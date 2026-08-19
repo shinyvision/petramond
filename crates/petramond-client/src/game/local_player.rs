@@ -113,6 +113,17 @@ impl Game {
         // input the local physics consumed this frame.
         self.predicted_input = player_input;
 
+        // Speed-coupled FOV: the camera eases toward the WISHED land speed —
+        // the same number the physics below applies — so sprint (only while
+        // deliberately moving; a held key over planted feet wishes nothing),
+        // a speed effect (moving or not — it is body state, not a wish), and
+        // both combined all arrive through one signal with no per-cause
+        // checks. Before the mount early-return on purpose: the widening
+        // follows the body's own selection wherever the body happens to be.
+        let ratio = self.player.wish_speed(player_input) / player::WALK;
+        self.speed_fov.advance(dt, ratio);
+        self.cam.fov_y = self.speed_fov.fov_y();
+
         // Mounted: no local physics — the body slaves to the interpolated
         // mount at the seat offset, the same glue observers apply to mounted
         // remotes, so rider and mount can never visibly separate. The intent

@@ -175,7 +175,7 @@
         "type": "tooltip",
         "style": "panel.inset",
         "layout": {
-          "max_w": 150,
+          "max_w": 200,
           "abs": { "x": 4, "y": 4 },
           "pad": [3, 2, 3, 3],
           "gap": 2,
@@ -202,7 +202,8 @@
           {
             "type": "hook",
             "id": "craft_tip_ingredients",
-            "layout": { "w": { "grow": 1 }, "min_w": 84, "h": 12 }
+            "layout": { "w": { "grow": 1 }, "min_w": 84, "h": 12 },
+            "bind": { "min_w": "craft_tip_ingredients_w" }
           }
         ]
       }

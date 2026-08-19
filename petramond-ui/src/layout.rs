@@ -288,6 +288,22 @@ impl Ax {
     }
 }
 
+/// A node's effective minimum width: the AUTHORED floor, raised by a live
+/// `bind.min_w`. The binding may only raise it — the authored minimum is the
+/// document's own promise about the box, and a host publishing nothing yet
+/// (the first frame) or a small number must never collapse it.
+///
+/// Both the measure pass and the shrink pass consult this. Measure alone is
+/// not enough: a tooltip that grew for its content would give the room
+/// straight back the moment its parent ran short, which for a recipe strip
+/// means silently hiding ingredients again.
+fn effective_min_w(inst: &crate::tree::Inst<'_>) -> Option<i32> {
+    match (inst.layout.min_w, inst.min_w) {
+        (Some(authored), Some(bound)) => Some(authored.max(bound)),
+        (authored, bound) => authored.or(bound),
+    }
+}
+
 fn clamp_opt(v: i32, min: Option<i32>, max: Option<i32>) -> i32 {
     let v = if let Some(min) = min { v.max(min) } else { v };
     if let Some(max) = max {
@@ -399,7 +415,7 @@ impl Solver<'_, '_, '_> {
         if let Size::Px(p) = l.h {
             natural.1 = p;
         }
-        natural.0 = clamp_opt(natural.0, l.min_w, l.max_w);
+        natural.0 = clamp_opt(natural.0, effective_min_w(inst), l.max_w);
         natural.1 = clamp_opt(natural.1, l.min_h, l.max_h);
         self.naturals[idx as usize] = natural;
         natural
@@ -583,11 +599,11 @@ impl Solver<'_, '_, '_> {
         // does content overflow.
         if leftover < 0 {
             let min_of = |i: usize| -> i32 {
-                let cl = tree.get(flow[i]).layout;
+                let ci = tree.get(flow[i]);
                 if main.horizontal {
-                    cl.min_w.unwrap_or(0)
+                    effective_min_w(ci).unwrap_or(0)
                 } else {
-                    cl.min_h.unwrap_or(0)
+                    ci.layout.min_h.unwrap_or(0)
                 }
                 .max(0)
             };

@@ -183,6 +183,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::FindBlocks { .. }
         | HostCall::MobInfo { .. }
         | HostCall::MobCanReach { .. }
+        | HostCall::SiteOpen { .. }
         // `terrain_solid_at` runs the density surface and the cave carve per
         // position — a generation-cost query, not a field sample, and nothing
         // presentation-side has a use for it. (`underground_biome_at`, which

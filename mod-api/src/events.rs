@@ -98,6 +98,24 @@ impl ContainerKind {
     }
 }
 
+/// WHICH use an [`EventPayload::ItemUsed`] is reporting. A handler that cares
+/// about one path must check this: the event fires from four sites, and two
+/// of them are a mod claiming the click rather than the engine acting.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ItemUseEvent {
+    /// A held-eat ran to completion: the portion is off the stack and the
+    /// row's effects have landed. Where a pack hangs what the food LEAVES
+    /// BEHIND (a stew's bowl) — see [`EventPayload::ItemUsed`].
+    Eaten,
+    /// The item's row-declared `use` handler ran (a bucket filled or poured;
+    /// its held stack is already the counterpart item).
+    Handler,
+    /// A mod's `item_use_pre` claimed the click and the engine did nothing
+    /// further. Reported so no use goes unaccounted for, but the mod that
+    /// claimed it already knows what it did.
+    Claimed,
+}
+
 /// Player-derived placement facing.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Facing {
@@ -273,8 +291,20 @@ pub enum EventPayload {
         harvested: bool,
         natural: bool,
     },
+    /// POST — a use of `item` by `player` was consumed. `kind` says WHICH
+    /// use (see [`ItemUseEvent`]); without it the four paths are
+    /// indistinguishable and a handler cannot react to eating in particular.
+    ///
+    /// `ItemUseEvent::Eaten` is the seam for whatever a food LEAVES BEHIND:
+    /// the portion is already off the stack and its effects have landed, so a
+    /// pack gives back the bowl/bottle here with `GiveItemTo` (an EXPLICIT
+    /// player — the payload names who ate). That is deliberately pack policy:
+    /// a container is what a recipe put the food in, not something the engine
+    /// should have vocabulary for.
     ItemUsed {
+        player: PlayerId,
         item: ItemId,
+        kind: ItemUseEvent,
     },
     /// POST — a mob died through the damage pipeline. Carries the stable
     /// `id` so a mod releases any per-mob state it keyed by it (despawns and

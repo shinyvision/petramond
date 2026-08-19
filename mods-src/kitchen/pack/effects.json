@@ -1,0 +1,10 @@
+{
+  "effects": [
+    {
+      "effect": "kitchen:swiftness",
+      "display": "Swiftness",
+      "icon": "textures/swiftness_icon.png",
+      "behavior": { "speed": { "scale": 1.5 } }
+    }
+  ]
+}

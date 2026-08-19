@@ -248,6 +248,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 ("items", BindField::Items, &mut edited.bind.items),
                 ("selected", BindField::Selected, &mut edited.bind.selected),
                 ("image", BindField::Image, &mut edited.bind.image),
+                // Applies to any node: the host raises this box's minimum
+                // width for content the layout engine cannot measure.
+                ("min_w", BindField::Value, &mut edited.bind.min_w),
             ];
             if frame_relevant {
                 rows.push(("frame", BindField::Frame, &mut edited.bind.frame));

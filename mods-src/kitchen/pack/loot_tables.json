@@ -2,6 +2,9 @@
   "tables": {
     "petramond:sheep": [
       { "item": "kitchen:raw_mutton", "min": 1, "max": 2 }
+    ],
+    "farming:rabbit": [
+      { "item": "kitchen:raw_rabbit", "min": 1, "max": 1 }
     ]
   }
 }

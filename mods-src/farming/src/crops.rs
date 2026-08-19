@@ -360,6 +360,9 @@ fn rearm_if_lost(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
         pop_planting_stock(growth, def, pos);
         return;
     }
+    // A stand that survived the darkness check is a stand a pest could smell:
+    // the same heartbeat carries the attraction roll (see `attract`).
+    crate::attract::on_random_tick(content, pos, block);
     if let Some(&due) = growth.pending.get(&pos) {
         if current_tick() <= due + REARM_GRACE {
             return;

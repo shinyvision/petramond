@@ -19,6 +19,7 @@
       "category": "passive",
       "cap": 12,
       "spawn": {
+        "chance": 0.25,
         "biomes": [
           "plains",
           "forest",
@@ -93,6 +94,22 @@
       },
       "avoid_water": true,
       "damage_feedback": [],
+      "sounds": [
+        {
+          "category": "idle",
+          "sound": "farming:rabbit_idle",
+          "tick_interval": 500,
+          "tick_interval_variance": 250
+        },
+        {
+          "category": "hurt",
+          "sound": "farming:rabbit_hurt"
+        },
+        {
+          "category": "death",
+          "sound": "farming:rabbit_death"
+        }
+      ],
       "brain": [
         {
           "node": "wander",
@@ -101,6 +118,10 @@
         {
           "node": "head_look",
           "priority": 10
+        },
+        {
+          "node": "farming:husbandry_goal",
+          "priority": 18
         }
       ]
     },

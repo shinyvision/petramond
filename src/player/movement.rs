@@ -3,7 +3,7 @@ use super::state::{Input, Player, HALF_W};
 use petramond_math::math::Vec3;
 use crate::world::World;
 
-pub(super) const WALK: f32 = 4.3;
+pub const WALK: f32 = 4.3;
 pub const SPRINT: f32 = 5.6;
 /// Land-speed multiplier while sneaking (applies to walk; sneak overrides sprint).
 pub(super) const SNEAK_FACTOR: f32 = 0.5;
@@ -172,6 +172,30 @@ impl Player {
     /// neither accumulates nor fights the movement controller — the player just drifts out
     /// of the overlap smoothly and can still walk against it. Vertical is ignored (pushing
     /// is horizontal); a noclip spectator has no body to jostle.
+    /// The land speed this INPUT wishes: sneak, sprint or walk, scaled by the
+    /// active effects (see `EffectBehavior::Speed`). The mode keys are
+    /// modifiers on a WISH — with no deliberate movement there is nothing for
+    /// them to modify, so a held sprint key over planted feet selects plain
+    /// walk — while the effect scale is the body's own state and applies
+    /// whether or not it moves.
+    ///
+    /// This is the one statement of that selection: movement applies it (the
+    /// wish gate costs it nothing — a zero wish never reads the speed), and
+    /// any presentation that follows the body's speed (the speed-widened FOV)
+    /// reads the same number, so a new cause of speed — an effect, a future
+    /// mode — reaches every consumer without per-cause wiring anywhere.
+    pub fn wish_speed(&self, input: Input) -> f32 {
+        let wishing = input.wishdir.length_squared() > 1e-12;
+        self.speed_scale()
+            * if input.sneak && wishing {
+                WALK * SNEAK_FACTOR
+            } else if input.sprint && wishing {
+                SPRINT
+            } else {
+                WALK
+            }
+    }
+
     pub fn shove(&mut self, delta: Vec3, world: &World) {
         if self.is_spectator() || (delta.x == 0.0 && delta.z == 0.0) {
             return;
@@ -475,13 +499,7 @@ impl Player {
         // --- Horizontal: input accelerates toward the wish velocity; friction
         // decays it. In water this is a slow swim with heavy drag; on land it is
         // the original ground/air handling. ---
-        let speed = if input.sneak {
-            WALK * SNEAK_FACTOR
-        } else if input.sprint {
-            SPRINT
-        } else {
-            WALK
-        };
+        let speed = self.wish_speed(input);
         let wish = if input.wishdir.length_squared() > 1.0 {
             input.wishdir.normalize()
         } else {

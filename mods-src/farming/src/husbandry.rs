@@ -42,7 +42,7 @@
 
 use mod_sdk::*;
 
-use crate::content::{Content, HusbandryDef};
+use crate::content::{Content, Eaten, HusbandryDef};
 
 /// Sweep cadence (ticks). Courtship progress accrues in these increments.
 const SWEEP_EVERY: u64 = 5;
@@ -427,26 +427,32 @@ fn step_animal(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64)
                 s.drink_next = Some((tick + DRINK_RETRY) as i64);
             }
             if !s.in_love(tick) {
-                roll_love(content, a, tick);
+                if def.kept() {
+                    roll_love(content, a, tick);
+                }
                 roll_graze(content, def, a);
             }
         }
     }
     // Drinking runs on its own long cadence, whenever a filled trough is
-    // near — thirst is upkeep, not hunger.
-    match a.now.drink_next {
-        None => {
-            a.now.drink_next =
-                Some((tick + DRINK_MIN + rng_u64("husbandry_drink") % DRINK_SPAN) as i64)
+    // near — thirst is upkeep, not hunger. A WILD grazer skips it entirely:
+    // the trough is pasture infrastructure, and nothing that refuses to be
+    // kept should be drinking out of it.
+    if def.kept() {
+        match a.now.drink_next {
+            None => {
+                a.now.drink_next =
+                    Some((tick + DRINK_MIN + rng_u64("husbandry_drink") % DRINK_SPAN) as i64)
+            }
+            Some(due)
+                if tick as i64 >= due
+                    && a.now.consume_until.is_none()
+                    && a.now.drink_cell.is_none() =>
+            {
+                roll_drink(content, a, tick);
+            }
+            Some(_) => {}
         }
-        Some(due)
-            if tick as i64 >= due
-                && a.now.consume_until.is_none()
-                && a.now.drink_cell.is_none() =>
-        {
-            roll_drink(content, a, tick);
-        }
-        Some(_) => {}
     }
     consume_step(content, def, a, tick);
 }
@@ -498,8 +504,10 @@ fn roll_love(content: &Content, a: &mut Animal, tick: u64) {
 
 /// The hunger roll: chance grows one step per missing saturation point
 /// ((SAT_MAX - sat) / 10 per heartbeat). A hit targets the nearest REACHABLE
-/// food in the seek box — a packed wheat trough ALWAYS beats grazing (a kept
-/// feed store saves the pasture), grass plants only when no trough serves.
+/// food in the seek box — for a KEPT species a packed wheat trough ALWAYS
+/// beats grazing (a kept feed store saves the pasture), and the row's food
+/// groups are then tried in PREFERENCE ORDER, each group settled before the
+/// next is looked at.
 fn roll_graze(content: &Content, def: &HusbandryDef, a: &mut Animal) {
     if a.now.sat >= SAT_MAX || a.now.graze.is_some() || a.now.feed_cell.is_some() {
         return;
@@ -509,27 +517,31 @@ fn roll_graze(content: &Content, def: &HusbandryDef, a: &mut Animal) {
     }
     let c = a.cell();
     let r = SEEK_RADIUS;
-    // The trough first. None = terrain still streaming: no verdict, retry
-    // next heartbeat — never a false "no trough" that falls back to grass.
-    let Some(troughs) = find_blocks(
-        [c[0] - r, c[1] - r, c[2] - r],
-        [c[0] + r, c[1] + r, c[2] + r],
-        vec![content.trough_wheat],
-    ) else {
-        return;
-    };
-    if let Some(p) = nearest_reachable(a, troughs) {
-        a.now.feed_cell = Some(pack_cell(p));
-        return;
+    let box_min = [c[0] - r, c[1] - r, c[2] - r];
+    let box_max = [c[0] + r, c[1] + r, c[2] + r];
+    if def.kept() {
+        // The trough first. None = terrain still streaming: no verdict, retry
+        // next heartbeat — never a false "no trough" that falls back to grass.
+        let Some(troughs) = find_blocks(box_min, box_max, vec![content.trough_wheat]) else {
+            return;
+        };
+        if let Some(p) = nearest_reachable(a, troughs) {
+            a.now.feed_cell = Some(pack_cell(p));
+            return;
+        }
     }
-    let Some(found) = find_blocks(
-        [c[0] - r, c[1] - r, c[2] - r],
-        [c[0] + r, c[1] + r, c[2] + r],
-        def.food.clone(),
-    ) else {
-        return;
-    };
-    a.now.graze = nearest_reachable(a, found).map(pack_cell);
+    for group in &def.food {
+        // A streaming read is no verdict for the WHOLE roll: falling through
+        // to the next group would quietly demote the preferred food on a
+        // frontier chunk.
+        let Some(found) = find_blocks(box_min, box_max, group.blocks.clone()) else {
+            return;
+        };
+        if let Some(p) = nearest_reachable(a, found) {
+            a.now.graze = Some(pack_cell(p));
+            return;
+        }
+    }
 }
 
 /// Horizontally within `range` of the cell's centre, feet within `dy_tol`
@@ -625,16 +637,16 @@ fn consume_step(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64
             }
         } else if let Some(packed) = a.now.graze {
             let cell = unpack_cell(packed);
-            match get_block(cell) {
+            let plant = match get_block(cell) {
                 None => return,
-                Some(b) if def.food.contains(&b) => {}
+                Some(b) if def.food_group(b).is_some() => b,
                 Some(_) => {
                     a.now.graze = None;
                     a.now.consume_until = None;
                     return;
                 }
-            }
-            if done && set_block(cell, BlockId::AIR) {
+            };
+            if done && finish_graze(content, def, cell, plant) {
                 a.now.sat = (a.now.sat + def.restore).min(SAT_MAX);
                 a.now.graze = None;
                 a.now.consume_until = None;
@@ -691,13 +703,31 @@ fn consume_step(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64
         let cell = unpack_cell(packed);
         match get_block(cell) {
             None => {}
-            Some(b) if def.food.contains(&b) => {
+            Some(b) if def.food_group(b).is_some() => {
                 if near_cell(a, cell, EAT_RANGE, 2.0) && facing_or_turn(a, cell) {
                     start(a);
                 }
             }
             Some(_) => a.now.graze = None,
         }
+    }
+}
+
+/// The bite lands: what it costs the plant is the food group's [`Eaten`]
+/// policy, never the species. `false` = the world refused the edit (a
+/// streaming cell), so the munch holds and retries rather than feeding the
+/// animal for nothing.
+fn finish_graze(content: &Content, def: &HusbandryDef, cell: [i32; 3], plant: BlockId) -> bool {
+    match def.food_group(plant).map(|g| g.eaten) {
+        Some(Eaten::Clear) => set_block(cell, BlockId::AIR),
+        // A seedling has no stage below it: the raider still gets its meal
+        // and the plant survives, which is what keeps it moving on.
+        Some(Eaten::Regress) => match content.crop_regressed(plant) {
+            Some(below) => set_block(cell, below),
+            None => true,
+        },
+        Some(Eaten::Keep) => true,
+        None => false,
     }
 }
 
@@ -870,6 +900,11 @@ fn court(content: &Content, animals: &mut [Animal], tick: u64) {
 /// complete and retries next sweep.
 fn birth(content: &Content, animals: &mut [Animal], i: usize, j: usize, tick: u64) {
     let def = &content.husbandry[animals[i].def];
+    // Only a kept species ever reaches courtship, but the offspring row is
+    // what a birth actually needs — read it, never assume it.
+    let Some((offspring_key, _)) = def.offspring else {
+        return;
+    };
     let (pa, pb) = (animals[i].snap.pos, animals[j].snap.pos);
     let mid = [
         (pa[0] + pb[0]) * 0.5,
@@ -879,7 +914,7 @@ fn birth(content: &Content, animals: &mut [Animal], i: usize, j: usize, tick: u6
     let yaw = animals[i].snap.yaw;
     let newborn = [mid, pa, pb]
         .into_iter()
-        .find_map(|pos| spawn_mob_checked(def.offspring_key, pos, yaw));
+        .find_map(|pos| spawn_mob_checked(offspring_key, pos, yaw));
     let Some(newborn) = newborn else {
         animals[i].now.court = Some(COURT_TICKS);
         return;

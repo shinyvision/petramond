@@ -1510,6 +1510,23 @@ pub enum HostCall {
         expect_data: Vec<(String, Vec<u8>)>,
         data: Vec<(String, Vec<u8>)>,
     },
+    /// Whether `cell` is a place a body of species `key` could stand and
+    /// still ROAM: a navigation foothold whose reachable ground is open world
+    /// rather than a closed-off region (a pen). The positional twin of
+    /// [`HostCall::MobCanReach`] — it needs no live mob, so a mod can judge a
+    /// site BEFORE spawning anything there.
+    ///
+    /// Ask it about any site your own spawner picked. Body clearance alone
+    /// (what [`HostCall::SpawnMob`]'s `checked` proves) still admits a site
+    /// over a hole, inside rock, or inside somebody's fenced pasture — where
+    /// a spawned animal would fall, suffocate, or be born captive in a pen
+    /// its owner built for other animals. `false` = no footing, confined, an
+    /// unknown species, or unloaded terrain (all "don't spawn here").
+    /// → [`HostRet::Bool`].
+    SiteOpen {
+        key: String,
+        cell: [i32; 3],
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].

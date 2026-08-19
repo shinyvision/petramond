@@ -68,6 +68,26 @@ pub enum EffectBehavior {
     /// lands `interval` ticks after application exactly when the granted
     /// duration is a multiple of `interval` — grant such durations.
     Regen { interval: u32, amount: i32 },
+    /// Scale the player's LAND speed by `scale` while active. It multiplies
+    /// the speed the movement code already selected, so walk, sprint and
+    /// sneak all move together and no mode gets its own tuning knob; water,
+    /// climbing and spectator flight have their own speeds and are untouched.
+    /// Concurrent scaling effects MULTIPLY (a haste and a mire compose), so
+    /// `scale` below 1 is slowness for free — this is the generic movement
+    /// knob, not one named effect.
+    Speed { scale: f32 },
+}
+
+impl EffectBehavior {
+    /// This behavior's contribution to the land-speed multiplier — 1 for
+    /// everything that is not a [`EffectBehavior::Speed`].
+    #[inline]
+    pub fn speed_scale(self) -> f32 {
+        match self {
+            Self::Speed { scale } => scale,
+            _ => 1.0,
+        }
+    }
 }
 
 /// One row of the effect table.
@@ -105,16 +125,23 @@ struct RawEffectDef {
     behavior: RawBehavior,
 }
 
-/// A row's `behavior` as written: `"none"`, or `{"regen": {"interval": ..,
-/// "amount": ..}}`. The enum shape gives every behavior its own required
-/// params (a missing or misspelled one is a serde error) — adding a behavior
-/// is one variant here + one arm in [`RawBehavior::resolve`].
+/// A row's `behavior` as written: `"none"`, `{"regen": {"interval": ..,
+/// "amount": ..}}`, or `{"speed": {"scale": ..}}`. The enum shape gives every
+/// behavior its own required params (a missing or misspelled one is a serde
+/// error) — adding a behavior is one variant here + one arm in
+/// [`RawBehavior::resolve`].
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum RawBehavior {
     None,
     Regen { interval: u32, amount: i32 },
+    Speed { scale: f32 },
 }
+
+/// Widest land-speed scale a row may ask for. Generous enough for any pack's
+/// haste, low enough that a typo'd row cannot fling the player past the
+/// terrain streamer's keep-up speed.
+const SPEED_SCALE_MAX: f32 = 5.0;
 
 impl RawBehavior {
     /// Range-check and convert to the runtime enum.
@@ -128,6 +155,14 @@ impl RawBehavior {
                     ));
                 }
                 Ok(EffectBehavior::Regen { interval, amount })
+            }
+            RawBehavior::Speed { scale } => {
+                if !scale.is_finite() || scale <= 0.0 || scale > SPEED_SCALE_MAX {
+                    return Err(format!(
+                        "effect '{effect}': speed scale must be in (0, {SPEED_SCALE_MAX}], got {scale}"
+                    ));
+                }
+                Ok(EffectBehavior::Speed { scale })
             }
         }
     }

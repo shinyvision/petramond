@@ -63,6 +63,21 @@ host_fn! {
 }
 
 host_fn! {
+    /// Whether `cell` is somewhere a body of species `key` could stand and
+    /// still ROAM — a navigation foothold whose reachable ground is open
+    /// world, not a closed-off region (a pen). The positional twin of
+    /// [`mob_can_reach`]: it needs no live mob, so a mod's own spawner can
+    /// judge a site BEFORE putting anything on it.
+    ///
+    /// [`spawn_mob_checked`] only proves the BODY FITS, which still admits a
+    /// site over a hole, buried in rock, or inside somebody's fenced
+    /// pasture. `false` = no footing, confined, unknown species, or unloaded
+    /// terrain — every one of them "don't spawn here".
+    pub fn site_open(key: &str, cell: [i32; 3]) -> bool
+        => SiteOpen { key: key.into(), cell } => Bool
+}
+
+host_fn! {
     /// Damage a live mob (STABLE id) through the `mob_damage_pre` pipeline with
     /// the species' resolved `damage_feedback` (applied at the next in-tick
     /// drain point; a mob gone by then is a silent no-op). Mod damage is not an

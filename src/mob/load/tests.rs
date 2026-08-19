@@ -694,4 +694,24 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
     .map(|_| ())
     .expect_err("a zero chance fails (drop the biome instead)");
     assert!(zeroed.contains("(0, 1]"), "{zeroed}");
+
+    // The species-wide chance MULTIPLIES into every biome's own: the two
+    // knobs are climate rarity and species rarity, and one must never
+    // silently replace the other.
+    let text = owl_with(|row| {
+        row["spawn"]["chance"] = serde_json::json!(0.25);
+        row["spawn"]["chances"] = serde_json::json!({"redwood_forest": 0.5});
+    });
+    let defs = parse_layers(&[&text]).expect("a species-wide chance loads").defs;
+    let spawn = &defs[Mob::Owl.0 as usize].spawn;
+    assert_eq!(spawn.chance_in(Biome::Forest), 0.25, "unmapped listed biome");
+    assert_eq!(spawn.chance_in(Biome::RedwoodForest), 0.125, "both applied");
+    assert_eq!(spawn.chance_in(Biome::Desert), 0.0, "unlisted biome");
+
+    let bad = parse_layers(&[&owl_with(|row| {
+        row["spawn"]["chance"] = serde_json::json!(1.5);
+    })])
+    .map(|_| ())
+    .expect_err("a species-wide chance above 1 fails");
+    assert!(bad.contains("(0, 1]"), "{bad}");
 }

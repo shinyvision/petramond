@@ -203,6 +203,17 @@ impl CraftingBrowser {
             "craft_tip_name",
             UiValue::Str(tip.map(|row| row.label.clone()).unwrap_or_default()),
         );
+        // How wide this recipe's ingredient strip needs to be. The tooltip
+        // binds its hook's `min_w` to it and grows, because an ingredient the
+        // player cannot see is a recipe they cannot read — the strip is never
+        // asked to drop one to fit.
+        state.set(
+            "craft_tip_ingredients_w",
+            UiValue::I32(
+                tip.map(|row| petramond_render::ui::ingredient_strip_width(&row.view.ingredients))
+                    .unwrap_or(0),
+            ),
+        );
     }
 
     /// UI enablement mirror of the server's output rule: empty output, or the

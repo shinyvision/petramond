@@ -779,6 +779,20 @@ impl Game {
             if self.player.mode() != self.self_view.mode {
                 self.player.set_mode(self.self_view.mode);
             }
+            // The predicted body runs the same movement code as the server,
+            // and that code reads the effect list (a speed effect scales land
+            // speed). An unsynced predicted player would walk at the wrong
+            // speed for the whole duration and rubber-band every batch.
+            self.player.set_effects(
+                self.self_view
+                    .effects
+                    .iter()
+                    .map(|&(effect, remaining)| petramond_world::effect::ActiveEffect {
+                        effect,
+                        remaining,
+                    })
+                    .collect(),
+            );
             // Tick-side transform mutations (teleports, knockback) win over
             // the local prediction — per-field against what we last sent.
             if let Some(t) = &state.transform {

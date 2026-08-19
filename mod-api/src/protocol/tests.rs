@@ -564,7 +564,11 @@ fn every_payload_kind_is_registerable() {
     // kind() is the dispatch routing key: it must agree with the variant.
     let samples = [
         EventPayload::PlayerDied,
-        EventPayload::ItemUsed { item: ItemId(3) },
+        EventPayload::ItemUsed {
+            player: PlayerId(3),
+            item: ItemId(3),
+            kind: ItemUseEvent::Eaten,
+        },
         EventPayload::SectionLoaded { pos: [0, -2, 5] },
     ];
     for s in samples {

@@ -24,6 +24,10 @@ struct CropSpec {
     yield_range: (u64, u64),
     /// An optional secondary drop per harvest.
     extra_drop: Option<ExtraDrop>,
+    /// The species a PLANTED stand of this crop draws out of the wild
+    /// (`mobs.json` row key), if any — see [`crate::attract`]. Only cultivated
+    /// rows attract: the wild stands are already where the animal lives.
+    attracts: Option<&'static str>,
 }
 
 /// A crop's secondary harvest drop — the seeds a tended plant throws off
@@ -41,40 +45,112 @@ struct ExtraDrop {
     count: (u64, u64),
 }
 
-/// One breedable species row: the whole husbandry system (grazing
-/// saturation, love mode, courtship, offspring, growth — see
-/// [`crate::husbandry`] and [`crate::growth`]) drives off these. Adding a
-/// breedable mob is ONE row here plus a `brain_extensions` entry composing
-/// `farming:husbandry_goal` onto its brain — never a species branch in the
+/// What a grazing bite costs the plant it lands on.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Eaten {
+    /// The plant is consumed and the cell clears (grass under a sheep).
+    Clear,
+    /// A cultivated crop is knocked back one growth stage. A plant already at
+    /// stage zero has nothing left to lose and survives the bite — the raider
+    /// still gets fed, so it never parks on one seedling forever.
+    Regress,
+    /// The stand is nibbled and left standing (wild forage, which is endless
+    /// on purpose — only what a player planted is worth losing).
+    Keep,
+}
+
+/// One food GROUP on a grazer's row: the plants, and what a bite costs them.
+///
+/// Groups are ordered by PREFERENCE — a hungry animal takes the first group
+/// with a reachable plant in range, which is the whole reason a rabbit ruins
+/// the field before it bothers with the wild patch beside it.
+struct FoodSpec {
+    blocks: &'static [&'static str],
+    eaten: Eaten,
+}
+
+/// One grazing species row: the whole husbandry system (saturation, love
+/// mode, courtship, offspring, growth — see [`crate::husbandry`] and
+/// [`crate::growth`]) drives off these. Adding one is ONE row here plus
+/// `farming:husbandry_goal` on its brain — never a species branch in the
 /// logic.
 struct HusbandrySpec {
     /// The ADULT species key (`mobs.json` row key) — what breeds, and what a
     /// grown juvenile becomes.
     mob: &'static str,
     /// The JUVENILE species a birth spawns (this pack's own row); it carries
-    /// `farming:baby` and grows into `mob` when the tag is removed.
-    offspring: &'static str,
-    /// The vegetation this species grazes (block registry names).
-    food: &'static [&'static str],
+    /// `farming:baby` and grows into `mob` when the tag is removed. `None`
+    /// marks a WILD species: it grazes and gets hungry like any other, but
+    /// never drinks from a trough and never pairs. Husbandry is what a
+    /// pasture earns, and a wild animal is not kept.
+    offspring: Option<&'static str>,
+    /// What this species eats, most-wanted group first.
+    food: &'static [FoodSpec],
     /// Saturation restored per eaten plant (balance data).
     restore: i64,
 }
 
-const HUSBANDRY: &[HusbandrySpec] = &[HusbandrySpec {
-    mob: "petramond:sheep",
-    offspring: "farming:lamb",
-    food: &["petramond:short_grass"],
-    restore: 3,
-}];
+const HUSBANDRY: &[HusbandrySpec] = &[
+    HusbandrySpec {
+        mob: "petramond:sheep",
+        offspring: Some("farming:lamb"),
+        food: &[FoodSpec {
+            blocks: &["petramond:short_grass"],
+            eaten: Eaten::Clear,
+        }],
+        restore: 3,
+    },
+    // The rabbit is a PEST, not livestock: it wants what a player planted and
+    // settles for the wild stand only when the field is out of reach.
+    HusbandrySpec {
+        mob: "farming:rabbit",
+        offspring: None,
+        food: &[
+            FoodSpec {
+                blocks: &[
+                    "farming:carrots_0",
+                    "farming:carrots_1",
+                    "farming:carrots_2",
+                    "farming:carrots_3",
+                ],
+                eaten: Eaten::Regress,
+            },
+            FoodSpec {
+                blocks: &["farming:wild_carrots"],
+                eaten: Eaten::Keep,
+            },
+        ],
+        restore: 4,
+    },
+];
 
-/// One breedable species, resolved from its [`HusbandrySpec`] row.
+/// One food group, resolved from its [`FoodSpec`] row.
+pub struct FoodGroup {
+    pub blocks: Vec<BlockId>,
+    pub eaten: Eaten,
+}
+
+/// One grazing species, resolved from its [`HusbandrySpec`] row.
 pub struct HusbandryDef {
     pub key: &'static str,
     pub kind: MobId,
-    pub offspring_key: &'static str,
-    pub offspring_kind: MobId,
-    pub food: Vec<BlockId>,
+    /// The juvenile this species births, or `None` for a wild grazer.
+    pub offspring: Option<(&'static str, MobId)>,
+    /// Food groups in preference order.
+    pub food: Vec<FoodGroup>,
     pub restore: i64,
+}
+
+impl HusbandryDef {
+    /// Whether this species is KEPT: it breeds, and a trough serves it.
+    pub fn kept(&self) -> bool {
+        self.offspring.is_some()
+    }
+
+    /// The food group `block` belongs to, if this species eats it at all.
+    pub fn food_group(&self, block: BlockId) -> Option<&FoodGroup> {
+        self.food.iter().find(|g| g.blocks.contains(&block))
+    }
 }
 
 const CROPS: &[CropSpec] = &[
@@ -84,6 +160,7 @@ const CROPS: &[CropSpec] = &[
         planting_stock: "farming:wheat_seeds",
         produce: "farming:wheat",
         yield_range: (1, 2),
+        attracts: None,
         extra_drop: Some(ExtraDrop {
             count_key: "harvest_wheat_seeds",
             item: "farming:wheat_seeds",
@@ -98,6 +175,8 @@ const CROPS: &[CropSpec] = &[
         produce: "farming:carrot",
         yield_range: (2, 3),
         extra_drop: None,
+        // A planted carrot patch is what brings rabbits in from the wild.
+        attracts: Some("farming:rabbit"),
     },
     CropSpec {
         name: "potato",
@@ -106,6 +185,7 @@ const CROPS: &[CropSpec] = &[
         produce: "farming:potato",
         yield_range: (2, 3),
         extra_drop: None,
+        attracts: None,
     },
     // Hemp is the one crop whose stock and produce are ENGINE items: the wild
     // stands and the rope they lash the first stone tools with are core
@@ -117,6 +197,7 @@ const CROPS: &[CropSpec] = &[
         planting_stock: "farming:hemp_seeds",
         produce: "petramond:hemp",
         yield_range: (1, 1),
+        attracts: None,
         extra_drop: Some(ExtraDrop {
             count_key: "harvest_hemp_seeds",
             item: "farming:hemp_seeds",
@@ -145,11 +226,17 @@ pub struct CropDef {
     pub produce: &'static str,
     pub yield_range: (u64, u64),
     pub extra_drop: Option<ExtraDropDef>,
+    /// The species a planted stand draws in, key and resolved id (see
+    /// [`crate::attract`]).
+    pub attracts: Option<(&'static str, MobId)>,
     /// RNG stream keys (derived once from the spec name — streams are
     /// stateful per key, so these must never vary per call site).
     pub harvest_key: String,
     pub fertile_key: String,
     pub harvest_emitter: String,
+    /// The attraction roll's own RNG stream key — never shared with the
+    /// harvest streams, which are stateful per key.
+    pub attract_key: String,
 }
 
 pub struct Content {
@@ -241,23 +328,34 @@ impl Content {
         let mut husbandry = Vec::with_capacity(HUSBANDRY.len());
         for spec in HUSBANDRY {
             let mut food = Vec::with_capacity(spec.food.len());
-            for name in spec.food {
-                food.push(block(name)?);
+            for group in spec.food {
+                let mut blocks = Vec::with_capacity(group.blocks.len());
+                for name in group.blocks {
+                    blocks.push(block(name)?);
+                }
+                food.push(FoodGroup {
+                    blocks,
+                    eaten: group.eaten,
+                });
             }
-            let (Some(kind), Some(offspring_kind)) =
-                (resolve_mob(spec.mob), resolve_mob(spec.offspring))
-            else {
-                log(&format!(
-                    "farming: unknown husbandry species '{}' / '{}'",
-                    spec.mob, spec.offspring
-                ));
+            let Some(kind) = resolve_mob(spec.mob) else {
+                log(&format!("farming: unknown grazing species '{}'", spec.mob));
                 return None;
+            };
+            let offspring = match spec.offspring {
+                None => None,
+                Some(key) => match resolve_mob(key) {
+                    Some(kind) => Some((key, kind)),
+                    None => {
+                        log(&format!("farming: unknown offspring species '{key}'"));
+                        return None;
+                    }
+                },
             };
             husbandry.push(HusbandryDef {
                 key: spec.mob,
                 kind,
-                offspring_key: spec.offspring,
-                offspring_kind,
+                offspring,
                 food,
                 restore: spec.restore,
             });
@@ -280,9 +378,20 @@ impl Content {
                     count_key: e.count_key,
                     chance_key: format!("extra_chance_{}", spec.name),
                 }),
+                attracts: match spec.attracts {
+                    None => None,
+                    Some(key) => match resolve_mob(key) {
+                        Some(kind) => Some((key, kind)),
+                        None => {
+                            log(&format!("farming: unknown attracted species '{key}'"));
+                            return None;
+                        }
+                    },
+                },
                 harvest_key: format!("harvest_{}", spec.name),
                 fertile_key: format!("fertile_{}", spec.name),
                 harvest_emitter: format!("farming:{}_harvest", spec.name),
+                attract_key: format!("attract_{}", spec.name),
             });
         }
         // The hemp a break can shake seeds out of. The wild stand is an ENGINE
@@ -372,6 +481,16 @@ impl Content {
                 .position(|&s| s == b)
                 .map(|i| (def, i as u8))
         })
+    }
+
+    /// The stage BELOW `b` for a cultivated crop — what a grazing bite knocks
+    /// it back to. `None` for a seedling (nothing below stage 0) and for
+    /// anything that is not a crop stage at all.
+    pub fn crop_regressed(&self, b: BlockId) -> Option<BlockId> {
+        let (def, stage) = self.crop_stage(b)?;
+        stage
+            .checked_sub(1)
+            .map(|below| def.stages[below as usize])
     }
 
     /// The compost barrel's fill stage (0 = empty, 3 = full), if `b` is one.

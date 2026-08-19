@@ -1,5 +1,30 @@
 use super::*;
 
+/// The mode keys are modifiers on a WISH: held over planted feet they select
+/// nothing, so everything that follows `wish_speed` (the speed-widened FOV)
+/// stays at rest — the bug was the camera widening for a player standing
+/// still holding sprint. Effects are body state, not a wish, and scale the
+/// selection whether or not it moves; that half is pinned by the arithmetic
+/// of `speed_scale` (a fresh player's is 1) rather than a registry fixture.
+#[test]
+fn mode_keys_select_nothing_without_a_wish() {
+    let pl = p(Vec3::ZERO);
+    let still = |sneak: bool, sprint: bool| Input {
+        wishdir: Vec3::ZERO,
+        jump: false,
+        sprint,
+        sneak,
+    };
+    assert_eq!(pl.wish_speed(still(false, true)), WALK, "held sprint");
+    assert_eq!(pl.wish_speed(still(true, false)), WALK, "held sneak");
+    let moving = |sneak: bool, sprint: bool| Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        ..still(sneak, sprint)
+    };
+    assert_eq!(pl.wish_speed(moving(false, true)), SPRINT);
+    assert_eq!(pl.wish_speed(moving(false, false)), WALK);
+}
+
 #[test]
 fn air_decays_slower_than_ground() {
     // No input: both decay gradually toward zero, but air friction is far

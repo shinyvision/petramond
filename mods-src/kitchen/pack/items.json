@@ -62,6 +62,101 @@
       },
       "tags": [],
       "block": "kitchen:miller"
+    },
+    {
+      "item": "kitchen:wooden_bowl",
+      "key": "kitchen:wooden_bowl",
+      "name": "Wooden Bowl",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "kitchen:wooden_bowl",
+      "tags": []
+    },
+    {
+      "item": "kitchen:raw_rabbit",
+      "key": "kitchen:raw_rabbit",
+      "name": "Raw Rabbit",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "kitchen:raw_rabbit",
+      "tags": [
+        "kitchen:cookable"
+      ]
+    },
+    {
+      "item": "kitchen:cooked_rabbit",
+      "key": "kitchen:cooked_rabbit",
+      "name": "Cooked Rabbit",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "kitchen:cooked_rabbit",
+      "tags": [],
+      "food": {
+        "eat_ticks": 20,
+        "effects": [
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 1000
+          }
+        ]
+      }
+    },
+    {
+      "item": "kitchen:raw_rabbit_stew",
+      "key": "kitchen:raw_rabbit_stew",
+      "name": "Raw Rabbit Stew",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "kitchen:raw_rabbit_stew",
+      "tags": [
+        "kitchen:cookable"
+      ]
+    },
+    {
+      "item": "kitchen:rabbit_stew",
+      "key": "kitchen:rabbit_stew",
+      "name": "Rabbit Stew",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "kitchen:rabbit_stew",
+      "tags": [],
+      "food": {
+        "eat_ticks": 40,
+        "effects": [
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 1200
+          },
+          {
+            "effect": "farming:well_fed",
+            "ticks": 1200
+          },
+          {
+            "effect": "kitchen:swiftness",
+            "ticks": 1200
+          }
+        ]
+      }
     }
   ]
 }

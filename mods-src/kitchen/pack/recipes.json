@@ -56,6 +56,67 @@
         "item": "kitchen:miller",
         "count": 1
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "kitchen:wooden_bowl",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "kitchen:wooden_bowl",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "kitchen:raw_rabbit_stew",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "kitchen:wooden_bowl",
+          "count": 1
+        },
+        {
+          "item": "petramond:water_bucket",
+          "count": 1,
+          "remainder": "petramond:wooden_bucket"
+        },
+        {
+          "item": "farming:carrot",
+          "count": 1
+        },
+        {
+          "item": "farming:potato",
+          "count": 1
+        },
+        {
+          "item": "kitchen:raw_rabbit",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "kitchen:raw_rabbit_stew",
+        "count": 1
+      }
+    },
+    {
+      "type": "processing",
+      "recipe": "kitchen:raw_rabbit_to_cooked_rabbit",
+      "class": "kitchen:cooking",
+      "ingredient": "kitchen:raw_rabbit",
+      "result": "kitchen:cooked_rabbit"
+    },
+    {
+      "type": "processing",
+      "recipe": "kitchen:raw_rabbit_stew_to_rabbit_stew",
+      "class": "kitchen:cooking",
+      "ingredient": "kitchen:raw_rabbit_stew",
+      "result": "kitchen:rabbit_stew"
     }
   ]
 }

@@ -216,7 +216,8 @@ impl ServerGame {
         let player = &mut self.sessions[s].player;
         for behavior in player.tick_effects() {
             match behavior {
-                petramond_world::effect::EffectBehavior::None => {}
+                petramond_world::effect::EffectBehavior::None
+                | petramond_world::effect::EffectBehavior::Speed { .. } => {}
                 petramond_world::effect::EffectBehavior::Regen { amount, .. } => {
                     player.heal(amount);
                 }

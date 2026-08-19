@@ -1,6 +1,11 @@
 {
   "tiles": [
     { "name": "kitchen:raw_mutton", "file": "raw_mutton.png" },
-    { "name": "kitchen:cooked_mutton", "file": "cooked_mutton.png" }
+    { "name": "kitchen:cooked_mutton", "file": "cooked_mutton.png" },
+    { "name": "kitchen:wooden_bowl", "file": "wooden_bowl.png" },
+    { "name": "kitchen:raw_rabbit", "file": "raw_rabbit.png" },
+    { "name": "kitchen:cooked_rabbit", "file": "cooked_rabbit.png" },
+    { "name": "kitchen:raw_rabbit_stew", "file": "raw_rabbit_stew.png" },
+    { "name": "kitchen:rabbit_stew", "file": "rabbit_stew.png" }
   ]
 }

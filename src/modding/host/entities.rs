@@ -97,6 +97,17 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             }))
         }),
+        HostCall::SiteOpen { key, cell } => sim_query(|ctx| {
+            let Some(kind) = crate::mob::by_key(&key) else {
+                log::warn!("[mod {mod_id}] SiteOpen: unknown species '{key}'");
+                return HostRet::Bool(false);
+            };
+            HostRet::Bool(crate::mob::site_open(
+                ctx.world,
+                kind,
+                petramond_math::math::IVec3::new(cell[0], cell[1], cell[2]),
+            ))
+        }),
         HostCall::MobsInRadius { pos, radius } => match finite3(pos, "MobsInRadius.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {

@@ -254,6 +254,45 @@ fn bound_abs_position_overrides_the_authored_one_per_axis() {
     assert_eq!((s.rects[1].x, s.rects[1].y), (5, 33));
 }
 
+/// A bound `min_w` lets host-drawn content the layout engine cannot measure
+/// reserve its own room: the box widens and its ANCESTOR grows around it (the
+/// recipe tooltip widening for a long ingredient strip). It may only ever
+/// raise the authored floor, and — the half that is easy to lose — the room
+/// must survive the shrink pass, or a parent under pressure takes it straight
+/// back and the host's content is clipped again.
+#[test]
+fn a_bound_min_w_grows_the_parent_and_never_shrinks_below_the_authored_floor() {
+    let json = r#"{
+        "format": 1, "kind": "petramond:x", "class": "screen",
+        "root": { "type": "frame", "layout": { "w": 200, "h": 100 },
+            "children": [
+                { "type": "column", "id": "panel", "layout": { "align": "stretch" },
+                  "children": [
+                    { "type": "hook", "id": "strip",
+                      "layout": { "w": { "grow": 1 }, "min_w": 40, "h": 12 },
+                      "bind": { "min_w": "strip_w" } }
+                  ] }
+            ] }
+    }"#;
+    let doc = Document::from_json(json).unwrap();
+    let width_with = |published: Option<i32>| {
+        let mut state = UiState::new();
+        if let Some(v) = published {
+            state.set("strip_w", UiValue::I32(v));
+        }
+        let tree = InstTree::expand(&doc, &state);
+        let s = solve(&tree, &MockEnv, (200, 100), &|_| 0);
+        (s.rects[1].w, s.rects[2].w)
+    };
+
+    // Nothing published yet (the first frame): the authored floor stands.
+    assert_eq!(width_with(None), (40, 40));
+    // A wider strip grows the hook AND the panel around it.
+    assert_eq!(width_with(Some(120)), (120, 120));
+    // A narrower one is ignored — the author's minimum is a promise.
+    assert_eq!(width_with(Some(10)), (40, 40));
+}
+
 /// `overlay: true` raises a subtree's PAINT tier without the tooltip tier's
 /// hit exclusion — the anvil's augment slot must draw above the host's
 /// enlarged tool view AND still take the click.

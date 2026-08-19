@@ -257,16 +257,22 @@ mod tests {
         Vec3::new(8.0, 65.0, 8.0)
     }
 
-    /// A seed whose deterministic roll populates the anchor chunk (chance AND
-    /// spacing) — searched, not pinned, so retuning `POPULATE_CHANCE` or the
-    /// spacing radius can't break these tests.
+    /// A seed that actually PLACES a herd on the anchor chunk — searched, not
+    /// pinned, so retuning `POPULATE_CHANCE`, the spacing radius, or any
+    /// species' spawn rarity can't break these tests. The search runs the real
+    /// attempt rather than the chunk roll alone: a passing chunk roll can
+    /// still place nothing once the chosen species' own spawn chance is
+    /// drawn, and every caller below asserts on the placement.
     fn populating_seed() -> u32 {
         let anchor_chunk = ChunkPos::new(0, 0);
         (0..10_000u32)
             .find(|&s| {
-                herd_draw(s, anchor_chunk).is_some_and(|own| wins_spacing(s, anchor_chunk, own))
+                let mut checked = FxHashSet::default();
+                attempt(&grass_world(s), anchor(), &mut checked)
+                    .iter()
+                    .any(|h| h.chunk == anchor_chunk)
             })
-            .expect("some small seed rolls a herd for chunk (0,0)")
+            .expect("some small seed places a herd on chunk (0,0)")
     }
 
     #[test]

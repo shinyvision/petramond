@@ -6,6 +6,8 @@
 //!   `kitchen:cooking`, so it cooks food and never smelts ore. While burning
 //!   it flips to the `kitchen:oven_lit` row (fire cube + glow + particles are
 //!   that row's data).
+//! - [`vessels`] — the bowl a finished dish leaves behind, hung on the
+//!   engine's `item_used` primitive (`ItemUseEvent::Eaten`).
 //! - [`miller`] — the miller: grinds one input into its `kitchen:milling`
 //!   product every 200 ticks, no fuel. While the output slot holds anything
 //!   it flips to the `kitchen:miller_full` row (the authored `flour` cube).
@@ -30,21 +32,25 @@
 
 mod miller;
 mod oven;
+mod vessels;
 
 use machine_core::Caches;
 use miller::Miller;
 use mod_sdk::*;
 use oven::Oven;
+use vessels::Vessels;
 
 const TICK_SYSTEM: u32 = 1;
 const ON_BLOCK_PLACED: u32 = 1;
 const ON_CONTAINER_OPENED: u32 = 2;
+const ON_ITEM_USED: u32 = 3;
 
 #[derive(Default)]
 struct Kitchen {
     oven: Oven,
     miller: Miller,
     caches: Caches,
+    vessels: Vessels,
 }
 
 impl Mod for Kitchen {
@@ -55,8 +61,10 @@ impl Mod for Kitchen {
             log("kitchen: no machine blocks registered; the mod stays idle");
             return;
         }
+        self.vessels.init();
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
+        register_event_handler(EventKind::ItemUsed, 0, ON_ITEM_USED);
         // After WorldScheduled = right after the engine's own furnace step.
         register_tick_system(Stage::WorldScheduled, AttachSide::After, 0, TICK_SYSTEM);
     }
@@ -71,6 +79,14 @@ impl Mod for Kitchen {
                 self.oven.on_container_opened(kind, *pos);
                 self.miller.on_container_opened(kind, *pos);
             }
+            (
+                ON_ITEM_USED,
+                EventPayload::ItemUsed {
+                    player,
+                    item,
+                    kind,
+                },
+            ) => self.vessels.on_item_used(*player, *item, *kind),
             _ => {}
         }
         Outcome::Continue

@@ -407,14 +407,42 @@ struct IngredientStripLayout {
     icon_side: f32,
 }
 
+/// Logical-px width the WHOLE strip needs to show every ingredient — the
+/// number a document publishes so its tooltip can grow to fit (see
+/// `bind.min_w`). The one place the strip's metrics are stated; the layout
+/// below measures against the identical arithmetic at render scale, and
+/// `strip_fits_the_width_it_asks_for` pins the two together.
+///
+/// Recipe ingredients are ESSENTIAL information — a hidden one leaves the
+/// player unable to see what a dish is made of — so the strip must never be
+/// asked to choose what to drop. It asks for the room it needs instead.
+pub fn ingredient_strip_width(ingredients: &[(ItemType, u16)]) -> i32 {
+    if ingredients.is_empty() {
+        return 0;
+    }
+    let pairs: i32 = ingredients
+        .iter()
+        .map(|(_, count)| STRIP_ICON_SIDE + 1 + prefixed_number_width_logical(u32::from(*count)))
+        .sum();
+    pairs + STRIP_GAP * (ingredients.len() as i32 - 1)
+}
+
+/// The strip's icon box and inter-pair gap, in logical px.
+const STRIP_ICON_SIDE: i32 = 12;
+const STRIP_GAP: i32 = 3;
+
+fn prefixed_number_width_logical(number: u32) -> i32 {
+    (tiny_text::GLYPH_W + 1 + tiny_text::number_width(number)) as i32
+}
+
 fn ingredient_strip_layout(
     ingredients: &[(ItemType, u16)],
     width: f32,
     height: f32,
     scale: f32,
 ) -> IngredientStripLayout {
-    let icon_side = height.min(12.0 * scale).max(0.0);
-    let gap = 3.0 * scale;
+    let icon_side = height.min(STRIP_ICON_SIDE as f32 * scale).max(0.0);
+    let gap = STRIP_GAP as f32 * scale;
     let pair_width =
         |count: u16| icon_side + scale + prefixed_number_width(u32::from(count), scale);
     let mut visible = ingredients.len();
@@ -452,7 +480,7 @@ fn ingredient_strip_layout(
 }
 
 fn prefixed_number_width(number: u32, scale: f32) -> f32 {
-    (tiny_text::GLYPH_W + 1 + tiny_text::number_width(number)) as f32 * scale
+    prefixed_number_width_logical(number) as f32 * scale
 }
 
 fn effective_hook_clip(hook: petramond::gui::DocHook) -> Option<SlotRect> {
@@ -939,6 +967,37 @@ mod tests {
         let roomy = ingredient_strip_layout(&ingredients, 10_000.0, 12.0 * scale, scale);
         assert_eq!(roomy.visible, ingredients.len());
         assert_eq!(roomy.omitted, 0);
+    }
+
+    /// The width the tooltip is TOLD to reserve must be the width the strip
+    /// actually needs. These are two functions over the same metrics, on
+    /// opposite sides of the ABI (`craft_tip_ingredients_w` is published from
+    /// the client, measured here at render scale), and drift between them
+    /// silently hides an ingredient — the one outcome the strip exists to
+    /// prevent. Nothing else pins them together.
+    #[test]
+    fn strip_fits_the_width_it_asks_for() {
+        for count in [1u16, 9, 10, 64, u16::MAX] {
+            for n in 1..=12usize {
+                let ingredients = vec![(ItemType::Coal, count); n];
+                let asked = ingredient_strip_width(&ingredients);
+                for scale in [1.0f32, 2.0, 3.0] {
+                    let fit = ingredient_strip_layout(
+                        &ingredients,
+                        asked as f32 * scale,
+                        12.0 * scale,
+                        scale,
+                    );
+                    assert_eq!(
+                        fit.omitted, 0,
+                        "×{count} × {n} at scale {scale}: asked {asked} logical px and still \
+                         dropped {} ingredient(s)",
+                        fit.omitted
+                    );
+                }
+            }
+        }
+        assert_eq!(ingredient_strip_width(&[]), 0, "no strip, no room");
     }
 
     #[test]

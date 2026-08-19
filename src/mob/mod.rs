@@ -50,6 +50,7 @@ pub use petramond_world::ai_vocab::validate_brain_extensions;
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub use nav::mob_can_reach;
+pub use nav::site_open;
 pub use nav::ReachBudget;
 pub use noise::{player_steps_are_audible, Noise, NoiseKind};
 pub use spawn::{
@@ -275,12 +276,19 @@ impl MobCategory {
 pub struct SpawnRule {
     /// Biomes the species may spawn in.
     pub biomes: &'static [Biome],
+    /// Species-wide spawn chance in `(0, 1]`, multiplied into every biome's
+    /// own chance below. This is how RARE the species is as a species — a
+    /// `0.25` row is a quarter as common as a full-chance neighbour
+    /// everywhere it lives, including biomes no other species competes for.
+    /// Per-biome tuning stays in `chances`, so climate rarity and species
+    /// rarity can be retuned independently.
+    pub chance: f32,
     /// Per-biome spawn chance in `(0, 1]`, aligned index-for-index with
-    /// `biomes`; empty = every listed biome spawns at full chance. A value
-    /// below 1 makes natural spawns in that biome proportionally rarer — the
-    /// spawner rolls it ONCE per trickle attempt / worldgen herd (see
-    /// [`spawn::biome_chance_passes`]), never per group member, so rarity
-    /// thins spawn events, not group size.
+    /// `biomes`; empty = every listed biome spawns at the species' own
+    /// `chance`. A value below 1 makes natural spawns in that biome
+    /// proportionally rarer — the spawner rolls the combined chance ONCE per
+    /// trickle attempt / worldgen herd (see [`spawn::biome_chance_passes`]),
+    /// never per group member, so rarity thins spawn events, not group size.
     pub chances: &'static [f32],
     /// Blocks the species accepts as the ground under its feet (the cell it rests on).
     pub ground: &'static [Block],
@@ -293,11 +301,12 @@ impl SpawnRule {
     }
 
     /// The chance in `[0, 1]` that a spawn event in `biome` passes this rule's
-    /// climate rarity: the row's per-biome chance (default 1 for a listed
-    /// biome), or 0 for a biome the rule doesn't list at all.
+    /// rarity: the species-wide `chance` times the row's per-biome chance
+    /// (default 1 for a listed biome), or 0 for a biome the rule doesn't list
+    /// at all.
     pub fn chance_in(&self, biome: Biome) -> f32 {
         match self.biomes.iter().position(|&b| b == biome) {
-            Some(i) => self.chances.get(i).copied().unwrap_or(1.0),
+            Some(i) => self.chance * self.chances.get(i).copied().unwrap_or(1.0),
             None => 0.0,
         }
     }

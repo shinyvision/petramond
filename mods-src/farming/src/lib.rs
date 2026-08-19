@@ -5,6 +5,8 @@
 //! crate is only the deterministic gameplay logic, split by subsystem:
 //!
 //! - [`content`] — the pack's registry names resolved to session ids once.
+//! - [`attract`] — a planted stand drawing its pest out of the wild (the
+//!   carrot patch that brings rabbits), rolled on the crop's own random tick.
 //! - [`worldgen`] — wild wheat/carrot/potato patches after the Trees stage.
 //! - [`tilling`] — the iron hoe turning grass/dirt into farmland.
 //! - [`farmland`] — the shared hydration probe (ground water OR overhead
@@ -33,6 +35,7 @@
 //! crop list. World reads treat `None` (unloaded / streaming) as "retry
 //! later", never as state to act on.
 
+mod attract;
 mod compost;
 mod content;
 mod crops;

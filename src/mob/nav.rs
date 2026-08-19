@@ -972,6 +972,40 @@ pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool 
     .unwrap_or(false)
 }
 
+/// Whether `cell` is somewhere a body of species `kind` could stand and still
+/// ROAM: a navigation foothold whose reachable ground is open world rather
+/// than a closed-off region (see [`super::confined`]). The `SiteOpen`
+/// HostCall's engine seam.
+///
+/// This is the question a spawner asks about a site it picked itself, and both
+/// halves matter: the foothold half is why a site over a hole or inside rock
+/// answers `false` instead of dropping a body into it, and the confinement
+/// half is why a pen someone built stays a pen — the engine's own confinement
+/// probe, asked positionally so the answer arrives BEFORE a mob exists.
+pub fn site_open(world: &World, kind: super::Mob, cell: IVec3) -> bool {
+    let d = def(kind);
+    let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
+    let cursor = world.cursor();
+    let solid = nav_solid_fn(&cursor);
+    let support = nav_support_fn(&cursor, d.size.half_width);
+    let water = nav_water_fn(&cursor);
+    if !path::is_navigation_foothold_with(cell, params, &solid, &support, &water) {
+        return false;
+    }
+    let step_allowed = partial_step_gate(&cursor, params, d.size.height);
+    let loaded = nav_loaded_fn(&cursor);
+    super::confined::confined_region(
+        cell,
+        params,
+        &solid,
+        &support,
+        &water,
+        &step_allowed,
+        &loaded,
+    )
+    .is_none()
+}
+
 /// The collision boxes navigation must sweep against in `c` — the PARTIAL
 /// shapes only. Full cubes are already resolved exactly by the cell probes and
 /// empty cells contribute nothing, so both answer an empty slice.

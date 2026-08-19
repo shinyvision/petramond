@@ -46,6 +46,7 @@ pub mod remote_players;
 pub mod replicated;
 pub mod section_cache;
 pub mod session;
+mod speed_fov;
 mod terrain_render;
 mod third_person;
 pub mod tick;
@@ -238,6 +239,9 @@ pub struct Game {
     /// First-person walking sway — a presentation offset on the camera, and
     /// the signal the hand follows (lagged) so the two are not in lockstep.
     view_bob: view_bob::ViewBob,
+    /// Speed-coupled FOV — the camera widens with the body's WISHED land
+    /// speed (`Player::wish_speed`), a presentation retarget of `cam.fov_y`.
+    speed_fov: speed_fov::SpeedFov,
     /// One-shot hand/presentation triggers latched this frame for P0
     /// prediction — the ONLY source of the own hand animation (the server
     /// never echoes self-initiated one-shots back). Consumed into `GameEvents` in

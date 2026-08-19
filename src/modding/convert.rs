@@ -293,8 +293,14 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             harvested,
             natural,
         },
-        PostEvent::ItemUsed { item } => api::EventPayload::ItemUsed {
+        PostEvent::ItemUsed { player, item, kind } => api::EventPayload::ItemUsed {
+            player: api::PlayerId(player.0),
             item: api::ItemId(item.id()),
+            kind: match kind {
+                crate::events::ItemUseEvent::Eaten => api::ItemUseEvent::Eaten,
+                crate::events::ItemUseEvent::Handler => api::ItemUseEvent::Handler,
+                crate::events::ItemUseEvent::Claimed => api::ItemUseEvent::Claimed,
+            },
         },
         PostEvent::MobDied { id, kind, pos } => api::EventPayload::MobDied {
             id,

@@ -366,6 +366,7 @@ fn samples() -> Samples {
             data: vec![("k".into(), vec![7])],
         },
     );
+    s.pin("HostCall::SiteOpen", &HostCall::SiteOpen { key: "m:k".into(), cell: [1, -2, 3] });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -560,7 +561,7 @@ fn samples() -> Samples {
     // --- GuestRet: every variant, declaration order --------------------------
     s.pin("GuestRet::Unit", &GuestRet::Unit);
     s.pin("GuestRet::Event", &GuestRet::Event {
-        outcome: Outcome::Cancel, payload: EventPayload::ItemUsed { item: ItemId(1) },
+        outcome: Outcome::Cancel, payload: EventPayload::ItemUsed { player: PlayerId(1), item: ItemId(1), kind: ItemUseEvent::Handler },
     });
     s.pin("GuestRet::GenWrites", &GuestRet::GenWrites(vec![([1, 2, 3], BlockId(4))]));
     s.pin("GuestRet::GenBlocks", &GuestRet::GenBlocks(vec![1, 2]));
@@ -636,7 +637,10 @@ fn samples() -> Samples {
     s.pin("EventPayload::BlockBroken", &EventPayload::BlockBroken {
         pos: [1, 2, 3], block: BlockId(1), harvested: false, natural: true,
     });
-    s.pin("EventPayload::ItemUsed", &EventPayload::ItemUsed { item: ItemId(2) });
+    s.pin("EventPayload::ItemUsed", &EventPayload::ItemUsed {
+        player: PlayerId(2), item: ItemId(2), kind: ItemUseEvent::Eaten,
+    });
+    s.pin("ItemUseEvent::*", &[ItemUseEvent::Eaten, ItemUseEvent::Handler, ItemUseEvent::Claimed]);
     s.pin("EventPayload::MobDied", &EventPayload::MobDied {
         id: 7, kind: MobId(1), pos: [1.0, 2.0, 3.0],
     });
@@ -916,6 +920,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::PlayerHeld", "8a0102"),
     ("HostCall::GiveItemTo", "8b010201690301016b0107"),
     ("HostCall::SetPlayerHeldData", "8c0102016901016b010601016b0107"),
+    ("HostCall::SiteOpen", "8d01036d3a6b020306"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -985,7 +990,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::BakeShapeItem", "0f0104"),
     ("GuestCall::ShapePlacementPlan", "10010400000000020000020000"),
     ("GuestRet::Unit", "00"),
-    ("GuestRet::Event", "01010801"),
+    ("GuestRet::Event", "010108010101"),
     ("GuestRet::GenWrites", "020102040604"),
     ("GuestRet::GenBlocks", "03020102"),
     ("GuestRet::GenBiomes", "040103"),
@@ -1007,7 +1012,8 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::PlayerDamagePre", "0502010100"),
     ("EventPayload::BlockPlaced", "0602040601"),
     ("EventPayload::BlockBroken", "07020406010001"),
-    ("EventPayload::ItemUsed", "0802"),
+    ("EventPayload::ItemUsed", "08020200"),
+    ("ItemUseEvent::*", "000102"),
     ("EventPayload::MobDied", "0907010000803f0000004000004040"),
     ("EventPayload::MobSpawned", "0a07010000803f0000004000004040"),
     ("EventPayload::PlayerDamaged", "0b0226"),

@@ -648,6 +648,19 @@ pub struct Bindings {
     /// empty string shows nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub item: Option<String>,
+    /// Bound MINIMUM WIDTH (logical px): a numeric key that replaces the
+    /// node's authored `layout.min_w` this frame, so a box whose CONTENT the
+    /// document cannot measure still reserves the room it needs.
+    ///
+    /// This is the answer for host-drawn `hook` content, which the layout
+    /// engine sees only as an empty rect: the host publishes how wide its
+    /// drawing will be and the ancestors grow around it (a recipe tooltip
+    /// widening for a five-ingredient recipe). Without it, a hook's only
+    /// natural width is the authored minimum, so growing for one recipe means
+    /// widening EVERY tooltip forever. Values below the authored minimum are
+    /// ignored — the author's floor stands, the binding may only raise it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_w: Option<String>,
     /// Bound absolute position (logical px from the parent's content rect,
     /// like `layout.abs`), for nodes that DECLARE `layout.abs`: the host moves
     /// the widget by publishing `I32` values (a slot whose place depends on

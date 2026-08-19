@@ -131,8 +131,12 @@ struct RawMobDef {
 struct RawSpawn {
     /// Biome names (see [`Biome::from_name`]). Empty = never natural-spawned.
     biomes: Vec<String>,
+    /// Optional species-wide rarity in `(0, 1]`; omitted = 1 (as common as
+    /// any other species admitting the site). See [`SpawnRule::chance`].
+    #[serde(default)]
+    chance: Option<f64>,
     /// Optional per-biome spawn chance in `(0, 1]`, keyed by a name from
-    /// `biomes`; unlisted biomes spawn at full chance. See
+    /// `biomes`; unlisted biomes spawn at the species-wide chance. See
     /// [`SpawnRule::chances`].
     #[serde(default)]
     chances: std::collections::BTreeMap<String, f64>,
@@ -532,12 +536,18 @@ fn convert_spawn_tags(
     Ok(Box::leak(Box::new(tags)))
 }
 
-/// Resolve a row's spawn rule: the biome list, the optional per-biome chance
-/// map (validated to name only listed biomes, values in `(0, 1]`, and aligned
-/// index-for-index with the biome list — see [`SpawnRule::chances`]), and the
-/// ground block list.
+/// Resolve a row's spawn rule: the biome list, the optional species-wide
+/// rarity, the optional per-biome chance map (validated to name only listed
+/// biomes, values in `(0, 1]`, and aligned index-for-index with the biome
+/// list — see [`SpawnRule::chances`]), and the ground block list.
 fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
     let biomes = resolve_biomes(raw.biomes)?;
+    let chance = raw.chance.unwrap_or(1.0);
+    if !chance.is_finite() || chance <= 0.0 || chance > 1.0 {
+        return Err(format!(
+            "spawn chance must be in (0, 1], got {chance} — empty the biome list instead of zeroing it"
+        ));
+    }
     let chances: &'static [f32] = if raw.chances.is_empty() {
         &[]
     } else {
@@ -559,6 +569,7 @@ fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
     };
     Ok(SpawnRule {
         biomes,
+        chance: chance as f32,
         chances,
         ground: Box::leak(raw.ground.into_boxed_slice()),
     })

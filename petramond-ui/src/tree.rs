@@ -48,6 +48,9 @@ pub struct Inst<'d> {
     /// Resolved `item` binding (hook nodes): the game item to draw in the
     /// hook's rect (empty string resolves to `None` — nothing to show).
     pub item_name: Option<String>,
+    /// Resolved `min_w` binding: this frame's minimum width for a box whose
+    /// content the layout engine cannot measure (host-drawn hooks).
+    pub min_w: Option<i32>,
     /// Resolved `abs_x`/`abs_y` bindings: per-frame overrides of the node's
     /// authored `layout.abs` position.
     pub abs_x: Option<i32>,
@@ -223,6 +226,9 @@ impl<'d> InstTree<'d> {
                 UiValue::Str(s) if !s.is_empty() => Some(s.clone()),
                 _ => None,
             }),
+            min_w: resolve_key(state, item_map, &node.bind.min_w)
+                .and_then(UiValue::as_f32)
+                .map(|f| f as i32),
             abs_x: resolve_key(state, item_map, &node.bind.abs_x)
                 .and_then(UiValue::as_f32)
                 .map(|f| f as i32),

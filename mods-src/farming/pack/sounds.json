@@ -37,6 +37,30 @@
       "pitch": 1.3,
       "attenuation_distance": 12.0,
       "category": "mob"
+    },
+    {
+      "sound": "farming:rabbit_idle",
+      "variants": ["sounds/rabbit_idle1.ogg", "sounds/rabbit_idle2.ogg"],
+      "gain": 0.8,
+      "pitch_variation": 0.1,
+      "attenuation_distance": 10.0,
+      "category": "mob"
+    },
+    {
+      "sound": "farming:rabbit_hurt",
+      "variants": ["sounds/rabbit_hurt.ogg"],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 10.0,
+      "category": "mob"
+    },
+    {
+      "sound": "farming:rabbit_death",
+      "variants": ["sounds/rabbit_death.ogg"],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 10.0,
+      "category": "mob"
     }
   ]
 }

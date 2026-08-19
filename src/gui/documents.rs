@@ -1306,6 +1306,43 @@ mod tests {
         }
     }
 
+    /// The recipe tooltip must GROW to whatever width the host says its
+    /// ingredient strip needs. Recipe ingredients are essential information —
+    /// the strip's own fallback when it runs short is to DROP the ones that
+    /// don't fit, which reads as a recipe with fewer ingredients than it has.
+    /// So the shipped documents bind the strip hook's `min_w` to the
+    /// published width, and this pins the whole chain: the binding present in
+    /// the document, resolved onto the instance, and honoured by layout.
+    #[test]
+    fn the_recipe_tooltip_grows_to_the_published_ingredient_width() {
+        use petramond_ui::{solve, InstTree, ThemeEnv, UiValue};
+        // Comfortably past the authored 84 floor, and inside what the
+        // tooltip's own `max_w` can hold.
+        const ASKED: i32 = 140;
+        let theme = crate::gui::doc_theme::theme();
+        for kind in [GuiKind::Inventory, GuiKind::CraftingTable] {
+            let doc = doc_for(kind).expect("the recipe documents ship");
+            let mut state = seeded_state(kind, Seed::Ordinary, 0);
+            state.set("craft_tip_ingredients_w", UiValue::I32(ASKED));
+            let tree = InstTree::expand_form(&doc.doc, &state, doc.doc.compact_active(320));
+            let env = ThemeEnv {
+                theme: &theme,
+                gui_scale: 3,
+                image_size: &|_| None,
+            };
+            let solved = solve(&tree, &env, (320, 240), &|_| 0);
+            let strip = (0..tree.len()).find(|&i| {
+                tree.get(i as u32).node.id.as_deref() == Some("craft_tip_ingredients")
+            });
+            let strip = strip.unwrap_or_else(|| panic!("{kind:?} ships the ingredient strip hook"));
+            assert!(
+                solved.rects[strip].w >= ASKED,
+                "{kind:?}: the strip asked for {ASKED} and got {} — ingredients would be hidden",
+                solved.rects[strip].w
+            );
+        }
+    }
+
     /// AUTHORED label text must fit the box the document gives it. The font is
     /// layout's only sizing input, so one font swap turns every box that was
     /// tuned to the old metrics into "Master V..." at once — and an ellipsis

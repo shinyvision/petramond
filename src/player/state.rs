@@ -247,6 +247,25 @@ impl Player {
         self.effects.retain(|e| e.effect != effect);
     }
 
+    /// Adopt an authoritative effect list wholesale (the client's predicted
+    /// player, reconciling against a replicated `SelfState`). Movement reads
+    /// the effect list every step, so a predicted body whose effects lag the
+    /// server's walks at the wrong speed and rubber-bands.
+    pub fn set_effects(&mut self, effects: Vec<petramond_world::effect::ActiveEffect>) {
+        self.effects = effects;
+    }
+
+    /// The product of every active [`EffectBehavior::Speed`] scale — the land
+    /// speed multiplier movement applies. `1.0` with nothing active.
+    ///
+    /// [`EffectBehavior::Speed`]: petramond_world::effect::EffectBehavior::Speed
+    pub fn speed_scale(&self) -> f32 {
+        self.effects
+            .iter()
+            .map(|e| e.effect.def().behavior.speed_scale())
+            .product()
+    }
+
     /// Clear every active effect (death/respawn starts a fresh life).
     pub fn clear_effects(&mut self) {
         self.effects.clear();
@@ -265,7 +284,10 @@ impl Player {
             e.remaining -= 1;
             let behavior = e.effect.def().behavior;
             match behavior {
-                petramond_world::effect::EffectBehavior::None => {}
+                // Continuous behaviors have no boundary to report: movement
+                // reads them off the live list every step.
+                petramond_world::effect::EffectBehavior::None
+                | petramond_world::effect::EffectBehavior::Speed { .. } => {}
                 petramond_world::effect::EffectBehavior::Regen { interval, .. } => {
                     if e.remaining % interval == 0 {
                         fired.push(behavior);

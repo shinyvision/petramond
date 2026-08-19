@@ -306,6 +306,10 @@
      "type": "str",
      "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
     },
+    "craft_tip_ingredients_w": {
+     "type": "i32",
+     "doc": "logical-px width the hovered recipe's ingredient strip needs; the tooltip binds its ingredient hook's min_w to it and GROWS. Ingredients are essential information, so the strip is never allowed to drop one to fit"
+    },
     "show_item_tip": {
      "type": "bool",
      "doc": "a filled slot is hovered while the cursor holds nothing: reveals the floating item tooltip"
@@ -368,6 +372,10 @@
     "craft_tip_name": {
      "type": "str",
      "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
+    },
+    "craft_tip_ingredients_w": {
+     "type": "i32",
+     "doc": "logical-px width the hovered recipe's ingredient strip needs; the tooltip binds its ingredient hook's min_w to it and GROWS. Ingredients are essential information, so the strip is never allowed to drop one to fit"
     },
     "show_item_tip": {
      "type": "bool",
@@ -460,6 +468,10 @@
     "<bind.item on a hook node>": {
      "type": "str",
      "doc": "an ordered comma-list of item registry names the host draws composited into the hook's rect, first name bottom-most (empty = nothing; unknown names skipped) — the generic layered item view, same list convention as petramond:overlay instance data; first user: the forge anvil's enlarged tool + augment overlays"
+    },
+    "<bind.min_w on any node>": {
+     "type": "i32",
+     "doc": "this frame's MINIMUM width for the node, logical px — how a box whose content the layout engine cannot measure (a host-drawn hook) reserves the room it needs, so ancestors grow around it. Only ever RAISES the authored layout.min_w; first user: the recipe tooltip's ingredient strip"
     },
     "<bind.abs_x / bind.abs_y on a layout.abs node>": {
      "type": "i32",

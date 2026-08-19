@@ -123,6 +123,9 @@ impl Game {
     ) -> Self {
         sync_camera_to_player(&mut cam, &bootstrap.client_player);
         let last_player_eye_y = bootstrap.client_player.eye().y;
+        // The camera the caller built carries the authored FOV; the per-frame
+        // speed widening multiplies on top of it (see `speed_fov`).
+        let speed_fov = super::speed_fov::SpeedFov::new(cam.fov_y);
         Self {
             cam,
             player: bootstrap.client_player,
@@ -167,6 +170,7 @@ impl Game {
             local_mining: petramond_world::mining::MiningState::new(),
             predicted_input: Default::default(),
             view_bob: Default::default(),
+            speed_fov,
             local_hand_jab: false,
             local_hand_swing: false,
             local_hand_threw: false,

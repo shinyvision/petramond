@@ -179,6 +179,29 @@ pub enum ModAction {
     },
 }
 
+/// WHICH use of an item a [`PostEvent::ItemUsed`] is reporting.
+///
+/// The event fires from four places and used to say only "an item's use was
+/// consumed, somehow" — a handler could not tell a finished meal from a
+/// poured bucket, and two of the four are a MOD claiming the click, which is
+/// the engine doing nothing at all. Reacting to eating was therefore
+/// impossible without inventing food-specific vocabulary somewhere else, so
+/// the payload names the path instead.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ItemUseEvent {
+    /// A held-eat ran to completion: the portion left the stack and the row's
+    /// effects landed. The moment a food's own consequences are done — where
+    /// a pack hangs whatever the eating LEAVES BEHIND (a stew's bowl).
+    Eaten,
+    /// The item's own row-declared `use` handler ran (a bucket filled or
+    /// poured, its held stack already swapped for the counterpart).
+    Handler,
+    /// A mod's `item_use_pre` CLAIMED the click and the engine did nothing
+    /// further — reported so a use is never silently unaccounted for, but the
+    /// claiming mod already knows what it did.
+    Claimed,
+}
+
 /// Observational events, queued at their site and drained FIFO at the post-queue
 /// drain points (each tick-stage boundary) within the same tick.
 /// (`Copy` was dropped when the tag events gained String keys — a Rust-trait
@@ -198,7 +221,9 @@ pub enum PostEvent {
         natural: bool,
     },
     ItemUsed {
+        player: crate::player::PlayerId,
         item: ItemType,
+        kind: ItemUseEvent,
     },
     MobDied {
         /// Stable session id the mob lived under — how a mod releases per-mob

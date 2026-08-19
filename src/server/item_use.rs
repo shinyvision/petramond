@@ -7,7 +7,7 @@ use super::game::ServerGame;
 use super::placement::facing_from_forward;
 use petramond_world::block::Block;
 use crate::entity::DroppedItem;
-use crate::events::{BlockPlacePre, ItemUsePre, Outcome, PostEvent};
+use crate::events::{BlockPlacePre, ItemUseEvent, ItemUsePre, Outcome, PostEvent};
 use crate::events::tick::TickEvents;
 use petramond_world::item::{ItemStack, ItemType, ItemUse, UseRay};
 use petramond_math::math::Vec3;
@@ -104,7 +104,11 @@ impl ServerGame {
             })
         };
         if cancelled {
-            self.bus.emit(PostEvent::ItemUsed { item });
+            self.bus.emit(PostEvent::ItemUsed {
+                player: self.sessions[s].id,
+                item,
+                kind: ItemUseEvent::Claimed,
+            });
             return true;
         }
         self.sessions[s].eating = Some(EatingState {
@@ -149,7 +153,11 @@ impl ServerGame {
             sess.player.apply_effect(effect, ticks);
         }
         events.player(s).ate_finished = true;
-        self.bus.emit(PostEvent::ItemUsed { item: eat.item });
+        self.bus.emit(PostEvent::ItemUsed {
+            player: self.sessions[s].id,
+            item: eat.item,
+            kind: ItemUseEvent::Eaten,
+        });
     }
 
     /// Apply the held item's own right-click use, if it has one. Returns `true`
@@ -191,7 +199,11 @@ impl ServerGame {
             })
         };
         if cancelled {
-            self.bus.emit(PostEvent::ItemUsed { item });
+            self.bus.emit(PostEvent::ItemUsed {
+                player: self.sessions[s].id,
+                item,
+                kind: ItemUseEvent::Claimed,
+            });
             return true;
         }
         // Dispatch on the item's data-declared use (`"use"` in items.json) —
@@ -205,7 +217,11 @@ impl ServerGame {
             _ => false,
         };
         if used {
-            self.bus.emit(PostEvent::ItemUsed { item });
+            self.bus.emit(PostEvent::ItemUsed {
+                player: self.sessions[s].id,
+                item,
+                kind: ItemUseEvent::Handler,
+            });
         }
         used
     }
