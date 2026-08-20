@@ -301,11 +301,11 @@ impl Minimap {
     }
 
     /// World-block rect `[x0, z0, x1, z1)` covering the open full map's
-    /// visible tile grid plus every prefetch band `request_visible_regions`
-    /// can reach (one MIP-region span — the larger kind — on all sides
-    /// covers the velocity band and the adjacent-zoom store alike). This is
-    /// the region working set the cache trim must protect while the map is
-    /// open; see `pump_store`.
+    /// visible tile grid plus one MIP-region span (the larger kind) of margin
+    /// on all sides — the velocity prefetch band and the paint apron. This is
+    /// the SOURCE-kind working set the cache trim must protect while the map
+    /// is open (the adjacent zoom's store is bounded separately by
+    /// `adjacent_zoom_world_rect`); see `pump_store`.
     pub(crate) fn full_view_world_rect(&self) -> [i32; 4] {
         let bounds = full_tile_bounds(self.pan, self.zoom);
         let tb = full_tile_blocks(self.zoom);
@@ -318,12 +318,35 @@ impl Minimap {
         ]
     }
 
+    /// The ADJACENT zoom level's own viewport around the current pan — the
+    /// ground one wheel step would actually show, in the store that level
+    /// renders from (the OTHER store exactly at the −1/−2 boundary). Both the
+    /// prefetch and the trim protection use this rect: prefetching the
+    /// CURRENT viewport's span at the other store's granularity instead (the
+    /// pre-2026-08 shape) queued ~4× the visible region count at −2, starving
+    /// visible loads during pans and protecting far more base regions than
+    /// the cache cap.
+    pub(crate) fn adjacent_zoom_world_rect(&self) -> Option<(RegionKind, [i32; 4])> {
+        let (kind, other_zoom) = match self.zoom {
+            -2 => (RegionKind::Base, -1i8),
+            -1 => (RegionKind::Mip, -2),
+            _ => return None,
+        };
+        let half = (FULL_SIZE as f32 * 0.5 * blocks_per_pixel(other_zoom)) as i32
+            + cell_blocks(other_zoom);
+        let (px, pz) = (self.pan[0] as i32, self.pan[1] as i32);
+        Some((kind, [px - half, pz - half, px + half, pz + half]))
+    }
+
     /// Queue async loads for every source region the visible bounds need
     /// (base regions, or mip regions at the outermost zoom), plus two
     /// prefetch layers: one region band beyond the edge the pan is moving
-    /// toward (data lands before it's exposed), and the ADJACENT zoom level's
-    /// store under the viewport (a wheel step paints instantly). Idempotent
-    /// per (bounds, zoom); arrivals repaint through the store's pump.
+    /// toward (data lands before it's exposed — VISIBLE tier, so it keeps
+    /// pre-warming during a continuous drag), and the ADJACENT zoom level's
+    /// own viewport (a wheel step paints instantly). Idempotent per (bounds,
+    /// zoom); arrivals repaint through the store's pump. Queued loads that
+    /// fell outside the new working set are dropped — a long pan never
+    /// accumulates a stale backlog.
     fn request_visible_regions(&mut self, bounds: [i32; 4]) {
         let stamp = (bounds, self.zoom);
         if self.full_needed_stamp == Some(stamp) {
@@ -368,27 +391,40 @@ impl Minimap {
         }
         for rz in pz0..=pz1 {
             for rx in px0..=px1 {
-                self.store
-                    .request_region(kind, (rx, rz), LoadTier::Prefetch);
+                self.store.request_region(kind, (rx, rz), LoadTier::Visible);
             }
         }
 
-        // Adjacent-zoom prefetch: the level one wheel step away renders from
-        // the OTHER store exactly at the −1/−2 boundary.
-        let other = match self.zoom {
-            -2 => Some(RegionKind::Base),
-            -1 => Some(RegionKind::Mip),
-            _ => None,
-        };
-        if let Some(other) = other {
+        // Adjacent-zoom prefetch: what one wheel step would show.
+        let adjacent = self.adjacent_zoom_world_rect();
+        if let Some((other, rect)) = adjacent {
             let other_span = region_block_rect(other, (0, 0))[2];
-            for rz in min_wz.div_euclid(other_span)..=max_wz.div_euclid(other_span) {
-                for rx in min_wx.div_euclid(other_span)..=max_wx.div_euclid(other_span) {
+            for rz in rect[1].div_euclid(other_span)..=rect[3].div_euclid(other_span) {
+                for rx in rect[0].div_euclid(other_span)..=rect[2].div_euclid(other_span) {
                     self.store
                         .request_region(other, (rx, rz), LoadTier::Prefetch);
                 }
             }
         }
+
+        // The new working set is exactly what was requested above (padded by
+        // one region span of hysteresis); drop queued loads outside it.
+        let view = self.full_view_world_rect();
+        self.store.drop_queued_outside(|load_kind, region| {
+            let rect = region_block_rect(load_kind, region);
+            let keep_rect = if load_kind == kind {
+                Some(view)
+            } else {
+                adjacent.map(|(_, rect)| rect)
+            };
+            keep_rect.is_some_and(|keep| {
+                let other_span = region_block_rect(load_kind, (0, 0))[2];
+                rect[2] > keep[0] - other_span
+                    && rect[0] < keep[2] + other_span
+                    && rect[3] > keep[1] - other_span
+                    && rect[1] < keep[3] + other_span
+            })
+        });
     }
 
     /// Rasterize one block rect of a full-map tile (`rect` tile-local,

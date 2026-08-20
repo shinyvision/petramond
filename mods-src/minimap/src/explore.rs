@@ -35,10 +35,21 @@ pub(crate) const UNKNOWN_HEIGHT: i16 = i16::MIN;
 /// caps outstanding tickets at 8; leave headroom for same-frame edits).
 const LOAD_KEYS_PER_TICKET: usize = 96;
 const LOAD_TICKETS_IN_FLIGHT: usize = 4;
+/// In-flight tickets that may be prefetch-only: urgent (sample/visible)
+/// loads always find a free ticket slot, so a warm-up sweep can never park
+/// the whole pipeline ahead of what the viewport is waiting for.
+const PREFETCH_TICKETS_IN_FLIGHT: usize = 2;
 /// Region values DECODED per frame: arrivals beyond this wait in a queue, so
 /// a burst of completed tickets can never spend a frame's budget unpacking
-/// cells.
-const DECODE_BUDGET_PER_FRAME: usize = 12;
+/// cells. Urgent arrivals take the whole budget (decode is a few µs per
+/// region; their volume is bounded by the viewport); prefetch arrivals only
+/// decode from the remainder, capped harder.
+const DECODE_BUDGET_PER_FRAME: usize = 64;
+const PREFETCH_DECODE_BUDGET_PER_FRAME: usize = 16;
+/// Prefetch reads only ISSUE while the arrival queue is shallow — they are
+/// idle-time work and must never grow a decode backlog that urgent arrivals
+/// would land behind.
+const PREFETCH_ISSUE_UNDECODED_MAX: usize = 16;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Cell {
@@ -124,8 +135,15 @@ struct QueuedLoad {
 
 struct InFlightLoad {
     ticket: u64,
-    entries: Vec<((i32, i32), RegionKind, bool)>,
+    /// Whether any entry is urgent (sample/visible) — counts against the
+    /// prefetch ticket reservation when false.
+    urgent: bool,
+    entries: Vec<QueuedEntry>,
 }
+
+/// One queued/issued load: region coord, store kind, materialize-on-absent,
+/// and the tier it was picked at (routes its arrival's decode priority).
+type QueuedEntry = ((i32, i32), RegionKind, bool, LoadTier);
 
 /// One arrived region awaiting its decode-budget slot: the region coord, which
 /// kind it is, whether it was a live fetch, and the raw bytes (`None` = miss).
@@ -151,8 +169,10 @@ pub(crate) struct TileStore {
     /// Every coord currently queued, in flight, or awaiting decode — the
     /// paint-once readiness check.
     pending: HashSet<(RegionKind, (i32, i32))>,
-    /// Arrived values awaiting their decode-budget slot.
-    undecoded: std::collections::VecDeque<Undecoded>,
+    /// Arrived values awaiting their decode-budget slot, split by urgency:
+    /// urgent (sample/visible) arrivals always decode ahead of prefetch ones.
+    undecoded_urgent: std::collections::VecDeque<Undecoded>,
+    undecoded_prefetch: std::collections::VecDeque<Undecoded>,
     /// rgb→hsl work on the mip write path is memoized: terrain colors repeat
     /// massively.
     hsl_memo: HashMap<[u8; 3], (f32, f32, f32)>,
@@ -307,16 +327,24 @@ impl TileStore {
     /// Poll in-flight tickets and issue new ones from the queue: the once-
     /// per-frame loader heartbeat. Returns completed loads so the map can
     /// repaint what arrived. Decoding is budgeted — a burst of completed
-    /// tickets unpacks over several frames instead of spiking one.
+    /// tickets unpacks over several frames instead of spiking one — and
+    /// urgent (sample/visible) work is never behind prefetch work at any
+    /// stage: it decodes first and always finds a free ticket slot.
     pub(crate) fn pump_loads(&mut self) -> Vec<RegionArrival> {
         let mut still_in_flight = Vec::new();
         for load in std::mem::take(&mut self.in_flight) {
             match client_storage_read_poll(load.ticket) {
                 None => still_in_flight.push(load),
                 Some(values) => {
-                    for ((coord, kind, materialize), value) in load.entries.into_iter().zip(values)
+                    for ((coord, kind, materialize, tier), value) in
+                        load.entries.into_iter().zip(values)
                     {
-                        self.undecoded.push_back((coord, kind, materialize, value));
+                        let queue = if tier == LoadTier::Prefetch {
+                            &mut self.undecoded_prefetch
+                        } else {
+                            &mut self.undecoded_urgent
+                        };
+                        queue.push_back((coord, kind, materialize, value));
                     }
                 }
             }
@@ -324,72 +352,95 @@ impl TileStore {
         self.in_flight = still_in_flight;
 
         let mut arrivals = Vec::new();
-        for _ in 0..DECODE_BUDGET_PER_FRAME {
-            let Some((coord, kind, materialize, value)) = self.undecoded.pop_front() else {
+        let mut budget = DECODE_BUDGET_PER_FRAME;
+        while budget > 0 {
+            let Some(entry) = self.undecoded_urgent.pop_front() else {
                 break;
             };
-            self.pending.remove(&(kind, coord));
-            let decoded = value.as_deref().and_then(codec::decode_region);
-            let had_data = decoded.is_some();
-            match decoded {
-                Some(tiles) => self.install_region(kind, coord, tiles),
-                None => {
-                    match kind {
-                        RegionKind::Base => self.base_absent.insert(coord),
-                        RegionKind::Mip => self.mip_absent.insert(coord),
-                    };
-                    if materialize {
-                        self.materialize_region(kind, coord);
-                    }
-                }
-            }
-            arrivals.push(RegionArrival {
-                kind,
-                coord,
-                had_data,
-            });
+            budget -= 1;
+            self.decode_arrival(entry, &mut arrivals);
+        }
+        let mut prefetch_budget = budget.min(PREFETCH_DECODE_BUDGET_PER_FRAME);
+        while prefetch_budget > 0 {
+            let Some(entry) = self.undecoded_prefetch.pop_front() else {
+                break;
+            };
+            prefetch_budget -= 1;
+            self.decode_arrival(entry, &mut arrivals);
         }
 
-        // Backpressure: don't stack more completed values behind the decode
-        // budget than a couple of frames can drain.
-        while self.in_flight.len() < LOAD_TICKETS_IN_FLIGHT
-            && !self.queued.is_empty()
-            && self.undecoded.len() < DECODE_BUDGET_PER_FRAME * 2
-        {
-            let mut batch: Vec<_> = Vec::new();
-            for tier in [LoadTier::Sample, LoadTier::Visible, LoadTier::Prefetch] {
-                if batch.len() >= LOAD_KEYS_PER_TICKET {
-                    break;
-                }
-                let mut picked: Vec<_> = self
-                    .queued
-                    .iter()
-                    .filter(|(_, load)| load.tier == tier)
-                    .map(|(&(kind, coord), load)| (coord, kind, load.materialize))
-                    .collect();
-                picked.sort_unstable_by_key(|&(coord, kind, _)| {
-                    (kind == RegionKind::Mip, coord.1, coord.0)
-                });
-                picked.truncate(LOAD_KEYS_PER_TICKET - batch.len());
-                for entry in picked {
-                    self.queued.remove(&(entry.1, entry.0));
-                    batch.push(entry);
-                }
-            }
+        loop {
+            let prefetch_in_flight = self.in_flight.iter().filter(|load| !load.urgent).count();
+            let undecoded = self.undecoded_urgent.len() + self.undecoded_prefetch.len();
+            let batch = plan_issue_batch(
+                &self.queued,
+                self.in_flight.len(),
+                prefetch_in_flight,
+                undecoded,
+            );
             if batch.is_empty() {
                 break;
             }
+            let urgent = batch.iter().any(|&(.., tier)| tier != LoadTier::Prefetch);
             let keys = batch
                 .iter()
-                .map(|&(coord, kind, _)| region_key(kind, coord))
+                .map(|&(coord, kind, ..)| {
+                    self.queued.remove(&(kind, coord));
+                    region_key(kind, coord)
+                })
                 .collect();
             let ticket = client_storage_read_begin(keys);
             self.in_flight.push(InFlightLoad {
                 ticket,
+                urgent,
                 entries: batch,
             });
         }
         arrivals
+    }
+
+    fn decode_arrival(
+        &mut self,
+        (coord, kind, materialize, value): Undecoded,
+        arrivals: &mut Vec<RegionArrival>,
+    ) {
+        self.pending.remove(&(kind, coord));
+        let decoded = value.as_deref().and_then(codec::decode_region);
+        let had_data = decoded.is_some();
+        match decoded {
+            Some(tiles) => self.install_region(kind, coord, tiles),
+            None => {
+                match kind {
+                    RegionKind::Base => self.base_absent.insert(coord),
+                    RegionKind::Mip => self.mip_absent.insert(coord),
+                };
+                if materialize {
+                    self.materialize_region(kind, coord);
+                }
+            }
+        }
+        arrivals.push(RegionArrival {
+            kind,
+            coord,
+            had_data,
+        });
+    }
+
+    /// Drop queued (not yet issued) visible/prefetch loads the caller no
+    /// longer needs — a long pan must not accumulate a stale backlog behind
+    /// which fresh viewport loads would queue. Sampling loads never drop, and
+    /// in-flight or arrived loads complete normally.
+    pub(crate) fn drop_queued_outside(&mut self, keep: impl Fn(RegionKind, (i32, i32)) -> bool) {
+        let dropped: Vec<(RegionKind, (i32, i32))> = self
+            .queued
+            .iter()
+            .filter(|(&(kind, coord), load)| load.tier != LoadTier::Sample && !keep(kind, coord))
+            .map(|(&key, _)| key)
+            .collect();
+        for key in dropped {
+            self.queued.remove(&key);
+            self.pending.remove(&key);
+        }
     }
 
     /// Recompute the 8×8 mip cells one dirty base tile covers, from its own
@@ -724,23 +775,70 @@ impl Minimap {
         let sample_center = self
             .last_sample
             .unwrap_or((self.player[0].floor() as i32, self.player[2].floor() as i32));
-        let view =
-            (self.open_canvas.as_deref() == Some(FULL_CANVAS)).then(|| self.full_view_world_rect());
+        let map_open = self.open_canvas.as_deref() == Some(FULL_CANVAS);
+        let view = map_open.then(|| self.full_view_world_rect());
+        let adjacent = map_open.then(|| self.adjacent_zoom_world_rect()).flatten();
+        let source = fullmap::source_kind(self.zoom);
         self.store.trim_caches(|kind, region| {
             let rect = region_block_rect(kind, region);
+            let intersects = |v: [i32; 4]| {
+                rect[2] > v[0] && rect[0] < v[2] && rect[3] > v[1] && rect[1] < v[3]
+            };
             // The live sampling neighborhood…
             let pad = SAMPLE_RADIUS + 16;
             let sampled = rect[2] > sample_center.0 - pad
                 && rect[0] < sample_center.0 + pad
                 && rect[3] > sample_center.1 - pad
                 && rect[1] < sample_center.1 + pad;
-            // …and, while the map is open, everything it shows or prefetches.
+            // …and, while the map is open, the SOURCE store under the view
+            // (plus its prefetch margin) and the adjacent zoom's store under
+            // ITS viewport — each kind's protection is bounded by its own
+            // working set, never the other's finer granularity, so protection
+            // stays under the cache caps at every zoom.
             sampled
-                || view.is_some_and(|v| {
-                    rect[2] > v[0] && rect[0] < v[2] && rect[3] > v[1] && rect[1] < v[3]
-                })
+                || (kind == source && view.is_some_and(intersects))
+                || adjacent.is_some_and(|(k, v)| k == kind && intersects(v))
         });
     }
+}
+
+/// Pick the next ticket's loads from the queue, or nothing. Urgent tiers
+/// (sample, then visible) fill urgent-only tickets whenever a slot is free —
+/// their arrival volume is bounded by the sampling neighborhood and the
+/// viewport, so they are exempt from arrival backpressure. Prefetch keys
+/// issue only when nothing urgent is queued, within their reserved ticket
+/// slots, and while the arrival queue is shallow: warm-up sweeps fill idle
+/// time and can never delay what the viewport is waiting for.
+fn plan_issue_batch(
+    queued: &HashMap<(RegionKind, (i32, i32)), QueuedLoad>,
+    in_flight: usize,
+    prefetch_in_flight: usize,
+    undecoded: usize,
+) -> Vec<QueuedEntry> {
+    if in_flight >= LOAD_TICKETS_IN_FLIGHT {
+        return Vec::new();
+    }
+    let pick = |tiers: &[LoadTier], room: usize| -> Vec<QueuedEntry> {
+        let mut picked: Vec<QueuedEntry> = queued
+            .iter()
+            .filter(|(_, load)| tiers.contains(&load.tier))
+            .map(|(&(kind, coord), load)| (coord, kind, load.materialize, load.tier))
+            .collect();
+        picked.sort_unstable_by_key(|&(coord, kind, _, tier)| {
+            (tier == LoadTier::Visible, kind == RegionKind::Mip, coord.1, coord.0)
+        });
+        picked.truncate(room);
+        picked
+    };
+    let urgent = pick(&[LoadTier::Sample, LoadTier::Visible], LOAD_KEYS_PER_TICKET);
+    if !urgent.is_empty() {
+        return urgent;
+    }
+    if prefetch_in_flight >= PREFETCH_TICKETS_IN_FLIGHT || undecoded > PREFETCH_ISSUE_UNDECODED_MAX
+    {
+        return Vec::new();
+    }
+    pick(&[LoadTier::Prefetch], LOAD_KEYS_PER_TICKET)
 }
 
 /// Sequential cell reads with a two-tile memo: raster loops walk world space
@@ -901,6 +999,88 @@ mod tests {
             mm.store.base_regions.len() <= BASE_REGION_CACHE_MAX + 4,
             "far regions trim while the map is open, got {}",
             mm.store.base_regions.len()
+        );
+    }
+
+    /// The loader must never let a prefetch backlog delay urgent loads:
+    /// urgent keys fill the next ticket alone, prefetch issues only into its
+    /// reserved slots at idle, and arrival backpressure applies to prefetch
+    /// only — regressions here are exactly the seconds-blank zoomed-out drag.
+    #[test]
+    fn urgent_loads_issue_ahead_of_a_prefetch_backlog() {
+        let mut queued: HashMap<(RegionKind, (i32, i32)), QueuedLoad> = HashMap::new();
+        for i in 0..300 {
+            queued.insert(
+                (RegionKind::Base, (i, 0)),
+                QueuedLoad {
+                    tier: LoadTier::Prefetch,
+                    materialize: false,
+                },
+            );
+        }
+        for i in 0..3 {
+            queued.insert(
+                (RegionKind::Mip, (i, 5)),
+                QueuedLoad {
+                    tier: LoadTier::Visible,
+                    materialize: false,
+                },
+            );
+        }
+        let batch = plan_issue_batch(&queued, 0, 0, 500);
+        assert_eq!(batch.len(), 3, "urgent keys issue alone, backpressure-exempt");
+        assert!(batch.iter().all(|&(.., tier)| tier == LoadTier::Visible));
+
+        for &(coord, kind, ..) in &batch {
+            queued.remove(&(kind, coord));
+        }
+        assert!(
+            plan_issue_batch(&queued, 1, 0, 500).is_empty(),
+            "prefetch never issues into a deep arrival queue"
+        );
+        let prefetch = plan_issue_batch(&queued, 1, 0, 0);
+        assert_eq!(prefetch.len(), LOAD_KEYS_PER_TICKET);
+        assert!(
+            plan_issue_batch(&queued, 2, PREFETCH_TICKETS_IN_FLIGHT, 0).is_empty(),
+            "prefetch stays within its reserved ticket slots"
+        );
+        assert!(
+            plan_issue_batch(&queued, LOAD_TICKETS_IN_FLIGHT, 0, 0).is_empty(),
+            "no slots, no ticket"
+        );
+
+        queued.insert(
+            (RegionKind::Base, (999, 9)),
+            QueuedLoad {
+                tier: LoadTier::Sample,
+                materialize: true,
+            },
+        );
+        let batch = plan_issue_batch(&queued, 0, 0, 0);
+        assert_eq!(
+            (batch[0].1, batch[0].0),
+            (RegionKind::Base, (999, 9)),
+            "sampling sorts ahead of everything"
+        );
+    }
+
+    /// A pan re-stamp drops queued loads outside the new working set —
+    /// except sampling loads, whose data feeds live exploration.
+    #[test]
+    fn a_pan_restamp_drops_stale_queued_loads() {
+        let mut store = TileStore::default();
+        store.request_region(RegionKind::Mip, (0, 0), LoadTier::Visible);
+        store.request_region(RegionKind::Mip, (50, 0), LoadTier::Visible);
+        store.request_region(RegionKind::Base, (7, 7), LoadTier::Sample);
+        store.drop_queued_outside(|_, coord| coord == (0, 0));
+        assert!(store.region_pending(RegionKind::Mip, (0, 0)), "kept");
+        assert!(
+            !store.region_pending(RegionKind::Mip, (50, 0)),
+            "stale visible load dropped from queue and pending"
+        );
+        assert!(
+            store.region_pending(RegionKind::Base, (7, 7)),
+            "sampling loads never drop"
         );
     }
 

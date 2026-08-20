@@ -19,6 +19,15 @@ impl App {
         self.game.is_some() && self.game_menu_kind().is_some()
     }
 
+    /// Whether a client-mod modal canvas (e.g. the world map) is on screen.
+    /// These pace at the full fps cap, not the menu cap: they are live
+    /// interactive surfaces (drag panning, budgeted progressive fills), and
+    /// menu-rate framing both halves their per-frame work budgets and makes
+    /// dragging feel choppy.
+    pub fn client_canvas_screen(&self) -> bool {
+        self.screen.client_canvas_open()
+    }
+
     /// The document solved as a GAME MENU this frame: a container / machine
     /// panel or a gameplay overlay — anything driven with the simulation still
     /// running behind it. `None` for SHELL documents, which their own branch

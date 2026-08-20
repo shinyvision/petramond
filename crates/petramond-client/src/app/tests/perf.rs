@@ -134,6 +134,193 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
     );
 }
 
+/// Count the full-map terrain tiles currently in the published canvas scene
+/// (excludes the player sprite): the map's "present" content.
+fn present_full_tiles(app: &TestApp) -> usize {
+    app.app
+        .game()
+        .client_mod_canvas_view("minimap:full_map")
+        .map(|view| {
+            view.elements
+                .iter()
+                .filter(|element| match &element.element {
+                    mod_api::ClientCanvasElement::Image { image_key, .. } => {
+                        image_key.starts_with("minimap:full_tile_")
+                    }
+                    _ => false,
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// Visible full-map tile count for a pan/zoom, mirroring the mod's
+/// `full_tile_bounds` (800 px canvas, fixed 160 px tile images).
+fn expected_full_tiles(pan: [f32; 2], zoom: i8) -> usize {
+    let (cell_blocks, cell_px) = match zoom {
+        i8::MIN..=-2 => (2, 1),
+        -1 => (1, 1),
+        0 => (1, 2),
+        1 => (1, 4),
+        _ => (1, 8),
+    };
+    let bpp = cell_blocks as f64 / cell_px as f64;
+    let tile_blocks = (160 / cell_px * cell_blocks) as f64;
+    let axis = |center: f32| {
+        let half_blocks = 800.0 * bpp * 0.5;
+        let min = ((center as f64 - half_blocks) / tile_blocks).floor() as i64;
+        let max = ((center as f64 + half_blocks) / tile_blocks).ceil() as i64 - 1;
+        (max - min + 1) as usize
+    };
+    axis(pan[0]) * axis(pan[1])
+}
+
+/// Time-to-content harness for the zoomed-out world map: how long visible
+/// tiles stay blank after a zoom-out and DURING/AFTER long fast drags across
+/// a widely-explored synthetic world. The frame profile above keeps frames
+/// cheap; this one measures the latency those budgets cost. Frames are paced
+/// ~4 ms so the storage worker gets at least the slack it would have at real
+/// frame rates — frame counts here are a lower bound on the 60 fps counts.
+#[test]
+#[ignore = "manual perf harness: run alone with --ignored --nocapture"]
+fn world_map_drag_fill_latency() {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let mut app = app();
+    let eye = app.app.game().listener_position();
+    let (pcx, pcz) = (
+        (eye.x.floor() as i32).div_euclid(16),
+        (eye.z.floor() as i32).div_euclid(16),
+    );
+
+    // Seed explored ground along the +x drag corridor: mip regions cover the
+    // whole path (the −2 source), base regions cover it too (the adjacent
+    // −1 prefetch reads them while browsing at −2).
+    let (prx, prz) = ((pcx * 16).div_euclid(64), (pcz * 16).div_euclid(64));
+    let (pmx, pmz) = ((pcx * 16).div_euclid(128), (pcz * 16).div_euclid(128));
+    let mut entries = Vec::new();
+    for rz in (prz - 16)..=(prz + 16) {
+        for rx in (prx - 16)..=(prx + 110) {
+            entries.push((
+                format!("{BASE_REGION_PREFIX}{rx}:{rz}"),
+                synthetic_region_value(rx, rz, 1),
+            ));
+        }
+    }
+    for mz in (pmz - 9)..=(pmz + 9) {
+        for mx in (pmx - 9)..=(pmx + 56) {
+            entries.push((
+                format!("{MIP_REGION_PREFIX}{mx}:{mz}"),
+                synthetic_region_value(mx, mz, 2),
+            ));
+        }
+    }
+    let seeded = entries.len();
+    let seed_started = Instant::now();
+    petramond::modding::client::seed_client_storage_for_test(
+        &petramond::modding::client::local_session_key(""),
+        "minimap",
+        entries,
+    );
+    println!("seeded {seeded} regions in {:.0?}", seed_started.elapsed());
+
+    // 1600×1000: the 800×800 canvas fits at native resolution, so cursor
+    // deltas are canvas deltas and the harness can mirror the mod's pan math.
+    let screen = (1600u32, 1000u32);
+    let frame = |app: &mut TestApp| {
+        app.app.update_frame(screen);
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    };
+
+    for _ in 0..10 {
+        frame(&mut app);
+    }
+    use petramond_world::keycode::KeyCode;
+    assert!(app.app.handle_raw_key(KeyCode::KeyM, true));
+    let _ = app.app.handle_raw_key(KeyCode::KeyM, false);
+    frame(&mut app);
+    assert!(app.app.screen.client_canvas_open(), "map open");
+    app.app.compose_client_overlays(screen);
+
+    // The mod snapped its pan to the player position on open (zoom 0 grid).
+    let zoom0 = 0i8;
+    let mut pan = [
+        (eye.x / 0.5).round() as f32 * 0.5,
+        (eye.z / 0.5).round() as f32 * 0.5,
+    ];
+    let fill = |app: &mut TestApp, pan: [f32; 2], zoom: i8, label: &str| {
+        let expected = expected_full_tiles(pan, zoom);
+        let started = Instant::now();
+        let mut frames = 0u32;
+        while present_full_tiles(app) < expected {
+            frame(app);
+            frames += 1;
+            assert!(
+                frames < 4000,
+                "{label}: still {}/{} tiles after {frames} frames",
+                present_full_tiles(app),
+                expected
+            );
+        }
+        println!(
+            "{label}: {expected} tiles full after {frames} frames ({:.0?})",
+            started.elapsed()
+        );
+    };
+    fill(&mut app, pan, zoom0, "open @ zoom 0");
+
+    // Wheel to −2, anchored at the canvas center (so pan is unchanged);
+    // the app's scroll delta is positive = wheel down = zoom out.
+    app.app.set_cursor_position(800.0, 500.0);
+    for _ in 0..2 {
+        app.app.add_scroll_delta(1.0);
+        frame(&mut app);
+    }
+    let zoom = -2i8;
+    pan = [(pan[0] / 2.0).round() * 2.0, (pan[1] / 2.0).round() * 2.0];
+    fill(&mut app, pan, zoom, "zoom 0 → −2");
+
+    // Four fast right-to-left strokes: each pans +1440 blocks at −2. Track
+    // the per-frame present/expected deficit — blank tiles the player sees.
+    let bpp = 2.0f32;
+    let mut deficit_frames = 0u32;
+    let mut deficit_sum = 0u64;
+    let mut deficit_max = 0usize;
+    let mut drag_frames = 0u32;
+    let drag_started = Instant::now();
+    for _stroke in 0..4 {
+        let start = [1150.0f32, 500.0f32];
+        let pan0 = pan;
+        app.app.set_cursor_position(start[0], start[1]);
+        app.app
+            .set_pointer_button(petramond_world::gui_state::PointerButton::Primary, true);
+        for step in 1..=24 {
+            let x = start[0] - step as f32 * 30.0;
+            app.app.set_cursor_position(x, start[1]);
+            pan = [pan0[0] - (x - start[0]).round() * bpp, pan0[1]];
+            frame(&mut app);
+            drag_frames += 1;
+            let expected = expected_full_tiles(pan, zoom);
+            let present = present_full_tiles(&app);
+            if present < expected {
+                deficit_frames += 1;
+                deficit_sum += (expected - present) as u64;
+                deficit_max = deficit_max.max(expected - present);
+            }
+        }
+        app.app
+            .set_pointer_button(petramond_world::gui_state::PointerButton::Primary, false);
+        frame(&mut app);
+        drag_frames += 1;
+    }
+    println!(
+        "drag @ −2: {drag_frames} frames ({:.0?}), {deficit_frames} frames with blank tiles, \
+         mean blank {:.1}, worst blank {deficit_max}",
+        drag_started.elapsed(),
+        deficit_sum as f64 / drag_frames as f64,
+    );
+    fill(&mut app, pan, zoom, "settle after drag");
+}
+
 /// Frame-time profile of the world map over a large synthetic explored world:
 /// open at the default zoom, then ride the wheel to the outermost (−2) level
 /// and let the progressive fill run. The "after" numbers of every world-map

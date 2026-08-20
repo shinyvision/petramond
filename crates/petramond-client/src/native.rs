@@ -413,7 +413,10 @@ impl ApplicationHandler for NativeHost {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
-            let frame = if app.cursor_policy().grabbed || app.game_menu_open() {
+            let frame = if app.cursor_policy().grabbed
+                || app.game_menu_open()
+                || app.client_canvas_screen()
+            {
                 self.frame
             } else {
                 self.menu_frame

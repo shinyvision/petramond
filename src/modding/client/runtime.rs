@@ -895,9 +895,18 @@ pub fn seed_client_storage_for_test(
             take += 1;
         }
         let rest = entries.split_off(take);
-        storage
-            .set_many(entries)
-            .expect("seed client storage batch");
+        // The worker drains asynchronously; when a large seed outruns the
+        // pending-byte cap, wait for it rather than fail.
+        let mut batch = entries;
+        loop {
+            match storage.set_many(batch.clone()) {
+                Ok(()) => break,
+                Err(error) if error.contains("too many queued writes") => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Err(error) => panic!("seed client storage batch: {error}"),
+            }
+        }
         entries = rest;
     }
     // Drop flushes the worker, so files exist when the test proceeds.
