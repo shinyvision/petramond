@@ -36,6 +36,10 @@ pub use dirt::DIRT;
 pub use grass::GRASS;
 pub use inert::INERT;
 pub use leaves::LEAVES;
+// The decay flood's reach is part of the leaf-support contract: worldgen
+// canopy placement bounds its trunk-connectivity flood by the same number, so
+// generated leaves can never sit outside the distance the decay rule enforces.
+pub use leaves::MAX_LOG_DISTANCE;
 
 /// The world surface a behaviour acts through. `Deref`s to [`WorldData`]
 /// (every read and data-half mutation), plus the few orchestrated mutations a

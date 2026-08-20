@@ -227,7 +227,19 @@ fn place_feature_origins(
             {
                 continue;
             }
-            cf.feature.generate(ctx, origin, &mut rng);
+            // Canopy-open oracle: a leaf may exist (or route support) only
+            // above the cave-adjusted surface — never inside a hillside, and
+            // never in carved cave air behind one. World-anchored like the
+            // anchoring gate's surface reads, so every chunk replaying this
+            // origin keeps the identical leaf set; the load-time reach fence
+            // in `data::features` keeps these reads inside the candidate
+            // window.
+            cf.feature.generate(
+                ctx,
+                &mut |p: IVec3| p.y > field.surf_at(p.x, p.z),
+                origin,
+                &mut rng,
+            );
             scatter_fallen_branches(ctx, field, seed, wx, wz);
         }
     }

@@ -117,7 +117,9 @@ pub fn preview_feature(name: &str, seed: u32) -> Option<FeaturePreview> {
     let mut sink = PreviewSink::default();
     let mut ctx = FeatureCtx::new(&mut sink);
     let mut rng = FeatureRng::positional(seed, FEATURE_PREVIEW_SALT, 0, 0, 0);
-    cf.feature.generate(&mut ctx, IVec3::new(0, 0, 0), &mut rng);
+    // Preview renders the pure shape: every cell is canopy-open.
+    cf.feature
+        .generate(&mut ctx, &mut |_| true, IVec3::new(0, 0, 0), &mut rng);
 
     let mut bounds = FeatureBounds::empty();
     let mut voxels: Vec<FeatureVoxel> = sink

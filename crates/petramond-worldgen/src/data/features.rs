@@ -116,8 +116,8 @@ enum RawFoliage {
 impl RawShape {
     /// Build the `Feature` this row configures. Rows load once per process,
     /// so leaking the built feature is the static lifetime, not a leak.
-    fn resolve(self) -> &'static dyn Feature {
-        match self {
+    fn resolve(self) -> Result<&'static dyn Feature, String> {
+        Ok(match self {
             RawShape::BlockyOak(f) => Box::leak(Box::new(f)),
             RawShape::Canopy(f) => Box::leak(Box::new(f)),
             RawShape::Redwood(f) => Box::leak(Box::new(f)),
@@ -131,6 +131,17 @@ impl RawShape {
                     RawFoliage::Conifer(f) => Box::leak(Box::new(f)),
                     RawFoliage::FlatSparse(f) => Box::leak(Box::new(f)),
                 };
+                // The canopy-open oracle reads column surfaces under every
+                // leaf cell, and those reads must stay inside the candidate
+                // window every replaying chunk can serve (the same fence the
+                // oak anchoring gate documents on its root reach).
+                let reach = foliage.horizontal_reach() + trunk.max_lean();
+                if reach > crate::biome::MAX_TREE_SPACING_RADIUS {
+                    return Err(format!(
+                        "tree foliage reach {reach} exceeds the candidate-window fence {}",
+                        crate::biome::MAX_TREE_SPACING_RADIUS
+                    ));
+                }
                 Box::leak(Box::new(TreeFeature {
                     trunk,
                     foliage,
@@ -139,7 +150,7 @@ impl RawShape {
                     height: t.height,
                 }))
             }
-        }
+        })
     }
 }
 
@@ -179,10 +190,14 @@ fn parse_layers(texts: &[&str]) -> Result<petramond_world::registry::Catalog<Fea
         ENGINE_FEATURE_NAMES,
         "worldgen feature",
         |r, id, names| {
+            let name = names.name(id).expect("id resolved from this table");
             Ok(FeatureDef {
-                name: names.name(id).expect("id resolved from this table"),
+                name,
                 configured: ConfiguredFeature {
-                    feature: r.shape.resolve(),
+                    feature: r
+                        .shape
+                        .resolve()
+                        .map_err(|e| format!("worldgen feature '{name}': {e}"))?,
                 },
             })
         },

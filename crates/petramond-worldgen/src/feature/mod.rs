@@ -67,7 +67,23 @@ fn feature_bounds_with_pad(ox: i32, oz: i32, pad: i32) -> (i32, i32, usize, usiz
 
 /// A worldgen feature: imperatively writes voxels around a world origin.
 pub trait Feature: Send + Sync {
-    fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng);
+    /// `open` answers whether a world cell may hold a canopy leaf, or route
+    /// leaf-support through one (the `TreeFeature` canopies gate and
+    /// connectivity-flood their leaves through it; implementations that
+    /// guarantee support another way — the oak's hidden clump wood — may
+    /// ignore it). The caller must supply a DETERMINISTIC oracle whose answers
+    /// are identical for every chunk that replays the feature: worldgen passes
+    /// the world-anchored cave-adjusted surface model (`p.y > surf(p.x, p.z)`
+    /// — reads fenced inside the candidate window by the load-time reach
+    /// check in `data::features`), runtime growth passes a live-world
+    /// occupancy read.
+    fn generate(
+        &self,
+        ctx: &mut FeatureCtx,
+        open: &mut dyn FnMut(IVec3) -> bool,
+        origin: IVec3,
+        rng: &mut FeatureRng,
+    );
 
     /// Ground-anchoring gate, consulted for an ACCEPTED origin just before
     /// `generate`: return false to skip the feature at this site entirely
@@ -115,10 +131,18 @@ impl<'a> FeatureCtx<'a> {
         self.sink.set(p, b);
     }
 
-    /// Write over Air/Water only (== `trees::leaf_at`).
+    /// Write over Air/Water, a fragile plant, or a snow blanket.
+    ///
+    /// Worldgen dresses the ground (vegetation, snow) BEFORE trees run, so a
+    /// canopy cell can already hold a tuft, flower or snow layer; refusing
+    /// those punched permanent holes in generated canopies and stranded the
+    /// leaves behind the hole for the decay flood. Ground cover yields to a
+    /// growing tree, exactly as it always yielded to trunk and root wood
+    /// (`set_log` is unconditional). Still reads only the cell it writes, so
+    /// it stays seam-safe.
     pub fn set_leaf(&mut self, p: IVec3, b: Block) {
         let c = self.sink.get(p);
-        if c == Block::Air || c == Block::Water {
+        if c == Block::Air || c == Block::Water || c.is_fragile() || c.is_snow_cover() {
             self.sink.set(p, b);
         }
     }

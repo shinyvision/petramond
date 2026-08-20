@@ -1,4 +1,6 @@
-//! Trunk placers — build a tree's trunk and return foliage attach point(s).
+//! Trunk placers — build a tree's trunk and return the foliage attach point(s)
+//! plus every log cell written (the support set the canopy's connectivity
+//! commit floods from — see `foliage::Canopy`).
 //!
 //! Draws happen here in the god file's order. `sample_height` consumes exactly
 //! one `next_i32` iff the height range is non-degenerate (matching e.g.
@@ -10,8 +12,15 @@ use petramond_world::mathh::IVec3;
 use crate::feature::FeatureCtx;
 use crate::rng::FeatureRng;
 
+/// A placed trunk: where the foliage attaches, and every log cell written —
+/// the wood the canopy commit treats as leaf support.
+pub struct TrunkPlan {
+    pub attach: Vec<IVec3>,
+    pub logs: Vec<IVec3>,
+}
+
 pub trait TrunkPlacer: Send + Sync {
-    /// Place the trunk; return foliage attach points. `height` is {min, max}.
+    /// Place the trunk; return its plan. `height` is {min, max}.
     fn place(
         &self,
         ctx: &mut FeatureCtx,
@@ -19,7 +28,14 @@ pub trait TrunkPlacer: Send + Sync {
         height: (i32, i32),
         log: Block,
         rng: &mut FeatureRng,
-    ) -> Vec<IVec3>;
+    ) -> TrunkPlan;
+
+    /// Maximum horizontal wander of any log (and so of the attach column) from
+    /// the origin column. Part of the canopy reach fence `data::features`
+    /// validates at load, so foliage never reads outside the candidate window.
+    fn max_lean(&self) -> i32 {
+        0
+    }
 }
 
 /// Draw a height: one `next_i32(min,max)` iff `min < max`, else `min` (no draw).
@@ -43,12 +59,18 @@ impl TrunkPlacer for StraightTrunk {
         height: (i32, i32),
         log: Block,
         rng: &mut FeatureRng,
-    ) -> Vec<IVec3> {
+    ) -> TrunkPlan {
         let h = sample_height(height, rng);
+        let mut logs = Vec::with_capacity(h as usize);
         for i in 0..h {
-            ctx.set_log(IVec3::new(origin.x, origin.y + i, origin.z), log);
+            let p = IVec3::new(origin.x, origin.y + i, origin.z);
+            ctx.set_log(p, log);
+            logs.push(p);
         }
-        vec![IVec3::new(origin.x, origin.y + h - 1, origin.z)]
+        TrunkPlan {
+            attach: vec![IVec3::new(origin.x, origin.y + h - 1, origin.z)],
+            logs,
+        }
     }
 }
 
@@ -64,18 +86,28 @@ impl TrunkPlacer for LeaningTrunk {
         height: (i32, i32),
         log: Block,
         rng: &mut FeatureRng,
-    ) -> Vec<IVec3> {
+    ) -> TrunkPlan {
         let h = sample_height(height, rng);
         let dx = rng.next_i32(-1, 1);
         let dz = rng.next_i32(-1, 1);
         let (mut cx, mut cz) = (origin.x, origin.z);
+        let mut logs = Vec::with_capacity(h as usize);
         for i in 0..h {
-            ctx.set_log(IVec3::new(cx, origin.y + i, cz), log);
+            let p = IVec3::new(cx, origin.y + i, cz);
+            ctx.set_log(p, log);
+            logs.push(p);
             if i == h / 2 {
                 cx += dx;
                 cz += dz;
             }
         }
-        vec![IVec3::new(cx, origin.y + h - 1, cz)]
+        TrunkPlan {
+            attach: vec![IVec3::new(cx, origin.y + h - 1, cz)],
+            logs,
+        }
+    }
+
+    fn max_lean(&self) -> i32 {
+        1
     }
 }

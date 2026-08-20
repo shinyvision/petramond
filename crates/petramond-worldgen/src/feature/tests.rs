@@ -38,6 +38,14 @@ fn generate_into_map(
     feat: &'static super::ConfiguredFeature,
     seed: u32,
 ) -> std::collections::HashMap<petramond_world::mathh::IVec3, Block> {
+    generate_into_map_with_open(feat, seed, &mut |_| true)
+}
+
+fn generate_into_map_with_open(
+    feat: &'static super::ConfiguredFeature,
+    seed: u32,
+    open: &mut dyn FnMut(petramond_world::mathh::IVec3) -> bool,
+) -> std::collections::HashMap<petramond_world::mathh::IVec3, Block> {
     use petramond_world::mathh::IVec3;
     use crate::rng::FeatureRng;
     let mut sink = MapSink(std::collections::HashMap::new());
@@ -45,7 +53,7 @@ fn generate_into_map(
     {
         let mut ctx = super::FeatureCtx::new(&mut sink);
         feat.feature
-            .generate(&mut ctx, IVec3::new(0, 64, 0), &mut rng);
+            .generate(&mut ctx, open, IVec3::new(0, 64, 0), &mut rng);
     }
     sink.0
 }
@@ -58,9 +66,35 @@ fn generate_into_map(
 #[test]
 fn configured_trees_place_only_orthogonally_supported_leaves() {
     use crate::data::features;
+
+    for (name, feat) in [
+        ("acacia", features::acacia()),
+        ("oak_young", features::oak_young()),
+        ("oak_small", features::oak_small()),
+        ("oak_swamp", features::oak_swamp()),
+        ("oak_big", features::oak_big()),
+        ("spruce", features::spruce()),
+        ("redwood", features::redwood()),
+    ] {
+        for seed in [1u32, 7, 42, 99, 1000, 31337] {
+            let map = generate_into_map(feat, seed);
+            assert_all_leaves_supported(&map, &format!("{name} seed {seed}"));
+        }
+    }
+}
+
+/// Assert every leaf in a feature write set reaches one of its logs within
+/// `MAX_LOG_DISTANCE` FACE-steps travelling only through leaves — the exact
+/// rule `block::behavior::leaves` decays against. Diagonal-only attachment (the
+/// acacia umbrella bug) does not count, so this guards against canopies that
+/// silently rot after generation.
+fn assert_all_leaves_supported(
+    map: &std::collections::HashMap<petramond_world::mathh::IVec3, Block>,
+    what: &str,
+) {
+    use petramond_world::block::behavior::MAX_LOG_DISTANCE;
     use std::collections::{HashSet, VecDeque};
 
-    const MAX_LOG_DISTANCE: i32 = 6; // mirrors block::behavior::leaves
     const FACES: [(i32, i32, i32); 6] = [
         (1, 0, 0),
         (-1, 0, 0),
@@ -70,48 +104,64 @@ fn configured_trees_place_only_orthogonally_supported_leaves() {
         (0, 0, -1),
     ];
 
+    let mut leaves = HashSet::new();
+    let mut logs = HashSet::new();
+    for (p, b) in map {
+        if b.is_leaves() {
+            leaves.insert((p.x, p.y, p.z));
+        } else if b.is_log() {
+            logs.insert((p.x, p.y, p.z));
+        }
+    }
+    assert!(!leaves.is_empty(), "{what}: placed no leaves");
+
+    for &start in &leaves {
+        let mut visited = HashSet::from([start]);
+        let mut frontier = VecDeque::from([(start, 0)]);
+        let mut supported = false;
+        'bfs: while let Some(((sx, sy, sz), dist)) = frontier.pop_front() {
+            for (dx, dy, dz) in FACES {
+                let n = (sx + dx, sy + dy, sz + dz);
+                if logs.contains(&n) {
+                    supported = true;
+                    break 'bfs;
+                }
+                if dist + 1 < MAX_LOG_DISTANCE && leaves.contains(&n) && visited.insert(n) {
+                    frontier.push_back((n, dist + 1));
+                }
+            }
+        }
+        assert!(
+            supported,
+            "{what}: leaf at {start:?} only diagonally attached — it would decay"
+        );
+    }
+}
+
+/// The `TreeFeature` canopies against a closed half-space — a hillside or the
+/// wall of a cave beside the trunk. No leaf may land in a closed cell (the old
+/// layer loops skipped the wall and kept placing in the cave air behind it),
+/// and everything placed must still satisfy the decay-support rule (the old
+/// loops stranded outer leaves whose inward path the wall interrupted).
+#[test]
+fn tree_canopies_respect_closed_cells_and_stay_supported() {
+    use crate::data::features;
+
     for (name, feat) in [
-        ("acacia", features::acacia()),
-        ("oak_young", features::oak_young()),
-        ("oak_small", features::oak_small()),
-        ("oak_big", features::oak_big()),
         ("spruce", features::spruce()),
-        ("redwood", features::redwood()),
+        ("oak_swamp", features::oak_swamp()),
+        ("acacia", features::acacia()),
     ] {
         for seed in [1u32, 7, 42, 99, 1000, 31337] {
-            let map = generate_into_map(feat, seed);
-            let mut leaves = HashSet::new();
-            let mut logs = HashSet::new();
+            // Wall right beside the trunk column: everything at x ≥ 2 closed.
+            let map = generate_into_map_with_open(feat, seed, &mut |p| p.x < 2);
             for (p, b) in &map {
-                if b.is_leaves() {
-                    leaves.insert((p.x, p.y, p.z));
-                } else if b.is_log() {
-                    logs.insert((p.x, p.y, p.z));
-                }
-            }
-            assert!(!leaves.is_empty(), "{name} seed {seed}: placed no leaves");
-
-            for &start in &leaves {
-                let mut visited = HashSet::from([start]);
-                let mut frontier = VecDeque::from([(start, 0)]);
-                let mut supported = false;
-                'bfs: while let Some(((sx, sy, sz), dist)) = frontier.pop_front() {
-                    for (dx, dy, dz) in FACES {
-                        let n = (sx + dx, sy + dy, sz + dz);
-                        if logs.contains(&n) {
-                            supported = true;
-                            break 'bfs;
-                        }
-                        if dist + 1 < MAX_LOG_DISTANCE && leaves.contains(&n) && visited.insert(n) {
-                            frontier.push_back((n, dist + 1));
-                        }
-                    }
-                }
                 assert!(
-                    supported,
-                    "{name} seed {seed}: leaf at {start:?} only diagonally attached — it would decay"
+                    !(b.is_leaves() && p.x >= 2),
+                    "{name} seed {seed}: leaf at {p:?} inside the closed half-space"
                 );
             }
+            assert_all_leaves_supported(&map, &format!("{name} (walled) seed {seed}"));
         }
     }
 }

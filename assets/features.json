@@ -75,7 +75,7 @@
       "shape": {
         "tree": {
           "trunk": "straight",
-          "foliage": { "conifer": { "radius": 2, "skirt_ragged": 0.25 } },
+          "foliage": { "conifer": { "radius": 2, "skirt_ragged": 0.0 } },
           "log": "petramond:spruce_log",
           "leaf": "petramond:spruce_leaves",
           "height": [6, 10]

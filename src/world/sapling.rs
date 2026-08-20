@@ -169,7 +169,27 @@ impl World {
         let writes = {
             let mut sink = GrowSink::new(self);
             let mut ctx = FeatureCtx::new(&mut sink);
-            cf.feature.generate(&mut ctx, pos, rng);
+            // Canopy-open oracle against the LIVE world: a canopy cell may be
+            // anything the tree is allowed to consume (the validation set
+            // below), plus wood it grows around. Water is deliberately NOT
+            // open — the canopy prunes cells that would land in a pond instead
+            // of the whole growth being refused for them. An unloaded cell
+            // counts open here; validation refuses any write that reaches one.
+            cf.feature.generate(
+                &mut ctx,
+                &mut |p: IVec3| match self.block_if_loaded(p.x, p.y, p.z) {
+                    None => true,
+                    Some(b) => {
+                        b == Block::Air
+                            || b.is_log()
+                            || b.is_leaves()
+                            || b.is_fragile()
+                            || b.is_snow_cover()
+                    }
+                },
+                pos,
+                rng,
+            );
             sink.overlay
         };
 
@@ -182,7 +202,15 @@ impl World {
                 continue;
             }
             match self.block_if_loaded(cell.x, cell.y, cell.z) {
-                Some(b) if b == Block::Air || b.is_log() || b.is_leaves() || b.is_fragile() => {}
+                // A snow blanket yields like a fragile plant does (the snow
+                // layer row is fragile today, but displacing a blanket is
+                // policy here, not a row fact): leaves may now write over it.
+                Some(b)
+                    if b == Block::Air
+                        || b.is_log()
+                        || b.is_leaves()
+                        || b.is_fragile()
+                        || b.is_snow_cover() => {}
                 Some(_) => return,
                 // An absent SECTION whose generated summary is empty sky is
                 // still growable air — the commit's `set_block_world`

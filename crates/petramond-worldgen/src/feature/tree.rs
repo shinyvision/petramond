@@ -29,9 +29,15 @@ pub struct TreeFeature {
 }
 
 impl Feature for TreeFeature {
-    fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
-        let attach = self.trunk.place(ctx, origin, self.height, self.log, rng);
-        self.foliage.place(ctx, &attach, self.leaf, rng);
+    fn generate(
+        &self,
+        ctx: &mut FeatureCtx,
+        open: &mut dyn FnMut(IVec3) -> bool,
+        origin: IVec3,
+        rng: &mut FeatureRng,
+    ) {
+        let plan = self.trunk.place(ctx, origin, self.height, self.log, rng);
+        self.foliage.place(ctx, open, &plan, self.leaf, rng);
     }
 }
 
@@ -495,7 +501,13 @@ impl BlockyOakFeature {
 }
 
 impl Feature for BlockyOakFeature {
-    fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
+    fn generate(
+        &self,
+        ctx: &mut FeatureCtx,
+        _open: &mut dyn FnMut(IVec3) -> bool,
+        origin: IVec3,
+        rng: &mut FeatureRng,
+    ) {
         let (h, centres) = self.plan_base(origin, rng, &mut |cell| match cell {
             BaseCell::Log(p) => ctx.set_log(p, self.log),
             BaseCell::Bump(p) => ctx.set_branch(p, self.log),
@@ -655,7 +667,13 @@ pub struct CanopyTreeFeature {
 const GOLDEN_ANGLE: f32 = 2.399_963_1;
 
 impl Feature for CanopyTreeFeature {
-    fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
+    fn generate(
+        &self,
+        ctx: &mut FeatureCtx,
+        _open: &mut dyn FnMut(IVec3) -> bool,
+        origin: IVec3,
+        rng: &mut FeatureRng,
+    ) {
         use std::f32::consts::TAU;
         let (x, y, z) = (origin.x, origin.y, origin.z);
         let height = sample_height(self.height, rng);
@@ -759,7 +777,13 @@ fn redwood_trunk_radius(level: i32, height: i32) -> f32 {
 }
 
 impl Feature for RedwoodFeature {
-    fn generate(&self, ctx: &mut FeatureCtx, origin: IVec3, rng: &mut FeatureRng) {
+    fn generate(
+        &self,
+        ctx: &mut FeatureCtx,
+        _open: &mut dyn FnMut(IVec3) -> bool,
+        origin: IVec3,
+        rng: &mut FeatureRng,
+    ) {
         use std::f32::consts::TAU;
         let (x, y, z) = (origin.x, origin.y, origin.z);
         let height = sample_height(self.height, rng);
