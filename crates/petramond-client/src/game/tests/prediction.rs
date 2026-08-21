@@ -439,6 +439,68 @@ fn break_finished_without_observed_mining_is_denied() {
 }
 
 #[test]
+fn two_instabreak_finishes_in_one_tick_window_both_accept() {
+    let mut game = game_on_empty_chunk();
+    let a = IVec3::new(2, 64, 2);
+    let b = IVec3::new(3, 64, 2);
+    assert!(game
+        .server
+        .world
+        .set_block_world(a.x, a.y, a.z, Block::Poppy));
+    assert!(game
+        .server
+        .world
+        .set_block_world(b.x, b.y, b.z, Block::Poppy));
+    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 4.5);
+    game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
+
+    // Two instabreak blocks broken back-to-back land in the same tick window.
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 1,
+            pos: a,
+            tool_item_id: None,
+            predicted: true,
+        }),
+    );
+    game.server.apply_message(
+        0,
+        ClientToServer::Action(PlayerAction::BreakFinished {
+            request_id: 2,
+            pos: b,
+            tool_item_id: None,
+            predicted: true,
+        }),
+    );
+    game.server.tick_mining(0, &mut TickEvents::default());
+
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(a.x, a.y, a.z)),
+        Block::Air,
+        "the first instabreak must clear its cell"
+    );
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(b.x, b.y, b.z)),
+        Block::Air,
+        "the second instabreak must clear its cell"
+    );
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert!(
+        outcomes.iter().any(|o| o.id == 1 && o.accepted),
+        "the first finish must accept, got {outcomes:?}"
+    );
+    assert!(
+        outcomes.iter().any(|o| o.id == 2 && o.accepted),
+        "the second finish must accept, got {outcomes:?}"
+    );
+    assert!(
+        game.server.sessions[0].pending_corrective_cells.is_empty(),
+        "no corrective cells for two legitimate instabreaks"
+    );
+}
+
+#[test]
 fn lagged_break_finished_after_hold_path_accepts_without_restore() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);

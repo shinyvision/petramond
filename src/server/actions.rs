@@ -123,20 +123,11 @@ impl ServerGame {
         tool_item_id: Option<u16>,
         predicted: bool,
     ) {
-        // A newer finish supersedes any in-flight latch OR deferred TooFast
-        // wait — answer the old id so the ledger cannot leak.
-        let (old_pending, old_deferred) = {
-            let sess = &mut self.sessions[s];
-            (
-                sess.pending_break_finished.take(),
-                sess.deferred_break_finished.take(),
-            )
-        };
-        if let Some(old) = old_pending {
-            self.sessions[s]
-                .pending_action_outcomes
-                .push(ActionOutcome::deny(old.request_id, ActionDenyReason::Denied));
-        }
+        // A newer finish supersedes any deferred TooFast wait — answer the old
+        // id so the ledger cannot leak. In-flight finishes are NOT superseded:
+        // instabreak blocks can legitimately finish two cells in one tick
+        // window, so each finish queues and resolves independently.
+        let old_deferred = self.sessions[s].deferred_break_finished.take();
         if let Some(old) = old_deferred {
             self.sessions[s]
                 .pending_action_outcomes
@@ -145,12 +136,14 @@ impl ServerGame {
             let cells = self.world.break_footprint_cells(old.pos);
             self.sessions[s].pending_corrective_cells.extend(cells);
         }
-        self.sessions[s].pending_break_finished = Some(PendingBreakFinished {
-            request_id,
-            pos,
-            tool_item_id,
-            predicted,
-        });
+        self.sessions[s]
+            .pending_break_finished
+            .push(PendingBreakFinished {
+                request_id,
+                pos,
+                tool_item_id,
+                predicted,
+            });
     }
 
     pub fn push_action_outcome(

@@ -306,8 +306,11 @@ pub struct ConnectedPlayer {
     pub pending_menu_actions: Vec<PendingMenuAction>,
     /// Outcomes queued this tick window for the next `TickUpdate`.
     pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
-    /// Latched `BreakFinished` request, applied by the mining stage.
-    pub pending_break_finished: Option<PendingBreakFinished>,
+    /// Latched `BreakFinished` requests, applied by the mining stage in
+    /// arrival order. A queue, not a single slot: instabreak blocks can
+    /// legitimately finish two cells in one tick window, so each finish must
+    /// resolve independently rather than supersede the last.
+    pub pending_break_finished: Vec<PendingBreakFinished>,
     /// A `BreakFinished` that arrived before the server's observed mining
     /// window was full (`TooFast`). Kept until the hold-path timer finishes
     /// the same cell (then accepted + presentation stripped) or mining
@@ -437,7 +440,7 @@ impl ConnectedPlayer {
             drop_queue: DropQueue::default(),
             pending_menu_actions: Vec::new(),
             pending_action_outcomes: Vec::new(),
-            pending_break_finished: None,
+            pending_break_finished: Vec::new(),
             deferred_break_finished: None,
             pending_break_ack: Default::default(),
             move_wishdir: petramond_math::math::Vec3::ZERO,

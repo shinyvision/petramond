@@ -26,7 +26,7 @@ impl ServerGame {
         self.sessions[s]
             .pending_break_ack
             .retain(|_, broke_at| now.saturating_sub(*broke_at) <= BREAK_ACK_TTL_TICKS);
-        if let Some(req) = self.sessions[s].pending_break_finished.take() {
+        for req in std::mem::take(&mut self.sessions[s].pending_break_finished) {
             self.resolve_break_finished(s, req, events);
         }
 
