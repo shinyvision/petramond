@@ -267,10 +267,8 @@ impl World {
             wx.div_euclid(SECTION_SIZE as i32),
             wz.div_euclid(SECTION_SIZE as i32),
         );
-        let (old_surface, old_sky_cover) = match self.column_at(wx, wz) {
-            Some(c) => (c.surface_y(lx, lz), c.sky_cover_y(lx, lz)),
-            None => return None,
-        };
+        let column = self.column_at(wx, wz)?;
+        let (old_surface, old_sky_cover) = (column.surface_y(lx, lz), column.sky_cover_y(lx, lz));
 
         let mut new_surface = old_surface;
         let mut surface_payload_changed = false;

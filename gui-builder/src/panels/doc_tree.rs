@@ -232,7 +232,7 @@ fn row(
             let painter = ui.painter();
             match zone {
                 Zone::Into => {
-                    painter.rect_stroke(rect, 2.0, Stroke::new(1.5, CARET));
+                    painter.rect_stroke(rect, 2.0, Stroke::new(1.5_f32, CARET));
                 }
                 Zone::Above | Zone::Below => {
                     let y = if zone == Zone::Above {
@@ -245,7 +245,7 @@ fn row(
                             Pos2::new(rect.left() + indent, y),
                             Pos2::new(rect.right() - 2.0, y),
                         ],
-                        Stroke::new(2.0, CARET),
+                        Stroke::new(2.0_f32, CARET),
                     );
                 }
             }

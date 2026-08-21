@@ -129,14 +129,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 if app.canvas_drag.is_none() {
                     if let Some(p) = ptr {
                         if let Some(e) = topmost_at(&rects, from_screen(p, origin, ppl)) {
-                            painter.rect_stroke(to_screen(e.rect), 0.0, Stroke::new(1.0, HOVER));
+                            painter.rect_stroke(
+                                to_screen(e.rect),
+                                0.0,
+                                Stroke::new(1.0_f32, HOVER),
+                            );
                         }
                     }
                 }
                 if let Some(sel) = app.sel.clone() {
                     if let Some(e) = rects.iter().find(|e| e.path == sel) {
                         let r = to_screen(e.rect);
-                        painter.rect_stroke(r, 0.0, Stroke::new(2.0, SEL));
+                        painter.rect_stroke(r, 0.0, Stroke::new(2.0_f32, SEL));
                         for (h, pos) in handle_positions(r) {
                             let hr = Rect::from_center_size(pos, Vec2::splat(7.0));
                             painter.rect_filled(hr, 1.0, SEL);
@@ -418,7 +422,7 @@ fn draw_insert_caret(
         let y = if after { r.max.y + 2.0 } else { r.min.y - 2.0 };
         (Pos2::new(r.min.x, y), Pos2::new(r.max.x, y))
     };
-    painter.line_segment([a, b], Stroke::new(2.0, CARET));
+    painter.line_segment([a, b], Stroke::new(2.0_f32, CARET));
 }
 
 fn draw_pixel_grid(painter: &egui::Painter, canvas: Rect, clip: Rect, ppl: f32) {
@@ -426,7 +430,7 @@ fn draw_pixel_grid(painter: &egui::Painter, canvas: Rect, clip: Rect, ppl: f32) 
     if area.width() <= 0.0 || area.height() <= 0.0 {
         return;
     }
-    let stroke = Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 14));
+    let stroke = Stroke::new(1.0_f32, Color32::from_rgba_premultiplied(255, 255, 255, 14));
     let mut x = canvas.min.x + ((area.min.x - canvas.min.x) / ppl).floor() * ppl;
     while x <= area.max.x {
         painter.line_segment([Pos2::new(x, area.min.y), Pos2::new(x, area.max.y)], stroke);

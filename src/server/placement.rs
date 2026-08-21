@@ -65,13 +65,8 @@ impl ServerGame {
             return None;
         }
 
-        let block = match self.sessions[s].player.held() {
-            Some(stack) => match stack.item.as_block() {
-                Some(b) if b != Block::Air => b,
-                _ => return None,
-            },
-            None => return None,
-        };
+        let stack = self.sessions[s].player.held()?;
+        let block = stack.item.as_block().filter(|&b| b != Block::Air)?;
 
         // Right-clicking a replaceable block (short grass, a fern…) while holding a block
         // places straight INTO its cell, overwriting it with no drop — the block just
