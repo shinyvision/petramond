@@ -26,10 +26,13 @@ pub const ENGINE_KINDS: &[&str] = &[
 /// shell screens carry no role slots.
 pub fn contract_for(kind: &str) -> SlotContract {
     match kind {
-        "petramond:chest" => SlotContract::new(&[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
+        "petramond:chest" => {
+            SlotContract::new(&[("container", 27), ("player_inv", 27), ("hotbar", 9)])
+        }
         "petramond:inventory" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
+            ("off_hand", 1),
             ("craft_result", 1),
         ]),
         "petramond:crafting_table" => SlotContract::new(&[
@@ -40,11 +43,9 @@ pub fn contract_for(kind: &str) -> SlotContract {
         "petramond:furnace" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
-            ("furnace_input", 1),
-            ("furnace_fuel", 1),
-            ("furnace_output", 1),
+            ("container", 3),
         ]),
-        "petramond:hotbar" => SlotContract::new(&[("hotbar", 9)]),
+        "petramond:hotbar" => SlotContract::new(&[("hotbar", 9), ("off_hand", 1)]),
         "petramond:demo" => SlotContract::new(&[("demo_slots", 9)]),
         _ => SlotContract::default(),
     }
@@ -86,10 +87,15 @@ mod tests {
         // Hand-written expectation mirroring src/gui/documents.rs — if this
         // fails, the builder and the game disagree about what validates.
         let expect: &[(&str, &[(&str, usize)])] = &[
-            ("petramond:chest", &[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
+            ("petramond:chest", &[("container", 27), ("player_inv", 27), ("hotbar", 9)]),
             (
                 "petramond:inventory",
-                &[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)],
+                &[
+                    ("player_inv", 27),
+                    ("hotbar", 9),
+                    ("off_hand", 1),
+                    ("craft_result", 1),
+                ],
             ),
             (
                 "petramond:crafting_table",
@@ -97,15 +103,9 @@ mod tests {
             ),
             (
                 "petramond:furnace",
-                &[
-                    ("player_inv", 27),
-                    ("hotbar", 9),
-                    ("furnace_input", 1),
-                    ("furnace_fuel", 1),
-                    ("furnace_output", 1),
-                ],
+                &[("player_inv", 27), ("hotbar", 9), ("container", 3)],
             ),
-            ("petramond:hotbar", &[("hotbar", 9)]),
+            ("petramond:hotbar", &[("hotbar", 9), ("off_hand", 1)]),
             ("petramond:demo", &[("demo_slots", 9)]),
         ];
         for (kind, roles) in expect {

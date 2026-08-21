@@ -12,6 +12,14 @@ use petramond_math::math::IVec3;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 
 impl Game {
+    /// The ACTING hand's stack from the replicated self view — the read every
+    /// use-click prediction resolves through (`player.acting_hand` is the
+    /// dispatch context the two-pass verdict sets; outside a click it is
+    /// `Main`, so this is the selected hotbar stack).
+    pub(super) fn predicted_held(&self) -> Option<&petramond_world::item::ItemStack> {
+        self.self_view.inventory.held_in(self.player.acting_hand)
+    }
+
     /// The acting player's snapshot for a client-mod PREDICTION dispatch —
     /// the same `PlayerSnapshot` vocabulary a server handler queries, built
     /// from the client's predicted local player + replicated self view.
@@ -25,12 +33,14 @@ impl Game {
             on_ground: self.player.on_ground,
             spectator: self.player.is_spectator(),
             sneak,
+            // The ACTING hand's stack — the client twin of the server's
+            // `Player::held()`: during the off-hand prediction pass the mod
+            // predictors see the off-hand item as `held`, exactly like their
+            // authoritative halves will.
             held: self
-                .self_view
-                .inventory
-                .selected()
+                .predicted_held()
                 .map(|st| mod_api::ItemId(st.item.id())),
-            held_count: self.self_view.inventory.selected().map_or(0, |st| st.count),
+            held_count: self.predicted_held().map_or(0, |st| st.count),
             pose_anchor: self.self_mount.and_then(|m| match m {
                 petramond::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos.to_array()),
                 petramond::net::protocol::PlayerMount::Mob { .. } => None,
@@ -166,7 +176,7 @@ impl Game {
         // The mod `interact_attempt` predictors were already dispatched
         // upstream ([`predict_use_click`](Self::predict_use_click) — one
         // dispatch per click); a predicted claim jabbed there.
-        let held = self.self_view.inventory.selected().map(|st| st.item);
+        let held = self.predicted_held().map(|st| st.item);
         if let Some(item) = held {
             // The eat consumer claims every click while food is held.
             if item.food().is_some() {
@@ -281,7 +291,7 @@ impl Game {
         if carry.is_empty() {
             return;
         }
-        let Some(held) = self.self_view.inventory.selected() else {
+        let Some(held) = self.predicted_held() else {
             return;
         };
         let Some(map) = petramond_world::item::variant::get(held.variant) else {
@@ -307,12 +317,7 @@ impl Game {
         if look.normal == IVec3::ZERO {
             return PlacePrediction::No; // eye inside the cell — the server never places
         }
-        let Some(block) = self
-            .self_view
-            .inventory
-            .selected()
-            .and_then(|s| s.item.as_block())
-        else {
+        let Some(block) = self.predicted_held().and_then(|s| s.item.as_block()) else {
             return PlacePrediction::No;
         };
         // A click the block's built-in consumer claims (the server's interact
@@ -336,9 +341,7 @@ impl Game {
         // through mod placement rules the replica cannot evaluate. Never
         // ghost it: jab only, and a real placement arrives unpredicted.
         if self
-            .self_view
-            .inventory
-            .selected()
+            .predicted_held()
             .is_some_and(|s| s.item.food().is_some())
         {
             return PlacePrediction::Plausible;
@@ -408,7 +411,7 @@ impl Game {
         if prev != petramond_world::block::Block::Air.0 {
             return PlacePrediction::No;
         }
-        let held = self.self_view.inventory.selected().map(|s| s.item);
+        let held = self.predicted_held().map(|s| s.item);
         let player_facing = petramond::server::placement::facing_from_forward(self.player.forward());
 
         // The SHARED per-shape placement ladder (`World::placement_plan`, the
@@ -477,9 +480,11 @@ impl Game {
         // Same synchronous prediction presentation as breaking: exact local
         // light and geometry are installed before the ghost is exposed.
         self.replica.present_predicted_edit(&previous_cells);
-        self.self_view.inventory.decrement_selected();
+        let hand = self.player.acting_hand;
+        self.self_view.inventory.decrement_held(hand);
         self.place_ghost = Some((place_pos, block.0));
         self.local_placed_block = Some(block);
+        self.local_placed_off_hand = hand == petramond_world::inventory::Hand::Off;
         self.predicted_presentation_cells.insert(place_pos);
         self.pending_events.world.push(WorldEvent::BlockPlaced {
             pos: place_pos,
@@ -608,9 +613,11 @@ impl Game {
         // Same synchronous prediction presentation as every ghost: exact
         // local light and geometry are installed before the ghost is exposed.
         self.replica.present_predicted_edit(&previous_cells);
-        self.self_view.inventory.decrement_selected();
+        let hand = self.player.acting_hand;
+        self.self_view.inventory.decrement_held(hand);
         self.place_ghost = Some((anchor, write_block.id()));
         self.local_placed_block = Some(write_block);
+        self.local_placed_off_hand = hand == petramond_world::inventory::Hand::Off;
         self.predicted_presentation_cells.insert(anchor);
         self.pending_events.world.push(WorldEvent::BlockPlaced {
             pos: anchor,

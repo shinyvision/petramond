@@ -46,6 +46,7 @@ impl GuiRouter {
             // which take-only slots already permit (they refuse INSERTS, not
             // takes), so this stays consistent with their semantics.
             MenuSlot::Container(i) => Some(CONTAINER_SLOT_STREAK_BASE + i),
+            MenuSlot::OffHand => Some(OFF_HAND_STREAK_KEY),
             MenuSlot::CraftResult | MenuSlot::Widget(_) => None,
         };
         match streak_key {
@@ -87,3 +88,7 @@ const DOUBLE_CLICK_SECS: f64 = 0.25;
 /// Namespaces container storage slots away from inventory slots in the click
 /// streak.
 const CONTAINER_SLOT_STREAK_BASE: usize = 1000;
+
+/// The off-hand cell's slot in the click streak (below the container base,
+/// above any real inventory index).
+const OFF_HAND_STREAK_KEY: usize = 999;

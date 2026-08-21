@@ -24,10 +24,11 @@ impl ServerGame {
     ) -> Option<IVec3> {
         // Capture the held block before `try_place` consumes it: on success that is
         // exactly the block placed, which the client maps to a place sound.
+        // `held()` resolves the ACTING hand — the ladder's off-hand pass
+        // places from the off-hand slot.
         let held = self.sessions[s]
             .player
-            .inventory
-            .selected()
+            .held()
             .and_then(|st| st.item.as_block());
         let pos = self.try_place(s, target, events)?;
         events.player(s).placed_block = held;
@@ -64,7 +65,7 @@ impl ServerGame {
             return None;
         }
 
-        let block = match self.sessions[s].player.inventory.selected() {
+        let block = match self.sessions[s].player.held() {
             Some(stack) => match stack.item.as_block() {
                 Some(b) if b != Block::Air => b,
                 _ => return None,
@@ -134,7 +135,7 @@ impl ServerGame {
             replacing_in_place,
             player_facing,
             held_rotation: self.sessions[s].held_rotation_snapshot(),
-            held: self.sessions[s].selected_item(),
+            held: self.sessions[s].player.held().map(|st| st.item),
         };
         // A custom shape places through its OWN pack's WASM callback
         // (footprint + orientation + initial state are the shape's to decide),
@@ -156,7 +157,8 @@ impl ServerGame {
             return None;
         }
         self.restore_carry(s, block, plan.anchor, plan.anchor_part());
-        self.sessions[s].player.inventory.decrement_selected();
+        let hand = self.sessions[s].player.acting_hand;
+        self.sessions[s].player.inventory.decrement_held(hand);
         Some(plan.anchor)
     }
 
@@ -283,7 +285,8 @@ impl ServerGame {
         }
         // A custom shape's placement is single-cell and whole: part 0.
         self.restore_carry(s, block, anchor, 0);
-        self.sessions[s].player.inventory.decrement_selected();
+        let hand = self.sessions[s].player.acting_hand;
+        self.sessions[s].player.inventory.decrement_held(hand);
         Some(Some(anchor))
     }
 
@@ -300,7 +303,7 @@ impl ServerGame {
         if carry.is_empty() {
             return;
         }
-        let Some(held) = self.sessions[s].player.inventory.selected() else {
+        let Some(held) = self.sessions[s].player.held() else {
             return;
         };
         let Some(map) = petramond_world::item::variant::get(held.variant) else {

@@ -50,7 +50,8 @@ pub struct SelfRestore {
     /// ids: effects are the one registry small enough that names are cheap and
     /// they already persist by name in level.dat).
     pub effects: Vec<(String, u32)>,
-    /// All inventory slots in index order, then the cursor stack last.
+    /// All inventory slots in index order, then the cursor stack, then the
+    /// off-hand stack last.
     pub inventory: Vec<Option<ItemSlotWire>>,
     /// The active hotbar slot, so the restored selection survives the join.
     pub active_slot: u8,

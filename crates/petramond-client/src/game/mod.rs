@@ -247,12 +247,18 @@ pub struct Game {
     /// never echoes self-initiated one-shots back). Consumed into `GameEvents` in
     /// `tick_receive`.
     local_hand_jab: bool,
+    /// The latched jab belongs to the LEFT hand (the use-click prediction's
+    /// off-hand pass produced it). Meaningless while `local_hand_jab` is
+    /// false.
+    local_hand_jab_off: bool,
     local_hand_swing: bool,
     local_hand_threw: bool,
     /// The block the LOCAL mining timer finished this frame (hand pop).
     local_broke_block: Option<petramond_world::block::Block>,
     /// The block the place ghost predicted this frame (hand pop).
     local_placed_block: Option<petramond_world::block::Block>,
+    /// The predicted place committed from the OFF hand (left-hand pop).
+    local_placed_off_hand: bool,
     /// Optimistic place cell (cleared on accept/deny or replica delta).
     place_ghost: Option<(IVec3, u16)>,
     /// Cells this client already presented place/break for (local WorldEvent).
@@ -577,6 +583,18 @@ impl Game {
         }));
     }
 
+    /// The F gesture in GAMEPLAY: swap the off-hand with the selected hotbar
+    /// slot — one face of the unified hovered-slot swap
+    /// ([`menu_swap_off_hand`](Self::menu_swap_off_hand)); the hotbar index
+    /// is client-owned, so the client names the concrete slot.
+    pub fn swap_off_hand(&mut self) {
+        // The index is client-owned and `player.inventory` is its stated
+        // owner (contents live on the replicated view; see the
+        // client-prediction "what not to do" list).
+        let active = self.player.inventory.active_slot() as usize;
+        self.menu_swap_off_hand(petramond_world::gui_state::MenuSlot::Inventory(active));
+    }
+
     /// Throw from the cursor-held stack out into the world (inventory drag-out
     /// then click outside the panel): the whole stack or a single item per
     /// `amount`. No-op when the cursor is empty.
@@ -808,6 +826,27 @@ impl Game {
     #[cfg(test)]
     pub fn predict_break_at_for_test(&mut self, pos: IVec3, block: petramond_world::block::Block) {
         self.apply_predicted_break(pos, block, Some(IVec3::Y));
+    }
+
+    /// Test injection: the whole TWO-PASS click verdict (main hand, then the
+    /// off hand) against a synthetic look — what a production click computes
+    /// in `build_outgoing_messages`. Returns `(jabbed, off_hand_acted,
+    /// place)`.
+    #[cfg(test)]
+    pub fn predict_click_verdict_at_for_test(
+        &mut self,
+        block: IVec3,
+        normal: IVec3,
+        sneak: bool,
+    ) -> (bool, bool, crate::game::tick::PlacePrediction) {
+        self.look = Some(RaycastHit {
+            block,
+            normal,
+            outline: petramond_math::math::SelectionShape::full_block(block),
+        });
+        let mut input = crate::game::tick::GameInput::default();
+        input.movement.sneak = sneak;
+        self.predict_click_verdict(&input, None)
     }
 }
 

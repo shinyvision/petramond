@@ -715,6 +715,12 @@ pub(super) fn new_renderer_inner(
             held_item_skylight: crate::lighting::FULL_SKYLIGHT,
             held_item_blocklight: petramond_world::light::BlockLight6::DARK,
             vertex_count: 0,
+            off_item: HeldItemView::default(),
+            off_item_anim: HeldItemAnimator::default(),
+            off_index_count: 0,
+            off_item3d_start: 0,
+            off_item3d_count: 0,
+            off_is_model: false,
         },
         ui: UiPass {
             viewport_generation: 1,

@@ -115,6 +115,9 @@ pub struct GameEvents {
     // from the replicated world events instead.
     /// The place ghost predicted a block this frame, if any.
     pub placed_block: Option<Block>,
+    /// The predicted place above committed from the OFF hand (the use-click
+    /// ladder's second pass) — the LEFT hand animates the pop.
+    pub placed_off_hand: bool,
     /// The local mining timer finished a block this frame, if any.
     pub broke_block: Option<Block>,
     /// The hand swung this frame for an attack.
@@ -145,6 +148,10 @@ pub struct GameEvents {
     /// — the P0 hand jab, latched at click time. Covers what the removed
     /// `used_item` echo used to animate.
     pub interacted: bool,
+    /// The jab above belongs to the OFF hand (the click's predicted effect —
+    /// or its `used_unpredicted` echo — came from the ladder's second pass):
+    /// the LEFT hand jabs instead of the right.
+    pub interacted_off_hand: bool,
     /// The player took damage this frame (post `player_damage_pre`, amount
     /// > 0) — plays the hurt sound and kicks the screen/hand shake.
     pub player_damaged: bool,
@@ -422,12 +429,18 @@ impl Game {
         // `jabbed` verdict was silent (a mod-consumed use/interact the
         // replica can't foresee), so folding it in can never play twice.
         let local_jab = std::mem::take(&mut self.local_hand_jab) || se.used_unpredicted;
+        // Which hand the jab belongs to: the local latch's own verdict, or —
+        // for the echoed unpredicted consumption — the server's acting hand.
+        let local_jab_off =
+            std::mem::take(&mut self.local_hand_jab_off) || se.used_unpredicted_off;
         let local_swing = std::mem::take(&mut self.local_hand_swing);
         let local_threw = std::mem::take(&mut self.local_hand_threw);
         let local_broke = std::mem::take(&mut self.local_broke_block);
         let local_placed = std::mem::take(&mut self.local_placed_block);
+        let local_placed_off = std::mem::take(&mut self.local_placed_off_hand);
         let mut out = GameEvents {
             placed_block: local_placed,
+            placed_off_hand: local_placed_off,
             broke_block: local_broke,
             swung_hand: local_swing,
             picked_up_item: se.picked_up_item,
@@ -436,6 +449,7 @@ impl Game {
             toggled_door: se.toggled_door,
             bed_interacted: se.bed_interacted,
             interacted: local_jab,
+            interacted_off_hand: local_jab && local_jab_off,
             player_damaged: se.player_damaged,
             player_died: se.player_died,
             sleep_ended: se.sleep_ended,
@@ -510,6 +524,51 @@ impl Game {
         }
     }
 
+    /// The whole use-click prediction verdict, mirroring the server's
+    /// two-pass ladder: the MAIN hand first; only when nothing is predicted
+    /// to act does the OFF hand evaluate (acting hand = actor context,
+    /// exactly like the server's dispatch — every held read in the
+    /// prediction resolves through `player.acting_hand`). At most one pass
+    /// opens a ledger entry: pass 2 runs only when pass 1 predicted nothing
+    /// at all. Returns `(jabbed, off_hand_acted, place)`.
+    ///
+    /// The jab fires when the click predictably does something — including a
+    /// PLAUSIBLE placement the ghost convention keeps unpredicted (oriented
+    /// model, replace-in-place, slab stack). A click the client knows is a
+    /// no-op still ships (the server may know better — mods, state the
+    /// replica can't see) and stays silent locally; the verdict rides the
+    /// wire so a server-side surprise (a mod-consumed use/interact) echoes
+    /// the jab back through `SelfEvents::used_unpredicted`.
+    pub(super) fn predict_click_verdict(
+        &mut self,
+        input: &GameInput,
+        use_mob: Option<u64>,
+    ) -> (bool, bool, PlacePrediction) {
+        use petramond_world::inventory::Hand;
+        self.player.acting_hand = Hand::Main;
+        let (mod_claimed, mut place) = self.predict_use_click(input.movement.sneak);
+        let mut jabbed = mod_claimed
+            || !matches!(place, PlacePrediction::No)
+            || self.use_click_predicts_effect(input, use_mob);
+        let mut off_hand = false;
+        if !jabbed && self.self_view.inventory.off_hand().is_some() {
+            self.player.acting_hand = Hand::Off;
+            let (mod_claimed_off, place_off) = self.predict_use_click(input.movement.sneak);
+            let off_jab = mod_claimed_off
+                || !matches!(place_off, PlacePrediction::No)
+                || self.use_click_predicts_effect(input, use_mob);
+            if off_jab {
+                place = place_off;
+                jabbed = true;
+                off_hand = true;
+            }
+        }
+        // Never leak the acting hand past the verdict (level-state reads —
+        // the render frame, the roster — are main-hand by definition).
+        self.player.acting_hand = Hand::Main;
+        (jabbed, off_hand, place)
+    }
+
     /// Assemble this frame's message batch into `frame_messages`, in
     /// consumption order: the `PlayerUpdate` first (so the edge-drop rule and
     /// slot-dependent actions see this frame's state), then this frame's click
@@ -544,23 +603,13 @@ impl Game {
                     block: h.block,
                     normal: h.normal,
                 });
-                let (mod_claimed, place) = self.predict_use_click(input.movement.sneak);
+                let (jabbed, off_hand, place) = self.predict_click_verdict(input, use_mob);
                 let request_id = match place {
                     PlacePrediction::Predicted(id) | PlacePrediction::TrackOnly(id) => Some(id),
                     _ => None,
                 };
-                // P0 jab only when the click predictably does something —
-                // including a PLAUSIBLE placement the ghost convention keeps
-                // unpredicted (oriented model, replace-in-place, slab stack).
-                // A click the client knows is a no-op still ships (the server
-                // may know better — mods, state the replica can't see) and
-                // stays silent locally; the verdict rides the wire so a
-                // server-side surprise (a mod-consumed use/interact) echoes
-                // the jab back through `SelfEvents::used_unpredicted`.
-                let jabbed = mod_claimed
-                    || !matches!(place, PlacePrediction::No)
-                    || self.use_click_predicts_effect(input, use_mob);
                 self.local_hand_jab = jabbed;
+                self.local_hand_jab_off = jabbed && off_hand;
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::UseClick {
                         mob: use_mob,

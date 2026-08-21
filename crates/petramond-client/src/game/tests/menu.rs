@@ -45,7 +45,7 @@ fn closing_cursor_stack_uses_empty_inventory_slot_after_matching_stacks() {
     let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     slots[4] = None;
     game.server.sessions[0].player.inventory =
-        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
+        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), None, 0);
 
     game.server.close_cursor_stack_for(0);
 
@@ -66,7 +66,7 @@ fn closing_cursor_stack_queues_a_drop_when_inventory_is_full() {
     let mut game = game();
     let slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     game.server.sessions[0].player.inventory =
-        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
+        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), None, 0);
 
     game.server.close_cursor_stack_for(0);
 
@@ -90,7 +90,7 @@ fn closing_cursor_stack_fills_matching_partials_then_drops_leftover() {
     slots[2] = Some(ItemStack::new(ItemType::Dirt, 60));
     slots[10] = Some(ItemStack::new(ItemType::Dirt, 63));
     game.server.sessions[0].player.inventory =
-        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
+        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), None, 0);
 
     game.server.close_cursor_stack_for(0);
 
@@ -126,7 +126,7 @@ fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
     slots[petramond_world::inventory::HOTBAR_LEN] = Some(ItemStack::new(ItemType::Dirt, 30)); // main grid
     slots[5] = Some(ItemStack::new(ItemType::Stone, 64)); // untouched
     game.server.sessions[0].player.inventory =
-        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 5)), 0);
+        Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 5)), None, 0);
 
     game.collect_to_cursor();
 

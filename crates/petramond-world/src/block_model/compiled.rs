@@ -322,7 +322,7 @@ impl CompiledAsset for BlockModel {
     /// v8: cubes carry their authored element NAME (per-row `hidden_parts`
     /// filtering needs it).
     /// v9: cubes carry their per-face `cullface` directions.
-    const FORMAT_VERSION: u32 = 9;
+    const FORMAT_VERSION: u32 = 10;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 

@@ -25,6 +25,7 @@ pub(super) fn build(
     let menu = game.menu_read_model();
     let inv = menu.inventory;
     snapshot.active = inv.active_slot();
+    snapshot.off_hand = inv.off_hand().copied();
     snapshot.craft_output = menu.craft_output;
     snapshot.cursor = inv.cursor().copied();
     snapshot.container = menu.container;
@@ -78,6 +79,7 @@ fn preview_capacity(
             .get(i)
             .map(|cell| slot_capacity(cell, held))
             .unwrap_or(0),
+        MenuSlot::OffHand => slot_capacity(&snapshot.off_hand, held),
         // The same question the committed prediction and the server both ask
         // (`container::slot_admits`). Asking a THIRD one here means the drag
         // preview shows a split the click that follows it will not perform.
@@ -115,6 +117,7 @@ fn preview_place(
     }
 
     let cell = match slot {
+        MenuSlot::OffHand => Some(&mut snapshot.off_hand),
         MenuSlot::Container(i)
             if petramond_world::container::slot_admits(
                 specs,

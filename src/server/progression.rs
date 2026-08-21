@@ -77,6 +77,7 @@ impl ServerGame {
                 .raw_slots()
                 .iter()
                 .chain(std::iter::once(&sess.player.inventory.cursor().copied()))
+                .chain(std::iter::once(&sess.player.inventory.off_hand().copied()))
                 .flatten()
                 .map(|stack| stack.item)
                 .collect::<Vec<_>>();

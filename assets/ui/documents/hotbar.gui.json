@@ -30,13 +30,26 @@
     "style": "list.row",
     "children": [
       {
-        "type": "slot_grid",
-        "role": "hotbar",
-        "cols": 9,
-        "rows": 1,
-        "bind": {
-          "selected": "active_slot"
-        }
+        "type": "row",
+        "layout": {
+          "gap": 4,
+          "align": "end"
+        },
+        "children": [
+          {
+            "type": "slot",
+            "role": "off_hand"
+          },
+          {
+            "type": "slot_grid",
+            "role": "hotbar",
+            "cols": 9,
+            "rows": 1,
+            "bind": {
+              "selected": "active_slot"
+            }
+          }
+        ]
       }
     ]
   }

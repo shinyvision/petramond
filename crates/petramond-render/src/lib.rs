@@ -359,6 +359,9 @@ pub struct PlayerRenderInstance {
 pub struct RemotePlayerRender {
     pub body: PlayerRenderInstance,
     pub held: HeldItemView,
+    /// The remote's OFF-hand item view — drawn in the body's left hand
+    /// (`item == None` = empty, nothing attached).
+    pub held_off: HeldItemView,
 }
 
 /// A placed chest to draw in the world this frame: an inset body box plus a lid

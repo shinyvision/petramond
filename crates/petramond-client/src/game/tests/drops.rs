@@ -424,12 +424,13 @@ fn cursor_throw_and_drop_selected_cases() {
             (true, Source::Cursor) => Inventory::from_parts(
                 [None; petramond_world::inventory::TOTAL_SLOTS],
                 Some(ItemStack::new(ItemType::Dirt, STACK)),
+                None,
                 0,
             ),
             (true, Source::Selected) => {
                 let mut slots = [None; petramond_world::inventory::TOTAL_SLOTS];
                 slots[0] = Some(ItemStack::new(ItemType::Dirt, STACK));
-                Inventory::from_parts(slots, None, 0)
+                Inventory::from_parts(slots, None, None, 0)
             }
         };
 
@@ -494,6 +495,7 @@ fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
     game.server.sessions[0].player.inventory = Inventory::from_parts(
         [None; petramond_world::inventory::TOTAL_SLOTS],
         Some(ItemStack::new(ItemType::Dirt, 12)),
+        None,
         0,
     );
 
@@ -532,6 +534,7 @@ fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
     game.server.sessions[0].player.inventory = Inventory::from_parts(
         [None; petramond_world::inventory::TOTAL_SLOTS],
         Some(ItemStack::new(ItemType::Dirt, 12)),
+        None,
         0,
     );
 
@@ -573,7 +576,7 @@ fn queued_q_drop_uses_the_action_time_hotbar_slot() {
     let mut slots = [None; petramond_world::inventory::TOTAL_SLOTS];
     slots[0] = Some(ItemStack::new(ItemType::Dirt, 5));
     slots[1] = Some(ItemStack::new(ItemType::Stone, 7));
-    game.server.sessions[0].player.inventory = Inventory::from_parts(slots, None, 0);
+    game.server.sessions[0].player.inventory = Inventory::from_parts(slots, None, None, 0);
 
     game.drop_selected_item(false);
     game.server.sessions[0].player.inventory.set_active(1);

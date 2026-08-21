@@ -98,10 +98,12 @@ impl ServerGame {
             jabbed,
         );
         // A water-stopping ray is gameplay authority, not merely a client
-        // presentation choice. The SAME captured item that selects this ray
-        // must still occupy the captured slot when Placement consumes the
-        // click.
-        click.target = self.authoritative_use_target(s, click.held_item(), click.target);
+        // presentation choice. The SAME captured items that select this ray
+        // must still occupy the captured hands when Placement consumes the
+        // click. Either hand's water-ray item selects the water ray (main
+        // first) — the off-hand boat needs the water target for its second
+        // dispatch pass.
+        click.target = self.authoritative_use_target(s, click.ray_item(), click.target);
         let sess = &mut self.sessions[s];
         if let Some(old) = sess
             .pending_use_click

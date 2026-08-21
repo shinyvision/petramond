@@ -12,10 +12,23 @@ pub use slots::{
 pub const HOTBAR_LEN: usize = 9;
 pub const MAIN_LEN: usize = 27;
 pub const TOTAL_SLOTS: usize = HOTBAR_LEN + MAIN_LEN; // 36
+
+/// Which hand an action reads its held item from. `Main` is the selected
+/// hotbar slot; `Off` is the dedicated off-hand slot. The off-hand never
+/// participates in pickup routing (`add`) or crafting — it only holds what a
+/// player deliberately put there.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Hand {
+    #[default]
+    Main,
+    Off,
+}
+
 #[derive(Clone, Debug)]
 pub struct Inventory {
     slots: [Option<ItemStack>; TOTAL_SLOTS],
     cursor: Option<ItemStack>,
+    off_hand: Option<ItemStack>,
     active: u8,
     /// Mutation counter for replication: bumped by every mutating public
     /// method (conservatively — a mutable borrow via [`slot_mut`]/
@@ -33,6 +46,7 @@ impl Default for Inventory {
         Self {
             slots: [None; TOTAL_SLOTS],
             cursor: None,
+            off_hand: None,
             active: 0,
             revision: 0,
         }
@@ -90,6 +104,112 @@ impl Inventory {
     pub fn selected(&self) -> Option<&ItemStack> {
         self.slot(self.active as usize)
     }
+    #[inline]
+    pub fn off_hand(&self) -> Option<&ItemStack> {
+        self.off_hand.as_ref()
+    }
+    #[inline]
+    pub fn off_hand_mut(&mut self) -> &mut Option<ItemStack> {
+        // Conservative: assume the borrower mutates.
+        self.bump_revision();
+        &mut self.off_hand
+    }
+    /// The stack a `hand` holds — the one accessor every acting-hand read
+    /// resolves through, so main and off behave identically by construction.
+    #[inline]
+    pub fn held_in(&self, hand: Hand) -> Option<&ItemStack> {
+        match hand {
+            Hand::Main => self.selected(),
+            Hand::Off => self.off_hand(),
+        }
+    }
+    pub fn take_off_hand(&mut self) -> Option<ItemStack> {
+        if self.off_hand.is_some() {
+            self.bump_revision();
+        }
+        self.off_hand.take()
+    }
+    /// Swap the off-hand slot with inventory slot `i` — the F gesture: the
+    /// selected hotbar slot in gameplay, the hovered slot in a menu. A swap
+    /// with one side empty moves the stack across; both empty is a true
+    /// no-op (revision untouched).
+    pub fn swap_off_hand_with_slot(&mut self, i: usize) {
+        let Some(slot) = self.slots.get_mut(i) else {
+            return;
+        };
+        if slot.is_none() && self.off_hand.is_none() {
+            return;
+        }
+        std::mem::swap(slot, &mut self.off_hand);
+        self.bump_revision();
+    }
+    /// The off-hand swap against an EXTERNAL cell (an open container's slot),
+    /// spec-checked like a click — but ALL-OR-NOTHING: a cell whose spec
+    /// refuses the off-hand stack (filter or runtime mask or take-only)
+    /// swaps NOTHING, unlike a click, which still takes. A swap is one
+    /// gesture over two stacks; half-executing it (take without give) reads
+    /// as item loss, not as a refusal. An EMPTY off-hand is a pure take and
+    /// is never gated (takes never are). Runs identically on the server's
+    /// world cell and the client's mirror cell — the `click_container_cell`
+    /// parity contract.
+    pub fn swap_off_hand_with_cell(
+        &mut self,
+        spec: Option<&crate::container::SlotSpec>,
+        gui_state: Option<&crate::gui_state::GuiStateMap>,
+        cell: &mut Option<ItemStack>,
+    ) -> bool {
+        if let (Some(spec), Some(held)) = (spec, self.off_hand.as_ref()) {
+            if spec.take_only || !spec.admits(held.item, spec.accepts_mask(gui_state)) {
+                return false;
+            }
+        }
+        if cell.is_none() && self.off_hand.is_none() {
+            return false;
+        }
+        std::mem::swap(cell, &mut self.off_hand);
+        self.bump_revision();
+        true
+    }
+    /// World-PICKUP routing: top up the OFF-HAND first when it already holds
+    /// the same item (a torch stack in the left hand keeps itself filled),
+    /// then route the remainder through the ordinary hotbar→main insertion
+    /// ([`add`](Self::add)). An empty or different-item off-hand is never a
+    /// pickup destination. Pickup is the ONLY path with this routing — gives,
+    /// crafting returns, and menu moves deliberately stay on `add`.
+    pub fn pickup(&mut self, stack: ItemStack) -> Option<ItemStack> {
+        match self.pickup_into_off_hand(stack) {
+            None => None,
+            Some(rest) => self.add(rest),
+        }
+    }
+    /// Capacity twin of [`pickup`](Self::pickup) — the partial-pickup planner.
+    pub fn pickup_fits_count(&self, stack: ItemStack) -> u8 {
+        if stack.is_empty() {
+            return 0;
+        }
+        let off_room = self
+            .off_hand
+            .as_ref()
+            .filter(|off| off.can_stack_with(&stack))
+            .map_or(0, ItemStack::space_left);
+        if off_room >= stack.count {
+            return stack.count;
+        }
+        off_room + self.fits_count(stack.restack(stack.count - off_room))
+    }
+    fn pickup_into_off_hand(&mut self, stack: ItemStack) -> Option<ItemStack> {
+        let Some(off) = self.off_hand.as_mut() else {
+            return Some(stack);
+        };
+        if !off.can_stack_with(&stack) || off.space_left() == 0 {
+            return Some(stack);
+        }
+        let moved = off.space_left().min(stack.count);
+        off.count += moved;
+        self.bump_revision();
+        let rest = stack.count - moved;
+        (rest > 0).then(|| stack.restack(rest))
+    }
     pub fn add(&mut self, stack: ItemStack) -> Option<ItemStack> {
         // The whole inventory in slot order: hotbar `[0, 9)` then main `[9, 36)`.
         self.add_to_range(stack, 0, TOTAL_SLOTS)
@@ -106,13 +226,19 @@ impl Inventory {
         }
     }
     pub fn decrement_selected(&mut self) {
-        let i = self.active as usize;
-        if let Some(stack) = self.slots[i].as_mut() {
+        self.decrement_held(Hand::Main);
+    }
+    pub fn decrement_held(&mut self, hand: Hand) {
+        if self.held_in(hand).is_none() {
+            return;
+        }
+        self.bump_revision();
+        let slot = self.held_slot_mut(hand);
+        if let Some(stack) = slot.as_mut() {
             stack.count = stack.count.saturating_sub(1);
             if stack.count == 0 {
-                self.slots[i] = None;
+                *slot = None;
             }
-            self.bump_revision();
         }
     }
     /// Swap ONE of the selected stack for `replacement` — a bucket filling or
@@ -122,25 +248,34 @@ impl Inventory {
     /// slot is empty or the replacement has nowhere to go — all-or-nothing, so
     /// the world mutation it accompanies can be gated on it.
     pub fn replace_selected_one(&mut self, replacement: ItemStack) -> bool {
-        let i = self.active as usize;
-        if self.slots[i].is_none() {
+        self.replace_held_one(Hand::Main, replacement)
+    }
+    pub fn replace_held_one(&mut self, hand: Hand, replacement: ItemStack) -> bool {
+        if self.held_in(hand).is_none() {
             return false;
         }
         self.bump_revision();
-        let stack = self.slots[i].as_mut().expect("checked above");
+        let held = self.held_slot_mut(hand);
+        let stack = held.as_mut().expect("checked above");
         if stack.count <= 1 {
-            self.slots[i] = Some(replacement);
+            *held = Some(replacement);
             return true;
         }
         stack.count -= 1;
         if self.add(replacement).is_some() {
             // No room for the replacement anywhere: restore and refuse.
-            if let Some(stack) = self.slots[i].as_mut() {
+            if let Some(stack) = self.held_slot_mut(hand).as_mut() {
                 stack.count += 1;
             }
             return false;
         }
         true
+    }
+    fn held_slot_mut(&mut self, hand: Hand) -> &mut Option<ItemStack> {
+        match hand {
+            Hand::Main => &mut self.slots[self.active as usize],
+            Hand::Off => &mut self.off_hand,
+        }
     }
     #[inline]
     pub fn cursor(&self) -> Option<&ItemStack> {
@@ -207,6 +342,7 @@ impl Inventory {
         // from them too.
         for take_full in [false, true] {
             Self::drain_into(&mut cursor, &mut self.slots, take_full);
+            Self::drain_into(&mut cursor, core::slice::from_mut(&mut self.off_hand), take_full);
         }
         self.cursor = Some(cursor);
     }
@@ -218,6 +354,7 @@ impl Inventory {
         for take_full in [false, true] {
             Self::drain_into(&mut cursor, extra, take_full);
             Self::drain_into(&mut cursor, &mut self.slots, take_full);
+            Self::drain_into(&mut cursor, core::slice::from_mut(&mut self.off_hand), take_full);
         }
         self.cursor = Some(cursor);
     }
@@ -489,14 +626,26 @@ impl Inventory {
         true
     }
 
+    /// Move the off-hand stack into the ordinary grid (the shift-click on the
+    /// off-hand cell). Whatever does not fit stays in the off-hand.
+    pub fn shift_move_off_hand(&mut self) {
+        let Some(stack) = self.off_hand.take() else {
+            return;
+        };
+        self.bump_revision();
+        self.off_hand = self.add_to_range(stack, 0, TOTAL_SLOTS);
+    }
+
     pub fn from_parts(
         slots: [Option<ItemStack>; TOTAL_SLOTS],
         cursor: Option<ItemStack>,
+        off_hand: Option<ItemStack>,
         active: u8,
     ) -> Self {
         Self {
             slots,
             cursor,
+            off_hand,
             active: active.min(HOTBAR_LEN as u8 - 1),
             revision: 0,
         }

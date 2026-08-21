@@ -212,8 +212,8 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     );
     assert_eq!(
         s1.inventory.as_ref().map(|v| v.len()),
-        Some(petramond_world::inventory::TOTAL_SLOTS + 1),
-        "36 slots + the cursor"
+        Some(petramond_world::inventory::TOTAL_SLOTS + 2),
+        "36 slots + the cursor + the off-hand"
     );
 
     let up2 = pump_one_tick(&mut game);

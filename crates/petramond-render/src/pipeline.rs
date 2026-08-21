@@ -29,7 +29,7 @@ pub(super) use self::environment::{
     EnvScaler,
 };
 pub(super) use self::grade::create_grade_bind;
-pub(super) use self::model3d::MAX_ITEM3D_VERTICES;
+pub(super) use self::model3d::{MAX_ITEM3D_VERTICES, MAX_MODEL3D_INDICES, MAX_MODEL3D_VERTICES};
 pub(super) use self::overlays::{MAX_BREAK_INDICES, MAX_BREAK_VERTICES};
 pub(super) use self::ui_icons::MAX_UI_VERTICES;
 

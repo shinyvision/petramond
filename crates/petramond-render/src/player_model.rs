@@ -35,6 +35,35 @@ use petramond::player::model::PLAYER_MODEL_SCALE;
 const HAND_GRIP_PX: Vec3 = Vec3::new(6.0, 11.0, -1.5);
 const HELD_SHOULDER_BONE: &str = "left_shoulder";
 const HELD_ELBOW_BONE: &str = "left_elbow";
+/// The OFF hand: the authored RIGHT arm lands on the visual LEFT side under
+/// the same yaw+π handedness conversion that makes the authored left arm the
+/// visual right. Its grip/attach transforms are the right hand's conjugated by
+/// an arm-local X mirror ([`mirror_local`]), so the two fists stay symmetric
+/// by construction.
+const OFF_SHOULDER_BONE: &str = "right_shoulder";
+const OFF_ELBOW_BONE: &str = "right_elbow";
+
+/// Mirror an arm-local attach transform across the arm's YZ plane by
+/// CONJUGATION: `S · M · S` with `S = diag(-1, 1, 1)`. Determinant preserved
+/// (winding and texturing untouched) — used ONLY for the held block
+/// mini-cube, whose symmetric geometry survives it AND whose stream draws on
+/// the back-face-culled opaque pipeline (a true reflection would cull it
+/// inside-out). Sprites and bbmodels use [`reflect_local`] instead.
+fn mirror_local(m: Mat4) -> Mat4 {
+    let s = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    s * m * s
+}
+
+/// TRUE reflection of an arm-local attach transform (`S · M`): the left fist
+/// holds the MIRROR IMAGE of what the right fist holds — the same rule the
+/// first-person pass uses (`hand::reflect_x`), and what Blockbench's
+/// `thirdperson_lefthand` preview shows. Flips winding; the sprite and
+/// bbmodel held streams draw on the double-sided mob pipeline, so that is
+/// safe — the block mini-cube (opaque pipeline, back-face culled) must NOT
+/// use this.
+fn reflect_local(m: Mat4) -> Mat4 {
+    Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)) * m
+}
 
 /// World-space size (blocks) of the held sprite-item slab.
 const SPRITE_WORLD_SIZE: f32 = 0.60;
@@ -46,19 +75,21 @@ const BLOCK_WORLD_SIZE: f32 = 0.30;
 const LIE_LIFT: f32 = 2.2 * PLAYER_MODEL_SCALE;
 
 /// Bake the player body posed for this frame. Returns the emitted index count
-/// plus the visual right-hand world transform (model-pixel units under the
-/// placed, scaled body) for attaching the held item.
+/// plus the visual right- and left-hand world transforms (model-pixel units
+/// under the placed, scaled body) for attaching the held items. `held` drives
+/// the right arm's swing/eat channels, `off` the left arm's (its jab and its
+/// off-hand eat) — both compose over the walk pose on their own shoulders.
 pub(super) fn build_player_body(
     model: &Model,
     env: LightEnv,
     inst: &PlayerRenderInstance,
-    swing: f32,
-    swing_scale: f32,
-    eat: f32,
-    eat_bob: f32,
+    held: &crate::HeldItemView,
+    off: &crate::HeldItemView,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
-) -> (u32, Mat4) {
+) -> (u32, Mat4, Mat4) {
+    let (swing, swing_scale, eat, eat_bob) =
+        (held.swing, held.swing_scale, held.eat, held.eat_bob);
     verts.clear();
     indices.clear();
 
@@ -144,14 +175,24 @@ pub(super) fn build_player_body(
     } else {
         0.0
     };
-    if twist != 0.0 {
+    // The LEFT arm's jab twists the torso the OTHER way (its chirality terms
+    // are the right arm's negated). The two compose additively — a same-frame
+    // main swing + off jab is rare, and each stays a small angle.
+    let off_s = off.swing.clamp(0.0, 1.0);
+    let off_twist = if off.swing > 0.0 {
+        (off_s.sqrt() * std::f32::consts::TAU).sin() * 0.2 * off.swing_scale
+    } else {
+        0.0
+    };
+    let twist_total = twist + off_twist;
+    if twist_total != 0.0 {
         if let Some(body) = model.bone_named("body") {
-            model.apply_bone_rotation(&mut pose, body, Quat::from_rotation_y(twist));
+            model.apply_bone_rotation(&mut pose, body, Quat::from_rotation_y(twist_total));
         }
     }
     if let Some(hb) = model.head_bone() {
         if !head_animated(hb) {
-            model.apply_head_look(&mut pose, hb, inst.head_yaw - twist, inst.head_pitch);
+            model.apply_head_look(&mut pose, hb, inst.head_yaw - twist_total, inst.head_pitch);
         }
     }
     if swing > 0.0 {
@@ -170,13 +211,37 @@ pub(super) fn build_player_body(
             model.apply_bone_rotation(&mut pose, shoulder, rot);
         }
     }
+    // The LEFT arm's jab: the same raise (X terms are mirror-symmetric), the
+    // chirality-carrying Y/Z terms negated for the mirrored arm.
+    if off.swing > 0.0 {
+        if let Some(shoulder) = model.bone_named(OFF_SHOULDER_BONE) {
+            let eased = 1.0 - (1.0 - off_s).powi(4);
+            let raise = (eased * std::f32::consts::PI).sin() * 1.2;
+            let pitch_term =
+                (off_s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
+            let roll = (off_s * std::f32::consts::PI).sin() * 0.4;
+            let rot = Quat::from_rotation_x((raise + pitch_term) * off.swing_scale)
+                * Quat::from_rotation_y(off_twist)
+                * Quat::from_rotation_z(roll * off.swing_scale);
+            model.apply_bone_rotation(&mut pose, shoulder, rot);
+        }
+    }
     // Eating: hold the forearm up so the food sits at the mouth (following the
     // gaze pitch like the swing does), bobbing with each bite. Blended by the
-    // shared `eat` channel, so start/finish/abort ease exactly like first person.
+    // shared `eat` channel, so start/finish/abort ease exactly like first
+    // person. Each hand's eat raises ITS OWN arm (the X raise is
+    // mirror-symmetric, so the off arm needs no sign flips).
     if eat > 0.0 {
         if let Some(shoulder) = model.bone_named(HELD_SHOULDER_BONE) {
             let raise = 1.35 + (inst.head_pitch + 0.7) * 0.35;
             let rot = Quat::from_rotation_x(eat * (raise + eat_bob * 0.04));
+            model.apply_bone_rotation(&mut pose, shoulder, rot);
+        }
+    }
+    if off.eat > 0.0 {
+        if let Some(shoulder) = model.bone_named(OFF_SHOULDER_BONE) {
+            let raise = 1.35 + (inst.head_pitch + 0.7) * 0.35;
+            let rot = Quat::from_rotation_x(off.eat * (raise + off.eat_bob * 0.04));
             model.apply_bone_rotation(&mut pose, shoulder, rot);
         }
     }
@@ -189,7 +254,8 @@ pub(super) fn build_player_body(
 }
 
 /// Emit every cube of the posed model under `global`, lit and hurt-tinted, and
-/// return the index count plus the visual right-hand world transform.
+/// return the index count plus the visual right- and left-hand world
+/// transforms.
 fn bake_cubes(
     model: &Model,
     pose: &[Mat4],
@@ -198,7 +264,7 @@ fn bake_cubes(
     env: LightEnv,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
-) -> (u32, Mat4) {
+) -> (u32, Mat4, Mat4) {
     let tint = fold_tint(
         hurt_tint(inst.hurt),
         DynLight::new(inst.skylight, inst.blocklight),
@@ -206,14 +272,18 @@ fn bake_cubes(
     );
     bake_model_cubes(model, pose, global, tint, |_| false, verts, indices);
 
-    let hand_bone = model
-        .bone_named(HELD_ELBOW_BONE)
-        .or_else(|| model.bone_named(HELD_SHOULDER_BONE));
-    let hand = global
-        * hand_bone
-            .and_then(|b| pose.get(b).copied())
-            .unwrap_or(Mat4::IDENTITY);
-    (indices.len() as u32, hand)
+    let arm = |elbow: &str, shoulder: &str| {
+        let bone = model
+            .bone_named(elbow)
+            .or_else(|| model.bone_named(shoulder));
+        global
+            * bone
+                .and_then(|b| pose.get(b).copied())
+                .unwrap_or(Mat4::IDENTITY)
+    };
+    let hand = arm(HELD_ELBOW_BONE, HELD_SHOULDER_BONE);
+    let off_hand = arm(OFF_ELBOW_BONE, OFF_SHOULDER_BONE);
+    (indices.len() as u32, hand, off_hand)
 }
 
 /// World transform for the EXTRUDED sprite item (unit XY slab). Tool art runs
@@ -264,6 +334,69 @@ pub(super) fn held_model_transform(hand: Mat4, kind: petramond_world::block_mode
         * petramond_world::block_model::instance(kind).display_from_unit
 }
 
+/// OFF-hand (left fist) twins of the three attach transforms. The sprite and
+/// bbmodel twins are the right hand's composition truly REFLECTED
+/// ([`reflect_local`]) — the left fist holds the mirror image, so a tool's
+/// head still points forward and a model shows the same face its Blockbench
+/// lefthand preview shows. The block mini-cube keeps the winding-preserving
+/// conjugation (its pipeline culls, and a cube's three-quarter view survives
+/// conjugation).
+pub(super) fn held_sprite_transform_off(off_hand: Mat4) -> Mat4 {
+    let size = SPRITE_WORLD_SIZE / PLAYER_MODEL_SCALE;
+    let rot = Mat4::from_rotation_x(-65f32.to_radians())
+        * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
+        * Mat4::from_rotation_z(55f32.to_radians());
+    let axis = rot.transform_vector3(Vec3::new(
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+        0.0,
+    ));
+    off_hand
+        * reflect_local(
+            Mat4::from_translation(HAND_GRIP_PX + axis * (0.30 * size))
+                * rot
+                * Mat4::from_scale(Vec3::splat(size)),
+        )
+}
+
+pub(super) fn held_block_transform_off(off_hand: Mat4) -> Mat4 {
+    off_hand
+        * mirror_local(
+            Mat4::from_translation(HAND_GRIP_PX + Vec3::new(0.0, -0.5, -2.0))
+                * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4)
+                * Mat4::from_scale(Vec3::splat(BLOCK_WORLD_SIZE / PLAYER_MODEL_SCALE)),
+        )
+}
+
+/// The bbmodel off-hand attach — the third-person twin of the first-person
+/// rule (`hand::held_model_off`, Blockbench's lefthand composition): the
+/// hand-layer FRAME mirrors by conjugation (`mirror_local` — for this frame
+/// that is just the grip's x negated: x-rotations and the 180° yaw are
+/// mirror-symmetric), the pose is the slot's values with `translation.x` /
+/// `rotation.y` / `rotation.z` negated ([`DisplayTransform::left_hand`],
+/// authored `thirdperson_lefthand` included), and the geometry + its
+/// `display_from_unit` rebase stay untouched — no reflection.
+pub(super) fn held_model_transform_off(
+    off_hand: Mat4,
+    kind: petramond_world::block_model::BlockModelKind,
+) -> Mat4 {
+    let display = petramond_world::block_model::display(kind);
+    let pose = display
+        .thirdperson_lefthand
+        .as_ref()
+        .unwrap_or(&display.thirdperson_righthand)
+        .left_hand();
+    off_hand
+        * mirror_local(
+            Mat4::from_translation(HAND_GRIP_PX)
+                * Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE))
+                * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+                * Mat4::from_rotation_y(std::f32::consts::PI),
+        )
+        * pose.base_matrix()
+        * petramond_world::block_model::instance(kind).display_from_unit
+}
+
 /// CPU-transform the given vertex positions by `m` — baking in model space then
 /// placing in the world on the CPU, since the opaque pipeline has no per-draw
 /// model matrix. Takes a position iterator so both vertex layouts (packed
@@ -296,16 +429,22 @@ mod tests {
         }
     }
 
+    fn swing_view(swing: f32) -> crate::HeldItemView {
+        crate::HeldItemView {
+            swing,
+            swing_scale: 1.0,
+            ..Default::default()
+        }
+    }
+
     fn bake(inst: &PlayerRenderInstance, swing: f32) -> Vec<ItemVertex> {
         let (mut v, mut i) = (Vec::new(), Vec::new());
-        let (n, _) = build_player_body(
+        let (n, _, _) = build_player_body(
             player_model(),
             LightEnv::IDENTITY,
             inst,
-            swing,
-            1.0,
-            0.0,
-            0.0,
+            &swing_view(swing),
+            &crate::HeldItemView::default(),
             &mut v,
             &mut i,
         );
@@ -315,18 +454,30 @@ mod tests {
 
     fn hand(inst: &PlayerRenderInstance, swing: f32) -> Mat4 {
         let (mut v, mut i) = (Vec::new(), Vec::new());
-        let (_, hand) = build_player_body(
+        let (_, hand, _) = build_player_body(
             player_model(),
             LightEnv::IDENTITY,
             inst,
-            swing,
-            1.0,
-            0.0,
-            0.0,
+            &swing_view(swing),
+            &crate::HeldItemView::default(),
             &mut v,
             &mut i,
         );
         hand
+    }
+
+    fn off_hand(inst: &PlayerRenderInstance, off_swing: f32) -> Mat4 {
+        let (mut v, mut i) = (Vec::new(), Vec::new());
+        let (_, _, off) = build_player_body(
+            player_model(),
+            LightEnv::IDENTITY,
+            inst,
+            &crate::HeldItemView::default(),
+            &swing_view(off_swing),
+            &mut v,
+            &mut i,
+        );
+        off
     }
 
     #[test]
@@ -515,6 +666,261 @@ mod tests {
             grip.x < inst.pos.x,
             "yaw 0 player-right is camera-right/world -X, grip at {grip:?}"
         );
+    }
+
+    /// Visual preview harness (NOT an assertion): the third-person body with
+    /// the SAME item in both fists, seen from the front — so the off-hand
+    /// attach transforms can be checked as the mirror of the right hand's.
+    /// Rows: sprite item at rest, bbmodel item at rest, sprite mid off-jab.
+    /// Run: `cargo test --lib -- --ignored --nocapture render_third_person_off_hand_preview`.
+    /// Writes /tmp/third_person_off_hand.png.
+    #[test]
+    #[ignore = "visual preview harness; run explicitly to regenerate /tmp/third_person_off_hand.png"]
+    fn render_third_person_off_hand_preview() {
+        use crate::atlas::tile_uv;
+        use crate::lighting::DynLight;
+        use petramond_world::item::{ItemRenderKind, ItemType};
+
+        let (w, h) = (640usize, 640usize);
+        let rows = 3usize;
+        let bg = [30u8, 32, 38];
+        let mut color = vec![0u8; w * h * rows * 3];
+        for px in color.chunks_mut(3) {
+            px.copy_from_slice(&bg);
+        }
+
+        // Front camera: the body stands at the origin facing +Z (yaw 0), the
+        // camera looks at its chest — their right hand is the viewer's left.
+        let proj = Mat4::perspective_rh(55f32.to_radians(), w as f32 / h as f32, 0.05, 20.0);
+        let view = Mat4::look_at_rh(
+            Vec3::new(0.0, 1.25, 2.9),
+            Vec3::new(0.0, 0.95, 0.0),
+            Vec3::Y,
+        );
+        let mvp = proj * view;
+
+        let model = player_model();
+        let skin = (model.texture_rgba.as_slice(), model.tex_w, model.tex_h);
+        let (model_atlas, maw, mah) = petramond_world::block_model::atlas().texture();
+
+        // One z-buffered cell: raster `verts` (already world-space) with a
+        // per-stream texture; both windings fill (the item streams draw on
+        // the double-sided mob pipeline in game).
+        let raster = |verts: &[ItemVertex],
+                      tex: (&[u8], u32, u32),
+                      row: usize,
+                      zbuf: &mut [f32],
+                      color: &mut [u8]| {
+            let (pix, tw, th) = tex;
+            for tri in verts.chunks_exact(3) {
+                let mut s = [[0f32; 3]; 3];
+                let mut ok = true;
+                for (dst, v) in s.iter_mut().zip(tri) {
+                    let c = mvp * glam::Vec4::new(v.pos[0], v.pos[1], v.pos[2], 1.0);
+                    if c.w <= 1e-6 {
+                        ok = false;
+                        break;
+                    }
+                    let n = c / c.w;
+                    *dst = [
+                        (n.x * 0.5 + 0.5) * w as f32,
+                        (1.0 - (n.y * 0.5 + 0.5)) * h as f32,
+                        n.z,
+                    ];
+                }
+                if !ok {
+                    continue;
+                }
+                let (x0, y0, x1, y1, x2, y2) =
+                    (s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1]);
+                let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+                if area.abs() < 1e-6 {
+                    continue;
+                }
+                let inv_area = 1.0 / area;
+                let minx = x0.min(x1).min(x2).floor().max(0.0) as usize;
+                let maxx = x0.max(x1).max(x2).ceil().min(w as f32 - 1.0) as usize;
+                let miny = y0.min(y1).min(y2).floor().max(0.0) as usize;
+                let maxy = y0.max(y1).max(y2).ceil().min(h as f32 - 1.0) as usize;
+                for y in miny..=maxy {
+                    for x in minx..=maxx {
+                        let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                        let w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv_area;
+                        let w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv_area;
+                        let w2 = 1.0 - w0 - w1;
+                        if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                            continue;
+                        }
+                        let z = w0 * s[0][2] + w1 * s[1][2] + w2 * s[2][2];
+                        let li = y * w + x;
+                        if z >= zbuf[li] {
+                            continue;
+                        }
+                        let u = w0 * tri[0].uv[0] + w1 * tri[1].uv[0] + w2 * tri[2].uv[0];
+                        let v = w0 * tri[0].uv[1] + w1 * tri[1].uv[1] + w2 * tri[2].uv[1];
+                        let tx = (u * tw as f32).clamp(0.0, tw as f32 - 1.0) as u32;
+                        let ty = (v * th as f32).clamp(0.0, th as f32 - 1.0) as u32;
+                        let ti = ((ty * tw + tx) * 4) as usize;
+                        if pix[ti + 3] < 128 {
+                            continue;
+                        }
+                        let shade =
+                            w0 * tri[0].shade + w1 * tri[1].shade + w2 * tri[2].shade;
+                        zbuf[li] = z;
+                        let o = ((row * h + y) * w + x) * 3;
+                        color[o] = (pix[ti] as f32 * shade).min(255.0) as u8;
+                        color[o + 1] = (pix[ti + 1] as f32 * shade).min(255.0) as u8;
+                        color[o + 2] = (pix[ti + 2] as f32 * shade).min(255.0) as u8;
+                    }
+                }
+            }
+        };
+
+        // The pickaxe texture, re-addressed through its atlas rect so the
+        // extruded verts' atlas UVs sample the source PNG.
+        let pick_src = format!(
+            "{}/../../assets/textures/stone_pickaxe.png",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let pick_img = image::open(&pick_src).expect("texture").to_rgba8();
+        let (ptw, pth) = pick_img.dimensions();
+        let pick_tile = match ItemType::StonePickaxe.render_kind() {
+            ItemRenderKind::Sprite(t) => t,
+            _ => panic!("pickaxe is a sprite"),
+        };
+        let [au0, av0, au1, av1] = tile_uv(pick_tile);
+        let sprite_stream = |m: Mat4| -> Vec<ItemVertex> {
+            let mut v = Vec::new();
+            crate::item_model::build_extruded_item_lit(
+                pick_tile,
+                DynLight::FULL,
+                LightEnv::IDENTITY,
+                &mut v,
+            );
+            transform_positions(v.iter_mut().map(|x| &mut x.pos), m);
+            // Re-normalize the atlas rect onto the source PNG for sampling.
+            for x in &mut v {
+                x.uv[0] = (x.uv[0] - au0) / (au1 - au0);
+                x.uv[1] = (x.uv[1] - av0) / (av1 - av0);
+            }
+            v
+        };
+        let bucket_kind = match ItemType::WoodenBucket.render_kind() {
+            ItemRenderKind::Model(k) => k,
+            _ => panic!("bucket is a model item"),
+        };
+        let model_stream = |m: Mat4| -> Vec<ItemVertex> {
+            let (mut tv, mut ti) = (Vec::new(), Vec::new());
+            crate::item_model::build_block_model_item(
+                bucket_kind,
+                m,
+                DynLight::FULL,
+                LightEnv::IDENTITY,
+                None,
+                &mut tv,
+                &mut ti,
+            );
+            let mut flat = Vec::with_capacity(ti.len());
+            for &i in &ti {
+                flat.push(tv[i as usize]);
+            }
+            flat
+        };
+
+        let (mut bv, mut bi) = (Vec::new(), Vec::new());
+        // The shared fixture parks the body away from the origin; the camera
+        // above looks at the origin, so stand the body there.
+        let mut inst = instance();
+        inst.pos = Vec3::ZERO;
+        for (row, (off_swing, model_row)) in
+            [(0.0, false), (0.0, true), (0.5, false)].iter().enumerate()
+        {
+            let held_view = swing_view(0.0);
+            let off_view = swing_view(*off_swing);
+            let (_, hand, off_hand) = build_player_body(
+                model,
+                LightEnv::IDENTITY,
+                &inst,
+                &held_view,
+                &off_view,
+                &mut bv,
+                &mut bi,
+            );
+            let mut zbuf = vec![f32::INFINITY; w * h];
+            // Body (indexed → flat triangles), skin texture.
+            let mut body = Vec::with_capacity(bi.len());
+            for &i in &bi {
+                body.push(bv[i as usize]);
+            }
+            raster(&body, skin, row, &mut zbuf, &mut color);
+            if *model_row {
+                raster(
+                    &model_stream(held_model_transform(hand, bucket_kind)),
+                    (model_atlas, maw, mah),
+                    row,
+                    &mut zbuf,
+                    &mut color,
+                );
+                raster(
+                    &model_stream(held_model_transform_off(off_hand, bucket_kind)),
+                    (model_atlas, maw, mah),
+                    row,
+                    &mut zbuf,
+                    &mut color,
+                );
+            } else {
+                raster(
+                    &sprite_stream(held_sprite_transform(hand)),
+                    (pick_img.as_raw(), ptw, pth),
+                    row,
+                    &mut zbuf,
+                    &mut color,
+                );
+                raster(
+                    &sprite_stream(held_sprite_transform_off(off_hand)),
+                    (pick_img.as_raw(), ptw, pth),
+                    row,
+                    &mut zbuf,
+                    &mut color,
+                );
+            }
+            println!(
+                "row {row}: {} (off_swing {off_swing})",
+                if *model_row { "bucket both hands" } else { "pickaxe both hands" }
+            );
+        }
+        image::save_buffer(
+            "/tmp/third_person_off_hand.png",
+            &color,
+            w as u32,
+            (h * rows) as u32,
+            image::ColorType::Rgb8,
+        )
+        .expect("save png");
+        println!("wrote /tmp/third_person_off_hand.png (front view; their right = your left)");
+    }
+
+    #[test]
+    fn off_hand_grip_is_on_the_visual_left_side_and_jabs_inward() {
+        let inst = instance();
+        // The off grip point mirrors the main one in the arm-local frame.
+        let grip_local = Vec3::new(-HAND_GRIP_PX.x, HAND_GRIP_PX.y, HAND_GRIP_PX.z);
+        let rest = off_hand(&inst, 0.0).transform_point3(grip_local);
+        assert!(
+            rest.x > inst.pos.x,
+            "yaw 0 player-left is world +X, off grip at {rest:?}"
+        );
+        for swing in [0.1, 0.25, 0.5, 0.75] {
+            let grip = off_hand(&inst, swing).transform_point3(grip_local);
+            assert!(
+                grip.x < rest.x,
+                "the left-hand jab punches inward at {swing}: {grip:?} vs {rest:?}"
+            );
+            assert!(
+                grip.z > rest.z,
+                "the left-hand jab still punches forward at {swing}: {grip:?} vs {rest:?}"
+            );
+        }
     }
 
     #[test]

@@ -597,6 +597,7 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<petramond_world::i
     match role {
         Role::Hotbar => ui.slots.get(i).copied().flatten(),
         Role::PlayerInv => ui.slots.get(HOTBAR_LEN + i).copied().flatten(),
+        Role::OffHand => ui.off_hand,
         Role::CraftResult => ui.craft_output,
         Role::Container => ui
             .container

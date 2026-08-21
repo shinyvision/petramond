@@ -38,6 +38,8 @@ pub enum Control {
     /// Drop the held (active hotbar) item: one item, or the whole stack when the
     /// sprint/Ctrl modifier is held.
     DropItem,
+    /// Swap the selected hotbar stack with the off-hand slot.
+    SwapOffHand,
     /// Toggle the held block's placement/render state when it supports rotation.
     RotateHeldBlock,
     /// Toggle between the first-person and third-person camera.
@@ -100,13 +102,14 @@ pub enum BindableAction {
     HotbarPrev,
     RotateBlock,
     DropItem,
+    SwapOffHand,
     Chat,
 }
 
 impl BindableAction {
     /// Display order of the Options → Controls screen: grouped by
     /// [`category`](Self::category), categories in first-appearance order.
-    pub const ALL: [BindableAction; 15] = [
+    pub const ALL: [BindableAction; 16] = [
         BindableAction::WalkForward,
         BindableAction::StrafeRight,
         BindableAction::StrafeLeft,
@@ -121,6 +124,7 @@ impl BindableAction {
         BindableAction::HotbarPrev,
         BindableAction::RotateBlock,
         BindableAction::DropItem,
+        BindableAction::SwapOffHand,
         BindableAction::Chat,
     ];
 
@@ -142,6 +146,7 @@ impl BindableAction {
             BindableAction::Sneak => "sneak",
             BindableAction::RotateBlock => "rotate_block",
             BindableAction::DropItem => "drop_item",
+            BindableAction::SwapOffHand => "swap_off_hand",
         }
     }
 
@@ -163,6 +168,7 @@ impl BindableAction {
             BindableAction::Sneak => "Sneak",
             BindableAction::RotateBlock => "Rotate Block",
             BindableAction::DropItem => "Drop Item",
+            BindableAction::SwapOffHand => "Swap Off-hand",
         }
     }
 
@@ -183,7 +189,8 @@ impl BindableAction {
             | BindableAction::HotbarNext
             | BindableAction::HotbarPrev
             | BindableAction::RotateBlock
-            | BindableAction::DropItem => "Interacting",
+            | BindableAction::DropItem
+            | BindableAction::SwapOffHand => "Interacting",
             BindableAction::Chat => "Other",
         }
     }
@@ -206,6 +213,7 @@ impl BindableAction {
             BindableAction::Sneak => Control::Sneak,
             BindableAction::RotateBlock => Control::RotateHeldBlock,
             BindableAction::DropItem => Control::DropItem,
+            BindableAction::SwapOffHand => Control::SwapOffHand,
         }
     }
 
@@ -227,6 +235,7 @@ impl BindableAction {
             BindableAction::Sneak => key(KeyCode::ShiftLeft),
             BindableAction::RotateBlock => key(KeyCode::KeyR),
             BindableAction::DropItem => key(KeyCode::KeyQ),
+            BindableAction::SwapOffHand => key(KeyCode::KeyF),
         }
     }
 }

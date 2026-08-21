@@ -46,6 +46,8 @@ pub enum Role {
     Generic,
     PlayerInv,
     Hotbar,
+    /// The player's single off-hand slot (role string `off_hand`).
+    OffHand,
     CraftResult,
     /// ANY container's slots (role string `container`) — the engine chest and
     /// furnace and a pack's own container alike. What each index means is the
@@ -62,6 +64,7 @@ impl Role {
         Some(match key {
             "player_inv" => Role::PlayerInv,
             "hotbar" => Role::Hotbar,
+            "off_hand" => Role::OffHand,
             "craft_result" => Role::CraftResult,
             "container" => Role::Container,
             _ => return None,
@@ -75,6 +78,7 @@ impl Role {
         Some(match self {
             Role::Hotbar => MenuSlot::Inventory(i),
             Role::PlayerInv => MenuSlot::Inventory(HOTBAR_LEN + i),
+            Role::OffHand => MenuSlot::OffHand,
             Role::CraftResult => MenuSlot::CraftResult,
             Role::Container => MenuSlot::Container(i),
             Role::Generic | Role::Other => return None,
@@ -178,6 +182,9 @@ pub struct UiSnapshot {
     /// One entry per inventory slot (`[0,9)` hotbar, `[9,36)` main grid);
     /// `None` for an empty slot.
     pub slots: [Option<ItemStack>; TOTAL_SLOTS],
+    /// The player's off-hand stack, drawn in the `off_hand` role cell (the
+    /// HUD frame beside the hotbar and the inventory screen's slot).
+    pub off_hand: Option<ItemStack>,
     /// The real player-crafting output, drawn in the take-only result slot.
     pub craft_output: Option<ItemStack>,
     /// Filtered recipe rows, in the same order as the browser document list.
@@ -250,6 +257,7 @@ impl Default for UiSnapshot {
             cursor_px: (0.0, 0.0),
             active: 0,
             slots: [None; TOTAL_SLOTS],
+            off_hand: None,
             craft_output: None,
             craft_recipes: Vec::new(),
             craft_tip: None,

@@ -10,6 +10,7 @@ mod item_use;
 mod joinprofile;
 mod menu;
 mod net_pipe;
+mod off_hand;
 mod placement;
 mod prediction;
 mod remote_join;

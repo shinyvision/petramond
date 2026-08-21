@@ -14,7 +14,7 @@ use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8,
 
 /// The one supported player-file version. Only the CURRENT version decodes —
 /// no legacy ladders. Bump this and let old dev players respawn fresh.
-const VERSION: u32 = 5;
+const VERSION: u32 = 6;
 
 /// Decoded `players/<name>.dat` contents.
 pub struct PlayerData {
@@ -72,6 +72,7 @@ pub fn encode(player: &Player) -> Vec<u8> {
         put_item_slot(&mut b, *slot);
     }
     put_item_slot(&mut b, player.inventory.cursor().copied());
+    put_item_slot(&mut b, player.inventory.off_hand().copied());
     put_u8(&mut b, player.inventory.active_slot());
     put_u8(&mut b, player.craft_craftable_only as u8);
     // Active status effects, persisted by registry NAME — ids are
@@ -147,8 +148,9 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
         *slot = get_item_slot(&mut r)?;
     }
     let cursor = get_item_slot(&mut r)?;
+    let off_hand = get_item_slot(&mut r)?;
     let active = r.u8()?;
-    let inventory = Inventory::from_parts(slots, cursor, active);
+    let inventory = Inventory::from_parts(slots, cursor, off_hand, active);
     let craft_craftable_only = r.u8()? != 0;
 
     let mut effects = Vec::new();
@@ -249,6 +251,10 @@ mod tests {
         player.pitch = -0.5;
         player.set_health(7);
         player.inventory.set_active(3);
+        *player.inventory.off_hand_mut() = Some(petramond_world::item::ItemStack::new(
+            petramond_world::item::ItemType::Coal,
+            9,
+        ));
         player.bed_spawn = Some(BedSpawn {
             bed: IVec3::new(-3, 70, 12),
             spot: IVec3::new(-2, 70, 13),
@@ -283,6 +289,11 @@ mod tests {
         assert_eq!(
             got.inventory.selected().map(|s| s.item),
             player.inventory.selected().map(|s| s.item)
+        );
+        assert_eq!(
+            got.inventory.off_hand().map(|s| (s.item, s.count)),
+            Some((petramond_world::item::ItemType::Coal, 9)),
+            "the off-hand slot survives the round-trip"
         );
         assert!(
             got.restore().craft_craftable_only,

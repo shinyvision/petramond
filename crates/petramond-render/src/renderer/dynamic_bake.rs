@@ -79,6 +79,8 @@ impl Renderer {
             self.hand.index_count = 0;
             self.hand.vertex_count = 0;
             self.hand.item3d_vertex_count = 0;
+            self.hand.off_index_count = 0;
+            self.hand.off_item3d_count = 0;
             return;
         }
 
@@ -196,6 +198,129 @@ impl Renderer {
                         bytemuck::cast_slice(&mvp.to_cols_array()),
                     );
                     self.hand.item3d_vertex_count = count;
+                }
+                self.hand.item3d_verts = iv;
+            }
+        }
+
+        // The OFF (left) hand: same three render-kind paths, mirrored
+        // placements (`hand::mirror_x`), geometry APPENDED after the main
+        // hand's in the shared buffers, MVP slot 1 (byte offset 256). Empty
+        // off-hand = nothing drawn — there is no bare left arm.
+        self.hand.off_index_count = 0;
+        self.hand.off_item3d_start = self.hand.item3d_vertex_count;
+        self.hand.off_item3d_count = 0;
+        self.hand.off_is_model = false;
+        if self.hand.off_item.item.is_some() {
+            let aspect = if self.config.height > 0 {
+                self.config.width as f32 / self.config.height as f32
+            } else {
+                1.0
+            };
+            let vert_size = std::mem::size_of::<petramond_mesh::Vertex>() as u64;
+            let item_vert_size = std::mem::size_of::<crate::item_model::ItemVertex>() as u64;
+            // Held block cube (model3d), appended after the main hand's
+            // geometry; indices stay off-stream-relative and draw with
+            // `base_vertex = vertex_count`.
+            {
+                let mut hv = std::mem::take(&mut self.hand.verts);
+                let mut hi = std::mem::take(&mut self.hand.indices);
+                let mvp = self.hand_shake_mat()
+                    * crate::hand::build_off_hand_lit(
+                        &self.hand.off_item,
+                        aspect,
+                        self.held_item_light(),
+                        &mut hv,
+                        &mut hi,
+                    );
+                let fits = (self.hand.vertex_count as u64 + hv.len() as u64)
+                    <= crate::pipeline::MAX_MODEL3D_VERTICES
+                    && (self.hand.index_count as u64 + hi.len() as u64)
+                        <= crate::pipeline::MAX_MODEL3D_INDICES;
+                if !hi.is_empty() && fits {
+                    self.queue.write_buffer(
+                        &self.hand.model3d_vbuf,
+                        u64::from(self.hand.vertex_count) * vert_size,
+                        bytemuck::cast_slice(&hv),
+                    );
+                    self.queue.write_buffer(
+                        &self.hand.model3d_ibuf,
+                        u64::from(self.hand.index_count) * 4,
+                        bytemuck::cast_slice(&hi),
+                    );
+                    self.queue.write_buffer(
+                        &self.hand.model3d_mvp_buf,
+                        256,
+                        bytemuck::cast_slice(&mvp.to_cols_array()),
+                    );
+                    self.hand.off_index_count = hi.len() as u32;
+                }
+                self.hand.verts = hv;
+                self.hand.indices = hi;
+            }
+            // Extruded sprite / bbmodel (item3d), appended after the main
+            // hand's stream. Mutually exclusive with the model3d geometry
+            // above (one render kind per item), so MVP slot 1 is shared.
+            if let Some((kind, mvp)) = crate::hand::held_model_off(&self.hand.off_item, aspect)
+                .map(|(kind, mvp)| (kind, self.hand_shake_mat() * mvp))
+            {
+                let mut iv = std::mem::take(&mut self.hand.item3d_verts);
+                iv.clear();
+                let (mut tv, mut ti) = (Vec::new(), Vec::new());
+                crate::item_model::build_block_model_item(
+                    kind,
+                    glam::Mat4::IDENTITY,
+                    self.held_item_light(),
+                    self.light_env(),
+                    None,
+                    &mut tv,
+                    &mut ti,
+                );
+                for &idx in &ti {
+                    iv.push(tv[idx as usize]);
+                }
+                let start = u64::from(self.hand.off_item3d_start);
+                if !iv.is_empty() && start + iv.len() as u64 <= crate::pipeline::MAX_ITEM3D_VERTICES
+                {
+                    self.queue.write_buffer(
+                        &self.hand.item3d_vbuf,
+                        start * item_vert_size,
+                        bytemuck::cast_slice(&iv),
+                    );
+                    self.queue.write_buffer(
+                        &self.hand.model3d_mvp_buf,
+                        256,
+                        bytemuck::cast_slice(&mvp.to_cols_array()),
+                    );
+                    self.hand.off_item3d_count = iv.len() as u32;
+                    self.hand.off_is_model = true;
+                }
+                self.hand.item3d_verts = iv;
+            } else if let Some((tile, mvp)) =
+                crate::hand::held_sprite_off(&self.hand.off_item, aspect)
+                    .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
+            {
+                let mut iv = std::mem::take(&mut self.hand.item3d_verts);
+                let count = crate::item_model::build_extruded_stack_lit(
+                    tile,
+                    self.hand.off_item.variant,
+                    self.held_item_light(),
+                    self.light_env(),
+                    &mut iv,
+                );
+                let start = u64::from(self.hand.off_item3d_start);
+                if count > 0 && start + iv.len() as u64 <= crate::pipeline::MAX_ITEM3D_VERTICES {
+                    self.queue.write_buffer(
+                        &self.hand.item3d_vbuf,
+                        start * item_vert_size,
+                        bytemuck::cast_slice(&iv),
+                    );
+                    self.queue.write_buffer(
+                        &self.hand.model3d_mvp_buf,
+                        256,
+                        bytemuck::cast_slice(&mvp.to_cols_array()),
+                    );
+                    self.hand.off_item3d_count = count;
                 }
                 self.hand.item3d_verts = iv;
             }
@@ -453,12 +578,14 @@ impl Renderer {
             let pad = glam::Vec3::new(1.0, 2.2, 1.0);
             if let Some(p) = self.actor.player_view {
                 if visible_world_aabb(p.pos - pad, p.pos + pad) {
-                    self.actor.player_visible.push((p, self.hand.held_item));
+                    self.actor
+                        .player_visible
+                        .push((p, self.hand.held_item, self.hand.off_item));
                 }
             }
             for r in &self.actor.remote_players {
                 if visible_world_aabb(r.body.pos - pad, r.body.pos + pad) {
-                    self.actor.player_visible.push((r.body, r.held));
+                    self.actor.player_visible.push((r.body, r.held, r.held_off));
                 }
             }
         }
@@ -484,17 +611,15 @@ impl Renderer {
         block_verts.clear();
         block_indices.clear();
         let model = self.actor.player_gpu.model;
-        for (inst, held) in &self.actor.player_visible {
+        for (inst, held, off) in &self.actor.player_visible {
             // The builder clears its buffers, so each body bakes into the
             // scratch and appends with a base-vertex offset.
-            let (_, hand) = crate::player_model::build_player_body(
+            let (_, hand, off_hand) = crate::player_model::build_player_body(
                 model,
                 env,
                 inst,
-                held.swing,
-                held.swing_scale,
-                held.eat,
-                held.eat_bob,
+                held,
+                off,
                 &mut scratch_verts,
                 &mut scratch_indices,
             );
@@ -503,77 +628,95 @@ impl Renderer {
             body_indices.extend(scratch_indices.iter().map(|&i| i + base));
 
             let light = crate::lighting::DynLight::new(inst.skylight, inst.blocklight);
-            // A sleeper's hands are empty — the held item would poke through the bed.
-            let held_item = (!inst.sleeping).then_some(held.item).flatten();
-            match held_item.map(|it| it.render_kind()) {
-                Some(petramond_world::item::ItemRenderKind::BlockCube(block)) => {
-                    let m = crate::player_model::held_block_transform(hand);
-                    let start = block_verts.len();
-                    if block == petramond_world::block::Block::Chest {
-                        crate::chest_model::push_chest_item(
-                            &mut block_verts,
-                            &mut block_indices,
-                            glam::Vec3::splat(-0.5),
-                            1.0,
-                            light,
+            // A sleeper's hands are empty — the held items would poke through
+            // the bed. Each hand emits its own item with its own attach
+            // transforms (the off set is the mirrored twin).
+            for (view, hand_mat, off_side) in
+                [(held, hand, false), (off, off_hand, true)]
+            {
+                let item = (!inst.sleeping).then_some(view.item).flatten();
+                match item.map(|it| it.render_kind()) {
+                    Some(petramond_world::item::ItemRenderKind::BlockCube(block)) => {
+                        let m = if off_side {
+                            crate::player_model::held_block_transform_off(hand_mat)
+                        } else {
+                            crate::player_model::held_block_transform(hand_mat)
+                        };
+                        let start = block_verts.len();
+                        if block == petramond_world::block::Block::Chest {
+                            crate::chest_model::push_chest_item(
+                                &mut block_verts,
+                                &mut block_indices,
+                                glam::Vec3::splat(-0.5),
+                                1.0,
+                                light,
+                            );
+                        } else {
+                            crate::item_cube::push_block_item_cube_lit_with_state(
+                                &mut block_verts,
+                                &mut block_indices,
+                                block,
+                                view.block_state,
+                                glam::Vec3::splat(-0.5),
+                                1.0,
+                                light,
+                                false,
+                            );
+                        }
+                        // Instance-data tint on the held mini-cube (dyed wool
+                        // in a remote or third-person hand).
+                        crate::item_model::dye_block_verts(
+                            &mut block_verts[start..],
+                            view.variant,
                         );
-                    } else {
-                        crate::item_cube::push_block_item_cube_lit_with_state(
-                            &mut block_verts,
-                            &mut block_indices,
-                            block,
-                            held.block_state,
-                            glam::Vec3::splat(-0.5),
-                            1.0,
-                            light,
-                            false,
+                        crate::player_model::transform_positions(
+                            block_verts[start..].iter_mut().map(|v| &mut v.pos),
+                            m,
                         );
                     }
-                    // Instance-data tint on the held mini-cube (dyed wool in
-                    // a remote or third-person hand).
-                    crate::item_model::dye_block_verts(
-                        &mut block_verts[start..],
-                        held.variant,
-                    );
-                    crate::player_model::transform_positions(
-                        block_verts[start..].iter_mut().map(|v| &mut v.pos),
-                        m,
-                    );
+                    Some(petramond_world::item::ItemRenderKind::Sprite(tile)) => {
+                        // The extrusion clears its buffer and emits a non-indexed
+                        // triangle list; transform in place, then append with
+                        // sequential offset indices to ride the indexed draw.
+                        let m = if off_side {
+                            crate::player_model::held_sprite_transform_off(hand_mat)
+                        } else {
+                            crate::player_model::held_sprite_transform(hand_mat)
+                        };
+                        let count = crate::item_model::build_extruded_stack_lit(
+                            tile,
+                            view.variant,
+                            light,
+                            env,
+                            &mut sprite_scratch,
+                        );
+                        crate::player_model::transform_positions(
+                            sprite_scratch.iter_mut().map(|v| &mut v.pos),
+                            m,
+                        );
+                        let base = sprite_verts.len() as u32;
+                        sprite_verts.extend_from_slice(&sprite_scratch);
+                        sprite_indices.extend((0..count).map(|i| i + base));
+                    }
+                    Some(petramond_world::item::ItemRenderKind::Model(kind)) => {
+                        // Appends with absolute indices into the shared buffer.
+                        let m = if off_side {
+                            crate::player_model::held_model_transform_off(hand_mat, kind)
+                        } else {
+                            crate::player_model::held_model_transform(hand_mat, kind)
+                        };
+                        crate::item_model::build_block_model_item(
+                            kind,
+                            m,
+                            light,
+                            env,
+                            None,
+                            &mut model_verts,
+                            &mut model_indices,
+                        );
+                    }
+                    None => {}
                 }
-                Some(petramond_world::item::ItemRenderKind::Sprite(tile)) => {
-                    // The extrusion clears its buffer and emits a non-indexed
-                    // triangle list; transform in place, then append with
-                    // sequential offset indices to ride the indexed draw.
-                    let m = crate::player_model::held_sprite_transform(hand);
-                    let count = crate::item_model::build_extruded_stack_lit(
-                        tile,
-                        held.variant,
-                        light,
-                        env,
-                        &mut sprite_scratch,
-                    );
-                    crate::player_model::transform_positions(
-                        sprite_scratch.iter_mut().map(|v| &mut v.pos),
-                        m,
-                    );
-                    let base = sprite_verts.len() as u32;
-                    sprite_verts.extend_from_slice(&sprite_scratch);
-                    sprite_indices.extend((0..count).map(|i| i + base));
-                }
-                Some(petramond_world::item::ItemRenderKind::Model(kind)) => {
-                    // Appends with absolute indices into the shared buffer.
-                    let m = crate::player_model::held_model_transform(hand, kind);
-                    crate::item_model::build_block_model_item(
-                        kind,
-                        m,
-                        light,
-                        env,
-                        None,
-                        &mut model_verts,
-                        &mut model_indices,
-                    );
-                }
-                None => {}
             }
         }
         // Upload the four combined streams (a stream that stayed empty draws

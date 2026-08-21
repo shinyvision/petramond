@@ -59,11 +59,51 @@ impl ContainerMenu {
         }
         match slot {
             MenuSlot::Inventory(i) => inv.take_slot_for_drop(i, all),
+            MenuSlot::OffHand => take_slot_stack(inv.off_hand_mut(), all),
             MenuSlot::CraftResult if self.crafting_station().is_some() => {
                 take_slot_stack(&mut self.craft_output, all)
             }
             MenuSlot::Container(_) => self.drop_open_container_slot(world, slot, all),
             MenuSlot::CraftResult | MenuSlot::Widget(_) => None,
+        }
+    }
+
+    /// Swap the off-hand with the named slot — the F gesture's decode, one
+    /// arm per slot identity like [`drop_slot`](Self::drop_slot). Inventory
+    /// slots swap plainly (this is also the gameplay-F path, so it needs no
+    /// open target); a container cell swaps through the spec-gated
+    /// ALL-OR-NOTHING rule (`Inventory::swap_off_hand_with_cell` — the
+    /// client's prediction runs the same method against its mirror).
+    /// Hovering the off-hand cell itself, a transient output, or a widget
+    /// swaps nothing.
+    pub fn swap_off_hand(
+        &mut self,
+        world: &mut World,
+        inv: &mut Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
+        slot: MenuSlot,
+    ) {
+        match slot {
+            MenuSlot::Inventory(i) => inv.swap_off_hand_with_slot(i),
+            MenuSlot::Container(_) => {
+                let Some(i) = self.open_container_index(slot) else {
+                    return;
+                };
+                let specs = self.slot_specs();
+                let Some(pos) = self.container_pos() else {
+                    return;
+                };
+                let Some(cell) = world
+                    .container_at_mut(pos)
+                    .and_then(|container| container.slots.get_mut(i))
+                else {
+                    return;
+                };
+                if inv.swap_off_hand_with_cell(specs.get(i), gui, cell) {
+                    world.mark_chunk_modified(pos);
+                }
+            }
+            MenuSlot::OffHand | MenuSlot::CraftResult | MenuSlot::Widget(_) => {}
         }
     }
 
@@ -93,6 +133,7 @@ impl ContainerMenu {
                 .get(i)
                 .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
+            MenuSlot::OffHand => slot_capacity(&inv.off_hand().copied(), held),
             MenuSlot::Container(_) => {
                 let Some(i) = self.open_container_index(slot) else {
                     return 0;
@@ -136,6 +177,11 @@ impl ContainerMenu {
         match slot {
             MenuSlot::Inventory(i) => {
                 inv.place_cursor_count_in_slot(i, wanted);
+            }
+            MenuSlot::OffHand => {
+                let mut cell = inv.take_off_hand();
+                inv.place_cursor_count_in_external_slot(&mut cell, wanted);
+                *inv.off_hand_mut() = cell;
             }
             MenuSlot::Container(_) => {
                 let Some(i) = self.open_container_index(slot) else {

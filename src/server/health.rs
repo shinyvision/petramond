@@ -186,6 +186,9 @@ impl ServerGame {
         if let Some(stack) = self.sessions[s].player.inventory.take_cursor() {
             stacks.push(stack);
         }
+        if let Some(stack) = self.sessions[s].player.inventory.take_off_hand() {
+            stacks.push(stack);
+        }
         let cell = (
             centre.x.floor() as i32,
             centre.y.floor() as i32,

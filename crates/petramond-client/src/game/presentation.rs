@@ -475,6 +475,7 @@ impl GamePresentationScratch {
                     ),
                 },
                 held: p.view,
+                held_off: p.off_view,
             });
         }
     }

@@ -627,3 +627,185 @@ fn fits_count_reports_how_many_would_land() {
     // An empty stack fits nothing.
     assert_eq!(inv.fits_count(item(ItemType::Dirt, 0)), 0);
 }
+
+#[test]
+fn off_hand_swaps_with_a_named_slot_both_ways() {
+    let mut inv = empty_inv();
+    inv.slots[0] = Some(item(ItemType::Dirt, 5));
+
+    inv.swap_off_hand_with_slot(0);
+    assert!(inv.selected().is_none());
+    assert_eq!(inv.off_hand().map(|s| s.count), Some(5));
+
+    // The empty slot takes the stack back out.
+    inv.swap_off_hand_with_slot(0);
+    assert_eq!(inv.selected().map(|s| s.count), Some(5));
+    assert!(inv.off_hand().is_none());
+
+    // A both-empty swap moves nothing and marks nothing changed.
+    let before = inv.revision();
+    inv.set_active(4);
+    let after_select = inv.revision();
+    assert!(after_select > before, "selection change bumps");
+    inv.swap_off_hand_with_slot(4);
+    assert_eq!(
+        inv.revision(),
+        after_select,
+        "a both-empty swap is a true no-op"
+    );
+}
+
+#[test]
+fn the_cell_swap_is_all_or_nothing_under_a_refusing_spec() {
+    use crate::container::{SlotFilter, SlotSpec};
+    let fuel_only = SlotSpec {
+        accepts: vec![SlotFilter::Tag(crate::item::ItemTag::FUEL)],
+        take_only: false,
+        accepts_bind: None,
+    };
+    let take_only = SlotSpec {
+        accepts: Vec::new(),
+        take_only: true,
+        accepts_bind: None,
+    };
+    let coal = ItemType::by_key("petramond:coal").expect("engine item");
+
+    // A refused deposit swaps NOTHING — unlike a click, which still takes.
+    let mut inv = empty_inv();
+    *inv.off_hand_mut() = Some(item(ItemType::Stone, 1));
+    let mut cell = Some(item(coal, 3));
+    assert!(!inv.swap_off_hand_with_cell(Some(&fuel_only), None, &mut cell));
+    assert_eq!(cell.map(|s| s.count), Some(3), "the cell keeps its stack");
+    assert_eq!(inv.off_hand().map(|s| s.item), Some(ItemType::Stone));
+
+    // An admitted stack swaps whole.
+    *inv.off_hand_mut() = Some(item(coal, 2));
+    assert!(inv.swap_off_hand_with_cell(Some(&fuel_only), None, &mut cell));
+    assert_eq!(cell.map(|s| s.count), Some(2));
+    assert_eq!(inv.off_hand().map(|s| s.count), Some(3));
+
+    // A take-only cell refuses the deposit half outright…
+    let mut output = Some(item(coal, 4));
+    assert!(!inv.swap_off_hand_with_cell(Some(&take_only), None, &mut output));
+    assert_eq!(output.map(|s| s.count), Some(4));
+    // …but an EMPTY off-hand is a pure take, which take-only never gates.
+    *inv.off_hand_mut() = None;
+    assert!(inv.swap_off_hand_with_cell(Some(&take_only), None, &mut output));
+    assert!(output.is_none());
+    assert_eq!(inv.off_hand().map(|s| s.count), Some(4));
+}
+
+#[test]
+fn pickup_tops_up_a_matching_off_hand_first_and_never_a_foreign_one() {
+    // Same item: the off-hand fills first, the remainder routes to the grid.
+    let mut inv = empty_inv();
+    *inv.off_hand_mut() = Some(item(ItemType::Dirt, 60));
+    assert_eq!(inv.pickup_fits_count(item(ItemType::Dirt, 10)), 10);
+    assert!(inv.pickup(item(ItemType::Dirt, 10)).is_none());
+    assert_eq!(
+        inv.off_hand().map(|s| s.count),
+        Some(64),
+        "the off-hand tops up first"
+    );
+    assert_eq!(
+        inv.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>(),
+        6,
+        "the remainder routes through the ordinary insertion"
+    );
+
+    // A different item never touches the off-hand.
+    let mut inv = empty_inv();
+    *inv.off_hand_mut() = Some(item(ItemType::Dirt, 1));
+    assert!(inv.pickup(item(ItemType::Stone, 3)).is_none());
+    assert_eq!(inv.off_hand().map(|s| s.count), Some(1));
+
+    // An EMPTY off-hand is never a pickup destination either.
+    let mut inv = empty_inv();
+    assert!(inv.pickup(item(ItemType::Dirt, 3)).is_none());
+    assert!(inv.off_hand().is_none());
+
+    // The planner twin agrees when ONLY the off-hand has room: grid full of
+    // stone, off-hand holds a partial dirt stack.
+    let mut inv = empty_inv();
+    for slot in inv.slots.iter_mut() {
+        *slot = Some(item(ItemType::Stone, 64));
+    }
+    *inv.off_hand_mut() = Some(item(ItemType::Dirt, 62));
+    assert_eq!(inv.pickup_fits_count(item(ItemType::Dirt, 10)), 2);
+    assert_eq!(
+        inv.pickup(item(ItemType::Dirt, 2)),
+        None,
+        "the planned amount fits exactly"
+    );
+    assert_eq!(inv.off_hand().map(|s| s.count), Some(64));
+}
+
+#[test]
+fn held_in_and_decrement_resolve_per_hand() {
+    let mut inv = empty_inv();
+    inv.slots[0] = Some(item(ItemType::Dirt, 2));
+    *inv.off_hand_mut() = Some(item(ItemType::Stone, 1));
+
+    assert_eq!(inv.held_in(Hand::Main).unwrap().item, ItemType::Dirt);
+    assert_eq!(inv.held_in(Hand::Off).unwrap().item, ItemType::Stone);
+
+    inv.decrement_held(Hand::Off);
+    assert!(inv.held_in(Hand::Off).is_none(), "the last one empties");
+    assert_eq!(
+        inv.held_in(Hand::Main).map(|s| s.count),
+        Some(2),
+        "the other hand is untouched"
+    );
+}
+
+#[test]
+fn replace_held_one_swaps_the_off_hand_in_place() {
+    // The bucket swap against the off-hand: a single item swaps in place.
+    let mut inv = empty_inv();
+    *inv.off_hand_mut() = Some(item(ItemType::Dirt, 1));
+    assert!(inv.replace_held_one(Hand::Off, item(ItemType::Stone, 1)));
+    assert_eq!(inv.off_hand().map(|s| s.item), Some(ItemType::Stone));
+
+    // Of a larger stack, one converts and the replacement finds a slot.
+    *inv.off_hand_mut() = Some(item(ItemType::Dirt, 3));
+    assert!(inv.replace_held_one(Hand::Off, item(ItemType::Grass, 1)));
+    assert_eq!(inv.off_hand().map(|s| s.count), Some(2));
+    assert_eq!(
+        inv.slots.iter().flatten().find(|s| s.item == ItemType::Grass).map(|s| s.count),
+        Some(1)
+    );
+
+    // An empty off-hand refuses.
+    *inv.off_hand_mut() = None;
+    assert!(!inv.replace_held_one(Hand::Off, item(ItemType::Stone, 1)));
+}
+
+#[test]
+fn gather_sweeps_the_off_hand_and_shift_ships_it_to_the_grid() {
+    let mut inv = empty_inv();
+    inv.slots[3] = Some(item(ItemType::Dirt, 4));
+    *inv.off_hand_mut() = Some(item(ItemType::Dirt, 6));
+    *inv.cursor_mut() = Some(item(ItemType::Dirt, 1));
+    inv.collect_to_cursor();
+    assert_eq!(
+        inv.cursor().map(|s| s.count),
+        Some(11),
+        "the double-click gather sweeps the off-hand too"
+    );
+    assert!(inv.off_hand().is_none());
+
+    // Shift-move ships the off-hand stack into the ordinary grid.
+    *inv.cursor_mut() = None;
+    *inv.off_hand_mut() = Some(item(ItemType::Stone, 9));
+    inv.shift_move_off_hand();
+    assert!(inv.off_hand().is_none());
+    assert_eq!(
+        inv.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>(),
+        9
+    );
+
+    // `add` (world pickup) never routes INTO the off-hand.
+    let mut inv = empty_inv();
+    assert!(inv.add(item(ItemType::Dirt, 1)).is_none());
+    assert!(inv.off_hand().is_none());
+}

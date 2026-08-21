@@ -227,6 +227,14 @@ impl Renderer {
         self.hand.held_item = self.hand.held_item_anim.update(v);
     }
 
+    /// Advance and store the first-person OFF-hand (left) held-item state for
+    /// this frame. An empty frame (`item == None`) draws nothing — the left
+    /// hand appears exactly while the off-hand slot holds an item. The local
+    /// third-person body attaches the same animated view to its left hand.
+    pub fn set_off_hand_item(&mut self, v: HeldItemFrame) {
+        self.hand.off_item = self.hand.off_item_anim.update(v);
+    }
+
     pub fn set_hand_visible(&mut self, visible: bool) {
         self.hand.visible = visible;
     }

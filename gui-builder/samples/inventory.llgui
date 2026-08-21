@@ -432,10 +432,7 @@
                   "rows": 3
                 },
                 {
-                  "type": "slot_grid",
-                  "role": "hotbar",
-                  "cols": 9,
-                  "rows": 1,
+                  "type": "row",
                   "layout": {
                     "w": "auto",
                     "h": "auto",
@@ -451,10 +448,22 @@
                       0,
                       0
                     ],
-                    "gap": 0,
+                    "gap": 4,
                     "dir": "column",
                     "justify": "start"
-                  }
+                  },
+                  "children": [
+                    {
+                      "type": "slot_grid",
+                      "role": "hotbar",
+                      "cols": 9,
+                      "rows": 1
+                    },
+                    {
+                      "type": "slot",
+                      "role": "off_hand"
+                    }
+                  ]
                 }
               ]
             }
@@ -481,7 +490,7 @@
             "dir": "column",
             "align": "stretch",
             "justify": "start",
-            "max_w": 150,
+            "max_w": 200,
             "abs": {
               "x": 4,
               "y": 4
@@ -571,6 +580,9 @@
                 "dir": "column",
                 "justify": "start",
                 "min_w": 84
+              },
+              "bind": {
+                "min_w": "craft_tip_ingredients_w"
               }
             }
           ]
@@ -619,6 +631,9 @@
       },
       "craft_search": {
         "str": "Sample text"
+      },
+      "craft_tip_ingredients_w": {
+        "i32": 0
       },
       "craft_tip_name": {
         "str": "Sample text"

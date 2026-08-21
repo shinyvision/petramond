@@ -187,18 +187,27 @@ fn convert(legacy: &LegacyProject) -> Imported {
             .map(|g| (g.cols, g.rows))
             .unwrap_or((1, 1));
         let node = match slot.role.as_str() {
-            // Item-slot roles pass straight through.
+            // Item-slot roles pass straight through — except the v1 role
+            // names retired by the generic container unification, which map
+            // onto the one `container` role (index order preserved: the
+            // furnace's input/fuel/output arrive in that authored order).
             "generic" | "storage" | "player_inv" | "hotbar" | "craft_result" | "furnace_input"
             | "furnace_fuel" | "furnace_output" => {
+                let role = match slot.role.as_str() {
+                    "storage" | "furnace_input" | "furnace_fuel" | "furnace_output" => {
+                        "container".to_string()
+                    }
+                    other => other.to_string(),
+                };
                 let kind = if cols * rows <= 1 {
                     NodeKind::Slot {
-                        role: slot.role.clone(),
+                        role,
                         accepts: Vec::new(),
                         take_only: false,
                     }
                 } else {
                     NodeKind::SlotGrid {
-                        role: slot.role.clone(),
+                        role,
                         cols,
                         rows,
                         accepts: Vec::new(),

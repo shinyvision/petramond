@@ -470,12 +470,12 @@ impl ServerGame {
         self.world
             .dropped_items_mut()
             .request_pickups(requester, player_pos, |stack| {
-                let count = planned.fits_count(stack);
+                let count = planned.pickup_fits_count(stack);
                 if count > 0 {
-                    let leftover = planned.add(stack.restack(count));
+                    let leftover = planned.pickup(stack.restack(count));
                     debug_assert!(
                         leftover.is_none(),
-                        "fits_count overestimated pickup capacity"
+                        "pickup_fits_count overestimated pickup capacity"
                     );
                 }
                 count
@@ -491,7 +491,10 @@ impl ServerGame {
             .dropped_items_mut()
             .collect_requested_pickups(requester, player_pos, |stack| {
                 collected.push(stack);
-                inventory.add(stack)
+                // Pickup routing (off-hand top-up first) — see
+                // `Inventory::pickup`; every other insertion path stays on
+                // `add`.
+                inventory.pickup(stack)
             });
         let picked_up = !collected.is_empty();
         // One event per collected STACK. Whether the player has ever HELD one

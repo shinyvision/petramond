@@ -974,7 +974,11 @@ impl Renderer {
         // item3d pipeline (extruded, slot 0 = the item MVP — the model3d hand is
         // empty in that case, so slot 0 is free). They are mutually exclusive, but
         // both are drawn here so the pass is correct regardless.
-        if self.hand.index_count > 0 || self.hand.item3d_vertex_count > 0 {
+        if self.hand.index_count > 0
+            || self.hand.item3d_vertex_count > 0
+            || self.hand.off_index_count > 0
+            || self.hand.off_item3d_count > 0
+        {
             // NB: depth load-op is CLEAR(1.0) — this pass intentionally resets the
             // depth buffer so the hand self-sorts in isolation from the world.
             let mut pass = color_depth_pass(
@@ -995,6 +999,20 @@ impl Renderer {
                 pass.set_index_buffer(self.hand.model3d_ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..self.hand.index_count, 0, 0..1);
             }
+            // The OFF hand's held block: its geometry appends after the main
+            // hand's in the shared buffers; MVP slot 1.
+            if self.hand.off_index_count > 0 {
+                pass.set_pipeline(&self.hand.model3d_pipe);
+                pass.set_bind_group(0, &self.hand.model3d_mvp_bind, &[256]);
+                pass.set_bind_group(1, &self.atlas_bind, &[]);
+                pass.set_vertex_buffer(0, self.hand.model3d_vbuf.slice(..));
+                pass.set_index_buffer(self.hand.model3d_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(
+                    self.hand.index_count..self.hand.index_count + self.hand.off_index_count,
+                    self.hand.vertex_count as i32,
+                    0..1,
+                );
+            }
             // Extruded held sprite (block atlas) OR a held bbmodel block (model atlas) —
             // both ride the item3d pipeline (non-indexed triangle list, depth-tested).
             if self.hand.item3d_vertex_count > 0 {
@@ -1008,6 +1026,23 @@ impl Renderer {
                 pass.set_bind_group(1, atlas, &[]);
                 pass.set_vertex_buffer(0, self.hand.item3d_vbuf.slice(..));
                 pass.draw(0..self.hand.item3d_vertex_count, 0..1);
+            }
+            // The OFF hand's item3d stream (appended range, MVP slot 1).
+            if self.hand.off_item3d_count > 0 {
+                pass.set_pipeline(&self.hand.item3d_pipe);
+                pass.set_bind_group(0, &self.hand.item3d_mvp_bind, &[256]);
+                let atlas = if self.hand.off_is_model {
+                    &self.model_atlas_bind
+                } else {
+                    &self.atlas_bind
+                };
+                pass.set_bind_group(1, atlas, &[]);
+                pass.set_vertex_buffer(0, self.hand.item3d_vbuf.slice(..));
+                pass.draw(
+                    self.hand.off_item3d_start
+                        ..self.hand.off_item3d_start + self.hand.off_item3d_count,
+                    0..1,
+                );
             }
         }
         // GRADE PASS: full-screen colour grade (+ upscale when render_scale < 1)

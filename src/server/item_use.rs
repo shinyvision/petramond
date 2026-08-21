@@ -15,13 +15,16 @@ use crate::mob::ShearDrop;
 use crate::net::protocol::TargetRef;
 use crate::player::Player;
 
-/// The in-progress eat: which hotbar slot and food item are being eaten and
-/// for how many ticks the button has been held on it. Session-owned (one per
-/// player); aborted the moment the button lifts or the hotbar selection
-/// changes — the SLOT is tracked so switching to a different slot holding the
-/// same food still aborts (switching slots aborts).
+/// The in-progress eat: which hand and food item are being eaten and for how
+/// many ticks the button has been held on it. Session-owned (one per player);
+/// aborted the moment the button lifts or the eating hand's item changes. For
+/// a MAIN-hand eat the SLOT is tracked so switching to a different slot
+/// holding the same food still aborts (switching slots aborts); an OFF-hand
+/// eat ignores hotbar selection entirely.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EatingState {
+    pub hand: petramond_world::inventory::Hand,
+    /// The active hotbar slot at eat start. Meaningful for `Hand::Main` only.
     pub slot: u8,
     pub item: ItemType,
     pub progress: u32,
@@ -70,17 +73,19 @@ impl ServerGame {
     /// the click, not the food.
     pub fn try_start_eating(&mut self, s: usize, events: &mut TickEvents) -> bool {
         let sess = &self.sessions[s];
-        let Some(item) = sess.player.inventory.selected().map(|st| st.item) else {
+        let hand = sess.player.acting_hand;
+        let Some(item) = sess.player.held().map(|st| st.item) else {
             return false;
         };
         if item.food().is_none() || sess.player.is_spectator() {
             return false;
         }
         let slot = sess.player.inventory.active_slot();
-        if sess
-            .eating
-            .is_some_and(|e| e.slot == slot && e.item == item)
-        {
+        if sess.eating.is_some_and(|e| {
+            e.hand == hand
+                && e.item == item
+                && (hand == petramond_world::inventory::Hand::Off || e.slot == slot)
+        }) {
             return true; // re-click mid-eat: consumed, nothing restarts
         }
         let target = sess.look.map(|h| h.block);
@@ -112,6 +117,7 @@ impl ServerGame {
             return true;
         }
         self.sessions[s].eating = Some(EatingState {
+            hand,
             slot,
             item,
             progress: 0,
@@ -120,19 +126,19 @@ impl ServerGame {
     }
 
     /// Advance the in-progress eat one tick (runs every tick, click or not):
-    /// abort when the button lifted, the selection moved to ANY other slot,
-    /// or the slot's item changed under the eat; consume the item and grant
-    /// its effects when the hold reaches the row's `eat_ticks`.
+    /// abort when the button lifted, the eating hand's item changed under the
+    /// eat, or — for a main-hand eat — the selection moved to ANY other slot;
+    /// consume the item and grant its effects when the hold reaches the row's
+    /// `eat_ticks`.
     pub fn advance_eating(&mut self, s: usize, events: &mut TickEvents) {
         let sess = &mut self.sessions[s];
         let Some(eat) = sess.eating else {
             return;
         };
-        let held = sess.player.inventory.selected().map(|st| st.item);
-        if !sess.intent_use_held
-            || sess.player.inventory.active_slot() != eat.slot
-            || held != Some(eat.item)
-        {
+        let held = sess.player.inventory.held_in(eat.hand).map(|st| st.item);
+        let selection_moved = eat.hand == petramond_world::inventory::Hand::Main
+            && sess.player.inventory.active_slot() != eat.slot;
+        if !sess.intent_use_held || selection_moved || held != Some(eat.item) {
             sess.eating = None;
             return;
         }
@@ -145,14 +151,15 @@ impl ServerGame {
             sess.eating = Some(EatingState { progress, ..eat });
             return;
         }
-        // Done: the food leaves the hotbar and its effects land, atomically on
+        // Done: the food leaves the hand and its effects land, atomically on
         // this tick.
         sess.eating = None;
-        sess.player.inventory.decrement_selected();
+        sess.player.inventory.decrement_held(eat.hand);
         for &(effect, ticks) in food.effects {
             sess.player.apply_effect(effect, ticks);
         }
         events.player(s).ate_finished = true;
+        events.player(s).ate_off_hand = eat.hand == petramond_world::inventory::Hand::Off;
         self.bus.emit(PostEvent::ItemUsed {
             player: self.sessions[s].id,
             item: eat.item,
@@ -168,12 +175,7 @@ impl ServerGame {
         click_target: Option<crate::net::protocol::TargetRef>,
         events: &mut TickEvents,
     ) -> bool {
-        let Some(item) = self.sessions[s]
-            .player
-            .inventory
-            .selected()
-            .map(|st| st.item)
-        else {
+        let Some(item) = self.sessions[s].player.held().map(|st| st.item) else {
             return false;
         };
         // A handler cancelling `item_use_pre` consumed the click: the engine's own
@@ -233,7 +235,9 @@ impl ServerGame {
     /// it before mutation. A forged or vanished target is a no-op.
     pub fn try_shear_mob(&mut self, s: usize, target: Option<u64>) -> bool {
         if self.sessions[s]
-            .selected_item()
+            .player
+            .held()
+            .map(|st| st.item)
             .and_then(ItemType::item_use)
             != Some(ItemUse::Shear)
         {
@@ -284,10 +288,11 @@ impl ServerGame {
         // The held-item swap must succeed BEFORE the world changes: with a full
         // inventory (nowhere for the filled bucket out of a stack) the scoop is
         // refused and the source stays.
+        let hand = self.sessions[s].player.acting_hand;
         if !self.sessions[s]
             .player
             .inventory
-            .replace_selected_one(ItemStack::new(becomes, 1))
+            .replace_held_one(hand, ItemStack::new(becomes, 1))
         {
             return false;
         }
@@ -365,10 +370,11 @@ impl ServerGame {
         // A filled bucket row is max-stack 1 (the engine's water bucket; packs
         // should declare theirs the same), so the swap back to the empty
         // counterpart is an in-place slot swap and cannot fail.
+        let hand = self.sessions[s].player.acting_hand;
         self.sessions[s]
             .player
             .inventory
-            .replace_selected_one(ItemStack::new(becomes, 1));
+            .replace_held_one(hand, ItemStack::new(becomes, 1));
         true
     }
 }

@@ -78,6 +78,9 @@ impl Game {
                 .get(i)
                 .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
+            MenuSlot::OffHand => {
+                slot_capacity(&self.self_view.inventory.off_hand().copied(), held)
+            }
             // The same question the server's `drag_capacity` asks, through the
             // same helper: a slot one side counts and the other refuses does
             // not just snap that leg back — the split is by the NUMBER of
@@ -112,6 +115,11 @@ impl Game {
         match slot {
             MenuSlot::Inventory(i) => {
                 inventory.place_cursor_count_in_slot(i, wanted);
+            }
+            MenuSlot::OffHand => {
+                let mut cell = inventory.take_off_hand();
+                inventory.place_cursor_count_in_external_slot(&mut cell, wanted);
+                *inventory.off_hand_mut() = cell;
             }
             // The same question the server's drag asks, through the same
             // helper. A leg the client mirrors and the server refuses is a
@@ -161,32 +169,40 @@ impl Game {
                 // click never leaves the inventory.
                 !(shift || gather) || v.container.is_none()
             }
+            MenuSlot::OffHand => {
+                // The off-hand's shift-move always ships into the OWN grid
+                // (nothing container-routes it), so only a gather with an
+                // open container is unpredictable.
+                !gather || v.container.is_none()
+            }
             MenuSlot::Container(i) => {
                 !shift
                     && !gather
                     && v.container.is_some()
                     && v.container_kind.is_some()
-                    && !self.mask_decides(i)
+                    && !self.mask_decides(i, self.self_view.inventory.cursor().map(|c| c.item))
             }
             _ => false,
         }
     }
 
-    /// Whether a runtime `accepts` MASK is the deciding voice on placing the
-    /// cursor stack into container cell `i`: the authored filters admit it but
-    /// the currently MIRRORED mask refuses. The mirror is one round trip
-    /// stale, so a mask-decided refusal is not the client's call to make — the
-    /// click rides track-only and the server (whose mask is current) decides.
-    /// Without this, inserting a tool and quickly dropping a gem into a socket
-    /// the tool just unlocked gets locally refused — the icon never appears —
-    /// until the forced sync overrules; a prediction that can only be wrong in
-    /// the refusing direction is worse than no prediction. Genuine refusals
-    /// look identical either way (nothing moves), just one round trip later.
-    fn mask_decides(&self, i: usize) -> bool {
+    /// Whether a runtime `accepts` MASK is the deciding voice on placing
+    /// `held` into container cell `i`: the authored filters admit it but the
+    /// currently MIRRORED mask refuses. The mirror is one round trip stale,
+    /// so a mask-decided refusal is not the client's call to make — the
+    /// gesture rides track-only and the server (whose mask is current)
+    /// decides. Without this, inserting a tool and quickly dropping a gem
+    /// into a socket the tool just unlocked gets locally refused — the icon
+    /// never appears — until the forced sync overrules; a prediction that can
+    /// only be wrong in the refusing direction is worse than no prediction.
+    /// Genuine refusals look identical either way (nothing moves), just one
+    /// round trip later. `held` is whatever stack the gesture would deposit:
+    /// the cursor for clicks/drags, the off-hand for the F swap.
+    fn mask_decides(&self, i: usize, held: Option<petramond_world::item::ItemType>) -> bool {
         let Some(kind) = self.menu_view.container_kind else {
             return false;
         };
-        let Some(held) = self.self_view.inventory.cursor().map(|c| c.item) else {
+        let Some(held) = held else {
             return false;
         };
         let specs = petramond::gui::documents::container_slot_specs(kind);
@@ -226,6 +242,22 @@ impl Game {
                     inv.right_click_slot(i);
                 } else {
                     inv.click_slot(i);
+                }
+            }
+            MenuSlot::OffHand => {
+                // The same take/click/put shape the server's decode runs.
+                if shift {
+                    inv.shift_move_off_hand();
+                } else if gather {
+                    inv.collect_to_cursor();
+                } else {
+                    let mut cell = inv.take_off_hand();
+                    if secondary {
+                        inv.right_click_external_slot(&mut cell);
+                    } else {
+                        inv.click_external_slot(&mut cell);
+                    }
+                    *inv.off_hand_mut() = cell;
                 }
             }
             MenuSlot::Container(i) => {
@@ -268,7 +300,11 @@ impl Game {
         // container-slot click mutates the open menu mirror too, so its
         // rollback unit spans both stores.
         let (can, request_id) = if self.menu_click_is_predictable(slot, shift, gather) {
-            if matches!(slot, petramond_world::gui_state::MenuSlot::Inventory(_)) {
+            if matches!(
+                slot,
+                petramond_world::gui_state::MenuSlot::Inventory(_)
+                    | petramond_world::gui_state::MenuSlot::OffHand
+            ) {
                 self.begin_inventory_prediction()
             } else {
                 self.begin_menu_prediction()
@@ -293,14 +329,27 @@ impl Game {
     /// ride track-only until the authoritative menu tick applies them.
     pub fn menu_drop(&mut self, slot: petramond_world::gui_state::MenuSlot, all: bool) {
         self.local_hand_threw |= self.menu_slot_has_stack(slot);
-        let (can, request_id) = if matches!(slot, petramond_world::gui_state::MenuSlot::Inventory(_)) {
+        let (can, request_id) = if matches!(
+            slot,
+            petramond_world::gui_state::MenuSlot::Inventory(_)
+                | petramond_world::gui_state::MenuSlot::OffHand
+        ) {
             self.begin_inventory_prediction()
         } else {
             (false, self.prediction.begin_track_only())
         };
         if can {
-            if let petramond_world::gui_state::MenuSlot::Inventory(i) = slot {
-                self.self_view.inventory.take_slot_for_drop(i, all);
+            match slot {
+                petramond_world::gui_state::MenuSlot::Inventory(i) => {
+                    self.self_view.inventory.take_slot_for_drop(i, all);
+                }
+                petramond_world::gui_state::MenuSlot::OffHand => {
+                    petramond_world::inventory::take_slot_stack(
+                        self.self_view.inventory.off_hand_mut(),
+                        all,
+                    );
+                }
+                _ => {}
             }
         }
         self.outbox.push(ClientToServer::MenuDrop {
@@ -310,10 +359,70 @@ impl Game {
         });
     }
 
+    /// The F gesture: swap the off-hand with `slot` — the selected hotbar
+    /// slot in gameplay ([`Game::swap_off_hand`] names it), the hovered slot
+    /// in a menu. Predicted with the SAME `Inventory` primitives the server's
+    /// decode runs (`swap_off_hand_with_slot` / the spec-gated
+    /// `swap_off_hand_with_cell`), against the mirrors. Container cells whose
+    /// runtime accepts-MASK is the deciding refusal ride track-only — the
+    /// mirror's mask is one round trip stale (the click rule). Hovering the
+    /// off-hand cell itself, a transient output, or a widget is a no-op the
+    /// server would also refuse: nothing is sent at all.
+    pub fn menu_swap_off_hand(&mut self, slot: petramond_world::gui_state::MenuSlot) {
+        use petramond_world::gui_state::MenuSlot;
+        // The server refuses a spectator's swap; don't burn a request on a
+        // known deny.
+        if self.player.is_spectator() {
+            return;
+        }
+        let off_item = self.self_view.inventory.off_hand().map(|s| s.item);
+        let (can, request_id) = match slot {
+            MenuSlot::Inventory(_) => self.begin_inventory_prediction(),
+            MenuSlot::Container(i)
+                if self.menu_view.container.is_some()
+                    && self.menu_view.container_kind.is_some()
+                    && !self.mask_decides(i, off_item) =>
+            {
+                self.begin_menu_prediction()
+            }
+            MenuSlot::Container(_) => (false, self.prediction.begin_track_only()),
+            MenuSlot::OffHand | MenuSlot::CraftResult | MenuSlot::Widget(_) => return,
+        };
+        if can {
+            match slot {
+                MenuSlot::Inventory(i) => {
+                    self.self_view.inventory.swap_off_hand_with_slot(i);
+                }
+                MenuSlot::Container(i) => {
+                    let kind = self.menu_view.container_kind.expect("gated above");
+                    let specs = petramond::gui::documents::container_slot_specs(kind);
+                    if let Some(cell) = self
+                        .menu_view
+                        .container
+                        .as_mut()
+                        .and_then(|container| container.slots.get_mut(i))
+                    {
+                        self.self_view.inventory.swap_off_hand_with_cell(
+                            specs.get(i),
+                            self.menu_view.gui_state.as_deref(),
+                            cell,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.outbox.push(ClientToServer::MenuSwapOffHand {
+            slot: MenuSlotWire::from_menu_slot(&slot),
+            request_id,
+        });
+    }
+
     fn menu_slot_has_stack(&self, slot: petramond_world::gui_state::MenuSlot) -> bool {
         use petramond_world::gui_state::MenuSlot;
         match slot {
             MenuSlot::Inventory(i) => self.self_view.inventory.slot(i).is_some(),
+            MenuSlot::OffHand => self.self_view.inventory.off_hand().is_some(),
             MenuSlot::CraftResult => self.menu_view.craft_output.is_some(),
             MenuSlot::Container(i) => self
                 .menu_view

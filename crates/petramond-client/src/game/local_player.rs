@@ -363,17 +363,20 @@ impl Game {
     pub(super) fn refresh_target(&mut self) {
         let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.replica);
         self.look = block_hit.map(|(h, _)| h);
-        // The use-click target: the held item may declare a water-stopping
-        // use ray (a boat item targets the water surface); everything else
-        // keeps the selection hit. Mining/selection never read this. The held
-        // item comes from the REPLICATED inventory view like every other
-        // client held-item decision — `player.inventory` only tracks the
-        // active slot index client-side, never contents.
-        let held_water_ray = self
-            .self_view
-            .inventory
-            .selected()
-            .is_some_and(|st| st.item.use_ray() == petramond_world::item::UseRay::Water);
+        // The use-click target: a held item may declare a water-stopping use
+        // ray (a boat item targets the water surface); everything else keeps
+        // the selection hit. Mining/selection never read this. EITHER hand's
+        // water-ray item selects the water ray — the server's
+        // `PendingUseClick::ray_item` rule, so an off-hand boat gets the water
+        // target its second dispatch pass will act on. The held items come
+        // from the REPLICATED inventory view like every other client
+        // held-item decision — `player.inventory` only tracks the active slot
+        // index client-side, never contents.
+        let water = |st: Option<&petramond_world::item::ItemStack>| {
+            st.is_some_and(|st| st.item.use_ray() == petramond_world::item::UseRay::Water)
+        };
+        let held_water_ray = water(self.self_view.inventory.selected())
+            || water(self.self_view.inventory.off_hand());
         self.use_look = if held_water_ray {
             Player::raycast_including_water(self.cam.pos, self.cam.forward(), &self.replica)
                 .map(|(h, _)| h)

@@ -90,11 +90,22 @@ impl ServerGame {
                         .selected()
                         .and_then(|st| petramond_world::item::variant::blob(st.variant))
                         .map(|b| (*b).clone()),
+                    off_hand_item: sess.player.inventory.off_hand().map(|st| st.item.0),
+                    off_hand_data: sess
+                        .player
+                        .inventory
+                        .off_hand()
+                        .and_then(|st| petramond_world::item::variant::blob(st.variant))
+                        .map(|b| (*b).clone()),
                     // The same overlay state `SelfState::mining` ships for the
                     // player's own hand: target cell + crack stage. Observers
                     // derive the arm-swing flag AND the remote crack overlay.
                     mining: sess.mining.overlay(),
                     eating: sess.eating.is_some(),
+                    eating_off_hand: sess
+                        .eating
+                        .as_ref()
+                        .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
                     hurt_recent: events.player_at(s).player_damaged,
                     snap: sess.tick_teleported,
                     mount: sess
@@ -114,19 +125,35 @@ impl ServerGame {
                 push(PlayerActionKind::Broke);
             }
             if p.placed_block.is_some() {
-                push(PlayerActionKind::Placed);
+                push(if p.click_off_hand {
+                    PlayerActionKind::PlacedOff
+                } else {
+                    PlayerActionKind::Placed
+                });
             }
             if p.threw_item {
                 push(PlayerActionKind::ThrewItem);
             }
             if p.used_item {
-                push(PlayerActionKind::UsedItem);
+                push(if p.click_off_hand {
+                    PlayerActionKind::UsedItemOff
+                } else {
+                    PlayerActionKind::UsedItem
+                });
             }
             if p.interacted {
-                push(PlayerActionKind::Interacted);
+                push(if p.click_off_hand {
+                    PlayerActionKind::InteractedOff
+                } else {
+                    PlayerActionKind::Interacted
+                });
             }
             if p.ate_finished {
-                push(PlayerActionKind::AteFinished);
+                push(if p.ate_off_hand {
+                    PlayerActionKind::AteFinishedOff
+                } else {
+                    PlayerActionKind::AteFinished
+                });
             }
             if p.player_died {
                 push(PlayerActionKind::Died);
@@ -295,6 +322,7 @@ impl ServerGame {
             close_mod_gui: std::mem::take(&mut sess.request_close_mod_gui),
             toggled_door: p.toggled_door,
             used_unpredicted: p.used_unpredicted,
+            used_unpredicted_off: p.used_unpredicted && p.click_off_hand,
         }
     }
 
@@ -350,6 +378,7 @@ impl ServerGame {
                 .iter()
                 .copied()
                 .chain(std::iter::once(player.inventory.cursor().copied()))
+                .chain(std::iter::once(player.inventory.off_hand().copied()))
                 .map(|slot| slot.map(ItemSlotWire::from_stack))
                 .collect()
         });
@@ -370,6 +399,10 @@ impl ServerGame {
             eating: sess
                 .eating_progress()
                 .map(|p| (p.clamp(0.0, 1.0) * 255.0).round() as u8),
+            eating_off_hand: sess
+                .eating
+                .as_ref()
+                .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
             sleeping,
             sleep_bed,
             transform,

@@ -17,14 +17,15 @@ pub(super) const MODEL3D_MVP_SLOT_SIZE: u64 = 256;
 /// 64 slots covers the open inventory's 36 visible cube icons with headroom.
 pub(super) const MODEL3D_MVP_SLOTS: u64 = 64;
 /// Max vertices in the reusable model3d dynamic vertex buffer. A textured cube is
-/// 24 verts; this covers the hand plus a batch of icon cubes drawn in one buffer.
-pub(super) const MAX_MODEL3D_VERTICES: u64 = 4096;
+/// 24 verts; this covers both hands plus a batch of icon cubes drawn in one buffer.
+pub(crate) const MAX_MODEL3D_VERTICES: u64 = 4096;
 /// Max indices in the reusable model3d dynamic index buffer (36 per cube).
-pub(super) const MAX_MODEL3D_INDICES: u64 = 8192;
+pub(crate) const MAX_MODEL3D_INDICES: u64 = 8192;
 /// Max vertices in the reusable item3d dynamic vertex buffer (the extruded held
-/// item). A 16×16 sprite extrudes to front+back + boundary walls; a dense flower
-/// silhouette is well under this (non-indexed triangle list, 6 verts/quad).
-pub(crate) const MAX_ITEM3D_VERTICES: u64 = 4096;
+/// items — MAIN hand then OFF hand, two appended streams). A 16×16 sprite
+/// extrudes to front+back + boundary walls; a dense flower silhouette is well
+/// under half of this (non-indexed triangle list, 6 verts/quad).
+pub(crate) const MAX_ITEM3D_VERTICES: u64 = 8192;
 
 /// The dynamic-offset per-draw MVP uniform entry: one mat4 (64 bytes) per
 /// draw, selected by a 256-aligned dynamic offset (see

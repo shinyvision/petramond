@@ -23,6 +23,8 @@ pub enum ControlEvent {
     /// or the whole stack is decided by the App: holding the SPRINT control
     /// (wherever it's bound) drops the stack.
     DropItem,
+    /// Swap the selected hotbar stack with the off-hand slot (edge-triggered).
+    SwapOffHand,
     RotateHeldBlock,
     TogglePerspective,
 }
@@ -47,6 +49,7 @@ pub struct InputController {
     chat_open_held: bool,
     command_chat_open_held: bool,
     drop_item_held: bool,
+    swap_off_hand_held: bool,
     rotate_held_block_held: bool,
     toggle_perspective_held: bool,
 }
@@ -127,6 +130,11 @@ impl InputController {
                 let edge = down && !self.drop_item_held;
                 self.drop_item_held = down;
                 edge.then_some(ControlEvent::DropItem)
+            }
+            Control::SwapOffHand => {
+                let edge = down && !self.swap_off_hand_held;
+                self.swap_off_hand_held = down;
+                edge.then_some(ControlEvent::SwapOffHand)
             }
             Control::RotateHeldBlock => {
                 let edge = down && !self.rotate_held_block_held;

@@ -94,13 +94,17 @@ fn held_sprite_emits_no_model3d_geometry() {
 }
 
 /// CPU-rasterize one held-model view (perspective divide, z-buffer, model-atlas
-/// sampling — exactly what the item3d hand pass draws) into row `row` of a stacked
-/// `w`×`h`-per-row RGB canvas. Shared by the preview harnesses below.
+/// sampling — exactly what the item3d hand pass draws) into cell `(col, row)`
+/// of a `cols`-wide grid of `w`×`h` RGB cells. Shared by the preview
+/// harnesses below. Deliberately does NOT back-face cull — the item3d held
+/// pipeline is double-sided (cull `None`), so a reflected (negative
+/// determinant) off-hand MVP draws in game exactly as it does here.
 fn raster_held_cell(
     kind: petramond_world::block_model::BlockModelKind,
     mvp: Mat4,
     (w, h): (usize, usize),
-    row: usize,
+    (col, row): (usize, usize),
+    cols: usize,
     color: &mut [u8],
 ) {
     use crate::lighting::{DynLight, LightEnv};
@@ -176,7 +180,7 @@ fn raster_held_cell(
                 }
                 let shade = w0 * vtx[0].shade + w1 * vtx[1].shade + w2 * vtx[2].shade;
                 zbuf[li] = z;
-                let o = ((row * h + y) * w + x) * 3;
+                let o = ((row * h + y) * (w * cols) + col * w + x) * 3;
                 color[o] = (atlas_rgba[ti] as f32 * shade).min(255.0) as u8;
                 color[o + 1] = (atlas_rgba[ti + 1] as f32 * shade).min(255.0) as u8;
                 color[o + 2] = (atlas_rgba[ti + 2] as f32 * shade).min(255.0) as u8;
@@ -214,7 +218,7 @@ fn render_held_model_preview() {
             ..Default::default()
         };
         let (kind, mvp) = held_model(&view, aspect).expect("model item");
-        raster_held_cell(kind, mvp, (w, h), row, &mut color);
+        raster_held_cell(kind, mvp, (w, h), (0, row), 1, &mut color);
         println!("row {row}: {label}");
     }
     image::save_buffer(
@@ -226,6 +230,189 @@ fn render_held_model_preview() {
     )
     .expect("save png");
     println!("wrote /tmp/held_model.png ({w}x{gh}, one row per item)");
+}
+
+/// CPU-rasterize one held SPRITE view (the extruded slab, texture-file
+/// sampled through its atlas rect) into cell `(col, row)` of a `cols`-wide
+/// grid — the sprite twin of [`raster_held_cell`], shared by the off-hand
+/// preview. No back-face cull, like the double-sided item3d pipeline.
+fn raster_sprite_cell(
+    tile: petramond_world::tile::Tile,
+    texture: &str,
+    mvp: Mat4,
+    (w, h): (usize, usize),
+    (col, row): (usize, usize),
+    cols: usize,
+    color: &mut [u8],
+) {
+    use crate::atlas::tile_uv;
+    use glam::Vec4;
+
+    let mut verts = Vec::new();
+    crate::item_model::build_extruded_item_lit(
+        tile,
+        DynLight::FULL,
+        crate::lighting::LightEnv::IDENTITY,
+        &mut verts,
+    );
+    // Repo-root texture dir (this crate moved under crates/ in the split).
+    let src = format!(
+        "{}/../../assets/textures/{texture}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let img = image::open(&src).expect("texture").to_rgba8();
+    let (tw, th) = img.dimensions();
+    let [au0, av0, au1, av1] = tile_uv(tile);
+    let mut zbuf = vec![f32::INFINITY; w * h];
+    let project = |p: [f32; 3]| -> [f32; 4] {
+        let clip = mvp * Vec4::new(p[0], p[1], p[2], 1.0);
+        let invw = 1.0 / clip.w;
+        [
+            (clip.x * invw * 0.5 + 0.5) * w as f32,
+            (1.0 - (clip.y * invw * 0.5 + 0.5)) * h as f32,
+            clip.z * invw,
+            invw,
+        ]
+    };
+    for tri in verts.chunks_exact(3) {
+        let shade = tri[0].shade;
+        let s = [
+            project(tri[0].pos),
+            project(tri[1].pos),
+            project(tri[2].pos),
+        ];
+        let uvw = [
+            [tri[0].uv[0] * s[0][3], tri[0].uv[1] * s[0][3]],
+            [tri[1].uv[0] * s[1][3], tri[1].uv[1] * s[1][3]],
+            [tri[2].uv[0] * s[2][3], tri[2].uv[1] * s[2][3]],
+        ];
+        let (x0, y0, x1, y1, x2, y2) = (s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1]);
+        let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+        if area.abs() < 1e-6 {
+            continue;
+        }
+        let inv_area = 1.0 / area;
+        let minx = x0.min(x1).min(x2).floor().max(0.0) as usize;
+        let maxx = x0.max(x1).max(x2).ceil().min(w as f32 - 1.0) as usize;
+        let miny = y0.min(y1).min(y2).floor().max(0.0) as usize;
+        let maxy = y0.max(y1).max(y2).ceil().min(h as f32 - 1.0) as usize;
+        for y in miny..=maxy {
+            for x in minx..=maxx {
+                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                let w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv_area;
+                let w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv_area;
+                let w2 = 1.0 - w0 - w1;
+                // Inside-triangle test that works for BOTH windings (a
+                // reflected MVP flips the sign of every barycentric).
+                let inside = (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0)
+                    || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
+                if !inside {
+                    continue;
+                }
+                let z = w0 * s[0][2] + w1 * s[1][2] + w2 * s[2][2];
+                let idx = y * w + x;
+                if z >= zbuf[idx] {
+                    continue;
+                }
+                let invw = w0 * s[0][3] + w1 * s[1][3] + w2 * s[2][3];
+                let u = (w0 * uvw[0][0] + w1 * uvw[1][0] + w2 * uvw[2][0]) / invw;
+                let v = (w0 * uvw[0][1] + w1 * uvw[1][1] + w2 * uvw[2][1]) / invw;
+                let lu = (u - au0) / (au1 - au0);
+                let lv = (v - av0) / (av1 - av0);
+                let sx = (lu * tw as f32).clamp(0.0, tw as f32 - 1.0) as u32;
+                let sy = (lv * th as f32).clamp(0.0, th as f32 - 1.0) as u32;
+                let texel = img.get_pixel(sx, sy).0;
+                if texel[3] < 128 {
+                    continue;
+                }
+                zbuf[idx] = z;
+                let o = ((row * h + y) * (w * cols) + col * w + x) * 3;
+                color[o] = (texel[0] as f32 * shade) as u8;
+                color[o + 1] = (texel[1] as f32 * shade) as u8;
+                color[o + 2] = (texel[2] as f32 * shade) as u8;
+            }
+        }
+    }
+}
+
+/// Visual preview harness (NOT an assertion): every off-hand render path
+/// beside its right-hand twin — LEFT column = right hand, RIGHT column = the
+/// off hand — so each off view can be checked against Blockbench's lefthand
+/// preview of the same model without launching the game. (Sprites mirror the
+/// right-hand image exactly; bbmodels show Blockbench's conjugated-pose
+/// lefthand view — see `held_model_off`.)
+/// Run: `cargo test --lib -- --ignored --nocapture render_off_hand_preview`.
+/// Writes /tmp/off_hand_preview.png.
+#[test]
+#[ignore = "visual preview harness; run explicitly to regenerate /tmp/off_hand_preview.png"]
+fn render_off_hand_preview() {
+    // Engine models plus the pack machines whose authored display data has
+    // real x-offsets — the shapes that catch a wrong mirror rule (the
+    // workspace `mods/` root loads packs in test binaries automatically).
+    let model_items = [
+        ("WoodenBucket", ItemType::WoodenBucket),
+        ("FurnitureWorkbench", ItemType::FurnitureWorkbench),
+        ("Bed", ItemType::Bed),
+        (
+            "forge:pottery_table",
+            ItemType::by_key("forge:pottery_table").expect("forge pack loads"),
+        ),
+        (
+            "forge:forging_furnace",
+            ItemType::by_key("forge:forging_furnace").expect("forge pack loads"),
+        ),
+        (
+            "farming:farmers_workbench",
+            ItemType::by_key("farming:farmers_workbench").expect("farming pack loads"),
+        ),
+    ];
+    let sprite_items = [
+        ("StonePickaxe", ItemType::StonePickaxe, "stone_pickaxe.png"),
+        ("Poppy", ItemType::Poppy, "poppy.png"),
+    ];
+    let (w, h) = (640usize, 400usize);
+    let aspect = w as f32 / h as f32;
+    let rows = model_items.len() + sprite_items.len();
+    let (gw, gh) = (w * 2, h * rows);
+    let bg = [30u8, 32, 38];
+    let mut color = vec![0u8; gw * gh * 3];
+    for px in color.chunks_mut(3) {
+        px.copy_from_slice(&bg);
+    }
+    for (row, (label, item)) in model_items.iter().enumerate() {
+        let view = HeldItemView {
+            item: Some(*item),
+            variant: petramond_world::item::VariantId::NONE,
+            ..Default::default()
+        };
+        let (kind, right) = held_model(&view, aspect).expect("model item");
+        let (_, left) = held_model_off(&view, aspect).expect("model item");
+        raster_held_cell(kind, right, (w, h), (0, row), 2, &mut color);
+        raster_held_cell(kind, left, (w, h), (1, row), 2, &mut color);
+        println!("row {row}: {label} (right | off)");
+    }
+    for (i, (label, item, texture)) in sprite_items.iter().enumerate() {
+        let row = model_items.len() + i;
+        let view = HeldItemView {
+            item: Some(*item),
+            variant: petramond_world::item::VariantId::NONE,
+            ..Default::default()
+        };
+        let (tile, right) = held_sprite(&view, aspect).expect("sprite item");
+        let (_, left) = held_sprite_off(&view, aspect).expect("sprite item");
+        raster_sprite_cell(tile, texture, right, (w, h), (0, row), 2, &mut color);
+        raster_sprite_cell(tile, texture, left, (w, h), (1, row), 2, &mut color);
+        println!("row {row}: {label} (right | off)");
+    }
+    image::save_buffer(
+        "/tmp/off_hand_preview.png",
+        &color,
+        gw as u32,
+        gh as u32,
+        image::ColorType::Rgb8,
+    )
+    .expect("save png");
+    println!("wrote /tmp/off_hand_preview.png ({gw}x{gh}; left col = right hand, right col = off hand)");
 }
 
 #[test]
@@ -605,7 +792,8 @@ fn render_held_item_preview() {
             crate::lighting::LightEnv::IDENTITY,
             &mut verts,
         );
-        let src = format!("{}/assets/textures/{}", env!("CARGO_MANIFEST_DIR"), file);
+        // Repo-root texture dir (this crate moved under crates/ in the split).
+        let src = format!("{}/../../assets/textures/{}", env!("CARGO_MANIFEST_DIR"), file);
         let img = image::open(&src).expect("texture").to_rgba8();
         let (tw, th) = img.dimensions();
         let [au0, av0, au1, av1] = tile_uv(tile);

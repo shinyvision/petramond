@@ -93,6 +93,9 @@ pub enum PointerButton {
 pub enum MenuSlot {
     /// A main inventory/hotbar slot (the 36-slot grid drawn under every panel).
     Inventory(usize),
+    /// The player's single off-hand slot (swapped with the selected hotbar
+    /// stack by the swap-off-hand action, or clicked in the inventory GUI).
+    OffHand,
     /// The real, take-only output of an accepted player-crafting request.
     CraftResult,
     /// A container's `container` role slot index, backed by the

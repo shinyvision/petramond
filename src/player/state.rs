@@ -129,9 +129,17 @@ pub struct Player {
     /// as the max (not a sum) because two damaging landings can't occur within one 50 ms
     /// tick, and it keeps the physics side free of the damage rule.
     fall_distance: f32,
-    /// The player's 36-slot inventory (9 hotbar + 27 main). Owns the active
-    /// hotbar selection that drives the held item and placement.
+    /// The player's 36-slot inventory (9 hotbar + 27 main) plus the off-hand
+    /// slot. Owns the active hotbar selection that drives the held item and
+    /// placement.
     pub inventory: petramond_world::inventory::Inventory,
+    /// Which hand the use-click ladder is currently acting from. TRANSIENT
+    /// dispatch context, never saved or replicated: the ladder's second pass
+    /// sets it to `Off` so every "what am I holding" read — engine consumers
+    /// and the mod ABI's `PlayerState`/`PlayerHeld`/`ConsumeHeld` alike —
+    /// resolves to the off-hand without the attempt payload ever naming a
+    /// hand. Always reset to `Main` when the dispatch returns.
+    pub acting_hand: petramond_world::inventory::Hand,
     /// Bed spawn point, if a bed interaction set one (see [`BedSpawn`]).
     pub bed_spawn: Option<BedSpawn>,
     /// The recipe browser's craftable-only filter — a per-player UI preference
@@ -163,11 +171,20 @@ impl Player {
             fall_peak_y: feet.y,
             fall_distance: 0.0,
             inventory: petramond_world::inventory::Inventory::new(),
+            acting_hand: petramond_world::inventory::Hand::Main,
             bed_spawn: None,
             craft_craftable_only: false,
             progression: Default::default(),
             effects: Vec::new(),
         }
+    }
+
+    /// The stack the ACTING hand holds (see [`acting_hand`](Self::acting_hand)) —
+    /// the read every use-click consumer resolves through. Outside a dispatch
+    /// the acting hand is `Main`, so this is `inventory.selected()`.
+    #[inline]
+    pub fn held(&self) -> Option<&petramond_world::item::ItemStack> {
+        self.inventory.held_in(self.acting_hand)
     }
 
     /// Current health in half-heart points (`0..=`[`MAX_HEALTH`]).

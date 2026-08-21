@@ -144,6 +144,82 @@ pub(super) fn build_hand_lit(
     hand_view_proj(aspect) * placement * base_model
 }
 
+/// Mirror a rigid placement across the view-space YZ plane by CONJUGATION:
+/// `S · M · S` with `S = diag(-1, 1, 1)`. Preserves the determinant, so
+/// geometry keeps its winding and its texturing; only the POSE mirrors to the
+/// screen's left. Used ONLY for the held block cube — a cube's three-quarter
+/// view survives it because the geometry is symmetric. Anything with an
+/// asymmetric pose or silhouette (tool sprites, bbmodels) must use
+/// [`reflect_x`] instead: conjugation shows a DIFFERENT orientation (negated
+/// rotations of unmirrored geometry — the 2026-08-21 hoe-facing-the-player /
+/// invisible-pottery-table bug), not the mirror image.
+fn mirror_x(m: Mat4) -> Mat4 {
+    let s = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    s * m * s
+}
+
+/// TRUE reflection across the view-space YZ plane: `S · M`. The left-hand
+/// image is EXACTLY the right-hand image flipped horizontally — which is what
+/// Blockbench's `firstperson_lefthand` preview shows (the authored left pose
+/// rendered in a mirrored view space), and therefore the target for every
+/// authored pose. Flips triangle winding, so only double-sided (cull `None`)
+/// paths may draw it — the item3d held pipeline is.
+fn reflect_x(m: Mat4) -> Mat4 {
+    Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)) * m
+}
+
+/// The OFF-hand twin of [`build_hand_lit`]: the same geometry, seated at the
+/// screen's lower-LEFT by mirroring the placement (see [`mirror_x`]). An empty
+/// off-hand builds NOTHING — there is no bare left arm; the left hand appears
+/// exactly while the off-hand slot holds an item.
+pub(super) fn build_off_hand_lit(
+    view: &HeldItemView,
+    aspect: f32,
+    light: DynLight,
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+) -> Mat4 {
+    verts.clear();
+    indices.clear();
+    let Some(item) = view.item else {
+        return Mat4::IDENTITY;
+    };
+    let base_model = match item.render_kind() {
+        ItemRenderKind::BlockCube(block) => {
+            if block == Block::Chest {
+                super::chest_model::push_chest_item(
+                    verts,
+                    indices,
+                    Vec3::new(-0.5, -0.5, -0.5),
+                    1.0,
+                    light,
+                );
+            } else {
+                push_block_item_cube_lit_with_state(
+                    verts,
+                    indices,
+                    block,
+                    view.block_state,
+                    Vec3::new(-0.5, -0.5, -0.5),
+                    1.0,
+                    light,
+                    false,
+                );
+            }
+            Mat4::from_scale_rotation_translation(
+                Vec3::splat(0.55),
+                Quat::from_rotation_y(0.55) * Quat::from_rotation_x(-0.20),
+                Vec3::ZERO,
+            )
+        }
+        // Sprites and bbmodels ride the item3d pipeline (`held_sprite_off` /
+        // `held_model_off`); no model3d geometry here.
+        ItemRenderKind::Sprite(_) | ItemRenderKind::Model(_) => Mat4::IDENTITY,
+    };
+    super::item_model::dye_block_verts(verts, view.variant);
+    hand_view_proj(aspect) * mirror_x(held_item_placement(view, aspect) * base_model)
+}
+
 /// If `view` holds a sprite-kind item, return its tile + the complete clip-space
 /// MVP to draw the EXTRUDED 3D item (built by [`super::item_model`]) in the hand
 /// pass at the held three-quarter angle (so the extrusion depth is visible), with
@@ -183,6 +259,17 @@ pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
     ))
 }
 
+/// The OFF-hand twin of [`held_sprite`]: the right-hand composition, truly
+/// reflected ([`reflect_x`] — a symmetric perspective commutes with the flip,
+/// so this is exactly the right-hand MVP with clip-space x negated). The left
+/// hand shows the MIRROR IMAGE, so a tool's rolled art still points its head
+/// forward (conjugation pointed it at the player, the 2026-08-21 hoe bug).
+/// Near-symmetric art (flowers, torches) reads identically either way.
+pub fn held_sprite_off(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
+    let (tile, mvp) = held_sprite(view, aspect)?;
+    Some((tile, reflect_x(mvp)))
+}
+
 /// Where the first-person item sits relative to the camera (view units = blocks;
 /// camera at origin looking down −Z): the vanilla right-hand anchor, the same point
 /// Blockbench's first-person preview seats its `display_area` at (its "monitor"
@@ -220,6 +307,38 @@ pub fn held_model(
     // much nearer the camera, so the punch translation scales down proportionally.
     let placement = placement_at(view, MODEL_HAND_ANCHOR, -MODEL_HAND_ANCHOR.z / HAND_DEPTH);
     Some((kind, model_hand_view_proj(aspect) * placement * model))
+}
+
+/// The OFF-hand twin of [`held_model`] — EXACTLY Blockbench's lefthand
+/// preview composition (display_mode.js): the display area seats at the
+/// MIRRORED hand anchor (`mirror_x(placement)` — a conjugation, so the jab
+/// dynamics mirror too), the pose is the slot's values with `translation.x`
+/// / `rotation.y` / `rotation.z` NEGATED ([`DisplayTransform::left_hand`] —
+/// applied to an authored `firstperson_lefthand` too, exactly as Blockbench
+/// previews it), and the GEOMETRY (with its `display_from_unit` rebase) is
+/// untouched — no reflection. A whole-chain reflection instead mirrors each
+/// model's own authored x-offset, which pushed the pottery table off the
+/// left edge and the forging furnace to the right (2026-08-21 round 3).
+pub fn held_model_off(
+    view: &HeldItemView,
+    aspect: f32,
+) -> Option<(petramond_world::block_model::BlockModelKind, Mat4)> {
+    let item = view.item?;
+    let ItemRenderKind::Model(kind) = item.render_kind() else {
+        return None;
+    };
+    let display = petramond_world::block_model::display(kind);
+    let pose = display
+        .firstperson_lefthand
+        .as_ref()
+        .unwrap_or(&display.firstperson_righthand)
+        .left_hand();
+    let model = pose.base_matrix() * petramond_world::block_model::instance(kind).display_from_unit;
+    let placement = placement_at(view, MODEL_HAND_ANCHOR, -MODEL_HAND_ANCHOR.z / HAND_DEPTH);
+    Some((
+        kind,
+        model_hand_view_proj(aspect) * mirror_x(placement) * model,
+    ))
 }
 
 /// Fixed first-person perspective for the hand (independent of the world camera).

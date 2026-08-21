@@ -176,6 +176,20 @@ impl App {
                 bob: frame.held_item.bob,
                 dt,
             });
+            // The OFF hand: its own item + jab/eat channels. Mining, breaks,
+            // and attack swings are main-hand actions by definition.
+            renderer.set_off_hand_item(HeldItemFrame {
+                item: frame.off_hand_item.item,
+                variant: frame.off_hand_item.variant,
+                block_state: frame.off_hand_item.block_state,
+                mining: false,
+                broke_block: false,
+                placed: hand.placed_off,
+                swung: false,
+                eating: frame.off_hand_item.eating,
+                bob: frame.off_hand_item.bob,
+                dt,
+            });
         }
         // Build the neutral read snapshot, then bake it into render wire structs.
         {

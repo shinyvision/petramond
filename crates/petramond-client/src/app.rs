@@ -198,6 +198,9 @@ struct HandTriggers {
     broke: bool,
     placed: bool,
     swung: bool,
+    /// The place-jab latch for the LEFT hand (the use click's effect came
+    /// from the off-hand pass).
+    placed_off: bool,
 }
 
 #[derive(Default)]
@@ -397,6 +400,26 @@ impl App {
                     let whole_stack = self.input.sprint_held();
                     if let Some(game) = self.game.as_mut() {
                         game.drop_selected_item(whole_stack);
+                    }
+                }
+                true
+            }
+            ControlEvent::SwapOffHand => {
+                // In a menu, F swaps the off-hand with the HOVERED slot (the
+                // Drop Item shape: hit-test the solved document cells); over
+                // no slot it does nothing. In gameplay it swaps with the
+                // selected hotbar slot. Focused text inputs already swallowed
+                // the press upstream (`handle_raw_key`).
+                if self.screen.ui_open() {
+                    let (x, y) = self.pointer.cursor();
+                    if let (Some(slot), Some(game)) =
+                        (self.ui.menu_slot_at(x, y), self.game.as_mut())
+                    {
+                        game.menu_swap_off_hand(slot);
+                    }
+                } else if self.screen.gameplay_enabled() {
+                    if let Some(game) = self.game.as_mut() {
+                        game.swap_off_hand();
                     }
                 }
                 true

@@ -177,21 +177,47 @@ impl ServerGame {
             predicted,
             repeat,
         };
+        // The rule: if the RIGHT hand can act, it acts; only when the whole
+        // registry passes does the ladder run again with the OFF hand as the
+        // acting hand. The attempt payload never names a hand — the acting
+        // hand is actor context (`Player::acting_hand`), so every consumer
+        // and every mod host call (`PlayerState`, `PlayerHeld`, `ConsumeHeld`)
+        // resolves the off-hand item on the second pass with no new
+        // vocabulary. An empty off-hand runs no second pass: empty-hand
+        // interactions stay a main-hand affair.
         let mut consumed = false;
         let mut placed_at = None;
-        for consumer in CONSUMERS {
-            match consumer(self, s, &attempt, &meta, events) {
-                Claim::Pass => continue,
-                Claim::Claimed => {
-                    consumed = true;
-                }
-                Claim::Placed(pos) => {
-                    consumed = true;
-                    placed_at = Some(pos);
-                }
+        let mut off_hand_acted = false;
+        for hand in [
+            petramond_world::inventory::Hand::Main,
+            petramond_world::inventory::Hand::Off,
+        ] {
+            if hand == petramond_world::inventory::Hand::Off
+                && (consumed || self.sessions[s].player.inventory.off_hand().is_none())
+            {
+                break;
             }
-            break;
+            self.sessions[s].player.acting_hand = hand;
+            for consumer in CONSUMERS {
+                match consumer(self, s, &attempt, &meta, events) {
+                    Claim::Pass => continue,
+                    Claim::Claimed => {
+                        consumed = true;
+                    }
+                    Claim::Placed(pos) => {
+                        consumed = true;
+                        placed_at = Some(pos);
+                    }
+                }
+                break;
+            }
+            off_hand_acted = consumed && hand == petramond_world::inventory::Hand::Off;
         }
+        // The acting hand is DISPATCH context only — never leak it past the
+        // ladder (level-state reads like the roster and replication are
+        // main-hand by definition).
+        self.sessions[s].player.acting_hand = petramond_world::inventory::Hand::Main;
+        events.player(s).click_off_hand = off_hand_acted;
         // The attempt RESOLVED: announce it once, whoever took it. A claim
         // ends the pre dispatch, so `interact_attempt` handlers after the
         // claimant never saw it — this is where anything that only wants to
@@ -414,11 +440,12 @@ impl ServerGame {
         }
     }
 
-    /// Whether the held item is BOTH food and placeable (a plantable carrot)
-    /// — the dual nature the contextual-place / ordinary-place pair splits on.
+    /// Whether the ACTING hand's item is BOTH food and placeable (a plantable
+    /// carrot) — the dual nature the contextual-place / ordinary-place pair
+    /// splits on.
     fn held_is_contextual_placeable(&self, s: usize) -> bool {
-        self.sessions[s].selected_item().is_some_and(|item| {
-            item.food().is_some() && item.as_block().is_some_and(|b| b != Block::Air)
+        self.sessions[s].player.held().is_some_and(|st| {
+            st.item.food().is_some() && st.item.as_block().is_some_and(|b| b != Block::Air)
         })
     }
 

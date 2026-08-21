@@ -136,6 +136,12 @@ pub struct PlayerStateRow {
     /// The held stack's canonical instance-data blob (`None` = plain) — so
     /// observers tint the remote body's held item.
     pub held_data: Option<Vec<u8>>,
+    /// Off-hand item (wire item id); `None` for an empty off-hand. Drives the
+    /// remote body's LEFT-hand held item, exactly like `held_item` drives the
+    /// right.
+    pub off_hand_item: Option<u16>,
+    /// The off-hand stack's canonical instance-data blob (`None` = plain).
+    pub off_hand_data: Option<Vec<u8>>,
     /// The in-progress mining target + crack stage (0..=9). Drives the remote
     /// body's looping arm swing (`is_some()`) AND the remote break (crack)
     /// overlay every observer renders. The recipient's OWN crack overlay is
@@ -144,6 +150,9 @@ pub struct PlayerStateRow {
     /// Mid-eat — drives the remote chew pose (progress is approximated
     /// client-side; only the blend/nibble channels pose the body).
     pub eating: bool,
+    /// The in-progress eat consumes from the OFF hand — the remote body
+    /// raises the left arm to the mouth instead of the right.
+    pub eating_off_hand: bool,
     /// The player took damage this tick window. Sessions track no hurt TIMER
     /// (unlike `MobStateRow::hurt_timer`), so this ships the EDGE and each
     /// client runs its own flash envelope — the same one as the local
@@ -204,6 +213,12 @@ pub enum PlayerActionKind {
     AteFinished,
     Died,
     Respawned,
+    // The `*Off` twins are the same one-shots ACTED FROM THE OFF HAND (the
+    // use-click ladder's second pass) — observers animate the left arm.
+    PlacedOff,
+    UsedItemOff,
+    InteractedOff,
+    AteFinishedOff,
 }
 
 /// A server-authoritative transform correction: this pump's fixed ticks moved
@@ -233,9 +248,9 @@ pub struct SelfState {
     pub effects: Vec<(u8, u32)>,
     /// The server-side inventory mutation counter `inventory` was sampled at.
     pub inventory_revision: u64,
-    /// All 36 slots in index order, then the cursor stack LAST (the
-    /// `SelfRestore` layout). `None` while the revision hasn't moved since the
-    /// last update the recipient saw.
+    /// All 36 slots in index order, then the cursor stack, then the off-hand
+    /// stack LAST (the `SelfRestore` layout). `None` while the revision hasn't
+    /// moved since the last update the recipient saw.
     ///
     /// The active hotbar INDEX and the own mining overlay deliberately do NOT
     /// ride here: both are client-owned (the index rides `PlayerUpdate`, the
@@ -244,6 +259,9 @@ pub struct SelfState {
     pub inventory: Option<Vec<Option<ItemSlotWire>>>,
     /// The in-progress eat's progress, 0-255 over the food's eat time.
     pub eating: Option<u8>,
+    /// The in-progress eat consumes from the OFF hand — the client animates
+    /// the left hand carrying the food. Meaningless while `eating` is `None`.
+    pub eating_off_hand: bool,
     /// The in-progress sleep's fade progress, 0-255 (clamped at full).
     pub sleeping: Option<u8>,
     /// The in-progress sleep's bed base (foot) cell — the client derives the
@@ -383,6 +401,10 @@ pub struct SelfEvents {
     /// interact) but the initiator's own jab verdict was silent — play the
     /// hand jab now. See the header note on the no-echo rule.
     pub used_unpredicted: bool,
+    /// The unpredicted consumption above acted from the OFF hand (the
+    /// use-click ladder's second pass) — the jab plays on the left hand.
+    /// Meaningless while `used_unpredicted` is false.
+    pub used_unpredicted_off: bool,
 }
 
 impl SelfEvents {
@@ -401,6 +423,7 @@ impl SelfEvents {
         self.close_mod_gui |= other.close_mod_gui;
         self.toggled_door = other.toggled_door.or(self.toggled_door);
         self.used_unpredicted |= other.used_unpredicted;
+        self.used_unpredicted_off |= other.used_unpredicted_off;
     }
 }
 

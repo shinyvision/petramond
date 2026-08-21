@@ -184,6 +184,14 @@ impl ServerGame {
                         request_id,
                     });
             }
+            ClientToServer::MenuSwapOffHand { slot, request_id } => {
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(PendingMenuAction::SwapOffHand {
+                        slot: slot.to_menu_slot(),
+                        request_id,
+                    });
+            }
             ClientToServer::MenuDrag {
                 slots,
                 button,

@@ -347,6 +347,7 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
             inventory_revision: revision,
             inventory: Some(slots),
             eating: None,
+            eating_off_hand: false,
             sleeping: None,
             sleep_bed: None,
             transform: None,

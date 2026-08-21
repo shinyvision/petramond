@@ -251,6 +251,9 @@ pub struct SelfView {
     pub mining: Option<(IVec3, u8)>,
     /// The in-progress eat's progress in `[0, 1)`.
     pub eating: Option<f32>,
+    /// The in-progress eat consumes from the OFF hand — the left hand carries
+    /// the food. Meaningless while `eating` is `None`.
+    pub eating_off_hand: bool,
     /// The in-progress sleep's fade progress in `[0, 1]`.
     pub sleeping: Option<f32>,
     /// The in-progress sleep's bed base (foot) cell.
@@ -274,6 +277,7 @@ impl SelfView {
             inventory_revision: player.inventory.revision(),
             mining: None,
             eating: None,
+            eating_off_hand: false,
             sleeping: None,
             sleep_bed: None,
         }
@@ -306,6 +310,7 @@ impl SelfView {
             self.inventory_revision = state.inventory_revision;
         }
         self.eating = state.eating.map(|p| p as f32 / 255.0);
+        self.eating_off_hand = state.eating_off_hand;
         self.sleeping = state.sleeping.map(|p| p as f32 / 255.0);
         self.sleep_bed = state.sleep_bed;
     }
@@ -395,10 +400,9 @@ impl MenuView {
     }
 }
 
-/// Rebuild a real [`Inventory`] from the wire layout (36 slots then the
-/// cursor last — the `SelfRestore` layout). Short/absent tails read empty.
-/// A real `Inventory` from wire slots (36 slots + cursor LAST — the
-/// `SelfRestore`/`SelfState` layout). Also rebuilds the remote join's player.
+/// Rebuild a real [`Inventory`] from the wire layout (36 slots, then the
+/// cursor, then the off-hand LAST — the `SelfRestore`/`SelfState` layout).
+/// Short/absent tails read empty. Also rebuilds the remote join's player.
 pub fn inventory_from_wire(
     slots: &[Option<petramond::net::protocol::ItemSlotWire>],
     active: u8,
@@ -412,7 +416,11 @@ pub fn inventory_from_wire(
         .get(petramond_world::inventory::TOTAL_SLOTS)
         .and_then(|s| s.as_ref())
         .map(ItemSlotWire::to_stack);
-    Inventory::from_parts(grid, cursor, active)
+    let off_hand = slots
+        .get(petramond_world::inventory::TOTAL_SLOTS + 1)
+        .and_then(|s| s.as_ref())
+        .map(ItemSlotWire::to_stack);
+    Inventory::from_parts(grid, cursor, off_hand, active)
 }
 
 /// Interpolate a replicated ragdoll pose between two batches: positions lerp,

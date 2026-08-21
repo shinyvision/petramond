@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(rects[0].path, Vec::<usize>::new());
         let storage = rects
             .iter()
-            .find(|r| r.slot_role.as_deref() == Some("storage"))
+            .find(|r| r.slot_role.as_deref() == Some("container"))
             .unwrap();
         let node = crate::doc_edit::node_at(&p.document.root, &storage.path).unwrap();
         assert_eq!(node.kind.type_name(), "slot_grid");

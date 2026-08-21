@@ -128,6 +128,16 @@ pub enum ClientToServer {
         all: bool,
         request_id: ClientRequestId,
     },
+    /// Swap the OFF-HAND with a concrete slot — the F gesture, one lane for
+    /// both of its faces: gameplay F names the selected hotbar slot, menu F
+    /// names the hovered slot (container cells included, spec-gated
+    /// all-or-nothing). Rides the ordered menu-action stream so it can never
+    /// race a click on the same slots; the client predicts the swap and
+    /// reconciles from the outcome.
+    MenuSwapOffHand {
+        slot: MenuSlotWire,
+        request_id: ClientRequestId,
+    },
     /// Craft one stable, name-addressed recipe into the open crafting
     /// session's output slot (merging onto a same-item output stack). The
     /// server validates station, ingredients, and output fit on the next

@@ -54,6 +54,7 @@ pub struct PendingUseClick {
     pub jabbed: bool,
     held_slot: u8,
     held_item: Option<ItemType>,
+    off_hand_item: Option<ItemType>,
 }
 
 impl PendingUseClick {
@@ -73,6 +74,7 @@ impl PendingUseClick {
             jabbed,
             held_slot: player.inventory.active_slot(),
             held_item: player.inventory.selected().map(|stack| stack.item),
+            off_hand_item: player.inventory.off_hand().map(|stack| stack.item),
         }
     }
 
@@ -82,9 +84,33 @@ impl PendingUseClick {
     }
 
     #[inline]
+    pub fn off_hand_item(self) -> Option<ItemType> {
+        self.off_hand_item
+    }
+
+    /// The item that selects the click's RAY: the first hand (main, then off)
+    /// holding a `use_ray: water` item, else the main-hand item. The off-hand
+    /// boat needs the water target for the ladder's second pass.
+    pub fn ray_item(self) -> Option<ItemType> {
+        use petramond_world::item::UseRay;
+        let water = |item: Option<ItemType>| {
+            item.filter(|i| i.use_ray() == UseRay::Water)
+        };
+        water(self.held_item)
+            .or_else(|| water(self.off_hand_item))
+            .or(self.held_item)
+    }
+
+    /// Both hands must still hold what the click captured: which hand acts is
+    /// decided during dispatch (main pass first, then off), so a change to
+    /// EITHER hand between receipt and the Placement stage denies the whole
+    /// attempt instead of letting the ladder act on an item the click never
+    /// aimed.
+    #[inline]
     pub fn selection_still_matches(self, player: &Player) -> bool {
         player.inventory.active_slot() == self.held_slot
             && player.inventory.selected().map(|stack| stack.item) == self.held_item
+            && player.inventory.off_hand().map(|stack| stack.item) == self.off_hand_item
     }
 }
 
@@ -191,6 +217,13 @@ pub enum PendingMenuAction {
     CraftRecipe {
         recipe: String,
         bulk: bool,
+        request_id: crate::net::protocol::ClientRequestId,
+    },
+    /// Swap the off-hand with a concrete slot (the F gesture — the selected
+    /// hotbar slot in gameplay, the hovered slot in a menu). Rides this queue
+    /// so it serializes with clicks against the same slots.
+    SwapOffHand {
+        slot: MenuSlot,
         request_id: crate::net::protocol::ClientRequestId,
     },
 }
@@ -460,7 +493,10 @@ impl ConnectedPlayer {
 
     #[inline]
     pub fn held_slab_rotation(&self) -> petramond_world::slab::SlabRotation {
-        self.held_rotation.slab_rotation(self.selected_item())
+        // The acting hand's item: the rotation is armed per item, so an
+        // off-hand pass only inherits it when both hands hold the same item.
+        self.held_rotation
+            .slab_rotation(self.player.held().map(|st| st.item))
     }
 
     /// The in-progress eat as `(progress / eat_ticks)` in `[0, 1)`, or `None`.

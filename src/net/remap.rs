@@ -187,6 +187,7 @@ impl IdRemap {
                 // — no registry ids ride either.
                 for p in &mut t.players {
                     p.held_item = p.held_item.and_then(|id| self.item(id));
+                    p.off_hand_item = p.off_hand_item.and_then(|id| self.item(id));
                 }
                 if let Some(s) = &mut t.self_state {
                     s.effects.retain_mut(|(id, _)| match self.effect(*id) {
@@ -338,6 +339,7 @@ impl IdRemap {
             | ClientToServer::MenuClick { .. }
             | ClientToServer::MenuDrag { .. }
             | ClientToServer::MenuDrop { .. }
+            | ClientToServer::MenuSwapOffHand { .. }
             | ClientToServer::CraftRecipe { .. }
             | ClientToServer::ChatSend { .. }
             | ClientToServer::StreamBatchAck { .. }
@@ -682,8 +684,13 @@ mod tests {
             visible: true,
             held_item,
             held_data: None,
+            // The off-hand rides the same item remap as the held item; reuse
+            // the closure's id so both lanes are exercised together.
+            off_hand_item: held_item,
+            off_hand_data: None,
             mining: None,
             eating: false,
+            eating_off_hand: false,
             hurt_recent: false,
             snap: false,
             mount: None,
@@ -710,6 +717,7 @@ mod tests {
                     }),
                 ]),
                 eating: None,
+                eating_off_hand: false,
                 sleeping: None,
                 sleep_bed: None,
                 transform: None,

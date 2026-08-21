@@ -10,6 +10,7 @@ use super::ItemSlotWire;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuSlotWire {
     Inventory(u32),
+    OffHand,
     CraftResult,
     Container(u32),
     Widget(String),
@@ -20,6 +21,7 @@ impl MenuSlotWire {
         use petramond_world::gui_state::MenuSlot;
         match slot {
             MenuSlot::Inventory(i) => Self::Inventory(*i as u32),
+            MenuSlot::OffHand => Self::OffHand,
             MenuSlot::CraftResult => Self::CraftResult,
             MenuSlot::Container(i) => Self::Container(*i as u32),
             MenuSlot::Widget(id) => Self::Widget((*id).to_string()),
@@ -30,6 +32,7 @@ impl MenuSlotWire {
         use petramond_world::gui_state::MenuSlot;
         match self {
             Self::Inventory(i) => MenuSlot::Inventory(*i as usize),
+            Self::OffHand => MenuSlot::OffHand,
             Self::CraftResult => MenuSlot::CraftResult,
             Self::Container(i) => MenuSlot::Container(*i as usize),
             Self::Widget(id) => MenuSlot::Widget(petramond_world::gui_state::intern_str(id)),

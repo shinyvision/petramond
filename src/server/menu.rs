@@ -153,6 +153,31 @@ impl ServerGame {
                         dropped.is_none().then_some(ActionDenyReason::Denied),
                     );
                 }
+                PendingMenuAction::SwapOffHand { slot, request_id } => {
+                    let accepted = !self.sessions[s].player.is_spectator();
+                    if accepted {
+                        let sess = &mut self.sessions[s];
+                        let gui = sess.gui_state.clone();
+                        sess.menu.swap_off_hand(
+                            &mut self.world,
+                            &mut sess.player.inventory,
+                            Some(&gui),
+                            slot,
+                        );
+                        // The swap is predicted across both client mirrors;
+                        // force the authoritative pair into the outcome batch
+                        // so the pending prediction reconciles from it (the
+                        // SlotClick rule).
+                        sess.last_sent_inventory_revision = None;
+                        sess.last_menu_sync = None;
+                    }
+                    self.push_action_outcome(
+                        s,
+                        request_id,
+                        accepted,
+                        (!accepted).then_some(ActionDenyReason::Denied),
+                    );
+                }
                 PendingMenuAction::CraftRecipe {
                     recipe,
                     bulk,

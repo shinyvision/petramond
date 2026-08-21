@@ -17,6 +17,10 @@ pub struct ClientFrame<'a> {
     pub environment: GameEnvironment,
     pub selection: Option<SelectionShape>,
     pub held_item: ClientHeldItem,
+    /// The OFF-hand (left) item's frame state. `item == None` = empty slot —
+    /// no left hand renders. Mining/rotation stay main-hand-only; an off-hand
+    /// eat carries its progress here instead of on `held_item`.
+    pub off_hand_item: ClientHeldItem,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -47,6 +51,15 @@ impl Game {
         let mining_block = view
             .mining
             .map(|(p, _)| Block::from_id(self.replica.chunk_block(p.x, p.y, p.z)));
+        // The one in-progress eat belongs to a HAND: its progress animates the
+        // hand that is carrying the food, and only that one.
+        let eating = self.eating_progress();
+        let (eat_main, eat_off) = if view.eating_off_hand {
+            (None, eating)
+        } else {
+            (eating, None)
+        };
+        let bob = self.view_bob.offset();
         ClientFrame {
             // The third-person boom camera when active; the first-person eye
             // otherwise. Sim consumers keep reading `self.cam` directly.
@@ -63,8 +76,22 @@ impl Game {
                 block_state: self.held_block_state(),
                 mining,
                 mining_block,
-                eating: self.eating_progress(),
-                bob: self.view_bob.offset(),
+                eating: eat_main,
+                bob,
+            },
+            off_hand_item: ClientHeldItem {
+                item: view.inventory.off_hand().map(|s| s.item),
+                variant: view
+                    .inventory
+                    .off_hand()
+                    .map(|s| s.variant)
+                    .unwrap_or_default(),
+                // The R-rotation preview arms on the SELECTED item only.
+                block_state: Default::default(),
+                mining: false,
+                mining_block: None,
+                eating: eat_off,
+                bob,
             },
         }
     }

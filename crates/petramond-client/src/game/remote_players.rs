@@ -48,11 +48,15 @@ struct ActionLatch {
     swung: bool,
     broke: bool,
     placed: bool,
+    /// The place-jab latch for the LEFT hand — the `*Off` action kinds (the
+    /// use-click ladder acted from the off-hand).
+    placed_off: bool,
 }
 
 impl ActionLatch {
     /// Mirror of the local trigger mapping: a break is the full punch; place/
-    /// throw/use/interact all play the softer place jab; an attack swings.
+    /// throw/use/interact all play the softer place jab (their `*Off` twins
+    /// jab the LEFT hand); an attack swings.
     /// `AteFinished`/`Died`/`Respawned` need no jab — the eat flag, the
     /// `visible` flag, and `snap` carry their presentation.
     fn note(&mut self, kind: PlayerActionKind) {
@@ -63,7 +67,11 @@ impl ActionLatch {
             | PlayerActionKind::ThrewItem
             | PlayerActionKind::UsedItem
             | PlayerActionKind::Interacted => self.placed = true,
+            PlayerActionKind::PlacedOff
+            | PlayerActionKind::UsedItemOff
+            | PlayerActionKind::InteractedOff => self.placed_off = true,
             PlayerActionKind::AteFinished
+            | PlayerActionKind::AteFinishedOff
             | PlayerActionKind::Died
             | PlayerActionKind::Respawned => {}
         }
@@ -84,6 +92,8 @@ pub struct RemotePlayer {
     /// The renderer's held-item swing state machine, one per remote, fed from
     /// the replicated flags + latched one-shots.
     animator: HeldItemAnimator,
+    /// The LEFT hand's own animator (off-hand jabs + off-hand eats).
+    off_animator: HeldItemAnimator,
     latched: ActionLatch,
     /// Remaining hurt-flash seconds (see [`HURT_FLASH_SECS`]).
     hurt_t: f32,
@@ -92,6 +102,8 @@ pub struct RemotePlayer {
     /// The animator's output for this frame — what presentation attaches to
     /// the posed hand.
     pub view: HeldItemView,
+    /// The off-hand animator's output — the LEFT hand's held item.
+    pub off_view: HeldItemView,
 }
 
 impl RemotePlayer {
@@ -104,10 +116,12 @@ impl RemotePlayer {
             curr: row,
             pose,
             animator: HeldItemAnimator::default(),
+            off_animator: HeldItemAnimator::default(),
             latched: ActionLatch::default(),
             hurt_t: 0.0,
             eat_t: 0.0,
             view: HeldItemView::default(),
+            off_view: HeldItemView::default(),
         }
     }
 
@@ -213,6 +227,8 @@ impl RemotePlayers {
                 0.0
             };
             let latch = std::mem::take(&mut p.latched);
+            let eating_main = p.curr.eating && !p.curr.eating_off_hand;
+            let eating_off = p.curr.eating && p.curr.eating_off_hand;
             // A remote body's arm swing comes from its POSE; view bob is a
             // first-person camera effect and has no meaning on one.
             p.view = p.animator.update(HeldItemFrame {
@@ -233,7 +249,26 @@ impl RemotePlayers {
                 broke_block: latch.broke,
                 placed: latch.placed,
                 swung: latch.swung,
-                eating: p.curr.eating.then_some(p.eat_t),
+                eating: eating_main.then_some(p.eat_t),
+                dt,
+            });
+            // The LEFT hand: its own item, its own jabs, its own eats. Mining
+            // and attack swings are main-hand actions by definition.
+            p.off_view = p.off_animator.update(HeldItemFrame {
+                bob: [0.0, 0.0],
+                item: p.curr.off_hand_item.map(petramond_world::item::ItemType),
+                variant: p
+                    .curr
+                    .off_hand_data
+                    .as_deref()
+                    .and_then(petramond_world::item::variant::intern_blob)
+                    .unwrap_or_default(),
+                block_state: Default::default(),
+                mining: false,
+                broke_block: false,
+                placed: latch.placed_off,
+                swung: false,
+                eating: eating_off.then_some(p.eat_t),
                 dt,
             });
             p.hurt_t = (p.hurt_t - dt).max(0.0);
@@ -303,8 +338,11 @@ mod tests {
             visible: true,
             held_item: None,
             held_data: None,
+            off_hand_item: None,
+            off_hand_data: None,
             mining: None,
             eating: false,
+            eating_off_hand: false,
             hurt_recent: false,
             snap: false,
             mount: None,

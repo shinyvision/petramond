@@ -51,11 +51,12 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 on_ground: p.on_ground,
                 spectator: p.is_spectator(),
                 sneak,
-                held: p
-                    .inventory
-                    .selected()
-                    .map(|st| mod_api::ItemId(st.item.id())),
-                held_count: p.inventory.selected().map_or(0, |st| st.count),
+                // The ACTING hand's stack: during the use-click ladder's
+                // off-hand pass this answers the off-hand item, so a handler
+                // gating on "what am I holding" acts for whichever hand the
+                // dispatch is offering — with no hand on the ABI.
+                held: p.held().map(|st| mod_api::ItemId(st.item.id())),
+                held_count: p.held().map_or(0, |st| st.count),
                 pose_anchor: ctx
                     .acting_player_id()
                     .and_then(|id| pose_anchor_of(ctx.world, id.0)),
@@ -137,7 +138,9 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::PlayerHeld { player } => sim_query(move |ctx| {
             let id = crate::player::PlayerId(player.0);
             HostRet::HeldStack(
-                ctx.with_player(id, |p| p.inventory.selected().copied())
+                // The acting hand's stack (non-acting sessions are always
+                // outside a dispatch, so theirs reads the selected slot).
+                ctx.with_player(id, |p| p.held().copied())
                     .flatten()
                     .map(super::guards::item_stack_data),
             )
@@ -175,21 +178,30 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 let id = crate::player::PlayerId(player.0);
                 let ok = ctx
                     .with_player(id, |p| {
-                        let active = p.inventory.active_slot() as usize;
-                        match p.inventory.selected().copied() {
+                        let hand = p.acting_hand;
+                        match p.held().copied() {
                             Some(st)
                                 if st.item == expect_ty
                                     && variant::matches(st.variant, &expect_map) =>
                             {
-                                p.inventory
-                                    .slot_mut(active)
-                                    .map(|slot| {
-                                        *slot = Some(ItemStack::with_variant(
-                                            st.item, st.count, variant,
-                                        ));
+                                let stamped =
+                                    ItemStack::with_variant(st.item, st.count, variant);
+                                match hand {
+                                    petramond_world::inventory::Hand::Main => {
+                                        let active = p.inventory.active_slot() as usize;
+                                        p.inventory
+                                            .slot_mut(active)
+                                            .map(|slot| {
+                                                *slot = Some(stamped);
+                                                true
+                                            })
+                                            .unwrap_or(false)
+                                    }
+                                    petramond_world::inventory::Hand::Off => {
+                                        *p.inventory.off_hand_mut() = Some(stamped);
                                         true
-                                    })
-                                    .unwrap_or(false)
+                                    }
+                                }
                             }
                             _ => false,
                         }
@@ -198,28 +210,29 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(ok)
             })
         }
-        // Atomic: only a selected stack holding at least `count` of `item`
+        // Atomic: only an acting-hand stack holding at least `count` of `item`
         // consumes — the held stack IS the validation, so no registry check.
+        // During the ladder's off-hand pass this spends the off-hand.
         HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {
+            let hand = ctx.player.acting_hand;
             let holds = count > 0
                 && ctx
                     .player
-                    .inventory
-                    .selected()
+                    .held()
                     .is_some_and(|st| st.item.0 == item.0 && st.count as u32 >= count);
             if !holds {
                 return HostRet::Bool(false);
             }
             for _ in 0..count {
-                ctx.player.inventory.decrement_selected();
+                ctx.player.inventory.decrement_held(hand);
             }
             HostRet::Bool(true)
         }),
         HostCall::ReplaceHeldOne { item, replacement } => sim_query(|ctx| {
+            let hand = ctx.player.acting_hand;
             let holds = ctx
                 .player
-                .inventory
-                .selected()
+                .held()
                 .is_some_and(|st| st.item.0 == item.0 && st.count >= 1);
             if !holds {
                 return HostRet::Bool(false);
@@ -231,7 +244,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             let ok = ctx
                 .player
                 .inventory
-                .replace_selected_one(ItemStack::new(replacement_ty, 1));
+                .replace_held_one(hand, ItemStack::new(replacement_ty, 1));
             HostRet::Bool(ok)
         }),
         HostCall::PlayerInput { player_id } => sim_query(|ctx| {

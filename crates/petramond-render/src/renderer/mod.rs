@@ -294,7 +294,7 @@ struct ActorPass {
     remote_players: Vec<RemotePlayerRender>,
     /// Frustum-visible bodies this frame (local first, then remotes), each
     /// paired with the held-item view that animates its hand.
-    player_visible: Vec<(PlayerRenderInstance, HeldItemView)>,
+    player_visible: Vec<(PlayerRenderInstance, HeldItemView, HeldItemView)>,
     /// Per-body staging for one `build_player_body` bake, appended into
     /// `player_gpu`'s combined stream.
     body_verts: Vec<super::item_model::ItemVertex>,
@@ -455,9 +455,26 @@ struct HandPass {
     held_is_model: bool,
     /// Index count of the hand geometry uploaded for this frame (0 = nothing).
     index_count: u32,
-    /// Vertex count of the hand geometry (icons are appended after it in the
-    /// shared model3d vbuf, so their `base_vertex` starts here).
+    /// Vertex count of the hand geometry — the OFF-hand geometry appends
+    /// after it in the shared model3d vbuf, so its `base_vertex` starts here.
     vertex_count: u32,
+    // --- The OFF (left) hand: its own view/animator, its geometry appended
+    // --- into the SAME buffers after the main hand's, MVP slot 1. Drawn only
+    // --- while the off-hand slot holds an item (no bare left arm).
+    /// Off-hand held item state (`item == None` = empty, nothing drawn).
+    off_item: HeldItemView,
+    off_item_anim: HeldItemAnimator,
+    /// Index count of the off-hand model3d geometry (drawn at
+    /// `index_count..index_count + off_index_count` with `base_vertex =
+    /// vertex_count`).
+    off_index_count: u32,
+    /// The off-hand item3d stream's `[start, start + count)` vertex range in
+    /// the shared item3d vbuf (appended after the main hand's stream).
+    off_item3d_start: u32,
+    off_item3d_count: u32,
+    /// The off item3d stream draws with the MODEL atlas (bbmodel) rather than
+    /// the block atlas (extruded sprite) — per-stream twin of `held_is_model`.
+    off_is_model: bool,
     /// Reusable CPU staging for the per-frame hand geometry (cleared + refilled by
     /// `build_hand`, capacity retained — no per-frame allocation).
     verts: Vec<petramond_mesh::Vertex>,
@@ -491,6 +508,12 @@ impl HandPass {
         self.held_is_model = false;
         self.held_item = HeldItemView::default();
         self.held_item_anim = HeldItemAnimator::default();
+        self.off_item = HeldItemView::default();
+        self.off_item_anim = HeldItemAnimator::default();
+        self.off_index_count = 0;
+        self.off_item3d_start = 0;
+        self.off_item3d_count = 0;
+        self.off_is_model = false;
         self.shake = [0.0; 2];
         self.break_overlays.clear();
         self.break_draw.index_count = 0;

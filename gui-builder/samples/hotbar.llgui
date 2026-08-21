@@ -32,13 +32,42 @@
       "style": "list.row",
       "children": [
         {
-          "type": "slot_grid",
-          "role": "hotbar",
-          "cols": 9,
-          "rows": 1,
-          "bind": {
-            "selected": "active_slot"
-          }
+          "type": "row",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 4,
+            "dir": "column",
+            "align": "end",
+            "justify": "start"
+          },
+          "children": [
+            {
+              "type": "slot",
+              "role": "off_hand"
+            },
+            {
+              "type": "slot_grid",
+              "role": "hotbar",
+              "cols": 9,
+              "rows": 1,
+              "bind": {
+                "selected": "active_slot"
+              }
+            }
+          ]
         }
       ]
     }

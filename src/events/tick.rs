@@ -91,6 +91,14 @@ pub struct PlayerTickEvents {
     /// (`SelfEvents::used_unpredicted`). Observers are unaffected (they get
     /// `used_item`/`interacted` via the shared action rows).
     pub used_unpredicted: bool,
+    /// This tick's use click was claimed on the ladder's OFF-hand pass, so its
+    /// one-shots (`placed_block`/`used_item`/`interacted`/`used_unpredicted`)
+    /// animate the left hand. At most one click dispatches per tick, so one
+    /// flag covers them all; the eat completion keeps its own flag because an
+    /// eat can finish in the same tick as an unrelated click.
+    pub click_off_hand: bool,
+    /// The completed eat (`ate_finished`) consumed from the OFF hand.
+    pub ate_off_hand: bool,
 }
 
 /// A block the sim destroyed this tick (player-mined or natural), with

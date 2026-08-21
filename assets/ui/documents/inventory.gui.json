@@ -161,11 +161,17 @@
                 "rows": 3
               },
               {
-                "type": "slot_grid",
-                "role": "hotbar",
-                "cols": 9,
-                "rows": 1,
-                "layout": { "margin": [0, 2, 0, 0] }
+                "type": "row",
+                "layout": { "gap": 4, "margin": [0, 2, 0, 0] },
+                "children": [
+                  {
+                    "type": "slot_grid",
+                    "role": "hotbar",
+                    "cols": 9,
+                    "rows": 1
+                  },
+                  { "type": "slot", "role": "off_hand" }
+                ]
               }
             ]
           }

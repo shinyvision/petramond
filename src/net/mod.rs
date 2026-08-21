@@ -23,7 +23,11 @@ pub mod remap;
 //     container ships as the keyed generic `Container` target with
 //     `Container(i)` slots and named gauge readings in `gui_state`, so no
 //     engine content identity remains in the menu protocol.
-pub const PROTOCOL_VERSION: u16 = 30;
+// 31: the off-hand slot — self inventory bodies append the off-hand stack
+//     after the cursor, `MenuSlotWire::OffHand`, the hovered-slot swap
+//     gesture (`ClientToServer::MenuSwapOffHand`), the off-hand item +
+//     acting-hand eat/use flags on the player rows.
+pub const PROTOCOL_VERSION: u16 = 31;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

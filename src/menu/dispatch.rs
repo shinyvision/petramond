@@ -50,6 +50,23 @@ impl ContainerMenu {
                     }
                 }
             }
+            MenuSlot::OffHand => {
+                if shift {
+                    // Shift-click ships the off-hand stack back into the grid;
+                    // nothing shift-routes INTO the off-hand (a deliberate
+                    // placement only).
+                    inv.shift_move_off_hand();
+                } else if gather {
+                    self.collect_to_cursor(world, inv);
+                } else {
+                    let mut cell = inv.take_off_hand();
+                    match button {
+                        PointerButton::Primary => inv.click_external_slot(&mut cell),
+                        PointerButton::Secondary => inv.right_click_external_slot(&mut cell),
+                    }
+                    *inv.off_hand_mut() = cell;
+                }
+            }
             MenuSlot::CraftResult => self.craft_take_output(inv, button, shift),
             MenuSlot::Container(i) => {
                 self.container_slot_interaction(world, inv, gui, i, button, shift, gather);

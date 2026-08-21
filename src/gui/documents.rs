@@ -149,16 +149,17 @@ fn mod_contract_for(doc: &Document) -> Result<SlotContract, String> {
             }
             "player_inv" if count == MAIN_GRID => {}
             "hotbar" if count == HOTBAR => {}
-            "player_inv" | "hotbar" => {
+            "off_hand" if count == 1 => {}
+            "player_inv" | "hotbar" | "off_hand" => {
                 return Err(format!(
                     "role '{role}' declares {count} slots; the engine grids are \
-                     player_inv:{MAIN_GRID} and hotbar:{HOTBAR}"
+                     player_inv:{MAIN_GRID}, hotbar:{HOTBAR}, and off_hand:1"
                 ))
             }
             _ => {
                 return Err(format!(
                     "role '{role}' is not available to mod documents (allowed: container, \
-                     player_inv, hotbar)"
+                     player_inv, hotbar, off_hand)"
                 ))
             }
         }
@@ -238,9 +239,12 @@ pub fn contract_for(kind: GuiKind) -> SlotContract {
             ("player_inv", 27),
             ("hotbar", 9),
         ]),
-        GuiKind::Inventory => {
-            SlotContract::new(&[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)])
-        }
+        GuiKind::Inventory => SlotContract::new(&[
+            ("player_inv", 27),
+            ("hotbar", 9),
+            ("off_hand", 1),
+            ("craft_result", 1),
+        ]),
         GuiKind::CraftingTable => {
             SlotContract::new(&[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)])
         }
@@ -251,7 +255,7 @@ pub fn contract_for(kind: GuiKind) -> SlotContract {
             // order, since the in-role index IS the container index.
             ("container", petramond_world::furnace::FURNACE_SLOTS),
         ]),
-        GuiKind::Hotbar => SlotContract::new(&[("hotbar", 9)]),
+        GuiKind::Hotbar => SlotContract::new(&[("hotbar", 9), ("off_hand", 1)]),
         GuiKind::Demo => SlotContract::new(&[("demo_slots", 9)]),
         _ => SlotContract::default(),
     }
@@ -586,10 +590,10 @@ mod tests {
         // mis-routing clicks; every slot-bearing kind must pin its counts.
         for (kind, total) in [
             (GuiKind::Chest, 27 + 27 + 9),
-            (GuiKind::Inventory, 27 + 9 + 1),
+            (GuiKind::Inventory, 27 + 9 + 1 + 1),
             (GuiKind::CraftingTable, 27 + 9 + 1),
             (GuiKind::Furnace, 27 + 9 + 3),
-            (GuiKind::Hotbar, 9),
+            (GuiKind::Hotbar, 9 + 1),
         ] {
             let contract = contract_for(kind);
             let sum: usize = contract.roles.iter().map(|(_, n)| n).sum();

@@ -62,6 +62,23 @@ impl DisplayTransform {
         Mat4::from_translation(pos) * Mat4::from_quat(rot) * Mat4::from_scale(scale)
     }
 
+    /// The transform as Blockbench (and vanilla) apply it to a LEFT-hand
+    /// slot: the x-translation and the y/z rotations negate; scale and the
+    /// pivots stay authored (Blockbench feeds the negated euler with the
+    /// untouched pivots through the same pivot corrections —
+    /// display_mode.js `updateDisplayBase`, the `includes('lefthand')`
+    /// factors). Applied to WHICHEVER slot renders in the left hand,
+    /// authored `*_lefthand` values included — that is what Blockbench's
+    /// left-hand preview executes, so an author tuning the lefthand slot
+    /// sees exactly this.
+    pub fn left_hand(&self) -> DisplayTransform {
+        DisplayTransform {
+            rotation: [self.rotation[0], -self.rotation[1], -self.rotation[2]],
+            translation: [-self.translation[0], self.translation[1], self.translation[2]],
+            ..*self
+        }
+    }
+
     fn parse(v: &Value) -> Self {
         let read = |key: &str, default: [f32; 3]| -> [f32; 3] {
             match v.get(key).and_then(Value::as_array) {
@@ -89,16 +106,25 @@ impl DisplayTransform {
 pub struct BlockDisplay {
     /// First-person right-hand pose — the HELD item.
     pub firstperson_righthand: DisplayTransform,
+    /// First-person LEFT-hand pose — the OFF-hand held item. `None` when the
+    /// model authors no entry: the renderer then MIRRORS the right-hand pose
+    /// (the vanilla default), so `Option` distinguishes "author chose" from
+    /// "derive it".
+    pub firstperson_lefthand: Option<DisplayTransform>,
     /// Inventory / GUI pose — the slot ICON.
     pub gui: DisplayTransform,
     /// Third-person right-hand pose (cached for completeness; not yet wired).
     pub thirdperson_righthand: DisplayTransform,
+    /// Third-person LEFT-hand pose (`None` = mirror the right, like
+    /// [`firstperson_lefthand`](Self::firstperson_lefthand)).
+    pub thirdperson_lefthand: Option<DisplayTransform>,
     /// On-the-ground pose (cached for completeness; the dropped item keeps its own pose).
     pub ground: DisplayTransform,
 }
 
 impl BlockDisplay {
-    /// Parse the `.bbmodel`'s `display` object (any context absent → identity).
+    /// Parse the `.bbmodel`'s `display` object (any context absent → identity;
+    /// the lefthand contexts stay `None` so the renderer can mirror instead).
     pub(super) fn parse(root: &Value) -> Self {
         let d = root.get("display");
         let ctx = |name: &str| {
@@ -106,10 +132,13 @@ impl BlockDisplay {
                 .map(DisplayTransform::parse)
                 .unwrap_or_default()
         };
+        let opt_ctx = |name: &str| d.and_then(|d| d.get(name)).map(DisplayTransform::parse);
         BlockDisplay {
             firstperson_righthand: ctx("firstperson_righthand"),
+            firstperson_lefthand: opt_ctx("firstperson_lefthand"),
             gui: ctx("gui"),
             thirdperson_righthand: ctx("thirdperson_righthand"),
+            thirdperson_lefthand: opt_ctx("thirdperson_lefthand"),
             ground: ctx("ground"),
         }
     }
