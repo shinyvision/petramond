@@ -40,6 +40,17 @@ pub const ITEM_LIFETIME_TICKS: u32 = 6000;
 /// can pull it back.
 pub const ITEM_PICKUP_DELAY_TICKS: u32 = 10;
 
+/// Distance (centre to centre) below which two compatible dropped stacks
+/// merge into one entity. Tight enough that a pile still reads as several
+/// bobs, wide enough to catch a break burst's scattered pops.
+pub const ITEM_MERGE_RADIUS: f32 = 1.0;
+
+/// Merge cadence in game ticks (every 0.5 s at 20 TPS). Merging is invisible
+/// bookkeeping, so it never needs to run per tick: the interval bounds its
+/// worst-case cost to a twentieth of the per-tick budget share while piles
+/// still form far faster than a player can notice the delay.
+pub const ITEM_MERGE_INTERVAL_TICKS: u32 = 10;
+
 /// One dropped-item environmental transform's presentation — ONE per
 /// transformed entity, never per item in the stack. Returned from the physics
 /// tick as a batch; the stage owner routes it onto the world-event channels.
@@ -296,6 +307,102 @@ impl DroppedItems {
                 item.clear_pickup_request();
             }
         }
+    }
+
+    /// Merge compatible dropped stacks within [`ITEM_MERGE_RADIUS`] of each
+    /// other into one entity each. Runs on the fixed tick (cadence-gated by
+    /// the caller) so scattered break bursts and mob-drop piles collapse into
+    /// single stacks instead of rendering (and shadowing) as a swarm of
+    /// one-item entities.
+    ///
+    /// Compatibility is exactly inventory stacking (`ItemStack::can_stack_with`
+    /// — same item AND same instance-data variant), and merges respect the
+    /// item's max stack size: a pile of 40+40 dirt becomes 64 + a 16 remainder,
+    /// never an oversized stack.
+    ///
+    /// A drop with an active pickup reservation never takes part — it is
+    /// magnet-flying to its requester, whose inventory has already reserved
+    /// those items; absorbing it would strand the reservation.
+    ///
+    /// Performance: a spatial hash by voxel cell means the pass is O(items)
+    /// plus O(matches), never O(n²) — only drops that share a cell or border
+    /// one are distance-tested. The survivor keeps its identity (id, pose,
+    /// velocity); the absorbed stack's count folds in, keeping the OLDER
+    /// despawn timer so merging never shortens a pile's life. Removals happen
+    /// once at the end (flag + compact), so buckets stay valid mid-pass.
+    pub fn merge_nearby(&mut self) {
+        if self.items.len() < 2 {
+            return;
+        }
+        let mut cells: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
+        for (i, it) in self.items.iter().enumerate() {
+            let c = voxel_at(it.pos);
+            cells.entry((c.x, c.y, c.z)).or_default().push(i as u32);
+        }
+        let mut consumed = vec![false; self.items.len()];
+        for i in 0..self.items.len() {
+            if consumed[i] || self.items[i].pickup_requested.is_some() {
+                continue;
+            }
+            let origin = voxel_at(self.items[i].pos);
+            // The radius fits inside the 3×3×3 cell neighbourhood around the
+            // survivor's cell (worst case: adjacent cells touching corner-wise).
+            let near = |cells: &HashMap<(i32, i32, i32), Vec<u32>>| {
+                let mut out = Vec::new();
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            if let Some(bucket) =
+                                cells.get(&(origin.x + dx, origin.y + dy, origin.z + dz))
+                            {
+                                out.extend(
+                                    bucket.iter().copied().map(|j| j as usize).filter(|&j| j > i),
+                                );
+                            }
+                        }
+                    }
+                }
+                out
+            };
+            for j in near(&cells) {
+                if consumed[j] || self.items[j].pickup_requested.is_some() {
+                    continue;
+                }
+                let d = self.items[i].pos - self.items[j].pos;
+                let (stackable, space, b_count, b_ticks) = {
+                    let (a, b) = (&self.items[i], &self.items[j]);
+                    (
+                        a.stack.can_stack_with(&b.stack)
+                            && d.length_squared() <= ITEM_MERGE_RADIUS * ITEM_MERGE_RADIUS,
+                        a.stack.space_left(),
+                        b.stack.count,
+                        b.ticks_lived,
+                    )
+                };
+                if !stackable {
+                    continue;
+                }
+                if space == 0 {
+                    break;
+                }
+                let take = space.min(b_count);
+                self.items[i].stack.count += take;
+                self.items[i].ticks_lived = self.items[i].ticks_lived.min(b_ticks);
+                if take == b_count {
+                    consumed[j] = true;
+                } else {
+                    self.items[j].stack.count -= take;
+                }
+            }
+        }
+        let mut w = 0;
+        for (r, gone) in consumed.iter().enumerate() {
+            if !gone {
+                self.items.swap(w, r);
+                w += 1;
+            }
+        }
+        self.items.truncate(w);
     }
 
     fn pickup_request_candidate(&self, i: usize, player_pos: Vec3) -> bool {
@@ -863,5 +970,97 @@ mod tests {
         let map = w.dropped_items_mut().items_by_section();
         assert_eq!(map[&SectionPos::new(0, 4, 0)].len(), 2);
         assert_eq!(map[&SectionPos::new(1, 4, 0)].len(), 1);
+    }
+
+    /// Two compatible stacks within the merge radius collapse into one entity
+    /// carrying both counts; the survivor keeps its own identity and pose.
+    #[test]
+    fn nearby_compatible_stacks_merge_into_one_entity() {
+        let mut w = World::new(0, 0);
+        w.spawn_item(drop_at(0.5, 0.5));
+        w.spawn_item(drop_at(1.2, 0.5)); // 0.7 away
+        w.dropped_items_mut().merge_nearby();
+        assert_eq!(w.item_entities().len(), 1);
+        assert_eq!(w.item_entities()[0].stack.count, 2);
+        assert_eq!(w.item_entities()[0].stack.item, ItemType::Dirt);
+    }
+
+    /// Merging respects the max stack size: the overflow stays behind as its
+    /// own entity instead of producing an oversized stack.
+    #[test]
+    fn merging_respects_the_max_stack_size() {
+        let mut w = World::new(0, 0);
+        for x in [0.5, 1.1] {
+            let mut item = drop_at(x, 0.5);
+            item.stack = ItemStack::new(ItemType::Dirt, 40);
+            w.spawn_item(item);
+        }
+        w.dropped_items_mut().merge_nearby();
+        assert_eq!(w.item_entities().len(), 2, "64 + remainder");
+        let mut counts: Vec<u8> = w
+            .item_entities()
+            .iter()
+            .map(|d| d.stack.count)
+            .collect::<Vec<_>>();
+        counts.sort();
+        assert_eq!(counts, vec![16, 64]);
+    }
+
+    /// Different item kinds never merge, even sharing a cell.
+    #[test]
+    fn different_items_do_not_merge() {
+        let mut w = World::new(0, 0);
+        w.spawn_item(drop_at(0.5, 0.5));
+        let mut other = drop_at(0.6, 0.6);
+        other.stack.item = ItemType::Stone;
+        w.spawn_item(other);
+        w.dropped_items_mut().merge_nearby();
+        assert_eq!(w.item_entities().len(), 2);
+    }
+
+    /// Drops farther than the merge radius stay separate even when compatible.
+    #[test]
+    fn drops_beyond_the_radius_do_not_merge() {
+        let mut w = World::new(0, 0);
+        w.spawn_item(drop_at(0.5, 0.5));
+        w.spawn_item(drop_at(1.8, 0.5)); // 1.3 away
+        w.dropped_items_mut().merge_nearby();
+        assert_eq!(w.item_entities().len(), 2);
+    }
+
+    /// A magnetised drop never merges (in or out): it is flying to a requester
+    /// whose inventory already reserved those items.
+    #[test]
+    fn requested_drops_never_merge() {
+        let mut w = World::new(0, 0);
+        let mut flying = drop_at(0.5, 0.5);
+        flying.pickup_requested = Some(P0);
+        w.spawn_item(flying);
+        w.spawn_item(drop_at(0.7, 0.5));
+        w.dropped_items_mut().merge_nearby();
+        assert_eq!(
+            w.item_entities().len(),
+            2,
+            "the reserved drop neither absorbs nor is absorbed"
+        );
+        assert!(w.item_entities()[0].pickup_requested.is_some());
+    }
+
+    /// The merged pile keeps the OLDEST member's despawn timer, so merging
+    /// never shortens an item's remaining life.
+    #[test]
+    fn merged_pile_keeps_the_most_remaining_lifetime() {
+        let mut w = World::new(0, 0);
+        let mut old = drop_at(0.5, 0.5);
+        old.ticks_lived = ITEM_LIFETIME_TICKS - 200;
+        w.spawn_item(old);
+        w.spawn_item(drop_at(1.2, 0.5)); // fresh
+        w.dropped_items_mut().merge_nearby();
+        assert_eq!(w.item_entities().len(), 1);
+        assert_eq!(
+            w.item_entities()[0].ticks_lived,
+            0,
+            "the pile lives as long as its youngest member"
+        );
     }
 }

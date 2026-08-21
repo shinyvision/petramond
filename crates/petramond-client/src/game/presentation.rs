@@ -21,8 +21,8 @@ use super::Game;
 
 pub use petramond_render::views::{
     BreakOverlayView, ChestPresentation, CrackBox, CrackBoxes, DoorPresentation,
-    DroppedItemPresentation, FootstepSource, GamePresentation, MobPresentation, ParticleAtlas,
-    ParticlePresentation, PlayerPresentation, MAX_CRACK_BOXES,
+    DroppedItemPresentation, EntityShadow, FootstepSource, GamePresentation, MobPresentation,
+    ParticleAtlas, ParticlePresentation, PlayerPresentation, MAX_CRACK_BOXES,
 };
 
 /// The local player's [`FootstepSource`] key. Remotes are `1 + PlayerId`, so
@@ -48,6 +48,23 @@ const MIN_FOOTSTEP_WALK_WEIGHT: f32 = 0.35;
 /// under contention — a bound so a crowd of miners can't grow the bake.
 const MAX_BREAK_OVERLAYS: usize = 8;
 
+// Entity blob-shadow tuning. The gather owns all of it: the renderer just
+// stamps quads.
+/// How many cells below an entity's feet the ground probe searches before
+/// giving up (no shadow when nothing is within reach — a body falling past a
+/// cliff fades out long before this).
+const SHADOW_PROBE_DEPTH: i32 = 6;
+/// Body height above its ground at which the shadow has fully faded.
+const SHADOW_MAX_DROP: f32 = 4.0;
+/// Peak darkening at a shadow's centre for a body resting on its ground.
+const SHADOW_STRENGTH: f32 = 0.42;
+/// Mob decal radius as a multiple of the species' largest collision half-extent.
+const MOB_SHADOW_RADIUS_SCALE: f32 = 1.5;
+/// Player bodies: half-width 0.3 × the mob scale, rounded to a tuned value.
+const PLAYER_SHADOW_RADIUS: f32 = 0.45;
+/// A dropped item is one small spinning cube.
+const ITEM_SHADOW_RADIUS: f32 = 0.25;
+
 #[derive(Default)]
 pub struct GamePresentationScratch {
     /// Ambient (precipitation) volume drives — presentation-owned state,
@@ -63,6 +80,7 @@ pub struct GamePresentationScratch {
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
     remote_players: Vec<RemotePlayerRender>,
+    shadows: Vec<EntityShadow>,
     footsteps: Vec<FootstepSource>,
     break_overlays: Vec<BreakOverlayView>,
 }
@@ -95,6 +113,8 @@ impl GamePresentationScratch {
         self.collect_remote_players(game, tick_alpha);
         self.collect_footsteps(game, tick_alpha);
         self.collect_break_overlays(game);
+        let player = collect_player(game);
+        self.collect_entity_shadows(game, view, tick_alpha, player);
 
         GamePresentation {
             tick_alpha,
@@ -107,9 +127,10 @@ impl GamePresentationScratch {
             mobs: &self.mobs,
             remote_players: &self.remote_players,
             footsteps: &self.footsteps,
-            player: collect_player(game),
+            player,
             held_item_light: game.held_item_light(),
             break_overlays: &self.break_overlays,
+            shadows: &self.shadows,
         }
     }
 
@@ -515,6 +536,64 @@ impl GamePresentationScratch {
             self.break_overlays.truncate(MAX_BREAK_OVERLAYS);
         }
     }
+
+    /// One blob-shadow row per shadowed entity this frame: every mob, dropped
+    /// item, and body (local third-person + remotes) that has ground within
+    /// [`SHADOW_PROBE_DEPTH`] of its feet.
+    ///
+    /// The gather owns the whole decision because only it has the world: the
+    /// ground probe, the footprint-scaled radius, and the drop fade are all
+    /// resolved here — the renderer stamps quads and nothing else. Rows cull
+    /// against the view volume first so a full scene pays probes only for
+    /// entities that will draw (the gather-scales-with-VISIBLE rule).
+    fn collect_entity_shadows(
+        &mut self,
+        game: &Game,
+        view: &ViewVolume,
+        tick_alpha: f32,
+        player_row: Option<PlayerPresentation>,
+    ) {
+        self.shadows.clear();
+        let world = &game.replica;
+        // A generous box around the feet — the decal is at most a couple of
+        // blocks across and sits below the body, never above it.
+        let visible = |feet: Vec3| {
+            view.aabb_visible(
+                feet - Vec3::new(2.0, 1.0, 2.0),
+                feet + Vec3::new(2.0, 2.0, 2.0),
+            )
+        };
+        for m in &self.mobs {
+            let feet = m.prev_pos.lerp(m.pos, tick_alpha);
+            if !visible(feet) {
+                continue;
+            }
+            let size = petramond::mob::def(m.kind).size;
+            let half = size
+                .half_length
+                .unwrap_or(size.half_width)
+                .max(size.half_width);
+            push_entity_shadow(
+                world,
+                &mut self.shadows,
+                feet,
+                half * MOB_SHADOW_RADIUS_SCALE,
+            );
+        }
+        for d in &self.item_entities {
+            let pos = d.prev_pos.lerp(d.pos, tick_alpha);
+            if !visible(pos) {
+                continue;
+            }
+            push_entity_shadow(world, &mut self.shadows, pos, ITEM_SHADOW_RADIUS);
+        }
+        if let Some(p) = player_row {
+            push_entity_shadow(world, &mut self.shadows, p.pos, PLAYER_SHADOW_RADIUS);
+        }
+        for r in &self.remote_players {
+            push_entity_shadow(world, &mut self.shadows, r.body.pos, PLAYER_SHADOW_RADIUS);
+        }
+    }
 }
 
 /// The third-person body row, when the view is active. The body-yaw follow rule
@@ -537,6 +616,44 @@ fn emitter_tint(ids: &[u8]) -> [f32; 3] {
 /// look must not drag it around — and an unclamped relative head yaw would
 /// owl the neck when the rider looks backward.
 const SEATED_HEAD_YAW_LIMIT: f32 = 1.2;
+
+/// Resolve one entity's blob shadow into `out`: probe straight down from the
+/// feet for the first collision top within [`SHADOW_PROBE_DEPTH`], then fade
+/// the strength quadratically with the drop and widen the radius as the body
+/// rises — a falling body's shadow spreads and pales before vanishing. An
+/// entity with no reachable ground (falling past a cliff, over an unloaded
+/// column) casts nothing.
+fn push_entity_shadow(
+    world: &petramond_world::world::WorldData,
+    out: &mut Vec<EntityShadow>,
+    feet: Vec3,
+    radius: f32,
+) {
+    let x = feet.x.floor() as i32;
+    let z = feet.z.floor() as i32;
+    let y0 = feet.y.floor() as i32 - 1;
+    for dy in 0..SHADOW_PROBE_DEPTH {
+        let y = y0 - dy;
+        let boxes = world.collision_boxes_at(x, y, z);
+        if boxes.is_empty() {
+            continue;
+        }
+        let top = boxes.iter().map(|b| b.max[1]).fold(f32::MIN, f32::max);
+        let ground = y as f32 + top;
+        // Geometry poking up beside/into the body (a snow layer, a stair the
+        // feet clip) is not ground UNDER it; keep probing deeper.
+        if ground > feet.y + 0.01 {
+            continue;
+        }
+        let t = ((feet.y - ground) / SHADOW_MAX_DROP).clamp(0.0, 1.0);
+        out.push(EntityShadow {
+            center: Vec3::new(feet.x, ground, feet.z),
+            radius: radius * (1.0 + 0.5 * t),
+            strength: SHADOW_STRENGTH * (1.0 - t * t),
+        });
+        return;
+    }
+}
 
 /// Whether a wire mount renders the SEATED body pose: every mob seat, and a
 /// pose anchor holding the `sitting` pose. An anchor pose outside the known

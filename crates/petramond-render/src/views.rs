@@ -213,6 +213,21 @@ pub struct FootstepSource {
     pub sprinting: bool,
 }
 
+/// One entity blob-shadow decal to draw this frame: a soft radial darkening
+/// stamped on the ground under a mob, dropped item, or player body. The
+/// gather (which owns the world) resolves the ground height, scales the
+/// radius to the entity's footprint, and fades the strength with how far the
+/// body sits above its ground; the renderer just stamps quads.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct EntityShadow {
+    /// Decal centre: the entity's x/z, `y` = the ground top surface under it.
+    pub center: Vec3,
+    /// World-space half-size of the square decal.
+    pub radius: f32,
+    /// Peak darkening at the centre (`0..=1`; 1 = fully black).
+    pub strength: f32,
+}
+
 pub struct GamePresentation<'a> {
     pub tick_alpha: f32,
     pub item_entities: &'a [DroppedItemPresentation],
@@ -241,4 +256,7 @@ pub struct GamePresentation<'a> {
     /// mining target plus each visible remote's replicated one, capped at the
     /// `MAX_BREAK_OVERLAYS` nearest to the camera.
     pub break_overlays: &'a [BreakOverlayView],
+    /// Blob shadows under entities (mobs, dropped items, bodies), already
+    /// ground-resolved + view-culled by the gather.
+    pub shadows: &'a [EntityShadow],
 }

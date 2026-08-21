@@ -4,8 +4,10 @@ use super::builders::{
 };
 use petramond_mesh::{ContactShadowVertex, Vertex};
 use crate::crosshair::MAX_CROSSHAIR_VERTICES;
+use crate::entity_shadow::{MAX_ENTITY_SHADOWS, VERTS_PER_SHADOW};
 use crate::selection::MAX_OUTLINE_VERTICES;
 use crate::uniforms::Uniforms;
+use wgpu::util::DeviceExt;
 
 /// Boxes the break-overlay buffers must hold: a legacy block cracks over ONE cube, but a
 /// bbmodel block cracks over EVERY cube of its model (the workbench is ~36), so size for a
@@ -291,4 +293,97 @@ pub(super) fn create_contact_pipeline(
         Some(DepthPreset::ReadLessEqualContactBiased),
         sample_count,
     )
+}
+
+/// Entity blob-shadow pipeline: one horizontal quad per entity under the
+/// contact-shadow pass's rules — MULTIPLY blend, depth `LessEqual` read-only
+/// with the same coplanar bias, culling off. The static ibuf holds the quad
+/// pattern repeated for every cap slot (indices are absolute into the shared
+/// vbuf), so a frame draws its whole shadow batch in one call.
+///
+/// Reuses the block group-0 uniform layout like the contact pass; binds only
+/// the renderer's existing `uniform_bind`.
+pub(super) fn create_entity_shadow_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    uniform_bgl: &wgpu::BindGroupLayout,
+) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
+    let shadow_shader = shader_module(
+        device,
+        "entity shadow shader",
+        concat!(
+            include_str!("../../shaders/cel.wgsl"),
+            include_str!("../../shaders/atmosphere.wgsl"),
+            include_str!("../../shaders/entity_shadow.wgsl")
+        ),
+    );
+    let multiply_blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Dst,
+            dst_factor: wgpu::BlendFactor::Zero,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    let shadow_targets = color_target(format, Some(multiply_blend), wgpu::ColorWrites::ALL);
+    let shadow_layout = pipeline_layout(device, "entity shadow layout", &[uniform_bgl]);
+    let shadow_vbuf_attrs = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 12,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32,
+            offset: 20,
+            shader_location: 2,
+        },
+    ];
+    let shadow_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<crate::entity_shadow::ShadowVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &shadow_vbuf_attrs,
+    };
+    let pipe = world_pipeline(
+        device,
+        "entity shadow pipe",
+        &shadow_layout,
+        &shadow_shader,
+        "vs_entity_shadow",
+        "fs_entity_shadow",
+        std::slice::from_ref(&shadow_vbuf_layout),
+        &shadow_targets,
+        wgpu::PrimitiveState::default(),
+        Some(DepthPreset::ReadLessEqualContactBiased),
+        sample_count,
+    );
+    let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("entity shadow vbuf"),
+        size: ((MAX_ENTITY_SHADOWS * VERTS_PER_SHADOW as usize)
+            * std::mem::size_of::<crate::entity_shadow::ShadowVertex>()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // Static quad indices per cap slot: q*4 + {0,1,2, 0,2,3}.
+    let mut indices = Vec::with_capacity(MAX_ENTITY_SHADOWS * 6);
+    for q in 0..MAX_ENTITY_SHADOWS as u32 {
+        let base = q * VERTS_PER_SHADOW;
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("entity shadow ibuf"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    (pipe, vbuf, ibuf)
 }

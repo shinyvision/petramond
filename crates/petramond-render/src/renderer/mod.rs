@@ -33,6 +33,7 @@ use super::break_overlay::build_break_overlays;
 use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
 use super::door_model::build_doors;
+use super::entity_shadow::{build_entity_shadows, ShadowVertex};
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
 use super::item_entity::build_item_entities;
@@ -49,9 +50,9 @@ use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::{Uniforms, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
 use super::{
-    BreakOverlayView, ChestInstance, DoorInstance, HeldItemFrame, HeldItemView, ItemEntityInstance,
-    MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance,
-    RemotePlayerRender, SolidParticleInstance, UiFrame,
+    BreakOverlayView, ChestInstance, DoorInstance, EntityShadow, HeldItemFrame, HeldItemView,
+    ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance, ParticleInstance,
+    PlayerRenderInstance, RemotePlayerRender, SolidParticleInstance, UiFrame,
 };
 use petramond_world::bbmodel::Model;
 use petramond::gui::{UiSnapshot, UiViewport};
@@ -272,6 +273,25 @@ impl ItemEntityPass {
         self.sprite_draw.index_count = 0;
         self.instances.clear();
         self.visible.clear();
+    }
+}
+
+/// The entity blob-shadow pass: one MULTIPLY-blended ground quad per shadowed
+/// entity (mobs, dropped items, bodies). The rows arrive ground-resolved from
+/// the presentation gather; this pass only bakes quads and draws them.
+struct ShadowPass {
+    /// Shadow quad dynamic draw (static per-quad ibuf, grown vbuf).
+    draw: DynamicVertexDraw,
+    /// Reused CPU staging for the frame's quads.
+    verts: Vec<ShadowVertex>,
+    /// This frame's shadow rows (world-space), set by the scene adapter.
+    instances: Vec<EntityShadow>,
+}
+
+impl ShadowPass {
+    fn clear_world(&mut self) {
+        self.draw.vertex_count = 0;
+        self.instances.clear();
     }
 }
 
@@ -745,6 +765,7 @@ pub struct Renderer {
     particle: ParticlePass,
     item_entity: ItemEntityPass,
     actor: ActorPass,
+    shadow: ShadowPass,
     block_entity: BlockEntityPass,
     last_stats: RenderStats,
 }

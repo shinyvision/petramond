@@ -413,6 +413,34 @@ impl Renderer {
                 }
             }
         }
+        // ENTITY SHADOW PASS: the blob-shadow decals under mobs / dropped items
+        // / bodies — same contract as the contact stamps above (MULTIPLY over
+        // opaque terrain, depth read-only with the coplanar bias, drawn before
+        // the sky so a culled support section can't leave smudges on the
+        // background). One whole-batch draw; the gather already culled the
+        // rows against this frame's view volume.
+        if self.shadow.draw.vertex_count > 0 {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.targets.depth,
+                "entity shadow pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
+            );
+            pass.set_pipeline(&self.shadow.draw.pipeline);
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_vertex_buffer(0, self.shadow.draw.vbuf.slice(..));
+            pass.set_index_buffer(self.shadow.draw.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            let quads = self.shadow.draw.vertex_count as usize
+                / crate::entity_shadow::VERTS_PER_SHADOW as usize;
+            pass.draw_indexed(
+                0..crate::entity_shadow::quad_index_count(quads) as u32,
+                0,
+                0..1,
+            );
+        }
         // SKY PASS: full-screen background triangle at exactly the far plane,
         // AFTER opaque so its LessEqual depth test shades only the pixels no
         // terrain covered (the sky fs is the priciest full-screen shader). The

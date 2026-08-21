@@ -11,6 +11,7 @@ pub mod chest_model;
 pub mod crosshair;
 pub mod door_model;
 pub mod effect_icons;
+pub mod entity_shadow;
 pub mod foliage_tint;
 pub mod geometry_arena;
 pub mod gpu_mem;
@@ -35,6 +36,7 @@ pub mod ui;
 pub mod uniforms;
 
 pub use views::BreakOverlayView;
+pub use views::EntityShadow;
 pub use hand_animator::HeldItemAnimator;
 pub use renderer::new_offscreen_renderer;
 pub use renderer::new_renderer_from_target;

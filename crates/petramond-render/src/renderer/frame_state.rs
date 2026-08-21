@@ -337,6 +337,13 @@ impl Renderer {
         self.particle.solid_instances.extend_from_slice(v);
     }
 
+    /// Store this frame's entity blob-shadow rows (ground-resolved by the
+    /// gather). Reuses capacity.
+    pub fn set_shadows(&mut self, v: &[EntityShadow]) {
+        self.shadow.instances.clear();
+        self.shadow.instances.extend_from_slice(v);
+    }
+
     pub fn clear_world_state(&mut self) {
         self.terrain.clear_world();
         self.chrome.clear_world();
@@ -348,6 +355,7 @@ impl Renderer {
         self.item_entity.clear_world();
         self.block_entity.clear_world();
         self.actor.clear_world();
+        self.shadow.clear_world();
     }
 
     /// True while terrain columns are still queued for GPU upload. Uploads are

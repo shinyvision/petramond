@@ -115,8 +115,16 @@ impl ServerGame {
         self.end_stage(Stage::NaturalBreaks, events);
 
         self.begin_stage(Stage::Pickup, events);
-        // Drop lifetime advances once per tick; each player then vacuums
-        // eligible drops in session-id order.
+        // Nearby compatible stacks merge on a slow cadence (piles collapse;
+        // see `DroppedItems::merge_nearby`) before the lifetime pass ages
+        // them; each player then vacuums eligible drops in session-id order.
+        if self
+            .world
+            .current_tick()
+            .is_multiple_of(u64::from(crate::world::ITEM_MERGE_INTERVAL_TICKS))
+        {
+            self.world.dropped_items_mut().merge_nearby();
+        }
         self.world.tick_item_lifetime();
         // Reservations are per-requester: release any whose owner is gone or
         // dead (their pickup pass no longer runs to re-evaluate it), so the

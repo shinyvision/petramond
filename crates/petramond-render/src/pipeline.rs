@@ -44,7 +44,7 @@ use self::grade::create_grade_pipeline;
 use self::model3d::{create_item3d_pipeline, create_model3d_pipelines};
 use self::overlays::{
     create_break_overlay_pipeline, create_contact_pipeline, create_crosshair_pipeline,
-    create_selection_pipeline,
+    create_entity_shadow_pipeline, create_selection_pipeline,
 };
 use self::particle::create_particle_pipeline;
 use self::sky::create_sky_pipeline;
@@ -154,6 +154,13 @@ pub(super) struct PipelineResources {
     /// own coplanar bias, drawn between the opaque and sky passes. Binds only
     /// the shared `uniform_bind` at group 0.
     pub contact_pipe: wgpu::RenderPipeline,
+    /// Entity blob-shadow pipeline: one horizontal MULTIPLY-blended quad per
+    /// entity, same depth/cull rules as the contact pass, drawn right after it.
+    pub entity_shadow_pipe: wgpu::RenderPipeline,
+    /// Reusable dynamic vbuf for the entity shadow quads (rewritten per frame).
+    pub entity_shadow_vbuf: wgpu::Buffer,
+    /// Static ibuf for the entity shadow quads, uploaded once.
+    pub entity_shadow_ibuf: wgpu::Buffer,
     /// Reusable dynamic vbuf for the break overlay (one block-sized cube).
     pub break_vbuf: wgpu::Buffer,
     /// Reusable dynamic ibuf for the break overlay (one cube).
@@ -408,6 +415,8 @@ pub(super) fn create_pipeline_resources(
     let (break_pipe, break_vbuf, break_ibuf) =
         create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
     let contact_pipe = create_contact_pipeline(device, format, sample_count, &shared.uniform_bgl);
+    let (entity_shadow_pipe, entity_shadow_vbuf, entity_shadow_ibuf) =
+        create_entity_shadow_pipeline(device, format, sample_count, &shared.uniform_bgl);
     let entity_bufs = create_entity_model_buffers(device);
     let particles = create_particle_pipeline(device, format, sample_count, &shared.layout);
     let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format, sample_count);
@@ -455,6 +464,9 @@ pub(super) fn create_pipeline_resources(
         world_model_blend_pipe,
         break_pipe,
         contact_pipe,
+        entity_shadow_pipe,
+        entity_shadow_vbuf,
+        entity_shadow_ibuf,
         break_vbuf,
         break_ibuf,
         item_entity_vbuf: entity_bufs.item_entity_vbuf,

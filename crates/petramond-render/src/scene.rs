@@ -14,8 +14,9 @@
 use glam::Vec3;
 
 use super::{
-    ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance,
-    ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer, SolidParticleInstance,
+    ChestInstance, DoorInstance, EntityShadow, ItemEntityInstance, MobRenderInstance,
+    ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
+    SolidParticleInstance,
 };
 use petramond_math::math::lerp_angle;
 use crate::views::{
@@ -48,6 +49,9 @@ pub struct Scene {
     block_draws: Vec<crate::BlockDrawInstance>,
     /// Baked placed-door instances for this frame.
     doors: Vec<DoorInstance>,
+    /// Entity blob-shadow rows for this frame — the gather's own rows, a copy
+    /// (they are already resolved; nothing to interpolate).
+    shadows: Vec<EntityShadow>,
     /// Baked (interpolated) mob instances for this frame.
     mobs: Vec<MobRenderInstance>,
     /// The third-person player body for this frame (`None` in first person).
@@ -78,6 +82,7 @@ impl Scene {
         self.block_draws.clear();
         self.doors.clear();
         self.mobs.clear();
+        self.shadows.clear();
         self.player = None;
         self.remote_players.clear();
         self.held_item_skylight = 0;
@@ -112,6 +117,8 @@ impl Scene {
         self.bake_chests(presentation.chests);
         self.bake_doors(presentation.doors);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
+        self.shadows.clear();
+        self.shadows.extend_from_slice(presentation.shadows);
         self.player = presentation.player.map(|p| PlayerRenderInstance {
             pos: p.pos,
             body_yaw: p.body_yaw,
@@ -183,6 +190,7 @@ impl Scene {
         renderer.set_block_draws(&self.block_draws);
         renderer.set_doors(&self.doors);
         renderer.set_mobs(&self.mobs);
+        renderer.set_shadows(&self.shadows);
         renderer.set_player(self.player);
         renderer.set_remote_players(&self.remote_players);
         renderer.set_particles(&self.particles);

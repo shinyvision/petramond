@@ -839,6 +839,17 @@ pub(super) fn new_renderer_inner(
             emitter_verts: Vec::new(),
             emitter_scratch: Vec::new(),
         },
+        shadow: ShadowPass {
+            draw: DynamicVertexDraw::new(
+                pipelines.entity_shadow_pipe,
+                pipelines.entity_shadow_vbuf,
+                pipelines.entity_shadow_ibuf,
+                (crate::entity_shadow::MAX_ENTITY_SHADOWS
+                    * crate::entity_shadow::VERTS_PER_SHADOW as usize) as u64,
+            ),
+            verts: Vec::new(),
+            instances: Vec::new(),
+        },
         last_stats: RenderStats::default(),
     }
 }

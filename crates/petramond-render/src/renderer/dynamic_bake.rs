@@ -822,5 +822,16 @@ impl Renderer {
                 )
             },
         );
+
+        // Entity blob shadows: the rows arrive ground-resolved + view-culled
+        // from the gather, so this is just the quad bake. The static ibuf is
+        // sized for the same cap the builder stops at.
+        let shadows = std::mem::take(&mut self.shadow.instances);
+        self.shadow
+            .draw
+            .bake(&self.device, &self.queue, &mut self.shadow.verts, |verts| {
+                build_entity_shadows(&shadows, verts)
+            });
+        self.shadow.instances = shadows;
     }
 }
