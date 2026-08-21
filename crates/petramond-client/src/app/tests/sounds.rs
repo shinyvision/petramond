@@ -8,9 +8,9 @@ use crate::app::{
     render::{tick_footstep_sounds, tick_idle_mob_sounds},
     MobSoundState,
 };
-use petramond_audio::SpatialListener;
 use crate::game::presentation::{FootstepSource, MobPresentation};
 use crate::game::{GameEvents, WorldEvent};
+use petramond_audio::SpatialListener;
 use petramond_math::math::{IVec3, Vec3};
 
 #[test]

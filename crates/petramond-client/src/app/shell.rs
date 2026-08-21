@@ -4,9 +4,9 @@
 //! that forward platform keyboard events into the GUI-document runtime.
 
 use super::{now_seconds, App, AppScreen, HandTriggers};
+use petramond_math::math::Vec3;
 use petramond_render::camera::Camera;
 use petramond_world::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
-use petramond_math::math::Vec3;
 
 /// One World Settings row: an installed pack. Content-only packs (no `id`)
 /// are listed but not toggleable — disable semantics are namespace-based and
@@ -414,7 +414,8 @@ impl App {
         let Some(session) = self.world_settings.as_ref() else {
             return;
         };
-        if let Err(e) = petramond::save::write_world_settings(&session.dir_name, &session.settings) {
+        if let Err(e) = petramond::save::write_world_settings(&session.dir_name, &session.settings)
+        {
             log::warn!(
                 "could not write settings.json for world '{}': {e}",
                 session.world_name
@@ -474,7 +475,9 @@ impl App {
         };
         if let Err(e) = petramond::save::delete_world(&world.dir_name) {
             log::warn!("could not delete world '{}': {e}", world.name);
-        } else if let Err(e) = petramond::modding::client::delete_local_world_storage(&world.dir_name) {
+        } else if let Err(e) =
+            petramond::modding::client::delete_local_world_storage(&world.dir_name)
+        {
             // Client-mod data (minimap exploration, waypoints) keys on the
             // save-directory name and lives outside the save — deleted with
             // the world, or a future world reusing the name inherits it.

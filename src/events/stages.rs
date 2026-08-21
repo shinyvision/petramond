@@ -96,7 +96,7 @@ impl TickSystems {
     /// the ACTING session's — the HOST's (session 0) at these stage seams, a
     /// derived convenience of the sessions view. Player-plural systems reach
     /// every connected session through the `SimCtx` accessors
-    /// (`acting_player_id`/`player_ids`/`with_player`), served by the roster
+    /// (`acting_player_id`/`with_player`), served by the roster
     /// the caller publishes around this run (`ServerGame::with_sessions_view`);
     /// with no roster published (unit fixtures) the context is single-session
     /// and anonymous.

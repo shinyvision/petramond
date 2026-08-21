@@ -1,9 +1,9 @@
 use super::*;
+use petramond_math::facing::Facing;
+use petramond_math::math::Vec3;
 use petramond_world::block::Block;
 use petramond_world::block_state::{LogAxis, SlabSplit, SlabState, StairState};
-use petramond_math::facing::Facing;
 use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::Vec3;
 
 fn sec(cx: i32, cy: i32, cz: i32) -> Section {
     Section::new(cx, cy, cz)
@@ -213,7 +213,8 @@ fn foreign_state_bytes_never_decode_through_another_blocks_reader() {
 fn section_record_roundtrips_chests() {
     let mut s = sec(4, 4, -2);
     s.set_block(9, 2, 1, Block::Chest);
-    let mut chest = petramond_world::container::Container::with_len(crate::world::chest::CHEST_SLOTS);
+    let mut chest =
+        petramond_world::container::Container::with_len(crate::world::chest::CHEST_SLOTS);
     chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
     chest.slots[26] = Some(ItemStack::new(ItemType::OakLog, 5));
     s.insert_container(9, 2, 1, chest);
@@ -299,8 +300,8 @@ fn section_record_roundtrips_model_cells() {
 fn section_record_roundtrips_doors() {
     // A placed door's facing + open + which-half state must reload exactly. State is
     // set AFTER the block.
-    use petramond_world::door::DoorState;
     use petramond_math::facing::Facing;
+    use petramond_world::door::DoorState;
     let mut s = sec(3, 4, 7);
     s.set_block(4, 0, 5, Block::OakDoor);
     s.set_door_state(
@@ -501,7 +502,11 @@ fn the_record_block_cube_carries_ids_past_one_byte() {
     let pal = crate::save::palette::Palette::identity();
     let roundtrip = |ids: &[u16]| {
         let mut buf = Vec::new();
-        put_block_cube(&mut buf, &petramond_world::section::BlockCube::from_ids(ids), &pal);
+        put_block_cube(
+            &mut buf,
+            &petramond_world::section::BlockCube::from_ids(ids),
+            &pal,
+        );
         let mut r = Reader::new(&buf);
         let back = get_block_cube(&mut r, &pal).expect("cube decodes");
         assert_eq!(&back[..], ids);

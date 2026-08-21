@@ -10,8 +10,8 @@
 
 mod bus;
 mod payload;
-pub mod tick;
 mod stages;
+pub mod tick;
 
 pub use crate::mob::{MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound};
 #[allow(unused_imports)] // named only by tests that build a `SimCtx` by hand.

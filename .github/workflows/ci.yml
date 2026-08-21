@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system and Rust targets
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libasound2-dev libudev-dev mesa-vulkan-drivers
+          rustup target add wasm32-unknown-unknown
+      - name: Formatting
+        run: make fmt-check
+      - name: Lints
+        run: make clippy
+      - name: Source debt budget
+        run: make source-audit
+      - name: Debug-safe tests
+        run: make test
+      - name: Assets and shaders
+        run: make validate-assets

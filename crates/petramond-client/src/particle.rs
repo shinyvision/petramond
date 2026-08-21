@@ -11,12 +11,12 @@
 
 use petramond_render::atlas;
 
-use petramond_world::tile::Tile;
+use petramond::world::World;
+use petramond_math::math::{voxel_at, IVec3, Vec3};
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::block_model::{self, BlockModelKind};
-use petramond_math::math::{voxel_at, IVec3, Vec3};
-use petramond::world::World;
+use petramond_world::tile::Tile;
 
 use petramond::entity::hash01;
 
@@ -442,7 +442,13 @@ impl ParticleSystem {
     /// [`spawn_break_burst_model`]: Self::spawn_break_burst_model
     #[cfg(test)]
     pub fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
-        self.spawn_break_burst_lit(block_pos, block, 63, petramond_world::light::BlockLight6::DARK, None);
+        self.spawn_break_burst_lit(
+            block_pos,
+            block,
+            63,
+            petramond_world::light::BlockLight6::DARK,
+            None,
+        );
     }
 
     /// Same as `spawn_break_burst`, with caller-provided

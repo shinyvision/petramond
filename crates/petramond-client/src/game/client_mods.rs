@@ -66,22 +66,12 @@ impl Game {
         self.client_mods.ui_event(&self.replica, kind_key, event);
     }
 
-    pub fn client_mod_canvas_event(
-        &mut self,
-        canvas_key: &str,
-        event: mod_api::ClientCanvasEvent,
-    ) {
+    pub fn client_mod_canvas_event(&mut self, canvas_key: &str, event: mod_api::ClientCanvasEvent) {
         self.client_mods
             .canvas_event(&self.replica, canvas_key, event);
     }
 
-    pub fn client_mod_canvas_scroll(
-        &mut self,
-        canvas_key: &str,
-        x: f32,
-        y: f32,
-        delta: f32,
-    ) {
+    pub fn client_mod_canvas_scroll(&mut self, canvas_key: &str, x: f32, y: f32, delta: f32) {
         self.client_mods
             .canvas_scroll(&self.replica, canvas_key, x, y, delta);
     }
@@ -90,10 +80,7 @@ impl Game {
         self.client_mods.overlays()
     }
 
-    pub fn client_mod_image(
-        &self,
-        image_key: &str,
-    ) -> Option<petramond::modding::ClientImageData> {
+    pub fn client_mod_image(&self, image_key: &str) -> Option<petramond::modding::ClientImageData> {
         self.client_mods.image(image_key)
     }
 
@@ -116,7 +103,10 @@ impl Game {
     }
 
     /// Every client mod's desired looping-sound gains this frame.
-    pub fn client_mod_sound_loops(&self, out: &mut Vec<(petramond_world::sound_registry::Sound, f32)>) {
+    pub fn client_mod_sound_loops(
+        &self,
+        out: &mut Vec<(petramond_world::sound_registry::Sound, f32)>,
+    ) {
         self.client_mods.sound_loops(out);
     }
 

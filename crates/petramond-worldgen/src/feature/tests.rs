@@ -1,12 +1,12 @@
 use super::super::proto::MARGIN;
 use super::tree_select::{tree_candidate_at, tree_spacing_allows};
 use super::{feature_region_bounds, place_features_with_field, RuntimeFeatureField};
-use petramond_world::biome::Biome;
-use petramond_world::block::Block;
-use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::density::surface::SurfaceDensitySystem;
 use crate::generate_chunk;
 use crate::region::RegionCells;
+use petramond_world::biome::Biome;
+use petramond_world::block::Block;
+use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 
 fn is_tree(id: u16) -> bool {
     let block = Block::from_id(id);
@@ -46,8 +46,8 @@ fn generate_into_map_with_open(
     seed: u32,
     open: &mut dyn FnMut(petramond_world::mathh::IVec3) -> bool,
 ) -> std::collections::HashMap<petramond_world::mathh::IVec3, Block> {
-    use petramond_world::mathh::IVec3;
     use crate::rng::FeatureRng;
+    use petramond_world::mathh::IVec3;
     let mut sink = MapSink(std::collections::HashMap::new());
     let mut rng = FeatureRng::positional(seed, 0xACAC, 0, 0, 0);
     {
@@ -209,9 +209,9 @@ fn oak_crowns_bury_the_trunk_top() {
 /// splay rejects the whole tree — the floating-tree guard.
 #[test]
 fn oaks_refuse_sites_where_roots_would_hang() {
-    use petramond_world::mathh::IVec3;
     use crate::data::features;
     use crate::rng::FeatureRng;
+    use petramond_world::mathh::IVec3;
 
     for (name, feat) in [
         ("oak_young", features::oak_young()),

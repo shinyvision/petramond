@@ -7,9 +7,7 @@
 //! The GUI-session state map is NOT here: it lives on the player session
 //! (`ConnectedPlayer::gui_state` + the `crate::gui` state helpers).
 
-
 use super::store::World;
-
 
 impl World {
     /// Store a cell KV entry; marks the section modified so the data persists.

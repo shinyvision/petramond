@@ -66,16 +66,15 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 return HostRet::U64(0);
             }
             let handle = ctx.feed.alloc_spatial_sound_handle();
-            ctx.feed
-                .world
-                .spatial_sounds
-                .push(crate::events::tick::ModSpatialSoundCommand::PlayAt {
+            ctx.feed.world.spatial_sounds.push(
+                crate::events::tick::ModSpatialSoundCommand::PlayAt {
                     handle,
                     sound,
                     pos: pos.into(),
                     volume,
                     pitch,
-                });
+                },
+            );
             HostRet::U64(handle)
         }),
         HostCall::SoundPlayOnMob {
@@ -106,17 +105,16 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 return HostRet::U64(0);
             };
             let handle = ctx.feed.alloc_spatial_sound_handle();
-            ctx.feed
-                .world
-                .spatial_sounds
-                .push(crate::events::tick::ModSpatialSoundCommand::PlayOnMob {
+            ctx.feed.world.spatial_sounds.push(
+                crate::events::tick::ModSpatialSoundCommand::PlayOnMob {
                     handle,
                     sound,
                     mob_id,
                     volume,
                     pitch,
                     last_pos,
-                });
+                },
+            );
             HostRet::U64(handle)
         }),
         HostCall::SoundStop { handle } => sim_call(|ctx| {
@@ -145,13 +143,13 @@ fn spatial_sound_scalar_params_ok(volume: f32, pitch: f32) -> bool {
 mod tests {
     use mod_api::{HostCall, HostRet};
 
-    use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::{PostQueue, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
 
     /// `EmitSound` feeds the NON-lossy tick queue (never audio directly) and
     /// an unknown key reports failure without disabling anything.
@@ -272,8 +270,8 @@ mod tests {
             "same session inputs produce the same handles"
         );
 
-        let sound =
-            petramond_world::sound_registry::by_name("petramond:item_pickup").expect("engine sound exists");
+        let sound = petramond_world::sound_registry::by_name("petramond:item_pickup")
+            .expect("engine sound exists");
         assert_eq!(first.2.len(), 3);
         assert_eq!(
             first.2[0],

@@ -1,13 +1,13 @@
 //! Bed behaviour on the tick: sleeping (spawn set, time skip, wake beside the
 //! bed), cancelling, and death respawn — at the bed or the surface fallback.
 
-use petramond::events::tick::TickEvents;
 use super::common::{game_on_empty_chunk, hit};
-use petramond_world::block::Block;
+use petramond::events::tick::TickEvents;
 use petramond::events::DamageSource;
-use petramond_math::math::IVec3;
 use petramond::player::{MAX_HEALTH, PITCH_LIMIT};
 use petramond::server::bed::SLEEP_TICKS;
+use petramond_math::math::IVec3;
+use petramond_world::block::Block;
 
 const CLOCK_KEY: &str = "petramond:clock";
 

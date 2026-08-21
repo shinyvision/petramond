@@ -8,16 +8,32 @@ use eframe::egui;
 use petramond_ui::Node;
 
 const PRESETS: &[(&str, &str)] = &[
-    ("Titled section", include_str!("../../assets/presets/titled_section.json")),
-    ("Labeled slider row", include_str!("../../assets/presets/labeled_slider.json")),
-    ("Mod list row template", include_str!("../../assets/presets/mod_list.json")),
+    (
+        "Titled section",
+        include_str!("../../assets/presets/titled_section.json"),
+    ),
+    (
+        "Labeled slider row",
+        include_str!("../../assets/presets/labeled_slider.json"),
+    ),
+    (
+        "Mod list row template",
+        include_str!("../../assets/presets/mod_list.json"),
+    ),
     ("Alert", include_str!("../../assets/presets/alert.json")),
-    ("Tab bar with pages", include_str!("../../assets/presets/tab_bar.json")),
+    (
+        "Tab bar with pages",
+        include_str!("../../assets/presets/tab_bar.json"),
+    ),
 ];
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new("Palette").strong());
-    ui.label(egui::RichText::new("Inserts into the selected container.").weak().small());
+    ui.label(
+        egui::RichText::new("Inserts into the selected container.")
+            .weak()
+            .small(),
+    );
     ui.horizontal_wrapped(|ui| {
         let mut insert: Option<Node> = None;
         for ty in doc_edit::NODE_TYPES {

@@ -6,11 +6,11 @@
 
 // The data half (WorldData + pure-data query modules) lives in
 // `petramond_world::world`; this module layers orchestration on top.
-pub use petramond_world::world::{data, environment, load_targets, placement as placement_types, shape_bake_validate, tick_state};
 pub use petramond_world::world::data::{WorldData, WorldRole};
+pub use petramond_world::world::{
+    data, environment, load_targets, placement as placement_types, shape_bake_validate, tick_state,
+};
 
-#[cfg(test)]
-mod relocated_world_crate_tests;
 mod block_deltas;
 pub mod chest;
 mod column_heightmaps;
@@ -35,6 +35,8 @@ mod particle_emitters;
 pub mod placement;
 mod prediction_render;
 mod query;
+#[cfg(test)]
+mod relocated_world_crate_tests;
 mod remote;
 mod render_handoff;
 pub mod sapling;
@@ -54,19 +56,19 @@ pub mod water;
 
 pub use cursor::SectionCursor;
 pub use entities::ITEM_MERGE_INTERVAL_TICKS;
-pub use petramond_world::world::custom_bake::CustomBakeCell;
 #[cfg(any(test, feature = "test-support"))]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
+pub use petramond_world::world::custom_bake::CustomBakeCell;
 pub use petramond_world::world::shape_bake_validate::ingest_shape_boxes;
 #[cfg(any(test, feature = "test-support"))]
 pub use stream::split_generated_column;
 
-pub use petramond_world::world::ladder::Climb;
 pub use particle_emitters::{emitter_envelope, PlacedEmitter};
+pub use petramond_world::world::ladder::Climb;
 pub use petramond_world::world::query::CollisionShapeClass;
 pub use render_handoff::TerrainRenderHandoff;
-pub use store::VERTICAL_LOAD_RADIUS;
 pub use store::LoadAnchor;
+pub use store::VERTICAL_LOAD_RADIUS;
 pub use store::{MemoryCensus, World, RENDER_DIST};
 pub use stream::StreamEvent;
 

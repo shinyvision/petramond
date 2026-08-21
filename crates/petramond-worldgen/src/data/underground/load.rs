@@ -254,7 +254,10 @@ fn convert_faces(f: RawFaces, base: u16, name: &'static str) -> Result<Converted
         let block = raw.block.map_or(base, |b| b.id());
         // Unlike `lining.block`, air here is meaningful: "line the walls but
         // leave the ceiling bare" is a real thing to want.
-        names[which] = petramond_world::registry::names().blocks.name(block).unwrap_or("?");
+        names[which] = petramond_world::registry::names()
+            .blocks
+            .name(block)
+            .unwrap_or("?");
         Ok(FaceLining {
             block,
             weight: raw.weight,

@@ -1,9 +1,9 @@
 //! Raw voxel-shape primitives shared by placers and features.
 
-use petramond_world::block::Block;
-use petramond_world::mathh::IVec3;
 use crate::feature::FeatureCtx;
 use crate::rng::FeatureRng;
+use petramond_world::block::Block;
+use petramond_world::mathh::IVec3;
 
 /// Canonical fancy-oak leaf disc: a flat horizontal disc of leaves at world Y
 /// `y`, radius `radius` (float). The `(|dx|+0.5)² + (|dz|+0.5)² <= radius²` test

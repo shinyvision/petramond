@@ -1,12 +1,12 @@
-use petramond::events::tick::{TickEvents, TICK_DT};
 use super::common::{self, filled_inventory, game, game_on_empty_chunk, hit};
-use petramond_world::block::Block;
+use petramond::events::tick::{TickEvents, TICK_DT};
 use petramond::events::{DamageSource, Outcome};
-use petramond_math::math::{IVec3, Vec3};
 use petramond::mob::{Mob, MobAttack, MobDamageFeedback};
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::player;
 use petramond::server::game::ATTACK_COOLDOWN_TICKS;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
 
 fn strike() -> MobAttack {
     MobAttack {
@@ -914,7 +914,6 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
     // is there to touch when the body isn't rendered.
     use petramond::net::protocol::PlayerStateRow;
     use petramond::player::PlayerId;
-    use std::collections::HashMap;
 
     fn remote_row(pos: Vec3, visible: bool, sleeping: bool) -> PlayerStateRow {
         PlayerStateRow {
@@ -946,13 +945,12 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
 
     let mut game = game();
     let own_id = game.game.self_id;
-    let roster = HashMap::new();
     let start = Vec3::new(8.0, 64.0, 8.0);
     let overlap = Vec3::new(8.2, 64.0, 8.0); // just east, footprints overlapping
 
     let run = |game: &mut common::TestGame, row: PlayerStateRow| {
         game.player.pos = start;
-        game.game.remote_players.apply(&[row], &[], own_id, &roster);
+        game.game.remote_players.apply(&[row], &[], own_id);
         for _ in 0..30 {
             game.apply_entity_push(1.0 / 60.0);
         }
@@ -1093,10 +1091,7 @@ fn cannot_place_a_solid_block_inside_another_player() {
 
 /// Latch a PvP attack click at `target`, the way an `Action(AttackClick)`
 /// message does (mob and player are mutually exclusive on a click).
-fn click_attack_player(
-    game: &mut super::common::TestGame,
-    target: petramond::player::PlayerId,
-) {
+fn click_attack_player(game: &mut super::common::TestGame, target: petramond::player::PlayerId) {
     game.server.apply_message(
         0,
         ClientToServer::Action(PlayerAction::AttackClick {
@@ -1301,7 +1296,6 @@ fn pvp_knockback_ships_the_victims_vel_echo() {
 fn refresh_target_picks_remote_players_competing_with_mobs() {
     use petramond::net::protocol::PlayerStateRow;
     use petramond::player::PlayerId;
-    use std::collections::HashMap;
 
     fn remote_row(id: u8, pos: Vec3, visible: bool) -> PlayerStateRow {
         PlayerStateRow {
@@ -1336,14 +1330,13 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     game.cam.pitch = 0.0;
     let dir = game.cam.forward();
     let own_id = game.game.self_id;
-    let roster = HashMap::new();
 
     // A remote body two metres ahead, feet dropped so the level ray crosses it.
     let mut feet = game.cam.pos + dir * 2.0;
     feet.y -= 1.0;
     game.game
         .remote_players
-        .apply(&[remote_row(1, feet, true)], &[], own_id, &roster);
+        .apply(&[remote_row(1, feet, true)], &[], own_id);
     game.refresh_target();
     assert_eq!(game.targeted_player, Some(1), "the remote body is targeted");
     assert!(game.targeted_mob.is_none(), "at most one target kind");
@@ -1382,7 +1375,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     game.game.replicated_mobs.apply(Vec::new());
     game.game
         .remote_players
-        .apply(&[remote_row(1, feet, false)], &[], own_id, &roster);
+        .apply(&[remote_row(1, feet, false)], &[], own_id);
     game.refresh_target();
     assert!(
         game.targeted_player.is_none(),

@@ -342,7 +342,11 @@ impl Inventory {
         // from them too.
         for take_full in [false, true] {
             Self::drain_into(&mut cursor, &mut self.slots, take_full);
-            Self::drain_into(&mut cursor, core::slice::from_mut(&mut self.off_hand), take_full);
+            Self::drain_into(
+                &mut cursor,
+                core::slice::from_mut(&mut self.off_hand),
+                take_full,
+            );
         }
         self.cursor = Some(cursor);
     }
@@ -354,7 +358,11 @@ impl Inventory {
         for take_full in [false, true] {
             Self::drain_into(&mut cursor, extra, take_full);
             Self::drain_into(&mut cursor, &mut self.slots, take_full);
-            Self::drain_into(&mut cursor, core::slice::from_mut(&mut self.off_hand), take_full);
+            Self::drain_into(
+                &mut cursor,
+                core::slice::from_mut(&mut self.off_hand),
+                take_full,
+            );
         }
         self.cursor = Some(cursor);
     }
@@ -432,11 +440,7 @@ impl Inventory {
     /// Click a take-only output. Primary takes the whole output when it fits;
     /// secondary takes half onto an empty cursor, or one onto a compatible
     /// cursor. The held cursor stack is never placed into the output cell.
-    pub fn click_take_only_external_slot(
-        &mut self,
-        slot: &mut Option<ItemStack>,
-        secondary: bool,
-    ) {
+    pub fn click_take_only_external_slot(&mut self, slot: &mut Option<ItemStack>, secondary: bool) {
         self.bump_revision();
         Self::apply_take_only_click(&mut self.cursor, slot, secondary);
     }
@@ -659,7 +663,11 @@ mod click_filter_tests {
     use crate::item::{ItemTag, ItemType};
 
     fn spec(accepts: Vec<crate::container::SlotFilter>, take_only: bool) -> SlotSpec {
-        SlotSpec { accepts, take_only, accepts_bind: None }
+        SlotSpec {
+            accepts,
+            take_only,
+            accepts_bind: None,
+        }
     }
 
     /// A filtered slot refuses the cursor stack on a plain click, and refusing

@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use petramond_world::block::Block;
-use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE, SECTION_VOLUME};
 use petramond_math::math::IVec3;
 use petramond_mesh::ChunkMesh;
+use petramond_world::block::Block;
+use petramond_world::chunk::{
+    ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE, SECTION_VOLUME,
+};
 use petramond_world::section::Section;
 use petramond_worldgen::driver::ChunkGenerator;
 
@@ -12,6 +14,18 @@ use super::World;
 fn install_column_summary(world: &mut World, generator: &ChunkGenerator, pos: ChunkPos) {
     world.ensure_column(pos);
     world.set_column_gen(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
+}
+
+#[test]
+fn failed_section_mut_lookup_does_not_pollute_the_random_tick_index() {
+    let mut world = World::new(0, 0);
+    let absent = SectionPos::new(0, SECTION_MAX_CY + 1, 0);
+
+    assert!(world.section_mut(absent).is_none());
+    assert!(
+        !world.random_tick_dirty.contains(&absent),
+        "a failed boundary probe must not become derived-index work"
+    );
 }
 
 #[test]
@@ -384,7 +398,8 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
 
     let mut lower_section = Section::new(lower.cx, lower.cy, lower.cz);
     lower_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
-    lower_section.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
+    lower_section
+        .set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
     lower_section.dirty = false;
 
     world.sections.insert(top, Arc::new(top_section));

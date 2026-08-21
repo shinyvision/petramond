@@ -163,10 +163,10 @@ fn wrap_angle(a: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_world::block::Block;
-    use petramond_world::chunk::ChunkPos;
     use crate::mob::MobRng;
     use crate::world::World;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::ChunkPos;
 
     /// A ctx whose brain has the (default-id) player LOCKED — melee only
     /// strikes a published lock, so the classic strike tests provide one.

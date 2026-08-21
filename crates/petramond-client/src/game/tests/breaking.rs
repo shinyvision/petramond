@@ -1,7 +1,7 @@
 use super::common::game;
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::item::ItemType;
-use petramond_math::math::IVec3;
 
 #[test]
 fn stone_pickaxe_harvests_iron_as_raw_iron() {

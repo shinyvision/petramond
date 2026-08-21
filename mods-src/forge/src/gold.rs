@@ -79,7 +79,9 @@ impl Gold {
     /// logged — the only cheap signal the data keys and this module's
     /// constants are the same strings (the tag-typo trap).
     pub fn resolve() -> Gold {
-        let tools = read_rows(NONDESTRUCTIVE_KEY, |value| Some(tag_blocks(value.get("blocks"))));
+        let tools = read_rows(NONDESTRUCTIVE_KEY, |value| {
+            Some(tag_blocks(value.get("blocks")))
+        });
         let mut granted: HashMap<String, Vec<Grant>> = HashMap::new();
         let grant_rows = read_rows(AUGMENT_KEY, |value| {
             let grants: Vec<(String, Grant)> = value
@@ -261,7 +263,10 @@ mod tests {
             Some(ItemId(300))
         );
         // The wrong kind — a shovel on stone — changes nothing.
-        assert_eq!(gentle_target(BlockId(7), &stone, Some("shovel"), &none), None);
+        assert_eq!(
+            gentle_target(BlockId(7), &stone, Some("shovel"), &none),
+            None
+        );
         // Leaves have NO preferred tool; only the declared extra set
         // reaches them, and only for the block ids actually in it.
         let leaves = info("foliage", None, Some(310));
@@ -271,11 +276,17 @@ mod tests {
             gentle_target(BlockId(9), &leaves, Some("axe"), &extra),
             Some(ItemId(310))
         );
-        assert_eq!(gentle_target(BlockId(10), &leaves, Some("axe"), &extra), None);
+        assert_eq!(
+            gentle_target(BlockId(10), &leaves, Some("axe"), &extra),
+            None
+        );
         // Ores keep their raw drop regardless — even listed ones.
         let ore = info("ore", Some("pickaxe"), Some(301));
         let ore_extra: HashSet<BlockId> = [BlockId(11)].into();
-        assert_eq!(gentle_target(BlockId(11), &ore, Some("pickaxe"), &ore_extra), None);
+        assert_eq!(
+            gentle_target(BlockId(11), &ore, Some("pickaxe"), &ore_extra),
+            None
+        );
         // A block nothing places cannot be taken.
         let unplaceable = info("stone", Some("pickaxe"), None);
         assert_eq!(
@@ -284,6 +295,9 @@ mod tests {
         );
         // A hand-mined material with no extra listing is out of scope.
         let plant = info("plant", None, Some(302));
-        assert_eq!(gentle_target(BlockId(8), &plant, Some("pickaxe"), &none), None);
+        assert_eq!(
+            gentle_target(BlockId(8), &plant, Some("pickaxe"), &none),
+            None
+        );
     }
 }

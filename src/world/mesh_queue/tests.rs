@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use crate::world::store::{LoadTarget, World, WorldRole};
 use petramond_world::block::Block;
 use petramond_world::chunk::{SectionPos, SECTION_VOLUME};
 use petramond_world::section::Section;
-use crate::world::store::{LoadTarget, World, WorldRole};
 
 use super::DirtyMeshQueue;
 
@@ -44,7 +44,8 @@ fn mesh_job_uses_column_generated_biome_tint_halo() {
     let mut world = World::new(0, 0);
     let pos = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, pos);
-    let gen = petramond_worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
+    let gen =
+        petramond_worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
     world.set_column_gen(pos.chunk_pos(), Arc::new(gen));
 
     let job = world

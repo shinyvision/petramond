@@ -46,13 +46,13 @@ pub use body_geometry::{
 };
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
-pub use petramond_world::ai_vocab::validate_brain_extensions;
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub use nav::mob_can_reach;
 pub use nav::site_open;
 pub use nav::ReachBudget;
 pub use noise::{player_steps_are_audible, Noise, NoiseKind};
+pub use petramond_world::ai_vocab::validate_brain_extensions;
 pub use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_kind_has_room,
     hostile_spawn_plan, HostileSpawnCache, HOSTILE_SPAWN_ATTEMPTS, PASSIVE_SPAWN_INTERVAL_TICKS,
@@ -60,11 +60,11 @@ pub use spawn::{
 
 use std::sync::LazyLock;
 
+use petramond_math::math::Vec3;
 use petramond_world::bbmodel::Model;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::item::ItemType;
-use petramond_math::math::Vec3;
 
 use brain::AiBehavior;
 
@@ -908,10 +908,12 @@ static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
                 log::error!("mob model '{}' not found in the asset roots", d.model);
                 return Model::empty();
             };
-            petramond_world::asset_cache::load_or_compile::<Model>(d.name, &src).unwrap_or_else(|e| {
-                log::error!("mob model precache failed for {m:?}: {e}");
-                Model::empty()
-            })
+            petramond_world::asset_cache::load_or_compile::<Model>(d.name, &src).unwrap_or_else(
+                |e| {
+                    log::error!("mob model precache failed for {m:?}: {e}");
+                    Model::empty()
+                },
+            )
         })
         .collect()
 });

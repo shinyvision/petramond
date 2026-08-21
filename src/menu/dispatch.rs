@@ -1,8 +1,8 @@
 use super::{ContainerMenu, ContainerTarget};
-use petramond_world::gui_state::PointerButton;
-use petramond_world::gui_state::MenuSlot;
-use petramond_world::inventory::Inventory;
 use crate::world::World;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::inventory::Inventory;
 
 impl ContainerMenu {
     /// Route a hit-tested click to the open container. This is the single decision

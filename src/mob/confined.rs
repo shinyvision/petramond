@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
-use petramond_math::math::IVec3;
 use crate::mob::path::{body_clear, body_layer_clear, is_navigation_foothold_with, PathParams};
+use petramond_math::math::IVec3;
 
 /// Game ticks between confined-state re-evaluations for one mob.
 pub const CHECK_INTERVAL: u8 = 60;
@@ -379,10 +379,10 @@ impl RegionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_world::block::Block;
-    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::mob::path::PathParams;
     use crate::world::World;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     /// An `n`×`n` chunk grid of flat grass. The fill treats unloaded borders
     /// as inconclusive (free), so open-field tests pass regardless of grid

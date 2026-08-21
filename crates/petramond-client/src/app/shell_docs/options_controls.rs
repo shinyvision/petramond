@@ -119,8 +119,10 @@ mod tests {
     #[test]
     fn both_remap_hints_fit_the_fixed_hint_box() {
         use petramond_ui::{solve, InstTree, ThemeEnv, UiState};
-        let doc = petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsControls)
-            .expect("controls document loads");
+        let doc = petramond::gui::documents::doc_for(
+            petramond_world::gui_state::GuiKind::OptionsControls,
+        )
+        .expect("controls document loads");
         let theme = petramond::gui::doc_theme::theme();
         let mut state = UiState::new();
         state.set("remap_hint", UiValue::Str(HINT_ARMED.into()));
@@ -155,10 +157,12 @@ mod tests {
     /// "Previous Ho...". Widen the panel or shorten the wording.
     #[test]
     fn every_engine_action_label_fits_the_controls_row() {
-        use petramond_world::controls::BindableAction;
         use petramond_ui::{solve, InstTree, ThemeEnv, UiState};
-        let doc = petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsControls)
-            .expect("controls document loads");
+        use petramond_world::controls::BindableAction;
+        let doc = petramond::gui::documents::doc_for(
+            petramond_world::gui_state::GuiKind::OptionsControls,
+        )
+        .expect("controls document loads");
         let theme = petramond::gui::doc_theme::theme();
         let mut state = UiState::new();
         let rows: Vec<UiMap> = BindableAction::ALL

@@ -1,9 +1,9 @@
-use petramond_world::tile::Tile;
 use petramond_world::block::Block;
 use petramond_world::block_state::{LogAxis, SlabState};
 use petramond_world::chunk::SKY_FULL;
 use petramond_world::facing::Facing;
 use petramond_world::light::{BlockLight6, LightRgb};
+use petramond_world::tile::Tile;
 
 use super::super::face::{quad_ao, Face};
 use super::super::face_emit::{fold_light, fold_light_smooth, slab_corner_open};
@@ -101,7 +101,7 @@ pub(super) fn log_side_cell_uvs(
 /// dense flag rather than listing families, so a new box family — engine or
 /// mod — casts sub-cell AO the moment it resolves to boxes.
 #[inline]
-pub(in crate) fn probe_worthy(block: Block) -> bool {
+pub(crate) fn probe_worthy(block: Block) -> bool {
     block.has_box_shape()
 }
 
@@ -128,7 +128,7 @@ pub(in crate) fn probe_worthy(block: Block) -> bool {
 /// [`PROBE_LIFT`]: super::super::boxset::PROBE_LIFT
 /// [`PROBE_REACH`]: super::super::boxset::PROBE_REACH
 #[inline]
-pub(in crate) fn corner_cast_probes(
+pub(crate) fn corner_cast_probes(
     face: Face,
     f: (i32, i32, i32),
     su: i32,
@@ -198,7 +198,7 @@ pub(in crate) fn corner_cast_probes(
 /// The world coordinate (along the face normal) of a cube face's plane: the
 /// front voxel `f`'s boundary toward the cell it fronts.
 #[inline]
-pub(in crate) fn boundary_plane(face: Face, f: (i32, i32, i32)) -> f32 {
+pub(crate) fn boundary_plane(face: Face, f: (i32, i32, i32)) -> f32 {
     let (dx, dy, dz) = face.dir();
     let (axis, _, _) = face_axes(face);
     let d = [dx, dy, dz][axis];
@@ -221,7 +221,7 @@ pub(in crate) fn boundary_plane(face: Face, f: (i32, i32, i32)) -> f32 {
 /// Consulted only for ring cells that are box-shape families or partial
 /// slabs, so pure cube/air neighbourhoods pay nothing.
 #[allow(clippy::too_many_arguments)]
-pub(in crate) fn cube_face_lighting<B, S, L, K, P>(
+pub(crate) fn cube_face_lighting<B, S, L, K, P>(
     face: Face,
     fx: i32,
     fy: i32,
@@ -394,7 +394,7 @@ where
 /// so the greedy slice's `(u,v)` grid and a merged quad's tiled UV (W tiles along U, H along
 /// V) align with `corner_local`: normal-X → U=Z,V=Y; normal-Y → U=X,V=Z; normal-Z → U=X,V=Y.
 #[inline]
-pub(in crate) fn face_axes(face: Face) -> (usize, usize, usize) {
+pub(crate) fn face_axes(face: Face) -> (usize, usize, usize) {
     match face {
         Face::PosX | Face::NegX => (0, 2, 1),
         Face::PosY | Face::NegY => (1, 0, 2),

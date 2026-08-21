@@ -9,13 +9,12 @@
 //! [`petramond_world::block_model`].
 
 use crate::world::WorldData;
-use petramond_world::block::Block;
-use petramond_world::block_model::{self, BlockModelKind};
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
+use petramond_world::block::Block;
+use petramond_world::block_model::{self, BlockModelKind};
 
 use super::store::{SkyCoverChange, World};
-
 
 impl World {
     /// Place model `block` with its rotated-footprint base at `base`: write the block id to
@@ -270,7 +269,6 @@ impl World {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

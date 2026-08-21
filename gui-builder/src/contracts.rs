@@ -35,16 +35,12 @@ pub fn contract_for(kind: &str) -> SlotContract {
             ("off_hand", 1),
             ("craft_result", 1),
         ]),
-        "petramond:crafting_table" => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            ("craft_result", 1),
-        ]),
-        "petramond:furnace" => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            ("container", 3),
-        ]),
+        "petramond:crafting_table" => {
+            SlotContract::new(&[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)])
+        }
+        "petramond:furnace" => {
+            SlotContract::new(&[("player_inv", 27), ("hotbar", 9), ("container", 3)])
+        }
         "petramond:hotbar" => SlotContract::new(&[("hotbar", 9), ("off_hand", 1)]),
         "petramond:demo" => SlotContract::new(&[("demo_slots", 9)]),
         _ => SlotContract::default(),
@@ -87,7 +83,10 @@ mod tests {
         // Hand-written expectation mirroring src/gui/documents.rs — if this
         // fails, the builder and the game disagree about what validates.
         let expect: &[(&str, &[(&str, usize)])] = &[
-            ("petramond:chest", &[("container", 27), ("player_inv", 27), ("hotbar", 9)]),
+            (
+                "petramond:chest",
+                &[("container", 27), ("player_inv", 27), ("hotbar", 9)],
+            ),
             (
                 "petramond:inventory",
                 &[
@@ -112,7 +111,12 @@ mod tests {
             assert_eq!(contract_for(kind), SlotContract::new(roles), "{kind}");
         }
         // Shell screens and mod kinds carry no slots.
-        for kind in ["petramond:pause", "petramond:title", "petramond:world_select", "somemod:wheel"] {
+        for kind in [
+            "petramond:pause",
+            "petramond:title",
+            "petramond:world_select",
+            "somemod:wheel",
+        ] {
             assert!(contract_for(kind).roles.is_empty(), "{kind}");
         }
     }

@@ -1,15 +1,15 @@
 use super::*;
-use petramond_world::block::Block;
-use petramond_world::chunk::SectionPos;
-use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::{IVec3, Vec3};
 use crate::net::connection::TcpClientConn;
 use crate::net::framing::{read_msg, write_msg};
 use crate::net::handshake::{client_handshake, installed_mod_ids};
 use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
 use crate::server::handle::ServerHandle;
+use petramond_math::math::{IVec3, Vec3};
 use petramond_util::test_time::TEST_HARD_DEADLINE;
+use petramond_world::block::Block;
+use petramond_world::chunk::SectionPos;
+use petramond_world::item::{ItemStack, ItemType};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
@@ -184,8 +184,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         .expect("player file");
     }
 
-    let player_name =
-        crate::save::client::resolve_player_name(&crate::save::client::load());
+    let player_name = crate::save::client::resolve_player_name(&crate::save::client::load());
     let (mut server, _, _) =
         crate::server::session_build::build_server("", 7, 2, Some(player_name));
     let opened = crate::save::open_at(dir.clone()).expect("temp save opens");

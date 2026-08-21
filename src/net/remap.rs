@@ -462,7 +462,10 @@ mod tests {
 
         let map = IdRemap::build(&tables);
         assert!(!map.is_identity());
-        assert_eq!(map.block(unknown_block), petramond_world::block::Block::Air.0);
+        assert_eq!(
+            map.block(unknown_block),
+            petramond_world::block::Block::Air.0
+        );
         assert_eq!(map.item(unknown_item), None);
         // Known ids still map through unchanged.
         assert_eq!(map.block(3), 3);

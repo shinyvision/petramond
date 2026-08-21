@@ -408,10 +408,7 @@ pub mod climate_fields {
 
 /// Build a climate field's double-Perlin noise for a world seed, exactly as the
 /// reference `setBiomeSeed`/`init_climate_seed` does.
-pub fn build_climate_field(
-    world_seed: u64,
-    params: &ClimateFieldParams,
-) -> ReferenceDoublePerlin {
+pub fn build_climate_field(world_seed: u64, params: &ClimateFieldParams) -> ReferenceDoublePerlin {
     let mut xr = Xoroshiro::new(world_seed);
     let xlo = xr.next_long();
     let xhi = xr.next_long();

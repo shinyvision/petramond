@@ -1,4 +1,3 @@
-
 use super::store::World;
 
 impl World {
@@ -42,8 +41,6 @@ impl World {
         )
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

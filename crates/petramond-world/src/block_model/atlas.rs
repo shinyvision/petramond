@@ -79,8 +79,16 @@ impl ModelAtlas {
         let inset = |lo: f32, hi: f32, half: f32| {
             let mid = (lo + hi) * 0.5;
             (
-                if lo < hi { (lo + half).min(mid) } else { (lo - half).max(mid) },
-                if hi > lo { (hi - half).max(mid) } else { (hi + half).min(mid) },
+                if lo < hi {
+                    (lo + half).min(mid)
+                } else {
+                    (lo - half).max(mid)
+                },
+                if hi > lo {
+                    (hi - half).max(mid)
+                } else {
+                    (hi + half).min(mid)
+                },
             )
         };
         let (u0, u1) = inset(uv[0], uv[2], hw);

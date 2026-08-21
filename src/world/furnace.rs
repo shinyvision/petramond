@@ -7,12 +7,12 @@
 //! wrappers plus the tick driver that supplies the recipe set the storage
 //! layer is kept ignorant of.
 
+use petramond_math::facing::Facing;
+use petramond_math::math::IVec3;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE};
 use petramond_world::container::Container;
 use petramond_world::crafting::Recipes;
-use petramond_math::facing::Facing;
 use petramond_world::furnace::{Furnace, FURNACE_SLOTS};
-use petramond_math::math::IVec3;
 
 use super::store::World;
 
@@ -96,14 +96,14 @@ fn local_to_world(cpos: SectionPos, lx: usize, ly: usize, lz: usize) -> IVec3 {
 mod tests {
     use super::*;
 
-    use petramond_world::tile::Tile;
+    use petramond_mesh::ChunkMesh;
     use petramond_world::block::Block;
     use petramond_world::chunk::SECTION_VOLUME;
     use petramond_world::crafting::{ProcessingRecipe, SMELTING_CLASS};
     use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT};
     use petramond_world::item::{ItemStack, ItemType};
-    use petramond_mesh::ChunkMesh;
     use petramond_world::section::Section;
+    use petramond_world::tile::Tile;
 
     fn furnace_recipes() -> Recipes {
         Recipes::new(

@@ -1,6 +1,6 @@
 use super::*;
-use petramond_world::block::Block;
 use crate::mob::{def, Mob, MobDamageFeedback};
+use petramond_world::block::Block;
 
 fn floor_at_zero(p: IVec3) -> bool {
     p.y < 0
@@ -231,7 +231,8 @@ fn wish_direction_drives_horizontal_motion_and_facing() {
 
 #[test]
 fn airborne_sheep_carries_velocity_without_walk_steering() {
-    let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
+    let empty_boxes =
+        |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
     let dry = |_: IVec3| false;
     let still = |_: Vec3| Vec3::ZERO;
     let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
@@ -270,12 +271,18 @@ fn airborne_sheep_carries_velocity_without_walk_steering() {
 
 #[test]
 fn an_airborne_drive_cannot_replace_carry_or_yaw() {
-    let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
+    let empty_boxes =
+        |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
     let dry = |_: IVec3| false;
     let still = |_: Vec3| Vec3::ZERO;
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.25, 1);
     owl.vel.x = 1.0;
-    assert!(owl.set_drive(DriveIntent { horizontal: Some([-5.0, 0.0]), vertical: None, yaw: Some(1.5), while_walking: false }));
+    assert!(owl.set_drive(DriveIntent {
+        horizontal: Some([-5.0, 0.0]),
+        vertical: None,
+        yaw: Some(1.5),
+        while_walking: false
+    }));
 
     owl.integrate_with_flow(
         1.0 / 20.0,
@@ -347,7 +354,12 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
     // yaw set, does not read as walking, and — like the brain's wish —
     // the intent must be re-issued or the next tick's overwrite parks it.
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-    assert!(owl.set_drive(DriveIntent { horizontal: Some([2.0, 0.0]), vertical: None, yaw: Some(1.0), while_walking: false }));
+    assert!(owl.set_drive(DriveIntent {
+        horizontal: Some([2.0, 0.0]),
+        vertical: None,
+        yaw: Some(1.0),
+        while_walking: false
+    }));
     owl.integrate(
         1.0 / 20.0,
         owl_def(),
@@ -388,7 +400,12 @@ fn knockback_stagger_overrides_a_drive_intent() {
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     let from = Vec3::new(2.0, 0.0, 0.5); // hit from +X: knockback pushes -X
     owl.damage(1.0, Some(from), true, None, &default_feedback());
-    assert!(owl.set_drive(DriveIntent { horizontal: Some([5.0, 0.0]), vertical: None, yaw: Some(1.0), while_walking: false }));
+    assert!(owl.set_drive(DriveIntent {
+        horizontal: Some([5.0, 0.0]),
+        vertical: None,
+        yaw: Some(1.0),
+        while_walking: false
+    }));
     owl.integrate(
         1.0 / 20.0,
         owl_def(),
@@ -723,12 +740,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
             &still,
         );
         let launched = was_grounded && !mob.on_ground() && mob.vel().y > 0.0;
-        mob.apply_expression(
-            dt,
-            d,
-            &named,
-            &crate::mob::brain::BehaviorOutput::default(),
-        );
+        mob.apply_expression(dt, d, &named, &crate::mob::brain::BehaviorOutput::default());
         if launched {
             launches += 1;
             let phase = (mob.anim_time - d.walk_anim_rate * dt).rem_euclid(0.5);
@@ -771,7 +783,12 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         jumper.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
     }
     assert!(jumper.on_ground());
-    assert!(jumper.set_drive(DriveIntent { horizontal: None, vertical: Some(4.6), yaw: None, while_walking: false }));
+    assert!(jumper.set_drive(DriveIntent {
+        horizontal: None,
+        vertical: Some(4.6),
+        yaw: None,
+        while_walking: false
+    }));
     jumper.integrate(dt, d, Vec3::new(1.0, 0.0, 0.0), true, &solid, &dry);
     assert!(
         jumper.vel().y > 4.6,
@@ -784,9 +801,17 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     for _ in 0..60 {
         driven.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
     }
-    assert!(driven.set_drive(DriveIntent { horizontal: Some([2.0, 0.0]), vertical: None, yaw: None, while_walking: false }));
+    assert!(driven.set_drive(DriveIntent {
+        horizontal: Some([2.0, 0.0]),
+        vertical: None,
+        yaw: None,
+        while_walking: false
+    }));
     driven.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
-    assert!(!driven.moving, "a horizontally-driven mob never reads as walking");
+    assert!(
+        !driven.moving,
+        "a horizontally-driven mob never reads as walking"
+    );
     assert!(driven.vel().x > 1.9, "the drive velocity applies");
 }
 

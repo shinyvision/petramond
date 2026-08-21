@@ -43,8 +43,11 @@ pub trait GenHookDispatch: Send + Sync {
     /// Terrain replacement: a full section fill, or `None`.
     fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>>;
     /// Stage replacement writes, or `None` (caller runs the engine stage).
-    fn replace_stage(&self, stage: WorldgenStage, inputs: &GenInputs)
-        -> Option<Vec<([i32; 3], u16)>>;
+    fn replace_stage(
+        &self,
+        stage: WorldgenStage,
+        inputs: &GenInputs,
+    ) -> Option<Vec<([i32; 3], u16)>>;
     /// Whether any feature attaches after `stage` (the driver's cheap gate).
     fn any_features_after(&self, stage: WorldgenStage) -> bool;
     /// Indices (dispatch order) of the features attached after `stage`.

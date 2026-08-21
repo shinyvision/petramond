@@ -5,7 +5,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Read, Write};
 
-
 /// Sequential little-endian reader. Every read is bounds-checked and returns
 /// `None` past the end, so a truncated / corrupt file fails cleanly.
 pub struct Reader<'a> {

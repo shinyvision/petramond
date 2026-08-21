@@ -1,7 +1,7 @@
-use crate::tile::Tile;
-use crate::sound_registry::Sound;
 use crate::facing::Facing;
 use crate::item::{DropSpec, ItemType, ToolKind};
+use crate::sound_registry::Sound;
+use crate::tile::Tile;
 
 use super::{
     data, definition, sounds, Aabb, Block, BlockBehavior, BlockFlags, BlockInteraction,

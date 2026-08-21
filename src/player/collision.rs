@@ -1,7 +1,7 @@
 use super::state::Player;
-use petramond_world::block::Aabb;
 #[cfg(test)]
 use petramond_math::math::IVec3;
+use petramond_world::block::Aabb;
 
 /// Boundary epsilon in world units. The AABB is shrunk by this on every side before
 /// its float edges are compared to block faces, so an edge flush on a voxel boundary

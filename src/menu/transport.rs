@@ -5,11 +5,13 @@
 //! deterministic, no-loss mutation.
 
 use super::{ContainerMenu, ContainerTarget};
+use crate::world::World;
 use petramond_world::gui_state::PointerButton;
 use petramond_world::gui_state::{MenuSlot, MAX_MENU_DRAG_SLOTS};
-use petramond_world::inventory::{plan_drag_distribution, slot_capacity, take_slot_stack, Inventory};
+use petramond_world::inventory::{
+    plan_drag_distribution, slot_capacity, take_slot_stack, Inventory,
+};
 use petramond_world::item::ItemStack;
-use crate::world::World;
 
 impl ContainerMenu {
     /// Distribute the cursor stack across distinct compatible destinations in

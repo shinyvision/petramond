@@ -31,8 +31,9 @@ mod shape_bake;
 /// The session's loaded recipe catalog, shared with the host so `RecipeResult`
 /// answers from the exact table the engine cooks from (same process-wide
 /// install pattern as [`gen`]; replaced by each `Game::new`).
-static ACTIVE_RECIPES: std::sync::RwLock<Option<std::sync::Arc<petramond_world::crafting::Recipes>>> =
-    std::sync::RwLock::new(None);
+static ACTIVE_RECIPES: std::sync::RwLock<
+    Option<std::sync::Arc<petramond_world::crafting::Recipes>>,
+> = std::sync::RwLock::new(None);
 
 /// Install the session's recipe snapshot (called by `Game::new`).
 pub fn install_recipes(recipes: std::sync::Arc<petramond_world::crafting::Recipes>) {
@@ -70,15 +71,15 @@ use std::sync::{Arc, Mutex};
 
 use mod_api::{EventKind, EventPayload, GuestCall, GuestRet, HostileSpawnCandidate};
 
+use crate::events::tick::TickEvents;
 use crate::events::{
     EventBus, MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound, Outcome, SimCtx,
     TickSystems,
 };
-use crate::events::tick::TickEvents;
-use petramond_math::math::IVec3;
 use crate::mob::{Mob, MobCategory};
 use crate::player::Player;
 use crate::world::World;
+use petramond_math::math::IVec3;
 
 pub use client::{ClientCommand, ClientImageData, ClientOverlayRegistration};
 use host::Registration;
@@ -609,7 +610,9 @@ fn hostile_kind_for_key(
     if def.category != MobCategory::Hostile {
         return None;
     }
-    if petramond_world::registry::namespace(def.name).is_some_and(|ns| world.disabled_mods().contains(ns)) {
+    if petramond_world::registry::namespace(def.name)
+        .is_some_and(|ns| world.disabled_mods().contains(ns))
+    {
         return None;
     }
     let feet = IVec3::from(candidate.cell);

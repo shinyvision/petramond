@@ -7,11 +7,11 @@ use std::process::Command;
 
 use mod_api::{AttachSide, HostCall, Stage as ApiStage};
 
-use crate::events::{Attach, EventBus, PostEvent, Stage, TickSystems};
 use crate::events::tick::TickEvents;
-use petramond_math::math::Vec3;
+use crate::events::{Attach, EventBus, PostEvent, Stage, TickSystems};
 use crate::player::Player;
 use crate::world::World;
+use petramond_math::math::Vec3;
 
 use super::instance::ModInstance;
 use super::ModHost;
@@ -457,7 +457,11 @@ fn watchdog_charges_guest_compute_only_inner() {
 
 /// A [`Sim`] holding one placed multi-cell model block, with its group anchor
 /// and a NON-anchor footprint cell — the cell a mod would address it by.
-fn sim_with_a_placed_machine() -> (Sim, petramond_math::math::IVec3, petramond_math::math::IVec3) {
+fn sim_with_a_placed_machine() -> (
+    Sim,
+    petramond_math::math::IVec3,
+    petramond_math::math::IVec3,
+) {
     use petramond_math::math::IVec3;
 
     let mut sim = Sim::new();
@@ -585,7 +589,8 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
     );
     let cp = petramond_world::chunk::ChunkPos::new(0, 0);
     replica.install_remote_column(sim.world.column_payload(cp).expect("a column payload"));
-    let sp = petramond_world::chunk::SectionPos::from_world(anchor.x, anchor.y, anchor.z).expect("in range");
+    let sp = petramond_world::chunk::SectionPos::from_world(anchor.x, anchor.y, anchor.z)
+        .expect("in range");
     replica.install_remote_section(sim.world.section_payload(sp).expect("a loaded section"));
 
     assert_eq!(

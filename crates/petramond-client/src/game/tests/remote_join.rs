@@ -3,11 +3,11 @@
 //! no `ServerGame`), and the roster tracks join/leave broadcasts.
 
 use crate::game::Game;
-use petramond_world::item::ItemType;
-use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::{ItemSlotWire, JoinData, SelfRestore, ServerToClient};
-use petramond::server::handle::ServerHandle;
 use petramond::player::PlayerId;
+use petramond::server::handle::ServerHandle;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::item::ItemType;
 
 fn join_data() -> Box<JoinData> {
     let mut slots: Vec<Option<ItemSlotWire>> = vec![None; 37];

@@ -770,7 +770,8 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .filter(|hook| {
             matches!(
                 hook.kind,
-                petramond::gui::DocHookKind::TipResult | petramond::gui::DocHookKind::TipIngredients
+                petramond::gui::DocHookKind::TipResult
+                    | petramond::gui::DocHookKind::TipIngredients
             )
         })
         .collect();

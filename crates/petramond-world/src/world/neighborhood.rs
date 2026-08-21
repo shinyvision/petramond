@@ -102,4 +102,3 @@ impl ShapeNeighborhood for WorldData {
         self.custom_shape_boxes(pos)
     }
 }
-

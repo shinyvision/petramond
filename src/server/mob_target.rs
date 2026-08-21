@@ -8,11 +8,7 @@ impl ServerGame {
     /// view ray. The id is only a claim: it must name the nearest live body
     /// before both terrain and reach, from the drift-bounded authoritative
     /// eye. Dead players and spectators have no actionable mob target.
-    pub fn authoritative_mob_target(
-        &self,
-        s: usize,
-        requested: Option<u64>,
-    ) -> Option<usize> {
+    pub fn authoritative_mob_target(&self, s: usize, requested: Option<u64>) -> Option<usize> {
         let requested = requested?;
         let sess = self.sessions.get(s)?;
         if sess.player.health() == 0 || sess.player.is_spectator() {

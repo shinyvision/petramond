@@ -3,9 +3,9 @@
 //! The server remains authoritative; this module
 //! only tracks disposable local overlays until [`ActionOutcome`]s arrive.
 
-use petramond_world::inventory::Inventory;
-use petramond_math::math::IVec3;
 use petramond::net::protocol::{ActionOutcome, ClientRequestId};
+use petramond_math::math::IVec3;
+use petramond_world::inventory::Inventory;
 
 use super::replicated::MenuView;
 
@@ -193,7 +193,10 @@ mod tests {
         assert_eq!(ledger.pending_len(), 0);
 
         let id2 = ledger.begin(PredictionSnapshot::Inventory(inv));
-        let rollbacks = ledger.reconcile(&[ActionOutcome::deny(id2, petramond::net::protocol::ActionDenyReason::Denied)]);
+        let rollbacks = ledger.reconcile(&[ActionOutcome::deny(
+            id2,
+            petramond::net::protocol::ActionDenyReason::Denied,
+        )]);
         assert_eq!(rollbacks.0.len(), 1);
     }
 

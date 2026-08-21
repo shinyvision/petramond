@@ -128,10 +128,7 @@ fn packed_vertex_pipeline_validates() {
     assert_eq!(std::mem::size_of::<petramond_mesh::TerrainVertex>(), 20);
     // item3d vertex stride must match its declared attribute layout
     // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, tint f32x3 @24 = 36 bytes).
-    assert_eq!(
-        std::mem::size_of::<crate::item_model::ItemVertex>(),
-        36
-    );
+    assert_eq!(std::mem::size_of::<crate::item_model::ItemVertex>(), 36);
     // world-model vertex stride must match ITS declared attribute layout
     // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, packed light u32 @24,
     // tint u32 @28 = 32 bytes).

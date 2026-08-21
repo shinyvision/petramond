@@ -24,9 +24,21 @@ pub struct CanvasKey {
 }
 
 pub enum CanvasDrag {
-    Move { path: NodePath, orig: (i32, i32), start: Pos2 },
-    Resize { path: NodePath, handle: Handle, orig: (i32, i32), start: Pos2 },
-    Reorder { path: NodePath, insert: usize },
+    Move {
+        path: NodePath,
+        orig: (i32, i32),
+        start: Pos2,
+    },
+    Resize {
+        path: NodePath,
+        handle: Handle,
+        orig: (i32, i32),
+        start: Pos2,
+    },
+    Reorder {
+        path: NodePath,
+        insert: usize,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -147,7 +159,7 @@ fn from_screen(p: Pos2, origin: Pos2, ppl: f32) -> (i32, i32) {
 }
 
 /// The topmost (last expanded) node whose rect contains the logical point.
-fn topmost_at<'a>(rects: &'a [RectEntry], p: (i32, i32)) -> Option<&'a RectEntry> {
+fn topmost_at(rects: &[RectEntry], p: (i32, i32)) -> Option<&RectEntry> {
     rects
         .iter()
         .rev()
@@ -170,7 +182,9 @@ fn interact(
     origin: Pos2,
     ppl: f32,
 ) {
-    let ptr = response.interact_pointer_pos().or_else(|| response.hover_pos());
+    let ptr = response
+        .interact_pointer_pos()
+        .or_else(|| response.hover_pos());
 
     if response.clicked() {
         if let Some(p) = ptr {
@@ -182,7 +196,10 @@ fn interact(
         if let Some(p) = ptr {
             if let Some(e) = topmost_at(rects, from_screen(p, origin, ppl)) {
                 app.select_external(Some(e.path.clone()));
-                if matches!(e.type_name, "label" | "button" | "badge" | "alert" | "text_input") {
+                if matches!(
+                    e.type_name,
+                    "label" | "button" | "badge" | "alert" | "text_input"
+                ) {
                     app.focus_text_edit = true;
                 }
             }
@@ -209,13 +226,21 @@ fn interact(
                     let path2 = path.clone();
                     app.gesture_mutate(move |doc| {
                         if let Some(n) = doc_edit::node_at_mut(&mut doc.root, &path2) {
-                            n.layout.abs = Some(petramond_ui::AbsPos { x: want.0, y: want.1 });
+                            n.layout.abs = Some(petramond_ui::AbsPos {
+                                x: want.0,
+                                y: want.1,
+                            });
                         }
                     });
                 }
                 app.canvas_drag = Some(CanvasDrag::Move { path, orig, start });
             }
-            Some(CanvasDrag::Resize { path, handle, orig, start }) => {
+            Some(CanvasDrag::Resize {
+                path,
+                handle,
+                orig,
+                start,
+            }) => {
                 let dx = ((p.x - start.x) / ppl).round() as i32;
                 let dy = ((p.y - start.y) / ppl).round() as i32;
                 let w = (orig.0 + dx).max(1);
@@ -231,7 +256,12 @@ fn interact(
                         }
                     }
                 });
-                app.canvas_drag = Some(CanvasDrag::Resize { path, handle, orig, start });
+                app.canvas_drag = Some(CanvasDrag::Resize {
+                    path,
+                    handle,
+                    orig,
+                    start,
+                });
             }
             Some(CanvasDrag::Reorder { path, .. }) => {
                 let insert = reorder_insert_index(app, rects, &path, p, origin, ppl);
@@ -295,7 +325,11 @@ fn classify_drag(
     if e.abs {
         let node = doc_edit::node_at(&app.proj.document.root, &e.path)?;
         let abs = node.layout.abs.unwrap_or_default();
-        Some(CanvasDrag::Move { path: e.path.clone(), orig: (abs.x, abs.y), start: p })
+        Some(CanvasDrag::Move {
+            path: e.path.clone(),
+            orig: (abs.x, abs.y),
+            start: p,
+        })
     } else {
         Some(CanvasDrag::Reorder {
             path: e.path.clone(),
@@ -415,7 +449,12 @@ fn ensure_texture(app: &mut App, ctx: &egui::Context, screen: (u32, u32), scale:
         theme_rev: app.theme.rev,
         screen,
         scale,
-        forced: (forced_id.clone(), app.forced.hover, app.forced.pressed, app.forced.focus),
+        forced: (
+            forced_id.clone(),
+            app.forced.hover,
+            app.forced.pressed,
+            app.forced.focus,
+        ),
     };
     if app.canvas_tex.is_some() && app.canvas_tex_key.as_ref() == Some(&key) {
         return;
@@ -438,10 +477,8 @@ fn ensure_texture(app: &mut App, ctx: &egui::Context, screen: (u32, u32), scale:
         scale,
         forced.as_ref(),
     );
-    let img = egui::ColorImage::from_rgba_unmultiplied(
-        [screen.0 as usize, screen.1 as usize],
-        &rgba,
-    );
+    let img =
+        egui::ColorImage::from_rgba_unmultiplied([screen.0 as usize, screen.1 as usize], &rgba);
     match &mut app.canvas_tex {
         Some(tex) => tex.set(img, egui::TextureOptions::NEAREST),
         None => {

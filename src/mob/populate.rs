@@ -22,9 +22,9 @@
 
 use rustc_hash::FxHashSet;
 
-use petramond_world::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
-use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
 
 use super::spawn::{
     biome_chance_passes, mob_census_ready, nearby_spawn, site_for, spawn_with, species_enabled,
@@ -375,4 +375,3 @@ mod tests {
         assert!(!spawned.is_empty(), "worldgen herds bypass the caps");
     }
 }
-

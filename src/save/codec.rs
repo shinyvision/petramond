@@ -23,12 +23,12 @@ pub use petramond_util::bytecodec::{
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use crate::entity::DroppedItem;
+use crate::mob::SavedMob;
 use petramond_world::block::ShapeState;
 use petramond_world::chunk::{SectionPos, SECTION_VOLUME};
 use petramond_world::container::Container;
-use crate::entity::DroppedItem;
 use petramond_world::furnace::Furnace;
-use crate::mob::SavedMob;
 use petramond_world::section::Section;
 
 use super::palette;
@@ -288,7 +288,11 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
 /// (every section a world ever produces) and a `u16` otherwise. The palette is
 /// what keeps the record ~4 KiB after block ids widened to two bytes, and it
 /// also gives deflate a much shorter dictionary to chew on.
-fn put_block_cube(buf: &mut Vec<u8>, blocks: &petramond_world::section::BlockCube, pal: &palette::Palette) {
+fn put_block_cube(
+    buf: &mut Vec<u8>,
+    blocks: &petramond_world::section::BlockCube,
+    pal: &palette::Palette,
+) {
     let mut ids: Vec<u16> = Vec::new();
     let mut index: Vec<u16> = Vec::with_capacity(blocks.len());
     for b in blocks.iter() {
@@ -426,7 +430,9 @@ pub fn decode_section_with(
         None
     };
     let blocklight = if flags3 & FLAG3_HAS_BLOCKLIGHT != 0 {
-        Some(petramond_world::light::from_le_bytes(r.bytes(SECTION_VOLUME * 2)?)?)
+        Some(petramond_world::light::from_le_bytes(
+            r.bytes(SECTION_VOLUME * 2)?,
+        )?)
     } else {
         None
     };

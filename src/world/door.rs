@@ -9,14 +9,14 @@
 //! see `render::door_model`), and its collision is read live from the door state, so a
 //! toggle needs no remesh — only the placement/break edits relight + remesh neighbours.
 
-use petramond_world::tile::Tile;
-use petramond_world::block::{Block, ShapeFamily};
-use petramond_world::door::DoorState;
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::door::DoorState;
+use petramond_world::tile::Tile;
 
-use petramond_world::world::query::door_support;
 use super::store::World;
+use petramond_world::world::query::door_support;
 
 /// Cell offset from a door's lower cell to its upper cell.
 const UP: IVec3 = IVec3::new(0, 1, 0);
@@ -24,7 +24,6 @@ const UP: IVec3 = IVec3::new(0, 1, 0);
 /// Ticks a now-unsupported door waits before it breaks — the next tick, the same
 /// scheduled-break model fragile blocks and water use (see [`Door`]).
 const DOOR_BREAK_DELAY: u64 = 1;
-
 
 /// Break behaviour for doors: a neighbour change that takes away the floor under the
 /// door's LOWER cell schedules the whole door to break next tick; the scheduled tick
@@ -36,7 +35,6 @@ const DOOR_BREAK_DELAY: u64 = 1;
 pub struct Door;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Door {
-
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         if !world.door_supported(pos) {
             world.schedule_block_tick(pos, DOOR_BREAK_DELAY);
@@ -64,7 +62,13 @@ impl World {
     /// `Game::door_swing_angle`.
     pub fn collect_doors(
         &self,
-        out: &mut Vec<(IVec3, DoorState, [Tile; 3], u8, petramond_world::light::BlockLight6)>,
+        out: &mut Vec<(
+            IVec3,
+            DoorState,
+            [Tile; 3],
+            u8,
+            petramond_world::light::BlockLight6,
+        )>,
     ) {
         out.clear();
         for sp in &self.block_entity_sections {

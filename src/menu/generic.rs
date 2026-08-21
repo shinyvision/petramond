@@ -9,14 +9,14 @@
 //! machine state rather than authored layout.
 
 use super::{ContainerMenu, ContainerTarget};
+use crate::world::World;
+use petramond_math::math::IVec3;
 use petramond_world::container::{Container, SlotSpec};
-use petramond_world::gui_state::PointerButton;
 use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
 use petramond_world::gui_state::ContainerView;
+use petramond_world::gui_state::PointerButton;
 use petramond_world::inventory::{merge_stack, Inventory};
 use petramond_world::item::ItemTag;
-use petramond_math::math::IVec3;
-use crate::world::World;
 use std::sync::{Arc, OnceLock};
 
 /// The furnace's semantics: a smeltable-filtered input, a fuel-filtered fuel
@@ -27,8 +27,11 @@ fn furnace_slot_specs() -> Arc<Vec<SlotSpec>> {
     SPECS
         .get_or_init(|| {
             let mut specs = vec![SlotSpec::default(); petramond_world::furnace::FURNACE_SLOTS];
-            specs[SLOT_INPUT].accepts = vec![petramond_world::container::SlotFilter::Tag(ItemTag::SMELTABLE)];
-            specs[SLOT_FUEL].accepts = vec![petramond_world::container::SlotFilter::Tag(ItemTag::FUEL)];
+            specs[SLOT_INPUT].accepts = vec![petramond_world::container::SlotFilter::Tag(
+                ItemTag::SMELTABLE,
+            )];
+            specs[SLOT_FUEL].accepts =
+                vec![petramond_world::container::SlotFilter::Tag(ItemTag::FUEL)];
             specs[SLOT_OUTPUT].take_only = true;
             Arc::new(specs)
         })
@@ -183,19 +186,16 @@ impl ContainerMenu {
             let Some(src) = inv.slot_mut(i) else {
                 return;
             };
-            let by_filter = (0..container.slots.len())
-                .filter(|&s| {
+            let by_filter = (0..container.slots.len()).filter(|&s| {
                 specs
                     .get(s)
                     .is_some_and(|spec| spec.routes_by_filter(item, spec.accepts_mask(gui)))
             });
             let open = (0..container.slots.len()).filter(|&s| {
-                specs
-                    .get(s)
-                    .is_some_and(|spec| {
-                        let mask = spec.accepts_mask(gui);
-                        !spec.routes_by_filter(item, mask) && spec.routes(item, mask)
-                    })
+                specs.get(s).is_some_and(|spec| {
+                    let mask = spec.accepts_mask(gui);
+                    !spec.routes_by_filter(item, mask) && spec.routes(item, mask)
+                })
             });
             let routed: Vec<usize> = by_filter.chain(open).collect();
             // Merge-then-fill over the routed order (the inventory's

@@ -3,8 +3,8 @@
 //! (`Game::look`/`Game::targeted_mob`). None of this touches the sessions —
 //! the results reach the sim as the next `PlayerUpdate` message.
 
-use petramond_math::math::Vec3;
 use petramond::player::{self, Input, Player};
+use petramond_math::math::Vec3;
 
 use super::{Game, GameInput};
 
@@ -240,7 +240,8 @@ impl Game {
                 // on top would fight the contact (skating a deck-stander).
                 continue;
             }
-            let mob = petramond_world::body::Body::new(entry.curr.pos, d.size.half_width, d.size.height);
+            let mob =
+                petramond_world::body::Body::new(entry.curr.pos, d.size.half_width, d.size.height);
             if let Some(p) = petramond_world::body::separation(body, mob) {
                 push += p;
             }

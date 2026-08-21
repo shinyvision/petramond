@@ -1,5 +1,5 @@
-use petramond_world::gui_state::GuiKind;
 use petramond_math::math::IVec3;
+use petramond_world::gui_state::GuiKind;
 
 /// What the open GUI is acting on — named for the thing being edited, not for the
 /// screen. The app's `AppScreen` decides which screen is up; this decides which

@@ -223,7 +223,7 @@ impl WorldData {
         self.columns.entry(pos).or_default()
     }
 
-    /// Mod pack ids disabled for this world    /// Mod pack ids disabled for this world (per-world `settings.json`).
+    /// Mod pack ids disabled for this world (per-world `settings.json`).
     #[inline]
     pub fn disabled_mods(&self) -> &std::collections::BTreeSet<String> {
         &self.mods.disabled_mods
@@ -285,11 +285,7 @@ impl WorldData {
     /// or `None` when `wy` falls outside the world vertical range. Section lookup is
     /// a separate step (see [`chunk_at_world`](Self::chunk_at_world)).
     #[inline]
-    pub fn split_world(
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> Option<(SectionPos, usize, usize, usize)> {
+    pub fn split_world(wx: i32, wy: i32, wz: i32) -> Option<(SectionPos, usize, usize, usize)> {
         let sp = SectionPos::from_world(wx, wy, wz)?;
         Some((
             sp,
@@ -336,11 +332,13 @@ impl WorldData {
 
     #[inline]
     pub fn section_mut(&mut self, pos: SectionPos) -> Option<&mut Section> {
-        // Any handout may change what the section holds, so its
-        // random-tickable bit is now unproven (see `section_column_rt`).
-        // Cheap and rare next to the per-tick scan it keeps exact.
+        // Only a successful handout may change what the section holds. Marking
+        // a failed lookup polluted the derived index with absent (and, for
+        // boundary probes, out-of-range) positions; the next random-tick repair
+        // then tried to encode those positions in the fixed-height bitset.
+        let section = self.sections.get_mut(&pos)?;
         self.random_tick_dirty.insert(pos);
-        self.sections.get_mut(&pos).map(Arc::make_mut)
+        Some(Arc::make_mut(section))
     }
 
     /// Whether the section owning world `(wx,wy,wz)` is loaded.
@@ -443,5 +441,4 @@ impl WorldData {
     pub fn column_section_range() -> std::ops::RangeInclusive<i32> {
         SECTION_MIN_CY..=SECTION_MAX_CY
     }
-
 }

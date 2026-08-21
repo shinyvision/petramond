@@ -7,9 +7,8 @@ use crate::client::{
 };
 use crate::data::{
     BlockInfoData, CollisionShape, EffectStateData, GuiValue, GuiViewerData, ItemInfoData,
-    ItemStackData,
-    LightData, MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup, MobTagValue,
-    PlayerInputData, PlayerListEntry, PlayerSnapshot, RuntimeSide,
+    ItemStackData, LightData, MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup,
+    MobTagValue, PlayerInputData, PlayerListEntry, PlayerSnapshot, RuntimeSide,
 };
 use crate::events::EventKind;
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};

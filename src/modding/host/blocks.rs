@@ -194,7 +194,10 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 // flipping ITS placed variant, never a tool for rewriting
                 // someone else's content. The destination is checked here
                 // because it needs no world read.
-                let new_name = petramond_world::registry::names().blocks.name(b.id()).unwrap_or("?");
+                let new_name = petramond_world::registry::names()
+                    .blocks
+                    .name(b.id())
+                    .unwrap_or("?");
                 if !key_owned_by_namespace(mod_id, new_name) {
                     return HostRet::Error(format!(
                         "SwapModelBlock: block '{new_name}' is not owned by mod '{mod_id}'"
@@ -376,16 +379,16 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{CollisionShape, HostCall, HostRet};
 
-    use petramond_world::block::Block;
-    use petramond_world::chunk::ChunkPos;
-    use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::{PostQueue, SimCtx};
     use crate::modding::host::guards::SIM_BATCH_MAX;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::ChunkPos;
 
     /// Publish a SimCtx over `world` and run `f`, as if inside a dispatch.
     fn with_world_ctx(world: &mut World, f: impl FnOnce()) {

@@ -116,13 +116,13 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{HostCall, HostRet, MobTagValue as Api};
 
-    use crate::events::{PostEvent, PostEventKind, PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::{PostEvent, PostEventKind, PostQueue, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
 
     /// The tag lifecycle events fire on PRESENCE TRANSITIONS through the ABI
     /// surface: a NEW key emits `mob_tag_added`, deleting a present key emits

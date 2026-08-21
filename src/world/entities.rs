@@ -22,11 +22,11 @@
 
 use std::collections::HashMap;
 
-use petramond_world::chunk::SectionPos;
 use crate::entity::DroppedItem;
-use petramond_world::item::ItemStack;
-use petramond_math::math::{voxel_at, Vec3};
 use crate::player::PlayerId;
+use petramond_math::math::{voxel_at, Vec3};
+use petramond_world::chunk::SectionPos;
+use petramond_world::item::ItemStack;
 
 use super::store::World;
 
@@ -356,7 +356,11 @@ impl DroppedItems {
                                 cells.get(&(origin.x + dx, origin.y + dy, origin.z + dz))
                             {
                                 out.extend(
-                                    bucket.iter().copied().map(|j| j as usize).filter(|&j| j > i),
+                                    bucket
+                                        .iter()
+                                        .copied()
+                                        .map(|j| j as usize)
+                                        .filter(|&j| j > i),
                                 );
                             }
                         }

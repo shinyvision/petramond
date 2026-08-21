@@ -4,18 +4,16 @@
 
 use crate::world::WorldData;
 use petramond_world::block::Block;
-use petramond_world::chunk::{
-    section_idx, ChunkPos, SectionPos, SECTION_SIZE,
-};
+use petramond_world::chunk::{section_idx, ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_world::column::NO_SURFACE;
 
-use petramond_world::world::column_heightmaps::SkyCoverChange;
 use super::store::World;
+use petramond_world::world::column_heightmaps::SkyCoverChange;
 
-    /// Recompute a column's visible surface and direct-sky cover from its
-    /// currently-loaded sections. Used after overlaying saved terrain, whose
-    /// blocks can differ from generation. Returns the changed cover envelope.
-    impl World {
+/// Recompute a column's visible surface and direct-sky cover from its
+/// currently-loaded sections. Used after overlaying saved terrain, whose
+/// blocks can differ from generation. Returns the changed cover envelope.
+impl World {
     pub(super) fn recompute_column_heightmaps(&mut self, cpos: ChunkPos) -> Option<SkyCoverChange> {
         // Gather both maps under immutable section borrows, then write the
         // column once (the section and column maps are distinct fields).
@@ -108,4 +106,3 @@ use super::store::World;
         sky_change
     }
 }
-

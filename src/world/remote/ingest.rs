@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
+use crate::net::protocol::{BlockDelta, ColumnPayload, LightPayload, SectionPayload};
+use crate::world::store::{LoadTarget, World, WorldRole};
 use petramond_world::block::Block;
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SECTION_VOLUME};
-use crate::net::protocol::{BlockDelta, ColumnPayload, LightPayload, SectionPayload};
 use petramond_world::section::{Section, SectionSummary};
-use crate::world::store::{LoadTarget, World, WorldRole};
 
 impl World {
     /// Install a column's replicated facts on a replica: biome + both height
@@ -424,20 +424,12 @@ impl World {
     /// server's `ColumnUnload`. Returns the evicted live sections — a
     /// `ColumnUnload` implicitly drops them with no per-section message, so
     /// this is the section cache's only sight of them.
-    pub fn uninstall_remote_column(
-        &mut self,
-        pos: ChunkPos,
-    ) -> Vec<(SectionPos, Arc<Section>)> {
+    pub fn uninstall_remote_column(&mut self, pos: ChunkPos) -> Vec<(SectionPos, Arc<Section>)> {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote unloads are the replica's ingest path"
         );
-        let bits = self
-            .data
-            .section_column_cys
-            .get(&pos)
-            .copied()
-            .unwrap_or(0);
+        let bits = self.data.section_column_cys.get(&pos).copied().unwrap_or(0);
         let mut evicted = Vec::with_capacity(bits.count_ones() as usize);
         Self::for_each_column_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
@@ -456,11 +448,7 @@ impl World {
     /// exact counters, sparse maps, and final light it was evicted with. The
     /// caller batches the returned pos into `finish_remote_install_batch`
     /// like any other install.
-    pub fn install_cached_section(
-        &mut self,
-        pos: SectionPos,
-        section: Arc<Section>,
-    ) -> SectionPos {
+    pub fn install_cached_section(&mut self, pos: SectionPos, section: Arc<Section>) -> SectionPos {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote installs are the replica's ingest path"

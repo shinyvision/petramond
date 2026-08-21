@@ -148,10 +148,22 @@ pub struct EngineHook {
     random_tick: bool,
 }
 
-pub static WATER_HOOK: EngineHook = EngineHook { key: "water", random_tick: false };
-pub static FRAGILE_HOOK: EngineHook = EngineHook { key: "fragile", random_tick: false };
-pub static SAPLING_HOOK: EngineHook = EngineHook { key: "sapling", random_tick: true };
-pub static DOOR_HOOK: EngineHook = EngineHook { key: "door", random_tick: false };
+pub static WATER_HOOK: EngineHook = EngineHook {
+    key: "water",
+    random_tick: false,
+};
+pub static FRAGILE_HOOK: EngineHook = EngineHook {
+    key: "fragile",
+    random_tick: false,
+};
+pub static SAPLING_HOOK: EngineHook = EngineHook {
+    key: "sapling",
+    random_tick: true,
+};
+pub static DOOR_HOOK: EngineHook = EngineHook {
+    key: "door",
+    random_tick: false,
+};
 
 impl BlockBehavior for EngineHook {
     fn key(&self) -> &'static str {
@@ -163,15 +175,27 @@ impl BlockBehavior for EngineHook {
     }
 
     fn random_tick(&self, _world: &mut dyn BehaviorWorld, _pos: IVec3) {
-        debug_assert!(false, "engine behaviour '{}' must dispatch through the engine registry", self.key);
+        debug_assert!(
+            false,
+            "engine behaviour '{}' must dispatch through the engine registry",
+            self.key
+        );
     }
 
     fn neighbor_update(&self, _world: &mut dyn BehaviorWorld, _pos: IVec3) {
-        debug_assert!(false, "engine behaviour '{}' must dispatch through the engine registry", self.key);
+        debug_assert!(
+            false,
+            "engine behaviour '{}' must dispatch through the engine registry",
+            self.key
+        );
     }
 
     fn scheduled_tick(&self, _world: &mut dyn BehaviorWorld, _pos: IVec3) {
-        debug_assert!(false, "engine behaviour '{}' must dispatch through the engine registry", self.key);
+        debug_assert!(
+            false,
+            "engine behaviour '{}' must dispatch through the engine registry",
+            self.key
+        );
     }
 }
 

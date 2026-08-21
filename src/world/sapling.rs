@@ -31,8 +31,8 @@
 use crate::world::WorldData;
 use std::collections::HashMap;
 
-use petramond_world::block::Block;
 use petramond_math::math::IVec3;
+use petramond_world::block::Block;
 use petramond_world::section::SectionSummary;
 use petramond_worldgen::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
 use petramond_worldgen::rng::FeatureRng;
@@ -52,8 +52,6 @@ const ADVANCE_CHANCE: f32 = 0.5;
 pub struct Sapling;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Sapling {
-
-
     fn random_tick(&self, world: &mut World, pos: IVec3) {
         // A fresh deterministic stream per (sapling, tick): the tick number folds
         // into the salt so the same cell rolls differently every tick, while the

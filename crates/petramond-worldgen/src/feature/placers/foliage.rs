@@ -22,12 +22,12 @@
 
 use std::collections::VecDeque;
 
-use petramond_world::block::behavior::MAX_LOG_DISTANCE;
-use petramond_world::block::Block;
-use petramond_world::mathh::{IVec3, FACE_NEIGHBORS};
 use crate::feature::placers::trunk::TrunkPlan;
 use crate::feature::FeatureCtx;
 use crate::rng::FeatureRng;
+use petramond_world::block::behavior::MAX_LOG_DISTANCE;
+use petramond_world::block::Block;
+use petramond_world::mathh::{IVec3, FACE_NEIGHBORS};
 
 pub trait FoliagePlacer: Send + Sync {
     /// Build the canopy. `open` answers whether a world cell may hold a canopy
@@ -99,8 +99,9 @@ impl Canopy {
         }
         let size = hi - lo + IVec3::ONE;
         let (sx, sy) = (size.x as usize, size.y as usize);
-        let idx =
-            |p: IVec3| ((p.z - lo.z) as usize * sy + (p.y - lo.y) as usize) * sx + (p.x - lo.x) as usize;
+        let idx = |p: IVec3| {
+            ((p.z - lo.z) as usize * sy + (p.y - lo.y) as usize) * sx + (p.x - lo.x) as usize
+        };
         let mut grid = vec![0u8; sx * sy * size.z as usize];
 
         // The oracle is consulted once per unique candidate, in draw order.
@@ -131,8 +132,7 @@ impl Canopy {
                     continue;
                 }
                 let i = idx(n);
-                if grid[i] & (CANDIDATE | OPEN) == CANDIDATE | OPEN
-                    && grid[i] & (WOOD | KEEP) == 0
+                if grid[i] & (CANDIDATE | OPEN) == CANDIDATE | OPEN && grid[i] & (WOOD | KEEP) == 0
                 {
                     grid[i] |= KEEP;
                     frontier.push_back((n, d + 1));
@@ -367,15 +367,20 @@ impl FoliagePlacer for FlatSparseFoliage {
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod spruce_tests {
     use super::*;
-    use petramond_world::chunk::Chunk;
     use crate::rng::FeatureRng;
+    use petramond_world::chunk::Chunk;
 
     /// Trunk column logs from `base` up `h` blocks, written into `chunk`, as a
     /// [`TrunkPlan`] — what a straight trunk placer would produce.
     fn column_trunk(chunk: &mut Chunk, cx: i32, cz: i32, base: i32, h: i32) -> TrunkPlan {
         let mut logs = Vec::new();
         for i in 0..h {
-            chunk.set_block_raw(cx as usize, (base + i) as usize, cz as usize, Block::SpruceLog.id());
+            chunk.set_block_raw(
+                cx as usize,
+                (base + i) as usize,
+                cz as usize,
+                Block::SpruceLog.id(),
+            );
             logs.push(IVec3::new(cx, base + i, cz));
         }
         TrunkPlan {
@@ -403,7 +408,13 @@ mod spruce_tests {
                     radius,
                     skirt_ragged: 0.25,
                 };
-                cone.place(&mut ctx, &mut |_| true, &plan, Block::SpruceLeaves, &mut rng);
+                cone.place(
+                    &mut ctx,
+                    &mut |_| true,
+                    &plan,
+                    Block::SpruceLeaves,
+                    &mut rng,
+                );
 
                 let leaf = |x: i32, y: i32, z: i32| {
                     chunk.block_raw(x as usize, y as usize, z as usize) == Block::SpruceLeaves.id()
@@ -446,7 +457,13 @@ mod spruce_tests {
                     radius,
                     skirt_ragged: 0.25,
                 };
-                cone.place(&mut ctx, &mut |_| true, &plan, Block::SpruceLeaves, &mut rng);
+                cone.place(
+                    &mut ctx,
+                    &mut |_| true,
+                    &plan,
+                    Block::SpruceLeaves,
+                    &mut rng,
+                );
 
                 let max_r = radius.max(2);
                 for i in 4..(4 + max_r * 2) {
@@ -513,9 +530,14 @@ mod spruce_tests {
             let mut reached: HashSet<(i32, i32, i32)> = HashSet::new();
             let mut frontier: VecDeque<(i32, i32, i32)> = logs.iter().copied().collect();
             while let Some((x, y, z)) = frontier.pop_front() {
-                for (dx, dy, dz) in
-                    [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
-                {
+                for (dx, dy, dz) in [
+                    (1, 0, 0),
+                    (-1, 0, 0),
+                    (0, 1, 0),
+                    (0, -1, 0),
+                    (0, 0, 1),
+                    (0, 0, -1),
+                ] {
                     let n = (x + dx, y + dy, z + dz);
                     if leaves.contains(&n) && reached.insert(n) {
                         frontier.push_back(n);

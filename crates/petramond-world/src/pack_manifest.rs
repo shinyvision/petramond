@@ -56,10 +56,7 @@ pub fn foreign_namespaced_keys(pack_id: Option<&str>, keys: &[String]) -> Vec<St
 
 /// Resolve the pack load order (indices into `packs`). Disabled packs are
 /// reported through `disable(index, reason)` and omitted from the result.
-pub fn resolve_load_order(
-    packs: &[PackMeta],
-    mut disable: impl FnMut(usize, &str),
-) -> Vec<usize> {
+pub fn resolve_load_order(packs: &[PackMeta], mut disable: impl FnMut(usize, &str)) -> Vec<usize> {
     let mut alive = vec![true; packs.len()];
     let mut kill = |alive: &mut Vec<bool>, i: usize, why: &str| {
         alive[i] = false;
@@ -320,10 +317,7 @@ pub fn registration_keys_by_catalog(
 /// an override is not a new id, exactly as `NameTable::build` counts it. Later
 /// packs are dropped in load order, so an id budget is spent by the packs that
 /// were there first and the outcome does not depend on discovery order.
-pub fn id_budget_overflow(
-    engine_names: &[&str],
-    costs: &[Vec<String>],
-) -> Vec<(usize, usize)> {
+pub fn id_budget_overflow(engine_names: &[&str], costs: &[Vec<String>]) -> Vec<(usize, usize)> {
     let mut taken: std::collections::HashSet<&str> = engine_names.iter().copied().collect();
     let mut over = Vec::new();
     for (i, keys) in costs.iter().enumerate() {

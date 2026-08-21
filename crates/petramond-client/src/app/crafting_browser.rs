@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use petramond_ui::{UiEvent, UiMap, UiState, UiValue};
 
-use petramond_world::crafting::CraftingStation;
 use crate::game::Game;
 use petramond::gui::CraftingRecipeView;
+use petramond_world::crafting::CraftingStation;
 
 /// The document id of the recipe grid, whose hovered stamp drives the tooltip.
 pub(super) const RECIPE_LIST_ID: &str = "craft_recipes_list";

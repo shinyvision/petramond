@@ -36,15 +36,15 @@
 //! atlas ignored); when clear it samples the atlas at the reconstructed uv. Keep
 //! this convention identical between this module and `model3d.wgsl`.
 
-use petramond_mesh::vertex::BlockLightVertexExt;
 use super::foliage_tint::{self, FaceMaterial};
 use super::lighting::{self, DynLight};
-use petramond_world::tile::Tile;
+use petramond_math::face::Face;
+use petramond_math::facing::Facing;
+use petramond_mesh::vertex::BlockLightVertexExt;
+use petramond_mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
 use petramond_world::block::Block;
 use petramond_world::block_state::{HeldBlockState, LogAxis};
-use petramond_math::facing::Facing;
-use petramond_math::face::Face;
-use petramond_mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
+use petramond_world::tile::Tile;
 
 use glam::Vec3;
 
@@ -784,7 +784,8 @@ mod tests {
         let (v, _) = cube_textured(tiles, Vec3::ZERO, 1.0);
         // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
         // 4 verts per face; the tile id is the low field of `packed`.
-        let face_tile = |face_idx: usize| v[face_idx * 4].packed & petramond_mesh::vertex::TILE_MASK;
+        let face_tile =
+            |face_idx: usize| v[face_idx * 4].packed & petramond_mesh::vertex::TILE_MASK;
         // PosX (side), NegX (side)
         assert_eq!(face_tile(0), Tile::named("stone").index() as u32);
         assert_eq!(face_tile(1), Tile::named("stone").index() as u32);
@@ -871,7 +872,10 @@ mod tests {
         let (v, _) = cube_textured([Tile::named("stone"); 3], Vec3::ZERO, 1.0);
         for vert in &v {
             // skylight (bits 23..29) is full (63).
-            assert_eq!((vert.packed >> petramond_mesh::vertex::SKY_SHIFT) & 0x3F, 63);
+            assert_eq!(
+                (vert.packed >> petramond_mesh::vertex::SKY_SHIFT) & 0x3F,
+                63
+            );
             // AO (bits 21..23) is full (3).
             assert_eq!((vert.packed >> petramond_mesh::vertex::AO_SHIFT) & 0x3, 3);
             // textured path never sets the solid-color flag.
@@ -903,7 +907,10 @@ mod tests {
         for vert in &v {
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, SOLID_COLOR_FLAG);
             assert_eq!(vert.tint, pack_tint(tint));
-            assert_eq!((vert.packed >> petramond_mesh::vertex::SKY_SHIFT) & 0x3F, 63);
+            assert_eq!(
+                (vert.packed >> petramond_mesh::vertex::SKY_SHIFT) & 0x3F,
+                63
+            );
         }
     }
 

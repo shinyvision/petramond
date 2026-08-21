@@ -1,7 +1,7 @@
 use crate::entity::DroppedItem;
 use crate::events::{DamageSource, MobDamagePre, Outcome, PostEvent};
-use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, MobSoundCategory};
+use petramond_math::math::{voxel_at, Vec3};
 
 /// Falls shorter than this into water make no splash — walking or a one-block
 /// step-down stays quiet; a real fall throws the burst.
@@ -355,9 +355,9 @@ impl ServerGame {
         if fall < WATER_SPLASH_MIN_FALL {
             return;
         }
-        let Some(bundle) =
-            petramond_world::particle_emitters::by_key(petramond_world::particle_emitters::WATER_SPLASH_KEY)
-        else {
+        let Some(bundle) = petramond_world::particle_emitters::by_key(
+            petramond_world::particle_emitters::WATER_SPLASH_KEY,
+        ) else {
             return;
         };
         let c = petramond_math::math::voxel_at(feet);
@@ -519,12 +519,15 @@ fn queue_mob_sound(
     pos: Vec3,
 ) {
     if crate::mob::def(kind).sound_for(category).is_some() {
-        events.world.mob_sounds.push(crate::events::tick::MobSoundEvent {
-            mob_id,
-            kind,
-            category,
-            pos,
-        });
+        events
+            .world
+            .mob_sounds
+            .push(crate::events::tick::MobSoundEvent {
+                mob_id,
+                kind,
+                category,
+                pos,
+            });
     }
 }
 

@@ -82,7 +82,9 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                                     Err(e) => return e,
                                 };
                             (data.count > 0).then(|| {
-                                petramond_world::item::ItemStack::with_variant(item, data.count, variant)
+                                petramond_world::item::ItemStack::with_variant(
+                                    item, data.count, variant,
+                                )
                             })
                         }
                     }
@@ -144,14 +146,14 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{HostCall, HostRet};
 
-    use petramond_world::chunk::ChunkPos;
-    use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::{PostQueue, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
+    use petramond_world::chunk::ChunkPos;
 
     /// Container host calls canonicalize any footprint cell of a multi-cell
     /// model block to the group ANCHOR: a write through a non-anchor cell
@@ -161,7 +163,10 @@ mod tests {
     fn container_calls_canonicalize_to_the_group_anchor() {
         let mut world = World::new(1, 4);
         world.clear_world();
-        world.insert_chunk_for_test(ChunkPos::new(0, 0), petramond_world::chunk::Chunk::new(0, 0));
+        world.insert_chunk_for_test(
+            ChunkPos::new(0, 0),
+            petramond_world::chunk::Chunk::new(0, 0),
+        );
         let origin = petramond_math::math::IVec3::new(5, 64, 5);
         assert!(world.place_model_block(origin, petramond_world::block::Block::FurnitureWorkbench));
         let (_, anchor, cells) = world.model_group(origin).expect("a placed model group");

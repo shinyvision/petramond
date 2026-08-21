@@ -10,6 +10,7 @@
 pub use petramond_math::{face, facing, math as mathh, wire_enum};
 pub use petramond_util::{memory, paths, test_time, texture_mips};
 
+pub mod ai_vocab;
 pub mod asset_cache;
 pub mod assets;
 pub mod bbmodel;
@@ -39,7 +40,6 @@ pub mod keycode;
 pub mod ladder;
 pub mod light;
 pub mod mining;
-pub mod ai_vocab;
 pub mod pack_manifest;
 pub mod pane;
 pub mod particle_emitters;

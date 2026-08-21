@@ -26,8 +26,8 @@
 
 use std::collections::VecDeque;
 
-use petramond_world::chunk::SectionPos;
 use petramond_math::math::FACE_NEIGHBORS;
+use petramond_world::chunk::SectionPos;
 
 use super::store::World;
 
@@ -196,13 +196,13 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use petramond_world::block::Block;
-    use petramond_world::chunk::{ChunkPos, SECTION_SIZE, SectionPos};
-    use petramond_world::section::Section;
-    use crate::world::store::LoadTarget;
-    use petramond_worldgen::driver::ChunkGenerator;
     use super::World;
+    use crate::world::store::LoadTarget;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
+    use petramond_world::section::Section;
+    use petramond_worldgen::driver::ChunkGenerator;
+    use std::sync::Arc;
 
     fn solid_section(pos: SectionPos) -> Section {
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);

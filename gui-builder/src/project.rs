@@ -87,7 +87,7 @@ impl Project {
         if kind != "petramond:hotbar" {
             let title = kind
                 .split(':')
-                .last()
+                .next_back()
                 .unwrap_or(kind)
                 .replace('_', " ")
                 .to_uppercase();

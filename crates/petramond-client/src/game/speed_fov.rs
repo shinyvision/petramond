@@ -39,7 +39,10 @@ pub struct SpeedFov {
 
 impl SpeedFov {
     pub fn new(base_fov_y: f32) -> Self {
-        Self { base_fov_y, mult: 1.0 }
+        Self {
+            base_fov_y,
+            mult: 1.0,
+        }
     }
 
     /// Advance one frame toward `speed_ratio` (selected land speed over base

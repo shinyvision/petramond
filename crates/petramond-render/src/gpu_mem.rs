@@ -42,10 +42,7 @@ pub fn note_texture(desc: &wgpu::TextureDescriptor<'_>) {
 }
 
 /// Create a texture and bill it. Every renderer texture goes through here.
-pub fn create_texture(
-    device: &wgpu::Device,
-    desc: &wgpu::TextureDescriptor<'_>,
-) -> wgpu::Texture {
+pub fn create_texture(device: &wgpu::Device, desc: &wgpu::TextureDescriptor<'_>) -> wgpu::Texture {
     note_texture(desc);
     device.create_texture(desc)
 }

@@ -12,16 +12,16 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod audit;
-pub mod colgen;
-pub mod hooks;
-pub mod preview;
 pub mod biome;
+pub mod colgen;
 pub mod data;
 pub mod density;
 pub mod driver;
 pub mod feature;
 pub mod graph;
+pub mod hooks;
 mod noise;
+pub mod preview;
 mod proto;
 pub mod region;
 pub mod rng;
@@ -226,7 +226,10 @@ fn clamp_query(p: [i32; 3]) -> [i32; 3] {
     const HORIZONTAL_LIMIT: i32 = i32::MAX / 8;
     [
         p[0].clamp(-HORIZONTAL_LIMIT, HORIZONTAL_LIMIT),
-        p[1].clamp(petramond_world::chunk::WORLD_MIN_Y, petramond_world::chunk::WORLD_MAX_Y - 1),
+        p[1].clamp(
+            petramond_world::chunk::WORLD_MIN_Y,
+            petramond_world::chunk::WORLD_MAX_Y - 1,
+        ),
         p[2].clamp(-HORIZONTAL_LIMIT, HORIZONTAL_LIMIT),
     ]
 }

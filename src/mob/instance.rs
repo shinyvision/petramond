@@ -16,8 +16,8 @@
 //! layers) — the `world::store` pattern. This file keeps the struct, spawn,
 //! and the per-tick orchestration.
 
-use petramond_math::math::{voxel_at, IVec3, Vec3};
 use crate::world::World;
+use petramond_math::math::{voxel_at, IVec3, Vec3};
 
 use super::anim::AnimKind;
 // Re-exported so `mob::instance::AnimLayer` consumers (the manager's
@@ -538,8 +538,8 @@ impl Instance {
         let in_water = water(feet_cell) || water(feet_cell - IVec3::Y);
         // The cell navigation starts from: the standing foothold on land (robust to
         // standing at a block edge, where the cell under the centre overhangs into
-        // air), or the water-surface cell while in water — see `navigation_cell` for
-        // why a mob in water must never path from its (submerged) standing cell.
+        // air), or the water-surface cell while in water. `navigation_cell_with`
+        // explains why a mob in water must never path from its submerged standing cell.
         let cell = path::navigation_cell_with(
             self.pos,
             d.size.half_width,

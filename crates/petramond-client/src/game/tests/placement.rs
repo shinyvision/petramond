@@ -1,11 +1,13 @@
-use petramond::events::tick::TickEvents;
 use super::common::{filled_inventory, game, game_on_empty_chunk, give, hit};
-use petramond_world::block::Block;
-use petramond_world::block_state::{HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState};
-use petramond_math::facing::Facing;
-use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::{IVec3, Vec3};
+use petramond::events::tick::TickEvents;
 use petramond::server::placement::facing_from_forward;
+use petramond_math::facing::Facing;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::block_state::{
+    HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState,
+};
+use petramond_world::item::{ItemStack, ItemType};
 
 #[test]
 fn place_with_empty_hand_does_nothing() {

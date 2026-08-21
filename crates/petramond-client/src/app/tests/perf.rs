@@ -243,10 +243,7 @@ fn world_map_drag_fill_latency() {
 
     // The mod snapped its pan to the player position on open (zoom 0 grid).
     let zoom0 = 0i8;
-    let mut pan = [
-        (eye.x / 0.5).round() as f32 * 0.5,
-        (eye.z / 0.5).round() as f32 * 0.5,
-    ];
+    let mut pan = [(eye.x / 0.5).round() * 0.5, (eye.z / 0.5).round() * 0.5];
     let fill = |app: &mut TestApp, pan: [f32; 2], zoom: i8, label: &str| {
         let expected = expected_full_tiles(pan, zoom);
         let started = Instant::now();

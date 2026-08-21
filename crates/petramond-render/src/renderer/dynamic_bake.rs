@@ -20,10 +20,7 @@ impl Renderer {
     /// held-item variant.
     #[inline]
     fn held_item_light(&self) -> crate::lighting::DynLight {
-        crate::lighting::DynLight::new(
-            self.hand.held_item_skylight,
-            self.hand.held_item_blocklight,
-        )
+        crate::lighting::DynLight::new(self.hand.held_item_skylight, self.hand.held_item_blocklight)
     }
 
     /// Refresh the crosshair + selection-outline vertex buffers when their
@@ -175,9 +172,8 @@ impl Renderer {
                     self.hand.held_is_model = true;
                 }
                 self.hand.item3d_verts = iv;
-            } else if let Some((tile, mvp)) =
-                crate::hand::held_sprite(&self.hand.held_item, aspect)
-                    .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
+            } else if let Some((tile, mvp)) = crate::hand::held_sprite(&self.hand.held_item, aspect)
+                .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
             {
                 let mut iv = std::mem::take(&mut self.hand.item3d_verts);
                 let count = crate::item_model::build_extruded_stack_lit(
@@ -431,9 +427,7 @@ impl Renderer {
             |verts, indices| {
                 // Two producers: the count is the buffer's (see above).
                 crate::item_entity::build_item_model_entities(visible, env, verts, indices);
-                crate::block_draw::build_block_draw_models(
-                    draws, env, models, verts, indices,
-                );
+                crate::block_draw::build_block_draw_models(draws, env, models, verts, indices);
                 indices.len() as u32
             },
         );
@@ -631,9 +625,7 @@ impl Renderer {
             // A sleeper's hands are empty — the held items would poke through
             // the bed. Each hand emits its own item with its own attach
             // transforms (the off set is the mirrored twin).
-            for (view, hand_mat, off_side) in
-                [(held, hand, false), (off, off_hand, true)]
-            {
+            for (view, hand_mat, off_side) in [(held, hand, false), (off, off_hand, true)] {
                 let item = (!inst.sleeping).then_some(view.item).flatten();
                 match item.map(|it| it.render_kind()) {
                     Some(petramond_world::item::ItemRenderKind::BlockCube(block)) => {
@@ -665,10 +657,7 @@ impl Renderer {
                         }
                         // Instance-data tint on the held mini-cube (dyed wool
                         // in a remote or third-person hand).
-                        crate::item_model::dye_block_verts(
-                            &mut block_verts[start..],
-                            view.variant,
-                        );
+                        crate::item_model::dye_block_verts(&mut block_verts[start..], view.variant);
                         crate::player_model::transform_positions(
                             block_verts[start..].iter_mut().map(|v| &mut v.pos),
                             m,

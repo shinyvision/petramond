@@ -9,8 +9,8 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
 use crate::keycode::{KeyCode, MouseButton};
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Control {
@@ -659,12 +659,7 @@ pub fn fixed_control_from_key_code(code: KeyCode) -> Option<Control> {
     }
 }
 
-
-pub fn text_shortcut_from_key_code(
-    code: KeyCode,
-    modifiers: Modifiers,
-) -> Option<TextShortcut> {
-
+pub fn text_shortcut_from_key_code(code: KeyCode, modifiers: Modifiers) -> Option<TextShortcut> {
     if !modifiers.ctrl {
         return None;
     }

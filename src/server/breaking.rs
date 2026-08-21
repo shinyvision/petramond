@@ -1,10 +1,10 @@
-use petramond_world::block::{Block, ShapeFamily};
 use crate::entity::DroppedItem;
 use crate::events::{BlockBreakPre, Outcome, PostEvent};
-use petramond_world::item::ItemStack;
-use petramond_math::math::{IVec3, Vec3};
-use petramond_world::mining::{BreakEvent, MiningState};
 use crate::world::World;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::item::ItemStack;
+use petramond_world::mining::{BreakEvent, MiningState};
 
 use super::game::ServerGame;
 use crate::events::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
@@ -465,7 +465,12 @@ impl ServerGame {
             if harvested {
                 // Natural breaks carry nothing: the world cleared the cell
                 // (and its KV) before this drain runs.
-                self.spawn_drops(pos, block, (sky, blk), petramond_world::item::VariantId::NONE);
+                self.spawn_drops(
+                    pos,
+                    block,
+                    (sky, blk),
+                    petramond_world::item::VariantId::NONE,
+                );
             }
             // Sim-destroyed blocks are not cancellable (no pre event);
             // observers still hear about them.
@@ -532,7 +537,9 @@ impl ServerGame {
                 Some(s) => {
                     s.count = s.count.saturating_add(1).min(item.max_stack_size());
                 }
-                None => stacks.push(petramond_world::item::ItemStack::with_variant(item, 1, variant)),
+                None => stacks.push(petramond_world::item::ItemStack::with_variant(
+                    item, 1, variant,
+                )),
             }
         }
         stacks

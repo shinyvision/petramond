@@ -26,11 +26,7 @@ const COVERED: i32 = i32::MAX;
 /// Whether changing cover between these two vertical endpoints can alter this
 /// section's skylight. Above the higher endpoint both states are direct sky;
 /// below the lower endpoint's seep reach both are dark.
-pub fn cover_change_affects_section(
-    pos: SectionPos,
-    min_cover: i32,
-    max_cover: i32,
-) -> bool {
+pub fn cover_change_affects_section(pos: SectionPos, min_cover: i32, max_cover: i32) -> bool {
     let affected_min = min_cover.saturating_add(1).saturating_sub(SKY_SEEP_REACH);
     let oy = pos.origin_world().1;
     let top = oy + SECTION_SIZE as i32 - 1;

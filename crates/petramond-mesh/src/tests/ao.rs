@@ -1,6 +1,6 @@
 use super::*;
-use petramond_world::block_state::{SlabSplit, SlabState};
 use crate::face::{should_flip, vertex_ao};
+use petramond_world::block_state::{SlabSplit, SlabState};
 
 /// Leaves occlude AO onto/within themselves: a solid leaf cluster floating in
 /// air must produce darkened (ao < 3) leaf faces -- interior faces are buried

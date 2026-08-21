@@ -1,7 +1,7 @@
 use super::collision::Axis;
 use super::state::{Input, Player, HALF_W};
-use petramond_math::math::Vec3;
 use crate::world::World;
+use petramond_math::math::Vec3;
 
 pub const WALK: f32 = 4.3;
 pub const SPRINT: f32 = 5.6;
@@ -138,7 +138,11 @@ impl Player {
     /// take a climb-out boost like a block ledge grants — and since a deck
     /// sits higher above the waterline than a block ledge, the caller derives
     /// the boost from this returned height.
-    fn deck_ahead(&self, dir: Vec3, obstacles: &[petramond_world::collision::DynBox]) -> Option<f32> {
+    fn deck_ahead(
+        &self,
+        dir: Vec3,
+        obstacles: &[petramond_world::collision::DynBox],
+    ) -> Option<f32> {
         let d = Vec3::new(dir.x, 0.0, dir.z);
         if d.length_squared() <= 1e-12 {
             return None;
@@ -698,7 +702,8 @@ impl Player {
         // drop the guard allowed lands here; anything deeper stays put (only the
         // untouched clamp can refuse it).
         if sneak_guard {
-            let probe = -(petramond_world::collision::STEP_HEIGHT + petramond_world::collision::SUPPORT_PROBE_MARGIN);
+            let probe = -(petramond_world::collision::STEP_HEIGHT
+                + petramond_world::collision::SUPPORT_PROBE_MARGIN);
             let mn = self.aabb_min();
             let mx = self.aabb_max();
             let down = petramond_world::collision::sweep_axis_dyn(

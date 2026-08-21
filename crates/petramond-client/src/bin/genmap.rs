@@ -18,11 +18,11 @@
 //!   cargo run --quiet --bin genmap -- 42 /tmp/biome.png biome
 //!   cargo run --quiet --bin genmap -- 42 /tmp/cut.png side 0
 
-use petramond_world::tile::{map_rgb as tile_map_rgb, TileTint};
 use petramond::tooling::biome::Biome;
 use petramond::tooling::block::Block;
 use petramond::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use petramond::tooling::worldgen::{generate_chunk, macro_surface_map};
+use petramond_world::tile::{map_rgb as tile_map_rgb, TileTint};
 
 /// Highest non-air block in a column + its Y.
 fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {

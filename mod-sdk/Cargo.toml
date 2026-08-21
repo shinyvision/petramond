@@ -11,3 +11,8 @@ license = "MIT"
 
 [dependencies]
 mod-api = { path = "../mod-api" }
+
+[profile.test]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true

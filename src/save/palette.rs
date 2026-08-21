@@ -39,9 +39,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use crate::mob::Mob;
 use petramond_world::block::Block;
 use petramond_world::item::ItemType;
-use crate::mob::Mob;
 
 /// Bidirectional id maps for one save. Every direction is a dense LUT sized to
 /// cover both the runtime registry and the save's own list, so remapping a

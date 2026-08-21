@@ -1,7 +1,7 @@
 //! Shared surface-rule building blocks selected by individual biome modules.
 
-use petramond_world::block::Block;
 use crate::surface::rule::{SurfaceCond, SurfaceRule};
+use petramond_world::block::Block;
 
 const REDWOOD_GRASS_SALT: u64 = 0x0000_5245_4457_0047;
 

@@ -56,12 +56,7 @@ impl World {
         for cz in pos.cz - 1..=pos.cz + 1 {
             for cx in pos.cx - 1..=pos.cx + 1 {
                 let cp = ChunkPos::new(cx, cz);
-                let bits = self
-                    .data
-                    .section_column_cys
-                    .get(&cp)
-                    .copied()
-                    .unwrap_or(0);
+                let bits = self.data.section_column_cys.get(&cp).copied().unwrap_or(0);
                 Self::for_each_column_cy(bits, |cy| {
                     self.deferred_rechecks.insert(SectionPos::new(cx, cy, cz));
                 });
@@ -138,8 +133,13 @@ impl World {
                     .map(|&sp| target.section_priority_key(sp))
                     .min()
                     .unwrap_or(0);
-                self.light_bakes
-                    .request_batch(key, base, &members, &self.data.sections, &self.data.columns);
+                self.light_bakes.request_batch(
+                    key,
+                    base,
+                    &members,
+                    &self.data.sections,
+                    &self.data.columns,
+                );
             } else {
                 for sp in members {
                     let key = target.section_priority_key(sp);

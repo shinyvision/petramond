@@ -1,9 +1,9 @@
 //! Grass cover: a grass block dies back to dirt when a solid block smothers it from
 //! above or water floods it.
 
+use super::BehaviorWorld;
 use crate::block::{Block, BlockTag};
 use crate::mathh::IVec3;
-use super::BehaviorWorld;
 use crate::world::data::WorldData;
 
 use super::BlockBehavior;
@@ -67,9 +67,9 @@ pub(super) fn submerged(world: &WorldData, pos: IVec3) -> bool {
 /// Test-support builds only; never a public api surface.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_exports {
-    pub use crate::block::Block;
     pub use super::GRASS;
-    pub use crate::mathh::IVec3;
     #[allow(unused_imports)]
     pub use super::*;
+    pub use crate::block::Block;
+    pub use crate::mathh::IVec3;
 }

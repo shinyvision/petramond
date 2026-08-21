@@ -1,6 +1,6 @@
+use crate::rng::FeatureRng;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use crate::rng::FeatureRng;
 
 use super::{surfaces, trees, BiomeSpec, SnowCover, TreeProfile, VegetationProfile};
 

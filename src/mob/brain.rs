@@ -15,8 +15,8 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
+use petramond_math::math::{IVec3, Vec3};
 
 use super::model_meta::IdleAnimMeta;
 use super::noise::Noise;

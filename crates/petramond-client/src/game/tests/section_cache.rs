@@ -12,10 +12,10 @@
 
 use super::super::tick::TICK_DT;
 use super::common::{game, TestGame};
-use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::game::GameInput;
-use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::{SectionCacheClaim, SectionPayload, ServerToClient};
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 /// Wall-clock give-up bound for the pump loops (`TestGame` uses an inline
 /// pool, so waits are compute-bound; this is only a hard fail reporting cap).

@@ -1,11 +1,8 @@
-
 use crate::block::{Aabb, Block};
 use crate::chunk::{self, ChunkPos, SectionPos, SKY_FULL, WORLD_MIN_Y};
 use crate::mathh::IVec3;
 use crate::section::SectionSummary;
 
-
-    
 use super::data::WorldData;
 
 /// Whether `floor` can hold up a door: a FULL OPAQUE block. This is the one rule both
@@ -20,20 +17,15 @@ pub fn door_support(floor: Block) -> bool {
 const UP: IVec3 = IVec3::new(0, 1, 0);
 
 impl WorldData {
-
-
-
     /// Number of loaded sections — a diagnostic for streaming/perf tooling.
     pub fn loaded_section_count(&self) -> usize {
         self.sections.len()
     }
 
-
     /// Number of loaded columns — a diagnostic for streaming/perf tooling.
     pub fn loaded_column_count(&self) -> usize {
         self.columns.len()
     }
-
 
     /// Raw block id at a world voxel. Out of range (above/below the column) or in
     /// an unloaded chunk reads as `0` (air) — the mesh-border air fallback.
@@ -289,8 +281,8 @@ pub enum CollisionShapeClass {
 
 impl WorldData {
     pub fn door_footprint_clear(&self, base: IVec3) -> bool {
-            let upper = base + UP;
-            let floor = self.physics_block(base.x, base.y - 1, base.z);
-            self.placement_cell_open(base) && self.placement_cell_open(upper) && door_support(floor)
-        }
+        let upper = base + UP;
+        let floor = self.physics_block(base.x, base.y - 1, base.z);
+        self.placement_cell_open(base) && self.placement_cell_open(upper) && door_support(floor)
+    }
 }

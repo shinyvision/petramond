@@ -6,11 +6,11 @@
 //! through the same sanitize routine world save directories use (see
 //! `save::mod.rs`); this module owns only the codec.
 
-use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
-use petramond_world::item::ItemStack;
-use petramond_math::math::{IVec3, Vec3};
 use crate::player::{BedSpawn, Player, PlayerMode};
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8, Reader};
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
+use petramond_world::item::ItemStack;
 
 /// The one supported player-file version. Only the CURRENT version decodes —
 /// no legacy ladders. Bump this and let old dev players respawn fresh.
@@ -261,8 +261,12 @@ mod tests {
         });
         player.apply_effect(petramond_world::effect::Effect::Regeneration, 950);
         player.craft_craftable_only = true;
-        player.progression.obtain(petramond_world::item::ItemType::OakLog);
-        player.progression.obtain(petramond_world::item::ItemType::Coal);
+        player
+            .progression
+            .obtain(petramond_world::item::ItemType::OakLog);
+        player
+            .progression
+            .obtain(petramond_world::item::ItemType::Coal);
         player.progression.unlock("petramond:oak_planks");
         player.progression.unlock("petramond:torch");
 
@@ -311,9 +315,12 @@ mod tests {
             "unlocked recipes survive in unlock order"
         );
         assert!(restored.progression.obtained().intersects(
-            &[petramond_world::item::ItemType::OakLog, petramond_world::item::ItemType::Coal]
-                .into_iter()
-                .collect()
+            &[
+                petramond_world::item::ItemType::OakLog,
+                petramond_world::item::ItemType::Coal
+            ]
+            .into_iter()
+            .collect()
         ));
         let mut fresh = petramond_world::item::ItemSet::EMPTY;
         fresh.insert(petramond_world::item::ItemType::Diamond);
@@ -346,7 +353,10 @@ mod tests {
         let restored = data.restore();
         let active = restored.effects();
         assert_eq!(active.len(), 1, "only the known effect is restored");
-        assert_eq!(active[0].effect, petramond_world::effect::Effect::Regeneration);
+        assert_eq!(
+            active[0].effect,
+            petramond_world::effect::Effect::Regeneration
+        );
         assert_eq!(active[0].remaining, 400);
     }
 }

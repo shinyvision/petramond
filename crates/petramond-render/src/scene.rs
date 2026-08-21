@@ -18,11 +18,11 @@ use super::{
     ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
     SolidParticleInstance,
 };
-use petramond_math::math::lerp_angle;
 use crate::views::{
     ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
     MobPresentation, ParticleAtlas, ParticlePresentation,
 };
+use petramond_math::math::lerp_angle;
 
 /// Per-frame presentation translation state, owned by the App. Holds the renderer's
 /// flat instance buffers reused across frames, plus the held-item skylight sampled

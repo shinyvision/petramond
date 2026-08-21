@@ -40,13 +40,13 @@ use petramond_world::block::Block;
 use petramond_world::registry::NameTable;
 
 use super::brain::AiBehavior;
-use petramond_world::ai_vocab::{RawBrainExtension, RawBrainNode};
 use super::{
     behavior, BrainNode, Buoyancy, Habitat, Mob, MobCategory, MobCollision, MobDamageFeedback,
     MobDamageFeedbackComponent, MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec,
     MobTagValue, ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning,
     DEFAULT_DAMAGE_FLASH_SECS, DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
 };
+use petramond_world::ai_vocab::{RawBrainExtension, RawBrainNode};
 
 /// Constructs one AI node from its row key + brain-row params + declared
 /// scripted inputs + the owning species row. Factories run once at load for
@@ -553,8 +553,8 @@ fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
     } else {
         let mut chances = vec![1.0f32; biomes.len()];
         for (name, chance) in raw.chances {
-            let biome =
-                Biome::from_name(&name).ok_or_else(|| format!("spawn chance for unknown biome '{name}'"))?;
+            let biome = Biome::from_name(&name)
+                .ok_or_else(|| format!("spawn chance for unknown biome '{name}'"))?;
             let at = biomes.iter().position(|&b| b == biome).ok_or_else(|| {
                 format!("spawn chance for '{name}', which is not in the spawn biomes list")
             })?;

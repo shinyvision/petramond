@@ -1,7 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 use crate::world::store::{LoadAnchor, LoadTarget, World};
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 
 impl World {
     /// Whether `sp`'s light is presentable: baked (possibly stale — a pending

@@ -349,8 +349,8 @@ mod tests {
     #[test]
     #[ignore = "visual preview harness; run explicitly to regenerate /tmp/model_icon.png"]
     fn render_model_icon_preview() {
-        use petramond_world::block_model::{self, BlockModelKind};
         use glam::Quat;
+        use petramond_world::block_model::{self, BlockModelKind};
 
         let (atlas_rgba, aw, ah) = block_model::atlas().texture();
 

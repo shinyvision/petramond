@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn wrap_coord_reduces_exactly() {
         assert_eq!(wrap_coord(65536.0 * 3.0 + 12.25), 12.25);
-        assert_eq!(wrap_coord(-1.5), WRAP as f32 - 1.5);
+        assert_eq!(wrap_coord(-1.5), WRAP - 1.5);
     }
 
     #[test]

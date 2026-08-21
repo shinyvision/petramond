@@ -156,7 +156,10 @@ mod tests {
         dedup.sort();
         dedup.dedup();
         assert_eq!(dedup.len(), all.len(), "no cell is written twice");
-        assert!(!all.is_empty(), "the deep band generates SOME ore over 4 sections");
+        assert!(
+            !all.is_empty(),
+            "the deep band generates SOME ore over 4 sections"
+        );
     }
 
     /// The band holds: nothing above Y_MAX, and a section far above the

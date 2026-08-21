@@ -16,9 +16,9 @@
 
 use std::cell::Cell;
 
+use petramond_math::math::IVec3;
 use petramond_world::block::{Aabb, Block};
 use petramond_world::chunk::{self, SectionPos, SECTION_SIZE};
-use petramond_math::math::IVec3;
 use petramond_world::section::Section;
 
 use super::store::World;

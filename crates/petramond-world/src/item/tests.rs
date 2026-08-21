@@ -1,5 +1,5 @@
-use crate::tile::Tile;
 use crate::block::{Block, ShapeFamily};
+use crate::tile::Tile;
 
 use super::*;
 
@@ -59,7 +59,10 @@ fn a_stack_tool_override_changes_tier_speed_and_damage_but_never_kind() {
         crate::mining::harvests(Block::DiamondOre, augmented.tool()),
         "a tier-4 override unlocks what the row's tier 2 cannot"
     );
-    assert!(!crate::mining::harvests(Block::DiamondOre, stone_pick.tool()));
+    assert!(!crate::mining::harvests(
+        Block::DiamondOre,
+        stone_pick.tool()
+    ));
     assert_eq!(attack_damage(Some(&augmented)), (5.0, 7.0));
 }
 
@@ -85,7 +88,9 @@ fn a_malformed_tool_override_degrades_to_the_rows_values() {
     assert_eq!(t.tier, 3);
     assert_eq!(t.speed, row.speed, "a non-positive speed is refused");
     // An unordered damage band is refused; unknown fields are ignored.
-    let t = stack_with(br#"{"damage":[7.0,5.0],"future":1}"#).tool().unwrap();
+    let t = stack_with(br#"{"damage":[7.0,5.0],"future":1}"#)
+        .tool()
+        .unwrap();
     assert_eq!(t.damage, row.damage);
 }
 

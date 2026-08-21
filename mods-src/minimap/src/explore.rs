@@ -781,9 +781,8 @@ impl Minimap {
         let source = fullmap::source_kind(self.zoom);
         self.store.trim_caches(|kind, region| {
             let rect = region_block_rect(kind, region);
-            let intersects = |v: [i32; 4]| {
-                rect[2] > v[0] && rect[0] < v[2] && rect[3] > v[1] && rect[1] < v[3]
-            };
+            let intersects =
+                |v: [i32; 4]| rect[2] > v[0] && rect[0] < v[2] && rect[3] > v[1] && rect[1] < v[3];
             // The live sampling neighborhood…
             let pad = SAMPLE_RADIUS + 16;
             let sampled = rect[2] > sample_center.0 - pad
@@ -825,7 +824,12 @@ fn plan_issue_batch(
             .map(|(&(kind, coord), load)| (coord, kind, load.materialize, load.tier))
             .collect();
         picked.sort_unstable_by_key(|&(coord, kind, _, tier)| {
-            (tier == LoadTier::Visible, kind == RegionKind::Mip, coord.1, coord.0)
+            (
+                tier == LoadTier::Visible,
+                kind == RegionKind::Mip,
+                coord.1,
+                coord.0,
+            )
         });
         picked.truncate(room);
         picked
@@ -966,7 +970,7 @@ mod tests {
             "dirty-member region stays"
         );
         assert!(store.base_regions.len() <= BASE_REGION_CACHE_MAX + 2);
-        for (&(rx, rz), _) in &store.base_regions {
+        for &(rx, rz) in store.base_regions.keys() {
             for i in 0..16 {
                 let member = (
                     rx * codec::REGION_TILES + i % codec::REGION_TILES,
@@ -982,8 +986,10 @@ mod tests {
     /// protected (the map-open trim in `pump_store`).
     #[test]
     fn an_open_full_map_trims_out_of_view_regions() {
-        let mut mm = crate::Minimap::default();
-        mm.open_canvas = Some(FULL_CANVAS.to_string());
+        let mut mm = crate::Minimap {
+            open_canvas: Some(FULL_CANVAS.to_string()),
+            ..Default::default()
+        };
         // Player + pan at the origin: the view rect hugs (0, 0).
         mm.store.materialize_region(RegionKind::Base, (0, 0));
         for i in 0..(BASE_REGION_CACHE_MAX + REGION_CACHE_SLACK) as i32 + 8 {
@@ -1028,7 +1034,11 @@ mod tests {
             );
         }
         let batch = plan_issue_batch(&queued, 0, 0, 500);
-        assert_eq!(batch.len(), 3, "urgent keys issue alone, backpressure-exempt");
+        assert_eq!(
+            batch.len(),
+            3,
+            "urgent keys issue alone, backpressure-exempt"
+        );
         assert!(batch.iter().all(|&(.., tier)| tier == LoadTier::Visible));
 
         for &(coord, kind, ..) in &batch {

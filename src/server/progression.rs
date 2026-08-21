@@ -21,9 +21,9 @@
 
 use std::sync::Arc;
 
-use petramond_world::crafting::UnlockIndex;
 use crate::events::{EventBus, PostEvent, PostEventKind};
 use crate::player::Player;
+use petramond_world::crafting::UnlockIndex;
 
 use super::game::ServerGame;
 

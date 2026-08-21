@@ -31,7 +31,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if !info.state.is_empty() {
-                        ui.label(egui::RichText::new("State keys (bind these)").strong().small());
+                        ui.label(
+                            egui::RichText::new("State keys (bind these)")
+                                .strong()
+                                .small(),
+                        );
                         for (name, key) in &info.state {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(
@@ -71,8 +75,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     }
                     if info.state.is_empty() && info.handles.is_empty() {
                         ui.label(
-                            egui::RichText::new("This kind binds no dynamic data and reacts to no widget ids.")
-                                .weak(),
+                            egui::RichText::new(
+                                "This kind binds no dynamic data and reacts to no widget ids.",
+                            )
+                            .weak(),
                         );
                     }
                     if let Some(notes) = &info.notes {

@@ -18,8 +18,8 @@
 
 use std::collections::BTreeMap;
 
-use petramond_math::math::Vec3;
 use crate::player;
+use petramond_math::math::Vec3;
 
 const DISMOUNT_CLEARANCE: f32 = 0.45;
 
@@ -100,13 +100,14 @@ pub fn player_body_free(
     obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
     let (min, max) = player_body_aabb(feet);
-    !petramond_world::collision::aabb_hits_cells(min, max, |x, y, z| world.collision_boxes_at(x, y, z))
-        && !petramond_world::collision::aabb_hits_dynamic(
-            min,
-            max,
-            obstacles,
-            petramond_world::collision::NOT_AN_ENTITY,
-        )
+    !petramond_world::collision::aabb_hits_cells(min, max, |x, y, z| {
+        world.collision_boxes_at(x, y, z)
+    }) && !petramond_world::collision::aabb_hits_dynamic(
+        min,
+        max,
+        obstacles,
+        petramond_world::collision::NOT_AN_ENTITY,
+    )
 }
 
 /// Persistence-strength form of [`player_body_free`]: every terrain cell the

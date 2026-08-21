@@ -19,16 +19,16 @@ use glam::{Quat, Vec3};
 
 use petramond_world::gui_state::ContainerView;
 
-use petramond_world::gui_state::GuiStateMap;
-use petramond_world::inventory::Inventory;
-use petramond_world::item::ItemStack;
-use petramond_math::math::IVec3;
 use petramond::net::protocol::{
     ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, ModSpatialSoundMsg,
     PlayerActionKind, PlayerStateRow, SelfState, TickUpdate, WorldEventMsg,
 };
-use petramond::player::{Player, PlayerMode};
 use petramond::player::PlayerId;
+use petramond::player::{Player, PlayerMode};
+use petramond_math::math::IVec3;
+use petramond_world::gui_state::GuiStateMap;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::ItemStack;
 
 use super::tick::WorldEvent;
 use super::Game;
@@ -170,17 +170,15 @@ impl ReplicatedMobs {
     /// Interpolate one declared seat on a replicated mount. Local slaving and
     /// remote presentation share this lookup so row pairing, yaw interpolation,
     /// and seat projection cannot drift apart.
-    pub fn interpolated_seat_pose(
-        &self,
-        mob_id: u64,
-        seat: u8,
-        alpha: f32,
-    ) -> Option<(Vec3, f32)> {
+    pub fn interpolated_seat_pose(&self, mob_id: u64, seat: u8, alpha: f32) -> Option<(Vec3, f32)> {
         let entry = self.get(mob_id)?;
         let def = petramond::mob::def(petramond::mob::Mob(entry.curr.kind_id));
         let offset = *def.seats.get(seat as usize)?;
         let (pos, yaw) = entry.interpolated_pose(alpha);
-        Some((petramond::mob::riding::seat_world_pos(pos, yaw, offset), yaw))
+        Some((
+            petramond::mob::riding::seat_world_pos(pos, yaw, offset),
+            yaw,
+        ))
     }
 
     #[cfg(test)]
@@ -630,8 +628,7 @@ impl Game {
             self.replicated_mobs.apply(mobs);
             self.replicated_items.apply(items);
         }
-        self.remote_players
-            .apply(&players, &actions, self.self_id, &self.player_roster);
+        self.remote_players.apply(&players, &actions, self.self_id);
         if was_mounted && self.self_mount.is_none() {
             self.predict_dismount_placement();
         }
@@ -795,10 +792,12 @@ impl Game {
                 self.self_view
                     .effects
                     .iter()
-                    .map(|&(effect, remaining)| petramond_world::effect::ActiveEffect {
-                        effect,
-                        remaining,
-                    })
+                    .map(
+                        |&(effect, remaining)| petramond_world::effect::ActiveEffect {
+                            effect,
+                            remaining,
+                        },
+                    )
                     .collect(),
             );
             // Tick-side transform mutations (teleports, knockback) win over

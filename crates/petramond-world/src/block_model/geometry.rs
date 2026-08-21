@@ -41,11 +41,7 @@ pub fn cube_is_flat_plane(cube: &ModelCube) -> bool {
 /// bias. A cube flat on exactly one axis keeps only one of the collapsed opposite faces,
 /// preferring the face that points away from the nearest overlapping solid support.
 /// Cubes flat on two or three axes have no renderable area.
-pub fn render_face_bias(
-    cube: &ModelCube,
-    all_cubes: &[ModelCube],
-    face: Face,
-) -> Option<Vec3> {
+pub fn render_face_bias(cube: &ModelCube, all_cubes: &[ModelCube], face: Face) -> Option<Vec3> {
     let extent = (cube.to - cube.from).abs();
     let flat = [
         extent.x <= FLAT_FACE_EPS,

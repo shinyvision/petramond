@@ -4,17 +4,16 @@
 //! this snapshot once per draw and passes it to presentation consumers, keeping render
 //! wire structs out of `Game` while avoiding direct `Game` reads from those consumers.
 
-
 use glam::{IVec3, Vec3};
 
-use petramond_world::tile::Tile;
-use petramond_world::block::Block;
-use petramond_render::camera::ViewVolume;
-use petramond_world::door::DoorState;
-use petramond_math::facing::Facing;
 use petramond::mob::Mob;
-use petramond_render::{PlayerRenderInstance, RemotePlayerRender};
 use petramond::world::PlacedEmitter;
+use petramond_math::facing::Facing;
+use petramond_render::camera::ViewVolume;
+use petramond_render::{PlayerRenderInstance, RemotePlayerRender};
+use petramond_world::block::Block;
+use petramond_world::door::DoorState;
+use petramond_world::tile::Tile;
 
 use super::remote_players;
 use super::Game;
@@ -75,7 +74,13 @@ pub struct GamePresentationScratch {
     particle_emitters: Vec<PlacedEmitter>,
     chest_rows: Vec<(IVec3, Facing, u8, petramond_world::light::BlockLight6)>,
     block_draws: Vec<petramond::world::draw::BlockDrawInstance>,
-    door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, petramond_world::light::BlockLight6)>,
+    door_rows: Vec<(
+        IVec3,
+        DoorState,
+        [Tile; 3],
+        u8,
+        petramond_world::light::BlockLight6,
+    )>,
     chests: Vec<ChestPresentation>,
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
@@ -285,7 +290,11 @@ impl GamePresentationScratch {
                 blocklight: petramond_world::light::BlockLight6::from_x2(
                     world.blocklight_rgb_at_world(c.x, c.y, c.z),
                 ),
-                hurt_flash: petramond::mob::hurt_flash01(prev.hurt_timer, curr.hurt_timer, tick_alpha),
+                hurt_flash: petramond::mob::hurt_flash01(
+                    prev.hurt_timer,
+                    curr.hurt_timer,
+                    tick_alpha,
+                ),
                 dead: curr.dead,
                 shorn: curr.shorn,
                 emitters: curr.emitters.clone(),
@@ -661,7 +670,9 @@ fn push_entity_shadow(
 fn mount_renders_seated(mount: petramond::net::protocol::PlayerMount) -> bool {
     match mount {
         petramond::net::protocol::PlayerMount::Mob { .. } => true,
-        petramond::net::protocol::PlayerMount::Anchor { pose, .. } => pose == mod_api::pose::SITTING,
+        petramond::net::protocol::PlayerMount::Anchor { pose, .. } => {
+            pose == mod_api::pose::SITTING
+        }
     }
 }
 

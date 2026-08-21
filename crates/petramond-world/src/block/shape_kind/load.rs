@@ -329,10 +329,7 @@ impl RawShape {
     /// Resolve this raw shape to its `(family, params, canonical key)`.
     /// `corners` is the row's corner-joining flag; only a box set consumes
     /// it, so any other shape refuses it.
-    pub fn resolve(
-        &self,
-        corners: bool,
-    ) -> Result<(ShapeFamily, ShapeParams, String), String> {
+    pub fn resolve(&self, corners: bool) -> Result<(ShapeFamily, ShapeParams, String), String> {
         if corners && !matches!(self, RawShape::Boxes(_)) {
             return Err("'corners' requires a '{\"boxes\": [...]}' shape".into());
         }

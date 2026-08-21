@@ -336,8 +336,10 @@ mod tests {
 
     #[test]
     fn stair_box_outline_removes_internal_join_but_keeps_step_edges() {
-        let (boxes, len) =
-            petramond_world::connect::world_boxes(IVec3::ZERO, petramond_world::stair::boxes(Facing::South));
+        let (boxes, len) = petramond_world::connect::world_boxes(
+            IVec3::ZERO,
+            petramond_world::stair::boxes(Facing::South),
+        );
         let outline = outline_vertices(SelectionShape::Boxes {
             boxes: SelectionBoxes { boxes, len },
         });

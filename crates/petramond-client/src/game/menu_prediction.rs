@@ -11,11 +11,11 @@
 //! the gate and the mutation it guards cannot drift apart.
 
 use super::Game;
+use petramond::net::protocol::{ClientToServer, MenuSlotWire};
 use petramond_world::gui_state::PointerButton;
 use petramond_world::gui_state::{GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
 use petramond_world::inventory::{plan_drag_distribution, slot_capacity};
 use petramond_world::item::ItemStack;
-use petramond::net::protocol::{ClientToServer, MenuSlotWire};
 
 impl Game {
     /// Predict one complete cursor-stack distribution and send the same
@@ -78,9 +78,7 @@ impl Game {
                 .get(i)
                 .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
-            MenuSlot::OffHand => {
-                slot_capacity(&self.self_view.inventory.off_hand().copied(), held)
-            }
+            MenuSlot::OffHand => slot_capacity(&self.self_view.inventory.off_hand().copied(), held),
             // The same question the server's `drag_capacity` asks, through the
             // same helper: a slot one side counts and the other refuses does
             // not just snap that leg back — the split is by the NUMBER of
@@ -228,8 +226,8 @@ impl Game {
         shift: bool,
         gather: bool,
     ) {
-        use petramond_world::gui_state::PointerButton;
         use petramond_world::gui_state::MenuSlot;
+        use petramond_world::gui_state::PointerButton;
         let secondary = button == PointerButton::Secondary;
         let inv = &mut self.self_view.inventory;
         match slot {

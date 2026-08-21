@@ -38,9 +38,9 @@ mod ao;
 mod atlas;
 mod compiled;
 mod defs;
-pub mod instance;
 mod display;
 mod geometry;
+pub mod instance;
 mod placement;
 mod query;
 #[cfg(test)]
@@ -57,12 +57,11 @@ pub use placement::{
 };
 pub use query::{
     collision_boxes, collision_boxes_oriented, model_render_boxes, outline_bounds, ray_vs_model,
-    ray_vs_model_within,
-    selection_aabb, selection_aabb_oriented,
+    ray_vs_model_within, selection_aabb, selection_aabb_oriented,
 };
 
-pub use geometry::render_face_bias;
 pub use geometry::cube_is_flat_plane;
+pub use geometry::render_face_bias;
 pub use placement::placement_transform_fp;
 
 use compiled::MODELS;

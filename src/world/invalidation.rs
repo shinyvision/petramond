@@ -104,12 +104,7 @@ impl World {
         for dz in -1..=1 {
             for dx in -1..=1 {
                 let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
-                let bits = self
-                    .data
-                    .section_column_cys
-                    .get(&cp)
-                    .copied()
-                    .unwrap_or(0);
+                let bits = self.data.section_column_cys.get(&cp).copied().unwrap_or(0);
                 let mut b = bits;
                 while b != 0 {
                     let cy = SECTION_MIN_CY + b.trailing_zeros() as i32;
@@ -138,12 +133,7 @@ impl World {
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
-                    let bits = self
-                        .data
-                        .section_column_cys
-                        .get(&cp)
-                        .copied()
-                        .unwrap_or(0);
+                    let bits = self.data.section_column_cys.get(&cp).copied().unwrap_or(0);
                     let mut b = bits;
                     while b != 0 {
                         let cy = SECTION_MIN_CY + b.trailing_zeros() as i32;

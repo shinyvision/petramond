@@ -7,8 +7,8 @@
 //! gate and chase engagement share this test, so "can start hunting" and "can
 //! hit" agree on what a mob sees through.
 
-use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
+use petramond_math::math::{IVec3, Vec3};
 
 const LOS_EPS: f32 = 0.001;
 

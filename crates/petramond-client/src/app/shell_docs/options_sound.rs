@@ -58,8 +58,9 @@ mod tests {
     #[test]
     fn the_widest_volume_readout_fits_its_column() {
         use petramond_ui::{solve, InstTree, ThemeEnv};
-        let doc = petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsSound)
-            .expect("sound document loads");
+        let doc =
+            petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsSound)
+                .expect("sound document loads");
         let theme = petramond::gui::doc_theme::theme();
         let mut state = UiState::new();
         bind_volume(&mut state, "master_vol", "master_pct", 1.0);

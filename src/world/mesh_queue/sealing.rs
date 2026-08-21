@@ -1,5 +1,5 @@
-use petramond_world::chunk::SectionPos;
 use crate::world::store::World;
+use petramond_world::chunk::SectionPos;
 
 impl World {
     /// Whether `pos` produces no visible geometry, so meshing/lighting/drawing it is pure

@@ -6,7 +6,10 @@
 //! owns the behavior they call into.
 
 use super::{App, AppScreen};
-use petramond_world::controls::{fixed_control_from_key_code, is_modifier_key, ActionOut, BindMods, Binding, BoundInput, Control, ScrollDir};
+use petramond_world::controls::{
+    fixed_control_from_key_code, is_modifier_key, ActionOut, BindMods, Binding, BoundInput,
+    Control, ScrollDir,
+};
 use petramond_world::gui_state::PointerButton;
 use petramond_world::keycode::{KeyCode, MouseButton};
 

@@ -126,12 +126,12 @@ impl AiBehavior for RetaliateAi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_world::block::Block;
-    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-    use petramond_math::math::Vec3;
     use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::World;
+    use petramond_math::math::Vec3;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     fn flat_world() -> World {
         let mut world = World::new(0, 1);

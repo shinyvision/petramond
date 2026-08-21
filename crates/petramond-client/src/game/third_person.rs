@@ -10,8 +10,8 @@
 //! players drive the SAME helper from interpolated replicated rows
 //! (`game/remote_players.rs`), so there is exactly one pose implementation.
 
-use petramond_render::camera::Camera;
 use petramond_math::math::Vec3;
+use petramond_render::camera::Camera;
 
 use super::body_pose::BodyPose;
 use super::Game;

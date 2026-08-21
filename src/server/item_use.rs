@@ -5,15 +5,15 @@
 
 use super::game::ServerGame;
 use super::placement::facing_from_forward;
-use petramond_world::block::Block;
 use crate::entity::DroppedItem;
-use crate::events::{BlockPlacePre, ItemUseEvent, ItemUsePre, Outcome, PostEvent};
 use crate::events::tick::TickEvents;
-use petramond_world::item::{ItemStack, ItemType, ItemUse, UseRay};
-use petramond_math::math::Vec3;
+use crate::events::{BlockPlacePre, ItemUseEvent, ItemUsePre, Outcome, PostEvent};
 use crate::mob::ShearDrop;
 use crate::net::protocol::TargetRef;
 use crate::player::Player;
+use petramond_math::math::Vec3;
+use petramond_world::block::Block;
+use petramond_world::item::{ItemStack, ItemType, ItemUse, UseRay};
 
 /// The in-progress eat: which hand and food item are being eaten and for how
 /// many ticks the button has been held on it. Session-owned (one per player);

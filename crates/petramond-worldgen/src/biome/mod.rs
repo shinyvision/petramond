@@ -38,11 +38,11 @@ mod wetland;
 mod windswept_hills;
 mod wooded_hills;
 
-use petramond_world::biome::{Biome, BIOME_COUNT};
-use petramond_world::block::Block;
 use crate::feature::ConfiguredFeature;
 use crate::rng::FeatureRng;
 use crate::surface::rule::SurfaceRule;
+use petramond_world::biome::{Biome, BIOME_COUNT};
+use petramond_world::block::Block;
 
 pub type TreePicker = fn(&mut FeatureRng) -> &'static ConfiguredFeature;
 pub type PlantPicker = fn(&mut FeatureRng) -> Option<Block>;

@@ -184,8 +184,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                                 if st.item == expect_ty
                                     && variant::matches(st.variant, &expect_map) =>
                             {
-                                let stamped =
-                                    ItemStack::with_variant(st.item, st.count, variant);
+                                let stamped = ItemStack::with_variant(st.item, st.count, variant);
                                 match hand {
                                     petramond_world::inventory::Hand::Main => {
                                         let active = p.inventory.active_slot() as usize;
@@ -350,13 +349,13 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{HostCall, HostRet};
 
-    use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::{PostQueue, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
 
     /// The held-data write compares the VALUE it is replacing, not just the
     /// item: a stack that another handler re-stamped between the mod's read
@@ -392,7 +391,7 @@ mod tests {
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
 
-        crate::events::with_sessions_scope(crate::player::PlayerId(0), 0, None, Vec::new(), || {
+        crate::events::with_sessions_scope(crate::player::PlayerId(0), None, Vec::new(), || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,
@@ -477,7 +476,7 @@ mod tests {
             gui_state: &mut other_gui,
             gui: None,
         }];
-        crate::events::with_sessions_scope(PlayerId(0), 0, None, others, || {
+        crate::events::with_sessions_scope(PlayerId(0), None, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,

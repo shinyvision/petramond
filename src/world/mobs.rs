@@ -3,9 +3,9 @@
 
 use std::collections::BTreeSet;
 
-use petramond_world::chunk::ChunkPos;
-use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::{Mobs, SavedMob};
+use petramond_math::math::{voxel_at, Vec3};
+use petramond_world::chunk::ChunkPos;
 
 use super::store::World;
 
@@ -65,7 +65,9 @@ impl World {
     fn mob_render_light_at(&self, pos: Vec3) -> (u8, petramond_world::light::BlockLight6) {
         let c = voxel_at(pos + Vec3::new(0.0, 0.3, 0.0));
         let sky = self.skylight6_at_world(c.x, c.y, c.z);
-        let block = petramond_world::light::BlockLight6::from_x2(self.blocklight_rgb_at_world(c.x, c.y, c.z));
+        let block = petramond_world::light::BlockLight6::from_x2(
+            self.blocklight_rgb_at_world(c.x, c.y, c.z),
+        );
         (sky, block)
     }
 

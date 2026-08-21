@@ -120,7 +120,10 @@ impl Casting {
                     .map(|t| t.max(1.0) as u32),
                 molten: rgb(value.get("molten")),
                 solid: rgb(value.get("solid")),
-                name: value.get("name").and_then(|t| t.as_str()).map(str::to_owned),
+                name: value
+                    .get("name")
+                    .and_then(|t| t.as_str())
+                    .map(str::to_owned),
                 melts_to: value
                     .get("melts_to")
                     .and_then(|t| t.as_str())

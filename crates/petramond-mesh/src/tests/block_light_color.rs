@@ -7,8 +7,8 @@
 //! alpha lane and `packed`'s chroma nibble.
 
 use super::*;
-use petramond_world::light::{BlockLight6, LightRgb};
 use crate::vertex::decode_vertex_light;
+use petramond_world::light::{BlockLight6, LightRgb};
 
 /// Mesh a flat stone floor under a caller-supplied block-light field, with no
 /// skylight at all — so every vertex's light is purely the emitters'.

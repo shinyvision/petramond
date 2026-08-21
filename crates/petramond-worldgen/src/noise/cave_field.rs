@@ -34,10 +34,10 @@
 use super::settings::*;
 
 use super::simplex::Simplex3;
+use crate::data::underground::{self, LiningFaces, UndergroundBiomes};
 use petramond_world::block::Block;
 use petramond_world::chunk::{idx, section_idx, Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE};
 use petramond_world::section::Section;
-use crate::data::underground::{self, LiningFaces, UndergroundBiomes};
 
 use super::chamber;
 

@@ -2,8 +2,8 @@
 
 use std::collections::VecDeque;
 
-use crate::mathh::{IVec3, FACE_NEIGHBORS};
 use super::BehaviorWorld;
+use crate::mathh::{IVec3, FACE_NEIGHBORS};
 use crate::world::data::WorldData;
 
 use super::BlockBehavior;
@@ -87,10 +87,10 @@ pub fn leaf_supported(world: &WorldData, start: IVec3) -> bool {
 /// Test-support builds only; never a public api surface.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_exports {
-    pub use crate::mathh::IVec3;
+    pub use super::leaf_supported;
     pub use super::LEAVES;
     pub use super::MAX_LOG_DISTANCE;
-    pub use super::leaf_supported;
     #[allow(unused_imports)]
     pub use super::*;
+    pub use crate::mathh::IVec3;
 }

@@ -1,9 +1,9 @@
 //! Cross-subsystem riding boundaries that need the full server fixture.
 
 use super::common::{game, game_on_empty_chunk};
-use petramond_world::block::Block;
-use petramond_math::math::Vec3;
 use petramond::mob::Mob;
+use petramond_math::math::Vec3;
+use petramond_world::block::Block;
 
 #[test]
 fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_rider() {

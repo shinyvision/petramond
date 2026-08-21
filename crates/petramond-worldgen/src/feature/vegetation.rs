@@ -9,14 +9,16 @@
 //! plant is placed by its owning chunk from a positional RNG keyed on (seed, wx,
 //! wz), making the result deterministic and seamless with no neighbour pass.
 
-use petramond_world::biome::Biome;
-use petramond_world::block::Block;
-use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
-use petramond_world::mathh::smoothstep;
-use petramond_world::section::Section;
 use crate::biome::{spec, CoverCluster};
 use crate::surface::rule::SurfaceCtx;
 use crate::surface::SurfaceSystem;
+use petramond_world::biome::Biome;
+use petramond_world::block::Block;
+use petramond_world::chunk::{
+    Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y,
+};
+use petramond_world::mathh::smoothstep;
+use petramond_world::section::Section;
 
 use super::super::rng::FeatureRng;
 

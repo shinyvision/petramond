@@ -10,9 +10,9 @@
 //! across the wall face and the thin edges sample their own texel strips.
 //! Smooth-lit like every box family (2026-07-23).
 
-use crate::tile::Tile;
 use crate::block::Aabb;
 use crate::facing::Facing;
+use crate::tile::Tile;
 
 use crate::block::shape::{ShapeBox, ShapeFace};
 use crate::face::Face;

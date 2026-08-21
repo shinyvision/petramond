@@ -1,5 +1,5 @@
-use petramond_world::controls::Control;
 use crate::game::MovementInput;
+use petramond_world::controls::Control;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ControlEvent {

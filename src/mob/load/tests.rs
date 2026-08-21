@@ -2,7 +2,8 @@ use super::*;
 use petramond_math::math::Vec3;
 
 fn base() -> String {
-    let (text, _) = petramond_world::assets::read_base_text("mobs.json").expect("assets/mobs.json must ship");
+    let (text, _) =
+        petramond_world::assets::read_base_text("mobs.json").expect("assets/mobs.json must ship");
     text
 }
 
@@ -652,9 +653,14 @@ fn wander_avoid_ground_resolves_tags_and_forgives_unknown_ones() {
         .unwrap();
     row["wander"]["avoid_ground"] = serde_json::json!(["ghost_pack:lava_crust"]);
     let text = serde_json::to_string(&value).unwrap();
-    let defs = parse_layers(&[&text]).expect("an unloaded pack's tag is not an error").defs;
+    let defs = parse_layers(&[&text])
+        .expect("an unloaded pack's tag is not an error")
+        .defs;
     let sheep = defs.iter().find(|d| d.key == "petramond:sheep").unwrap();
-    assert!(sheep.wander.avoid_ground.is_empty(), "unknown tag = empty set");
+    assert!(
+        sheep.wander.avoid_ground.is_empty(),
+        "unknown tag = empty set"
+    );
 }
 
 #[test]
@@ -674,7 +680,9 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
     let text = owl_with(|row| {
         row["spawn"]["chances"] = serde_json::json!({"redwood_forest": 0.25});
     });
-    let defs = parse_layers(&[&text]).expect("a valid chance map loads").defs;
+    let defs = parse_layers(&[&text])
+        .expect("a valid chance map loads")
+        .defs;
     let spawn = &defs[Mob::Owl.0 as usize].spawn;
     use petramond_world::biome::Biome;
     assert_eq!(spawn.chance_in(Biome::Forest), 1.0, "unmapped listed biome");
@@ -686,7 +694,10 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
     })])
     .map(|_| ())
     .expect_err("a chance for a biome outside the spawn list fails");
-    assert!(unlisted.contains("not in the spawn biomes list"), "{unlisted}");
+    assert!(
+        unlisted.contains("not in the spawn biomes list"),
+        "{unlisted}"
+    );
 
     let zeroed = parse_layers(&[&owl_with(|row| {
         row["spawn"]["chances"] = serde_json::json!({"forest": 0.0});
@@ -702,9 +713,15 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
         row["spawn"]["chance"] = serde_json::json!(0.25);
         row["spawn"]["chances"] = serde_json::json!({"redwood_forest": 0.5});
     });
-    let defs = parse_layers(&[&text]).expect("a species-wide chance loads").defs;
+    let defs = parse_layers(&[&text])
+        .expect("a species-wide chance loads")
+        .defs;
     let spawn = &defs[Mob::Owl.0 as usize].spawn;
-    assert_eq!(spawn.chance_in(Biome::Forest), 0.25, "unmapped listed biome");
+    assert_eq!(
+        spawn.chance_in(Biome::Forest),
+        0.25,
+        "unmapped listed biome"
+    );
     assert_eq!(spawn.chance_in(Biome::RedwoodForest), 0.125, "both applied");
     assert_eq!(spawn.chance_in(Biome::Desert), 0.0, "unlisted biome");
 

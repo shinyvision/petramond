@@ -3,11 +3,11 @@
 //! over the section pad, and the packed-vertex face pushes.
 
 use crate::vertex::BlockLightVertexExt;
-use petramond_world::tile::Tile;
 use petramond_world::block::CellView;
 use petramond_world::block_state::SlabState;
 use petramond_world::chunk::SKY_FULL;
 use petramond_world::light::{BlockLight6, LightRgb};
+use petramond_world::tile::Tile;
 
 use petramond_world::block::Block;
 

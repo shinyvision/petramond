@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
-use petramond_render::camera::Camera;
 use crate::keymap::{key_code, mouse_button, text_key_from_named};
-use petramond_world::controls::Modifiers;
 use petramond_math::math::Vec3;
+use petramond_render::camera::Camera;
 use petramond_render::{new_renderer_from_target, Renderer};
+use petramond_world::controls::Modifiers;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -260,7 +260,9 @@ impl ApplicationHandler for NativeHost {
                     let Some(code) = key_code(winit_code) else {
                         return;
                     };
-                    if let Some(modifiers) = modifiers_after_key_event(self.modifiers, winit_code, down) {
+                    if let Some(modifiers) =
+                        modifiers_after_key_event(self.modifiers, winit_code, down)
+                    {
                         self.modifiers = modifiers;
                         app.set_modifiers(modifiers);
                     }
@@ -277,9 +279,9 @@ impl ApplicationHandler for NativeHost {
                 if down {
                     let mut handled_shortcut = false;
                     if let PhysicalKey::Code(winit_code) = physical_key {
-                    let Some(code) = key_code(winit_code) else {
-                        return;
-                    };
+                        let Some(code) = key_code(winit_code) else {
+                            return;
+                        };
                         handled_shortcut = app.handle_text_shortcut_code(code);
                     }
                     if !handled_shortcut {

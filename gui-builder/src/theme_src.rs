@@ -54,7 +54,12 @@ pub fn load(rev: u64) -> ThemeSource {
 
 fn source(theme: Theme, label: String, rev: u64) -> ThemeSource {
     let style_keys = theme.style_keys().map(str::to_owned).collect();
-    ThemeSource { theme: Arc::new(theme), style_keys, label, rev }
+    ThemeSource {
+        theme: Arc::new(theme),
+        style_keys,
+        label,
+        rev,
+    }
 }
 
 #[cfg(test)]

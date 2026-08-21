@@ -1,5 +1,5 @@
-use petramond_math::math::Vec3;
 use crate::mob::{EntityRef, Mob, MobDamageFeedback};
+use petramond_math::math::Vec3;
 
 use super::Mobs;
 

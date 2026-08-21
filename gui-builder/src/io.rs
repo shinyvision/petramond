@@ -8,7 +8,8 @@ use petramond_ui::Document;
 use std::path::{Path, PathBuf};
 
 pub fn load_project(path: &Path) -> Result<Project, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     Project::from_json(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -19,7 +20,8 @@ pub fn save_project(path: &Path, project: &Project) -> Result<(), String> {
 
 /// Import a legacy v1 `.llgui` into a fresh v2 project.
 pub fn import_legacy(path: &Path) -> Result<(Project, Vec<String>), String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     if !project::is_legacy_json(&text) {
         return Err(format!("{} is not a legacy v1 .llgui", path.display()));
     }
@@ -62,7 +64,10 @@ pub fn choose_project_image(project_dir: Option<&Path>) -> Result<Option<String>
     let Some(dir) = project_dir else {
         return Err("save the project first — images live beside the .llgui file".into());
     };
-    let Some(src) = rfd::FileDialog::new().add_filter("PNG image", &["png"]).pick_file() else {
+    let Some(src) = rfd::FileDialog::new()
+        .add_filter("PNG image", &["png"])
+        .pick_file()
+    else {
         return Ok(None);
     };
     let name = src
@@ -108,8 +113,12 @@ pub fn samples_dir() -> PathBuf {
 
 /// Every shipped `*.gui.json` as `(stem, path)`, sorted by stem.
 pub fn shipped_documents() -> Vec<(String, PathBuf)> {
-    let Some(dir) = game_documents_dir() else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let Some(dir) = game_documents_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut out: Vec<(String, PathBuf)> = entries
         .flatten()
         .filter_map(|e| {
@@ -137,7 +146,8 @@ pub fn make_samples() -> Result<Vec<String>, String> {
     for (stem, path) in shipped {
         let text =
             std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        let document = Document::from_json(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let document =
+            Document::from_json(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut proj = Project {
             version: crate::project::PROJECT_VERSION,
             document,
@@ -158,7 +168,9 @@ pub fn make_samples() -> Result<Vec<String>, String> {
 
 /// The available sample projects as `(stem, path)`, sorted.
 pub fn list_samples() -> Vec<(String, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(samples_dir()) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(samples_dir()) else {
+        return Vec::new();
+    };
     let mut out: Vec<(String, PathBuf)> = entries
         .flatten()
         .filter_map(|e| {
@@ -173,8 +185,39 @@ pub fn list_samples() -> Vec<(String, PathBuf)> {
 
 /// Default export file name for a document kind (`petramond:pause` → `pause.gui.json`).
 pub fn export_file_name(doc: &Document) -> String {
-    let stem = doc.kind.split(':').last().unwrap_or("document");
+    let stem = doc.kind.split(':').next_back().unwrap_or("document");
     format!("{stem}.gui.json")
+}
+
+// ---- dialogs -----------------------------------------------------------------
+
+fn dialog(dir: &Option<PathBuf>) -> rfd::FileDialog {
+    let mut d = rfd::FileDialog::new();
+    if let Some(dir) = dir {
+        d = d.set_directory(dir);
+    }
+    d
+}
+
+pub fn pick_open(last_dir: &Option<PathBuf>) -> Option<PathBuf> {
+    dialog(last_dir)
+        .add_filter("GUI project", &["llgui"])
+        .pick_file()
+}
+
+pub fn pick_save(last_dir: &Option<PathBuf>, name: &str) -> Option<PathBuf> {
+    dialog(last_dir)
+        .add_filter("GUI project", &["llgui"])
+        .set_file_name(name)
+        .save_file()
+}
+
+pub fn pick_export(doc: &Document, last_dir: &Option<PathBuf>) -> Option<PathBuf> {
+    let dir = game_documents_dir().or_else(|| last_dir.clone());
+    dialog(&dir)
+        .add_filter("GUI document", &["json"])
+        .set_file_name(export_file_name(doc))
+        .save_file()
 }
 
 #[cfg(test)]
@@ -196,8 +239,8 @@ mod tests {
                     sample_path.display()
                 )
             });
-            let sample = Project::from_json(&sample_text)
-                .unwrap_or_else(|e| panic!("sample '{stem}': {e}"));
+            let sample =
+                Project::from_json(&sample_text).unwrap_or_else(|e| panic!("sample '{stem}': {e}"));
             let shipped_doc =
                 Document::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
             assert_eq!(
@@ -230,33 +273,4 @@ mod tests {
             let _ = std::fs::remove_dir(out_dir);
         }
     }
-}
-
-// ---- dialogs -----------------------------------------------------------------
-
-fn dialog(dir: &Option<PathBuf>) -> rfd::FileDialog {
-    let mut d = rfd::FileDialog::new();
-    if let Some(dir) = dir {
-        d = d.set_directory(dir);
-    }
-    d
-}
-
-pub fn pick_open(last_dir: &Option<PathBuf>) -> Option<PathBuf> {
-    dialog(last_dir).add_filter("GUI project", &["llgui"]).pick_file()
-}
-
-pub fn pick_save(last_dir: &Option<PathBuf>, name: &str) -> Option<PathBuf> {
-    dialog(last_dir)
-        .add_filter("GUI project", &["llgui"])
-        .set_file_name(name)
-        .save_file()
-}
-
-pub fn pick_export(doc: &Document, last_dir: &Option<PathBuf>) -> Option<PathBuf> {
-    let dir = game_documents_dir().or_else(|| last_dir.clone());
-    dialog(&dir)
-        .add_filter("GUI document", &["json"])
-        .set_file_name(&export_file_name(doc))
-        .save_file()
 }

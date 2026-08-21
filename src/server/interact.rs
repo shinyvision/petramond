@@ -16,12 +16,12 @@
 //! initiator's replica could not foresee).
 
 use super::game::ServerGame;
-use petramond_world::block::{Block, BlockInteraction};
-use crate::events::{InteractAttempt, Outcome, PostEvent};
 use crate::events::tick::TickEvents;
-use petramond_math::math::IVec3;
+use crate::events::{InteractAttempt, Outcome, PostEvent};
 use crate::net::protocol::TargetRef;
 use crate::server::player::PendingUseClick;
+use petramond_math::math::IVec3;
+use petramond_world::block::{Block, BlockInteraction};
 
 /// Hold-to-interact repeat cadence: a HELD use button re-runs the interact
 /// dispatch this many ticks apart (250 ms at the 20 TPS tick).
@@ -549,11 +549,11 @@ impl ServerGame {
 
 #[cfg(test)]
 mod tests {
+    use crate::net::protocol::{PlayerAction, TargetRef};
+    use crate::player::Player;
     use petramond_math::math::{IVec3, Vec3};
     use petramond_world::block::Block;
     use petramond_world::item::{ItemStack, ItemType};
-    use crate::net::protocol::{PlayerAction, TargetRef};
-    use crate::player::Player;
 
     /// Placing a boat on water is the whole `use_ray: water` pipeline end to
     /// end: the receipt-time water-ray validator accepts the claimed surface
@@ -578,8 +578,7 @@ mod tests {
                 "vehicles",
                 "weather",
             ],
-        )
-        else {
+        ) else {
             return;
         };
         crate::modding::tests::run_child_test(
@@ -612,7 +611,9 @@ mod tests {
         for dx in -4..=4 {
             for dz in -4..=4 {
                 let edge = dx == -4 || dx == 4 || dz == -4 || dz == 4;
-                server.world.set_block_world(wx + dx, wy - 1, wz + dz, Block::Stone);
+                server
+                    .world
+                    .set_block_world(wx + dx, wy - 1, wz + dz, Block::Stone);
                 server.world.set_block_world(
                     wx + dx,
                     wy,
@@ -621,7 +622,9 @@ mod tests {
                 );
                 // The checked spawn sweeps the whole hull: clear headroom.
                 for dy in 1..=3 {
-                    server.world.set_block_world(wx + dx, wy + dy, wz + dz, Block::Air);
+                    server
+                        .world
+                        .set_block_world(wx + dx, wy + dy, wz + dz, Block::Air);
                 }
             }
         }
@@ -632,7 +635,11 @@ mod tests {
             .inventory
             .add(ItemStack::new(boat, 1));
         assert_eq!(
-            server.sessions[0].player.inventory.selected().map(|st| st.item),
+            server.sessions[0]
+                .player
+                .inventory
+                .selected()
+                .map(|st| st.item),
             Some(boat),
             "the boat sits in the selected hotbar slot"
         );
@@ -703,11 +710,13 @@ mod tests {
             "the hull was nudged toward open water, off the shore-hugging click"
         );
         assert_ne!(
-            server.sessions[0].player.inventory.selected().map(|st| st.item),
+            server.sessions[0]
+                .player
+                .inventory
+                .selected()
+                .map(|st| st.item),
             Some(boat),
             "the placed boat item was spent"
         );
     }
 }
-
-

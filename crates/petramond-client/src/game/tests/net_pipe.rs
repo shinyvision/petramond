@@ -3,15 +3,15 @@
 //! server-side fall tracker, stable-id mob targeting, and the menu-click
 //! roundtrip. These drive the message path directly, below `Game::tick`.
 
-use petramond::events::tick::TickEvents;
 use super::common::{self, filled_inventory, game, game_on_empty_chunk};
-use petramond_world::block::Block;
-use petramond_world::gui_state::MenuSlot;
-use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::{IVec3, Vec3};
+use petramond::events::tick::TickEvents;
 use petramond::mob::Mob;
 use petramond::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, TargetRef};
 use petramond::server::health::fall_damage_health;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::item::{ItemStack, ItemType};
 
 fn install_test_crafting_recipe(game: &mut super::common::TestGame) {
     game.server
@@ -429,7 +429,10 @@ fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
     );
     assert_eq!(
         game.server.sessions[0].request_open_gui,
-        Some((petramond_world::gui_state::GuiKind::CraftingTable, Some(table)))
+        Some((
+            petramond_world::gui_state::GuiKind::CraftingTable,
+            Some(table)
+        ))
     );
     assert!(game.server.sessions[0].menu.craft_output().is_none());
 }

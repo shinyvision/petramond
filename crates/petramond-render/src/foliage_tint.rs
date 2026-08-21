@@ -16,9 +16,8 @@
 //! ([`super::item_cube`] vertex packing) and `model3d.wgsl` (GPU composite)
 //! stay in lock-step with the mesher by construction.
 
-
-use petramond_world::tile::{Tile, TileTint};
 use petramond_world::biome::Biome;
+use petramond_world::tile::{Tile, TileTint};
 
 /// Fixed temperate grass colour for out-of-world tints. Plains is the canonical
 /// default temperate biome (`biome::data::TEMPERATE_DRY_DEFAULT`), so its grass

@@ -497,8 +497,7 @@ fn the_socket_tip_colours_only_the_words_and_strips_the_separators() {
         lvl: 1,
     });
     assert_eq!(
-        tip,
-        "accent|Great\ttext| DiamondTip\ntext|Condition: \twarn|Worn",
+        tip, "accent|Great\ttext| DiamondTip\ntext|Condition: \twarn|Worn",
         "level word on its palette, name plain and de-separated, condition word on its own"
     );
 }

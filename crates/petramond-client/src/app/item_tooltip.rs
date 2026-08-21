@@ -11,9 +11,9 @@
 use crate::game::Game;
 use petramond::gui::documents::{slot_tip_keys, SHOW_SLOT_TIP, SLOT_TIP_LINES, SLOT_TIP_SPANS};
 use petramond::gui::Role;
+use petramond_ui::{UiState, UiValue};
 use petramond_world::inventory::HOTBAR_LEN;
 use petramond_world::item::ItemStack;
-use petramond_ui::{UiState, UiValue};
 
 /// Publish the item-tip keys for the slot hovered on the last solved frame.
 /// Runs for every menu kind: keys a document does not bind are inert, so a
@@ -26,11 +26,16 @@ pub(super) fn populate(game: &Game, hover_slot: Option<&(String, u32)>, state: &
     } else {
         hover_slot.and_then(|(role, index)| hovered_stack(game, role, *index as usize))
     };
-    let stack = stack.filter(|stack| stack.item != petramond_world::item::ItemType::Air && stack.count > 0);
+    let stack =
+        stack.filter(|stack| stack.item != petramond_world::item::ItemType::Air && stack.count > 0);
     state.set("show_item_tip", UiValue::Bool(stack.is_some()));
     state.set(
         "item_tip_name",
-        UiValue::Str(stack.map(|stack| stack.item.name().to_owned()).unwrap_or_default()),
+        UiValue::Str(
+            stack
+                .map(|stack| stack.item.name().to_owned())
+                .unwrap_or_default(),
+        ),
     );
     state.set(
         "item_tip_info",
@@ -73,9 +78,7 @@ pub(super) fn populate_slot_tip(
             .filter(|(role, _)| matches!(Role::from_key(role), Some(Role::Container)))
             .filter(|(role, index)| {
                 hovered_stack(game, role, *index as usize)
-                    .filter(|s| {
-                        s.item != petramond_world::item::ItemType::Air && s.count > 0
-                    })
+                    .filter(|s| s.item != petramond_world::item::ItemType::Air && s.count > 0)
                     .is_none()
             })
             .and_then(|(_, index)| state.get_str(&format!("slot{index}:tip")))

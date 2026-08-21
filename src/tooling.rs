@@ -7,8 +7,8 @@
 /// rather than a re-derivation of it — generation/light/mesh pumping, the
 /// resident-memory census, and deterministic ticking.
 pub mod stream {
-    pub use petramond_math::facing::Facing;
     pub use crate::world::{MemoryCensus, World};
+    pub use petramond_math::facing::Facing;
 
     /// Run `n` deterministic game ticks over a streamed world.
     ///
@@ -68,7 +68,6 @@ pub mod stream {
         )
     }
 }
-
 
 /// Loading the installed mod packs so a dev tool generates the SAME world the
 /// game does.

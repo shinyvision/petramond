@@ -55,23 +55,24 @@ mod world_prediction;
 
 use std::collections::{HashMap, VecDeque};
 
-use petramond_world::block_state::HeldBlockState;
-use petramond_render::camera::Camera;
 use crate::particle::ParticleSystem;
-use petramond_math::math::IVec3;
-use petramond::net::protocol::{ChatLine, ClientToServer, PlayerAction, SelfTransform, ThrowAmount};
+use petramond::net::protocol::{
+    ChatLine, ClientToServer, PlayerAction, SelfTransform, ThrowAmount,
+};
 #[cfg(test)]
 use petramond::player::PlayerMode;
 use petramond::player::{Player, RaycastHit};
 use petramond::server::handle::ServerHandle;
 use petramond::server::player::HeldRotation;
 use petramond::world::World;
+use petramond_math::math::IVec3;
+use petramond_render::camera::Camera;
+use petramond_world::block_state::HeldBlockState;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 pub use environment::GameEnvironment;
 pub use tick::{
-    GameEvents, GameInput, MobSoundEvent, ModSpatialSoundCommand, MovementInput,
-    WorldEvent,
+    GameEvents, GameInput, MobSoundEvent, ModSpatialSoundCommand, MovementInput, WorldEvent,
 };
 
 /// Mining-dust emission interval, seconds.
@@ -312,7 +313,7 @@ impl Game {
     }
 
     /// The OTHER connected players (id → name). Empty in singleplayer.
-    #[allow(dead_code)] // first consumers: a player-list screen / remote-player rendering
+    #[cfg(test)]
     pub fn player_roster(&self) -> &HashMap<petramond::player::PlayerId, String> {
         &self.player_roster
     }
@@ -350,10 +351,6 @@ impl Game {
     pub fn take_outbox_for_test(&mut self) -> Vec<ClientToServer> {
         std::mem::take(&mut self.outbox)
     }
-
-
-
-
 
     /// Apply replicated view refreshes a test harness built server-side,
     /// standing in for the next batch (`SelfState` + optional menu sync).
@@ -725,7 +722,11 @@ impl Game {
 
     /// Ack of a server-opened GUI session — any kind, engine container or mod
     /// GUI (no-op; see above).
-    pub fn open_gui_screen(&mut self, kind: petramond_world::gui_state::GuiKind, pos: Option<IVec3>) {
+    pub fn open_gui_screen(
+        &mut self,
+        kind: petramond_world::gui_state::GuiKind,
+        pos: Option<IVec3>,
+    ) {
         let _ = (kind, pos);
     }
 

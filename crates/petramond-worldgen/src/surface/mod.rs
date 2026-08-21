@@ -32,8 +32,8 @@ impl SurfaceSystem {
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
-    use petramond_world::biome::Biome;
     use crate::biome::spec;
+    use petramond_world::biome::Biome;
 
     fn ctx(y: i32, depth_from_top: u32, _biome: Biome) -> SurfaceCtx {
         SurfaceCtx {

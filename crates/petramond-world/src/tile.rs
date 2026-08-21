@@ -105,7 +105,6 @@ impl Tile {
     }
 }
 
-
 /// Per-tile representative cartography colours, pixel-derived by the atlas
 /// composer and installed once on the client (`atlas` calls
 /// [`install_map_colors`] when it composes). Headless builds never install —

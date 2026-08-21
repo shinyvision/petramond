@@ -17,7 +17,7 @@
 //! soft obstacles (other mobs, players) are routed around when a detour
 //! exists without ever walling a route off.
 //!
-//! [`find_path`] returns the foothold cells from the start toward the goal; if
+//! [`find_path_nav`] returns the foothold cells from the start toward the goal; if
 //! the goal is unreachable it returns the path to the reachable cell that gets
 //! **closest** to the goal (a best-effort partial path), so a mob always makes
 //! progress instead of standing still.
@@ -42,7 +42,7 @@ const COST_DIAG: u32 = 14;
 /// movement, just mildly discouraged when avoidable).
 const COST_DROP_PER_BLOCK: u32 = 1;
 
-/// Tuning for [`find_path`]. `head` is the mob's vertical clearance in whole cells
+/// Tuning for [`find_path_nav`]. `head` is the mob's vertical clearance in whole cells
 /// (how many cells above the floor its body needs); `half_width` is its horizontal
 /// body radius from centre to side; `max_drop` caps how far a descent may fall;
 /// `max_nodes` bounds the search so one pathfind can't stall the tick.
@@ -140,8 +140,8 @@ pub fn is_foothold(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) -> bo
 
 /// Is `cell` a navigation foothold when water may support the body? Water support
 /// only counts at the surface: submerged cells are passable, not standable waypoints.
-#[allow(dead_code)]
-pub fn is_navigation_foothold(
+#[cfg(test)]
+fn is_navigation_foothold(
     cell: IVec3,
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
@@ -150,7 +150,7 @@ pub fn is_navigation_foothold(
     is_navigation_foothold_with(cell, params, solid, solid, water)
 }
 
-/// [`is_navigation_foothold`] with a separate `support` predicate: `solid` still
+/// Navigation foothold probing with a separate `support` predicate: `solid`
 /// marks fully-blocked cells (body clearance), while `support` marks any cell
 /// that can bear feet — including partial-collision shapes (a slab, a bed, a
 /// ladder column) that do not blanket-block their cell. Whether a body truly
@@ -173,10 +173,10 @@ pub fn is_navigation_foothold_with(
 /// `None` if the mob is over no foothold (e.g. mid-air).
 ///
 /// Without this, a mob standing at a block edge — centre over the drop, body still on
-/// the block — would have a non-foothold "current cell", so [`find_path`] would bail
+/// the block — would have a non-foothold "current cell", so [`find_path_nav`] would bail
 /// and it would never path anywhere (it'd freeze at the edge).
-#[allow(dead_code)]
-pub fn standing_cell(
+#[cfg(test)]
+fn standing_cell(
     pos: Vec3,
     half_width: f32,
     head: i32,
@@ -185,7 +185,7 @@ pub fn standing_cell(
     standing_cell_with(pos, half_width, head, solid, solid)
 }
 
-/// [`standing_cell`] with the separate `support` predicate (see
+/// Standing-cell resolution with a separate `support` predicate (see
 /// [`is_navigation_foothold_with`]): partial-collision blocks bear feet
 /// without blanket-blocking their cell.
 pub fn standing_cell_with(
@@ -246,8 +246,8 @@ pub fn standing_cell_with(
 /// Find the water-surface navigation cell near a swimming mob. This deliberately
 /// searches upward from the feet: underwater cells are not path waypoints, but the
 /// surface just above them can be.
-#[allow(dead_code)]
-pub fn swimming_cell(
+#[cfg(test)]
+fn swimming_cell(
     pos: Vec3,
     half_width: f32,
     head: i32,
@@ -257,7 +257,7 @@ pub fn swimming_cell(
     swimming_cell_with(pos, half_width, head, solid, solid, water)
 }
 
-/// [`swimming_cell`] with the separate `support` predicate.
+/// Swimming-cell resolution with the separate `support` predicate.
 pub fn swimming_cell_with(
     pos: Vec3,
     half_width: f32,
@@ -283,10 +283,10 @@ pub fn swimming_cell_with(
 /// body is in water — the water-surface navigation cell above its feet. The two must
 /// not be conflated: in one-deep water the solid bed sits directly below the feet, so
 /// the solid-only standing probe would claim the *submerged* feet cell, which
-/// [`find_path`] rejects as a start (water cells are passable, not standable) —
+/// [`find_path_nav`] rejects as a start (water cells are passable, not standable) —
 /// leaving the mob goalless, bobbing in place forever.
-#[allow(dead_code)]
-pub fn navigation_cell(
+#[cfg(test)]
+fn navigation_cell(
     pos: Vec3,
     half_width: f32,
     head: i32,
@@ -297,7 +297,7 @@ pub fn navigation_cell(
     navigation_cell_with(pos, half_width, head, in_water, solid, solid, water)
 }
 
-/// [`navigation_cell`] with the separate `support` predicate.
+/// Navigation-cell resolution with the separate `support` predicate.
 pub fn navigation_cell_with(
     pos: Vec3,
     half_width: f32,
@@ -398,8 +398,8 @@ fn supported_foothold(
 /// surface), so a route may cross a body of water of any depth — the kinematics float
 /// the mob up while it does. Avoiding water is a *destination* preference (see the
 /// wander behavior), not a routing constraint: the shortest path still cuts across.
-#[allow(dead_code)]
-pub fn find_path(
+#[cfg(test)]
+pub(super) fn find_path(
     start: IVec3,
     goal: IVec3,
     params: PathParams,
@@ -418,7 +418,8 @@ pub fn find_path(
     )
 }
 
-/// The full navigation search. Beyond [`find_path`]'s closures it takes:
+/// The full production navigation search. In addition to the basic world
+/// predicates it takes:
 /// - `support(cell)` — cells that can bear feet even when not fully `solid`
 ///   (partial-collision shapes), see [`is_navigation_foothold_with`];
 /// - `step_allowed(from, to)` — the accurate edge gate: rejects a specific

@@ -2,8 +2,8 @@ use crate::world::WorldData;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
-use petramond_world::chunk::{self, ChunkPos, SectionPos};
 use crate::world::store::{SkyCoverChange, World};
+use petramond_world::chunk::{self, ChunkPos, SectionPos};
 
 impl World {
     /// Present a reconciliation/rollback edit without blocking the client
@@ -114,7 +114,8 @@ impl World {
                 lights.push(PredictionLightUnit::Batch { job, prev });
             } else {
                 for pos in members {
-                    let job = LightBakeJob::snapshot(0, pos, &self.data.sections, &self.data.columns)?;
+                    let job =
+                        LightBakeJob::snapshot(0, pos, &self.data.sections, &self.data.columns)?;
                     let section = self.sections.get(&pos).expect("filtered on presence");
                     lights.push(PredictionLightUnit::Single(Box::new(PredictionLightJob {
                         job,
@@ -248,12 +249,7 @@ impl World {
             for cz in cpos.cz - 1..=cpos.cz + 1 {
                 for cx in cpos.cx - 1..=cpos.cx + 1 {
                     let cp = ChunkPos::new(cx, cz);
-                    let bits = self
-                        .data
-                        .section_column_cys
-                        .get(&cp)
-                        .copied()
-                        .unwrap_or(0);
+                    let bits = self.data.section_column_cys.get(&cp).copied().unwrap_or(0);
                     let mut b = bits;
                     while b != 0 {
                         let cy = chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;

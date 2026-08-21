@@ -630,8 +630,8 @@ fn smooth_xz(t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
     use crate::graph::{Axis, Channel, SampledScalarField};
+    use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

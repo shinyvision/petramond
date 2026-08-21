@@ -3,25 +3,25 @@ use petramond_world::block_state::LogAxis;
 pub use petramond_math::face::Face;
 
 /// Explicit tile-local UV for the bark side of a horizontal log. The texture's
-    /// vertical axis follows the log axis, matching the default vertical-log mapping
-    /// where bark runs along world Y.
-    pub fn log_side_cell_uv(face: Face, axis: LogAxis, local: [f32; 3]) -> Option<[f32; 2]> {
-        let axis_idx = match axis {
-            LogAxis::X => 0,
-            LogAxis::Y => return None,
-            LogAxis::Z => 2,
-        };
-        let normal_idx = match face {
-            Face::PosX | Face::NegX => 0,
-            Face::PosY | Face::NegY => 1,
-            Face::PosZ | Face::NegZ => 2,
-        };
-        if normal_idx == axis_idx {
-            return None;
-        }
-        let cross_idx = 3 - axis_idx - normal_idx;
-        Some([local[cross_idx], 1.0 - local[axis_idx]])
+/// vertical axis follows the log axis, matching the default vertical-log mapping
+/// where bark runs along world Y.
+pub fn log_side_cell_uv(face: Face, axis: LogAxis, local: [f32; 3]) -> Option<[f32; 2]> {
+    let axis_idx = match axis {
+        LogAxis::X => 0,
+        LogAxis::Y => return None,
+        LogAxis::Z => 2,
+    };
+    let normal_idx = match face {
+        Face::PosX | Face::NegX => 0,
+        Face::PosY | Face::NegY => 1,
+        Face::PosZ | Face::NegZ => 2,
+    };
+    if normal_idx == axis_idx {
+        return None;
     }
+    let cross_idx = 3 - axis_idx - normal_idx;
+    Some([local[cross_idx], 1.0 - local[axis_idx]])
+}
 
 /// The two diagonal billboard quads of an X-shaped plant model, filling the cell
 /// `[x,x+1] × [y,y+1] × [z,z+1]`. Corner order matches `quad_for` (p0 bottom-left,

@@ -17,10 +17,10 @@ pub mod icon;
 
 use petramond::gui::{Role, SlotRect, UiSnapshot};
 
+use petramond_text::tiny as tiny_text;
 use petramond_world::gui_state::GuiKind;
 use petramond_world::inventory::HOTBAR_LEN;
 use petramond_world::item::ItemType;
-use petramond_text::tiny as tiny_text;
 
 /// A single UI vertex: NDC position (y up) + texture uv + RGBA color. `uv.x < 0`
 /// is the solid-color sentinel (see `ui.wgsl`). 32 bytes.
@@ -783,7 +783,14 @@ mod tests {
     }
 
     fn build(ui: &UiSnapshot, slots: Option<&[DocSlot]>, out: &mut UiBuild) {
-        build_ui(ui, SCREEN, petramond::gui::gui_scale(SCREEN), slots, None, out);
+        build_ui(
+            ui,
+            SCREEN,
+            petramond::gui::gui_scale(SCREEN),
+            slots,
+            None,
+            out,
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
-use crate::tile::Tile;
 use crate::facing::Facing;
 use crate::item::DropSpec;
+use crate::tile::Tile;
 
 use super::behavior::BlockBehavior;
 use super::{Aabb, Block, BlockInteraction, BlockShapeKind, BlockTag};

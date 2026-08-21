@@ -15,12 +15,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{App, AppScreen};
-use petramond_render::camera::Camera;
 use crate::game::Game;
-use petramond_math::math::Vec3;
-use petramond::net::handshake::{client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin};
+use petramond::net::handshake::{
+    client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin,
+};
 use petramond::net::protocol::ModEntry;
 use petramond::server::handle::ServerHandle;
+use petramond_math::math::Vec3;
+use petramond_render::camera::Camera;
 
 /// Per-step network deadline: the TCP connect and each handshake read.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -112,7 +114,8 @@ impl App {
     fn enter_connect_screen(&mut self, addr: String, name: String) {
         // Activate the document FIRST: switching kinds resets bound state,
         // which would wipe the seeds below on the screen's first frame.
-        self.ui.ensure_active(petramond_world::gui_state::GuiKind::ConnectServer);
+        self.ui
+            .ensure_active(petramond_world::gui_state::GuiKind::ConnectServer);
         let state = self.ui.state_mut();
         state.set("server_addr", petramond_ui::UiValue::Str(addr.clone()));
         state.set("player_name", petramond_ui::UiValue::Str(name));

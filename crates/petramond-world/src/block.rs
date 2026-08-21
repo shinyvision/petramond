@@ -2,12 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-pub mod item_shape_bake;
 mod accessors;
 pub mod behavior;
 mod data;
 mod definition;
 mod interaction;
+pub mod item_shape_bake;
 mod load;
 pub mod shape;
 mod shape_kind;

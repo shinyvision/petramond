@@ -1,12 +1,11 @@
 //! Stackable slabs at the world level: position-aware state lookup, collision,
 //! and placement.
 
-use petramond_world::block::Block;
 use petramond_math::math::IVec3;
+use petramond_world::block::Block;
 use petramond_world::slab::SlabSlot;
 
 use super::store::World;
-
 
 impl World {
     /// Place one slab layer into `pos`, either creating a new slab cell or filling the

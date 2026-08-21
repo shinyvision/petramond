@@ -157,11 +157,7 @@ fn redwood_trunk_is_supported(
 /// deterministic configured spacing rule. Features write in world coords and
 /// are clipped to this chunk, so seams are continuous with no double-placement
 /// and the old chunk-edge skip is gone.
-pub fn place_features_with_field(
-    chunk: &mut Chunk,
-    field: &mut impl FeatureField,
-    seed: u32,
-) {
+pub fn place_features_with_field(chunk: &mut Chunk, field: &mut impl FeatureField, seed: u32) {
     let (ox, oz) = chunk.chunk_origin_world();
     let mut sink = ChunkSink::new(chunk);
     let mut ctx = FeatureCtx::new(&mut sink);
@@ -174,11 +170,7 @@ pub fn place_features_with_field(
 /// whole-column [`place_features_with_field`] would write there — for the section's
 /// own vertical slab, with no neighbour buffer. `field` covers this section's column
 /// (origin `ox,oz = section column origin`) plus the feature margin.
-pub fn place_features_section(
-    section: &mut Section,
-    field: &mut impl FeatureField,
-    seed: u32,
-) {
+pub fn place_features_section(section: &mut Section, field: &mut impl FeatureField, seed: u32) {
     let (ox, _oy, oz) = section.origin_world();
     let mut sink = SectionSink::new(section);
     let mut ctx = FeatureCtx::new(&mut sink);

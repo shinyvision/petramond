@@ -131,14 +131,14 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{HostCall, HostRet};
 
-    use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::{PostQueue, SimCtx};
     use crate::modding::host::guards::KV_MAX_VALUE_BYTES;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
 
     /// Run `f` with a live SimCtx published, as if inside a guest dispatch.
     /// The world gets one flat-floored loaded chunk so section-cell KV writes

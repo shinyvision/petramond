@@ -1,8 +1,8 @@
 use crate::events::tick::TickEvents;
 use crate::net::protocol::{ClientToServer, PlayerUpdate, SelfTransform, ServerToClient};
 use crate::player;
-use crate::server::player::PendingMenuAction;
 use crate::player::PlayerId;
+use crate::server::player::PendingMenuAction;
 
 use super::{wire_world_events, PumpOutput, ServerGame};
 
@@ -74,7 +74,8 @@ impl ServerGame {
         // once, and a terminal-speed fall legitimately covers 1.5 blocks per
         // tick. A fixed bound wiped the fall tracker mid-fall — flashing the
         // inventory while falling cancelled the landing's damage.
-        let legit_motion = ticks_ran as f32 * crate::player::TERMINAL * crate::events::tick::TICK_DT;
+        let legit_motion =
+            ticks_ran as f32 * crate::player::TERMINAL * crate::events::tick::TICK_DT;
         for sess in &mut self.sessions {
             let delta = (sess.player.pos - sess.pos_before_ticks).length();
             sess.tick_teleported = delta > 2.0 + legit_motion;

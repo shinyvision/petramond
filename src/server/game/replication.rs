@@ -1,10 +1,10 @@
 use crate::events::tick::{TickEvents, WorldEvents};
-use petramond_math::math::IVec3;
 use crate::net::protocol::{
     BlockDelta, ItemSlotWire, ItemStateRow, MobStateRow, ModSpatialSoundMsg, OpenScreen,
     PlayerActionKind, PlayerStateRow, SelfEvents, SelfState, SelfTransform, TickUpdate, Transform,
     WorldEventMsg,
 };
+use petramond_math::math::IVec3;
 
 use super::{ServerGame, SharedTickRows};
 
@@ -415,10 +415,7 @@ impl ServerGame {
     /// state map compares by `Arc` identity — holding the shipped `Arc` in
     /// `last_sent_gui_state` forces the next tick-side write to copy-on-write
     /// onto a fresh allocation, which is what makes identity sound here.
-    pub fn build_menu_sync(
-        &mut self,
-        s: usize,
-    ) -> Option<crate::net::protocol::MenuSyncMsg> {
+    pub fn build_menu_sync(&mut self, s: usize) -> Option<crate::net::protocol::MenuSyncMsg> {
         use crate::net::protocol::{GuiValueWire, MenuTargetWire};
 
         let base = self.build_menu_sync_base(s);
@@ -475,10 +472,7 @@ impl ServerGame {
         host
     }
 
-    fn host_mod_gui_state_applies_to(
-        &self,
-        target: crate::menu::ContainerTarget,
-    ) -> bool {
+    fn host_mod_gui_state_applies_to(&self, target: crate::menu::ContainerTarget) -> bool {
         if self.sessions[0].menu.target() == target {
             return true;
         }

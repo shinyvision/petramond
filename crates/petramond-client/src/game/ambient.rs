@@ -24,10 +24,10 @@ use rustc_hash::FxHashMap;
 use glam::Vec3;
 
 use petramond::entity::hash01;
+use petramond::world::World;
 use petramond_world::particle_emitters::{
     AmbientHit, AmbientKill, AmbientLight, AmbientMotion, AmbientSpec, BurstSpec,
 };
-use petramond::world::World;
 
 use super::presentation::{ParticleAtlas, ParticlePresentation};
 
@@ -170,9 +170,8 @@ impl AmbientDrives {
                 ];
                 let splash = match &spec.hit {
                     AmbientHit::Die => None,
-                    AmbientHit::Burst(key) => {
-                        petramond_world::particle_emitters::by_key(key).and_then(|b| b.burst.as_ref())
-                    }
+                    AmbientHit::Burst(key) => petramond_world::particle_emitters::by_key(key)
+                        .and_then(|b| b.burst.as_ref()),
                 };
                 derive_volume(
                     spec,
@@ -354,7 +353,8 @@ fn derive_volume(
                 let Some((kill_y, hit_biome)) = column_ceiling(world, ceilings, hx, hz) else {
                     continue;
                 };
-                if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, hit_biome) {
+                if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, hit_biome)
+                {
                     continue;
                 }
                 if kill_y >= y_top || kill_y <= y_top - span {
@@ -382,7 +382,10 @@ fn derive_volume(
                 };
                 // The refinement can land columns away: keep the biome
                 // divide exact for crowns too.
-                if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, refined_biome) {
+                if !petramond_world::particle_emitters::biome_allowed(
+                    &spec.biome_allow,
+                    refined_biome,
+                ) {
                     continue;
                 }
                 if kill_y >= y_top || kill_y <= y_top - span {
@@ -406,7 +409,9 @@ fn derive_volume(
                         (0.0, 0.0)
                     };
                     let light = match spec.light {
-                        AmbientLight::Sky => (SKY_OPEN_LIGHT, petramond_world::light::BlockLight6::DARK),
+                        AmbientLight::Sky => {
+                            (SKY_OPEN_LIGHT, petramond_world::light::BlockLight6::DARK)
+                        }
                         AmbientLight::World => world.dynamic_light_at_world(
                             hx.floor() as i32,
                             kill_y.floor() as i32,

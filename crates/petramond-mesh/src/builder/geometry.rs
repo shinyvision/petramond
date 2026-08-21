@@ -1,12 +1,12 @@
 use crate::vertex::BlockLightVertexExt;
 use glam::IVec3;
 
-use petramond_world::tile::Tile;
 use petramond_world::block::CellView;
 use petramond_world::block::{Block, ShapeFamily};
 use petramond_world::block_state::{LogAxis, SlabState};
 use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use petramond_world::section::Section;
+use petramond_world::tile::Tile;
 
 use super::super::face::{quad_for, Face, FACES};
 use super::super::face_emit::{cube_face_lighting_pad, fold_light, push_cube_face_with_cell_uvs};
@@ -396,8 +396,9 @@ pub(super) fn section_geometry(
                     let cell_sky = neighbour_light(wx, wy, wz) as u32;
                     let sky6 = ((cell_sky * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
                     let [er, eg, eb] = block.light_emission_rgb();
-                    let emit =
-                        petramond_world::light::BlockLight6::from_x2(petramond_world::light::LightRgb::new(er, eg, eb));
+                    let emit = petramond_world::light::BlockLight6::from_x2(
+                        petramond_world::light::LightRgb::new(er, eg, eb),
+                    );
                     let placement = section.torch_placement(lx, ly, lz);
                     super::torch::emit_torch(
                         &mut opaque,

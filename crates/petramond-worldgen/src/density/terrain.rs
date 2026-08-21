@@ -369,11 +369,9 @@ fn shaping_inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_world::chunk::{CHUNK_SY, SEA_LEVEL};
-    use crate::density::lattice::{
-        DensityLattice, DensityLatticeBounds, DensityLatticeCellSize,
-    };
+    use crate::density::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
     use crate::graph::SamplePoint;
+    use petramond_world::chunk::{CHUNK_SY, SEA_LEVEL};
 
     fn assert_close(actual: f64, expected: f64) {
         assert!(

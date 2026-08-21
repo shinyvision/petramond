@@ -10,6 +10,8 @@
 #   make gui-builder     -- build (release) & run the GUI builder tool
 #   make gui-builder-dev -- build (debug) & run the GUI builder tool
 #   make mods            -- build mods-src (wasm32) & install packs into mods/
+#   make profile         -- run repeatable join + map perf harnesses in scratch data
+#   make smoke           -- exercise threaded, TCP, UI-connect, and headless lifecycles
 #
 # Override vars:
 #   SEED=0x12345678 RD=12 make run
@@ -30,7 +32,7 @@ RD    ?=
 # affects OpenGL/GLES. Override with `make run NV_OFFLOAD=` to use the Intel iGPU.
 NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
 
-.PHONY: run run-native run-release run-server dev build build-native clean gui-builder gui-builder-dev mods test
+.PHONY: run run-native run-release run-server dev build build-native clean gui-builder gui-builder-dev mods test fmt fmt-check clippy source-audit validate-assets profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -66,10 +68,10 @@ clean:
 
 # Standalone data-driven GUI builder (separate crate in ./gui-builder).
 gui-builder:
-	cd gui-builder && $(CARGO) run --release
+	$(CARGO) run --manifest-path gui-builder/Cargo.toml --target-dir target --release
 
 gui-builder-dev:
-	cd gui-builder && $(CARGO) run
+	$(CARGO) run --manifest-path gui-builder/Cargo.toml --target-dir target
 
 # Build every mod crate in mods-src/ (its own wasm32 workspace) and install
 # each one that ships a pack/ dir into mods/<id>/ (pack files + mod.wasm),
@@ -78,25 +80,61 @@ gui-builder-dev:
 # built but not installed. A pack with no compiled wasm installs as
 # content-only, which the mod API supports.
 mods:
-	cd mods-src && $(CARGO) build --release --target wasm32-unknown-unknown
+	$(CARGO) build --manifest-path mods-src/Cargo.toml --target-dir target \
+		--release --target wasm32-unknown-unknown
 	@set -e; for d in mods-src/*/; do \
 		id=$$(basename $$d); \
+		wasm_id=$$(printf '%s' "$$id" | tr '-' '_'); \
 		[ -f "$$d/pack/pack.json" ] || continue; \
 		mkdir -p mods/$$id; \
 		cp -r $$d/pack/. mods/$$id/; \
-		if [ -f mods-src/target/wasm32-unknown-unknown/release/$$id.wasm ]; then \
-			cp mods-src/target/wasm32-unknown-unknown/release/$$id.wasm mods/$$id/mod.wasm; \
+		if [ -f target/wasm32-unknown-unknown/release/$$wasm_id.wasm ]; then \
+			cp target/wasm32-unknown-unknown/release/$$wasm_id.wasm mods/$$id/mod.wasm; \
 			echo "installed mods/$$id"; \
 		else \
 			echo "installed mods/$$id (content only, no wasm)"; \
 		fi; \
 	done
 
-# The one command that runs EVERYTHING. `cargo test` from the repo root builds
-# only the root package, because this manifest is both a package and the
-# workspace root — so `mod-api`'s wire pins, `petramond-ui` and `petramond-text`
-# silently never ran, and a hand-edited ABI pin reached the tree undetected.
-# The mods are a separate workspace again, so they need their own invocation.
+# The canonical suite builds bundled WASM guests into target/, installs their
+# packs into an isolated temporary root, and runs every workspace with debug
+# assertions and overflow checks enabled. It never reads a developer's mods/.
 test:
-	$(CARGO) test --profile playtest --workspace
-	cd mods-src && $(CARGO) test --profile playtest --workspace
+	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/test-all.sh
+
+fmt:
+	$(CARGO) fmt --all
+	$(CARGO) fmt --manifest-path mods-src/Cargo.toml --all
+	$(CARGO) fmt --manifest-path mod-sdk/Cargo.toml
+	$(CARGO) fmt --manifest-path gui-builder/Cargo.toml
+
+fmt-check:
+	$(CARGO) fmt --all -- --check
+	$(CARGO) fmt --manifest-path mods-src/Cargo.toml --all -- --check
+	$(CARGO) fmt --manifest-path mod-sdk/Cargo.toml -- --check
+	$(CARGO) fmt --manifest-path gui-builder/Cargo.toml -- --check
+
+clippy:
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --manifest-path mods-src/Cargo.toml --target-dir target --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --manifest-path mod-sdk/Cargo.toml --target-dir target --all-targets -- -D warnings
+	$(CARGO) clippy --manifest-path gui-builder/Cargo.toml --target-dir target --all-targets -- -D warnings
+
+# Keep giant test fixtures and declarative wire schemas from disguising the
+# size of executable modules, and stop production modules growing past the
+# reviewable ceiling without first extracting a cohesive submodule.
+source-audit:
+	bash scripts/audit-source.sh
+
+validate-assets:
+	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/validate-assets.sh
+
+# Manual measurement targets are intentionally outside `check`: profile
+# numbers are machine/load dependent, and smoke duplicates full-suite coverage.
+profile:
+	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/profile.sh
+
+smoke:
+	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/smoke.sh
+
+check: fmt-check clippy source-audit test validate-assets

@@ -2,9 +2,11 @@ use super::*;
 
 use std::sync::Arc;
 
-use petramond_world::block::Block;
-use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_SIZE};
 use petramond_math::math::IVec3;
+use petramond_world::block::Block;
+use petramond_world::chunk::{
+    Chunk, ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_SIZE,
+};
 use petramond_world::section::Section;
 
 use crate::world::store::{LoadAnchor, LoadTarget, World};

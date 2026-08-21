@@ -1,9 +1,9 @@
 use super::state::Player;
-use petramond_world::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
-use petramond_world::block::{Block, ShapeFamily};
-use petramond_math::math::{IVec3, SelectionBoxes, SelectionShape, Vec3};
-use petramond_world::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 use crate::world::World;
+use petramond_math::math::{IVec3, SelectionBoxes, SelectionShape, Vec3};
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
+use petramond_world::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 
 /// Max block-interaction distance, measured from the eye.
 pub const REACH: f32 = 4.0;
@@ -58,11 +58,7 @@ impl Player {
     /// at a mob interrupts block selection). Voxel DDA (Amanatides & Woo), with
     /// plant-shaped blocks tested against their square selection box (see
     /// `plant_selection_aabb`).
-    pub fn raycast_with_dist(
-        eye: Vec3,
-        dir: Vec3,
-        world: &World,
-    ) -> Option<(RaycastHit, f32)> {
+    pub fn raycast_with_dist(eye: Vec3, dir: Vec3, world: &World) -> Option<(RaycastHit, f32)> {
         let (mut hit, dist) = Self::raycast_blocks_core(
             eye,
             dir,
@@ -163,11 +159,7 @@ impl Player {
     /// a thin film (both of which can render exactly like still water) must
     /// never shadow the source beneath or behind it: the ray reads through them
     /// to the source the player is actually aiming at.
-    pub fn raycast_water_sources(
-        eye: Vec3,
-        dir: Vec3,
-        world: &World,
-    ) -> Option<(RaycastHit, f32)> {
+    pub fn raycast_water_sources(eye: Vec3, dir: Vec3, world: &World) -> Option<(RaycastHit, f32)> {
         Self::raycast_water_stopping(eye, dir, world, |p| world.is_water_source_world(p))
     }
 

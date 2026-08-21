@@ -67,7 +67,6 @@ impl ScriptedInputs {
     }
 }
 
-
 /// The extension-only lenient view a pack's `mobs.json` gets at ADMISSION
 /// (before any registry exists) — see [`validate_brain_extensions`].
 #[derive(Deserialize)]
@@ -102,7 +101,6 @@ pub struct RawBrainNode {
     #[serde(default)]
     pub inputs: Vec<String>,
 }
-
 
 /// Pack-admission validation of a layer's optional `brain_extensions`,
 /// surfaced early (`manifest::registration_keys`) so a bad extension disables
@@ -142,4 +140,3 @@ fn admission_check_node(node: &RawBrainNode) -> Result<(), String> {
     }
     Ok(())
 }
-

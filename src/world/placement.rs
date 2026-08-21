@@ -2,9 +2,9 @@
 //! world (slab stacking, general placement, support checks, finish paths).
 //! The plan/outcome/trait VOCABULARY lives in `petramond_world::world::placement`.
 
-pub use petramond_world::world::placement::*;
-use petramond_world::block::{Aabb, Block, ShapeState};
 use crate::world::World;
+use petramond_world::block::{Aabb, Block, ShapeState};
+pub use petramond_world::world::placement::*;
 
 use petramond_math::math::IVec3;
 
@@ -53,7 +53,9 @@ impl World {
                 .log_axis_for_facing(inputs.held, inputs.player_facing);
             petramond_world::block::CellCodec::to_cell(&axis)
         } else if block.directional_view() {
-            petramond_world::block::CellCodec::to_cell(&petramond_world::block_state::EntityFront(inputs.player_facing))
+            petramond_world::block::CellCodec::to_cell(&petramond_world::block_state::EntityFront(
+                inputs.player_facing,
+            ))
         } else {
             ShapeState::NONE
         };
@@ -78,11 +80,7 @@ impl World {
     /// client replica passes false — container/furnace machine state is
     /// server-owned and arrives with the delta. That fabrication is
     /// block-ENTITY vocabulary (see `world::container`), not shape knowledge.
-    pub fn commit_placement(
-        &mut self,
-        plan: &PlacementPlan,
-        with_block_entities: bool,
-    ) -> bool {
+    pub fn commit_placement(&mut self, plan: &PlacementPlan, with_block_entities: bool) -> bool {
         for w in &plan.writes {
             if !self.materialize_section_at(w.cell) {
                 return false;

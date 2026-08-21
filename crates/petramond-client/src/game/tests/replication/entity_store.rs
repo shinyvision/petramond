@@ -3,13 +3,13 @@
 
 use super::common::{game, game_on_empty_chunk};
 use super::pump_one_tick;
-use petramond::entity::DroppedItem;
 use crate::game::presentation::GamePresentationScratch;
 use crate::game::tick::TICK_DT;
-use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::Vec3;
+use petramond::entity::DroppedItem;
 use petramond::mob::Mob;
 use petramond::net::protocol::MobStateRow;
+use petramond_math::math::Vec3;
+use petramond_world::item::{ItemStack, ItemType};
 
 fn mob_row(id: u64, pos: Vec3, hurt_timer: f32) -> MobStateRow {
     MobStateRow {
@@ -354,7 +354,11 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
     game.commit_replication_window_for_test();
 
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0, &petramond_render::camera::ViewVolume::unbounded());
+    let presentation = scratch.snapshot(
+        &game,
+        0.0,
+        &petramond_render::camera::ViewVolume::unbounded(),
+    );
     let row = presentation
         .mobs
         .iter()
@@ -399,7 +403,11 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
         "an id absent from the batch drops from the store"
     );
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0, &petramond_render::camera::ViewVolume::unbounded());
+    let presentation = scratch.snapshot(
+        &game,
+        0.0,
+        &petramond_render::camera::ViewVolume::unbounded(),
+    );
     assert!(
         !presentation.mobs.iter().any(|m| m.id == id),
         "and from the presentation rows"
@@ -446,7 +454,11 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     game.commit_replication_window_for_test();
 
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0, &petramond_render::camera::ViewVolume::unbounded());
+    let presentation = scratch.snapshot(
+        &game,
+        0.0,
+        &petramond_render::camera::ViewVolume::unbounded(),
+    );
     let row = presentation
         .item_entities
         .iter()

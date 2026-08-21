@@ -14,9 +14,9 @@
 //! name this build doesn't know is SKIPPED with a warning — there is no "air mob"
 //! to degrade to, and respawning a wrong species would corrupt the world.
 
-use petramond_math::math::Vec3;
 use crate::mob::{Mob, MobTagValue, SavedMob};
 use crate::save::codec::{put_f32, put_f64, put_i64, put_u16, put_u8, Reader};
+use petramond_math::math::Vec3;
 
 /// Fixed bytes per serialized mob: kind(1) + pos(12) + yaw(4);
 /// the variable-length tag map follows. Tag KEYS repeat across

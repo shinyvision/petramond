@@ -42,7 +42,9 @@ impl PlaneLight {
         // Block light interpolates PER CHANNEL, in the linear light space —
         // interpolating a hue between two differently-coloured corners is
         // meaningless, and the shader's per-channel curve wants linear input.
-        let ch = self.block.map(petramond_world::light::BlockLight6::channels);
+        let ch = self
+            .block
+            .map(petramond_world::light::BlockLight6::channels);
         let block = petramond_world::light::BlockLight6::new(
             blend([ch[0][0], ch[1][0], ch[2][0], ch[3][0]]),
             blend([ch[0][1], ch[1][1], ch[2][1], ch[3][1]]),

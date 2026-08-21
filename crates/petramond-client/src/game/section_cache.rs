@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use petramond_world::chunk::SectionPos;
 use petramond::net::protocol::{NameTables, SectionCacheClaim, SECTION_CACHE_CAP};
+use petramond_world::chunk::SectionPos;
 use petramond_world::section::Section;
 
 /// Fingerprint of a remote session's block-id vocabulary: the server's block
@@ -27,7 +27,9 @@ pub fn section_cache_registry_key(tables: &NameTables) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     tables.blocks.hash(&mut h);
-    petramond::net::remap::local_name_tables().blocks.hash(&mut h);
+    petramond::net::remap::local_name_tables()
+        .blocks
+        .hash(&mut h);
     h.finish()
 }
 

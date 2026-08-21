@@ -89,7 +89,11 @@ fn emit_segments(
                 continue;
             }
         }
-        let dst = if seg.blend { &mut *blend_indices } else { &mut *indices };
+        let dst = if seg.blend {
+            &mut *blend_indices
+        } else {
+            &mut *indices
+        };
         copy_run(tmpl, &seg.run, basef, light, tint, verts, dst);
     }
 }
@@ -248,15 +252,7 @@ mod tests {
                     .iter()
                     .map(|&i| tmpl.verts[i as usize].pos.x),
             );
-            copy_run(
-                &tmpl,
-                &seg.run,
-                Vec3::ZERO,
-                0,
-                0,
-                &mut verts,
-                &mut indices,
-            );
+            copy_run(&tmpl, &seg.run, Vec3::ZERO, 0, 0, &mut verts, &mut indices);
         }
         (verts, indices, want)
     }
@@ -307,7 +303,9 @@ mod tests {
         };
         ModelCellTemplate {
             verts: [quad(0.0), quad(1.0), quad(2.0)].concat(),
-            indices: (0..3u32).flat_map(|q| [q * 4, q * 4 + 1, q * 4 + 2]).collect(),
+            indices: (0..3u32)
+                .flat_map(|q| [q * 4, q * 4 + 1, q * 4 + 2])
+                .collect(),
             segments: vec![
                 seg(
                     PartRun {
@@ -407,6 +405,8 @@ mod tests {
                 .all(|&i| verts[i as usize].pos[0].floor() == 2.0),
             "the blend stream holds exactly the blend segment's quad"
         );
-        assert!(indices.iter().all(|&i| verts[i as usize].pos[0].floor() < 2.0));
+        assert!(indices
+            .iter()
+            .all(|&i| verts[i as usize].pos[0].floor() < 2.0));
     }
 }

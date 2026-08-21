@@ -17,9 +17,9 @@ use glam::Vec3;
 
 use super::item_cube::{orient_faces_to_block, push_box_faces_lit_mirrored};
 use super::DoorInstance;
-use petramond_world::door::{self, THICKNESS};
 use petramond_math::facing::Facing;
 use petramond_mesh::{Vertex, UV_MODE_THIN_U, UV_MODE_THIN_V};
+use petramond_world::door::{self, THICKNESS};
 
 /// Canonical closed-door slab extent on the thin (Z) axis: flush with the `+Z` face.
 const Z_BACK: f32 = 1.0 - THICKNESS;
@@ -188,7 +188,8 @@ mod tests {
         );
         // Faces are emitted per box in ALL_FACES order [PosX, NegX, PosY, NegY, PosZ, NegZ],
         // 4 verts each; read the first vert of each face in the lower box.
-        let slice = |face_idx: usize| (v[face_idx * 4].packed >> petramond_mesh::UV_MODE_SHIFT) & 0x3;
+        let slice =
+            |face_idx: usize| (v[face_idx * 4].packed >> petramond_mesh::UV_MODE_SHIFT) & 0x3;
         assert_eq!(slice(0), 1, "PosX side edge crops U");
         assert_eq!(slice(1), 1, "NegX side edge crops U");
         assert_eq!(slice(2), 2, "PosY top edge crops V");

@@ -66,7 +66,6 @@ pub(super) const WATER_FLOW_DELAY: u64 = 5;
 pub struct Water;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Water {
-
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         // A neighbour changed: schedule the flow check `WATER_FLOW_DELAY` ticks out
         // so the disturbance settles before water re-levels.
@@ -103,7 +102,6 @@ fn flowing(level: u8) -> u8 {
 fn fillable(block: Block) -> bool {
     block == Block::Air || block.is_fragile()
 }
-
 
 #[inline]
 fn opposite(d: IVec3) -> IVec3 {

@@ -6,8 +6,8 @@
 //! lives on the server thread); everything mutated is
 //! client-owned (particles, lids, swings, the mesh pump).
 
-use petramond_world::block::{Block, ShapeFamily};
 use petramond_math::math::{voxel_at, IVec3};
+use petramond_world::block::{Block, ShapeFamily};
 
 use super::{Game, MINING_DUST_INTERVAL};
 
@@ -65,8 +65,8 @@ impl Game {
                 } => {
                     // A one-shot burst bundle: spawn its physics particles into
                     // the client-local system, world-lit at the burst point.
-                    let Some(spec) =
-                        petramond_world::particle_emitters::def(emitter).and_then(|b| b.burst.as_ref())
+                    let Some(spec) = petramond_world::particle_emitters::def(emitter)
+                        .and_then(|b| b.burst.as_ref())
                     else {
                         continue;
                     };

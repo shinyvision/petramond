@@ -29,8 +29,10 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
             let value = crate::modding::convert::gui_value(value);
             let id = crate::player::PlayerId(player_id.0);
             HostRet::Bool(
-                ctx.with_gui_state(id, |map| petramond_world::gui_state::gui_state_set(map, key, value))
-                    .is_some(),
+                ctx.with_gui_state(id, |map| {
+                    petramond_world::gui_state::gui_state_set(map, key, value)
+                })
+                .is_some(),
             )
         }),
         HostCall::GuiViewers => sim_query(|ctx| {
@@ -63,7 +65,9 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::GuiOpen { kind_key } => {
             // Resolve WITHOUT registering: opening a kind nothing declared is
             // a mod bug, reported forgivingly (like an unknown sound key).
-            let Some(kind) = petramond_world::gui_state::resolve_kind(&kind_key).filter(|k| k.is_mod()) else {
+            let Some(kind) =
+                petramond_world::gui_state::resolve_kind(&kind_key).filter(|k| k.is_mod())
+            else {
                 log::warn!("[mod {mod_id}] GuiOpen: unknown or non-mod gui kind '{kind_key}'");
                 return HostRet::Bool(false);
             };
@@ -83,14 +87,14 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{GuiValue, HostCall, HostRet};
 
-    use crate::events::{OpenGui, PostQueue, SessionPlayerRef, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::{IVec3, Vec3};
+    use crate::events::{OpenGui, PostQueue, SessionPlayerRef, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::player::PlayerId;
     use crate::world::World;
+    use petramond_math::math::{IVec3, Vec3};
 
     /// TWO sessions with panels open at TWO machines, which is the whole
     /// point: a mod runs once for the server, and a tick system acts as the
@@ -107,7 +111,8 @@ mod tests {
         let mut guest_gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let kind = petramond_world::gui_state::intern_kind("doctest:machine").expect("a mod kind interns");
+        let kind =
+            petramond_world::gui_state::intern_kind("doctest:machine").expect("a mod kind interns");
         let (host_at, guest_at) = (IVec3::new(1, 2, 3), IVec3::new(9, 2, 3));
 
         let others = vec![SessionPlayerRef {
@@ -123,7 +128,7 @@ mod tests {
             kind,
             anchor: Some(host_at),
         });
-        crate::events::with_sessions_scope(PlayerId(0), 0, acting_gui, others, || {
+        crate::events::with_sessions_scope(PlayerId(0), acting_gui, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut host,
@@ -182,7 +187,9 @@ mod tests {
             });
         });
 
-        let read = |map: &std::sync::Arc<petramond_world::gui_state::GuiStateMap>| match map.get("doctest:level") {
+        let read = |map: &std::sync::Arc<petramond_world::gui_state::GuiStateMap>| match map
+            .get("doctest:level")
+        {
             Some(petramond_world::gui_state::GuiValue::F32(v)) => *v,
             other => panic!("expected the published gauge, got {other:?}"),
         };

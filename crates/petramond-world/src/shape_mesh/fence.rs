@@ -13,10 +13,10 @@
 //! Flat-lit at the cell's own light with directional face shade, like the
 //! pane (per-corner AO would smear on thin geometry).
 
-use crate::tile::Tile;
 use crate::block::Aabb;
 use crate::fence::{rail_cross, RAIL_BOT_HI, RAIL_BOT_LO, RAIL_TOP_HI, RAIL_TOP_LO};
 use crate::pane::{EAST, NORTH, SOUTH, WEST};
+use crate::tile::Tile;
 
 use crate::block::shape::{ShapeBox, ShapeFace};
 use crate::face::Face;

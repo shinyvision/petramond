@@ -4,12 +4,12 @@
 //! placement path owes.
 
 use super::game::ServerGame;
-use petramond_world::block::{Aabb, Block, CellPart, ShapeFamily};
-use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
-use petramond_math::facing::Facing;
 use crate::events::tick::TickEvents;
-use petramond_math::math::{IVec3, Vec3};
+use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
 use crate::net::protocol::TargetRef;
+use petramond_math::facing::Facing;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::{Aabb, Block, CellPart, ShapeFamily};
 
 impl ServerGame {
     /// Ordinary placement of the held item's block, with the shared

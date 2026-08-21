@@ -1617,8 +1617,8 @@ mod ctx_tests {
         // a section with a sealed roof pays nothing for the margin scan
         let sealed = split_section([0, -3, 0]);
         let mut blocks = vec![3u16; 4096];
-        for i in 0..256 {
-            blocks[i] = 0; // one open row at the bottom, roof solid
+        for block in blocks.iter_mut().take(256) {
+            *block = 0; // one open row at the bottom, roof solid
         }
         let sealed = GenCtx::for_test(
             sealed.section_pos(),
@@ -1777,7 +1777,7 @@ mod ctx_tests {
             }
             cells += run.len();
             blooms += run.iter().filter(|&&b| b != content.vine).count();
-            if run.iter().any(|&b| b == content.vine) && run.iter().any(|&b| b != content.vine) {
+            if run.contains(&content.vine) && run.iter().any(|&b| b != content.vine) {
                 mixed += 1;
             }
         }

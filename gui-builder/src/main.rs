@@ -119,10 +119,15 @@ fn cli_screenshot(args: &[String]) -> Result<(), String> {
     let theme = theme_src::load(0);
     let catalog = bindings::Catalog::load();
     let doc_dir = input.parent();
-    let (rgba, (w, h)) =
-        preview::render_project(&project, &theme.theme, doc_dir, catalog.as_ref());
+    let (rgba, (w, h)) = preview::render_project(&project, &theme.theme, doc_dir, catalog.as_ref());
     image::save_buffer(output, &rgba, w, h, image::ColorType::Rgba8)
         .map_err(|e| format!("write {}: {e}", output.display()))?;
-    println!("wrote {} ({}x{}, theme: {})", output.display(), w, h, theme.label);
+    println!(
+        "wrote {} ({}x{}, theme: {})",
+        output.display(),
+        w,
+        h,
+        theme.label
+    );
     Ok(())
 }

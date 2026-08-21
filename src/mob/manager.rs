@@ -10,9 +10,9 @@
 
 use rustc_hash::FxHashSet;
 
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
 use petramond_world::chunk::ChunkPos;
-use petramond_math::math::{IVec3, Vec3};
 
 use super::brain::AiMob;
 use super::noise::Noise;
@@ -153,7 +153,11 @@ impl Mobs {
     /// Drop cached confined regions a block change could have altered — the
     /// world drains its per-tick change buffer here before each mob tick.
     /// `all` means the buffer overflowed (exact positions unknown).
-    pub fn invalidate_confined_regions(&mut self, changed: &[petramond_math::math::IVec3], all: bool) {
+    pub fn invalidate_confined_regions(
+        &mut self,
+        changed: &[petramond_math::math::IVec3],
+        all: bool,
+    ) {
         self.confined_regions.invalidate(changed, all);
     }
 

@@ -1,14 +1,14 @@
 use super::{app, app_with_grass, cursor_over_slot};
 use crate::app::{App, CursorIcon, CursorPolicy};
-#[cfg(feature = "audio")] // only the engine-gated ui-click test reads it
-use petramond_world::sound_registry::Sound;
-use petramond_render::camera::Camera;
-use petramond_world::controls::{Control, Modifiers, TextKey, TextShortcut};
-use petramond_world::gui_state::PointerButton;
-use petramond_math::math::Vec3;
 use petramond::net::protocol::{ClientToServer, ServerToClient};
 use petramond::player::PlayerMode;
 use petramond::save::WorldInfo;
+use petramond_math::math::Vec3;
+use petramond_render::camera::Camera;
+use petramond_world::controls::{Control, Modifiers, TextKey, TextShortcut};
+use petramond_world::gui_state::PointerButton;
+#[cfg(feature = "audio")] // only the engine-gated ui-click test reads it
+use petramond_world::sound_registry::Sound;
 
 #[test]
 fn app_starts_on_title_without_loading_a_game() {
@@ -250,7 +250,9 @@ fn play_after_rename_opens_the_original_save_directory() {
     drop(app); // joins the save I/O thread; everything queued hits disk
 
     assert!(
-        petramond::save::world_dir(dir_name).join("level.dat").exists(),
+        petramond::save::world_dir(dir_name)
+            .join("level.dat")
+            .exists(),
         "the ORIGINAL directory received the save"
     );
     assert!(

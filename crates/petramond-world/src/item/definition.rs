@@ -4,8 +4,8 @@
 //! loaded from `assets/items.json` (see `super::load`), looked up via
 //! `def(item)` / `from_id(id)`.
 
-use crate::tile::Tile;
 use crate::block::Block;
+use crate::tile::Tile;
 
 use super::{HeldPose, ItemTag, ItemType, ItemUse, Tool};
 

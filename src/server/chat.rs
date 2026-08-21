@@ -4,8 +4,8 @@
 //! delivered to currently connected clients and never retained server-side.
 
 use crate::net::protocol::{ChatColor, ChatLine, ChatSpan, MAX_CHAT_CHARS};
-use crate::server::game::ServerGame;
 use crate::player::PlayerId;
+use crate::server::game::ServerGame;
 
 /// Who should receive one accepted chat line on the next pump.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,12 +66,7 @@ impl ServerGame {
         self.enqueue_line(authored_line(seq, text), targets);
     }
 
-    pub fn enqueue_plain_chat(
-        &mut self,
-        text: &str,
-        color: ChatColor,
-        targets: ChatTargets,
-    ) {
+    pub fn enqueue_plain_chat(&mut self, text: &str, color: ChatColor, targets: ChatTargets) {
         let seq = self.alloc_chat_seq();
         self.enqueue_line(plain_line(seq, text, color), targets);
     }

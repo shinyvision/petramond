@@ -806,8 +806,8 @@ mod tests {
             for half_steps in -2000..=2000 {
                 let pan = half_steps as f32 * bpp;
                 let bounds = full_tile_bounds([pan, -pan], zoom);
-                assert!(bounds[1] - bounds[0] + 1 <= FULL_TILE_GRID);
-                assert!(bounds[3] - bounds[2] + 1 <= FULL_TILE_GRID);
+                assert!(bounds[1] - bounds[0] < FULL_TILE_GRID);
+                assert!(bounds[3] - bounds[2] < FULL_TILE_GRID);
 
                 let mut slots = BTreeSet::new();
                 for tz in bounds[2]..=bounds[3] {

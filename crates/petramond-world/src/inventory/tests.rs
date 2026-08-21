@@ -708,7 +708,11 @@ fn pickup_tops_up_a_matching_off_hand_first_and_never_a_foreign_one() {
         "the off-hand tops up first"
     );
     assert_eq!(
-        inv.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>(),
+        inv.slots
+            .iter()
+            .flatten()
+            .map(|s| s.count as u32)
+            .sum::<u32>(),
         6,
         "the remainder routes through the ordinary insertion"
     );
@@ -771,7 +775,11 @@ fn replace_held_one_swaps_the_off_hand_in_place() {
     assert!(inv.replace_held_one(Hand::Off, item(ItemType::Grass, 1)));
     assert_eq!(inv.off_hand().map(|s| s.count), Some(2));
     assert_eq!(
-        inv.slots.iter().flatten().find(|s| s.item == ItemType::Grass).map(|s| s.count),
+        inv.slots
+            .iter()
+            .flatten()
+            .find(|s| s.item == ItemType::Grass)
+            .map(|s| s.count),
         Some(1)
     );
 
@@ -800,7 +808,11 @@ fn gather_sweeps_the_off_hand_and_shift_ships_it_to_the_grid() {
     inv.shift_move_off_hand();
     assert!(inv.off_hand().is_none());
     assert_eq!(
-        inv.slots.iter().flatten().map(|s| s.count as u32).sum::<u32>(),
+        inv.slots
+            .iter()
+            .flatten()
+            .map(|s| s.count as u32)
+            .sum::<u32>(),
         9
     );
 

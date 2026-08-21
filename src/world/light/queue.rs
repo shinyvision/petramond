@@ -1,10 +1,10 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+use petramond_math::math::IVec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::column::Column;
 use petramond_world::light::LightRgb;
-use petramond_math::math::IVec3;
 use petramond_world::section::Section;
 
 use petramond_world::world::light::shape::{LightCells, ShapeStateSnapshot};
@@ -105,7 +105,9 @@ impl LightBakeQueue {
         if fresh.is_empty() {
             return;
         }
-        let Some(job) = petramond_world::world::light::batch::snapshot_batch(base, &fresh, sections, columns) else {
+        let Some(job) =
+            petramond_world::world::light::batch::snapshot_batch(base, &fresh, sections, columns)
+        else {
             return;
         };
         // Pending slots only for members the snapshot actually carries — an
@@ -235,7 +237,9 @@ pub fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
             .unwrap_or_default();
 
         let skylight = match sky {
-            SkyPlan::Full => petramond_world::section::uniform_cube(petramond_world::chunk::SKY_FULL),
+            SkyPlan::Full => {
+                petramond_world::section::uniform_cube(petramond_world::chunk::SKY_FULL)
+            }
             SkyPlan::Dark => petramond_world::section::uniform_cube(0),
             SkyPlan::Flood { surface } => {
                 let blocks =

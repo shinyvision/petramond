@@ -42,7 +42,8 @@ fn cursor_has_stack_tracks_the_held_stack() {
 #[test]
 fn closing_cursor_stack_uses_empty_inventory_slot_after_matching_stacks() {
     let mut game = game();
-    let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
+    let mut slots =
+        [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     slots[4] = None;
     game.server.sessions[0].player.inventory =
         Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), None, 0);
@@ -64,7 +65,8 @@ fn closing_cursor_stack_uses_empty_inventory_slot_after_matching_stacks() {
 #[test]
 fn closing_cursor_stack_queues_a_drop_when_inventory_is_full() {
     let mut game = game();
-    let slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
+    let slots =
+        [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     game.server.sessions[0].player.inventory =
         Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), None, 0);
 
@@ -86,7 +88,8 @@ fn closing_cursor_stack_queues_a_drop_when_inventory_is_full() {
 #[test]
 fn closing_cursor_stack_fills_matching_partials_then_drops_leftover() {
     let mut game = game();
-    let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
+    let mut slots =
+        [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     slots[2] = Some(ItemStack::new(ItemType::Dirt, 60));
     slots[10] = Some(ItemStack::new(ItemType::Dirt, 63));
     game.server.sessions[0].player.inventory =
@@ -164,12 +167,13 @@ fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
 /// clears the map again.
 #[test]
 fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
-    use petramond_world::gui_state::PointerButton;
     use petramond_world::gui_state::GuiValue;
+    use petramond_world::gui_state::PointerButton;
 
     let mut game = game();
     game.set_mods_for_test(petramond::modding::ModHost::test_unit_guest_host("modtest"));
-    let kind = petramond_world::gui_state::intern_kind("modtest:panel").expect("mod kind registers");
+    let kind =
+        petramond_world::gui_state::intern_kind("modtest:panel").expect("mod kind registers");
 
     // Stale values from before the session must not survive the open.
     petramond_world::gui_state::gui_state_set(
@@ -243,8 +247,8 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
 #[test]
 fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
-    use petramond_world::block::Block;
     use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     game.server.world.set_block_world(8, 64, 8, Block::Chest);

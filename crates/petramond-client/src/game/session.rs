@@ -1,15 +1,15 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use petramond_render::camera::Camera;
-use petramond_world::crafting::CraftingCatalog;
 use crate::particle::ParticleSystem;
 use petramond::player::Player;
+use petramond::player::PlayerId;
 use petramond::server::game::ServerGame;
 use petramond::server::handle::ServerHandle;
-use petramond::player::PlayerId;
 use petramond::worker::JobPool;
 use petramond::world::{World, WorldRole};
+use petramond_render::camera::Camera;
+use petramond_world::crafting::CraftingCatalog;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 use petramond::server::session_build::build_server_with_pool;
@@ -116,11 +116,7 @@ impl Game {
     }
 
     /// Assemble the client half around an already-connected server handle.
-    pub fn assemble(
-        mut cam: Camera,
-        handle: ServerHandle,
-        bootstrap: ClientBootstrap,
-    ) -> Self {
+    pub fn assemble(mut cam: Camera, handle: ServerHandle, bootstrap: ClientBootstrap) -> Self {
         sync_camera_to_player(&mut cam, &bootstrap.client_player);
         let last_player_eye_y = bootstrap.client_player.eye().y;
         // The camera the caller built carries the authored FOV; the per-frame
@@ -239,7 +235,8 @@ pub fn build_session_with_pool(
 ) -> (ServerGame, ClientBootstrap) {
     // The LOCAL player's identity (client.json / env / OS username) keys
     // its per-world save file: `players/<name>.dat`.
-    let player_name = petramond::save::client::resolve_player_name(&petramond::save::client::load());
+    let player_name =
+        petramond::save::client::resolve_player_name(&petramond::save::client::load());
     let (server, pool, fallback_world) =
         build_server_with_pool(world_name, new_seed, render_dist, Some(player_name), pool);
     let t_client = std::time::Instant::now();
@@ -339,4 +336,3 @@ fn sync_camera_to_player(cam: &mut Camera, player: &Player) {
     cam.yaw = player.yaw;
     cam.pitch = player.pitch;
 }
-

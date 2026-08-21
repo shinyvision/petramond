@@ -58,8 +58,6 @@ impl WorldData {
         s.cell_kv().get(&cell).map_or(0, |m| m.len())
     }
 
-
-
     pub fn cell_kv_writable(&self, wx: i32, wy: i32, wz: i32) -> bool {
         crate::chunk::SectionPos::from_world(wx, wy, wz).is_some_and(|sp| self.stream_writable(sp))
     }

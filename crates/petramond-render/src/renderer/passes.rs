@@ -162,7 +162,8 @@ impl Renderer {
                 let dist_sq = (cam - c).length_squared();
                 column_dist_sq = column_dist_sq.min(dist_sq);
                 column_has_opaque |= section.opaque_vertex_count > 0;
-                column_has_model |= section.model_idx_count > 0 || section.model_blend_idx_count > 0;
+                column_has_model |=
+                    section.model_idx_count > 0 || section.model_blend_idx_count > 0;
                 // Contact visibility is its OWN presence bit: a multi-cell
                 // model's contact triangles can sit in a section whose model
                 // index range is empty.
@@ -235,8 +236,8 @@ impl Renderer {
                     } else {
                         item.opaque_quads
                     } > 0;
-                let model_left = !model_batched
-                    && (item.model_idx_count > 0 || item.model_blend_idx_count > 0);
+                let model_left =
+                    !model_batched && (item.model_idx_count > 0 || item.model_blend_idx_count > 0);
                 if opaque_left
                     || model_left
                     || item.transparent_quads > 0

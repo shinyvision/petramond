@@ -65,7 +65,13 @@ fn a_long_body_blocks_placement_at_its_bow_and_stern() {
         "the shared segmented body prevents bow-clipping placement"
     );
     assert!(
-        body_overlaps_block_boxes(pos, 0.0, size, petramond_math::math::IVec3::new(0, 0, 1), full,),
+        body_overlaps_block_boxes(
+            pos,
+            0.0,
+            size,
+            petramond_math::math::IVec3::new(0, 0, 1),
+            full,
+        ),
         "the stern participates too"
     );
 }

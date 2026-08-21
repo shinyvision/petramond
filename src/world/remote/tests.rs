@@ -2,17 +2,17 @@ use crate::world::remote::payload::SectionPayloadExt;
 use crate::world::WorldData;
 use std::sync::Arc;
 
+use crate::net::protocol::BlockDelta;
+use crate::worker::JobPool;
+use crate::world::store::{LoadTarget, World, WorldRole};
+use petramond_math::facing::Facing;
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::block_state::{LogAxis, SlabSplit, StairHalf, StairState};
 use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ};
-use petramond_math::facing::Facing;
-use petramond_math::math::IVec3;
-use crate::net::protocol::BlockDelta;
 use petramond_world::section::Section;
 use petramond_world::slab::SlabSlot;
 use petramond_world::torch::TorchPlacement;
-use crate::worker::JobPool;
-use crate::world::store::{LoadTarget, World, WorldRole};
 
 /// A flat-floored source world (Combined runs the same content paths the
 /// headless server will) and a fresh replica, sharing ONE job pool — the
@@ -352,7 +352,10 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     assert!(server.place_stair(
         stair,
         Block::OakStairs,
-        petramond_world::block_state::StairState::new(Facing::South, petramond_world::block_state::StairHalf::Top),
+        petramond_world::block_state::StairState::new(
+            Facing::South,
+            petramond_world::block_state::StairHalf::Top
+        ),
     ));
     assert!(server.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
     server.insert_torch(torch, TorchPlacement::East);
@@ -380,8 +383,13 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     };
     let stair_state = state_at(stair).expect("stair delta carries state");
     assert_eq!(
-        <petramond_world::block_state::StairState as petramond_world::block::CellView>::from_cell(stair_state),
-        petramond_world::block_state::StairState::new(Facing::South, petramond_world::block_state::StairHalf::Top),
+        <petramond_world::block_state::StairState as petramond_world::block::CellView>::from_cell(
+            stair_state
+        ),
+        petramond_world::block_state::StairState::new(
+            Facing::South,
+            petramond_world::block_state::StairHalf::Top
+        ),
         "placed bits ride the delta"
     );
     assert_ne!(
@@ -391,7 +399,9 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     );
     assert_eq!(
         state_at(torch),
-        Some(petramond_world::block::CellCodec::to_cell(&TorchPlacement::East))
+        Some(petramond_world::block::CellCodec::to_cell(
+            &TorchPlacement::East
+        ))
     );
     assert!(state_at(door).is_some());
     assert!(state_at(door + IVec3::Y).is_some());
@@ -516,8 +526,8 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
 /// A hand-built column payload: flat maps, all-unknown summaries, and the
 /// given deep band floor — the minimum a replica needs to classify deep.
 fn column_payload_fixture(pos: ChunkPos, deep_band_lo: i32) -> crate::net::protocol::ColumnPayload {
-    use petramond_world::chunk::SECTION_SIZE;
     use crate::net::protocol::{ColumnPayload, SectionBytes};
+    use petramond_world::chunk::SECTION_SIZE;
     let flat = |n: usize| SectionBytes(Arc::from(vec![0u8; n].into_boxed_slice()));
     ColumnPayload {
         pos,
@@ -608,9 +618,9 @@ fn replication_log_coalesces_latest_wins_and_respects_capture() {
 /// incrementality gate.
 #[test]
 fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
+    use crate::world::store::LoadAnchor;
     use petramond_world::chunk::SECTION_VOLUME;
     use petramond_world::section::Section;
-    use crate::world::store::LoadAnchor;
     use rustc_hash::{FxHashMap, FxHashSet};
 
     let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
@@ -752,9 +762,9 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
 /// on the replica without meshing anyway.
 #[test]
 fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
+    use crate::world::store::LoadAnchor;
     use petramond_world::chunk::SECTION_VOLUME;
     use petramond_world::section::Section;
-    use crate::world::store::LoadAnchor;
     use rustc_hash::{FxHashMap, FxHashSet};
 
     let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());

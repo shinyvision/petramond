@@ -21,9 +21,9 @@ use super::item_cube::push_block_item_cube_lit;
 use super::item_model::ItemVertex;
 use super::lighting::{DynLight, LightEnv};
 use super::ItemEntityInstance;
+use petramond_mesh::Vertex;
 use petramond_world::block::Block;
 use petramond_world::item::ItemRenderKind;
-use petramond_mesh::Vertex;
 
 /// Side length (metres) of a dropped block-cube. Small so items read as loot, not
 /// world blocks.

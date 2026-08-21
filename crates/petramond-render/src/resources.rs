@@ -1,8 +1,8 @@
 use super::geometry_arena::{GeometryArena, LayerAlloc};
 use crate::atlas::decode_atlas_mips;
-use petramond_world::chunk::SectionPos;
 use petramond_mesh::{ChunkMesh, ContactShadowVertex, ModelVertex, TerrainVertex, Vertex};
 use petramond_util::texture_mips::build_cutout_mips;
+use petramond_world::chunk::SectionPos;
 
 /// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
 /// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size —
@@ -348,8 +348,12 @@ impl ColumnUploadScratch {
             .reserve(meshes.iter().map(|(_, mesh)| mesh.model.len()).sum());
         self.model_idx
             .reserve(meshes.iter().map(|(_, mesh)| mesh.model_idx.len()).sum());
-        self.model_blend_idx
-            .reserve(meshes.iter().map(|(_, mesh)| mesh.model_blend_idx.len()).sum());
+        self.model_blend_idx.reserve(
+            meshes
+                .iter()
+                .map(|(_, mesh)| mesh.model_blend_idx.len())
+                .sum(),
+        );
         self.contact
             .reserve(meshes.iter().map(|(_, mesh)| mesh.contact.len()).sum());
     }

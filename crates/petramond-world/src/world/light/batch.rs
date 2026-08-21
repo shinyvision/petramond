@@ -104,9 +104,7 @@ impl LightBatchJob {
 }
 
 /// Group section positions into their 2×2×2-aligned batches: `(group base, members)`.
-pub fn group_positions(
-    positions: &[SectionPos],
-) -> Vec<(SectionPos, Vec<SectionPos>)> {
+pub fn group_positions(positions: &[SectionPos]) -> Vec<(SectionPos, Vec<SectionPos>)> {
     let mut groups: std::collections::BTreeMap<(i32, i32, i32), Vec<SectionPos>> =
         std::collections::BTreeMap::new();
     for &p in positions {
@@ -335,15 +333,15 @@ pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBatchOutput> {
 /// Test-support builds only; never a public api surface.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_exports {
-    pub use std::sync::Arc;
-    pub use crate::chunk::ChunkPos;
-    pub use crate::column::Column;
-    pub use rustc_hash::FxHashMap;
-    pub use crate::chunk::SECTION_SIZE;
     pub use super::SPAN;
-    pub use crate::section::Section;
-    pub use crate::chunk::SectionPos;
-    pub use crate::chunk::section_idx;
     #[allow(unused_imports)]
     pub use super::*;
+    pub use crate::chunk::section_idx;
+    pub use crate::chunk::ChunkPos;
+    pub use crate::chunk::SectionPos;
+    pub use crate::chunk::SECTION_SIZE;
+    pub use crate::column::Column;
+    pub use crate::section::Section;
+    pub use rustc_hash::FxHashMap;
+    pub use std::sync::Arc;
 }

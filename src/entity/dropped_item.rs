@@ -5,11 +5,11 @@
 //! cells without tunnelling). Spin and age advance for the renderer/pickup; the
 //! `entity` module never draws — `App` reads `pos`/`spin`/`stack` directly.
 
-use petramond_world::item::ItemStack;
+use crate::world::World;
 #[cfg(test)]
 use petramond_math::math::IVec3;
 use petramond_math::math::Vec3;
-use crate::world::World;
+use petramond_world::item::ItemStack;
 
 use super::{hash01, hash_signed};
 

@@ -31,9 +31,9 @@
 //! on-load water kick when that terrain streams in
 //! (`world::stream::queue_loaded_section_water_updates`).
 
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE};
-use petramond_math::math::IVec3;
 use petramond_world::section::SectionSummary;
 
 use super::store::World;
@@ -184,12 +184,12 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use petramond_world::chunk::{CHUNK_SX, CHUNK_SZ, Chunk, ChunkPos, SECTION_SIZE, SectionPos};
-    use petramond_math::math::{IVec3, Vec3};
+    use super::super::store::World;
     use crate::mob::Mob;
     use crate::world::testutil::flat_world;
-    use super::super::store::World;
+    use petramond_math::math::{IVec3, Vec3};
     use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE};
 
     fn run_ticks(w: &mut World, n: u32) {
         let recipes = petramond_world::crafting::Recipes::default();

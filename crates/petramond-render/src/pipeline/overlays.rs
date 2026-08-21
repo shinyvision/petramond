@@ -2,11 +2,11 @@ use super::builders::{
     buffer_bind_group, color_target, cull_back, pipeline_layout, shader_module, uniform_entry,
     world_pipeline, DepthPreset,
 };
-use petramond_mesh::{ContactShadowVertex, Vertex};
 use crate::crosshair::MAX_CROSSHAIR_VERTICES;
 use crate::entity_shadow::{MAX_ENTITY_SHADOWS, VERTS_PER_SHADOW};
 use crate::selection::MAX_OUTLINE_VERTICES;
 use crate::uniforms::Uniforms;
+use petramond_mesh::{ContactShadowVertex, Vertex};
 use wgpu::util::DeviceExt;
 
 /// Boxes the break-overlay buffers must hold: a legacy block cracks over ONE cube, but a

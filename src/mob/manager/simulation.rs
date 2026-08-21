@@ -1,12 +1,12 @@
 use std::sync::LazyLock;
 
-use petramond_world::body::Body;
-use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::brain::{AiMob, TickInputs};
 use crate::mob::model_meta::{self, IdleAnimMeta, Skeleton};
 use crate::mob::noise::{Noise, NoiseKind};
 use crate::mob::{def, defs, model, EntityRef, Instance, Mob};
 use crate::world::World;
+use petramond_math::math::{voxel_at, Vec3};
+use petramond_world::body::Body;
 
 use super::{nearest_anchor, Mobs};
 
@@ -483,8 +483,9 @@ impl Mobs {
             }
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
             mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
-            mob.blocklight =
-                petramond_world::light::BlockLight6::from_x2(world.blocklight_rgb_at_world(c.x, c.y, c.z));
+            mob.blocklight = petramond_world::light::BlockLight6::from_x2(
+                world.blocklight_rgb_at_world(c.x, c.y, c.z),
+            );
         }
         self.ticked_scratch = ticked;
         self.motion_finish_scratch = motion_finish;

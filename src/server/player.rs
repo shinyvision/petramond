@@ -10,17 +10,17 @@
 //! transform, targeting, and held intents; `PlayerAction`/menu actions latch the
 //! one-shot edges. The tick stages consume the latches exactly as before.
 
-use petramond_world::gui_state::PointerButton;
 use crate::menu::ContainerMenu;
-use petramond_world::gui_state::MenuSlot;
-use petramond_world::item::ItemType;
-use petramond_math::math::IVec3;
-use petramond_world::mining::MiningState;
 use crate::net::protocol::TargetRef;
 use crate::player::Player;
 use crate::server::bed::SleepState;
 use crate::server::drops::DropQueue;
 use crate::server::item_use::EatingState;
+use petramond_math::math::IVec3;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::item::ItemType;
+use petramond_world::mining::MiningState;
 
 pub use crate::player::PlayerId;
 
@@ -93,9 +93,7 @@ impl PendingUseClick {
     /// boat needs the water target for the ladder's second pass.
     pub fn ray_item(self) -> Option<ItemType> {
         use petramond_world::item::UseRay;
-        let water = |item: Option<ItemType>| {
-            item.filter(|i| i.use_ray() == UseRay::Water)
-        };
+        let water = |item: Option<ItemType>| item.filter(|i| i.use_ray() == UseRay::Water);
         water(self.held_item)
             .or_else(|| water(self.off_hand_item))
             .or(self.held_item)
@@ -148,12 +146,7 @@ impl FallTracker {
     /// landing (airborne → grounded) with its fall distance, or a water entry
     /// (airborne → in water) with the distance fallen into the surface —
     /// walking into water arrives grounded/level and reports nothing.
-    pub fn observe(
-        &mut self,
-        y: f32,
-        on_ground: bool,
-        in_water: bool,
-    ) -> Option<FallOutcome> {
+    pub fn observe(&mut self, y: f32, on_ground: bool, in_water: bool) -> Option<FallOutcome> {
         if in_water {
             let was_airborne = self.airborne;
             let dist = self.peak_y - y;
@@ -509,8 +502,6 @@ impl ConnectedPlayer {
         Some(eat.progress as f32 / ticks as f32)
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

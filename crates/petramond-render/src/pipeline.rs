@@ -1,6 +1,6 @@
 use crate::atlas::tile_uv;
-use petramond_world::tile::Tile;
 use petramond_mesh::{TerrainVertex, Vertex};
+use petramond_world::tile::Tile;
 
 use wgpu::util::DeviceExt;
 
@@ -408,10 +408,22 @@ pub(super) fn create_pipeline_resources(
         &shared.layout,
         &item3d_vbuf_layout,
     );
-    let world_model_pipe =
-        create_world_model_pipeline(device, format, sample_count, &shared.layout, &mob_shader, false);
-    let world_model_blend_pipe =
-        create_world_model_pipeline(device, format, sample_count, &shared.layout, &mob_shader, true);
+    let world_model_pipe = create_world_model_pipeline(
+        device,
+        format,
+        sample_count,
+        &shared.layout,
+        &mob_shader,
+        false,
+    );
+    let world_model_blend_pipe = create_world_model_pipeline(
+        device,
+        format,
+        sample_count,
+        &shared.layout,
+        &mob_shader,
+        true,
+    );
     let (break_pipe, break_vbuf, break_ibuf) =
         create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
     let contact_pipe = create_contact_pipeline(device, format, sample_count, &shared.uniform_bgl);

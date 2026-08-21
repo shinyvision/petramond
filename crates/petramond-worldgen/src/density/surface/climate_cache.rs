@@ -1,8 +1,8 @@
-use petramond_world::biome::Biome;
 use crate::biome::climate::{
     BiomeClimateIndex, ClimateSampleCell, ClimateSampler, SurfaceClimate, CLIMATE_SAMPLE_CELL_X,
     CLIMATE_SAMPLE_CELL_Z,
 };
+use petramond_world::biome::Biome;
 use rustc_hash::FxHashMap;
 
 /// Memoized base climate for one shared 4×4 climate cell: the sampled climate

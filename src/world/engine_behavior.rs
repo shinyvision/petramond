@@ -4,8 +4,8 @@
 //! layer's `EngineHook` facts; the tick resolves a key here FIRST and only
 //! falls back to the data-layer behaviour object.
 
-use petramond_math::math::IVec3;
 use crate::world::World;
+use petramond_math::math::IVec3;
 
 pub(crate) trait EngineBlockBehavior: Sync {
     fn random_tick(&self, world: &mut World, pos: IVec3) {

@@ -11,9 +11,9 @@ use petramond_math::math::Vec3;
 /// place with no hand jab and no sound for the placer.
 #[test]
 fn unpredicted_placement_keeps_the_initiators_world_event() {
-    use petramond_world::block::Block;
-    use petramond_math::math::IVec3;
     use petramond::net::protocol::WorldEventMsg;
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
@@ -57,9 +57,9 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
 /// still reaches them; a second session receives both either way.
 #[test]
 fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
-    use petramond_world::block::Block;
-    use petramond_math::math::IVec3;
     use petramond::net::protocol::WorldEventMsg;
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
@@ -190,9 +190,9 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
 /// resolves; any other cell's event assembles normally.
 #[test]
 fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() {
-    use petramond_world::block::Block;
-    use petramond_math::math::IVec3;
     use petramond::net::protocol::{ServerToClient, TickUpdate, WorldEventMsg};
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = game();
     let presented = IVec3::new(8, 64, 8);

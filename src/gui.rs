@@ -17,12 +17,12 @@ use std::sync::Arc;
 
 // Compat re-exports while callers migrate to `gui_state` (the shared session
 // vocabulary now lives below the GUI machinery).
-pub use petramond_world::gui_state::{ContainerView, GuiKind, GuiStateMap, HealthView, MenuSlot};
 #[allow(unused_imports)]
 pub use petramond_world::gui_state::{
     empty_gui_state, gui_state_clear, gui_state_set, intern_kind, intern_str, kind_key,
     resolve_kind, MAX_MENU_DRAG_SLOTS,
 };
+pub use petramond_world::gui_state::{ContainerView, GuiKind, GuiStateMap, HealthView, MenuSlot};
 
 /// One document image source for the renderer. Static pack art is cached by
 /// path; client-WASM rasters are replaced by `(key, revision)` without ever
@@ -165,8 +165,6 @@ impl UiViewport {
         UiViewport::new(size, 0)
     }
 }
-
-
 
 /// An owned, neutral UI read model of the flat UI data needed to draw the hotbar
 /// or open menu. Built by the app presentation boundary and consumed by the

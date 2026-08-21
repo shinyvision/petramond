@@ -1,11 +1,10 @@
 //! Directional stairs at the world level: position-aware facing lookup and placement.
 
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::block_state::StairState;
-use petramond_math::math::IVec3;
 
 use super::store::World;
-
 
 impl World {
     /// Place a single-cell stair and record its facing before relighting/remeshing.

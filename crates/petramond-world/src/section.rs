@@ -305,11 +305,7 @@ impl Section {
 
     /// Record a custom-shape cell's freshly-baked render boxes (the client
     /// render-bake pump). Bumps `mesh_revision` so the section remeshes.
-    pub fn set_shape_render(
-        &mut self,
-        idx: u16,
-        boxes: Box<[crate::block::ShapeRenderBox]>,
-    ) {
+    pub fn set_shape_render(&mut self, idx: u16, boxes: Box<[crate::block::ShapeRenderBox]>) {
         Arc::make_mut(self.shape_render.get_or_insert_with(Default::default)).insert(idx, boxes);
         self.mesh_revision += 1;
     }

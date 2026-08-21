@@ -14,11 +14,11 @@
 //! it back through the `PlayerInput` HostCall.
 
 use crate::events::PostEvent;
-use petramond_math::math::Vec3;
 use crate::mob::riding::{
     dismount_spot, player_body_free, player_body_known_free, seat_world_pos, Mount, MountTarget,
 };
 use crate::player::{Player, PlayerInputSnapshot};
+use petramond_math::math::Vec3;
 
 use super::game::ServerGame;
 

@@ -32,14 +32,14 @@
 
 use std::cmp::Reverse;
 
+use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 use petramond_world::block::Block;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use petramond_world::crafting::Recipes;
-use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 
-use petramond_world::world::tick_state::NAV_CHANGE_CAP;
 use super::sim_guard::{SimReadiness, SIM_RETRY_DELAY};
 use super::store::World;
+use petramond_world::world::tick_state::NAV_CHANGE_CAP;
 
 /// Random-tick draws per loaded 16³ section per tick.
 const RANDOM_TICK_SPEED: u32 = 3;
@@ -51,7 +51,6 @@ const RANDOM_TICK_SPEED: u32 = 3;
 /// plus behaviour probes over ~2 800 columns per player burned half the
 /// server tick thread on an idle world. 8 chunks (128 blocks)
 const RANDOM_TICK_CHUNK_RADIUS: i32 = 8;
-
 
 /// Whether replacing `old` with `new` provably CANNOT change what a mob can
 /// walk on or through — the confinement-invalidation filter for
@@ -80,7 +79,6 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
     };
     static_shape(old) && static_shape(new) && old.collision_boxes() == new.collision_boxes()
 }
-
 
 impl World {
     /// Current game-tick number (advances once per [`World::game_tick`]).
@@ -464,9 +462,11 @@ impl World {
                         .copied()
                         .unwrap_or(0);
                     while cys != 0 {
-                        let cy = petramond_world::chunk::SECTION_MIN_CY + cys.trailing_zeros() as i32;
+                        let cy =
+                            petramond_world::chunk::SECTION_MIN_CY + cys.trailing_zeros() as i32;
                         cys &= cys - 1;
-                        let Some(section) = self.data.sections.get(&SectionPos::new(cx, cy, cz)) else {
+                        let Some(section) = self.data.sections.get(&SectionPos::new(cx, cy, cz))
+                        else {
                             continue;
                         };
                         let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();

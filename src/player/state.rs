@@ -1,5 +1,5 @@
-use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
+use petramond_math::math::{IVec3, Vec3};
 
 /// Half the horizontal width (box is 0.6 wide on x and z).
 pub const HALF_W: f32 = 0.3;

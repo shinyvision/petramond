@@ -5,9 +5,9 @@
 //! The blend is precomputed once per section in
 //! [`biome_window`]; the per-face loop then just looks the column up.
 
-use petramond_world::tile::TileTint;
 use petramond_world::biome::Biome;
 use petramond_world::chunk::{CHUNK_SX, CHUNK_SZ};
+use petramond_world::tile::TileTint;
 
 const COLUMNS: usize = CHUNK_SX * CHUNK_SZ;
 const BLEND_RADIUS: i32 = 2;

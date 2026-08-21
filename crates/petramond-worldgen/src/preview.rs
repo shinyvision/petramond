@@ -4,11 +4,11 @@
 
 use std::collections::HashMap;
 
+use crate::feature::{FeatureCtx, VoxelSink};
+use crate::rng::FeatureRng;
 use petramond_world::block::Block;
 use petramond_world::chunk::Chunk;
 use petramond_world::mathh::IVec3;
-use crate::feature::{FeatureCtx, VoxelSink};
-use crate::rng::FeatureRng;
 
 const FEATURE_PREVIEW_SALT: u64 = 0x0000_FE47_0000_0001;
 
@@ -43,9 +43,11 @@ pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
 // Cubic per-section generation, re-exported so dev tools (genmap's deep
 // cross-section / cave statistics) can inspect terrain below y = 0 — the
 // whole-column `Chunk` preview only covers `[0, CHUNK_SY)`.
-pub use petramond_world::chunk::{SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y};
-pub use petramond_world::section::Section;
 pub use crate::driver::{ChunkGenerator, ColumnGen};
+pub use petramond_world::chunk::{
+    SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y,
+};
+pub use petramond_world::section::Section;
 
 /// A kilometre-scale surface overview sampled straight from the climate
 /// graph (no chunk generation): per grid point the classified biome id and
@@ -59,9 +61,7 @@ pub struct MacroSurfaceMap {
 }
 
 pub fn macro_surface_map(seed: u32, side: usize, stride: i32) -> MacroSurfaceMap {
-    use crate::biome::climate::{
-        BiomeClimateIndex, ClimateSampleCell, ClimateSampler,
-    };
+    use crate::biome::climate::{BiomeClimateIndex, ClimateSampleCell, ClimateSampler};
     use crate::density::terrain::{channels, TerrainDensitySpec};
     use crate::graph::SamplePoint;
 
@@ -137,9 +137,7 @@ pub fn preview_feature(name: &str, seed: u32) -> Option<FeaturePreview> {
     Some(FeaturePreview { voxels, bounds })
 }
 
-fn configured_feature(
-    name: &str,
-) -> Option<&'static crate::feature::ConfiguredFeature> {
+fn configured_feature(name: &str) -> Option<&'static crate::feature::ConfiguredFeature> {
     let key = name.trim().to_ascii_lowercase().replace('-', "_");
     let key = match key.as_str() {
         "young_oak" => "oak_young",

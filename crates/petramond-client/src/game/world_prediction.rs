@@ -8,8 +8,8 @@
 use super::prediction;
 use super::tick::{GameInput, PlacePrediction, WorldEvent};
 use super::Game;
-use petramond_math::math::IVec3;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
+use petramond_math::math::IVec3;
 
 impl Game {
     /// The ACTING hand's stack from the replicated self view — the read every
@@ -412,7 +412,8 @@ impl Game {
             return PlacePrediction::No;
         }
         let held = self.predicted_held().map(|s| s.item);
-        let player_facing = petramond::server::placement::facing_from_forward(self.player.forward());
+        let player_facing =
+            petramond::server::placement::facing_from_forward(self.player.forward());
 
         // The SHARED per-shape placement ladder (`World::placement_plan`, the
         // same rule the server evaluates against its world), run against the
@@ -449,7 +450,8 @@ impl Game {
         // place), the request ships unpredicted.
         let oriented_model = match block.model_kind() {
             Some(kind) => {
-                block.directional_view() || petramond_world::block_model::instance(kind).cells.len() > 1
+                block.directional_view()
+                    || petramond_world::block_model::instance(kind).cells.len() > 1
             }
             None => false,
         };
@@ -531,16 +533,17 @@ impl Game {
         if !result.accepted {
             return Some(PlacePrediction::No);
         }
-        let Some((anchor, write_block)) =
-            petramond::world::placement::validate_custom_plan(&result, block, shape_kind, place_pos)
-        else {
+        let Some((anchor, write_block)) = petramond::world::placement::validate_custom_plan(
+            &result, block, shape_kind, place_pos,
+        ) else {
             return Some(PlacePrediction::No);
         };
         // The replaceable gate (the server's `block_if_loaded` twin): an
         // unread replica cell reads as air — optimistic, and a stale read
         // rolls back like any engine ghost.
-        let cur =
-            petramond_world::block::Block::from_id(self.replica.chunk_block(anchor.x, anchor.y, anchor.z));
+        let cur = petramond_world::block::Block::from_id(
+            self.replica.chunk_block(anchor.x, anchor.y, anchor.z),
+        );
         if !cur.is_replaceable() || cur == write_block {
             return Some(PlacePrediction::No);
         }

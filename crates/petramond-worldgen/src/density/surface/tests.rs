@@ -1,7 +1,7 @@
 use super::*;
-use petramond_world::chunk::Chunk;
 use crate::biome::climate::{AxisRange, BiomeClimateEntry, ClimateRect, SurfaceClimate};
 use crate::graph::{Channel, SamplePoint, SampledScalarField};
+use petramond_world::chunk::Chunk;
 
 #[derive(Debug)]
 struct PlaneDensity {

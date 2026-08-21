@@ -117,10 +117,7 @@ impl SlotSpec {
     /// integer vocabulary; it is reinterpreted as the mask's `u32` bits, so a
     /// publisher passing `-1` opens every filter exactly like [`FULL_MASK`].
     pub fn accepts_mask(&self, gui_state: Option<&crate::gui_state::GuiStateMap>) -> u32 {
-        match self
-            .accepts_bind
-            .and_then(|key| gui_state?.get(key))
-        {
+        match self.accepts_bind.and_then(|key| gui_state?.get(key)) {
             Some(crate::gui_state::GuiValue::I32(m)) => *m as u32,
             _ => FULL_MASK,
         }

@@ -1,7 +1,7 @@
 use crate::events::tick::TickEvents;
+use crate::player::PlayerId;
 #[cfg(any(test, feature = "test-support"))]
 use crate::server::player::ConnectedPlayer;
-use crate::player::PlayerId;
 
 use super::ServerGame;
 
@@ -34,8 +34,9 @@ impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn install_recipes_for_test(&mut self, recipes: petramond_world::crafting::Recipes) {
         self.recipes = recipes;
-        self.unlocks =
-            std::sync::Arc::new(petramond_world::crafting::UnlockIndex::build(self.recipes.crafting()));
+        self.unlocks = std::sync::Arc::new(petramond_world::crafting::UnlockIndex::build(
+            self.recipes.crafting(),
+        ));
         for s in 0..self.sessions.len() {
             self.unlock_all_recipes_for_test(s);
         }

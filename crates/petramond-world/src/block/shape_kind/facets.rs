@@ -12,9 +12,9 @@
 //! struct implements one or both; the [`ShapeKindDef`](super::ShapeKindDef)
 //! row binds the singletons.
 
-use crate::tile::Tile;
 use crate::block_model::BlockModelKind;
 use crate::mathh::IVec3;
+use crate::tile::Tile;
 
 use super::super::{Aabb, Block, CellPart, ShapeBox};
 use super::neighborhood::{ShapeNeighborhood, ShapeState};

@@ -13,10 +13,10 @@
 //! or the world's terrain-content revision moved (`World::terrain_send_key`),
 //! or while a previous plan hit the per-pump budget.
 
-use petramond_world::chunk::{ChunkPos, SectionPos};
-use petramond_math::math::IVec3;
 use crate::net::protocol::{SectionCacheClaim, ServerToClient, SECTION_CACHE_CAP};
 use crate::world::LoadAnchor;
+use petramond_math::math::IVec3;
+use petramond_world::chunk::{ChunkPos, SectionPos};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
@@ -609,8 +609,8 @@ mod tests {
     use super::*;
     use crate::net::connection::SERVER_QUEUE_MSGS;
     use crate::net::protocol::ClientToServer;
-    use crate::server::game::PumpOutput;
     use crate::player::PlayerId;
+    use crate::server::game::PumpOutput;
     use petramond_util::test_time::TEST_HARD_DEADLINE;
     use std::time::Instant;
 

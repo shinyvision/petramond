@@ -69,14 +69,7 @@ impl BodyPose {
     /// (false for spectators — the local body never draws for one, but the
     /// gate keeps both drivers identical). `sneaking` eases the sneak-stance
     /// blend in/out.
-    pub fn advance(
-        &mut self,
-        dt: f32,
-        hspeed: f32,
-        head_yaw: f32,
-        can_move: bool,
-        sneaking: bool,
-    ) {
+    pub fn advance(&mut self, dt: f32, hspeed: f32, head_yaw: f32, can_move: bool, sneaking: bool) {
         self.moving = hspeed * hspeed > MOVING_SPEED_SQ && can_move;
         // Stand↔sneak blends like walk↔stand: eased, with a snap-to-rest floor
         // so the weight actually reaches 0/1.

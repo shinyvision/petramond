@@ -24,8 +24,8 @@ use super::item_model::ItemVertex;
 use super::lighting::{fold_tint, DynLight, LightEnv};
 use super::mob_model::{bake_model_cubes, hurt_tint};
 use super::PlayerRenderInstance;
-use petramond_world::bbmodel::Model;
 use petramond::player::model::PLAYER_MODEL_SCALE;
+use petramond_world::bbmodel::Model;
 
 /// The grip point in model pixels, in the visual-right arm's rest frame: centred
 /// in the fist (the lower arm spans x 4..8, ends at y 12), a touch toward the
@@ -88,8 +88,7 @@ pub(super) fn build_player_body(
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> (u32, Mat4, Mat4) {
-    let (swing, swing_scale, eat, eat_bob) =
-        (held.swing, held.swing_scale, held.eat, held.eat_bob);
+    let (swing, swing_scale, eat, eat_bob) = (held.swing, held.swing_scale, held.eat, held.eat_bob);
     verts.clear();
     indices.clear();
 
@@ -217,8 +216,7 @@ pub(super) fn build_player_body(
         if let Some(shoulder) = model.bone_named(OFF_SHOULDER_BONE) {
             let eased = 1.0 - (1.0 - off_s).powi(4);
             let raise = (eased * std::f32::consts::PI).sin() * 1.2;
-            let pitch_term =
-                (off_s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
+            let pitch_term = (off_s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
             let roll = (off_s * std::f32::consts::PI).sin() * 0.4;
             let rot = Quat::from_rotation_x((raise + pitch_term) * off.swing_scale)
                 * Quat::from_rotation_y(off_twist)
@@ -324,7 +322,10 @@ pub(super) fn held_block_transform(hand: Mat4) -> Mat4 {
 /// display unit is one world block, and the authored pose does the rest. A model
 /// that sits wrong in hand has an untuned `thirdperson_righthand` pose; tune it
 /// in Blockbench, not here.
-pub(super) fn held_model_transform(hand: Mat4, kind: petramond_world::block_model::BlockModelKind) -> Mat4 {
+pub(super) fn held_model_transform(
+    hand: Mat4,
+    kind: petramond_world::block_model::BlockModelKind,
+) -> Mat4 {
     let pose = &petramond_world::block_model::display(kind).thirdperson_righthand;
     hand * Mat4::from_translation(HAND_GRIP_PX)
         * Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE))
@@ -764,8 +765,7 @@ mod tests {
                         if pix[ti + 3] < 128 {
                             continue;
                         }
-                        let shade =
-                            w0 * tri[0].shade + w1 * tri[1].shade + w2 * tri[2].shade;
+                        let shade = w0 * tri[0].shade + w1 * tri[1].shade + w2 * tri[2].shade;
                         zbuf[li] = z;
                         let o = ((row * h + y) * w + x) * 3;
                         color[o] = (pix[ti] as f32 * shade).min(255.0) as u8;
@@ -886,7 +886,11 @@ mod tests {
             }
             println!(
                 "row {row}: {} (off_swing {off_swing})",
-                if *model_row { "bucket both hands" } else { "pickaxe both hands" }
+                if *model_row {
+                    "bucket both hands"
+                } else {
+                    "pickaxe both hands"
+                }
             );
         }
         image::save_buffer(

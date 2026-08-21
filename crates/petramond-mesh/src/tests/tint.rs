@@ -63,8 +63,7 @@ fn a_cell_tint_multiplies_every_box_family() {
             "{name}: a tint changes colour, never geometry"
         );
         assert!(
-            dyed.iter()
-                .all(|v| v.packed2 & crate::DYED_FLAG2 != 0),
+            dyed.iter().all(|v| v.packed2 & crate::DYED_FLAG2 != 0),
             "{name}: every tinted vertex samples the dye-base twin"
         );
         // The multiply must actually reach the vertex tint lane. Comparing
@@ -120,9 +119,7 @@ fn a_stack_dyed_per_layer_draws_each_layer_in_its_own_colour() {
     // Every vertex is dyed (both layers carry a tint), and the two layers
     // disagree on colour — the whole point.
     assert!(
-        verts
-            .iter()
-            .all(|v| v.packed2 & crate::DYED_FLAG2 != 0),
+        verts.iter().all(|v| v.packed2 & crate::DYED_FLAG2 != 0),
         "both dyed layers sample the dye-base twin"
     );
     let colours = |above: bool| -> Vec<[f32; 3]> {
@@ -200,9 +197,7 @@ fn an_untinted_cell_never_sets_the_dyed_flag() {
     for (name, block) in box_families() {
         let verts = cell_verts(&mesh(&tinted_scene(block, None)));
         assert!(
-            verts
-                .iter()
-                .all(|v| v.packed2 & crate::DYED_FLAG2 == 0),
+            verts.iter().all(|v| v.packed2 & crate::DYED_FLAG2 == 0),
             "{name}: an untinted cell must sample the plain tile"
         );
     }

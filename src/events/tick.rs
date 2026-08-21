@@ -4,9 +4,9 @@
 //! presentation. The sim never touches audio or particles — it only queues
 //! these values.
 
-use petramond_world::block::Block;
-use petramond_math::math::{IVec3, Vec3};
 use crate::player::PlayerId;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
 
 /// Fixed simulation timestep: 20 game ticks per second, independent of frame
 /// rate. World simulation (block updates, scheduled ticks, water flow) advances

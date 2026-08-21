@@ -75,7 +75,9 @@ impl App {
     }
 
     fn open_inventory(&mut self) {
-        self.enter_menu(AppScreen::Menu(petramond_world::gui_state::GuiKind::Inventory));
+        self.enter_menu(AppScreen::Menu(
+            petramond_world::gui_state::GuiKind::Inventory,
+        ));
         if let Some(game) = self.game.as_mut() {
             game.request_open_inventory();
         }

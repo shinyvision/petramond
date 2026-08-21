@@ -422,8 +422,10 @@ impl ClientModRuntime {
             Vec<petramond_world::block::Aabb>,
             mod_api::LightAperture,
         )> = Vec::new();
-        let mut baked_render: Vec<(petramond_math::math::IVec3, Box<[petramond_world::block::ShapeRenderBox]>)> =
-            Vec::new();
+        let mut baked_render: Vec<(
+            petramond_math::math::IVec3,
+            Box<[petramond_world::block::ShapeRenderBox]>,
+        )> = Vec::new();
         for ((shape_key, shape_kind), group) in &groups {
             let Some(loaded) = self.owner_mod_mut(shape_key) else {
                 continue;
@@ -570,14 +572,7 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas event");
     }
 
-    pub fn canvas_scroll(
-        &mut self,
-        world: &World,
-        canvas_key: &str,
-        x: f32,
-        y: f32,
-        delta: f32,
-    ) {
+    pub fn canvas_scroll(&mut self, world: &World, canvas_key: &str, x: f32, y: f32, delta: f32) {
         let call = GuestCall::ClientCanvasScroll {
             canvas_key: canvas_key.to_owned(),
             x,
@@ -667,16 +662,13 @@ impl ClientModRuntime {
     /// its last weather on for the rest of the session: its targets read as
     /// zero intensity so the drives ease out and retire (mirrors
     /// `take_commands`).
-    pub fn ambient_targets(
-        &self,
-    ) -> impl Iterator<Item = (&str, u8, f32, [f32; 2])> + '_ {
+    pub fn ambient_targets(&self) -> impl Iterator<Item = (&str, u8, f32, [f32; 2])> + '_ {
         self.mods.iter().flat_map(|m| {
             let disabled = m.instance.disabled();
-            m.instance
-                .client_data()
-                .into_iter()
-                .flat_map(move |data| {
-                    data.ambient_sets.iter().map(move |(&bundle, &(intensity, wind))| {
+            m.instance.client_data().into_iter().flat_map(move |data| {
+                data.ambient_sets
+                    .iter()
+                    .map(move |(&bundle, &(intensity, wind))| {
                         (
                             m.id.as_str(),
                             bundle,
@@ -684,7 +676,7 @@ impl ClientModRuntime {
                             wind,
                         )
                     })
-                })
+            })
         })
     }
 
@@ -758,7 +750,8 @@ pub fn bake_installed_custom_item_geometry() {
             .copied()
             .filter(|b| {
                 b.shape_family() == ShapeFamily::Custom
-                    && petramond_world::registry::namespace(b.shape_kind().key()) == Some(id.as_str())
+                    && petramond_world::registry::namespace(b.shape_kind().key())
+                        == Some(id.as_str())
             })
             .collect();
         if blocks.is_empty() {
@@ -897,7 +890,7 @@ pub fn seed_client_storage_for_test(
         let rest = entries.split_off(take);
         // The worker drains asynchronously; when a large seed outruns the
         // pending-byte cap, wait for it rather than fail.
-        let mut batch = entries;
+        let batch = entries;
         loop {
             match storage.set_many(batch.clone()) {
                 Ok(()) => break,
@@ -1043,16 +1036,18 @@ mod tests {
     /// minimap against a server without it) stays inactive.
     #[test]
     fn unlisted_packs_contribute_no_client_instance() {
-        let pack = |name: &str, id: Option<&str>, client_wasm: Option<&str>| petramond_world::assets::Pack {
-            dir: PathBuf::from(format!("/fixture/{name}")),
-            name: name.to_owned(),
-            id: id.map(str::to_owned),
-            version: None,
-            description: String::new(),
-            summary: None,
-            icon: None,
-            wasm: None,
-            client_wasm: client_wasm.map(PathBuf::from),
+        let pack = |name: &str, id: Option<&str>, client_wasm: Option<&str>| {
+            petramond_world::assets::Pack {
+                dir: PathBuf::from(format!("/fixture/{name}")),
+                name: name.to_owned(),
+                id: id.map(str::to_owned),
+                version: None,
+                description: String::new(),
+                summary: None,
+                icon: None,
+                wasm: None,
+                client_wasm: client_wasm.map(PathBuf::from),
+            }
         };
         let packs = [
             pack(

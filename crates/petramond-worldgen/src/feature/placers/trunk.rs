@@ -7,10 +7,10 @@
 //! `4 + next_i32(0,1)`), and consumes NOTHING for a fixed height (matching the
 //! literal-height oaks) — this no-extra-draw rule is load-bearing for parity.
 
-use petramond_world::block::Block;
-use petramond_world::mathh::IVec3;
 use crate::feature::FeatureCtx;
 use crate::rng::FeatureRng;
+use petramond_world::block::Block;
+use petramond_world::mathh::IVec3;
 
 /// A placed trunk: where the foliage attaches, and every log cell written —
 /// the wood the canopy commit treats as leaf support.

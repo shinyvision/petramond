@@ -12,8 +12,8 @@
 //! restart.
 
 use super::GuiKind;
-use petramond_world::container::{SlotSpec, MAX_CONTAINER_SLOTS, MAX_SLOT_FILTERS};
 use petramond_ui::{DocClass, Document, Node, NodeKind, SlotContract};
+use petramond_world::container::{SlotSpec, MAX_CONTAINER_SLOTS, MAX_SLOT_FILTERS};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -115,7 +115,12 @@ pub fn loaded_documents() -> Vec<(&'static str, usize)> {
     let mut out: Vec<(&'static str, usize)> = registry
         .entries
         .iter()
-        .filter_map(|e| Some((petramond_world::gui_state::kind_key(e.kind)?, e.container_slots.len())))
+        .filter_map(|e| {
+            Some((
+                petramond_world::gui_state::kind_key(e.kind)?,
+                e.container_slots.len(),
+            ))
+        })
         .collect();
     out.sort_unstable();
     out
@@ -136,7 +141,8 @@ pub fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
 /// an engine block-entity's roles. `Err` skips the document loudly at load.
 fn mod_contract_for(doc: &Document) -> Result<SlotContract, String> {
     // The engine grids' sizes come from the inventory layout itself.
-    const MAIN_GRID: usize = petramond_world::inventory::TOTAL_SLOTS - petramond_world::inventory::HOTBAR_LEN;
+    const MAIN_GRID: usize =
+        petramond_world::inventory::TOTAL_SLOTS - petramond_world::inventory::HOTBAR_LEN;
     const HOTBAR: usize = petramond_world::inventory::HOTBAR_LEN;
     let mut roles: Vec<(String, usize)> = Vec::new();
     for (role, count) in doc.role_slots() {
@@ -224,7 +230,9 @@ fn resolve_slot_filter(
                     "slot accepts data key '{data}': data keys must be namespaced ('mod_id:name')"
                 ));
             }
-            Ok(petramond_world::container::SlotFilter::Data(super::intern_str(data)))
+            Ok(petramond_world::container::SlotFilter::Data(
+                super::intern_str(data),
+            ))
         }
     }
 }
@@ -606,8 +614,8 @@ mod tests {
     fn bindings_catalog_parses_and_covers_controller_kinds() {
         // assets/ui/bindings.json is the builder-facing data contract; keep
         // it shipping and covering every screen a controller populates.
-        let (text, _) =
-            petramond_world::assets::read_base_text("ui/bindings.json").expect("bindings catalog ships");
+        let (text, _) = petramond_world::assets::read_base_text("ui/bindings.json")
+            .expect("bindings catalog ships");
         let v: serde_json::Value = serde_json::from_str(&text).expect("catalog is valid JSON");
         let kinds = v["kinds"].as_object().expect("catalog has kinds");
         for key in [
@@ -1102,7 +1110,9 @@ mod tests {
             .expect("an unheard-of data key is legal");
         assert_eq!(
             specs[0].accepts,
-            vec![petramond_world::container::SlotFilter::Data("doctest:metal")]
+            vec![petramond_world::container::SlotFilter::Data(
+                "doctest:metal"
+            )]
         );
         let err = doc_container_specs(&doc(r#"{"data": "metal"}"#)).unwrap_err();
         assert!(err.contains("namespaced"), "{err}");
@@ -1152,7 +1162,8 @@ mod tests {
             "A craftable rideable wooden chair, directional iron chains, a light-giving \
              chandelier, and a slate cauldron.";
         const ORDINARY: &str = "Nexo Test World";
-        let (text, _) = petramond_world::assets::read_base_text("ui/bindings.json").expect("catalog ships");
+        let (text, _) =
+            petramond_world::assets::read_base_text("ui/bindings.json").expect("catalog ships");
         let v: serde_json::Value = serde_json::from_str(&text).expect("catalog is valid JSON");
         let mut state = UiState::new();
         let key = crate::gui::kind_key(kind).unwrap_or("");
@@ -1335,9 +1346,8 @@ mod tests {
                 image_size: &|_| None,
             };
             let solved = solve(&tree, &env, (320, 240), &|_| 0);
-            let strip = (0..tree.len()).find(|&i| {
-                tree.get(i as u32).node.id.as_deref() == Some("craft_tip_ingredients")
-            });
+            let strip = (0..tree.len())
+                .find(|&i| tree.get(i as u32).node.id.as_deref() == Some("craft_tip_ingredients"));
             let strip = strip.unwrap_or_else(|| panic!("{kind:?} ships the ingredient strip hook"));
             assert!(
                 solved.rects[strip].w >= ASKED,
@@ -1440,7 +1450,9 @@ mod tests {
         let mut unbounded = Vec::new();
         for kind in SHELL_KINDS {
             walk_solved(*kind, 3, Seed::Long, |n| {
-                if matches!(n.inst.node.kind, petramond_ui::NodeKind::Tooltip { .. }) && n.rect.w > 200 {
+                if matches!(n.inst.node.kind, petramond_ui::NodeKind::Tooltip { .. })
+                    && n.rect.w > 200
+                {
                     unbounded.push(format!("{kind:?}: floating panel is {}px wide", n.rect.w));
                 }
             });

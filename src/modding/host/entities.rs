@@ -8,8 +8,8 @@ use mod_api::{
 
 use crate::entity::DroppedItem;
 use crate::events::{ModAction, PostEvent, SimCtx};
-use petramond_world::item::{ItemStack, ItemType};
 use petramond_math::math::Vec3;
+use petramond_world::item::{ItemStack, ItemType};
 
 use super::guards::{finite3, item_by_name, live_mob, sim_call, sim_query};
 use super::intern_mod_id;
@@ -263,11 +263,13 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
-                HostRet::Bool(
-                    ctx.world
-                        .mobs_mut()
-                        .set_mob_drive(index, horizontal, vertical, yaw, while_walking),
-                )
+                HostRet::Bool(ctx.world.mobs_mut().set_mob_drive(
+                    index,
+                    horizontal,
+                    vertical,
+                    yaw,
+                    while_walking,
+                ))
             })
         }
         HostCall::MobMount {
@@ -454,7 +456,10 @@ fn fill_inventory(
     while remaining > 0 {
         let put = remaining.min(item.max_stack_size());
         remaining -= put;
-        if let Some(leftover) = player.inventory.add(ItemStack::with_variant(item, put, variant)) {
+        if let Some(leftover) = player
+            .inventory
+            .add(ItemStack::with_variant(item, put, variant))
+        {
             leftovers.push(leftover);
         }
     }
@@ -488,7 +493,8 @@ pub(super) fn give_item_to(
     count: u8,
     variant: petramond_world::item::VariantId,
 ) -> bool {
-    let Some((leftovers, at)) = ctx.with_player(player, |p| fill_inventory(p, item, count, variant))
+    let Some((leftovers, at)) =
+        ctx.with_player(player, |p| fill_inventory(p, item, count, variant))
     else {
         return false;
     };
@@ -503,14 +509,14 @@ mod tests {
         MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
     };
 
-    use petramond_world::chunk::{ChunkPos, SECTION_VOLUME};
-    use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::{PostQueue, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
+    use petramond_world::chunk::{ChunkPos, SECTION_VOLUME};
 
     #[test]
     fn spawn_mob_initializes_cached_light_before_first_render_snapshot() {

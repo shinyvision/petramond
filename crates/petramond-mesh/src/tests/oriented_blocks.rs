@@ -54,8 +54,8 @@ fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
 /// entity facing survives the swap.
 #[test]
 fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
-    use petramond_world::tile::Tile;
     use petramond_world::furnace::Furnace;
+    use petramond_world::tile::Tile;
 
     let mut section = section_with(&[((8, 8, 8), Block::Furnace)]);
     section.insert_furnace(8, 8, 8, Furnace::default());

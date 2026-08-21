@@ -1,7 +1,7 @@
-use petramond_world::body::Body;
-use petramond_world::chunk::SectionPos;
 use crate::mob::{Mob, MobDamageFeedback, MobTagValue, SavedMob};
 use crate::world::World;
+use petramond_world::body::Body;
+use petramond_world::chunk::SectionPos;
 
 #[test]
 fn mobs_anchor_on_the_nearest_player() {
@@ -349,9 +349,7 @@ fn the_push_pass_records_touch_contacts_both_ways() {
         "overlapping mobs record each other: {contacts:?}"
     );
     assert!(
-        contacts[0].contains(&crate::mob::EntityRef::Player(
-            crate::player::PlayerId(3)
-        )),
+        contacts[0].contains(&crate::mob::EntityRef::Player(crate::player::PlayerId(3))),
         "the touching (sneaking) player is felt: {contacts:?}"
     );
     assert!(
@@ -609,8 +607,8 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
 /// two mobs standing inside each other, and it would only show up in a crowd.
 #[test]
 fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
-    use petramond_math::math::Vec3;
     use crate::mob::{def, Mob};
+    use petramond_math::math::Vec3;
 
     let kinds: Vec<Mob> = crate::mob::defs().iter().map(|d| d.mob).collect();
     let mut rng = 0x1234_5678_9abc_def0u64;

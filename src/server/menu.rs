@@ -8,19 +8,19 @@
 //! `ContainerMenu` — two players can stand in one chest; their clicks apply in
 //! session-id order on the tick.
 
-use petramond_world::gui_state::PointerButton;
-use petramond_world::crafting::CraftingStation;
 use crate::events::{PostEvent, SimCtx};
+use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
+use petramond_math::math::IVec3;
+use petramond_world::crafting::CraftingStation;
 use petramond_world::gui_state::ContainerView;
+use petramond_world::gui_state::PointerButton;
 use petramond_world::gui_state::{GuiStateMap, MenuSlot};
 use petramond_world::inventory::Inventory;
 use petramond_world::item::ItemStack;
-use petramond_math::math::IVec3;
-use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 
 use super::game::ServerGame;
-use crate::menu::{ContainerTarget, CraftMenuFailure};
 use crate::events::tick::TickEvents;
+use crate::menu::{ContainerTarget, CraftMenuFailure};
 use crate::net::protocol::ActionDenyReason;
 use crate::server::player::PendingMenuAction;
 
@@ -475,7 +475,9 @@ impl ServerGame {
                     // pack GUI uses, so no engine machine needs a wire variant.
                     let gauges = sess.menu.open_gauges(&self.world);
                     MenuTargetWire::Container {
-                        kind_key: petramond_world::gui_state::kind_key(kind).unwrap_or_default().to_string(),
+                        kind_key: petramond_world::gui_state::kind_key(kind)
+                            .unwrap_or_default()
+                            .to_string(),
                         pos,
                         slots: sess
                             .menu
@@ -485,7 +487,12 @@ impl ServerGame {
                             gauges
                                 .into_iter()
                                 .map(|(k, v)| {
-                                    (k, GuiValueWire::from_value(&petramond_world::gui_state::GuiValue::F32(v)))
+                                    (
+                                        k,
+                                        GuiValueWire::from_value(
+                                            &petramond_world::gui_state::GuiValue::F32(v),
+                                        ),
+                                    )
                                 })
                                 .collect()
                         }),
@@ -500,7 +507,9 @@ impl ServerGame {
 /// The `container_opened`/`container_closed` payload for a menu target, or `None`
 /// when no container session is involved. The unified target already carries
 /// the event's `(kind, pos)` identity.
-fn container_event_key(target: ContainerTarget) -> Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)> {
+fn container_event_key(
+    target: ContainerTarget,
+) -> Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)> {
     match target {
         ContainerTarget::None => None,
         ContainerTarget::Gui { kind, pos } => Some((kind, pos)),

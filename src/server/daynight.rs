@@ -306,10 +306,10 @@ mod tests {
         );
     }
 
-    use crate::events::EventBus;
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::EventBus;
     use crate::player::Player;
+    use petramond_math::math::Vec3;
 
     fn published_time(world: &World) -> f32 {
         let bytes = world.mod_kv_get(TIME_KEY).expect("petramond time");

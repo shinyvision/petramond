@@ -65,7 +65,10 @@ impl SavedIndex {
     /// Record `pos` as having an authoritative on-disk record.
     pub fn insert_authoritative(&mut self, pos: SectionPos) {
         if self.authoritative.insert(pos) {
-            self.columns.entry(pos.chunk_pos()).or_default().push(pos.cy);
+            self.columns
+                .entry(pos.chunk_pos())
+                .or_default()
+                .push(pos.cy);
         }
     }
 

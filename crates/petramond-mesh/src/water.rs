@@ -7,8 +7,8 @@
 //! winding. The fluid MATH (`fluid_height`, `fills_cell`, `surface_flow_dir`) stays
 //! in `crate::world::water`; this module only turns those values into vertices.
 
-use petramond_world::tile::Tile;
 use petramond_world::block::Block;
+use petramond_world::tile::Tile;
 
 /// Whether a water cell's side face toward a neighbouring water cell is culled or
 /// kept as the exposed vertical step (a full cell standing over a shorter,
@@ -94,7 +94,8 @@ impl WaterSurface {
         // current push matches the texture heading.
         let mut top_tile = petramond_world::tile::engine().water_still;
         let mut top_angle = 0u32;
-        let flow = petramond_world::water_math::surface_flow_dir(wx, wy, wz, block_at, fluid_at, still_at);
+        let flow =
+            petramond_world::water_math::surface_flow_dir(wx, wy, wz, block_at, fluid_at, still_at);
         if flow.length_squared() > 0.0 {
             top_tile = petramond_world::tile::engine().water_flow;
             // Continuous flow heading: the shader rotates the flow tile by this

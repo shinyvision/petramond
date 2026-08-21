@@ -21,11 +21,11 @@
 
 use std::time::{Duration, Instant};
 
+use crate::game::{Game, GameInput};
+use petramond::net::protocol::ClientToServer;
+use petramond_math::math::Vec3;
 use petramond_render::camera::Camera;
 use petramond_world::chunk::ChunkPos;
-use crate::game::{Game, GameInput};
-use petramond_math::math::Vec3;
-use petramond::net::protocol::ClientToServer;
 
 #[test]
 #[ignore]
@@ -156,8 +156,11 @@ fn join_profile_sync() {
             let all_final = (-1..=1).all(|dz| {
                 (-1..=1).all(|dx| {
                     (-1..=1).all(|dy| {
-                        let sp =
-                            petramond_world::chunk::SectionPos::new(pc.cx + dx, feet_cy + dy, pc.cz + dz);
+                        let sp = petramond_world::chunk::SectionPos::new(
+                            pc.cx + dx,
+                            feet_cy + dy,
+                            pc.cz + dz,
+                        );
                         let loaded = server
                             .world
                             .section_at_world_for_test(sp.cx * 16, sp.cy * 16, sp.cz * 16)

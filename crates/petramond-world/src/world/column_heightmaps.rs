@@ -3,15 +3,12 @@
 //! invalidation.
 //! (Data-half queries; the mutation/orchestration half stays in the engine crate.)
 
-use crate::world::data::WorldData;
 use crate::block::Block;
-use crate::chunk::{
-    section_idx, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
-};
+use crate::chunk::{section_idx, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE};
 use crate::column::NO_SURFACE;
+use crate::world::data::WorldData;
 
 impl WorldData {
-
     /// Merge one deterministic generated/cache section into the analytical bare
     /// surface and sky-cover maps. It can only add feature blocks above those
     /// baselines; authoritative saved terrain uses

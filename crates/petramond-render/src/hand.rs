@@ -23,10 +23,10 @@ use glam::{Mat4, Quat, Vec3};
 use super::item_cube::{push_block_item_cube_lit_with_state, push_cube_solid_lit};
 use super::lighting::DynLight;
 use super::HeldItemView;
-use petramond_world::tile::Tile;
+use petramond_mesh::Vertex;
 use petramond_world::block::Block;
 use petramond_world::item::ItemRenderKind;
-use petramond_mesh::Vertex;
+use petramond_world::tile::Tile;
 
 /// Skin tone for the bare-hand cuboid.
 const SKIN: [f32; 3] = [0.80, 0.60, 0.46];

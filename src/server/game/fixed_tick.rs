@@ -1,7 +1,7 @@
-use crate::events::{Attach, PostEvent, SessionPlayerRef, SimCtx, Stage};
 use crate::events::tick::{TickEvents, TICK_DT};
-use crate::server::player::ConnectedPlayer;
+use crate::events::{Attach, PostEvent, SessionPlayerRef, SimCtx, Stage};
 use crate::player::PlayerId;
+use crate::server::player::ConnectedPlayer;
 
 use super::{ServerGame, MAX_TICKS_PER_FRAME};
 
@@ -370,8 +370,8 @@ impl ServerGame {
     /// Split-borrow `sessions` around the ACTING session and run `f` against
     /// it with the sessions view published: inside `f`, any `SimCtx` built on
     /// the acting session's borrows can reach EVERY connected session's
-    /// player through its accessors (`acting_player_id` / `player_ids` /
-    /// `with_player`). The acting session is deliberately EXCLUDED from the
+    /// player through its accessors (`acting_player_id` / `with_player`). The
+    /// acting session is deliberately EXCLUDED from the
     /// published roster — its player is exactly the `&mut` `f` receives, and
     /// the accessors route its id through that borrow, so one player can
     /// never be reachable on two paths (the `with_sessions_scope` soundness
@@ -395,7 +395,7 @@ impl ServerGame {
                 gui_state: &mut sess.gui_state,
             })
             .collect();
-        crate::events::with_sessions_scope(act.id, acting, acting_gui, others, || f(act))
+        crate::events::with_sessions_scope(act.id, acting_gui, others, || f(act))
     }
 
     /// One session's open GUI, as the sessions roster publishes it — the

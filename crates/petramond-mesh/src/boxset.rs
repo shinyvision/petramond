@@ -396,7 +396,7 @@ pub(super) fn emit_box_set<B, S, L, K>(
 /// another block's face — the glass convention [`occupancy_boxes`] uses), and
 /// a family with no box form answers `false`, which is overdraw and never a
 /// hole.
-pub(in crate) fn cell_seals_face(
+pub(crate) fn cell_seals_face(
     nb: &dyn petramond_world::block::ShapeNeighborhood,
     pos: glam::IVec3,
     face: Face,
@@ -459,7 +459,7 @@ fn snow_bed(
 /// either IS a snow-cover block or is [`snow_bed`]ded in one. What the grass
 /// below swaps its sides for, so a decorated column keeps the snowy sides its
 /// undecorated neighbours have.
-pub(in crate) fn cell_wears_snow(
+pub(crate) fn cell_wears_snow(
     nb: &dyn petramond_world::block::ShapeNeighborhood,
     pos: glam::IVec3,
 ) -> bool {
@@ -472,7 +472,7 @@ pub(in crate) fn cell_wears_snow(
 /// it is whatever the snow beside it actually is, so it lines up by
 /// construction and a retuned snow row moves both together. Appends; empty
 /// when the cell is not bedded.
-pub(in crate) fn snow_bed_boxes(
+pub(crate) fn snow_bed_boxes(
     nb: &dyn petramond_world::block::ShapeNeighborhood,
     pos: glam::IVec3,
     block: Block,

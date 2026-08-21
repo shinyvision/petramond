@@ -121,28 +121,27 @@ impl Renderer {
                     color,
                 );
             }
-            let push_hooks =
-                |verts: &mut Vec<UiVertex>, icons: &[crate::ui::HookIconQuad]| {
-                    for icon in icons {
-                        let [u0, v0, u1, v1] = self.ui.icon_atlas.cell_uv(icon.item);
-                        let Some((visible, uv_tl, uv_br)) =
-                            clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
-                        else {
-                            continue;
-                        };
-                        crate::ui::push_quad_uv(
-                            verts,
-                            screen,
-                            visible.x,
-                            visible.y,
-                            visible.w,
-                            visible.h,
-                            uv_tl,
-                            uv_br,
-                            [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
-                        );
-                    }
-                };
+            let push_hooks = |verts: &mut Vec<UiVertex>, icons: &[crate::ui::HookIconQuad]| {
+                for icon in icons {
+                    let [u0, v0, u1, v1] = self.ui.icon_atlas.cell_uv(icon.item);
+                    let Some((visible, uv_tl, uv_br)) =
+                        clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
+                    else {
+                        continue;
+                    };
+                    crate::ui::push_quad_uv(
+                        verts,
+                        screen,
+                        visible.x,
+                        visible.y,
+                        visible.w,
+                        visible.h,
+                        uv_tl,
+                        uv_br,
+                        [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
+                    );
+                }
+            };
             push_hooks(&mut verts, &self.ui.build.hook_icon_quads);
             let normal_icon_vertex_count = verts.len() as u32;
             push_hooks(&mut verts, &self.ui.build.overlay_icon_quads);
@@ -196,9 +195,7 @@ fn clipped_icon(
     clip: Option<petramond::gui::SlotRect>,
     uv: [f32; 4],
 ) -> Option<(petramond::gui::SlotRect, [f32; 2], [f32; 2])> {
-    let visible = clip.map_or(Some(rect), |clip| {
-        crate::ui::intersect_rect(rect, clip)
-    })?;
+    let visible = clip.map_or(Some(rect), |clip| crate::ui::intersect_rect(rect, clip))?;
     let fx0 = (visible.x - rect.x) / rect.w;
     let fy0 = (visible.y - rect.y) / rect.h;
     let fx1 = (visible.x + visible.w - rect.x) / rect.w;

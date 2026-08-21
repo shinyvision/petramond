@@ -4,14 +4,14 @@
 //! itself lives on [`petramond::server::game::ServerGame`].
 
 use super::Game;
-use petramond_world::block::Block;
-use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::{
     ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, SelfEvents, TargetRef,
 };
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
 
-pub use petramond::events::tick::{MobSoundEvent, ModSound, ModSpatialSoundCommand};
 pub use petramond::events::tick::TICK_DT;
+pub use petramond::events::tick::{MobSoundEvent, ModSound, ModSpatialSoundCommand};
 
 /// What the place-prediction pass decided for a use click (see
 /// `Game::try_predict_place_ghost`). Distinguishing `Plausible` from `No`
@@ -431,8 +431,7 @@ impl Game {
         let local_jab = std::mem::take(&mut self.local_hand_jab) || se.used_unpredicted;
         // Which hand the jab belongs to: the local latch's own verdict, or —
         // for the echoed unpredicted consumption — the server's acting hand.
-        let local_jab_off =
-            std::mem::take(&mut self.local_hand_jab_off) || se.used_unpredicted_off;
+        let local_jab_off = std::mem::take(&mut self.local_hand_jab_off) || se.used_unpredicted_off;
         let local_swing = std::mem::take(&mut self.local_hand_swing);
         let local_threw = std::mem::take(&mut self.local_hand_threw);
         let local_broke = std::mem::take(&mut self.local_broke_block);
@@ -652,10 +651,7 @@ impl Game {
     /// the server's own view ray to agree (the `use_ray: water` boat click).
     /// If a server feature must one day force a look, it needs an explicit
     /// signal on the wire, not this echo channel.
-    pub fn adopt_authoritative_transform(
-        &mut self,
-        t: &petramond::net::protocol::SelfTransform,
-    ) {
+    pub fn adopt_authoritative_transform(&mut self, t: &petramond::net::protocol::SelfTransform) {
         let sent = self.last_sent_transform;
         if sent.is_none_or(|s| s.transform.pos != t.transform.pos) {
             self.player.teleport(t.transform.pos);

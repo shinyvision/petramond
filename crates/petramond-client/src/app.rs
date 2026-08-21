@@ -32,12 +32,12 @@ pub use screen::{CursorIcon, CursorPolicy};
 use crate::app::gui_router::GuiRouter;
 use crate::app::input::{ControlEvent, InputController};
 use crate::app::pointer::PointerState;
-use petramond_audio::Audio;
-use petramond_render::camera::Camera;
-use petramond_world::controls::{Control, Modifiers};
 use crate::game::presentation::GamePresentationScratch;
 use crate::game::Game;
+use petramond_audio::Audio;
+use petramond_render::camera::Camera;
 use petramond_render::Scene;
+use petramond_world::controls::{Control, Modifiers};
 
 const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
 
@@ -66,7 +66,10 @@ pub struct App {
     mob_sound_events: Vec<crate::game::MobSoundEvent>,
     /// Positional world-event one-shots (block place/break, doors, chest
     /// lids, foreign pickups) waiting for the next render's spatial listener.
-    world_sound_cues: Vec<(petramond_world::sound_registry::Sound, petramond_math::math::Vec3)>,
+    world_sound_cues: Vec<(
+        petramond_world::sound_registry::Sound,
+        petramond_math::math::Vec3,
+    )>,
     /// Client-owned idle sound scheduling per live mob session id.
     mob_sound_state: HashMap<u64, MobSoundState>,
     /// Client-owned footstep cadence per walking body (see
@@ -363,15 +366,19 @@ impl App {
             // count in gameplay; releases always land so nothing sticks held.
             ControlEvent::Attack { down } => {
                 if self.screen.gameplay_enabled() || !down {
-                    self.pointer
-                        .set_gameplay_button(petramond_world::gui_state::PointerButton::Primary, down);
+                    self.pointer.set_gameplay_button(
+                        petramond_world::gui_state::PointerButton::Primary,
+                        down,
+                    );
                 }
                 true
             }
             ControlEvent::Interact { down } => {
                 if self.screen.gameplay_enabled() || !down {
-                    self.pointer
-                        .set_gameplay_button(petramond_world::gui_state::PointerButton::Secondary, down);
+                    self.pointer.set_gameplay_button(
+                        petramond_world::gui_state::PointerButton::Secondary,
+                        down,
+                    );
                 }
                 true
             }

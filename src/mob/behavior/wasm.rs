@@ -113,7 +113,8 @@ impl WasmNodeAi {
         writes
             .into_iter()
             .filter(|w| {
-                let ok = petramond_world::registry::namespace(&w.key) == Some(own) && !own.is_empty();
+                let ok =
+                    petramond_world::registry::namespace(&w.key) == Some(own) && !own.is_empty();
                 if !ok {
                     log::warn!(
                         "AI node '{}' decision tag write '{}' outside its own namespace — dropped",

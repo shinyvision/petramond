@@ -12,15 +12,14 @@
 //! body + replicated rows), so the rules take it as a closure over the cells
 //! and boxes the placed shape would occupy.
 
-use crate::block::SupportDir;
-use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairHalf, StairState};
-use crate::item::ItemType;
 use super::data::WorldData;
+use crate::block::SupportDir;
 use crate::block::{Aabb, Block, CellPart, ShapeFamily, ShapeState};
+use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairHalf, StairState};
 use crate::facing::Facing;
+use crate::item::ItemType;
 use crate::mathh::IVec3;
 use crate::slab::{SlabRotation, SlabSlot};
-
 
 /// Whether a click on `looked_at` REPLACES it where it stands instead of
 /// building against its face: replaceable MATTER — tall grass, a snow layer,
@@ -393,133 +392,127 @@ pub fn validate_custom_plan(
 
 impl WorldData {
     pub fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
-            // A shape whose support comes from its PLACEMENT answers where it
-            // grips; the face-completeness test is then the shared one. No family
-            // is named here, so a pack's wall lantern supports itself for free.
-            let k = block.shape_kind_def();
-            if let Some(m) = k.sim.mount(&k.params, self, pos, block) {
-                return self.mount_face_complete(m.cell, m.normal);
-            }
-            let dir = block.support_dir();
-            let s = dir.support_cell(pos);
-            match dir {
-                SupportDir::Below => {
-                    let ground = self.physics_block(s.x, s.y, s.z);
-                    // DECLARED beats derived. A row that stated what its floor must
-                    // look like keeps that same rule once placed, so the gate that
-                    // let it be placed and the rule that keeps it there cannot
-                    // disagree. It has to come first: `rests_flat_on_floor` probes
-                    // octant VOLUMES, so anything with a foot on the floor — a
-                    // lantern's 8-wide base — reads as lying flat and would take
-                    // the cover rule instead of its own.
-                    if block.roots_face() != crate::block::RootsFace::Any {
-                        return self.roots_face_ok(block, crate::mathh::IVec3::Y, s, ground);
-                    }
-                    if crate::block::rests_flat_on_floor(self, pos, block) {
-                        return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
-                    }
-                    ground.is_opaque()
-                }
-                SupportDir::Above => {
-                    super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z))
-                        || Block::from_id(self.chunk_block(s.x, s.y, s.z)).support_dir()
-                            == SupportDir::Above
-                }
-                // A WALL holds it exactly when a wall torch would hold: the
-                // support's face toward this cell is complete — an opaque cube's,
-                // or any shaped face that is geometrically whole (a stair's flat
-                // side, a counter's back). The same test the torch/ladder mounts
-                // run, reached here through the row's declaration instead of
-                // through stored placement state.
-                _ => self.mount_face_complete(s, pos - s),
-            }
+        // A shape whose support comes from its PLACEMENT answers where it
+        // grips; the face-completeness test is then the shared one. No family
+        // is named here, so a pack's wall lantern supports itself for free.
+        let k = block.shape_kind_def();
+        if let Some(m) = k.sim.mount(&k.params, self, pos, block) {
+            return self.mount_face_complete(m.cell, m.normal);
         }
+        let dir = block.support_dir();
+        let s = dir.support_cell(pos);
+        match dir {
+            SupportDir::Below => {
+                let ground = self.physics_block(s.x, s.y, s.z);
+                // DECLARED beats derived. A row that stated what its floor must
+                // look like keeps that same rule once placed, so the gate that
+                // let it be placed and the rule that keeps it there cannot
+                // disagree. It has to come first: `rests_flat_on_floor` probes
+                // octant VOLUMES, so anything with a foot on the floor — a
+                // lantern's 8-wide base — reads as lying flat and would take
+                // the cover rule instead of its own.
+                if block.roots_face() != crate::block::RootsFace::Any {
+                    return self.roots_face_ok(block, crate::mathh::IVec3::Y, s, ground);
+                }
+                if crate::block::rests_flat_on_floor(self, pos, block) {
+                    return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
+                }
+                ground.is_opaque()
+            }
+            SupportDir::Above => {
+                super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z))
+                    || Block::from_id(self.chunk_block(s.x, s.y, s.z)).support_dir()
+                        == SupportDir::Above
+            }
+            // A WALL holds it exactly when a wall torch would hold: the
+            // support's face toward this cell is complete — an opaque cube's,
+            // or any shaped face that is geometrically whole (a stair's flat
+            // side, a counter's back). The same test the torch/ladder mounts
+            // run, reached here through the row's declaration instead of
+            // through stored placement state.
+            _ => self.mount_face_complete(s, pos - s),
+        }
+    }
 
-    pub fn roots_face_ok(
-            &self,
-            block: Block,
-            normal: IVec3,
-            s: IVec3,
-            ground: Block,
-        ) -> bool {
-            match block.roots_face() {
-                crate::block::RootsFace::Any => true,
-                crate::block::RootsFace::FullCube => {
-                    ground.is_opaque()
-                        && crate::block::full_face_at(self, s, normal)
-                            == Some(crate::block::FullFace::Cube)
-                }
-                crate::block::RootsFace::SolidFace => self.mount_face_complete(s, normal),
+    pub fn roots_face_ok(&self, block: Block, normal: IVec3, s: IVec3, ground: Block) -> bool {
+        match block.roots_face() {
+            crate::block::RootsFace::Any => true,
+            crate::block::RootsFace::FullCube => {
+                ground.is_opaque()
+                    && crate::block::full_face_at(self, s, normal)
+                        == Some(crate::block::FullFace::Cube)
             }
+            crate::block::RootsFace::SolidFace => self.mount_face_complete(s, normal),
         }
+    }
 
     pub fn slab_stack_slot_in_hit(
-            &self,
-            block: Block,
-            hit: IVec3,
-            rotation: SlabRotation,
-            normal: IVec3,
-            player_facing: Facing,
-        ) -> Option<SlabSlot> {
-            if block.shape_family() != ShapeFamily::Slab {
-                return None;
-            }
-            let looked_at = Block::from_id(self.chunk_block(hit.x, hit.y, hit.z));
-            if !crate::slab::is_slab(looked_at) {
-                return None;
-            }
-            let slot = crate::slab::stack_slot(rotation, normal, player_facing)?;
-            crate::slab::can_add_layer(self.slab_state_at(hit.x, hit.y, hit.z), slot).then_some(slot)
+        &self,
+        block: Block,
+        hit: IVec3,
+        rotation: SlabRotation,
+        normal: IVec3,
+        player_facing: Facing,
+    ) -> Option<SlabSlot> {
+        if block.shape_family() != ShapeFamily::Slab {
+            return None;
         }
+        let looked_at = Block::from_id(self.chunk_block(hit.x, hit.y, hit.z));
+        if !crate::slab::is_slab(looked_at) {
+            return None;
+        }
+        let slot = crate::slab::stack_slot(rotation, normal, player_facing)?;
+        crate::slab::can_add_layer(self.slab_state_at(hit.x, hit.y, hit.z), slot).then_some(slot)
+    }
     pub fn finish_single_cell_placement(
-            &self,
-            block: Block,
-            p: IVec3,
-            state: ShapeState,
-            boxes: &[Aabb],
-            occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
-        ) -> Option<PlacementPlan> {
-            // Substrate + support gate: a block that roots in a particular ground,
-            // or hangs from a ceiling, or brackets off a wall, places only when the
-            // SUPPORT cell its row declares actually holds it. Blocks with no such
-            // rule accept anything. Staying put once placed is the separate job of
-            // the FRAGILE behaviour, which reads the same cell.
-            if !self.placement_support_ok(block, p) {
-                return None;
-            }
-            let target = Block::from_id(self.chunk_block(p.x, p.y, p.z));
-            // Replacing a block with ITSELF (short grass clicked while holding
-            // short grass) would rewrite the same state invisibly while still
-            // consuming the held item — refuse it like any unplaceable spot.
-            if !target.is_replaceable() || target == block {
-                return None;
-            }
-            // A block with no collision box (a torch, grass, a fern, …) traps
-            // nothing, so it may be placed inside an entity; a block that WOULD
-            // collide cannot be placed where its shape overlaps a gameplay body.
-            if occupied(p, boxes) {
-                return None;
-            }
-            Some(PlacementPlan::single(p, block, state))
+        &self,
+        block: Block,
+        p: IVec3,
+        state: ShapeState,
+        boxes: &[Aabb],
+        occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
+    ) -> Option<PlacementPlan> {
+        // Substrate + support gate: a block that roots in a particular ground,
+        // or hangs from a ceiling, or brackets off a wall, places only when the
+        // SUPPORT cell its row declares actually holds it. Blocks with no such
+        // rule accept anything. Staying put once placed is the separate job of
+        // the FRAGILE behaviour, which reads the same cell.
+        if !self.placement_support_ok(block, p) {
+            return None;
         }
+        let target = Block::from_id(self.chunk_block(p.x, p.y, p.z));
+        // Replacing a block with ITSELF (short grass clicked while holding
+        // short grass) would rewrite the same state invisibly while still
+        // consuming the held item — refuse it like any unplaceable spot.
+        if !target.is_replaceable() || target == block {
+            return None;
+        }
+        // A block with no collision box (a torch, grass, a fern, …) traps
+        // nothing, so it may be placed inside an entity; a block that WOULD
+        // collide cannot be placed where its shape overlaps a gameplay body.
+        if occupied(p, boxes) {
+            return None;
+        }
+        Some(PlacementPlan::single(p, block, state))
+    }
     pub fn placement_support_ok(&self, block: Block, p: IVec3) -> bool {
-            let s = block.support_dir().support_cell(p);
-            let ground = self.physics_block(s.x, s.y, s.z);
-            if !block.can_root_on(ground) {
-                return false;
-            }
-            if !self.roots_face_ok(block, p - s, s, ground) {
-                return false;
-            }
-            // A fragile row whose support is NOT the ground below has no substrate
-            // vocabulary to gate on — `roots_on` names GROUNDS, and this row's
-            // support is a ceiling or a wall — so the two rules above accept open
-            // air and the FRAGILE tick would shatter the block one tick later,
-            // eating the item. Gate on the fragile rule itself, so placement and
-            // survival agree by construction (the ladder's rule, which the torch
-            // and ladder families already reach through their own pre-gate).
-            !(block.is_fragile()
-                && block.support_dir() != crate::block::SupportDir::Below
-                && !self.fragile_supported(p, block))
+        let s = block.support_dir().support_cell(p);
+        let ground = self.physics_block(s.x, s.y, s.z);
+        if !block.can_root_on(ground) {
+            return false;
         }
+        if !self.roots_face_ok(block, p - s, s, ground) {
+            return false;
+        }
+        // A fragile row whose support is NOT the ground below has no substrate
+        // vocabulary to gate on — `roots_on` names GROUNDS, and this row's
+        // support is a ceiling or a wall — so the two rules above accept open
+        // air and the FRAGILE tick would shatter the block one tick later,
+        // eating the item. Gate on the fragile rule itself, so placement and
+        // survival agree by construction (the ladder's rule, which the torch
+        // and ladder families already reach through their own pre-gate).
+        !(block.is_fragile()
+            && block.support_dir() != crate::block::SupportDir::Below
+            && !self.fragile_supported(p, block))
+    }
 }

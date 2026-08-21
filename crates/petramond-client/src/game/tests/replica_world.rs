@@ -6,11 +6,11 @@
 
 use super::super::tick::TICK_DT;
 use super::common::game;
+use crate::game::GameInput;
+use petramond_math::facing::Facing;
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-use petramond_math::facing::Facing;
-use crate::game::GameInput;
-use petramond_math::math::{IVec3, Vec3};
 
 /// A flat stone floor at y=64 in column (0,0) on the SERVER world, with the
 /// player (client + session) standing on it — the fixture the pipe then

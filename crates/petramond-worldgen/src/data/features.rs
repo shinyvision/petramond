@@ -20,15 +20,13 @@ use std::sync::LazyLock;
 
 use serde::Deserialize;
 
-use petramond_world::block::Block;
 use crate::feature::placers::foliage::{
     ConiferFoliage, DroopyFoliage, FlatSparseFoliage, FoliagePlacer,
 };
 use crate::feature::placers::trunk::{LeaningTrunk, StraightTrunk, TrunkPlacer};
-use crate::feature::tree::{
-    BlockyOakFeature, CanopyTreeFeature, RedwoodFeature, TreeFeature,
-};
+use crate::feature::tree::{BlockyOakFeature, CanopyTreeFeature, RedwoodFeature, TreeFeature};
 use crate::feature::{ConfiguredFeature, Feature};
+use petramond_world::block::Block;
 
 /// Engine feature names in frozen id order (the completeness oracle
 /// `features.json` is validated against).
@@ -161,8 +159,11 @@ struct RawFile {
 
 fn catalog() -> &'static petramond_world::registry::Catalog<FeatureDef> {
     static TABLE: LazyLock<petramond_world::registry::Catalog<FeatureDef>> = LazyLock::new(|| {
-        let table =
-            petramond_world::registry::read_catalog("features.json", "worldgen feature", parse_layers);
+        let table = petramond_world::registry::read_catalog(
+            "features.json",
+            "worldgen feature",
+            parse_layers,
+        );
         // Cross-check every block row's `grows_into` key against this table.
         // The block layer sits BELOW worldgen and interns keys unchecked; a
         // final sapling stage naming a missing tree must still fail loudly,
@@ -172,7 +173,10 @@ fn catalog() -> &'static petramond_world::registry::Catalog<FeatureDef> {
                 if table.id(key).is_none() {
                     panic!(
                         "blocks.json: '{}' grows_into names unknown worldgen feature '{key}'",
-                        petramond_world::registry::names().blocks.name(block.id()).unwrap_or("?")
+                        petramond_world::registry::names()
+                            .blocks
+                            .name(block.id())
+                            .unwrap_or("?")
                     );
                 }
             }

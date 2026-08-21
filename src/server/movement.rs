@@ -6,8 +6,8 @@
 //! same drift ring bounds the reach eye ([`reach_eye`]) so a fabricated
 //! claim cannot grant remote block interaction.
 
-use petramond_math::math::Vec3;
 use crate::player::{self, Input};
+use petramond_math::math::Vec3;
 
 use super::game::ServerGame;
 use crate::events::tick::TICK_DT;
@@ -65,7 +65,11 @@ impl ServerGame {
     /// neither integrated nor adopted (the client slaves itself to the same
     /// replicated mount), and no fall accrues. Claim staleness bookkeeping
     /// still runs so the drift ring is honest on the dismount tick.
-    fn tick_movement_with_obstacles(&mut self, s: usize, obstacles: &[petramond_world::collision::DynBox]) {
+    fn tick_movement_with_obstacles(
+        &mut self,
+        s: usize,
+        obstacles: &[petramond_world::collision::DynBox],
+    ) {
         let (
             wishdir,
             jump,

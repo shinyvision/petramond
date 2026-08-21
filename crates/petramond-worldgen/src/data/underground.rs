@@ -27,10 +27,10 @@ use std::sync::LazyLock;
 
 use serde::Deserialize;
 
+use crate::noise::settings::{CAVE_BIOME_FIELD_MAX, CAVE_LATTICE_STEP, CAVE_MIN_Y};
 use petramond_world::block::Block;
 use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 use petramond_world::registry::Catalog;
-use crate::noise::settings::{CAVE_BIOME_FIELD_MAX, CAVE_LATTICE_STEP, CAVE_MIN_Y};
 
 /// Engine underground-biome names in frozen id order. Id 0 is the structural
 /// FALLBACK: it declares no band, so nothing can select it by field, and
@@ -717,7 +717,11 @@ use load::parse_layers;
 
 pub fn table() -> &'static UndergroundBiomes {
     static TABLE: LazyLock<UndergroundBiomes> = LazyLock::new(|| {
-        petramond_world::registry::read_catalog("underground_biomes.json", "underground biome", parse_layers)
+        petramond_world::registry::read_catalog(
+            "underground_biomes.json",
+            "underground biome",
+            parse_layers,
+        )
     });
     &TABLE
 }

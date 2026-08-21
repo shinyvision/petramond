@@ -2,23 +2,22 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use petramond_world::block::Block;
-use petramond_world::chunk::{ChunkPos, SectionPos};
-use petramond_mesh::ChunkMesh;
 use crate::mob::Mobs;
 use crate::save::WorldSave;
-use petramond_world::section::{Section, SectionSummary};
 use crate::worker::{JobCancel, JobPool, WorkerPool};
+use petramond_mesh::ChunkMesh;
+use petramond_world::block::Block;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_world::section::{Section, SectionSummary};
 use petramond_worldgen::driver::ChunkGenerator;
 use petramond_worldgen::driver::ColumnGen;
 
 use super::entities::DroppedItems;
-use petramond_world::world::saved_index::SavedIndex;
-use petramond_world::world::environment::WorldEnvironment;
 use super::light::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
+use petramond_world::world::environment::WorldEnvironment;
+use petramond_world::world::saved_index::SavedIndex;
 use petramond_world::world::tick_state::TickState;
-
 
 // Moved halves, re-exported under their historical `store::` paths.
 pub use petramond_world::world::column_heightmaps::SkyCoverChange;
@@ -603,18 +602,16 @@ impl World {
 
     // --- Column data ------------------------------------------------------------
 
-
     /// This tick's shared navigation probe budget.
     #[inline]
     pub fn reach_budget(&self) -> &crate::mob::ReachBudget {
         &self.nav_probe_budget
     }
-
 }
 
-use petramond_world::block::{Aabb, ShapeRenderBox, ShapeState};
 use petramond_math::math::IVec3;
 use petramond_world::block::ShapeNeighborhood;
+use petramond_world::block::{Aabb, ShapeRenderBox, ShapeState};
 /// `&World` coerces to `&WorldData` only at concrete argument positions, not
 /// through trait bounds — so the orchestration wrapper forwards the seam.
 impl ShapeNeighborhood for World {
@@ -636,7 +633,13 @@ impl ShapeNeighborhood for World {
 }
 
 impl petramond_world::block::behavior::BehaviorWorld for World {
-    fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: petramond_world::block::Block) -> bool {
+    fn set_block_world(
+        &mut self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        b: petramond_world::block::Block,
+    ) -> bool {
         World::set_block_world(self, wx, wy, wz, b)
     }
 

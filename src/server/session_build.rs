@@ -7,8 +7,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use petramond_world::crafting::load_recipes_for;
-use petramond_math::math::Vec3;
 use crate::player::Player;
 use crate::player::PlayerId;
 use crate::save::{LevelData, WorldSave};
@@ -16,6 +14,8 @@ use crate::server::game::ServerGame;
 use crate::server::player::ConnectedPlayer;
 use crate::worker::JobPool;
 use crate::world::{World, WorldRole};
+use petramond_math::math::Vec3;
+use petramond_world::crafting::load_recipes_for;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 struct OpenedSession {
@@ -49,11 +49,7 @@ impl Default for OpenedSession {
 /// nobody is connected (`ServerGame::pump_tagged`'s empty-session gate).
 /// Driven by the same `ServerHandle::spawn` loop; the standalone binary
 /// (`platform::server`) parks its main thread on it.
-pub fn build_headless_session(
-    world_name: &str,
-    new_seed: u32,
-    render_dist: i32,
-) -> ServerGame {
+pub fn build_headless_session(world_name: &str, new_seed: u32, render_dist: i32) -> ServerGame {
     build_server(world_name, new_seed, render_dist, None).0
 }
 
@@ -177,7 +173,9 @@ pub fn build_server_with_pool(
     // gen hooks use). The unlock index is the other view of that catalog.
     let recipes = load_recipes_for(&disabled_mods);
     crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
-    let unlocks = std::sync::Arc::new(petramond_world::crafting::UnlockIndex::build(recipes.crafting()));
+    let unlocks = std::sync::Arc::new(petramond_world::crafting::UnlockIndex::build(
+        recipes.crafting(),
+    ));
     perf.mark("recipes");
     let mut server = ServerGame {
         hostile_spawn_cache: Default::default(),
@@ -248,7 +246,10 @@ pub fn build_server_with_pool(
         let (host_player, host_gui) = match sessions.first_mut() {
             Some(host) => (&mut host.player, &mut host.gui_state),
             None => {
-                stand_in = (spawn_player(seed), petramond_world::gui_state::empty_gui_state());
+                stand_in = (
+                    spawn_player(seed),
+                    petramond_world::gui_state::empty_gui_state(),
+                );
                 (&mut stand_in.0, &mut stand_in.1)
             }
         };

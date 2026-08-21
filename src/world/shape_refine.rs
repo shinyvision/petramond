@@ -25,9 +25,9 @@
 
 use std::collections::VecDeque;
 
+use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 use petramond_world::block::{Block, ShapeNeighborhood};
 use petramond_world::chunk::{section_idx, section_local, SectionPos, SECTION_SIZE};
-use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 
 use super::store::{World, WorldRole};
 
@@ -186,13 +186,13 @@ impl World {
 
 #[cfg(test)]
 mod tests {
+    use crate::world::World;
+    use petramond_math::facing::Facing;
     use petramond_math::math::IVec3;
     use petramond_world::block::{Block, CellCodec, ShapeNeighborhood};
     use petramond_world::block_state::{StairHalf, StairState};
-    use petramond_math::facing::Facing;
-    use petramond_world::section::Section;
-    use crate::world::World;
     use petramond_world::chunk::SectionPos;
+    use petramond_world::section::Section;
 
     /// The oracle: what the cell's own family would refine its state to right
     /// now — the sweep must leave every cell agreeing with it.

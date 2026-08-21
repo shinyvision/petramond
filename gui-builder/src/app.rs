@@ -169,7 +169,11 @@ impl App {
     /// `worlds` shows rows immediately, without dirtying the file.
     pub fn preview_state(&self) -> UiState {
         let (mut state, _) = self.proj.sample_ui_state();
-        if let Some(info) = self.catalog.as_ref().and_then(|c| c.kind(&self.proj.document.kind)) {
+        if let Some(info) = self
+            .catalog
+            .as_ref()
+            .and_then(|c| c.kind(&self.proj.document.kind))
+        {
             bindings::apply_seeds(&mut state, info);
         }
         state
@@ -185,7 +189,10 @@ impl App {
                 .validate(Some(self.theme.theme.as_ref()), Some(&contract));
             // Builder-side extra: static images must resolve beside the
             // project or they draw nothing, in game and preview alike.
-            let dir = self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from));
+            let dir = self
+                .path
+                .as_ref()
+                .and_then(|p| p.parent().map(PathBuf::from));
             self.validation.extend(doc_edit::missing_image_issues(
                 &self.proj.document,
                 &|name| crate::io::resolve_document_image_path(dir.as_deref(), name).is_some(),
@@ -266,7 +273,12 @@ impl App {
     fn save_as(&mut self) {
         let name = format!(
             "{}.llgui",
-            self.proj.document.kind.split(':').last().unwrap_or("gui")
+            self.proj
+                .document
+                .kind
+                .split(':')
+                .next_back()
+                .unwrap_or("gui")
         );
         if let Some(path) = io::pick_save(&self.last_dir, &name) {
             self.path = Some(path);
@@ -275,7 +287,9 @@ impl App {
     }
 
     fn import_legacy(&mut self) {
-        let Some(path) = io::pick_open(&self.last_dir) else { return };
+        let Some(path) = io::pick_open(&self.last_dir) else {
+            return;
+        };
         match io::import_legacy(&path) {
             Ok((proj, warnings)) => {
                 let n = warnings.len();
@@ -295,13 +309,20 @@ impl App {
 
     fn export(&mut self) {
         if let Some(path) = io::pick_export(&self.proj.document, &self.last_dir) {
-            let images_from = self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from));
+            let images_from = self
+                .path
+                .as_ref()
+                .and_then(|p| p.parent().map(PathBuf::from));
             match io::export_document(&path, &self.proj.document, images_from.as_deref()) {
                 Ok(copied) => {
                     self.status = format!(
                         "Exported {}{}",
                         path.display(),
-                        if copied > 0 { format!(" (+{copied} images)") } else { String::new() }
+                        if copied > 0 {
+                            format!(" (+{copied} images)")
+                        } else {
+                            String::new()
+                        }
                     );
                 }
                 Err(e) => self.status = e,
@@ -353,7 +374,9 @@ impl App {
         if path.is_empty() {
             return;
         }
-        let Some(node) = doc_edit::node_at(&self.proj.document.root, &path) else { return };
+        let Some(node) = doc_edit::node_at(&self.proj.document.root, &path) else {
+            return;
+        };
         let mut copy = node.clone();
         doc_edit::uniquify_ids(&self.proj.document, &mut copy);
         let (last, parent) = path.split_last().unwrap();
@@ -556,12 +579,17 @@ impl App {
                     ui.monospace(r#"{"volume": {"f32": 75.0}, "on": {"bool": true}}"#);
                     if ui
                         .button("Insert example list entry")
-                        .on_hover_text("Appends a 'rows' list two documents' list bindings can read")
+                        .on_hover_text(
+                            "Appends a 'rows' list two documents' list bindings can read",
+                        )
                         .clicked()
                     {
                         let mut row = petramond_ui::UiMap::new();
                         row.insert("name".into(), petramond_ui::UiValue::Str("Example".into()));
-                        row.insert("version".into(), petramond_ui::UiValue::Str("v0.1.0".into()));
+                        row.insert(
+                            "version".into(),
+                            petramond_ui::UiValue::Str("v0.1.0".into()),
+                        );
                         row.insert("enabled".into(), petramond_ui::UiValue::Bool(true));
                         let list = petramond_ui::UiValue::List(std::sync::Arc::new(vec![row]));
                         self.proj
@@ -571,14 +599,16 @@ impl App {
                         self.sync_sample_buffer();
                         self.touch();
                     }
-                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.sample_json)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(12),
-                        );
-                    });
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.sample_json)
+                                    .code_editor()
+                                    .desired_width(f32::INFINITY)
+                                    .desired_rows(12),
+                            );
+                        });
                     ui.horizontal(|ui| {
                         if ui.button("Apply").clicked() {
                             self.apply_sample_buffer();
@@ -649,7 +679,10 @@ impl eframe::App for App {
         }
 
         // Keep doc images fresh (the project dir may gain PNGs while open).
-        let dir = self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from));
+        let dir = self
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(PathBuf::from));
         self.images.refresh(&self.proj.document, dir.as_deref());
 
         let title = format!(

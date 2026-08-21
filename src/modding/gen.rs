@@ -104,8 +104,8 @@ pub struct GenHooks {
     fallback_logged: [AtomicBool; STAGE_COUNT],
 }
 
-pub use petramond_worldgen::hooks::GenInputs;
 use petramond_worldgen::hooks::GenHookDispatch;
+pub use petramond_worldgen::hooks::GenInputs;
 
 impl GenHooks {
     /// Whether `stage` has a registered replacement.
@@ -129,11 +129,7 @@ impl GenHooks {
 
     /// Dispatch feature `idx` for one section. `None` = the feature failed
     /// (instance disabled with a logged error) and is skipped.
-    pub fn dispatch_feature(
-        &self,
-        idx: usize,
-        inputs: &GenInputs,
-    ) -> Option<Vec<([i32; 3], u16)>> {
+    pub fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> Option<Vec<([i32; 3], u16)>> {
         let hook = &self.features[idx];
         let call = GuestCall::GenFeature {
             feature_id: hook.feature_id,
@@ -503,7 +499,6 @@ impl GenHooksBuilder {
 // ---------------------------------------------------------------------------
 // Process-wide installation (captured by ChunkGenerator::new).
 // ---------------------------------------------------------------------------
-
 
 impl GenHookDispatch for GenHooks {
     fn epoch(&self) -> u64 {

@@ -2,10 +2,10 @@
 //! (`flush_modified_chunks`) and eviction (`harvest_section_snapshot`), plus
 //! the save-handle plumbing.
 
-use petramond_world::chunk::SectionPos;
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
 use crate::save::{SectionSnapshot, WorldSave};
+use petramond_world::chunk::SectionPos;
 
 use super::store::{World, WorldRole};
 
@@ -58,14 +58,10 @@ impl World {
         // separate stores. First cache persistence waits for final light so the
         // common path writes and compresses the record only once.
         let light_final = !section.light_dirty || section.all_opaque();
-        let authoritative_exists = self
-            .save
-            .as_ref()
-            .is_some() && self.data.saved.authoritative_contains(pos);
-        let explored_exists = self
-            .save
-            .as_ref()
-            .is_some() && self.data.saved.explored_contains(pos);
+        let authoritative_exists =
+            self.save.as_ref().is_some() && self.data.saved.authoritative_contains(pos);
+        let explored_exists =
+            self.save.as_ref().is_some() && self.data.saved.explored_contains(pos);
         let explored_first_persist = light_final && !authoritative_exists && !explored_exists;
         // A record already on disk whose light rebaked since it was written
         // (a lightless neighbour landed at the explored boundary, or an edit's

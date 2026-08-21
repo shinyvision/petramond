@@ -21,10 +21,10 @@ use std::cell::RefCell;
 
 use rustc_hash::FxHashMap;
 
+use crate::world::{SectionCursor, World};
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Aabb;
 use petramond_world::collision;
-use petramond_math::math::{IVec3, Vec3};
-use crate::world::{SectionCursor, World};
 
 use super::brain::AiMob;
 use super::path::{self, PathParams};
@@ -1217,8 +1217,8 @@ fn entity_cell_costs(avoid: &NavObstacles, start: IVec3) -> FxHashMap<IVec3, u32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_world::block::Block;
     use petramond_math::facing::Facing;
+    use petramond_world::block::Block;
 
     #[test]
     fn idle_until_given_a_goal() {
@@ -1996,7 +1996,11 @@ mod tests {
         let goal = IVec3::new(8, 64, 1);
         let player_cell = IVec3::new(4, 64, 1);
         let anchor = PlayerAnchor {
-            body: Some(petramond_world::body::Body::new(Vec3::new(4.5, 64.0, 1.5), 0.3, 1.8)),
+            body: Some(petramond_world::body::Body::new(
+                Vec3::new(4.5, 64.0, 1.5),
+                0.3,
+                1.8,
+            )),
             ..Default::default()
         };
         let players = [anchor];

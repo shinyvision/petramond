@@ -1,5 +1,5 @@
-use petramond_math::math::Vec3;
 use crate::mob::MobSize;
+use petramond_math::math::Vec3;
 
 use super::{
     arc_component_bounds, body_boxes, segment_centre, segment_offsets, wrap_angle, WorldBox,
@@ -41,16 +41,17 @@ where
         );
         min[1] += healed;
         max[1] += healed;
-        let (mut moved, grounded, hit) = petramond_world::collision::resolve_body_dyn_from_depenetrated(
-            min,
-            max,
-            vel,
-            dt,
-            step_height,
-            boxes_fn,
-            dyn_boxes,
-            ignore,
-        );
+        let (mut moved, grounded, hit) =
+            petramond_world::collision::resolve_body_dyn_from_depenetrated(
+                min,
+                max,
+                vel,
+                dt,
+                step_height,
+                boxes_fn,
+                dyn_boxes,
+                ignore,
+            );
         moved[1] += healed;
         return (moved, grounded, hit, healed);
     }
@@ -172,8 +173,9 @@ where
             min[i] += offset[i];
             max[i] += offset[i];
         }
-        let allowed =
-            petramond_world::collision::sweep_axis_dyn(min, max, axis, delta, boxes_fn, dyn_boxes, ignore);
+        let allowed = petramond_world::collision::sweep_axis_dyn(
+            min, max, axis, delta, boxes_fn, dyn_boxes, ignore,
+        );
         if delta > 0.0 {
             travel = travel.min(allowed);
         } else {

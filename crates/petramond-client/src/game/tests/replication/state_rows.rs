@@ -3,9 +3,9 @@
 
 use super::common::{game, game_on_empty_chunk};
 use super::pump_one_tick;
-use petramond::events::DamageSource;
 use crate::game::presentation::GamePresentationScratch;
 use petramond::events::tick::{TickEvents, TICK_DT};
+use petramond::events::DamageSource;
 use petramond_math::math::Vec3;
 
 /// The HUD reads the replicated self view, and after a damage tick's batch it
@@ -77,8 +77,8 @@ fn every_sessions_player_row_reaches_the_local_batch() {
 /// bed's base→pillow direction) and flags the tuck teleport as a snap.
 #[test]
 fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
-    use petramond_world::block::Block;
     use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = game_on_empty_chunk();
     for x in 0..16 {
@@ -177,10 +177,9 @@ fn env_params_ship_on_change_and_none_when_static() {
 /// its own stage; an invisible remote (spectator/dead) draws none.
 #[test]
 fn break_overlays_collect_own_and_visible_remote_miners() {
-    use petramond_math::math::IVec3;
     use petramond::net::protocol::PlayerStateRow;
     use petramond::player::PlayerId;
-    use std::collections::HashMap;
+    use petramond_math::math::IVec3;
 
     fn row(id: u8, mining: Option<(IVec3, u8)>, visible: bool) -> PlayerStateRow {
         PlayerStateRow {
@@ -218,12 +217,14 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
         row(2, Some((IVec3::new(5, 64, 5), 2)), false), // hidden: no overlay
         row(3, None, true),                             // not mining: no overlay
     ];
-    game.game
-        .remote_players
-        .apply(&rows, &[], own_id, &HashMap::new());
+    game.game.remote_players.apply(&rows, &[], own_id);
 
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0, &petramond_render::camera::ViewVolume::unbounded());
+    let presentation = scratch.snapshot(
+        &game,
+        0.0,
+        &petramond_render::camera::ViewVolume::unbounded(),
+    );
     let overlays = presentation.break_overlays;
     assert_eq!(overlays.len(), 2, "own + the one visible remote miner");
     assert!(

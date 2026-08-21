@@ -26,3 +26,8 @@ rfd = { version = "0.14", default-features = false, features = ["xdg-portal", "a
 # Keep the editor responsive even in dev builds.
 [profile.dev]
 opt-level = 1
+
+[profile.test]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true

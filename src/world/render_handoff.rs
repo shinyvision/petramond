@@ -1,5 +1,5 @@
-use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_mesh::ChunkMesh;
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use super::World;
 
@@ -30,11 +30,7 @@ impl TerrainRenderHandoff<'_> {
     /// drained. The caller's upload scheduler should upload these without
     /// waiting out its quiet-gate coalescing.
     pub fn take_urgent_columns(&mut self) -> Vec<ChunkPos> {
-        self.world
-            .terrain
-            .upload_urgent_columns
-            .drain()
-            .collect()
+        self.world.terrain.upload_urgent_columns.drain().collect()
     }
 
     pub fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos, u64)) {
@@ -125,11 +121,11 @@ impl TerrainRenderHandoff<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-    use petramond_world::block::Block;
-    use petramond_world::section::Section;
     use crate::world::store::World;
+    use petramond_world::block::Block;
     use petramond_world::chunk::SectionPos;
+    use petramond_world::section::Section;
+    use std::time::{Duration, Instant};
 
     /// The CPU-release contract: a settled column frees its mesh buffers, a later
     /// repack refuses to upload from released meshes (no silent geometry loss) and

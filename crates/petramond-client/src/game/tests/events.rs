@@ -3,10 +3,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use petramond::events::tick::TickEvents;
 use super::common::game;
-use petramond::events::{Attach, DamageSource, PostEvent, PostEventKind, Stage};
 use crate::game::{GameInput, ModSpatialSoundCommand};
+use petramond::events::tick::TickEvents;
+use petramond::events::{Attach, DamageSource, PostEvent, PostEventKind, Stage};
 use petramond_math::math::Vec3;
 
 #[test]
@@ -94,7 +94,8 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
 #[test]
 fn spatial_sound_commands_reach_game_events_without_loss() {
     let mut game = game();
-    let sound = petramond_world::sound_registry::by_name("petramond:item_pickup").expect("engine sound exists");
+    let sound = petramond_world::sound_registry::by_name("petramond:item_pickup")
+        .expect("engine sound exists");
     game.server
         .systems
         .attach(Attach::Before(Stage::Mining), 0, move |ctx| {

@@ -12,15 +12,10 @@
 
 use crate::world::WorldData;
 
-use petramond_world::block::{Block, ShapeFamily};
 use petramond_math::math::IVec3;
+use petramond_world::block::{Block, ShapeFamily};
 
 use super::store::World;
-
-
-
-
-
 
 impl World {
     /// A block at `(wx, wy, wz)` became `new_block`: drop the cached bake for the
@@ -86,11 +81,7 @@ impl World {
     /// light" decision — Opaque blocks light, Open passes it. A real opacity
     /// TRANSITION relights the cell's section neighbourhood so the change
     /// propagates; an unchanged bake costs nothing.
-    pub fn set_custom_light_aperture(
-        &mut self,
-        pos: IVec3,
-        aperture: mod_api::LightAperture,
-    ) {
+    pub fn set_custom_light_aperture(&mut self, pos: IVec3, aperture: mod_api::LightAperture) {
         let opaque = match aperture {
             mod_api::LightAperture::Opaque => true,
             mod_api::LightAperture::Open => false,
@@ -120,9 +111,9 @@ impl World {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use petramond_world::block::Aabb;
     use petramond_world::world::custom_bake::intern_boxes;
-    use super::*;
 
     #[test]
     fn interning_dedups_equal_box_sets() {

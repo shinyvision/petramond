@@ -19,7 +19,11 @@ enum Action {
     Duplicate(NodePath),
     AddChild(NodePath, &'static str),
     Wrap(NodePath, bool),
-    Drop { from: NodePath, parent: NodePath, index: usize },
+    Drop {
+        from: NodePath,
+        parent: NodePath,
+        index: usize,
+    },
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -30,7 +34,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if app.tree_scroll_to_sel {
         if let Some(sel) = app.sel.clone() {
             for cut in 0..sel.len() {
-                app.tree_collapsed.remove(&sel[..cut].to_vec());
+                app.tree_collapsed.remove(&sel[..cut]);
             }
         }
     }
@@ -65,13 +69,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
         }
         Some(Action::Wrap(p, as_row)) => {
-            let kind = if as_row { NodeKind::Row } else { NodeKind::Column };
+            let kind = if as_row {
+                NodeKind::Row
+            } else {
+                NodeKind::Column
+            };
             app.mutate(|doc| {
                 doc_edit::wrap_in(&mut doc.root, &p, kind);
             });
             app.sel = Some(p);
         }
-        Some(Action::Drop { from, parent, index }) => apply_drop(app, from, parent, index),
+        Some(Action::Drop {
+            from,
+            parent,
+            index,
+        }) => apply_drop(app, from, parent, index),
     }
 }
 
@@ -82,9 +94,9 @@ fn label_of(node: &Node) -> String {
     }
     match &node.kind {
         NodeKind::Slot { role, .. } => s.push_str(&format!(" [{role}]")),
-        NodeKind::SlotGrid { role, cols, rows, .. } => {
-            s.push_str(&format!(" [{role} {cols}x{rows}]"))
-        }
+        NodeKind::SlotGrid {
+            role, cols, rows, ..
+        } => s.push_str(&format!(" [{role} {cols}x{rows}]")),
         NodeKind::Label { text, .. }
         | NodeKind::Button { text, .. }
         | NodeKind::Badge { text }
@@ -143,8 +155,10 @@ fn row(
 
     // ONE full-width widget that senses click AND drag (a separate drag-only
     // overlay would swallow clicks in egui's hit test — the round-2 bug).
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), ROW_H),
+        Sense::click_and_drag(),
+    );
     let indent = 4.0 + depth as f32 * INDENT;
     let text_x = rect.left() + indent + 13.0;
 
@@ -221,9 +235,16 @@ fn row(
                     painter.rect_stroke(rect, 2.0, Stroke::new(1.5, CARET));
                 }
                 Zone::Above | Zone::Below => {
-                    let y = if zone == Zone::Above { rect.top() } else { rect.bottom() };
+                    let y = if zone == Zone::Above {
+                        rect.top()
+                    } else {
+                        rect.bottom()
+                    };
                     painter.line_segment(
-                        [Pos2::new(rect.left() + indent, y), Pos2::new(rect.right() - 2.0, y)],
+                        [
+                            Pos2::new(rect.left() + indent, y),
+                            Pos2::new(rect.right() - 2.0, y),
+                        ],
                         Stroke::new(2.0, CARET),
                     );
                 }
@@ -240,7 +261,11 @@ fn row(
                     _ => None,
                 };
                 if let Some((parent, index)) = target {
-                    *action = Some(Action::Drop { from: (*from).clone(), parent, index });
+                    *action = Some(Action::Drop {
+                        from: (*from).clone(),
+                        parent,
+                        index,
+                    });
                 }
             }
         }
@@ -292,8 +317,8 @@ fn apply_drop(app: &mut App, from: NodePath, parent: NodePath, index: usize) {
         return;
     }
     // Only containers take children.
-    let ok = doc_edit::node_at(&app.proj.document.root, &parent)
-        .is_some_and(|n| n.kind.is_container());
+    let ok =
+        doc_edit::node_at(&app.proj.document.root, &parent).is_some_and(|n| n.kind.is_container());
     if !ok {
         return;
     }

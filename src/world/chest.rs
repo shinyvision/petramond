@@ -8,9 +8,9 @@
 //! [`forget_block_entity_records`](super::store::World) sweep), and the
 //! render collection walks the facings of chest cells.
 
-use petramond_world::container::Container;
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
+use petramond_world::container::Container;
 
 use super::store::World;
 
@@ -44,7 +44,10 @@ impl World {
     /// every loaded chest to `out` (cleared first). The transient lid open angle is
     /// filled in by the caller (it's client-side animation, not world state). Visits
     /// only the block-entity section index, not every loaded section.
-    pub fn collect_chests(&self, out: &mut Vec<(IVec3, Facing, u8, petramond_world::light::BlockLight6)>) {
+    pub fn collect_chests(
+        &self,
+        out: &mut Vec<(IVec3, Facing, u8, petramond_world::light::BlockLight6)>,
+    ) {
         out.clear();
         for sp in &self.block_entity_sections {
             let Some(section) = self.sections.get(sp) else {

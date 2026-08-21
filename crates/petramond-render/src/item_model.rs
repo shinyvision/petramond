@@ -20,13 +20,13 @@
 use super::foliage_tint;
 use super::lighting::{self, DynLight, LightEnv};
 use crate::atlas::tile_uv;
-use petramond_world::tile_alpha::tile_alpha_opaque;
-use petramond_world::tile::Tile;
-use petramond_world::bbmodel::face_corners;
-use petramond_world::block_model::{self, BlockModelKind};
+use glam::{Mat4, Vec3};
 use petramond_math::face::Face;
 use petramond_mesh::SHADES;
-use glam::{Mat4, Vec3};
+use petramond_world::bbmodel::face_corners;
+use petramond_world::block_model::{self, BlockModelKind};
+use petramond_world::tile::Tile;
+use petramond_world::tile_alpha::tile_alpha_opaque;
 
 /// Bake a bbmodel block's baked model into indexed [`ItemVertex`] geometry (sampling the
 /// MODEL atlas, the same sheet the in-world block uses) — the model centred + uniformly
@@ -313,7 +313,10 @@ pub(super) fn dye_item_verts(verts: &mut [ItemVertex], variant: petramond_world:
 /// no caller can multiply without the flag (or vice versa).
 ///
 /// [`Vertex`]: petramond_mesh::Vertex
-pub(super) fn dye_block_verts(verts: &mut [petramond_mesh::Vertex], variant: petramond_world::item::VariantId) {
+pub(super) fn dye_block_verts(
+    verts: &mut [petramond_mesh::Vertex],
+    variant: petramond_world::item::VariantId,
+) {
     let Some(t) = petramond_world::item::variant::tint(variant) else {
         return;
     };
@@ -739,11 +742,18 @@ mod tests {
             (scaled - scaled.round()).abs() < 1e-4
         };
         let in_rect = |uv: [f32; 2], r: [f32; 4]| {
-            uv[0] >= r[0] - 1e-4 && uv[0] <= r[2] + 1e-4 && uv[1] >= r[1] - 1e-4 && uv[1] <= r[3] + 1e-4
+            uv[0] >= r[0] - 1e-4
+                && uv[0] <= r[2] + 1e-4
+                && uv[1] >= r[1] - 1e-4
+                && uv[1] <= r[3] + 1e-4
         };
         let (br, or) = (tile_uv(base), tile_uv(over));
         for v in geom.base.iter().chain(&geom.over) {
-            assert!(on_grid(v.pos[0]) && on_grid(v.pos[1]), "off-grid: {:?}", v.pos);
+            assert!(
+                on_grid(v.pos[0]) && on_grid(v.pos[1]),
+                "off-grid: {:?}",
+                v.pos
+            );
             assert!(
                 (v.pos[2].abs() - DEPTH * 0.5).abs() < 1e-5,
                 "one slab, one depth: {:?}",

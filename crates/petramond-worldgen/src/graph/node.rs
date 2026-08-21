@@ -159,11 +159,7 @@ impl ScalarGraph {
             .map(|node| self.node_depends_on_y(node))
     }
 
-    pub fn evaluate_channel(
-        &self,
-        channel: impl AsRef<str>,
-        point: SamplePoint,
-    ) -> Option<f64> {
+    pub fn evaluate_channel(&self, channel: impl AsRef<str>, point: SamplePoint) -> Option<f64> {
         self.channel_node(channel)
             .map(|node| self.evaluate_node(node, point))
     }

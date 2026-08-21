@@ -128,12 +128,7 @@ fn check_fps(fps: &Option<f32>, issue: &mut impl FnMut(String)) {
 
 /// A tooltip's `hover` anchor must name a widget that exists — a typo'd id
 /// would not error anywhere else, the tooltip would just never show.
-fn check_hover_anchors(
-    node: &Node,
-    path: &str,
-    ids: &HashSet<&str>,
-    issues: &mut Vec<DocIssue>,
-) {
+fn check_hover_anchors(node: &Node, path: &str, ids: &HashSet<&str>, issues: &mut Vec<DocIssue>) {
     if let NodeKind::Tooltip {
         hover: Some(anchor),
     } = &node.kind
@@ -447,7 +442,11 @@ mod tests {
             .iter()
             .filter(|i| i.message.contains("'accepts' binding"))
             .collect();
-        assert_eq!(inert.len(), 2, "the unfiltered slot and the label: {issues:?}");
+        assert_eq!(
+            inert.len(),
+            2,
+            "the unfiltered slot and the label: {issues:?}"
+        );
     }
 
     /// A `palette` bind anywhere but a label would silently recolour

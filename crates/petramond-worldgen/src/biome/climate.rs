@@ -3,9 +3,9 @@
 //! This module classifies a sampled climate vector from the density graph into
 //! a final game-facing [`Biome`] without shaping terrain or placing blocks.
 
-use petramond_world::biome::Biome;
 use crate::density::terrain::channels;
 use crate::graph::{SamplePoint, ScalarGraph};
+use petramond_world::biome::Biome;
 
 const SURFACE_AXIS_COUNT: usize = 5;
 

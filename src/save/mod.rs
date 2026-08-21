@@ -44,9 +44,9 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
-use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
+use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::Section;
 
 use io::{read_thread, write_thread, IoMsg, ReadMsg};
@@ -166,7 +166,11 @@ impl WorldSave {
     /// write choke points (the other is [`note_section_load_miss`]).
     ///
     /// [`note_section_load_miss`]: Self::note_section_load_miss
-    pub fn save_sections(&mut self, saved: &mut crate::world::SavedIndex, snaps: Vec<SectionSnapshot>) {
+    pub fn save_sections(
+        &mut self,
+        saved: &mut crate::world::SavedIndex,
+        snaps: Vec<SectionSnapshot>,
+    ) {
         if snaps.is_empty() {
             return;
         }

@@ -1,8 +1,8 @@
 //! Fly camera: yaw/pitch orientation, WASD/space/shift translation.
 
-use petramond_world::chunk::CHUNK_SX;
-use petramond_math::math::{Mat4, Vec3};
 use petramond::world::RENDER_DIST;
+use petramond_math::math::{Mat4, Vec3};
+use petramond_world::chunk::CHUNK_SX;
 
 /// Far clip plane (world blocks). The far plane only has to sit beyond the point
 /// where the world fully fogs out so nothing still visible gets far-plane-culled,

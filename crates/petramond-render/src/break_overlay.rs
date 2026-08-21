@@ -24,8 +24,8 @@ use glam::Vec3;
 
 use super::item_cube::{push_box_faces_lit, push_cube_textured};
 use super::BreakOverlayView;
-use petramond_world::tile::Tile;
 use petramond_mesh::Vertex;
+use petramond_world::tile::Tile;
 
 /// Skip cracking a bbmodel cube whose LARGEST dimension is below this (in blocks).
 const MIN_CRACK_EXTENT: f32 = 1.0;
@@ -91,7 +91,8 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
         // cell's empty air. Boxes are footprint-space, so transform them through the
         // placed model's facing and rotated-footprint base. The multi-block breaks as one
         // object, so the whole piece cracks (MC-like).
-        let model_base = petramond_world::block_model::base_from_cell(view.block, kind, offset, facing);
+        let model_base =
+            petramond_world::block_model::base_from_cell(view.block, kind, offset, facing);
         let placement = petramond_world::block_model::placement_transform(model_base, kind, facing);
         for b in petramond_world::block_model::model_render_boxes(kind) {
             // Skip very small surfaces (decoration specks) — crack only the structural cubes.
@@ -349,7 +350,11 @@ mod tests {
             block,
             visual_box: None,
             shape_boxes: None,
-            model: Some((kind, offset, petramond_world::block_model::DEFAULT_MODEL_FACING)),
+            model: Some((
+                kind,
+                offset,
+                petramond_world::block_model::DEFAULT_MODEL_FACING,
+            )),
             stage: 3,
         };
         let mut v = Vec::new();
@@ -399,11 +404,11 @@ mod tests {
     #[test]
     #[ignore = "visual preview harness; writes /tmp/break_overlay.png"]
     fn render_break_overlay_preview() {
-        use petramond_world::bbmodel::euler_quat;
-        use petramond_world::block_model::{self, BlockModelKind};
+        use glam::{Mat4, Vec3};
         use petramond_math::face::Face;
         use petramond_mesh::SHADES;
-        use glam::{Mat4, Vec3};
+        use petramond_world::bbmodel::euler_quat;
+        use petramond_world::block_model::{self, BlockModelKind};
 
         let kind = BlockModelKind::FurnitureWorkbench;
         const W: usize = 480;

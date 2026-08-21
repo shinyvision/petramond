@@ -356,7 +356,6 @@ fn enforce_id_budget(
     .collect()
 }
 
-
 /// The workspace root, from this crate's compiled-in manifest dir. Dev builds
 /// run from anywhere inside the repo; installed builds never hit these roots
 /// (the data-dir roots above resolve first).

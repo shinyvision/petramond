@@ -384,7 +384,10 @@ mod tests {
     #[test]
     fn le_bytes_round_trip_a_cube() {
         let cube: Vec<LightRgb> = (0..64u8)
-            .map(|i| LightRgb::new(i % 31, (i * 3) % 31, (i * 7) % 31))
+            .map(|i| {
+                let i = u16::from(i);
+                LightRgb::new((i % 31) as u8, (i * 3 % 31) as u8, (i * 7 % 31) as u8)
+            })
             .collect();
         let bytes = to_le_bytes(&cube);
         assert_eq!(bytes.len(), cube.len() * 2);

@@ -1123,11 +1123,18 @@ fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
     };
 
     run(&mut fs, &mut out, &[]);
-    assert!(out.rect("tip_text").is_none(), "nothing hovered, no tooltip");
+    assert!(
+        out.rect("tip_text").is_none(),
+        "nothing hovered, no tooltip"
+    );
     let tank = out.rect("tank").expect("gauge is named");
     let (gx, gy) = ((tank.x + tank.w / 2) as f32, (tank.y + tank.h / 2) as f32);
 
-    run(&mut fs, &mut out, &[InputEvent::PointerMove { x: gx, y: gy }]);
+    run(
+        &mut fs,
+        &mut out,
+        &[InputEvent::PointerMove { x: gx, y: gy }],
+    );
     assert!(
         out.rect("tip_text").is_none(),
         "hover lands in the NEXT frame's expansion"
@@ -1138,7 +1145,11 @@ fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
         "over its widget, the anchored tooltip shows"
     );
 
-    run(&mut fs, &mut out, &[InputEvent::PointerMove { x: 2.0, y: 2.0 }]);
+    run(
+        &mut fs,
+        &mut out,
+        &[InputEvent::PointerMove { x: 2.0, y: 2.0 }],
+    );
     run(&mut fs, &mut out, &[]);
     assert!(
         out.rect("tip_text").is_none(),
@@ -1150,10 +1161,7 @@ fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
     empty.set("fill", UiValue::F32(0.5));
     empty.set("tip", UiValue::Str(String::new()));
     run_state(&rt, &empty, &mut fs, &mut out, &[]);
-    assert!(
-        out.rect("tip_text").is_none(),
-        "no text, no tooltip panel"
-    );
+    assert!(out.rect("tip_text").is_none(), "no text, no tooltip panel");
 }
 
 #[cfg(test)]

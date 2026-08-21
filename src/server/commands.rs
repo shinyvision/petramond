@@ -2,9 +2,9 @@
 //! operator-authored chat commands.
 
 use crate::net::protocol::ChatColor;
+use crate::player::PlayerId;
 use crate::server::chat::ChatTargets;
 use crate::server::game::ServerGame;
-use crate::player::PlayerId;
 
 #[derive(Copy, Clone)]
 enum CommandSource {

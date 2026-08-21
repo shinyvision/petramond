@@ -6,8 +6,8 @@ use crate::bbmodel::{euler_quat, face_corners};
 use crate::block::Aabb;
 use crate::facing::Facing;
 use crate::mathh::IVec3;
-use petramond_math::face::Face;
 use crate::shade::{ContactShadowVertex, SHADES};
+use petramond_math::face::Face;
 
 use super::ao::{bake_contact_field, bake_face_ao, CONTACT_GRID};
 use super::query::face_texel_opaque;
@@ -618,8 +618,9 @@ fn bake_cell_template(
                     Some(Face::ALL[cull_bucket - 1])
                 };
                 let (v0, i0) = (verts.len() as u32, indices.len() as u32);
-                for &(ci, slot, ..) in
-                    group_faces.iter().filter(|&&(_, _, b, c)| b == blend && c == bucket_cull)
+                for &(ci, slot, ..) in group_faces
+                    .iter()
+                    .filter(|&&(_, _, b, c)| b == blend && c == bucket_cull)
                 {
                     let cube = &cubes[ci as usize];
                     let tinted = tint_parts.contains(&cube.name.as_str());
@@ -842,7 +843,11 @@ mod tests {
 
         let straight =
             bake_cell_template(Mat4::IDENTITY, &cubes, &[0], &ao, &draw, &blend, &[], &[]);
-        let gated: Vec<_> = straight.segments.iter().filter(|s| s.cull.is_some()).collect();
+        let gated: Vec<_> = straight
+            .segments
+            .iter()
+            .filter(|s| s.cull.is_some())
+            .collect();
         assert_eq!(gated.len(), 1);
         assert_eq!(gated[0].cull, Some(Face::NegZ));
         assert_eq!(gated[0].run.vert_len, 4, "exactly the one gated face");

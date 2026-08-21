@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use petramond_math::math::{IVec3, Vec3};
 use crate::player::PlayerId;
+use petramond_math::math::{IVec3, Vec3};
 
 use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 

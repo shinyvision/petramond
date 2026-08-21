@@ -18,9 +18,9 @@
 //! every box family (2026-07-23), so a glass wall shades continuously with
 //! the terrain it meets.
 
-use crate::tile::Tile;
 use crate::block::Aabb;
 use crate::pane::{EAST, NORTH, SOUTH, WEST};
+use crate::tile::Tile;
 
 use crate::block::shape::{ShapeBox, ShapeFace};
 use crate::face::Face;

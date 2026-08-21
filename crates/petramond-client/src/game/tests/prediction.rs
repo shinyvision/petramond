@@ -1,16 +1,16 @@
 //! Optimistic client prediction: ledger rollback, mining deny, movement snap.
 
 use super::common::*;
-use petramond_world::block::Block;
-use petramond_world::gui_state::PointerButton;
 use crate::game::prediction::PredictionSnapshot;
-use petramond::events::tick::{TickEvents, TICK_DT};
 use crate::game::tick::{GameInput, PlacePrediction};
-use petramond_world::gui_state::{GuiKind, MenuSlot};
-use petramond_math::math::{IVec3, Vec3};
+use petramond::events::tick::{TickEvents, TICK_DT};
 use petramond::net::protocol::{
     ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, TickUpdate,
 };
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::gui_state::{GuiKind, MenuSlot};
 
 #[test]
 fn menu_click_deny_restores_inventory_snapshot() {
@@ -26,9 +26,12 @@ fn menu_click_deny_restores_inventory_snapshot() {
     );
 
     let id = 0;
-    let (rollbacks, _) = game
-        .prediction
-        .reconcile(&[petramond::net::protocol::ActionOutcome::deny(id, ActionDenyReason::Denied)]);
+    let (rollbacks, _) =
+        game.prediction
+            .reconcile(&[petramond::net::protocol::ActionOutcome::deny(
+                id,
+                ActionDenyReason::Denied,
+            )]);
     assert_eq!(rollbacks.len(), 1);
     match &rollbacks[0] {
         PredictionSnapshot::Inventory(inv) => {
@@ -52,7 +55,8 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
     game.game.menu_view.container = Some(petramond_world::gui_state::ContainerView {
         slots: vec![None; petramond::world::chest::CHEST_SLOTS],
     });
-    game.game.menu_view.container_kind = petramond_world::gui_state::resolve_kind("petramond:chest");
+    game.game.menu_view.container_kind =
+        petramond_world::gui_state::resolve_kind("petramond:chest");
 
     game.game.menu_drag(
         GuiKind::Chest,
@@ -74,7 +78,10 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
     );
 
     game.game.apply_tick_update(Box::new(TickUpdate {
-        action_outcomes: vec![petramond::net::protocol::ActionOutcome::deny(0, ActionDenyReason::Denied)],
+        action_outcomes: vec![petramond::net::protocol::ActionOutcome::deny(
+            0,
+            ActionDenyReason::Denied,
+        )],
         ..Default::default()
     }));
     assert_eq!(
@@ -306,7 +313,8 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
     game.game.menu_view.container = Some(petramond_world::gui_state::ContainerView {
         slots: vec![None; petramond::world::chest::CHEST_SLOTS],
     });
-    game.game.menu_view.container_kind = petramond_world::gui_state::resolve_kind("petramond:chest");
+    game.game.menu_view.container_kind =
+        petramond_world::gui_state::resolve_kind("petramond:chest");
 
     game.game.menu_click(
         MenuSlot::Container(0),
@@ -518,7 +526,8 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
         .apply_message(0, ClientToServer::PlayerUpdate(u));
 
     // Hold-path clears the cell BEFORE BreakFinished arrives (slow uplink).
-    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks =
+        (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
         if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
@@ -611,7 +620,8 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     );
 
     // Hold until the server's timer breaks the block.
-    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks =
+        (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
         if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
@@ -652,7 +662,8 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u));
 
-    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks =
+        (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     // Hold just short of the server's own finish, then deliver the client's.
     for _ in 0..expected_ticks - 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
@@ -927,7 +938,10 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
             state: None,
             cell_kv: vec![],
         }],
-        action_outcomes: vec![petramond::net::protocol::ActionOutcome::deny(id, ActionDenyReason::Denied)],
+        action_outcomes: vec![petramond::net::protocol::ActionOutcome::deny(
+            id,
+            ActionDenyReason::Denied,
+        )],
         ..Default::default()
     };
     game.game.apply_tick_update(Box::new(update));
@@ -1168,10 +1182,14 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     // Any mod-registered custom-shape block with a linked item (the
     // furniture chain, when the pack is installed). The engine ships no
     // custom rows, so without an installed pack there is nothing to pin.
-    let Some(item) = petramond_world::item::ItemType::all().iter().copied().find(|i| {
-        i.as_block()
-            .is_some_and(|b| !b.is_engine() && b.shape_family() == ShapeFamily::Custom)
-    }) else {
+    let Some(item) = petramond_world::item::ItemType::all()
+        .iter()
+        .copied()
+        .find(|i| {
+            i.as_block()
+                .is_some_and(|b| !b.is_engine() && b.shape_family() == ShapeFamily::Custom)
+        })
+    else {
         return;
     };
     let mut game = game_on_empty_chunk();
@@ -1343,8 +1361,9 @@ fn optimistic_chest_place_records_front_facing_immediately() {
         .section_at_world_for_test(floor.x, floor.y, floor.z)
         .expect("floor section")
         .entity_facing(0, 0, 0);
-    let facing_of =
-        |g: &crate::game::Game| petramond::server::placement::facing_from_forward(g.player.forward());
+    let facing_of = |g: &crate::game::Game| {
+        petramond::server::placement::facing_from_forward(g.player.forward())
+    };
     if facing_of(&game.game) == default_facing {
         game.game.player.yaw += std::f32::consts::PI;
     }
@@ -1501,7 +1520,10 @@ fn denied_place_restores_cell_and_inventory_silently() {
     game.self_view.inventory.decrement_selected();
 
     let update = TickUpdate {
-        action_outcomes: vec![petramond::net::protocol::ActionOutcome::deny(id, ActionDenyReason::Denied)],
+        action_outcomes: vec![petramond::net::protocol::ActionOutcome::deny(
+            id,
+            ActionDenyReason::Denied,
+        )],
         ..Default::default()
     };
     game.game.apply_tick_update(Box::new(update));
@@ -1725,7 +1747,8 @@ fn unpredicted_break_finish_keeps_the_initiators_break_event() {
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u));
-    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks =
+        (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks - 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
     }
@@ -1817,7 +1840,16 @@ fn corrections_never_adopt_the_look() {
         on_ground: false,
     });
 
-    assert_eq!(game.game.player.pos, corrected_pos, "position corrections still adopt");
-    assert_eq!(game.game.player.yaw, 1.25, "the stale yaw echo must not revert the look");
-    assert_eq!(game.game.player.pitch, -0.5, "the stale pitch echo must not revert the look");
+    assert_eq!(
+        game.game.player.pos, corrected_pos,
+        "position corrections still adopt"
+    );
+    assert_eq!(
+        game.game.player.yaw, 1.25,
+        "the stale yaw echo must not revert the look"
+    );
+    assert_eq!(
+        game.game.player.pitch, -0.5,
+        "the stale pitch echo must not revert the look"
+    );
 }

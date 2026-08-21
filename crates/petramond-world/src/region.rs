@@ -24,8 +24,8 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use petramond_util::bytecodec::{read_u16, read_u32, write_u16, write_u32};
 use crate::chunk::{SectionPos, SECTION_MIN_CY};
+use petramond_util::bytecodec::{read_u16, read_u32, write_u16, write_u32};
 
 /// Columns per region edge (32 → 1024 columns per region, each a vertical stack).
 pub const REGION_SHIFT: i32 = 5;

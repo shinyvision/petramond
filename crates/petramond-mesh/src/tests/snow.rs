@@ -74,7 +74,11 @@ fn any_floor_flush_neighbour_seals_the_face_beneath_it() {
             8,
             1,
             8,
-            SlabState::single(petramond_world::block_state::SlabSplit::Y, slot, Block::StoneSlab),
+            SlabState::single(
+                petramond_world::block_state::SlabSplit::Y,
+                slot,
+                Block::StoneSlab,
+            ),
         );
         mesh(&section).opaque.chunks_exact(4).any(|q| {
             let span = |a: usize| {

@@ -5,11 +5,11 @@
 
 #[cfg(test)]
 mod behavior_dirt {
-    use petramond_world::block::behavior::BlockBehavior;
+    use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::block::behavior::test_shims::dirt::*;
-    use crate::world::World;
-    
+    use petramond_world::block::behavior::BlockBehavior;
+
     use petramond_world::chunk::{Chunk, ChunkPos};
 
     /// A world with one loaded chunk at (0,0). Coords kept a few blocks inside the
@@ -107,11 +107,11 @@ mod behavior_dirt {
 
 #[cfg(test)]
 mod behavior_grass {
-    use petramond_world::block::behavior::BlockBehavior;
+    use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::block::behavior::test_shims::grass::*;
-    use crate::world::World;
-    
+    use petramond_world::block::behavior::BlockBehavior;
+
     use petramond_world::chunk::{Chunk, ChunkPos};
 
     fn world_with_chunk() -> World {
@@ -166,11 +166,11 @@ mod behavior_grass {
 
 #[cfg(test)]
 mod behavior_leaves {
-    use petramond_world::block::behavior::BlockBehavior;
+    use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::block::behavior::test_shims::leaves::*;
-    use crate::world::World;
-    
+    use petramond_world::block::behavior::BlockBehavior;
+
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos};
 
@@ -252,11 +252,11 @@ mod behavior_leaves {
 mod behavior_wasm {
     #[allow(unused_imports)]
     use petramond_world::block::behavior::test_shims::wasm::*;
-    
 
     #[test]
     fn namespaced_keys_intern_to_shared_singletons_that_enqueue_hooks() {
-        let a = petramond_world::block::behavior::by_name("testmod:zap").expect("namespaced keys resolve");
+        let a = petramond_world::block::behavior::by_name("testmod:zap")
+            .expect("namespaced keys resolve");
         let b = petramond_world::block::behavior::by_name("testmod:zap").expect("stable");
         assert_eq!(a.key(), "testmod:zap", "key() inverts by_name()");
         assert!(
@@ -285,10 +285,9 @@ mod behavior_wasm {
 
 #[cfg(test)]
 mod shape_kind {
+    use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::block::shape_kind_test_shim::*;
-    use crate::world::World;
-    
 
     /// The per-id collision table ([`Block::static_collision_boxes`]) is only
     /// sound while every kind flagged [`ShapeKindDef::collision_state_free`]
@@ -718,9 +717,10 @@ mod shape_kind {
         // they were authored in different frames. Reading the cell's turn
         // alone gives both `0` and is the bug this pins.
         let drawn_top = |b: &BoxDef| {
-            families::box_set_box(b, 0, petramond_world::block::Block::Stone, &|_| [1.0; 3]).faces[2]
-                .expect("a top face")
-                .uv_turns
+            families::box_set_box(b, 0, petramond_world::block::Block::Stone, &|_| [1.0; 3]).faces
+                [2]
+            .expect("a top face")
+            .uv_turns
         };
         assert_eq!(drawn_top(piece), 1, "inherited top turns with its parent");
         assert_eq!(drawn_top(own), 0, "the shape's own top does not");
@@ -779,10 +779,9 @@ mod shape_kind {
 
 #[cfg(test)]
 mod registry_palette {
+    use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::registry::test_exports::*;
-    use crate::world::World;
-    
 
     #[test]
     fn tag_table_interns_namespaced_and_rejects_bare_unknowns() {
@@ -1059,11 +1058,11 @@ mod world_fence {
     use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::world::fence::test_exports::*;
-    
+
+    use petramond_math::facing::Facing;
     use petramond_world::block::Block;
     use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
     use petramond_world::chunk::{Chunk, ChunkPos};
-    use petramond_math::facing::Facing;
 
     fn world() -> World {
         let mut w = World::new(0, 4);
@@ -1082,7 +1081,10 @@ mod world_fence {
 
         w.set_block_world(7, 64, 8, Block::Stone);
         w.set_block_world(9, 64, 8, Block::OakFence);
-        assert_eq!(w.fence_mask_at(p), petramond_world::pane::WEST | petramond_world::pane::EAST);
+        assert_eq!(
+            w.fence_mask_at(p),
+            petramond_world::pane::WEST | petramond_world::pane::EAST
+        );
 
         w.set_block_world(7, 64, 8, Block::OakLeaves);
         w.set_block_world(8, 64, 9, Block::Glass);
@@ -1141,7 +1143,7 @@ mod world_ladder {
     use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::world::ladder::test_exports::*;
-    
+
     use petramond_world::chunk::{Chunk, ChunkPos};
 
     fn world() -> World {
@@ -1172,7 +1174,10 @@ mod world_ladder {
         let p = IVec3::new(8, 64, 8);
         w.set_block_world(p.x, p.y, p.z, Block::LadderEast);
         let boxes = w.collision_boxes_at(p.x, p.y, p.z);
-        assert_eq!(boxes, petramond_world::ladder::collision_boxes(Facing::East));
+        assert_eq!(
+            boxes,
+            petramond_world::ladder::collision_boxes(Facing::East)
+        );
         // The panel is thin, standable geometry hugging the wall side — not a
         // full cube and not empty (a body bumps it and can stand on top).
         assert_eq!(boxes.len(), 1);
@@ -1229,10 +1234,10 @@ mod light_batch {
     use crate::world::light::{run_light_bake, LightBakeJob};
     #[allow(unused_imports)]
     use petramond_world::world::light::batch::test_exports::*;
-    
+
+    use petramond_math::facing::Facing;
     use petramond_world::block::Block;
     use petramond_world::block_state::{StairHalf, StairState};
-    use petramond_math::facing::Facing;
     use petramond_world::torch::TorchPlacement;
 
     fn xorshift(state: &mut u64) -> u64 {
@@ -1394,11 +1399,11 @@ mod world_pane {
     use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::world::pane::test_exports::*;
-    
+
+    use petramond_math::facing::Facing;
     use petramond_world::block::Block;
     use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
     use petramond_world::chunk::{Chunk, ChunkPos};
-    use petramond_math::facing::Facing;
 
     fn world() -> World {
         let mut w = World::new(0, 4);
@@ -1417,7 +1422,10 @@ mod world_pane {
 
         w.set_block_world(7, 64, 8, Block::Stone);
         w.set_block_world(9, 64, 8, Block::GlassPane);
-        assert_eq!(w.pane_mask_at(p), petramond_world::pane::WEST | petramond_world::pane::EAST);
+        assert_eq!(
+            w.pane_mask_at(p),
+            petramond_world::pane::WEST | petramond_world::pane::EAST
+        );
 
         w.set_block_world(8, 64, 7, Block::Chest);
         w.set_block_world(8, 64, 9, Block::Cactus);
@@ -1476,11 +1484,11 @@ mod world_torch {
     use crate::world::World;
     #[allow(unused_imports)]
     use petramond_world::world::torch::test_exports::*;
-    
+
+    use petramond_math::facing::Facing;
     use petramond_world::block::Block;
     use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
     use petramond_world::chunk::{Chunk, ChunkPos};
-    use petramond_math::facing::Facing;
 
     fn world() -> World {
         let mut w = World::new(0, 4);

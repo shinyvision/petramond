@@ -14,8 +14,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 use petramond_util::bytecodec::{deflate, inflate, put_u32, put_u64, put_u8, Reader};
+use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 use petramond_world::region::{REGION_SHIFT, REGION_SIZE};
 
 /// Bumped to 6 when underground biomes became data-driven: a pack row can now

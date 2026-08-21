@@ -488,9 +488,7 @@ impl Content {
     /// anything that is not a crop stage at all.
     pub fn crop_regressed(&self, b: BlockId) -> Option<BlockId> {
         let (def, stage) = self.crop_stage(b)?;
-        stage
-            .checked_sub(1)
-            .map(|below| def.stages[below as usize])
+        stage.checked_sub(1).map(|below| def.stages[below as usize])
     }
 
     /// The compost barrel's fill stage (0 = empty, 3 = full), if `b` is one.

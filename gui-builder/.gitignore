@@ -1,3 +1,3 @@
-# Build artifacts and default bake output for the GUI builder.
-/target
+# Default bake output for the GUI builder. Cargo artifacts are routed to the
+# repository-level target/ by the Makefile and verification scripts.
 /out

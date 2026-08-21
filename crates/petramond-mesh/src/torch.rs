@@ -10,9 +10,9 @@
 //! so it stays visibly glowing even in an unlit cave.
 
 use crate::vertex::BlockLightVertexExt;
-use petramond_world::tile::Tile;
 use petramond_world::light::BlockLight6;
 use petramond_world::mathh::Vec3;
+use petramond_world::tile::Tile;
 use petramond_world::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 
 use super::face::Face;

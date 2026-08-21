@@ -1,6 +1,6 @@
 use crate::vertex::BlockLightVertexExt;
-use petramond_world::tile::Tile;
 use petramond_world::block::ShapeFamily;
+use petramond_world::tile::Tile;
 
 use super::super::face::{crop_quads, cross_quads};
 use petramond_world::light::BlockLight6;

@@ -425,7 +425,12 @@ impl World {
         if self.mod_stream.block_draws.is_empty() {
             return;
         }
-        let Some(set) = self.mod_stream.block_draws.get(&pos).map(|p| Arc::clone(&p.set)) else {
+        let Some(set) = self
+            .mod_stream
+            .block_draws
+            .get(&pos)
+            .map(|p| Arc::clone(&p.set))
+        else {
             return;
         };
         let (to_world, _) = self.draw_placement(pos, &set);
@@ -605,10 +610,10 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::facing::Facing;
     use petramond_world::block::Block;
     use petramond_world::block_model::BlockModelKind;
     use petramond_world::chunk::{Chunk, ChunkPos, SectionPos};
-    use petramond_math::facing::Facing;
 
     const WB: Block = Block::FurnitureWorkbench;
 

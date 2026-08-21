@@ -8,8 +8,8 @@
 //! block/biome/water data; see `save::codec`.
 
 use crate::entity::DroppedItem;
-use petramond_math::math::Vec3;
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u16, put_u32, Reader};
+use petramond_math::math::Vec3;
 
 /// Bytes per serialized entity: pos(12) + vel(12) + slot(4, plain stack) +
 /// ticks_lived(4) + spin(4). Data-bearing stacks append their blob past this;

@@ -304,8 +304,8 @@ fn raster_sprite_cell(
                 let w2 = 1.0 - w0 - w1;
                 // Inside-triangle test that works for BOTH windings (a
                 // reflected MVP flips the sign of every barycentric).
-                let inside = (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0)
-                    || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
+                let inside =
+                    (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
                 if !inside {
                     continue;
                 }
@@ -412,7 +412,9 @@ fn render_off_hand_preview() {
         image::ColorType::Rgb8,
     )
     .expect("save png");
-    println!("wrote /tmp/off_hand_preview.png ({gw}x{gh}; left col = right hand, right col = off hand)");
+    println!(
+        "wrote /tmp/off_hand_preview.png ({gw}x{gh}; left col = right hand, right col = off hand)"
+    );
 }
 
 #[test]
@@ -754,8 +756,8 @@ fn swing_and_place_change_the_mvp() {
 #[ignore = "visual preview harness; run explicitly to regenerate /tmp PNGs"]
 fn render_held_item_preview() {
     use crate::atlas::tile_uv;
-    use petramond_world::item::ItemType;
     use glam::Vec4;
+    use petramond_world::item::ItemType;
 
     // (item, texture, eat blend, bite phase, approach) — the eat rows
     // preview the mouth-carry pose (mid-carry, full, and full at the end
@@ -793,7 +795,11 @@ fn render_held_item_preview() {
             &mut verts,
         );
         // Repo-root texture dir (this crate moved under crates/ in the split).
-        let src = format!("{}/../../assets/textures/{}", env!("CARGO_MANIFEST_DIR"), file);
+        let src = format!(
+            "{}/../../assets/textures/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            file
+        );
         let img = image::open(&src).expect("texture").to_rgba8();
         let (tw, th) = img.dimensions();
         let [au0, av0, au1, av1] = tile_uv(tile);

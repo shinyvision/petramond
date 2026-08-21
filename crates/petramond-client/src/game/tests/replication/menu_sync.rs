@@ -3,12 +3,12 @@
 
 use super::common::{count_item, filled_inventory, game, game_on_empty_chunk};
 use super::pump_one_tick;
-use petramond_world::gui_state::PointerButton;
 use petramond::entity::DroppedItem;
 use petramond::events::tick::{TickEvents, TICK_DT};
-use petramond_world::gui_state::MenuSlot;
-use petramond_world::item::{ItemStack, ItemType};
 use petramond_math::math::Vec3;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::item::{ItemStack, ItemType};
 
 fn test_crafting_recipe(
     key: &str,
@@ -110,8 +110,8 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
 
 #[test]
 fn crafting_outputs_replicate_per_session_and_remain_independent() {
-    use petramond_world::crafting::CraftingStation;
     use petramond::net::protocol::{ClientToServer, MenuSlotWire, MenuTargetWire};
+    use petramond_world::crafting::CraftingStation;
 
     let mut game = game();
     game.server
@@ -246,8 +246,8 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
 /// closes silently.
 #[test]
 fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
-    use petramond_world::block::Block;
     use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
@@ -280,9 +280,9 @@ fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
 /// carries no open-screen (it wasn't the opener).
 #[test]
 fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
-    use petramond_world::block::Block;
-    use petramond_math::math::IVec3;
     use petramond::net::protocol::WorldEventMsg;
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
@@ -321,9 +321,9 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
 /// tick-side open ships the new target once.
 #[test]
 fn menu_sync_ships_on_change_only() {
-    use petramond_world::block::Block;
-    use petramond_math::math::IVec3;
     use petramond::net::protocol::MenuTargetWire;
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
@@ -367,9 +367,9 @@ fn menu_sync_ships_on_change_only() {
 /// pending — this batch is the one it reconciles from.
 #[test]
 fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
-    use petramond_world::block::Block;
-    use petramond_math::math::IVec3;
     use petramond::net::protocol::{ClientToServer, MenuSlotWire};
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
@@ -388,7 +388,9 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
         0,
         ClientToServer::MenuClick {
             slot: MenuSlotWire::Container(0),
-            button: petramond::net::protocol::button_to_wire(petramond_world::gui_state::PointerButton::Secondary),
+            button: petramond::net::protocol::button_to_wire(
+                petramond_world::gui_state::PointerButton::Secondary,
+            ),
             shift: false,
             gather: false,
             request_id: 11,
@@ -414,12 +416,13 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
 /// a fresh allocation), never in between.
 #[test]
 fn gui_state_ships_in_menu_sync_only_on_arc_change() {
-    use petramond_world::gui_state::GuiValue;
     use petramond::net::protocol::{GuiValueWire, MenuTargetWire};
+    use petramond_world::gui_state::GuiValue;
 
     let mut game = super::common::game();
     game.set_mods_for_test(petramond::modding::ModHost::test_unit_guest_host("modtest"));
-    let kind = petramond_world::gui_state::intern_kind("modtest:panel").expect("mod kind registers");
+    let kind =
+        petramond_world::gui_state::intern_kind("modtest:panel").expect("mod kind registers");
     game.server.open_mod_gui_screen_for(0, kind, None);
 
     let up = pump_one_tick(&mut game);
@@ -461,8 +464,8 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
 
 #[test]
 fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
-    use petramond_world::gui_state::GuiValue;
     use petramond::net::protocol::{GuiValueWire, MenuTargetWire};
+    use petramond_world::gui_state::GuiValue;
 
     let mut game = super::common::game();
     game.set_mods_for_test(petramond::modding::ModHost::test_unit_guest_host("kitchen"));
@@ -506,7 +509,8 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
     let pos = IVec3::new(3, 64, 3);
     // The tick's request site (interaction arm) writes this outbox field;
     // seed it directly to isolate the SelfEvents → GameEvents pipe.
-    game.server.sessions[0].request_open_gui = Some((petramond_world::gui_state::GuiKind::Chest, Some(pos)));
+    game.server.sessions[0].request_open_gui =
+        Some((petramond_world::gui_state::GuiKind::Chest, Some(pos)));
 
     let events = game.tick(TICK_DT, &GameInput::default());
     assert_eq!(

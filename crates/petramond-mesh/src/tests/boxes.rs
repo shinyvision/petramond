@@ -190,7 +190,11 @@ fn a_face_only_box_is_not_matter() {
         9,
         1,
         8,
-        SlabState::single(petramond_world::block_state::SlabSplit::Y, 0, Block::StoneSlab),
+        SlabState::single(
+            petramond_world::block_state::SlabSplit::Y,
+            0,
+            Block::StoneSlab,
+        ),
     );
     let m = mesh(&section);
     let slab_face_toward_cactus = m.opaque.chunks_exact(4).any(|q| {

@@ -6,14 +6,14 @@
 //! purpose — adding an engine event/stage without its ABI mirror must not
 //! compile.
 
-use petramond_world::chunk::SectionPos;
 use crate::events::{
     self, BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre, MobDamageFeedbackComponent,
     MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent, PostEventKind,
 };
+use mod_api as api;
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
-use mod_api as api;
+use petramond_world::chunk::SectionPos;
 
 /// Engine → ABI world-cell position (a plain-fn `IVec3::to_array` for `.map`).
 #[inline]
@@ -200,7 +200,10 @@ pub(super) fn item_stack_in(data: &api::ItemStackData) -> Option<petramond_world
         if variant::valid(&map) {
             variant::intern(&map).unwrap_or(variant::VariantId::NONE)
         } else {
-            log::warn!("event drops override for '{}': invalid instance data", data.item);
+            log::warn!(
+                "event drops override for '{}': invalid instance data",
+                data.item
+            );
             variant::VariantId::NONE
         }
     };

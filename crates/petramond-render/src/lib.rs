@@ -3,10 +3,9 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod atlas;
-pub mod camera;
-pub mod views;
 pub mod block_draw;
 pub mod break_overlay;
+pub mod camera;
 pub mod chest_model;
 pub mod crosshair;
 pub mod door_model;
@@ -21,6 +20,7 @@ pub mod hand_animator;
 pub mod item_cube;
 pub mod item_entity;
 pub mod item_model;
+pub mod views;
 
 pub mod lighting;
 pub mod mob_model;
@@ -35,23 +35,23 @@ pub mod shader_pack;
 pub mod ui;
 pub mod uniforms;
 
-pub use views::BreakOverlayView;
-pub use views::EntityShadow;
 pub use hand_animator::HeldItemAnimator;
 pub use renderer::new_offscreen_renderer;
 pub use renderer::new_renderer_from_target;
 #[allow(unused_imports)]
 pub use renderer::TerrainMemory;
 pub use renderer::{RenderedFrame, Renderer};
+pub use views::BreakOverlayView;
+pub use views::EntityShadow;
 
 pub use scene::Scene;
 
 #[cfg(test)]
 pub use item_cube::SOLID_COLOR_FLAG;
 
+use glam::{Quat, Vec3};
 use petramond_world::block_state::HeldBlockState;
 use petramond_world::item::ItemType;
-use glam::{Quat, Vec3};
 use std::sync::Arc;
 
 /// One client-WASM image placed in an explicit physical screen rect. This is

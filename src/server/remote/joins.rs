@@ -1,8 +1,8 @@
 use crate::events::tick::TickEvents;
 use crate::net::protocol::{ItemSlotWire, JoinData, SelfRestore};
+use crate::player::PlayerId;
 use crate::server::game::{wire_world_events, ServerGame};
 use crate::server::player::ConnectedPlayer;
-use crate::player::PlayerId;
 
 impl ServerGame {
     /// Admit `requested` as a new remote session and return the `JoinAccept`

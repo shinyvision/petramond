@@ -104,7 +104,8 @@ pub(super) fn build_exposed_masks(
                 let c = pad_class[pad.blocks[i] as usize];
                 if c & PAD_OPAQUE != 0
                     || (c & PAD_SLAB != 0
-                        && petramond_world::block_state::SlabState::from_cell(pad.cell_states[i]).is_full())
+                        && petramond_world::block_state::SlabState::from_cell(pad.cell_states[i])
+                            .is_full())
                 {
                     row |= 1u32 << px;
                 // Air, water, plants and plain cubes are the overwhelming

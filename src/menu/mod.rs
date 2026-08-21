@@ -13,18 +13,18 @@ pub use target::ContainerTarget;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::World;
+    use petramond_math::facing::Facing;
+    use petramond_math::math::IVec3;
     use petramond_world::block::Block;
-    use petramond_world::gui_state::PointerButton;
     use petramond_world::crafting::{
         CraftingIngredient, CraftingRecipe, CraftingStation, IngredientSelector, IngredientUse,
         Recipes,
     };
-    use petramond_math::facing::Facing;
     use petramond_world::gui_state::MenuSlot;
+    use petramond_world::gui_state::PointerButton;
     use petramond_world::inventory::Inventory;
     use petramond_world::item::{ItemStack, ItemType};
-    use petramond_math::math::IVec3;
-    use crate::world::World;
     /// The engine chest earns its slot semantics from its OWN GUI document,
     /// exactly as a pack container does — there is no engine-owned chest spec
     /// set any more. If `chest.gui.json` ever stops declaring `container`
@@ -33,7 +33,8 @@ mod tests {
     /// which no other test would catch.
     #[test]
     fn the_chest_derives_its_slot_specs_from_its_document() {
-        let specs = crate::gui::documents::container_slot_specs(petramond_world::gui_state::GuiKind::Chest);
+        let specs =
+            crate::gui::documents::container_slot_specs(petramond_world::gui_state::GuiKind::Chest);
         assert_eq!(
             specs.len(),
             crate::world::chest::CHEST_SLOTS,
@@ -53,7 +54,9 @@ mod tests {
     #[test]
     fn the_furnace_derives_its_slot_specs_from_its_document() {
         use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-        let specs = crate::gui::documents::container_slot_specs(petramond_world::gui_state::GuiKind::Furnace);
+        let specs = crate::gui::documents::container_slot_specs(
+            petramond_world::gui_state::GuiKind::Furnace,
+        );
         assert_eq!(specs.len(), petramond_world::furnace::FURNACE_SLOTS);
         assert!(specs[SLOT_INPUT]
             .accepts
@@ -489,7 +492,8 @@ mod tests {
         }
         // It landed in the main grid (first slot of the 27-slot region).
         assert_eq!(
-            inv.slot(petramond_world::inventory::HOTBAR_LEN).map(|s| s.item),
+            inv.slot(petramond_world::inventory::HOTBAR_LEN)
+                .map(|s| s.item),
             Some(ItemType::OakPlanks),
         );
     }

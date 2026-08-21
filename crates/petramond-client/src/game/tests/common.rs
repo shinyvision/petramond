@@ -1,13 +1,13 @@
-use petramond::events::tick::TickEvents;
 use super::super::Game;
-use petramond_render::camera::Camera;
 use crate::game::{GameEvents, GameInput};
-use petramond_world::inventory::Inventory;
-use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::{IVec3, Vec3};
+use petramond::events::tick::TickEvents;
 use petramond::net::protocol::{ClientToServer, PlayerUpdate, TargetRef};
 use petramond::server::game::ServerGame;
 use petramond::server::handle::LoopbackServer;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_render::camera::Camera;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
 
 /// The game test fixture: the client [`Game`] wired to a LOOPBACK
 /// [`ServerHandle`](petramond::server::handle::ServerHandle) — the REAL message
@@ -308,7 +308,10 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
 /// sections first, so the air ABOVE the floor reads as LOADED — sim reads
 /// treat unloaded air as absent.
 /// Takes the `World` directly so tests driving a bare world can use it too.
-pub(super) fn flat_floor_loaded_air(world: &mut petramond::world::World, floor: petramond_world::block::Block) {
+pub(super) fn flat_floor_loaded_air(
+    world: &mut petramond::world::World,
+    floor: petramond_world::block::Block,
+) {
     install_flat_floor(world, floor, true);
 }
 

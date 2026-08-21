@@ -164,10 +164,13 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
     let chest = Block::Chest.collision_boxes(); // inset: x/z in [1/16, 15/16]
     let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
     let blocked = |p: Vec3| {
-        petramond_world::collision::point_in_solid(
-            [p.x, p.y, p.z],
-            |_x, y, _z| if y == 0 { chest } else { &[][..] },
-        )
+        petramond_world::collision::point_in_solid([p.x, p.y, p.z], |_x, y, _z| {
+            if y == 0 {
+                chest
+            } else {
+                &[][..]
+            }
+        })
     };
     let fleck = |pos: Vec3, vel: Vec3| Particle {
         pos,
@@ -265,7 +268,13 @@ fn splash_spec() -> petramond_world::particle_emitters::BurstSpec {
 fn emitter_burst_count_scales_with_intensity_and_caps() {
     let spec = splash_spec();
     let mut small = ParticleSystem::new();
-    small.spawn_emitter_burst(&spec, Vec3::ZERO, 2.0, 63, petramond_world::light::BlockLight6::DARK);
+    small.spawn_emitter_burst(
+        &spec,
+        Vec3::ZERO,
+        2.0,
+        63,
+        petramond_world::light::BlockLight6::DARK,
+    );
     assert_eq!(small.len(), 8, "4 per intensity unit × 2");
     let mut big = ParticleSystem::new();
     big.spawn_emitter_burst(
@@ -292,7 +301,13 @@ fn burst_color_bias_favors_the_first_endpoint() {
     let spec = splash_spec(); // bias 2.5 toward the deep first endpoint
     let mut sys = ParticleSystem::new();
     for _ in 0..10 {
-        sys.spawn_emitter_burst(&spec, Vec3::ZERO, 5.0, 63, petramond_world::light::BlockLight6::DARK);
+        sys.spawn_emitter_burst(
+            &spec,
+            Vec3::ZERO,
+            5.0,
+            63,
+            petramond_world::light::BlockLight6::DARK,
+        );
     }
     // mix^2.5 has mean ~0.29: most droplets sit nearer color[0] (deep).
     let mean_g: f32 = sys.particles().iter().map(|p| p.tint[1]).sum::<f32>() / sys.len() as f32;

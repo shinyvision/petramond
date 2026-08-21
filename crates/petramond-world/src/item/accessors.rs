@@ -1,5 +1,5 @@
-use crate::tile::Tile;
 use crate::block::{Block, ItemRender};
+use crate::tile::Tile;
 
 use super::{
     data, definition, DroppedReaction, FoodDef, HeldPose, ItemRenderKind, ItemTag, ItemType,

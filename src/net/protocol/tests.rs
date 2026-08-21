@@ -152,7 +152,11 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
     // so a lane slip or an endianness flip in `SectionLight` cannot pass.
     let light: Vec<petramond_world::light::LightRgb> = (0..4096u32)
         .map(|i| {
-            petramond_world::light::LightRgb::new((i % 31) as u8, (i / 7 % 31) as u8, (i / 53 % 31) as u8)
+            petramond_world::light::LightRgb::new(
+                (i % 31) as u8,
+                (i / 7 % 31) as u8,
+                (i / 53 % 31) as u8,
+            )
         })
         .collect();
     let payload = SectionPayload {
@@ -172,7 +176,10 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
             draws: Vec::new(),
             cell_states: vec![
                 (4095, petramond_world::block::ShapeState::new(&[7])),
-                (9, petramond_world::block::ShapeState::with_ids(&[5, 3, 0], 0b110)),
+                (
+                    9,
+                    petramond_world::block::ShapeState::with_ids(&[5, 3, 0], 0b110),
+                ),
                 (80, petramond_world::block::ShapeState::new(&[1, 0, 1, 2])),
             ],
             cell_kv: vec![(12, vec![("kitchen:burn".into(), vec![1, 2, 3])])],
@@ -211,7 +218,10 @@ fn tick_updates_roundtrip() {
                 pos: IVec3::new(4, 65, 4),
                 block_id: 12,
                 water: None,
-                state: Some(petramond_world::block::ShapeState::with_ids(&[1, 12, 0], 0b110)),
+                state: Some(petramond_world::block::ShapeState::with_ids(
+                    &[1, 12, 0],
+                    0b110,
+                )),
                 cell_kv: vec![],
             },
             BlockDelta {

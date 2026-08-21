@@ -33,7 +33,12 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             None => HostRet::Names(
                 blocks
                     .iter()
-                    .map(|b| petramond_world::registry::names().blocks.name(b.0).map(str::to_owned))
+                    .map(|b| {
+                        petramond_world::registry::names()
+                            .blocks
+                            .name(b.0)
+                            .map(str::to_owned)
+                    })
                     .collect(),
             ),
         },
@@ -42,7 +47,12 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             None => HostRet::Names(
                 items
                     .iter()
-                    .map(|i| petramond_world::registry::names().items.name(i.0).map(str::to_owned))
+                    .map(|i| {
+                        petramond_world::registry::names()
+                            .items
+                            .name(i.0)
+                            .map(str::to_owned)
+                    })
                     .collect(),
             ),
         },
@@ -121,22 +131,25 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         HostCall::BlockInfo { block } => {
             // Registration gates BEFORE any row accessor runs — an
             // unregistered id must answer `None`, never index a row table.
-            HostRet::BlockInfo(petramond_world::registry::names().blocks.name(block.0).map(
-                |_| {
-                    let b = petramond_world::block::Block::from_id(block.0);
-                    Box::new(mod_api::BlockInfoData {
-                        material: material_name(b.material()).to_owned(),
-                        hardness: b.hardness(),
-                        harvest_tier: b.harvest_tier(),
-                        preferred_tool: b.preferred_tool().map(|t| t.name().to_owned()),
-                        item: {
-                            let item = petramond_world::item::ItemType::from_block(b);
-                            (item != petramond_world::item::ItemType::Air)
-                                .then_some(mod_api::ItemId(item.id()))
-                        },
-                    })
-                },
-            ))
+            HostRet::BlockInfo(
+                petramond_world::registry::names()
+                    .blocks
+                    .name(block.0)
+                    .map(|_| {
+                        let b = petramond_world::block::Block::from_id(block.0);
+                        Box::new(mod_api::BlockInfoData {
+                            material: material_name(b.material()).to_owned(),
+                            hardness: b.hardness(),
+                            harvest_tier: b.harvest_tier(),
+                            preferred_tool: b.preferred_tool().map(|t| t.name().to_owned()),
+                            item: {
+                                let item = petramond_world::item::ItemType::from_block(b);
+                                (item != petramond_world::item::ItemType::Air)
+                                    .then_some(mod_api::ItemId(item.id()))
+                            },
+                        })
+                    }),
+            )
         }
         HostCall::BlocksWithData { key } => HostRet::BlockDataRows(
             petramond_world::block::Block::all()
@@ -331,7 +344,9 @@ mod tests {
         ) else {
             panic!("block list expected");
         };
-        assert!(leaves.contains(&mod_api::BlockId(petramond_world::block::Block::OakLeaves.id())));
+        assert!(leaves.contains(&mod_api::BlockId(
+            petramond_world::block::Block::OakLeaves.id()
+        )));
         assert!(!leaves.contains(&mod_api::BlockId(petramond_world::block::Block::Stone.id())));
         for tag in ["no_such_tag", "mymod:no_such_tag"] {
             assert_eq!(

@@ -22,13 +22,13 @@
 //!   client runs its own linear flash envelope, mirroring the local body's
 //!   hurt-flash (the app's hurt-shake envelope, 0.25 s).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use glam::Vec3;
 
 use petramond::net::protocol::{PlayerActionKind, PlayerStateRow};
-use petramond_render::{HeldItemAnimator, HeldItemFrame, HeldItemView};
 use petramond::player::PlayerId;
+use petramond_render::{HeldItemAnimator, HeldItemFrame, HeldItemView};
 
 use super::body_pose::{lerp_angle, BodyPose};
 
@@ -81,9 +81,6 @@ impl ActionLatch {
 /// One remote player: the interpolation row pair plus per-remote animation
 /// state.
 pub struct RemotePlayer {
-    /// Roster display name (`PlayerJoined`); presentation-only.
-    #[allow(dead_code)] // first consumer: nametags (polish backlog)
-    pub name: String,
     pub prev: PlayerStateRow,
     pub curr: PlayerStateRow,
     /// The shared body pose (walk cycle + body-yaw follow) — the same helper
@@ -111,7 +108,6 @@ impl RemotePlayer {
         let mut pose = BodyPose::default();
         pose.reset_facing(row.transform.yaw);
         Self {
-            name: String::new(),
             prev: row.clone(),
             curr: row,
             pose,
@@ -168,7 +164,6 @@ impl RemotePlayers {
         players: &[PlayerStateRow],
         actions: &[(PlayerId, PlayerActionKind)],
         self_id: PlayerId,
-        roster: &HashMap<PlayerId, String>,
     ) {
         let mut old = std::mem::take(&mut self.map);
         for row in players {
@@ -189,11 +184,6 @@ impl RemotePlayers {
             entry.curr = row.clone();
             if row.hurt_recent {
                 entry.hurt_t = HURT_FLASH_SECS;
-            }
-            if let Some(name) = roster.get(&row.id) {
-                if entry.name != *name {
-                    entry.name = name.clone();
-                }
             }
             self.map.insert(row.id, entry);
         }
@@ -303,11 +293,7 @@ impl RemotePlayers {
 /// Interpolate a remote's transform between two batches: position lerps,
 /// yaw takes the shortest arc, pitch lerps. A `snap` row was applied with
 /// prev == curr, so this is the identity across a teleport.
-pub fn interpolate(
-    prev: &PlayerStateRow,
-    curr: &PlayerStateRow,
-    alpha: f32,
-) -> (Vec3, f32, f32) {
+pub fn interpolate(prev: &PlayerStateRow, curr: &PlayerStateRow, alpha: f32) -> (Vec3, f32, f32) {
     let (p, c) = (&prev.transform, &curr.transform);
     (
         p.pos.lerp(c.pos, alpha),
@@ -350,7 +336,7 @@ mod tests {
     }
 
     fn apply(store: &mut RemotePlayers, rows: &[PlayerStateRow]) {
-        store.apply(rows, &[], PlayerId(0), &HashMap::new());
+        store.apply(rows, &[], PlayerId(0));
     }
 
     #[test]
@@ -420,7 +406,6 @@ mod tests {
             &[row(1, Vec3::ZERO)],
             &[(PlayerId(1), PlayerActionKind::Broke)],
             PlayerId(0),
-            &HashMap::new(),
         );
         store.advance(1.0 / 60.0, 1.0);
         let s1 = store.iter().next().unwrap().view.swing;

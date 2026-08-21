@@ -1,13 +1,13 @@
 use super::super::tick::TICK_DT;
 use super::super::GameInput;
 use super::common::{apply_drop_actions, count_item, filled_inventory, game};
-use petramond_world::block::Block;
 use petramond::entity::DroppedItem;
-use petramond_world::inventory::Inventory;
-use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::ThrowAmount;
 use petramond::world::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
 
 #[test]
 fn spawn_drops_dirt_yields_one_drop() {
@@ -35,8 +35,8 @@ fn spawn_drops_dirt_yields_one_drop() {
 /// fragile block (a poppy) still yields itself.
 #[test]
 fn an_undermined_snow_layer_shatters_without_a_drop() {
-    use petramond::events::tick::TickEvents;
     use super::common::game_on_empty_chunk;
+    use petramond::events::tick::TickEvents;
 
     let mut game = game_on_empty_chunk();
     let cases = [(Block::SnowLayer, 0usize), (Block::Poppy, 1usize)];
@@ -139,8 +139,14 @@ fn pickup_planning_reserves_capacity_before_magnetizing() {
 
     let chest = game.server.sessions[0].player.body_center();
     for (seed, offset) in [
-        (1, Vec3::new(petramond::entity::ATTRACT_RADIUS - 0.1, 0.0, 0.0)),
-        (2, Vec3::new(0.0, 0.0, petramond::entity::ATTRACT_RADIUS - 0.1)),
+        (
+            1,
+            Vec3::new(petramond::entity::ATTRACT_RADIUS - 0.1, 0.0, 0.0),
+        ),
+        (
+            2,
+            Vec3::new(0.0, 0.0, petramond::entity::ATTRACT_RADIUS - 0.1),
+        ),
     ] {
         let mut drop = DroppedItem::new(chest + offset, ItemStack::new(ItemType::Dirt, 1), seed);
         drop.vel = Vec3::ZERO;
@@ -296,7 +302,11 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
 fn distant_dropped_item_is_not_picked_up() {
     let mut game = game();
     let far = game.server.sessions[0].player.eye() + Vec3::new(50.0, 0.0, 0.0);
-    let mut drop = DroppedItem::new(far, ItemStack::new(petramond_world::item::ItemType::Dirt, 1), 2);
+    let mut drop = DroppedItem::new(
+        far,
+        ItemStack::new(petramond_world::item::ItemType::Dirt, 1),
+        2,
+    );
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible, but far out of range
     game.server.world.spawn_item(drop);
     game.server.world.tick_item_lifetime();
@@ -308,7 +318,11 @@ fn distant_dropped_item_is_not_picked_up() {
 fn stale_dropped_item_despawns_on_the_lifetime_tick() {
     let mut game = game();
     let far = game.server.sessions[0].player.eye() + Vec3::new(50.0, 0.0, 0.0);
-    let mut item = DroppedItem::new(far, ItemStack::new(petramond_world::item::ItemType::Dirt, 1), 3);
+    let mut item = DroppedItem::new(
+        far,
+        ItemStack::new(petramond_world::item::ItemType::Dirt, 1),
+        3,
+    );
     // One tick short of the lifetime limit: the next fixed tick ages it out.
     item.ticks_lived = ITEM_LIFETIME_TICKS - 1;
     game.server.world.spawn_item(item);

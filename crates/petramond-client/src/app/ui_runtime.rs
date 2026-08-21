@@ -10,8 +10,8 @@
 
 use petramond::gui::{doc_theme, documents};
 
-use petramond_world::gui_state::GuiKind;
 use petramond_ui::{DocImages, FrameArgs, FrameOutput, FrameState, InputEvent, UiRuntime, UiState};
+use petramond_world::gui_state::GuiKind;
 
 /// A document's image registry: document-local images first, then the
 /// host-registered extras (controller-provided icons), in one
@@ -344,7 +344,10 @@ impl AppUi {
     /// still emits the one authoritative `SlotDrag` event.
     pub fn menu_drag_preview(
         &self,
-    ) -> Option<(Vec<petramond_world::gui_state::MenuSlot>, petramond_ui::PointerButton)> {
+    ) -> Option<(
+        Vec<petramond_world::gui_state::MenuSlot>,
+        petramond_ui::PointerButton,
+    )> {
         let (_, viewport) = self.frame_stamp?;
         if viewport.generation != self.viewport_generation {
             return None;
@@ -354,7 +357,8 @@ impl AppUi {
             .iter()
             .take(petramond_world::gui_state::MAX_MENU_DRAG_SLOTS)
             .filter_map(|(role, index)| {
-                petramond::gui::Role::from_key(role).and_then(|role| role.menu_slot(*index as usize))
+                petramond::gui::Role::from_key(role)
+                    .and_then(|role| role.menu_slot(*index as usize))
             })
             .collect();
         (!slots.is_empty()).then_some((slots, button))
@@ -487,9 +491,18 @@ mod frame_stamp_tests {
 
     #[test]
     fn an_item_view_layers_ghost_marker_is_the_tilde_prefix() {
-        assert_eq!(item_view_layer("petramond:diamond"), ("petramond:diamond", false));
-        assert_eq!(item_view_layer("~petramond:diamond"), ("petramond:diamond", true));
-        assert_eq!(item_view_layer(" ~ petramond:diamond "), ("petramond:diamond", true));
+        assert_eq!(
+            item_view_layer("petramond:diamond"),
+            ("petramond:diamond", false)
+        );
+        assert_eq!(
+            item_view_layer("~petramond:diamond"),
+            ("petramond:diamond", true)
+        );
+        assert_eq!(
+            item_view_layer(" ~ petramond:diamond "),
+            ("petramond:diamond", true)
+        );
         assert_eq!(item_view_layer(""), ("", false));
     }
 

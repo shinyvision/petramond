@@ -1,6 +1,6 @@
+use crate::world::store::World;
 #[cfg(test)]
 use petramond_world::chunk::{ChunkPos, SectionPos};
-use crate::world::store::World;
 
 use super::{
     max_mesh_jobs_in_flight, CANDIDATE_SCAN_PER_MESH_JOB, MESH_SUBMIT_TIME_BUDGET,

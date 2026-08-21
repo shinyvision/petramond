@@ -3,14 +3,14 @@
 //! menu-action stream, the client's mirrored two-pass prediction, and the
 //! off-hand GUI cell's click routing.
 
-use petramond::events::tick::TickEvents;
 use super::common::{game, game_on_empty_chunk, hit};
 use crate::game::tick::PlacePrediction;
+use petramond::events::tick::TickEvents;
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::gui_state::{MenuSlot, PointerButton};
 use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::IVec3;
 
 // The stick is an item-only row: no block link, no `use`, no food — inert on
 // every rung of the use-click ladder, so a main hand holding one predictably
@@ -138,8 +138,10 @@ fn an_off_hand_change_after_receipt_denies_the_click() {
     game.server
         .world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server.sessions[0].player.inventory =
-        hands(Some(ItemStack::new(stick(), 1)), Some(ItemStack::new(ItemType::Dirt, 2)));
+    game.server.sessions[0].player.inventory = hands(
+        Some(ItemStack::new(stick(), 1)),
+        Some(ItemStack::new(ItemType::Dirt, 2)),
+    );
     game.server.sessions[0].look = Some(hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
 
@@ -167,8 +169,7 @@ fn an_off_hand_change_after_receipt_denies_the_click() {
 #[test]
 fn swap_off_hand_swaps_the_selected_stack_and_predicts_it() {
     let mut game = game();
-    game.server.sessions[0].player.inventory =
-        hands(Some(ItemStack::new(ItemType::Dirt, 5)), None);
+    game.server.sessions[0].player.inventory = hands(Some(ItemStack::new(ItemType::Dirt, 5)), None);
     game.sync_self_view_for_test();
 
     game.game.swap_off_hand();
@@ -229,11 +230,7 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
     );
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(
-            game.game
-                .replica
-                .chunk_block(above.x, above.y, above.z)
-        ),
+        Block::from_id(game.game.replica.chunk_block(above.x, above.y, above.z)),
         Block::Dirt,
         "the ghost writes the replica like any predicted place"
     );
@@ -248,10 +245,7 @@ fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
 
     game.menu_click(MenuSlot::OffHand, PointerButton::Primary, false, false);
     // Predicted pickup onto the cursor…
-    assert_eq!(
-        game.self_view.inventory.cursor().map(|s| s.count),
-        Some(7)
-    );
+    assert_eq!(game.self_view.inventory.cursor().map(|s| s.count), Some(7));
     assert!(game.self_view.inventory.off_hand().is_none());
     // …and the authoritative decode agrees.
     game.apply_latched_actions_for_test();
@@ -292,7 +286,8 @@ fn pickup_refills_a_matching_off_hand_before_the_grid() {
     use petramond::world::ITEM_PICKUP_DELAY_TICKS;
 
     let mut game = game();
-    game.server.sessions[0].player.inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 60)));
+    game.server.sessions[0].player.inventory =
+        hands(None, Some(ItemStack::new(ItemType::Dirt, 60)));
     let centre = game.server.sessions[0].player.body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(ItemType::Dirt, 10), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
@@ -365,8 +360,7 @@ fn menu_f_swap_respects_container_slot_specs() {
     game.server
         .world
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
-    game.server.sessions[0].player.inventory =
-        hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
+    game.server.sessions[0].player.inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
     let mut ev = TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
     game.sync_self_view_for_test();
@@ -389,7 +383,11 @@ fn menu_f_swap_respects_container_slot_specs() {
         Some(5),
         "the authoritative chest cell agrees"
     );
-    assert!(game.server.sessions[0].player.inventory.off_hand().is_none());
+    assert!(game.server.sessions[0]
+        .player
+        .inventory
+        .off_hand()
+        .is_none());
 
     // Furnace: the fuel filter and the take-only output refuse the deposit
     // half, so the WHOLE swap refuses.
@@ -399,8 +397,7 @@ fn menu_f_swap_respects_container_slot_specs() {
     game.server
         .world
         .insert_furnace(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
-    game.server.sessions[0].player.inventory =
-        hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
+    game.server.sessions[0].player.inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
     game.server.open_furnace_screen_for(0, pos);
     game.sync_self_view_for_test();
     game.sync_menu_view_for_test();
@@ -449,7 +446,11 @@ fn death_spills_the_off_hand_with_the_rest() {
         None,
         &mut events,
     ));
-    assert!(game.server.sessions[0].player.inventory.off_hand().is_none());
+    assert!(game.server.sessions[0]
+        .player
+        .inventory
+        .off_hand()
+        .is_none());
     let spilled: u32 = game
         .server
         .world

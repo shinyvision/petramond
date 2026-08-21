@@ -1,5 +1,5 @@
-use crate::tile::Tile;
 use crate::block::Block;
+use crate::tile::Tile;
 
 /// How an item is drawn in inventory slots and in-hand.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

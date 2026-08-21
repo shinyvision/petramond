@@ -1,9 +1,9 @@
 use super::worlds::delete_world_at;
 use super::*;
+use crate::player::Player;
+use petramond_math::math::Vec3;
 use petramond_world::block::Block;
 use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::math::Vec3;
-use crate::player::Player;
 
 fn temp_world_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("petramond-savetest-{}-{tag}", std::process::id()));
@@ -11,7 +11,11 @@ fn temp_world_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn load_blocking(save: &WorldSave, saved: &crate::world::SavedIndex, pos: SectionPos) -> Option<LoadedSection> {
+fn load_blocking(
+    save: &WorldSave,
+    saved: &crate::world::SavedIndex,
+    pos: SectionPos,
+) -> Option<LoadedSection> {
     save.request_load(saved, pos, true);
     for _ in 0..500 {
         if let Some(l) = save.poll_loaded() {
@@ -84,12 +88,10 @@ fn save_reopen_roundtrips_section_level_entities() {
         assert_eq!(restored.pos, Vec3::new(80.0, 70.0, -40.0));
         assert_eq!(restored.inventory.active_slot(), 4);
 
-        assert!(
-            opened.saved.contains(pos),
-            "manifest sees saved section"
-        );
+        assert!(opened.saved.contains(pos), "manifest sees saved section");
 
-        let loaded = load_blocking(&opened.save, &opened.saved, pos).expect("section loads from disk");
+        let loaded =
+            load_blocking(&opened.save, &opened.saved, pos).expect("section loads from disk");
         let section = loaded.section.expect("section record decodes");
         assert_eq!(section.block_raw(3, 0, 7), Block::Stone.id());
         assert_eq!(section.block_raw(3, 1, 7), Block::Water.id());
@@ -122,9 +124,10 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
 
         let mut edited = Section::new(edited_pos.cx, edited_pos.cy, edited_pos.cz);
         edited.set_block(6, 7, 8, Block::Dirt);
-        opened
-            .save
-            .save_sections(&mut opened.saved, vec![cached_snap, SectionSnapshot::from_section(&edited)]);
+        opened.save.save_sections(
+            &mut opened.saved,
+            vec![cached_snap, SectionSnapshot::from_section(&edited)],
+        );
 
         assert!(opened.saved.explored_contains(cached_pos));
         assert!(!opened.saved.authoritative_contains(cached_pos));
@@ -141,7 +144,8 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
         assert!(opened.saved.explored_contains(cached_pos));
         assert!(!opened.saved.authoritative_contains(cached_pos));
         assert!(opened.saved.authoritative_contains(edited_pos));
-        let loaded = load_blocking(&opened.save, &opened.saved, cached_pos).expect("cache section loads");
+        let loaded =
+            load_blocking(&opened.save, &opened.saved, cached_pos).expect("cache section loads");
         assert_eq!(
             loaded
                 .section

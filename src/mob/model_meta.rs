@@ -6,8 +6,8 @@
 //! data and never re-parses a `.bbmodel`. Bone indices line up with the renderer's by
 //! construction, since both come from the one `Model`.
 
-use petramond_world::bbmodel::{euler_quat, Model};
 use petramond_math::math::Vec3;
+use petramond_world::bbmodel::{euler_quat, Model};
 
 /// Length + loop mode of one NAMED animation, for the sim's one-shot layer
 /// retirement: a mod-activated `once` clip (`MobAnimSet`) retires itself when

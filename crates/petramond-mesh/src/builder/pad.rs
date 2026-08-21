@@ -4,12 +4,12 @@ use petramond_world::water_math;
 
 pub(super) const SECTION_PAD: usize = SECTION_SIZE + 2;
 /// [`SECTION_PAD`] under the name the mesh module re-exports.
-pub(in crate) const MESH_PAD_SIDE: usize = SECTION_PAD;
+pub(crate) const MESH_PAD_SIDE: usize = SECTION_PAD;
 const BIOME_PAD_RADIUS: i32 = 2;
 const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
 
 #[inline]
-pub(in crate) fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
+pub(crate) fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
     (y * SECTION_PAD + z) * SECTION_PAD + x
 }
 
@@ -34,7 +34,7 @@ pub struct SectionMeshPad<'a> {
 
 impl SectionMeshPad<'_> {
     #[inline]
-    pub(in crate) fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
+    pub(crate) fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
         Block::from_id(self.blocks[mesh_pad_idx(px, py, pz)])
     }
 
@@ -106,7 +106,9 @@ impl SectionMeshPad<'_> {
         wz: i32,
     ) -> petramond_world::light::LightRgb {
         self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(petramond_world::light::LightRgb::ZERO, |i| self.blocklight[i])
+            .map_or(petramond_world::light::LightRgb::ZERO, |i| {
+                self.blocklight[i]
+            })
     }
 
     #[inline]

@@ -423,7 +423,8 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 let columns = queries
                     .iter()
                     .map(|query| {
-                        let pos = petramond_world::chunk::ChunkPos::new(query.coord[0], query.coord[1]);
+                        let pos =
+                            petramond_world::chunk::ChunkPos::new(query.coord[0], query.coord[1]);
                         let revision = world.client_surface_column_revision(pos)?;
                         // A zero query revision means "never seen complete" —
                         // it must never match, even against a defaulted host

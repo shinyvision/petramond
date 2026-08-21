@@ -10,12 +10,12 @@
 
 use std::time::{Duration, Instant};
 
-use petramond_world::biome::Biome;
-use petramond_render::camera::Camera;
-use petramond_math::math::{voxel_at, Vec3};
-use petramond_render::Renderer;
 use petramond::world::environment::ShaderParamMap;
 use petramond::world::World;
+use petramond_math::math::{voxel_at, Vec3};
+use petramond_render::camera::Camera;
+use petramond_render::Renderer;
+use petramond_world::biome::Biome;
 
 pub use petramond_render::RenderedFrame;
 
@@ -202,8 +202,10 @@ impl SceneCapture {
     /// static-fallback cube this harness used to shoot for custom shapes.
     fn publish_block_draws(&mut self) {
         let mut rows = Vec::new();
-        self.world
-            .collect_block_draws(&petramond_render::camera::ViewVolume::unbounded(), &mut rows);
+        self.world.collect_block_draws(
+            &petramond_render::camera::ViewVolume::unbounded(),
+            &mut rows,
+        );
         self.renderer.set_block_draws(&rows);
     }
 

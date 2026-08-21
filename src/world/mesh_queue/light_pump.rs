@@ -1,5 +1,5 @@
-use petramond_world::chunk::{self, SectionPos};
 use crate::world::store::World;
+use petramond_world::chunk::{self, SectionPos};
 
 use super::{RESULT_DRAIN_MIN, RESULT_DRAIN_TIME_BUDGET};
 
@@ -216,8 +216,12 @@ impl World {
                             let key = self
                                 .last_load_target
                                 .map_or(0, |t| t.section_priority_key(p));
-                            self.light_bakes
-                                .request(key, p, &self.data.sections, &self.data.columns);
+                            self.light_bakes.request(
+                                key,
+                                p,
+                                &self.data.sections,
+                                &self.data.columns,
+                            );
                         }
                         waiting = true;
                     }

@@ -46,13 +46,17 @@ impl History {
     }
 
     pub fn undo(&mut self, current: &mut Document) -> bool {
-        let Some(prev) = self.undo.pop() else { return false };
+        let Some(prev) = self.undo.pop() else {
+            return false;
+        };
         self.redo.push(std::mem::replace(current, prev));
         true
     }
 
     pub fn redo(&mut self, current: &mut Document) -> bool {
-        let Some(next) = self.redo.pop() else { return false };
+        let Some(next) = self.redo.pop() else {
+            return false;
+        };
         self.undo.push(std::mem::replace(current, next));
         true
     }
@@ -91,12 +95,22 @@ mod tests {
             kind: "petramond:test".into(),
             class: DocClass::Screen,
             compact_below_w: None,
-            root: Node::leaf(NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1, small: false }),
+            root: Node::leaf(NodeKind::Label {
+                text: Some(label.into()),
+                wrap: false,
+                scale: 1,
+                small: false,
+            }),
         }
     }
 
     fn set(d: &mut Document, label: &str) {
-        d.root.kind = NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1, small: false };
+        d.root.kind = NodeKind::Label {
+            text: Some(label.into()),
+            wrap: false,
+            scale: 1,
+            small: false,
+        };
     }
 
     #[test]

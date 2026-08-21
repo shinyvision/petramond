@@ -71,7 +71,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
             });
             if !has_id {
-                ui.label(egui::RichText::new("(select an id-bearing node)").weak().small());
+                ui.label(
+                    egui::RichText::new("(select an id-bearing node)")
+                        .weak()
+                        .small(),
+                );
             }
             ui.separator();
 

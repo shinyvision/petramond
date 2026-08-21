@@ -41,14 +41,13 @@ pub enum Outcome {
 ///
 /// `player`/`gui_state` are the ACTING session's — a derived convenience, not
 /// the whole roster. Player-plural code uses the sessions-view accessors
-/// ([`acting_player_id`]/[`player_ids`]/[`with_player`]), which reach EVERY
+/// ([`acting_player_id`]/[`with_player`]), which reach EVERY
 /// connected session's player wherever the dispatch site published the roster
 /// (`ServerGame::with_sessions_view` — the tick-stage seams and the migrated
 /// pre-event sites). The direct fields stay because the mod ABI's player
 /// surface is per-acting-session and the WASM host reads them.
 ///
 /// [`acting_player_id`]: Self::acting_player_id
-/// [`player_ids`]: Self::player_ids
 /// [`with_player`]: Self::with_player
 pub struct SimCtx<'a> {
     pub world: &'a mut World,
@@ -82,10 +81,6 @@ pub struct OpenGui {
     pub anchor: Option<petramond_math::math::IVec3>,
 }
 
-// The sessions-view seam ships ahead of its first in-engine consumer (it
-// exists so player-plural systems CAN attach); the accessors are exercised by
-// the bus tests until one lands.
-#[allow(dead_code)]
 struct ScopeEntry {
     id: PlayerId,
     player: *mut Player,
@@ -98,11 +93,8 @@ struct ScopeEntry {
 /// never appears here — it is exactly the `&mut` lent into the live
 /// [`SimCtx`], and [`SimCtx::with_player`] routes its id through that borrow
 /// so two paths to one player can never exist).
-#[allow(dead_code)]
 struct ScopeData {
     acting: PlayerId,
-    /// The acting session's position in the full session order.
-    acting_index: usize,
     /// What the ACTING session has open — its map is the live `SimCtx` borrow,
     /// so only this half of it can ride the roster.
     acting_gui: Option<OpenGui>,
@@ -129,7 +121,6 @@ thread_local! {
 /// deref relies on this contract for the rest.
 pub fn with_sessions_scope<R>(
     acting: PlayerId,
-    acting_index: usize,
     acting_gui: Option<OpenGui>,
     others: Vec<SessionPlayerRef<'_>>,
     f: impl FnOnce() -> R,
@@ -154,7 +145,6 @@ pub fn with_sessions_scope<R>(
     let prev = SESSIONS_SCOPE.with(|s| {
         s.borrow_mut().replace(ScopeData {
             acting,
-            acting_index,
             acting_gui,
             others: entries,
         })
@@ -163,7 +153,6 @@ pub fn with_sessions_scope<R>(
     f()
 }
 
-#[allow(dead_code)] // see `ScopeEntry` — seam ahead of its first consumer.
 impl SimCtx<'_> {
     /// The id of the ACTING session — whose `player`/`gui_state` this context
     /// carries. `None` when the dispatch site published no roster (mod init,
@@ -173,28 +162,11 @@ impl SimCtx<'_> {
         SESSIONS_SCOPE.with(|s| s.borrow().as_ref().map(|d| d.acting))
     }
 
-    /// Every connected session's player id, in session order (acting session
-    /// included). Empty when no roster is published.
-    pub fn player_ids(&self) -> Vec<PlayerId> {
-        SESSIONS_SCOPE.with(|s| match s.borrow().as_ref() {
-            None => Vec::new(),
-            Some(d) => {
-                let mut ids: Vec<PlayerId> = d.others.iter().map(|e| e.id).collect();
-                ids.insert(d.acting_index.min(ids.len()), d.acting);
-                ids
-            }
-        })
-    }
-
     /// Lend session `id`'s authoritative player to `f`. The acting session's
     /// id resolves to `self.player` (the one live borrow); any other
     /// connected session resolves through the published roster. `None` = no
     /// such session, or no roster published here.
-    pub fn with_player<R>(
-        &mut self,
-        id: PlayerId,
-        f: impl FnOnce(&mut Player) -> R,
-    ) -> Option<R> {
+    pub fn with_player<R>(&mut self, id: PlayerId, f: impl FnOnce(&mut Player) -> R) -> Option<R> {
         enum Hit {
             Acting,
             Other(*mut Player),
@@ -553,9 +525,9 @@ mod tests {
 
     use super::super::payload::*;
     use super::*;
+    use petramond_math::math::{IVec3, Vec3};
     use petramond_world::block::Block;
     use petramond_world::item::ItemType;
-    use petramond_math::math::{IVec3, Vec3};
 
     fn sim() -> (
         World,
@@ -593,7 +565,6 @@ mod tests {
                 queue: &mut queue,
             };
             assert_eq!(ctx.acting_player_id(), None);
-            assert!(ctx.player_ids().is_empty());
             assert!(ctx.with_player(PlayerId(0), |_| ()).is_none());
         }
 
@@ -604,7 +575,7 @@ mod tests {
             gui_state: &mut other_gui,
             gui: None,
         }];
-        with_sessions_scope(PlayerId(1), 1, None, others, || {
+        with_sessions_scope(PlayerId(1), None, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,
@@ -613,11 +584,6 @@ mod tests {
                 queue: &mut queue,
             };
             assert_eq!(ctx.acting_player_id(), Some(PlayerId(1)));
-            assert_eq!(
-                ctx.player_ids(),
-                vec![PlayerId(0), PlayerId(1)],
-                "session order, acting inserted at its index"
-            );
             let touched = ctx.with_player(PlayerId(1), |p| {
                 p.set_health(5);
                 p.pos.x

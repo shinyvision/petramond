@@ -14,8 +14,10 @@ use std::sync::Arc;
 
 use mod_api::WorldgenStage;
 
-use petramond_world::chunk::{idx, Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE};
 use crate::hooks::{GenHookDispatch, GenInputs};
+use petramond_world::chunk::{
+    idx, Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE,
+};
 use petramond_world::section::{Section, SectionSummary};
 
 use super::density::surface::SurfaceDensitySystem;
@@ -110,7 +112,8 @@ impl ColumnGen {
         let windows = self.feature_windows.as_ref().map_or(0, |w| {
             std::mem::size_of::<FeatureWindows>()
                 + w.candidates.surf.capacity() * 4
-                + w.candidates.biomes.capacity() * std::mem::size_of::<petramond_world::biome::Biome>()
+                + w.candidates.biomes.capacity()
+                    * std::mem::size_of::<petramond_world::biome::Biome>()
                 + w.support.as_ref().map_or(0, |s| s.capacity_bytes())
         });
         (base + windows) as u64
@@ -573,7 +576,9 @@ impl ChunkGenerator {
         //    underflow when a feature overwrites a random-tickable skin block (e.g. a tree
         //    trunk replacing surface grass) while the count still read zero.
         match self.replaced_terrain_fill(sp, col) {
-            Some(fill) => *section.blocks_mut() = petramond_world::section::BlockCube::from_ids(&fill),
+            Some(fill) => {
+                *section.blocks_mut() = petramond_world::section::BlockCube::from_ids(&fill)
+            }
             None => {
                 self.surface_density
                     .fill_section(&mut section, &col.biome, &col.surf);

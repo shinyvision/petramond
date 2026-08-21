@@ -10,8 +10,8 @@
 
 use std::collections::HashMap;
 
-use petramond_world::container::{Container, MAX_CONTAINER_SLOTS};
 use crate::save::codec::{get_indexed, get_item_slot, put_indexed, put_item_slot, put_u8, Reader};
+use petramond_world::container::{Container, MAX_CONTAINER_SLOTS};
 
 /// Append a `u16`-length-prefixed list of `(local index, container)` records.
 pub fn put_containers(buf: &mut Vec<u8>, containers: &HashMap<u16, Container>) {
@@ -39,8 +39,8 @@ pub fn get_containers(r: &mut Reader) -> Option<HashMap<u16, Container>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_world::item::{ItemStack, ItemType};
     use crate::save::codec::put_u16;
+    use petramond_world::item::{ItemStack, ItemType};
 
     #[test]
     fn containers_roundtrip_through_a_buffer() {

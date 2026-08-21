@@ -164,11 +164,7 @@ impl SplinePoint {
         Self::with_optional_derivative(location, SplineValue::Constant(value), Some(derivative))
     }
 
-    pub fn nested_with_derivative(
-        location: f64,
-        spline: CubicSpline,
-        derivative: f64,
-    ) -> Self {
+    pub fn nested_with_derivative(location: f64, spline: CubicSpline, derivative: f64) -> Self {
         Self::with_optional_derivative(
             location,
             SplineValue::Spline(Box::new(spline)),

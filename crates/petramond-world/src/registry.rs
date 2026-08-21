@@ -544,10 +544,7 @@ pub struct ContentNames {
 /// Build both tables from raw catalog layer texts — the pure core `names()`
 /// wraps, split out so loader tests can drive it with synthetic layers. Only
 /// the row KEYS are read here; full row validation stays with the loaders.
-pub fn build_names(
-    block_texts: &[&str],
-    item_texts: &[&str],
-) -> Result<ContentNames, String> {
+pub fn build_names(block_texts: &[&str], item_texts: &[&str]) -> Result<ContentNames, String> {
     // Key pre-parse only: rows with a `"patch"` field register nothing (they
     // attach data to an EXISTING row — see [`RawDataPatch`]), so they carry
     // no key here.

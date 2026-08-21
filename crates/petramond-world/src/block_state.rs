@@ -465,14 +465,7 @@ impl BlockStates {
             .map(Vec::as_slice)
     }
 
-    pub fn cell_kv_set(
-        &mut self,
-        x: usize,
-        y: usize,
-        z: usize,
-        key: String,
-        value: Vec<u8>,
-    ) {
+    pub fn cell_kv_set(&mut self, x: usize, y: usize, z: usize, key: String, value: Vec<u8>) {
         self.sparse_mut()
             .cell_kv
             .entry(Self::key(x, y, z))

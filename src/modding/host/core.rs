@@ -157,11 +157,11 @@ mod tests {
         );
     }
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
 
     /// Shader params are the visual environment surface mods use for sky
     /// shaders and other pack-owned effects: own namespace or engine `petramond:*`,

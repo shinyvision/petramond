@@ -7,7 +7,9 @@
 
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{idx, section_idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE};
+use petramond_world::chunk::{
+    idx, section_idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE,
+};
 use petramond_world::section::Section;
 
 use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};

@@ -21,10 +21,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::tile::Tile;
 use crate::facing::Facing;
 use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::ContentNames;
+use crate::tile::Tile;
 
 use super::definition::{
     self, BlockDef, BlockFlags, BlockMaterial, ParticleEmitter, RootsFace, SupportDir,

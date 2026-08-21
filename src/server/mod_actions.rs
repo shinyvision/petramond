@@ -66,9 +66,7 @@ impl ServerGame {
                     let targets = match targets {
                         None => crate::server::chat::ChatTargets::All,
                         Some(ids) => crate::server::chat::ChatTargets::Players(
-                            ids.into_iter()
-                                .map(crate::player::PlayerId)
-                                .collect(),
+                            ids.into_iter().map(crate::player::PlayerId).collect(),
                         ),
                     };
                     self.enqueue_authored_chat(&text, targets);

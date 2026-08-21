@@ -7,11 +7,12 @@
 //! single-slot latch denies the id it supersedes; an intent that cannot even
 //! queue is denied immediately.
 
-
-use petramond_math::math::IVec3;
-use crate::net::protocol::{ActionDenyReason, ActionOutcome, ClientRequestId, PlayerAction, TargetRef};
+use crate::net::protocol::{
+    ActionDenyReason, ActionOutcome, ClientRequestId, PlayerAction, TargetRef,
+};
 use crate::server::game::ServerGame;
 use crate::server::player::{PendingBreakFinished, PendingMenuAction, PendingUseClick};
+use petramond_math::math::IVec3;
 
 impl ServerGame {
     pub(super) fn apply_action(&mut self, s: usize, action: PlayerAction) {
@@ -131,7 +132,10 @@ impl ServerGame {
         if let Some(old) = old_deferred {
             self.sessions[s]
                 .pending_action_outcomes
-                .push(ActionOutcome::deny(old.request_id, ActionDenyReason::Denied));
+                .push(ActionOutcome::deny(
+                    old.request_id,
+                    ActionDenyReason::Denied,
+                ));
             // Old optimistic clear may still be on the client.
             let cells = self.world.break_footprint_cells(old.pos);
             self.sessions[s].pending_corrective_cells.extend(cells);

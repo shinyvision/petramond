@@ -74,7 +74,11 @@ impl DisplayTransform {
     pub fn left_hand(&self) -> DisplayTransform {
         DisplayTransform {
             rotation: [self.rotation[0], -self.rotation[1], -self.rotation[2]],
-            translation: [-self.translation[0], self.translation[1], self.translation[2]],
+            translation: [
+                -self.translation[0],
+                self.translation[1],
+                self.translation[2],
+            ],
             ..*self
         }
     }

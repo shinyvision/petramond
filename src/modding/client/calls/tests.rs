@@ -507,7 +507,9 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
                 name: "petramond:stone".into()
             }
         ),
-        HostRet::Block(Some(mod_api::BlockId(petramond_world::block::Block::Stone.id())))
+        HostRet::Block(Some(mod_api::BlockId(
+            petramond_world::block::Block::Stone.id()
+        )))
     );
     let HostRet::BlockList(leaves) = handle_host_call(
         &mut data,

@@ -9,13 +9,11 @@
 //! [`crate::block_model`].
 //! (Data-half queries; the mutation/orchestration half stays in the engine crate.)
 
-use crate::world::data::WorldData;
 use crate::block::{Aabb, Block};
 use crate::block_model::{self, BlockModelKind};
 use crate::facing::Facing;
 use crate::mathh::{IVec3, Mat4, Vec3};
-    
-    
+use crate::world::data::WorldData;
 
 impl WorldData {
     /// The authored footprint offset of the model-block cell at world `pos` —
@@ -141,7 +139,6 @@ impl WorldData {
             .into_iter()
             .all(|c| self.placement_cell_open(c))
     }
-
 }
 
 fn transform_box(m: Mat4, min: [f32; 3], max: [f32; 3]) -> ([f32; 3], [f32; 3]) {

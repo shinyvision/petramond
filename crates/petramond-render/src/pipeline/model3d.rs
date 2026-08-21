@@ -4,8 +4,8 @@ use super::builders::{
     color_target, cull_back, pipeline_layout, shader_module, uniform_entry, world_pipeline,
     DepthPreset,
 };
-use petramond_mesh::Vertex;
 use crate::uniforms::{Uniforms, UV_RECTS_LEN};
+use petramond_mesh::Vertex;
 
 /// Size of one MVP slot in the model3d dynamic-offset uniform buffer. A `mat4`
 /// is 64 bytes but dynamic offsets must be a multiple of the device's

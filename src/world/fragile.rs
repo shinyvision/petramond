@@ -10,8 +10,8 @@
 //! cells it may flow into), this behaviour is what such a block DOES when its support
 //! changes.
 
-use petramond_world::block::Block;
 use petramond_math::math::IVec3;
+use petramond_world::block::Block;
 
 use super::store::World;
 
@@ -30,7 +30,6 @@ const FRAGILE_BREAK_DELAY: u64 = 1;
 pub struct Fragile;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Fragile {
-
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         // Dispatch already read this cell as the fragile block; re-read to learn which
         // one — the support cell is per-block (a torch sideways, a plant below, a
@@ -58,12 +57,12 @@ pub static FRAGILE: Fragile = Fragile;
 
 #[cfg(test)]
 mod tests {
-    use petramond_world::block::{Block, SupportDir};
     use super::*;
+    use petramond_math::facing::Facing;
+    use petramond_world::block::{Block, SupportDir};
     use petramond_world::block_state::{StairHalf, StairState};
     use petramond_world::chunk::{Chunk, ChunkPos};
     use petramond_world::crafting::Recipes;
-    use petramond_math::facing::Facing;
     use petramond_world::torch::TorchPlacement;
 
     /// A world with one empty loaded chunk at the origin.

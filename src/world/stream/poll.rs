@@ -1,8 +1,8 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
-use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use crate::worker::{GenJob, GenOutput};
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_worldgen::driver::ColumnGen;
 
 use crate::world::store::{LoadTarget, SkyCoverChange, World, WorldRole};

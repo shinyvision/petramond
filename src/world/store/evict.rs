@@ -55,12 +55,7 @@ impl World {
         // An evicted column is missing again if an anchor still wants it —
         // the settled short-circuit must not hide it from the next scan.
         self.missing_columns_settled = false;
-        let bits = self
-            .data
-            .section_column_cys
-            .get(&pos)
-            .copied()
-            .unwrap_or(0);
+        let bits = self.data.section_column_cys.get(&pos).copied().unwrap_or(0);
         Self::for_each_column_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.forget_block_draws_in_section(sp);

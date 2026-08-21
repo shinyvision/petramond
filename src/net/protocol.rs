@@ -13,9 +13,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use petramond_world::chunk::{ChunkPos, SectionPos};
-use petramond_math::math::Vec3;
 use crate::player::PlayerId;
+use petramond_math::math::Vec3;
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 mod actions;
 mod chat;
@@ -70,7 +70,10 @@ impl ItemSlotWire {
     /// Decode back to a stack, re-interning the blob. An unreadable blob
     /// degrades to a plain stack (mirrors the save codec's policy).
     pub fn to_stack(&self) -> petramond_world::item::ItemStack {
-        let mut st = petramond_world::item::ItemStack::new(petramond_world::item::ItemType(self.item_id), self.count);
+        let mut st = petramond_world::item::ItemStack::new(
+            petramond_world::item::ItemType(self.item_id),
+            self.count,
+        );
         if let Some(blob) = &self.data {
             match petramond_world::item::variant::intern_blob(blob) {
                 Some(v) => st.variant = v,

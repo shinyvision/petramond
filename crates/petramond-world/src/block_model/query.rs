@@ -125,12 +125,7 @@ pub fn ray_vs_model_within(
     )
 }
 
-fn ray_vs_model_cubes<F>(
-    eye: Vec3,
-    dir: Vec3,
-    cubes: &[ModelCube],
-    face_opaque: F,
-) -> Option<f32>
+fn ray_vs_model_cubes<F>(eye: Vec3, dir: Vec3, cubes: &[ModelCube], face_opaque: F) -> Option<f32>
 where
     F: FnMut(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
 {
@@ -397,17 +392,18 @@ mod tests {
         let all = |_: &ModelCube, _: Face, _: Vec3, _: Vec3, _: Vec3| true;
         // Unrestricted: the horn is the first crossing.
         let first = ray_vs_model_cubes(eye, dir, &cubes, all).expect("hits the horn");
-        assert!((first - 1.7).abs() < 1e-4, "horn face at x=1.3, got {first}");
+        assert!(
+            (first - 1.7).abs() < 1e-4,
+            "horn face at x=1.3, got {first}"
+        );
         // Restricted to the 0..1 cell: the horn is skipped, the body picks.
-        let within = ray_vs_model_cubes_within(
-            eye,
-            dir,
-            &cubes,
-            Some((Vec3::ZERO, Vec3::ONE)),
-            all,
-        )
-        .expect("the in-cell body still picks");
-        assert!((within - 2.1).abs() < 1e-4, "body face at x=0.9, got {within}");
+        let within =
+            ray_vs_model_cubes_within(eye, dir, &cubes, Some((Vec3::ZERO, Vec3::ONE)), all)
+                .expect("the in-cell body still picks");
+        assert!(
+            (within - 2.1).abs() < 1e-4,
+            "body face at x=0.9, got {within}"
+        );
         // And a box that covers neither crossing yields a clean miss.
         assert!(ray_vs_model_cubes_within(
             eye,

@@ -292,8 +292,8 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_math::math::{IVec3, Vec3};
     use crate::mob::{def, Mob};
+    use petramond_math::math::{IVec3, Vec3};
 
     fn floor_at_zero(p: IVec3) -> bool {
         p.y < 0

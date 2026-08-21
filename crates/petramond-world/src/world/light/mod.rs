@@ -37,11 +37,7 @@ pub static ZERO_CUBE: [crate::light::LightRgb; crate::chunk::SECTION_VOLUME] =
 /// plane/edge/corner the neighbour at `d` samples through its one-cell mesh
 /// pad (the centre bit: any change at all). `old = None` reads as the uniform
 /// `fallback` the live accessors use for an absent cube.
-pub fn cube_region_changes<T: Copy + PartialEq>(
-    old: Option<&[T]>,
-    new: &[T],
-    fallback: T,
-) -> u32 {
+pub fn cube_region_changes<T: Copy + PartialEq>(old: Option<&[T]>, new: &[T], fallback: T) -> u32 {
     #[inline]
     fn axis_bits(local: usize) -> u32 {
         // Bit 0: delta −1, bit 1: delta 0, bit 2: delta +1 along one axis.

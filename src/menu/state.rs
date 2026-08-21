@@ -1,10 +1,10 @@
 use super::ContainerTarget;
+use crate::world::World;
+use petramond_math::math::IVec3;
 use petramond_world::crafting::CraftingStation;
 use petramond_world::gui_state::GuiKind;
 use petramond_world::inventory::Inventory;
 use petramond_world::item::ItemStack;
-use petramond_math::math::IVec3;
-use crate::world::World;
 
 /// The active container menu: transient station state plus the edit target the
 /// open GUI mutates. Recipes stay on `ServerGame` because machine processing
@@ -122,11 +122,7 @@ impl ContainerMenu {
 
     /// Close player crafting: return its real output to inventory (overflow is
     /// thrown through `overflow`) and drop the target.
-    pub fn close_crafting(
-        &mut self,
-        inv: &mut Inventory,
-        mut overflow: impl FnMut(ItemStack),
-    ) {
+    pub fn close_crafting(&mut self, inv: &mut Inventory, mut overflow: impl FnMut(ItemStack)) {
         if let Some(stack) = self.craft_output.take() {
             if let Some(leftover) = inv.add(stack) {
                 overflow(leftover);

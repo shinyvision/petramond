@@ -100,7 +100,9 @@ mod parallel_parity_tests {
         let sections: Vec<(SectionPos, Section)> = coords
             .iter()
             .flat_map(|&(cx, cz)| {
-                let (_, secs) = petramond_world::column_split::split_generated_column(&columns[&(cx, cz)].chunk);
+                let (_, secs) = petramond_world::column_split::split_generated_column(
+                    &columns[&(cx, cz)].chunk,
+                );
                 secs.into_iter()
                     .filter(|(cy, _)| *cy >= 0)
                     .map(move |(cy, s)| (SectionPos::new(cx, cy, cz), s))

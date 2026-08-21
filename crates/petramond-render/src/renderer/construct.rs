@@ -257,8 +257,7 @@ pub(super) fn new_renderer_inner(
             });
             let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("mob vbuf"),
-                size: crate::pipeline::MAX_MOB_VERTICES
-                    * std::mem::size_of::<ItemVertex>() as u64,
+                size: crate::pipeline::MAX_MOB_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -454,8 +453,7 @@ pub(super) fn new_renderer_inner(
     // item-entity buffers.
     let item_sprite_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("item sprite entity vbuf"),
-        size: crate::pipeline::MAX_ITEM_ENTITY_VERTICES
-            * std::mem::size_of::<ItemVertex>() as u64,
+        size: crate::pipeline::MAX_ITEM_ENTITY_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -534,8 +532,7 @@ pub(super) fn new_renderer_inner(
             under_chrome,
             vbuf: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: crate::pipeline::MAX_UI_VERTICES
-                    * std::mem::size_of::<UiVertex>() as u64,
+                size: crate::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),

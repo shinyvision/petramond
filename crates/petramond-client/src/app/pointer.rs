@@ -1,6 +1,6 @@
 use super::{input::InputController, App};
-use petramond_world::gui_state::PointerButton;
 use crate::game::GameInput;
+use petramond_world::gui_state::PointerButton;
 
 /// Wheel notches of travel per hotbar slot. One classic detent is `1.0`
 /// (Windows' `WHEEL_DELTA` / 120, as winit normalizes it), so a notched wheel

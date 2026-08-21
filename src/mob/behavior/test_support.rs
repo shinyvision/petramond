@@ -2,10 +2,10 @@
 //! per field, so adding a perception fact costs one default here instead of a
 //! struct-literal edit in every behavior/brain/manager test module.
 
-use petramond_math::math::{IVec3, Vec3};
 use crate::mob::brain::AiCtx;
 use crate::mob::MobRng;
 use crate::world::World;
+use petramond_math::math::{IVec3, Vec3};
 
 /// A neutral, idle, dry context: a small mob at the origin, the nearest
 /// player at the origin too, no perception input of any kind. Tests set only

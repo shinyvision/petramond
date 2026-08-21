@@ -73,13 +73,7 @@ pub fn move_node(
     } else if parent == from_parent && index > from_last {
         index -= 1;
     }
-    match insert_at(root, &parent, index, node) {
-        Some(p) => Some(p),
-        None => {
-            // Shouldn't happen; avoid losing the node if it does.
-            None
-        }
-    }
+    insert_at(root, &parent, index, node)
 }
 
 /// Every id used anywhere in the document.

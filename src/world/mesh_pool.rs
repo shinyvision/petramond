@@ -12,10 +12,10 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use petramond_world::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
-use petramond_mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
-use petramond_world::section::Section;
 use crate::worker::JobPool;
+use petramond_mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
+use petramond_world::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
+use petramond_world::section::Section;
 
 /// Padded neighbourhood side length: the section (16) plus one cell of border on each
 /// face — all the mesher's face-culling / AO / smooth-light sampling ever reaches.
@@ -211,7 +211,8 @@ impl Pad {
         self.water.fill(0);
         self.skylight.fill(SKY_FULL);
         self.blocklight.fill(petramond_world::light::LightRgb::ZERO);
-        self.cell_states.fill(petramond_world::block::ShapeState::NONE);
+        self.cell_states
+            .fill(petramond_world::block::ShapeState::NONE);
         self.loaded.fill(false);
     }
 }

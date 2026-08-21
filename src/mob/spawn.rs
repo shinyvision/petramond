@@ -25,13 +25,13 @@
 use mod_api::HostileSpawnCandidate;
 use rustc_hash::FxHashSet;
 
+use crate::world::{World, VERTICAL_LOAD_RADIUS};
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::chunk::{
     ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
 };
-use petramond_math::math::{IVec3, Vec3};
-use crate::world::{World, VERTICAL_LOAD_RADIUS};
 
 use super::path::{body_clear, is_foothold, PathParams};
 use super::{def, defs, Instance, Mob, MobCategory, MobRng};
@@ -749,7 +749,9 @@ mod tests {
     fn the_chance_gate_is_certain_at_full_chance_and_rolls_below_it() {
         // Full chance draws NOTHING — existing rows must leave every RNG
         // stream exactly as it was before per-biome chances existed.
-        assert!(chance_gate(1.0, || unreachable!("full chance draws no roll")));
+        assert!(chance_gate(1.0, || unreachable!(
+            "full chance draws no roll"
+        )));
         assert!(chance_gate(0.2, || 0.19));
         assert!(!chance_gate(0.2, || 0.2));
     }

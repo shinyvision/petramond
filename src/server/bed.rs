@@ -19,10 +19,10 @@
 //! ([`petramond_worldgen::spawn::find_spawn`] — deliberately OS-entropy random,
 //! like the fresh spawn).
 
-use petramond_world::block::{Block, BlockTag};
-use petramond_math::math::{IVec3, Vec3};
 use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
 use crate::world::World;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::{Block, BlockTag};
 
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;

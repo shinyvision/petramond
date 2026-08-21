@@ -15,11 +15,11 @@
 //! real terrain-overhang signal, and the flood scan shares the generic
 //! [`flood_reachable`] helper.
 
+use crate::driver::ChunkGenerator;
+use crate::generate_chunk;
 use petramond_world::biome::{Biome, BIOME_COUNT};
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
-use crate::driver::ChunkGenerator;
-use crate::generate_chunk;
 
 /// Highest non-air block in a column + its Y (mirrors the previewer's column
 /// scan). Returns `(0, 0)` for an all-air column.

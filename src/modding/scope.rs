@@ -91,11 +91,11 @@ pub(super) fn with_active<R>(f: impl FnOnce(&mut SimCtx<'_>) -> R) -> Option<R> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::PostQueue;
     use crate::events::tick::TickEvents;
-    use petramond_math::math::Vec3;
+    use crate::events::PostQueue;
     use crate::player::Player;
     use crate::world::World;
+    use petramond_math::math::Vec3;
 
     #[test]
     fn scope_is_bounded_and_reentrancy_safe() {

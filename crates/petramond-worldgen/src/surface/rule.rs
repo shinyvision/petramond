@@ -6,10 +6,10 @@
 //! surface / depth / Y conditions below (e.g. the mountain colour bands key
 //! off `SurfaceAboveY`).
 
+use crate::rng::FeatureRng;
 use petramond_world::block::Block;
 use petramond_world::chunk::SEA_LEVEL;
 use petramond_world::mathh::smoothstep;
-use crate::rng::FeatureRng;
 
 pub enum SurfaceRule {
     /// Unconditionally place this block.

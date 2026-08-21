@@ -29,9 +29,9 @@ mod world_select;
 mod world_settings;
 
 use super::{App, AppScreen};
-use petramond_world::sound_registry::Sound;
-use petramond_world::gui_state::GuiKind;
 use petramond_ui::{UiEvent, UiState, UiValue};
+use petramond_world::gui_state::GuiKind;
+use petramond_world::sound_registry::Sound;
 
 /// The flat dim shell menus draw over a live world.
 const MENU_DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.6];
@@ -286,9 +286,15 @@ impl App {
             if let Some(map) = gui_state {
                 for (key, value) in map.iter() {
                     let v = match value {
-                        petramond_world::gui_state::GuiValue::F32(v) => petramond_ui::UiValue::F32(*v),
-                        petramond_world::gui_state::GuiValue::I32(v) => petramond_ui::UiValue::I32(*v),
-                        petramond_world::gui_state::GuiValue::Str(s) => petramond_ui::UiValue::Str(s.clone()),
+                        petramond_world::gui_state::GuiValue::F32(v) => {
+                            petramond_ui::UiValue::F32(*v)
+                        }
+                        petramond_world::gui_state::GuiValue::I32(v) => {
+                            petramond_ui::UiValue::I32(*v)
+                        }
+                        petramond_world::gui_state::GuiValue::Str(s) => {
+                            petramond_ui::UiValue::Str(s.clone())
+                        }
                     };
                     state.set(key.clone(), v);
                 }
@@ -306,8 +312,12 @@ impl App {
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;
         let to_button = |b: petramond_ui::PointerButton| match b {
-            petramond_ui::PointerButton::Primary => petramond_world::gui_state::PointerButton::Primary,
-            petramond_ui::PointerButton::Secondary => petramond_world::gui_state::PointerButton::Secondary,
+            petramond_ui::PointerButton::Primary => {
+                petramond_world::gui_state::PointerButton::Primary
+            }
+            petramond_ui::PointerButton::Secondary => {
+                petramond_world::gui_state::PointerButton::Secondary
+            }
         };
         for ev in self.ui.take_events() {
             let handled_crafting = if crafting_station.is_some() {
@@ -323,7 +333,9 @@ impl App {
             if let Some(id) = menu_widget_activation(&ev) {
                 if let Some(game) = self.game.as_mut() {
                     game.menu_click(
-                        petramond_world::gui_state::MenuSlot::Widget(petramond_world::gui_state::intern_str(id)),
+                        petramond_world::gui_state::MenuSlot::Widget(
+                            petramond_world::gui_state::intern_str(id),
+                        ),
                         petramond_world::gui_state::PointerButton::Primary,
                         modifier_shift,
                         false,
@@ -338,8 +350,8 @@ impl App {
                     button,
                     shift,
                 } => {
-                    let Some(slot) =
-                        petramond::gui::Role::from_key(&role).and_then(|r| r.menu_slot(index as usize))
+                    let Some(slot) = petramond::gui::Role::from_key(&role)
+                        .and_then(|r| r.menu_slot(index as usize))
                     else {
                         continue;
                     };
@@ -371,7 +383,9 @@ impl App {
                         use petramond::net::protocol::ThrowAmount;
                         game.throw_cursor(match to_button(button) {
                             petramond_world::gui_state::PointerButton::Primary => ThrowAmount::All,
-                            petramond_world::gui_state::PointerButton::Secondary => ThrowAmount::One,
+                            petramond_world::gui_state::PointerButton::Secondary => {
+                                ThrowAmount::One
+                            }
                         });
                     }
                 }

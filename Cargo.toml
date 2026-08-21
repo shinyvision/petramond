@@ -114,3 +114,12 @@ strip = false
 
 [profile.dev]
 opt-level = 1
+
+# Tests deliberately keep the light optimization used by day-to-day debug
+# builds while retaining the checks that catch invalid indexing and arithmetic.
+# Do not point the test command at `playtest`: that profile inherits release and
+# therefore disables the very assertions the suite is meant to exercise.
+[profile.test]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true

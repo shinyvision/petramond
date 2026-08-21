@@ -281,7 +281,9 @@ impl<'d> InstTree<'d> {
             _ => node
                 .children
                 .iter()
-                .filter_map(|c| self.grow(c, state, item_map, item, Some(idx), enabled, compact, hover))
+                .filter_map(|c| {
+                    self.grow(c, state, item_map, item, Some(idx), enabled, compact, hover)
+                })
                 .collect(),
         };
         self.insts[idx as usize].children = child_indices;

@@ -51,13 +51,20 @@ fn cullfaces_compile_into_face_slots() {
     .expect("compiles");
     assert_eq!(m.cubes.len(), 1);
     // Face::ALL order: PosX, NegX, PosY(up)=2, NegY(down)=3, PosZ, NegZ(north)=5.
-    assert_eq!(m.cubes[0].cull[2], Some(2), "up culls against the block above");
+    assert_eq!(
+        m.cubes[0].cull[2],
+        Some(2),
+        "up culls against the block above"
+    );
     assert_eq!(m.cubes[0].cull[5], Some(3), "north's cullface names down");
     assert_eq!(m.cubes[0].cull[4], None, "no cullface authored on south");
 
     let plain = BlockModel::compile(&model_bytes(WB)).expect("compiles");
     assert!(
-        plain.cubes.iter().all(|c| c.cull.iter().all(Option::is_none)),
+        plain
+            .cubes
+            .iter()
+            .all(|c| c.cull.iter().all(Option::is_none)),
         "the workbench authors no cullfaces"
     );
 }

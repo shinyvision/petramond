@@ -1,8 +1,8 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::io::write_atomic;
-use petramond_util::paths::base_data_dir;
 use super::{level, settings};
+use petramond_util::paths::base_data_dir;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorldInfo {
@@ -13,7 +13,6 @@ pub struct WorldInfo {
     pub dir_name: String,
     pub has_level: bool,
 }
-
 
 fn saves_dir() -> PathBuf {
     base_data_dir().join("saves")

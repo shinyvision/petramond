@@ -19,8 +19,8 @@ use glam::Vec3;
 
 use super::item_cube::{orient_faces_to_block, push_box_faces_lit};
 use super::ChestInstance;
-use petramond_world::tile::Tile;
 use petramond_mesh::Vertex;
+use petramond_world::tile::Tile;
 
 /// Inset (m) of the body/lid from the block edges — the chest is 14/16 wide & deep.
 const INSET: f32 = 1.0 / 16.0;

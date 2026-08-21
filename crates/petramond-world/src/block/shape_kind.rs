@@ -22,9 +22,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::Aabb;
-use crate::tile::Tile;
 use crate::block_model::BlockModelKind;
 use crate::connect;
+use crate::tile::Tile;
 
 mod corner_form;
 mod custom;
@@ -532,17 +532,17 @@ impl ShapeKindInterner {
 /// Test-support builds only; never a public api surface.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_exports {
-    pub use super::BoxDef;
     pub use super::corner_form::FACE_BEFORE_TURN;
-    pub use super::FRONT_AFTER_TURN;
-    pub use super::RawShape;
-    pub use super::ShapeFamily;
-    pub use super::ShapeParams;
-    pub use crate::tile::Tile;
     pub use super::face_uv_turns;
     pub use super::facets;
     pub use super::families;
     pub use super::light_aperture_face;
+    pub use super::BoxDef;
+    pub use super::RawShape;
+    pub use super::ShapeFamily;
+    pub use super::ShapeParams;
+    pub use super::FRONT_AFTER_TURN;
     #[allow(unused_imports)]
     pub use super::*;
+    pub use crate::tile::Tile;
 }

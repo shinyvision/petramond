@@ -21,9 +21,9 @@ use glam::{Mat4, Vec3};
 use super::item_model::ItemVertex;
 use super::lighting::{fold_tint, mul3, DynLight, LightEnv};
 use super::MobRenderInstance;
-use petramond_world::bbmodel::{euler_quat, face_corners, Animation, Cube, Model};
 use petramond_math::face::Face;
 use petramond_mesh::SHADES;
+use petramond_world::bbmodel::{euler_quat, face_corners, Animation, Cube, Model};
 
 /// White: mobs are textured directly (no foliage tint), so the shader's
 /// `tex.rgb * shade * tint` reduces to `tex.rgb * shade`.

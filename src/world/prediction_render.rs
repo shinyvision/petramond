@@ -9,9 +9,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
-use petramond_world::chunk::SectionPos;
-use petramond_mesh::ChunkMesh;
 use crate::worker::{JobCancel, JobPool};
+use petramond_mesh::ChunkMesh;
+use petramond_world::chunk::SectionPos;
 
 use super::light::{
     run_light_bake, run_light_bake_batch, LightBakeJob, LightBakeResult, LightBatchJob,
@@ -73,7 +73,10 @@ impl PredictionMeshResult {
 
 /// The pair of light cubes one section carries: skylight and packed-RGB block
 /// light, either of which may be absent (never baked).
-type LightCubes = (Option<Arc<[u8]>>, Option<Arc<[petramond_world::light::LightRgb]>>);
+type LightCubes = (
+    Option<Arc<[u8]>>,
+    Option<Arc<[petramond_world::light::LightRgb]>>,
+);
 
 /// One candidate light bake plus the cubes it would replace, so the runner
 /// can diff the fresh bake against them and prune meshes nothing sampled.

@@ -5,9 +5,6 @@ use crate::block_state::StairState;
 use crate::mathh::IVec3;
 use crate::stair::StairShape;
 
-    
-    
-    
 use super::data::WorldData;
 
 impl WorldData {
@@ -32,5 +29,4 @@ impl WorldData {
             IVec3::new(wx, wy, wz),
         ))
     }
-
 }

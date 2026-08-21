@@ -79,14 +79,9 @@ impl Mod for Kitchen {
                 self.oven.on_container_opened(kind, *pos);
                 self.miller.on_container_opened(kind, *pos);
             }
-            (
-                ON_ITEM_USED,
-                EventPayload::ItemUsed {
-                    player,
-                    item,
-                    kind,
-                },
-            ) => self.vessels.on_item_used(*player, *item, *kind),
+            (ON_ITEM_USED, EventPayload::ItemUsed { player, item, kind }) => {
+                self.vessels.on_item_used(*player, *item, *kind)
+            }
             _ => {}
         }
         Outcome::Continue

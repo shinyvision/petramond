@@ -10,7 +10,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Validation").strong());
         if issues.is_empty() {
-            ui.colored_label(egui::Color32::from_rgb(110, 200, 120), "✔ document is valid");
+            ui.colored_label(
+                egui::Color32::from_rgb(110, 200, 120),
+                "✔ document is valid",
+            );
         } else {
             ui.colored_label(
                 egui::Color32::from_rgb(235, 160, 80),

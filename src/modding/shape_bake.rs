@@ -12,8 +12,8 @@
 //! Keeping this in one place is what makes the server and client pumps behave
 //! identically, so a shape cannot pass on one side and desync on the other.
 
-use petramond_world::block::Aabb;
 use crate::world::CustomBakeCell;
+use petramond_world::block::Aabb;
 
 /// The wire input for one dirty cell — built once by
 /// `World::bake_cell_input` when the cell is drained, so every dispatcher

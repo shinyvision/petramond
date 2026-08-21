@@ -30,3 +30,8 @@ strip = true
 [profile.playtest]
 inherits = "dev"
 opt-level = 1
+
+[profile.test]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true

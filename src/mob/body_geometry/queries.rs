@@ -1,5 +1,5 @@
-use petramond_math::math::Vec3;
 use crate::mob::MobSize;
+use petramond_math::math::Vec3;
 
 use super::{
     arc_component_bounds, body_boxes, segment_centre, segment_centres, segment_offsets, wrap_angle,
@@ -20,11 +20,13 @@ pub fn body_separation(
         return None;
     }
     strongest_separation(
-        segment_centres(a_pos, a_yaw, a_size)
-            .map(|centre| petramond_world::body::Body::new(centre, a_size.half_width, a_size.height)),
+        segment_centres(a_pos, a_yaw, a_size).map(|centre| {
+            petramond_world::body::Body::new(centre, a_size.half_width, a_size.height)
+        }),
         || {
-            segment_centres(b_pos, b_yaw, b_size)
-                .map(|centre| petramond_world::body::Body::new(centre, b_size.half_width, b_size.height))
+            segment_centres(b_pos, b_yaw, b_size).map(|centre| {
+                petramond_world::body::Body::new(centre, b_size.half_width, b_size.height)
+            })
         },
     )
 }

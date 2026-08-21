@@ -24,7 +24,6 @@
 #[cfg_attr(not(feature = "playback"), allow(unused_imports))]
 pub use petramond_world::sound_registry::{Sound, SoundCategory};
 
-
 #[cfg(feature = "playback")]
 mod keep_alive;
 

@@ -264,8 +264,14 @@ mod terrain_vertex_tests {
             ),
         ];
         let sources = [
-            ("block.wgsl", include_str!("../../petramond-render/shaders/block.wgsl")),
-            ("model3d.wgsl", include_str!("../../petramond-render/shaders/model3d.wgsl")),
+            (
+                "block.wgsl",
+                include_str!("../../petramond-render/shaders/block.wgsl"),
+            ),
+            (
+                "model3d.wgsl",
+                include_str!("../../petramond-render/shaders/model3d.wgsl"),
+            ),
             (
                 "break_overlay.wgsl",
                 include_str!("../../petramond-render/shaders/break_overlay.wgsl"),
@@ -354,8 +360,14 @@ mod terrain_vertex_tests {
     #[test]
     fn the_light_decoding_shaders_read_the_tint_alpha_lane() {
         for (name, src) in [
-            ("block.wgsl", include_str!("../../petramond-render/shaders/block.wgsl")),
-            ("model3d.wgsl", include_str!("../../petramond-render/shaders/model3d.wgsl")),
+            (
+                "block.wgsl",
+                include_str!("../../petramond-render/shaders/block.wgsl"),
+            ),
+            (
+                "model3d.wgsl",
+                include_str!("../../petramond-render/shaders/model3d.wgsl"),
+            ),
         ] {
             assert!(
                 src.contains("tint: vec4<f32>"),
@@ -822,10 +834,10 @@ pub struct ChunkMesh {
     /// True once the CPU vertex/index buffers were released after a settled GPU
     /// upload (the geometry then lives only in the packed column buffer). A column
     /// repack cannot read a released mesh; it must force a remesh first.
-    pub(in crate) released: bool,
+    pub(crate) released: bool,
     /// `is_empty()` captured at release time, so emptiness queries stay truthful
     /// after the buffers are gone.
-    pub(in crate) released_empty: bool,
+    pub(crate) released_empty: bool,
 }
 
 impl Default for ChunkMesh {

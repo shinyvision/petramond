@@ -3,11 +3,11 @@
 
 use mod_api::HostRet;
 
-use petramond_world::block::Block;
 use crate::events::SimCtx;
-use petramond_world::item::ItemType;
-use petramond_math::math::{IVec3, Vec3};
 use crate::modding::scope;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::item::ItemType;
 
 /// Every bound this module enforces is declared in the ABI crate, because a
 /// mod has to obey them and can only do that by reading them — the SDK

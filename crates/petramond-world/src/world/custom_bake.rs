@@ -11,12 +11,11 @@
 //! distinct geometries, not by the world.
 //! (Data-half queries; the mutation/orchestration half stays in the engine crate.)
 
-use crate::world::data::WorldData;
-use std::sync::Mutex;
 use crate::block::{Aabb, Block, ShapeFamily};
 use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::IVec3;
-    
+use crate::world::data::WorldData;
+use std::sync::Mutex;
 
 impl WorldData {
     /// The baked collision boxes for the custom shape at `pos`, or `None` when
@@ -40,8 +39,6 @@ impl WorldData {
             }
         }
     }
-
-
 
     /// Drop a cell's bake so the next read re-bakes (or falls back) — the edit
     /// invalidation the block-write lanes call.
@@ -158,7 +155,6 @@ impl WorldData {
         }
     }
 
-
     /// A cell-KV write to `key` landed: re-bake every stateful custom shape in
     /// the cell's neighbourhood that resolves from this state key, so a shape
     /// reading a neighbour's state (a stair's corner from an adjacent facing)
@@ -192,14 +188,14 @@ impl WorldData {
         }
     }
 
-
     /// Drop every cached custom bake (collision + dirty mark) in a section being
     /// evicted — the render-box and light-aperture caches ride the `Section` and
     /// evict with it, but the world-keyed collision map and the dirty set do not,
     /// so a roamed-away section would leave stale collision and churn
     /// `chunk_block` on unloaded coords every bake pump.
     pub fn evict_custom_bake_section(&mut self, pos: SectionPos) {
-        let in_section = |p: &IVec3| WorldData::split_world(p.x, p.y, p.z).map(|s| s.0) == Some(pos);
+        let in_section =
+            |p: &IVec3| WorldData::split_world(p.x, p.y, p.z).map(|s| s.0) == Some(pos);
         self.mods.custom_bake.retain(|p, _| !in_section(p));
         self.mods.custom_bake_dirty.retain(|p| !in_section(p));
     }
