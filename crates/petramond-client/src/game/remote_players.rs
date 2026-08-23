@@ -101,6 +101,12 @@ pub struct RemotePlayer {
     pub view: HeldItemView,
     /// The off-hand animator's output — the LEFT hand's held item.
     pub off_view: HeldItemView,
+    /// This body's eased bone offsets, so its bones move at the same rate as
+    /// the item in its fist. Holds the eased value between frames; the
+    /// presentation gather copies it into this frame's arena.
+    pub bones: super::bone_ease::BoneEase,
+    /// Scratch for this body's resolved offset target, reused across frames.
+    target: Vec<petramond_render::BoneOffset>,
 }
 
 impl RemotePlayer {
@@ -118,6 +124,8 @@ impl RemotePlayer {
             eat_t: 0.0,
             view: HeldItemView::default(),
             off_view: HeldItemView::default(),
+            bones: Default::default(),
+            target: Vec::new(),
         }
     }
 
@@ -240,6 +248,7 @@ impl RemotePlayers {
                 placed: latch.placed,
                 swung: latch.swung,
                 eating: eating_main.then_some(p.eat_t),
+                pose_target: p.curr.held_pose_main.map(super::render_held_pose),
                 dt,
             });
             // The LEFT hand: its own item, its own jabs, its own eats. Mining
@@ -260,7 +269,15 @@ impl RemotePlayers {
                 swung: false,
                 eating: eating_off.then_some(p.eat_t),
                 dt,
+                pose_target: p.curr.held_pose_off.map(super::render_held_pose),
             });
+            // The body's bones ease at the same rate as the item in its
+            // fist, so a raised guard and the arm raising it arrive together.
+            let mut target = std::mem::take(&mut p.target);
+            target.clear();
+            super::render_bone_offsets(&p.curr.bone_poses, &mut target);
+            p.bones.advance(&target, dt);
+            p.target = target;
             p.hurt_t = (p.hurt_t - dt).max(0.0);
         }
     }
@@ -329,6 +346,9 @@ mod tests {
             mining: None,
             eating: false,
             eating_off_hand: false,
+            held_pose_main: None,
+            held_pose_off: None,
+            bone_poses: Vec::new(),
             hurt_recent: false,
             snap: false,
             mount: None,

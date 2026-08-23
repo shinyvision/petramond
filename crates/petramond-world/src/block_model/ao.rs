@@ -270,7 +270,7 @@ mod tests {
             to: Vec3::from(to),
             origin: Vec3::ZERO,
             rotation: Vec3::ZERO,
-            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
             cull: [None; 6],
         }
     }

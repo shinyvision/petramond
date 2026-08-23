@@ -191,6 +191,55 @@ pub struct HeldItemView {
     /// slowly closes the remaining DEPTH toward the camera as this rises — the
     /// bite-by-bite approach. Screen-position carry stays on [`eat`](Self::eat).
     pub eat_near: f32,
+    /// The hand's claimed held pose, already EASED by the animator so a 20 Hz
+    /// publisher still glides. Identity on ordinary frames.
+    pub pose: HeldPose,
+}
+
+/// A claimed held-item pose: one extra Blockbench display transform per VIEW,
+/// composed onto whatever hold the item already has.
+///
+/// It is a [`DisplayTransform`] because that is exactly what it is, so the
+/// engine's existing composition ([`DisplayTransform::base_matrix`]) and
+/// left-hand mirroring ([`DisplayTransform::left_hand`], reached here by
+/// conjugating the hand frame) apply unchanged. Two views because they start
+/// from different authored holds, so one intent is a different delta in each.
+///
+/// [`DisplayTransform`]: petramond_world::block_model::DisplayTransform
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct HeldPose {
+    pub first_person: petramond_world::block_model::DisplayTransform,
+    pub third_person: petramond_world::block_model::DisplayTransform,
+}
+
+/// How fast a published presentation POSE chases its target, per second
+/// (first-order lag, like the hand's bob).
+///
+/// Fast enough that a deliberate raise reads as instant, slow enough to turn a
+/// replicated publisher's 20 Hz steps into a glide.
+///
+/// ONE rate for everything posed — the item in a hand ([`HeldPose`]) and the
+/// bones carrying it ([`BoneOffset`]) alike. A body whose arm snaps to a stance
+/// while the thing in its fist glides there is the item visibly trailing its
+/// own hand.
+pub const POSE_EASE_RATE: f32 = 22.0;
+
+impl HeldPose {
+    /// Ease each view a fraction `t` toward `to`, on the two channels a claim
+    /// may set. Rotation eases in DEGREES rather than as a quaternion: these
+    /// are small deltas from an authored hold, where the two agree, and staying
+    /// a `DisplayTransform` keeps every consumer on one type.
+    pub fn ease_toward(&mut self, to: &HeldPose, t: f32) {
+        let ease = |a: &mut petramond_world::block_model::DisplayTransform,
+                    b: &petramond_world::block_model::DisplayTransform| {
+            for i in 0..3 {
+                a.rotation[i] += (b.rotation[i] - a.rotation[i]) * t;
+                a.translation[i] += (b.translation[i] - a.translation[i]) * t;
+            }
+        };
+        ease(&mut self.first_person, &to.first_person);
+        ease(&mut self.third_person, &to.third_person);
+    }
 }
 
 impl Default for HeldItemView {
@@ -205,6 +254,7 @@ impl Default for HeldItemView {
             eat: 0.0,
             eat_bob: 0.0,
             eat_near: 0.0,
+            pose: HeldPose::default(),
         }
     }
 }
@@ -230,6 +280,11 @@ pub struct HeldItemFrame {
     /// The animator raises the food quickly at the start, then drifts it the
     /// rest of the way to the mouth as the progress advances.
     pub eating: Option<f32>,
+    /// This hand's claimed held pose as last published — predicted locally this
+    /// frame, or replicated from the authority. `None` = the item's authored
+    /// hold. The animator eases toward it; geometry reads the eased
+    /// [`HeldItemView::pose`].
+    pub pose_target: Option<HeldPose>,
     /// The camera's normalized walk sway this frame (`side`, `up` — see
     /// `game::view_bob`). The hand does NOT wear it directly: the animator
     /// lags it, which is what stops the item riding the screen rigidly.
@@ -312,6 +367,49 @@ pub struct MobRenderInstance {
     pub ragdoll: Option<Arc<[(Vec3, Quat)]>>,
 }
 
+/// One rig-bone offset, resolved to a bone INDEX by the caller.
+///
+/// Composed onto whatever the body's own animation already put that bone at,
+/// about the bone's posed pivot, and carried through every descendant bone —
+/// so an offset on a shoulder moves the whole arm and its held item.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BoneOffset {
+    /// Index into the player model's bone list.
+    pub bone: usize,
+    /// Rotation in DEGREES about the bone's pivot, applied X, Y, Z.
+    pub rotation: [f32; 3],
+    /// Translation in 1/16-BLOCK pixels, in the bone's frame.
+    pub translation: [f32; 3],
+    /// Whether this layers over the body's animation or REPLACES that bone's
+    /// share of it (a stance, which must not also swing with the stride).
+    pub hold: bool,
+}
+
+/// One body's slice of the frame's shared bone-offset arena
+/// ([`GamePresentation::bone_offsets`](crate::views::GamePresentation)).
+///
+/// Bodies carry a RANGE rather than their own list so a render instance stays
+/// a plain `Copy` value with no per-body allocation, and so nothing has to cap
+/// how many bones a body may wear.
+///
+/// [`GamePresentation::bone_offsets`]: crate::views::GamePresentation
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct BoneRange {
+    pub start: u32,
+    pub len: u32,
+}
+
+impl BoneRange {
+    /// This body's offsets. An out-of-bounds range (a stale row, never a
+    /// correctly built one) reads as empty rather than panicking mid-frame.
+    pub fn of(self, arena: &[BoneOffset]) -> &[BoneOffset] {
+        let start = self.start as usize;
+        arena
+            .get(start..start + self.len as usize)
+            .unwrap_or(&[][..])
+    }
+}
+
 /// The local player's third-person body to draw this frame (absent in first
 /// person): the compiled `player.bbmodel` at `pos` (feet), body facing
 /// `body_yaw` with the head turned `head_yaw`/`head_pitch` relative to it,
@@ -348,6 +446,10 @@ pub struct PlayerRenderInstance {
     /// 6-bit two-channel light sampled at the player.
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
+    /// This body's bone offsets, as a range into the frame's arena. Applied
+    /// after the engine's own animation layers, so they compose with a walk, a
+    /// punch or a head-look instead of replacing it.
+    pub bones: BoneRange,
 }
 
 /// One REMOTE player's body + held item to draw this frame, already

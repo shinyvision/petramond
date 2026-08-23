@@ -313,6 +313,13 @@ impl Renderer {
         self.actor.remote_players.extend_from_slice(v);
     }
 
+    /// Store this frame's bone-offset arena — the backing every drawn body's
+    /// `PlayerRenderInstance::bones` range indexes into. Reuses capacity.
+    pub fn set_bone_offsets(&mut self, v: &[crate::BoneOffset]) {
+        self.actor.bone_offsets.clear();
+        self.actor.bone_offsets.extend_from_slice(v);
+    }
+
     /// Store the block-atlas particle cubes to draw this frame. Reuses capacity.
     pub fn set_particles(&mut self, v: &[ParticleInstance]) {
         self.particle.instances.clear();

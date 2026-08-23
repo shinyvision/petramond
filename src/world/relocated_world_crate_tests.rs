@@ -273,13 +273,13 @@ mod behavior_wasm {
         let pos = IVec3::new(1, 65, 1);
         a.random_tick(&mut world, pos);
         a.neighbor_update(&mut world, pos);
-        let hooks = world.take_mod_block_hooks();
+        let hooks = world.take_block_hooks();
         assert_eq!(hooks.len(), 2);
         assert_eq!(hooks[0].kind, BlockHookKind::RandomTick);
         assert_eq!(hooks[1].kind, BlockHookKind::NeighborUpdate);
         assert_eq!(hooks[0].key, "testmod:zap");
         assert_eq!(hooks[0].pos, pos);
-        assert!(world.take_mod_block_hooks().is_empty(), "take drains");
+        assert!(world.take_block_hooks().is_empty(), "take drains");
     }
 }
 

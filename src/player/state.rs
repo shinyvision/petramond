@@ -1,5 +1,49 @@
+use crate::player::body_claims::BodyClaims;
 use crate::world::World;
 use petramond_math::math::{IVec3, Vec3};
+
+/// The claimant an [`adopt_resolved_body`](Player::adopt_resolved_body) mirror
+/// writes under. Deliberately a name nothing can register, because a mirror is
+/// not resolving anybody's claim — it is repeating an answer.
+const MIRRORED_CLAIM: &str = "";
+
+/// One press of the interact button, from press to release — and who owns it.
+///
+/// Most interactions resolve inside a gesture and leave it FREE, which is what
+/// lets a held button keep placing blocks or flapping a door. A CONTINUOUS one
+/// — an eat, a raised guard — takes the gesture instead, and nothing else is
+/// offered the button until it comes up.
+///
+/// Transient body state: never saved, and both mirrors run the same rules over
+/// it from the same input.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum UseGesture {
+    /// Nothing owns the button; the next press or repeat is offered.
+    #[default]
+    Free,
+    /// Owned until release, by the named claimant
+    /// ([`ENGINE_CLAIMANT`](super::ENGINE_CLAIMANT) for the engine's own eat).
+    Held(Box<str>),
+    /// It WAS owned, the interaction finished, and the button has not come up
+    /// yet — so nothing else may take it until it does.
+    ///
+    /// This is the whole reason a held button does not eat a stack: finishing
+    /// is not the same as letting go, and the player has to say so.
+    Spent,
+}
+
+impl UseGesture {
+    /// Whether `claimant` owns this gesture right now.
+    pub fn held_by(&self, claimant: &str) -> bool {
+        matches!(self, UseGesture::Held(o) if &**o == claimant)
+    }
+
+    /// Whether anything owns it — the gate that stops a fresh click or a
+    /// repeat being offered to the chain.
+    pub fn is_free(&self) -> bool {
+        *self == UseGesture::Free
+    }
+}
 
 /// Half the horizontal width (box is 0.6 wide on x and z).
 pub const HALF_W: f32 = 0.3;
@@ -57,7 +101,7 @@ pub struct PlayerInputSnapshot {
 /// One connected player's per-tick state snapshot, published on the world
 /// beside the inputs — the read model behind the `Players` HostCall
 /// (multiplayer-aware spawn/ambience/weather policy).
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlayerRosterSnapshot {
     /// Session player id.
     pub id: u8,
@@ -72,9 +116,20 @@ pub struct PlayerRosterSnapshot {
     pub spectator: bool,
     /// Sneak intent, gated on gameplay focus (the session's one sneak rule).
     pub sneak: bool,
+    /// Use (interact) intent, gated on gameplay focus — published beside sneak
+    /// so continuous-use predicates read the snapshot every other actor
+    /// context lives on.
+    pub use_held: bool,
     /// The selected hotbar stack's item, if any, with its count.
     pub held: Option<petramond_world::item::ItemType>,
     pub held_count: u8,
+    /// Who owns this body's interact press — the roster's copy of
+    /// [`Player::use_gesture`], so a reader answers "is this press mine"
+    /// for any session, not just the acting one.
+    pub use_gesture: UseGesture,
+    /// The off-hand slot's item, if any — the literal off slot (the roster is
+    /// outside any acting-hand dispatch), so a reader sees both hands.
+    pub off_held: Option<petramond_world::item::ItemType>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -154,6 +209,14 @@ pub struct Player {
     /// Stepped once per game tick by `Game::tick_effects`; persisted by
     /// registry name in `level.dat`.
     effects: Vec<petramond_world::effect::ActiveEffect>,
+    /// What is currently claimed on this body — speed, barred actions, held
+    /// poses, bone offsets — keyed by claimant so two of them compose.
+    /// TRANSIENT like the damage-immunity timer: never saved, and each claim
+    /// lives only while its claimant keeps re-stating it. See [`BodyClaims`].
+    pub claims: BodyClaims,
+    /// Who owns this body's current interact press (see [`UseGesture`]).
+    /// Transient, like the claims beside it.
+    pub use_gesture: UseGesture,
 }
 
 impl Player {
@@ -176,6 +239,8 @@ impl Player {
             craft_craftable_only: false,
             progression: Default::default(),
             effects: Vec::new(),
+            claims: BodyClaims::default(),
+            use_gesture: UseGesture::default(),
         }
     }
 
@@ -272,15 +337,88 @@ impl Player {
         self.effects = effects;
     }
 
-    /// The product of every active [`EffectBehavior::Speed`] scale — the land
-    /// speed multiplier movement applies. `1.0` with nothing active.
+    /// The product of every active [`EffectBehavior::Speed`] scale. Not read
+    /// directly: it is one input to the engine's own claim (see
+    /// [`refresh_engine_claims`](Self::refresh_engine_claims)), so movement has
+    /// exactly one speed to read.
     ///
     /// [`EffectBehavior::Speed`]: petramond_world::effect::EffectBehavior::Speed
-    pub fn speed_scale(&self) -> f32 {
+    fn effect_speed_scale(&self) -> f32 {
         self.effects
             .iter()
             .map(|e| e.effect.def().behavior.speed_scale())
             .product()
+    }
+
+    /// Re-state the ENGINE's own claim on this body, from the body's state plus
+    /// the one fact it cannot see (`gameplay` — whether a menu has the hands).
+    ///
+    /// The engine takes a claimant slot like anything else rather than gating
+    /// each action site on its own condition. That is what makes "may this body
+    /// mine" a single question: a spectator, a corpse, an open menu and a
+    /// pack's raised shield all answer it the same way, and a rule that
+    /// composes with one composes with all of them.
+    ///
+    /// Idempotent and re-stated every tick on BOTH mirrors — every input is
+    /// state the client also holds, so the engine's half is derived rather than
+    /// replicated and stays predicted (see
+    /// [`BodyClaims::replicated_speed_scale`]).
+    pub fn refresh_engine_claims(&mut self, gameplay: bool) {
+        self.claims
+            .set_speed_scale(super::ENGINE_CLAIMANT, self.effect_speed_scale());
+        // A spectator has no body to act with and an open menu has the hands.
+        // Both used to be a separate condition at every action site.
+        //
+        // Death is deliberately NOT a term: the death screen is a menu, so
+        // `gameplay` already covers it on both mirrors — and a mirror does not
+        // track this body's health, so reading it here would let the two sides
+        // disagree about what the body may do.
+        let idle = self.is_spectator() || !gameplay;
+        let denied = if idle {
+            super::DeniedActions::of([
+                mod_api::BodyAction::Attack,
+                mod_api::BodyAction::Mine,
+                mod_api::BodyAction::Use,
+            ])
+        } else {
+            super::DeniedActions::NONE
+        };
+        self.claims
+            .set_denied_actions(super::ENGINE_CLAIMANT, denied);
+    }
+
+    /// The body-level land-speed scale: the resolved product over every claim
+    /// (see [`BodyClaims::speed_scale`]).
+    #[inline]
+    pub fn move_scale(&self) -> f32 {
+        self.claims.speed_scale()
+    }
+
+    /// The set of actions this body is barred from (see
+    /// [`BodyClaims::denied_actions`]).
+    #[inline]
+    pub fn denied_actions(&self) -> super::DeniedActions {
+        self.claims.denied_actions()
+    }
+
+    /// Adopt an already-resolved body on a MIRROR — the client's predicted
+    /// player, told the answers the authority resolved. Neither knob is
+    /// predicted: both are SIMULATION (the server validates how fast a client
+    /// moved and what it was allowed to do), and a batch of latency on either
+    /// is imperceptible next to the POSE, which IS predicted precisely because
+    /// it is the part you see instantly.
+    ///
+    /// ONE entry point for the whole answer rather than a setter per knob: a
+    /// mirror adopts everything it was told or it is out of step, and a
+    /// per-field door is a field somebody forgets to walk through.
+    ///
+    /// It replaces only the MIRRORED slot, never the whole set: the mirror
+    /// carries the engine's own claim too, worked out from state it holds
+    /// (see [`refresh_engine_claims`](Self::refresh_engine_claims)), and
+    /// clearing would drop it until the next frame re-stated it.
+    pub fn adopt_resolved_body(&mut self, scale: f32, denied: super::DeniedActions) {
+        self.claims.set_speed_scale(MIRRORED_CLAIM, scale);
+        self.claims.set_denied_actions(MIRRORED_CLAIM, denied);
     }
 
     /// Clear every active effect (death/respawn starts a fresh life).

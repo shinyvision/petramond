@@ -160,7 +160,7 @@ pub fn build_server_with_pool(
     // before core systems and mod init below, so core day/night, scheduled
     // ticks, and init-time HostCalls (CurrentTick) see the persisted state.
     if let Some(level) = &opened.level {
-        world.set_mod_kv(level.world_kv.clone());
+        world.set_world_kv(level.world_kv.clone());
         world.restore_tick(level.tick);
         world.set_populated_columns(level.populated_columns.clone());
     }
@@ -198,7 +198,7 @@ pub fn build_server_with_pool(
             mods
         },
         spawn_counter: 0,
-        next_mod_sound_handle: 1,
+        next_spatial_sound_handle: 1,
         tick_accumulator: 0.0,
         paused: false,
         // Headless: remote players may exist from boot — Pause is never
@@ -239,7 +239,7 @@ pub fn build_server_with_pool(
             bus,
             systems,
             mods,
-            next_mod_sound_handle,
+            next_spatial_sound_handle,
             ..
         } = &mut server;
         let mut stand_in;
@@ -259,7 +259,7 @@ pub fn build_server_with_pool(
             host_gui,
             bus,
             systems,
-            next_mod_sound_handle,
+            next_spatial_sound_handle,
         );
     }
     perf.mark("mod_init");

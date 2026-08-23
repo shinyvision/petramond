@@ -1,11 +1,11 @@
 //! The drain for engine actions mod HostCalls queue mid-dispatch
-//! ([`ModAction`]): a guest call arrives while the event bus is borrowed, so
+//! ([`DeferredAction`]): a guest call arrives while the event bus is borrowed, so
 //! calls that must run through a bus funnel (`DamagePlayer`, `DamageMob`) queue
 //! here and `ServerGame` applies them at its per-tick action points (after every
 //! systems batch and before each post-event drain — see `server::game`), on the
 //! same tick, in queue order.
 
-use crate::events::{DamageSource, ModAction};
+use crate::events::{DamageSource, DeferredAction};
 
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
@@ -16,7 +16,7 @@ impl ServerGame {
     /// engine-originated damage. Actions queued *while* this batch runs (e.g.
     /// by a `player_damage_pre` handler) land at the next action point — the
     /// per-tick point count bounds them, no recursion.
-    pub fn apply_mod_actions(&mut self, events: &mut TickEvents) {
+    pub fn apply_deferred_actions(&mut self, events: &mut TickEvents) {
         if !self.bus.queue_mut().has_actions() {
             return;
         }
@@ -25,10 +25,10 @@ impl ServerGame {
         let s = 0;
         for action in self.bus.queue_mut().take_actions() {
             match action {
-                ModAction::DamagePlayer { amount, mod_id } => {
+                DeferredAction::DamagePlayer { amount, mod_id } => {
                     self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
                 }
-                ModAction::DamageMob {
+                DeferredAction::DamageMob {
                     mob_id,
                     amount,
                     mod_id,
@@ -54,15 +54,15 @@ impl ServerGame {
                 }
                 // GUI opens share the ordered menu boundary with player
                 // clicks and closes; this action point precedes that stage.
-                ModAction::OpenGui { kind } => {
+                DeferredAction::OpenGui { kind } => {
                     self.sessions[s].pending_menu_actions.push(
                         crate::server::player::PendingMenuAction::OpenGui { kind, pos: None },
                     );
                 }
-                ModAction::CloseGui => {
-                    self.sessions[s].request_close_mod_gui = true;
+                DeferredAction::CloseGui => {
+                    self.sessions[s].request_close_gui = true;
                 }
-                ModAction::ChatSend { text, targets } => {
+                DeferredAction::ChatSend { text, targets } => {
                     let targets = match targets {
                         None => crate::server::chat::ChatTargets::All,
                         Some(ids) => crate::server::chat::ChatTargets::Players(

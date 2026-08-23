@@ -223,11 +223,196 @@ pub struct PlayerInputData {
     pub pitch: f32,
 }
 
+/// One extra Blockbench DISPLAY TRANSFORM on top of an item's authored hold —
+/// same units and axis order as the `display` block, so a pose tuned in the
+/// modelling tool transfers digit-for-digit.
+///
+/// Composed OUTSIDE the authored transform (`offset · authored`), so the
+/// translation moves the item within the hold frame rather than along its own
+/// tilted axes. [`IDENTITY`](Self::IDENTITY) means the same as no pose at all.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Default)]
+pub struct HeldPoseData {
+    /// Rotation in DEGREES about X, then Y, then Z — the `display` block's
+    /// convention.
+    pub rotation: [f32; 3],
+    /// Translation in 1/16-BLOCK pixels — the `display` block's convention.
+    pub translation: [f32; 3],
+}
+
+impl HeldPoseData {
+    /// The neutral offset: the authored hold, unchanged.
+    pub const IDENTITY: Self = Self {
+        rotation: [0.0; 3],
+        translation: [0.0; 3],
+    };
+
+    /// Whether this offset changes nothing.
+    pub fn is_identity(&self) -> bool {
+        *self == Self::IDENTITY
+    }
+
+    /// Every component finite. A NaN would poison every transform downstream
+    /// of the hand, so the engine refuses one outright.
+    pub fn is_finite(&self) -> bool {
+        self.rotation
+            .iter()
+            .chain(&self.translation)
+            .all(|c| c.is_finite())
+    }
+}
+
+/// One hand's held-item pose for [`HostCall::SetPlayerHeldPose`]: an offset
+/// per VIEW, because the two views hold an item from different authored poses
+/// (`firstperson_righthand` vs `thirdperson_righthand`), so the same intent is
+/// a different delta in each.
+///
+/// The OFF hand is never authored separately — the engine mirrors by the rule
+/// Blockbench applies to a left-hand slot (negate the x-translation and the
+/// y/z rotations).
+///
+/// [`HostCall::SetPlayerHeldPose`]: crate::HostCall::SetPlayerHeldPose
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Default)]
+pub struct HeldPose {
+    /// Composed onto the item's `firstperson_*hand` hold — the wielder's own
+    /// screen.
+    pub first_person: HeldPoseData,
+    /// Composed onto the item's `thirdperson_*hand` hold — the body every
+    /// observer sees (and the wielder's own, in third person).
+    pub third_person: HeldPoseData,
+}
+
+impl HeldPose {
+    /// The neutral pose: both views keep their authored hold.
+    pub const IDENTITY: Self = Self {
+        first_person: HeldPoseData::IDENTITY,
+        third_person: HeldPoseData::IDENTITY,
+    };
+
+    /// Whether this pose changes nothing in either view.
+    pub fn is_identity(&self) -> bool {
+        self.first_person.is_identity() && self.third_person.is_identity()
+    }
+
+    /// Every component of both views finite.
+    pub fn is_finite(&self) -> bool {
+        self.first_person.is_finite() && self.third_person.is_finite()
+    }
+}
+
+/// How a [`BonePoseData`] meets the animation already posing its bone.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum BonePoseMode {
+    /// COMPOSE onto whatever the animation put the bone at, so the offset
+    /// layers over the motion — a nudge that still walks, sneaks and swings.
+    #[default]
+    Compose,
+    /// REPLACE the animation's own posing of this bone: HELD at the rig's rest
+    /// pose plus this rotation, whatever the walk cycle wanted.
+    ///
+    /// What a STANCE needs — an arm raised mid-stride must not also swing, and
+    /// composing cannot express that because the swing is still underneath.
+    /// Descendants keep their own animation relative to the held bone, so
+    /// holding a shoulder does NOT freeze the elbow: a stance must hold every
+    /// joint it owns.
+    Replace,
+}
+
+/// One bone's pose: an offset composed onto the engine's own animation, or a
+/// stance that replaces it — see [`BonePoseMode`].
+///
+/// The rotation is about the bone's PIVOT and carries through every descendant,
+/// which is what makes "rotate the shoulder" move the whole arm and the thing
+/// in its fist.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct BonePoseData {
+    /// The rig bone to pose — see the [`bone`](crate::bone) names. A name
+    /// the rig does not have is ignored, like a disabled pack.
+    pub bone: String,
+    /// Rotation in DEGREES about the bone's pivot, applied X then Y then Z —
+    /// the same convention as a `.bbmodel`'s own rotations, so a pose posed
+    /// in Blockbench transfers digit for digit.
+    pub rotation: [f32; 3],
+    /// Translation in 1/16-BLOCK pixels, in the bone's frame.
+    pub translation: [f32; 3],
+    /// Whether this pose layers over the animation or replaces it.
+    pub mode: BonePoseMode,
+}
+
+impl BonePoseData {
+    /// Every component finite; a NaN would poison every transform below the
+    /// bone, so the engine refuses the list whole. The NAME is not validated
+    /// here — an unknown one resolves to nothing and is dropped.
+    pub fn is_finite(&self) -> bool {
+        self.rotation
+            .iter()
+            .chain(&self.translation)
+            .all(|c| c.is_finite())
+    }
+}
+
+/// The player rig's bone names, for [`HostCall::SetPlayerBonePose`]. Any
+/// authored name works; these are the shipped rig's, named by intent rather
+/// than by how the model file spells them.
+///
+/// THAT MATTERS FOR THE ARMS: the rig authors the MAIN hand's arm as the
+/// model's LEFT (the body faces engine-forward, which swaps the sides you
+/// see), so reaching for `"right_shoulder"` by intuition moves the wrong arm.
+///
+/// [`HostCall::SetPlayerBonePose`]: crate::HostCall::SetPlayerBonePose
+pub mod bone {
+    /// The head — rotating it composes with, and is overridden by, the
+    /// engine's own head-look when an animation is not driving the head.
+    pub const HEAD: &str = "head";
+    /// The upper body (chest + arms + head). Rotating it turns everything
+    /// above the waist.
+    pub const BODY: &str = "body";
+    /// Everything above the legs.
+    pub const WAIST: &str = "waist";
+
+    /// The MAIN hand's whole arm, from the shoulder joint down.
+    pub const MAIN_SHOULDER: &str = "left_shoulder";
+    /// The MAIN hand's forearm, from the elbow down.
+    pub const MAIN_ELBOW: &str = "left_elbow";
+    /// The OFF hand's whole arm, from the shoulder joint down.
+    pub const OFF_SHOULDER: &str = "right_shoulder";
+    /// The OFF hand's forearm, from the elbow down.
+    pub const OFF_ELBOW: &str = "right_elbow";
+}
+
+/// One thing a body does with its hands, and can be barred from doing
+/// ([`HostCall::SetPlayerDeniedActions`]).
+///
+/// These are the three gates a player's own buttons drive, and they stay
+/// separate because they are separate gates: a body that can still mine but
+/// not fight is a reasonable thing to want.
+///
+/// Barring an action stops the ACTION, never the intent behind it. A body
+/// denied [`Use`](Self::Use) still has its use button read as held, which is
+/// what lets the same press that raises a guard be the press the guard
+/// swallows.
+///
+/// [`HostCall::SetPlayerDeniedActions`]: crate::HostCall::SetPlayerDeniedActions
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BodyAction {
+    /// Swing at a mob, another player, or the air.
+    Attack,
+    /// Break blocks — both the held-button timer and a client's claimed finish.
+    Mine,
+    /// Interact: the whole use dispatch — placing, doors and containers, an
+    /// item's own use, starting an eat — and the hold-repeat that re-runs it.
+    Use,
+}
+
 /// The player's state for [`HostCall::PlayerState`].
 ///
 /// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerSnapshot {
+    /// WHOSE state this is — the identity every player-addressed HostCall
+    /// takes, so a handler acts on the player it was handed instead of
+    /// guessing. `None` only where the dispatch has no session behind it (mod
+    /// init, unit fixtures). On a CLIENT instance, always the local player.
+    pub id: Option<PlayerId>,
     /// Feet position.
     pub pos: [f32; 3],
     pub vel: [f32; 3],
@@ -251,6 +436,28 @@ pub struct PlayerSnapshot {
     /// [`HostCall::ItemNames`]: crate::HostCall::ItemNames
     /// [`HostCall::ResolveItem`]: crate::HostCall::ResolveItem
     pub held: Option<ItemId>,
+    /// The OFF-HAND slot's item (`None` = empty). Always literally that slot,
+    /// unlike [`held`](Self::held), which resolves the ACTING hand during a use
+    /// click's second pass — so a consumer can see both hands at once.
+    pub off_held: Option<ItemId>,
+    /// Whether the interact (use) button is HELD, gated on gameplay focus like
+    /// [`sneak`](Self::sneak). The unconditional intent, for continuous-use
+    /// predicates: a held button also re-fires
+    /// [`EventPayload::InteractAttempt`] every few ticks, but only at whatever
+    /// the crosshair holds.
+    ///
+    /// [`EventPayload::InteractAttempt`]: crate::EventPayload::InteractAttempt
+    pub use_held: bool,
+    /// Whether THIS caller holds the actor's current use gesture — took the
+    /// press ([`HostCall::HoldUse`]) and has not seen the button come up.
+    ///
+    /// The predicate a CONTINUOUS use is written against, in place of
+    /// [`use_held`](Self::use_held): a raw held button says nothing about
+    /// whether the press was yours, so a pack keying off it starts its own
+    /// interaction on top of whatever the click actually did.
+    ///
+    /// [`HostCall::HoldUse`]: crate::HostCall::HoldUse
+    pub holds_use: bool,
     /// The selected stack's count (0 = empty hand) — lets a consumer gate an
     /// atomic multi-item spend (the trough's three-wheat fill) exactly.
     pub held_count: u8,

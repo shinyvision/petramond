@@ -503,7 +503,7 @@ impl ActionTable {
 
     /// Append a client-mod action (`id` = `mod_id:action`), listed under
     /// `category` (the pack's display name).
-    pub fn push_mod_action(
+    pub fn push_registered_action(
         &mut self,
         id: String,
         label: String,
@@ -839,7 +839,7 @@ mod binding_tests {
     #[test]
     fn mod_actions_resolve_and_release_after_a_table_swap() {
         let mut table = ActionTable::engine();
-        table.push_mod_action(
+        table.push_registered_action(
             "minimap:open_map".into(),
             "Open World Map".into(),
             "Minimap".into(),

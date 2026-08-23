@@ -197,7 +197,7 @@ pub(super) fn push_face(
     face: Face,
     from: Vec3,
     to: Vec3,
-    uv: [f32; 4],
+    uv: petramond_world::bbmodel::FaceUv,
     tint: [f32; 3],
 ) {
     let local = face_corners(face, from, to);
@@ -212,10 +212,9 @@ pub(super) fn push_face(
     }
 
     let shade = SHADES[face.shade_idx() as usize];
-    // UV rect is [u0, v0_top, u1, v1_bottom]; assign per `quad_box` corner order
-    // (p0 bottom-left, p1 bottom-right, p2 top-right, p3 top-left).
-    let [u0, v0, u1, v1] = uv;
-    let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+    // Corner UVs in `quad_box` order (p0 bottom-left, p1 bottom-right, p2
+    // top-right, p3 top-left), per-face rotation applied.
+    let corner_uv = uv.corner_uv();
 
     let start = verts.len() as u32;
     for i in 0..4 {

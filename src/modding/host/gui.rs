@@ -2,7 +2,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::events::ModAction;
+use crate::events::DeferredAction;
 
 use super::guards::{sim_call, sim_query};
 
@@ -44,7 +44,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                         // and its key is not this vocabulary.
                         let kind = open
                             .kind
-                            .is_mod()
+                            .is_registered()
                             .then(|| petramond_world::gui_state::kind_key(open.kind))??;
                         Some(mod_api::GuiViewerData {
                             player_id: mod_api::PlayerId(id.0),
@@ -66,17 +66,17 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
             // Resolve WITHOUT registering: opening a kind nothing declared is
             // a mod bug, reported forgivingly (like an unknown sound key).
             let Some(kind) =
-                petramond_world::gui_state::resolve_kind(&kind_key).filter(|k| k.is_mod())
+                petramond_world::gui_state::resolve_kind(&kind_key).filter(|k| k.is_registered())
             else {
                 log::warn!("[mod {mod_id}] GuiOpen: unknown or non-mod gui kind '{kind_key}'");
                 return HostRet::Bool(false);
             };
             sim_query(|ctx| {
-                ctx.queue.push_action(ModAction::OpenGui { kind });
+                ctx.queue.push_action(DeferredAction::OpenGui { kind });
                 HostRet::Bool(true)
             })
         }
-        HostCall::GuiClose => sim_call(|ctx| ctx.queue.push_action(ModAction::CloseGui)),
+        HostCall::GuiClose => sim_call(|ctx| ctx.queue.push_action(DeferredAction::CloseGui)),
         other => HostRet::Error(format!(
             "non-GUI call {other:?} mis-routed to handle_gui_call (host bug)"
         )),

@@ -36,17 +36,19 @@ pub enum WorldRole {
     ClientReplica,
 }
 
-pub struct ModSimState {
-    /// Behavior hooks fired on mod-behavior blocks this tick (see
-    /// `block::behavior::wasm`), in fire order. Drained by the game right
-    /// after the world tick and dispatched to the owning mods; only blocks
-    /// whose rows declare a `mod_id:name` behavior ever enqueue here.
-    pub mod_block_hooks: Vec<crate::block::behavior::ModBlockHook>,
-    /// Persistent mod world KV (`mod_id:key` → bytes) — the cross-mod interop
-    /// surface. BTreeMap so the save encoding (it
-    /// rides `level.dat`) iterates in one deterministic order. Mutated on the
-    /// tick only (mod HostCalls); restored at session open.
-    pub mod_kv: BTreeMap<String, Vec<u8>>,
+/// The world state that lives outside the voxel grid and the tick queue: the
+/// hooks blocks declare, the world's persistent key/value map, which packs
+/// this world disabled, and the custom-shape collision bakes.
+pub struct ContentState {
+    /// Behavior hooks fired this tick (see `block::behavior::wasm`), in fire
+    /// order. Drained right after the world tick and dispatched to the owner;
+    /// only blocks whose rows declare a `mod_id:name` behavior enqueue here.
+    pub block_hooks: Vec<crate::block::behavior::BlockHook>,
+    /// The world's persistent key/value map (`namespace:key` → bytes) — where
+    /// the day/night clock, the operator list and any pack's own world state
+    /// live. BTreeMap so the save encoding (it rides `level.dat`) iterates in
+    /// one deterministic order. Mutated on the tick only; restored at open.
+    pub world_kv: BTreeMap<String, Vec<u8>>,
     /// Mod pack ids DISABLED for this world (per-world `settings.json`; empty
     /// = all enabled). Session-fixed, set once at open; the natural spawner
     /// and the mod-set record consult it. The palette/mod-host gates take it
@@ -195,8 +197,9 @@ pub struct WorldData {
     /// Mutated on the tick only (mod HostCalls); NOT persisted — resets to
     /// defaults on world open, the owning mod re-applies it (mod world KV).
     pub environment: WorldEnvironment,
-    /// Mod-owned sim state (hooks, KV, bakes).
-    pub mods: ModSimState,
+    /// World state that is neither the voxel grid nor the tick queue: block
+    /// hooks, the world KV, the disabled-pack set, the custom-shape bakes.
+    pub content: ContentState,
     /// Sections whose streamed content is NOT final: an in-flight gen job, an
     /// unanswered saved-record request, or a pending saved overlay. The UNION
     /// of `WorldgenJobs`' three in-flight sets, maintained beside them by the
@@ -226,12 +229,12 @@ impl WorldData {
     /// Mod pack ids disabled for this world (per-world `settings.json`).
     #[inline]
     pub fn disabled_mods(&self) -> &std::collections::BTreeSet<String> {
-        &self.mods.disabled_mods
+        &self.content.disabled_mods
     }
 
     /// Install the world's disabled-mod set — once, at session open.
     pub fn set_disabled_mods(&mut self, disabled: std::collections::BTreeSet<String>) {
-        self.mods.disabled_mods = disabled;
+        self.content.disabled_mods = disabled;
     }
 
     /// The sim-owned visual shader parameter state (see [`WorldEnvironment`]).
@@ -427,13 +430,13 @@ impl WorldData {
 
     /// Queue a mod-behavior hook for post-tick dispatch (called by
     /// `block::behavior::wasm`'s hooks, on the tick only).
-    pub fn queue_mod_block_hook(&mut self, hook: crate::block::behavior::ModBlockHook) {
-        self.mods.mod_block_hooks.push(hook);
+    pub fn queue_block_hook(&mut self, hook: crate::block::behavior::BlockHook) {
+        self.content.block_hooks.push(hook);
     }
 
     /// Drain the mod-behavior hooks fired this tick, in fire order.
-    pub fn take_mod_block_hooks(&mut self) -> Vec<crate::block::behavior::ModBlockHook> {
-        std::mem::take(&mut self.mods.mod_block_hooks)
+    pub fn take_block_hooks(&mut self) -> Vec<crate::block::behavior::BlockHook> {
+        std::mem::take(&mut self.content.block_hooks)
     }
 
     /// All section coordinates of column `(cx,cz)` in the world vertical range.

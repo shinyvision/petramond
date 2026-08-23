@@ -6,8 +6,8 @@
 //! darkness veto, exactly as it does for wheat.
 //!
 //! The core `petramond:hemp` fibre is a MATERIAL and places nothing — it lost
-//! its `block` link when replanting it turned out to be a seed mint (see
-//! WIKI/progression.md). Seeds farm; fibre is the product.
+//! its `block` link when replanting it turned out to be a seed mint. Seeds
+//! farm; fibre is the product.
 
 use mod_sdk::*;
 

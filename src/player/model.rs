@@ -30,3 +30,20 @@ static PLAYER_MODEL: LazyLock<Model> = LazyLock::new(|| {
 pub fn player_model() -> &'static Model {
     &PLAYER_MODEL
 }
+
+/// Resolve a rig bone NAME to the compact id every runtime path carries.
+///
+/// The mod ABI speaks names, because a pack should not be writing indices into
+/// a rig it does not own. Everything BELOW that boundary — the per-mod claim,
+/// the wire row, the render instance — carries this id instead, so a bone
+/// offset costs no allocation and no string comparison per tick.
+///
+/// The id is the bone's index in this process's player rig, and both mirrors
+/// resolve against the same `player.bbmodel` from the same asset roots. A
+/// client whose asset set puts a different rig behind that path simply drops
+/// the offsets it cannot place, exactly as an unknown name does here.
+pub fn bone_id(name: &str) -> Option<u16> {
+    player_model()
+        .bone_named(name)
+        .and_then(|i| u16::try_from(i).ok())
+}

@@ -91,7 +91,7 @@ impl DayNightCycle {
                 return;
             }
         }
-        if let Some(raw) = world.mod_kv_get(TIME_KEY).and_then(read_time_bytes) {
+        if let Some(raw) = world.world_kv_get(TIME_KEY).and_then(read_time_bytes) {
             if Some(raw) != self.published_time {
                 self.clock = clock_from_fraction(f32::from_le_bytes(raw), self.clock, self.cycle);
             }
@@ -113,10 +113,10 @@ impl DayNightCycle {
         let phase = ((self.clock / self.cycle) % MOON_PHASES) as f32;
         let (time_param, light_param) = sky_params(t, phase);
 
-        world.mod_kv_set(CLOCK_KEY.into(), self.clock.to_le_bytes().to_vec());
-        world.mod_kv_set(TIME_KEY.into(), t_bytes.to_vec());
-        world.mod_kv_set(NIGHT_KEY.into(), vec![u8::from(t >= 0.5)]);
-        world.mod_kv_set(FROZEN_KEY.into(), vec![u8::from(self.frozen)]);
+        world.world_kv_set(CLOCK_KEY.into(), self.clock.to_le_bytes().to_vec());
+        world.world_kv_set(TIME_KEY.into(), t_bytes.to_vec());
+        world.world_kv_set(NIGHT_KEY.into(), vec![u8::from(t >= 0.5)]);
+        world.world_kv_set(FROZEN_KEY.into(), vec![u8::from(self.frozen)]);
         self.published_clock = Some(self.clock);
         self.published_time = Some(t_bytes);
 
@@ -149,7 +149,7 @@ pub fn sky_params(day_fraction: f32, moon_phase: f32) -> ([f32; 4], [f32; 4]) {
 /// [0.5, 1.0) — sunset through sunrise). False on a world where the cycle has
 /// not published yet.
 pub(super) fn is_night(world: &World) -> bool {
-    world.mod_kv_get(NIGHT_KEY).map(|b| b.first().copied()) == Some(Some(1))
+    world.world_kv_get(NIGHT_KEY).map(|b| b.first().copied()) == Some(Some(1))
 }
 
 /// The published day clock (`petramond:clock`), or 0 on a world whose cycle has
@@ -179,13 +179,13 @@ pub fn set_time(world: &mut World, preset: TimePreset) {
     };
     let current = read_clock(world).unwrap_or(fresh_clock(cycle));
     let clock = current / cycle * cycle + within_day;
-    world.mod_kv_set(CLOCK_KEY.into(), clock.to_le_bytes().to_vec());
+    world.world_kv_set(CLOCK_KEY.into(), clock.to_le_bytes().to_vec());
 }
 
 /// Freeze/unfreeze the deterministic cycle at its current clock. The flag is
 /// world KV, so save-all/autosave and reload preserve it.
 pub fn set_frozen(world: &mut World, frozen: bool) {
-    world.mod_kv_set(FROZEN_KEY.into(), vec![u8::from(frozen)]);
+    world.world_kv_set(FROZEN_KEY.into(), vec![u8::from(frozen)]);
 }
 
 /// Skip the clock to early morning of the NEXT day (sleeping through the
@@ -195,7 +195,7 @@ pub(super) fn skip_to_morning(world: &mut World) {
     let cycle = world.day_cycle_ticks();
     let clock = read_clock(world).unwrap_or(fresh_clock(cycle));
     let next = morning_after(clock, cycle);
-    world.mod_kv_set(CLOCK_KEY.into(), next.to_le_bytes().to_vec());
+    world.world_kv_set(CLOCK_KEY.into(), next.to_le_bytes().to_vec());
 }
 
 /// The first early-morning clock strictly after `clock`.
@@ -204,13 +204,13 @@ fn morning_after(clock: u64, cycle: u64) -> u64 {
 }
 
 fn read_clock(world: &World) -> Option<u64> {
-    let raw: [u8; 8] = world.mod_kv_get(CLOCK_KEY)?.try_into().ok()?;
+    let raw: [u8; 8] = world.world_kv_get(CLOCK_KEY)?.try_into().ok()?;
     Some(u64::from_le_bytes(raw))
 }
 
 fn read_frozen(world: &World) -> bool {
     world
-        .mod_kv_get(FROZEN_KEY)
+        .world_kv_get(FROZEN_KEY)
         .and_then(|b| b.first())
         .copied()
         == Some(1)
@@ -218,7 +218,7 @@ fn read_frozen(world: &World) -> bool {
 
 fn read_time(world: &World) -> Option<f32> {
     world
-        .mod_kv_get(TIME_KEY)
+        .world_kv_get(TIME_KEY)
         .and_then(read_time_bytes)
         .map(f32::from_le_bytes)
         .filter(|t| t.is_finite())
@@ -286,10 +286,10 @@ mod tests {
         );
 
         let mut world = World::new(1, 1);
-        world.mod_kv_set(CLOCK_KEY.into(), (C * 3 / 4).to_le_bytes().to_vec());
+        world.world_kv_set(CLOCK_KEY.into(), (C * 3 / 4).to_le_bytes().to_vec());
         skip_to_morning(&mut world);
         assert_eq!(
-            world.mod_kv_get(CLOCK_KEY),
+            world.world_kv_get(CLOCK_KEY),
             Some(&(C + fresh_clock(C)).to_le_bytes()[..]),
             "the skip writes the adopted petramond:clock format"
         );
@@ -298,10 +298,10 @@ mod tests {
         let mut world = World::new(1, 1);
         world.set_day_cycle_ticks(cycle_ticks_for_day_minutes(10));
         let c10 = world.day_cycle_ticks();
-        world.mod_kv_set(CLOCK_KEY.into(), (c10 * 3 / 4).to_le_bytes().to_vec());
+        world.world_kv_set(CLOCK_KEY.into(), (c10 * 3 / 4).to_le_bytes().to_vec());
         skip_to_morning(&mut world);
         assert_eq!(
-            world.mod_kv_get(CLOCK_KEY),
+            world.world_kv_get(CLOCK_KEY),
             Some(&(c10 + fresh_clock(c10)).to_le_bytes()[..])
         );
     }
@@ -312,14 +312,14 @@ mod tests {
     use petramond_math::math::Vec3;
 
     fn published_time(world: &World) -> f32 {
-        let bytes = world.mod_kv_get(TIME_KEY).expect("petramond time");
+        let bytes = world.world_kv_get(TIME_KEY).expect("petramond time");
         f32::from_le_bytes(bytes.try_into().expect("4-byte LE f32"))
     }
 
     #[test]
     fn core_daynight_restores_publishes_and_advances_on_tick_stage() {
         let mut world = World::new(1, 1);
-        world.mod_kv_set(CLOCK_KEY.into(), (C * 3 / 4).to_le_bytes().to_vec());
+        world.world_kv_set(CLOCK_KEY.into(), (C * 3 / 4).to_le_bytes().to_vec());
         let mut systems = TickSystems::default();
 
         install_core(&mut world, &mut systems);
@@ -329,7 +329,7 @@ mod tests {
             (t0 - 0.75).abs() < 1e-6,
             "restored clock publishes midnight fraction, got {t0}"
         );
-        assert_eq!(world.mod_kv_get(NIGHT_KEY), Some(&[1u8][..]));
+        assert_eq!(world.world_kv_get(NIGHT_KEY), Some(&[1u8][..]));
 
         let params = world.environment().shader_params();
         let light = params.get(SKY_LIGHT_PARAM).expect("sky light param");
@@ -355,7 +355,7 @@ mod tests {
         );
 
         assert_eq!(
-            world.mod_kv_get(CLOCK_KEY),
+            world.world_kv_get(CLOCK_KEY),
             Some(&(C * 3 / 4 + 1).to_le_bytes()[..]),
             "clock advances by the elapsed engine tick"
         );
@@ -364,7 +364,7 @@ mod tests {
             "published time advances with the clock"
         );
 
-        world.mod_kv_set(TIME_KEY.into(), 0.25f32.to_le_bytes().to_vec());
+        world.world_kv_set(TIME_KEY.into(), 0.25f32.to_le_bytes().to_vec());
         world.game_tick(&Recipes::default());
         systems.run(
             Attach::After(Stage::Spawning),
@@ -379,7 +379,7 @@ mod tests {
             "external petramond:time write is adopted on the next core tick"
         );
 
-        world.mod_kv_set(CLOCK_KEY.into(), (C / 2).to_le_bytes().to_vec());
+        world.world_kv_set(CLOCK_KEY.into(), (C / 2).to_le_bytes().to_vec());
         world.game_tick(&Recipes::default());
         systems.run(
             Attach::After(Stage::Spawning),
@@ -390,7 +390,7 @@ mod tests {
             bus.queue_mut(),
         );
         assert_eq!(
-            world.mod_kv_get(CLOCK_KEY),
+            world.world_kv_get(CLOCK_KEY),
             Some(&(C / 2 + 1).to_le_bytes()[..]),
             "external petramond:clock write wins exactly"
         );
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn named_times_and_frozen_cycle_are_deterministic() {
         let mut world = World::new(1, 1);
-        world.mod_kv_set(CLOCK_KEY.into(), (C + 123).to_le_bytes().to_vec());
+        world.world_kv_set(CLOCK_KEY.into(), (C + 123).to_le_bytes().to_vec());
 
         set_time(&mut world, TimePreset::Day);
         assert_eq!(read_clock(&world), Some(C + fresh_clock(C)));
@@ -430,7 +430,7 @@ mod tests {
             );
         }
         assert_eq!(read_clock(&world), Some(frozen_at));
-        assert_eq!(world.mod_kv_get(FROZEN_KEY), Some(&[1][..]));
+        assert_eq!(world.world_kv_get(FROZEN_KEY), Some(&[1][..]));
 
         set_frozen(&mut world, false);
         world.game_tick(&Recipes::default());

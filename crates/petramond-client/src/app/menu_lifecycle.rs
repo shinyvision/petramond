@@ -30,7 +30,9 @@ impl App {
         }
         // A mod's `GuiClose` closes only an open MOD GUI (engine containers
         // are not closable from mods).
-        if events.close_mod_gui && matches!(self.screen, AppScreen::Menu(k) if k.is_mod()) {
+        if events.close_document_gui
+            && matches!(self.screen, AppScreen::Menu(k) if k.is_registered())
+        {
             self.close_menu();
         }
         // Right-clicking a bed starts the sleep overlay.

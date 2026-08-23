@@ -1,10 +1,11 @@
 use crate::events::tick::{TickEvents, WorldEvents};
 use crate::net::protocol::{
-    BlockDelta, ItemSlotWire, ItemStateRow, MobStateRow, ModSpatialSoundMsg, OpenScreen,
-    PlayerActionKind, PlayerStateRow, SelfEvents, SelfState, SelfTransform, TickUpdate, Transform,
-    WorldEventMsg,
+    BlockDelta, ClientEventMsg, ItemSlotWire, ItemStateRow, MobStateRow, OpenScreen,
+    PlayerActionKind, PlayerStateRow, SelfEvents, SelfState, SelfTransform, SpatialSoundMsg,
+    TickUpdate, Transform, WorldEventMsg,
 };
 use petramond_math::math::IVec3;
+use petramond_world::inventory::Hand;
 
 use super::{ServerGame, SharedTickRows};
 
@@ -106,6 +107,12 @@ impl ServerGame {
                         .eating
                         .as_ref()
                         .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
+                    // Mod-set held-item poses (`SetPlayerHeldPose`), already
+                    // resolved across mods — this is what makes a raised
+                    // guard visible on somebody ELSE's body.
+                    held_pose_main: sess.player.claims.held_pose(Hand::Main),
+                    held_pose_off: sess.player.claims.held_pose(Hand::Off),
+                    bone_poses: sess.player.claims.bone_poses().collect(),
                     hurt_recent: events.player_at(s).player_damaged,
                     snap: sess.tick_teleported,
                     mount: sess
@@ -291,6 +298,7 @@ impl ServerGame {
     fn build_self_events(&mut self, s: usize, events: &TickEvents) -> SelfEvents {
         let p = events.player_at(s);
         let sess = &mut self.sessions[s];
+        let id = sess.id;
         // Take every request so nothing lingers; the tick can only set one of
         // them (one consumed click per tick), so first-Some is the open.
         let gui = sess.request_open_gui.take();
@@ -319,10 +327,21 @@ impl ServerGame {
             sleep_ended: p.sleep_ended,
             respawned: p.respawned,
             open_screen,
-            close_mod_gui: std::mem::take(&mut sess.request_close_mod_gui),
+            close_document_gui: std::mem::take(&mut sess.request_close_gui),
             toggled_door: p.toggled_door,
             used_unpredicted: p.used_unpredicted,
             used_unpredicted_off: p.used_unpredicted && p.click_off_hand,
+            // Addressed by player id rather than by session index: a mod names
+            // the recipient it means, and the queue is shared across sessions.
+            client_events: events
+                .client_events
+                .iter()
+                .filter(|ev| ev.player == id)
+                .map(|ev| ClientEventMsg {
+                    key: ev.key.clone(),
+                    data: ev.data.clone(),
+                })
+                .collect(),
         }
     }
 
@@ -394,6 +413,9 @@ impl ServerGame {
                 .iter()
                 .map(|e| (e.effect.0, e.remaining))
                 .collect(),
+            held_pose_main: player.claims.held_pose(Hand::Main),
+            held_pose_off: player.claims.held_pose(Hand::Off),
+            bone_poses: player.claims.bone_poses().collect(),
             inventory_revision: revision,
             inventory,
             eating: sess
@@ -405,6 +427,11 @@ impl ServerGame {
                 .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
             sleeping,
             sleep_bed,
+            // Only the half the recipient cannot work out for itself: it folds
+            // the engine's own claim from its own effect list, mode and menu,
+            // so sending that half too would double it.
+            move_scale: player.claims.replicated_speed_scale(),
+            denied_actions: player.claims.replicated_denied_actions(),
             transform,
         }
     }
@@ -422,8 +449,8 @@ impl ServerGame {
         let target = self.sessions[s].menu.target();
         let gui_arc = target
             .kind()
-            .is_some_and(|kind| kind.is_mod())
-            .then(|| self.mod_gui_state_for_menu_sync(s, target));
+            .is_some_and(|kind| kind.is_registered())
+            .then(|| self.gui_state_for_menu_sync(s, target));
         let sess = &mut self.sessions[s];
         // Pointer identity first (the no-publish fast path), then VALUE
         // equality: a machine that re-publishes identical readings every tick
@@ -456,7 +483,7 @@ impl ServerGame {
         Some(out)
     }
 
-    fn mod_gui_state_for_menu_sync(
+    fn gui_state_for_menu_sync(
         &self,
         s: usize,
         target: crate::menu::ContainerTarget,
@@ -466,20 +493,20 @@ impl ServerGame {
             return own;
         }
         let host = self.sessions[0].gui_state.clone();
-        if host.is_empty() || !self.host_mod_gui_state_applies_to(target) {
+        if host.is_empty() || !self.host_gui_state_applies_to(target) {
             return own;
         }
         host
     }
 
-    fn host_mod_gui_state_applies_to(&self, target: crate::menu::ContainerTarget) -> bool {
+    fn host_gui_state_applies_to(&self, target: crate::menu::ContainerTarget) -> bool {
         if self.sessions[0].menu.target() == target {
             return true;
         }
         let mut open_target = None;
         for sess in &self.sessions {
             let t = sess.menu.target();
-            if !t.kind().is_some_and(|kind| kind.is_mod()) {
+            if !t.kind().is_some_and(|kind| kind.is_registered()) {
                 continue;
             }
             if open_target.is_some_and(|seen| seen != t) {
@@ -540,21 +567,21 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
         });
     }
     for s in world.sounds.drain(..) {
-        out.push(WorldEventMsg::ModSound {
+        out.push(WorldEventMsg::Sound {
             sound_id: s.sound.0,
             pos: s.pos,
         });
     }
     for c in world.spatial_sounds.drain(..) {
-        use crate::events::tick::ModSpatialSoundCommand as Cmd;
-        out.push(WorldEventMsg::ModSpatialSound(match c {
+        use crate::events::tick::SpatialSoundCommand as Cmd;
+        out.push(WorldEventMsg::SpatialSound(match c {
             Cmd::PlayAt {
                 handle,
                 sound,
                 pos,
                 volume,
                 pitch,
-            } => ModSpatialSoundMsg::PlayAt {
+            } => SpatialSoundMsg::PlayAt {
                 handle,
                 sound_id: sound.0,
                 pos,
@@ -568,7 +595,7 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
                 volume,
                 pitch,
                 last_pos,
-            } => ModSpatialSoundMsg::PlayOnMob {
+            } => SpatialSoundMsg::PlayOnMob {
                 handle,
                 sound_id: sound.0,
                 mob_id,
@@ -576,7 +603,7 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
                 pitch,
                 last_pos,
             },
-            Cmd::Stop { handle } => ModSpatialSoundMsg::Stop { handle },
+            Cmd::Stop { handle } => SpatialSoundMsg::Stop { handle },
         }));
     }
     out

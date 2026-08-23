@@ -298,10 +298,10 @@ fn a_spectator_takes_neither_damage_nor_knockback_from_mob_strikes() {
 
 #[test]
 fn a_mods_damage_player_action_routes_through_the_funnel() {
-    // A mod's DamagePlayer HostCall queues a ModAction; the drain must send it
+    // A mod's DamagePlayer HostCall queues a DeferredAction; the drain must send it
     // through Game::damage_player so handlers see it with a Mod source — and a
     // registered player_damage_pre canceller can block it.
-    use petramond::events::ModAction;
+    use petramond::events::DeferredAction;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -322,11 +322,11 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
     game.server
         .bus
         .queue_mut()
-        .push_action(ModAction::DamagePlayer {
+        .push_action(DeferredAction::DamagePlayer {
             amount: 3,
             mod_id: "testmod",
         });
-    game.server.apply_mod_actions(&mut ev);
+    game.server.apply_deferred_actions(&mut ev);
     assert_eq!(
         game.server.sessions[0].player.health(),
         h0 - 3,
@@ -348,11 +348,11 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
     game.server
         .bus
         .queue_mut()
-        .push_action(ModAction::DamagePlayer {
+        .push_action(DeferredAction::DamagePlayer {
             amount: 5,
             mod_id: "testmod",
         });
-    game.server.apply_mod_actions(&mut ev);
+    game.server.apply_deferred_actions(&mut ev);
     assert_eq!(
         game.server.sessions[0].player.health(),
         h0 - 3,
@@ -364,7 +364,7 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
 fn queued_mod_actions_apply_within_a_game_tick() {
     // The wiring contract: an action sitting in the queue when a fixed tick
     // runs is applied by that tick (at its first drain point), not lost.
-    use petramond::events::ModAction;
+    use petramond::events::DeferredAction;
 
     let mut game = game_on_empty_chunk();
     let mut ev = TickEvents::default();
@@ -372,7 +372,7 @@ fn queued_mod_actions_apply_within_a_game_tick() {
     game.server
         .bus
         .queue_mut()
-        .push_action(ModAction::DamagePlayer {
+        .push_action(DeferredAction::DamagePlayer {
             amount: 2,
             mod_id: "testmod",
         });
@@ -937,6 +937,9 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
             mining: None,
             eating: false,
             eating_off_hand: false,
+            held_pose_main: None,
+            held_pose_off: None,
+            bone_poses: Vec::new(),
             hurt_recent: false,
             snap: false,
             mount: None,
@@ -1319,6 +1322,9 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
             mining: None,
             eating: false,
             eating_off_hand: false,
+            held_pose_main: None,
+            held_pose_off: None,
+            bone_poses: Vec::new(),
             hurt_recent: false,
             snap: false,
             mount: None,

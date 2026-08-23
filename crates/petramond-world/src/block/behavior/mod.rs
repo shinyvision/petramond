@@ -27,7 +27,7 @@ mod inert;
 mod leaves;
 mod wasm;
 
-pub use wasm::ModBlockHook;
+pub use wasm::BlockHook;
 
 // The behaviour registry: one re-export per behaviour, so a data row points at a
 // flat `&behavior::NAME`. Behaviours that reach into world internals live under

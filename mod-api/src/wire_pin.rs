@@ -367,6 +367,31 @@ fn samples() -> Samples {
         },
     );
     s.pin("HostCall::SiteOpen", &HostCall::SiteOpen { key: "m:k".into(), cell: [1, -2, 3] });
+    s.pin("HostCall::SetPlayerSpeedScale", &HostCall::SetPlayerSpeedScale {
+        player: PlayerId(3), scale: 1.5,
+    });
+    s.pin("HostCall::SetPlayerBonePose", &HostCall::SetPlayerBonePose {
+        player: PlayerId(5),
+        bones: vec![crate::BonePoseData {
+            bone: "left_shoulder".into(), rotation: [-22.0, 0.0, 0.0], translation: [0.0, 1.0, -2.0],
+            mode: crate::BonePoseMode::Replace,
+        }],
+    });
+    s.pin("HostCall::SetPlayerHeldPose", &HostCall::SetPlayerHeldPose {
+        player: PlayerId(4),
+        main: Some(crate::HeldPose {
+            first_person: crate::HeldPoseData { rotation: [0.0, 1.5, 0.0], translation: [0.1, -0.2, -0.3] },
+            third_person: crate::HeldPoseData { rotation: [0.5; 3], translation: [0.4; 3] },
+        }),
+        off: None,
+    });
+    s.pin("HostCall::EmitEventTo", &HostCall::EmitEventTo {
+        player: PlayerId(6), key: "m:e".into(), data: vec![1, 2],
+    });
+    s.pin("HostCall::SetPlayerDeniedActions", &HostCall::SetPlayerDeniedActions {
+        player: PlayerId(7), actions: vec![BodyAction::Attack, BodyAction::Mine],
+    });
+    s.pin("HostCall::HoldUse", &HostCall::HoldUse { player: PlayerId(8) });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -381,8 +406,10 @@ fn samples() -> Samples {
         yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
+        id: Some(PlayerId(1)),
         pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
         health: 20, on_ground: true, spectator: false, sneak: true, held: Some(ItemId(2)), held_count: 3,
+        off_held: None, use_held: false, holds_use: false,
         pose_anchor: Some([1.5, 2.0, -3.5]),
     }));
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
@@ -440,8 +467,10 @@ fn samples() -> Samples {
     s.pin("HostRet::Players", &HostRet::Players(vec![PlayerListEntry {
         id: PlayerId(1),
         state: PlayerSnapshot {
+            id: Some(PlayerId(1)),
             pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
             health: 20, on_ground: true, spectator: false, sneak: false, held: None, held_count: 0,
+            off_held: Some(ItemId(5)), use_held: true, holds_use: false,
             pose_anchor: None,
         },
     }]));
@@ -611,6 +640,9 @@ fn samples() -> Samples {
     s.pin("EventPayload::InteractAttempt", &EventPayload::InteractAttempt {
         block: Some([1, 2, 3]), face: Some([0, 1, 0]), mob: Some(7), player: PlayerId(0),
     });
+    s.pin("EventPayload::UseUnclaimed", &EventPayload::UseUnclaimed {
+        block: Some([1, 2, 3]), face: Some([0, 1, 0]), mob: Some(7), player: PlayerId(0),
+    });
     s.pin("EventPayload::ItemUsePre", &EventPayload::ItemUsePre {
         item: ItemId(1), target: Some([1, 2, 3]),
     });
@@ -710,6 +742,7 @@ fn samples() -> Samples {
         EventKind::PlayerDismounted, EventKind::MobTagAdded, EventKind::MobTagRemoved,
         EventKind::ItemPickedUp, EventKind::ItemObtained, EventKind::MobDamaged,
         EventKind::Interacted, EventKind::ModEvent,
+            EventKind::UseUnclaimed,
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
@@ -731,6 +764,7 @@ fn samples() -> Samples {
         MobDamageFeedbackComponent::Immunity { ticks: 10 },
     ]);
     s.pin("MobDamageSound::*", &vec![MobDamageSound::Hurt, MobDamageSound::Death]);
+    s.pin("BodyAction::*", &vec![BodyAction::Attack, BodyAction::Mine, BodyAction::Use]);
     s.pin("GuiValue::*", &vec![GuiValue::F32(1.0), GuiValue::I32(-1), GuiValue::Str("s".into())]);
     s.pin("MobTagValue::*", &vec![
         MobTagValue::Bool(true),
@@ -921,6 +955,12 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::GiveItemTo", "8b010201690301016b0107"),
     ("HostCall::SetPlayerHeldData", "8c0102016901016b010601016b0107"),
     ("HostCall::SiteOpen", "8d01036d3a6b020306"),
+    ("HostCall::SetPlayerSpeedScale", "8e01030000c03f"),
+    ("HostCall::SetPlayerBonePose", "900105010d6c6566745f73686f756c6465720000b0c10000000000000000000000000000803f000000c001"),
+    ("HostCall::SetPlayerHeldPose", "8f010401000000000000c03f00000000cdcccc3dcdcc4cbe9a9999be0000003f0000003f0000003fcdcccc3ecdcccc3ecdcccc3e00"),
+    ("HostCall::EmitEventTo", "910106036d3a65020102"),
+    ("HostCall::SetPlayerDeniedActions", "920107020001"),
+    ("HostCall::HoldUse", "930108"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -929,7 +969,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203030201"),
     ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f0000803f00000000000000400100"),
-    ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e28010001010203010000c03f00000040000060c0"),
+    ("HostRet::Player", "0801010000803f00000040000040400000000000000000000000000000003f0000803e28010001010200000003010000c03f00000040000060c0"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
@@ -950,7 +990,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobAnimState", "1a010000c03f0000403f0100000040"),
     ("HostRet::MaybeByte", "1b0104"),
     ("HostRet::MaybeI32", "1c010d"),
-    ("HostRet::Players", "1d01010000803f00000040000040400000000000000000000000000000003f0000803e28010000000000"),
+    ("HostRet::Players", "1d010101010000803f00000040000040400000000000000000000000000000003f0000803e2801000000010501000000"),
     ("HostRet::EnvParams", "1e0200010000803f000000400000404000008040"),
     ("HostRet::BlockList", "1f020109"),
     ("HostRet::ItemList", "20020109"),
@@ -1007,6 +1047,7 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::BlockPlacePre", "000204060100"),
     ("EventPayload::BlockBreakPre", "010204060101020101036d3a690101036d3a6b0107"),
     ("EventPayload::InteractAttempt", "020102040601000200010700"),
+    ("EventPayload::UseUnclaimed", "190102040601000200010700"),
     ("EventPayload::ItemUsePre", "030101020406"),
     ("EventPayload::MobDamagePre", "0407020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
     ("EventPayload::PlayerDamagePre", "0502010100"),
@@ -1035,12 +1076,13 @@ const PINS: &[(&str, &str)] = &[
     ("Stage::*", "0c000102030405060708090a0b"),
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
-    ("EventKind::*", "19000102030405060708090a0b0c0d0e0f101112131415161718"),
+    ("EventKind::*", "1a000102030405060708090a0b0c0d0e0f10111213141516171819"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "031370657472616d6f6e643a696e76656e746f72790f70657472616d6f6e643a6368657374036d3a67"),
     ("Facing::*", "0400010203"),
     ("MobDamageFeedbackComponent::*", "0600010000003f020000803f0000003f030004050a"),
     ("MobDamageSound::*", "020001"),
+    ("BodyAction::*", "03000102"),
     ("GuiValue::*", "03000000803f0101020173"),
     ("MobTagValue::*", "040001010102000000000000f83f030173"),
     ("MobTagLookup::*", "030001020101"),

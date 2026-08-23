@@ -156,7 +156,7 @@ impl App {
         let mut table = petramond_world::controls::ActionTable::engine();
         if let Some(game) = self.game.as_ref() {
             for (id, label, category, default) in game.client_bindable_actions() {
-                table.push_mod_action(id, label, category, default);
+                table.push_registered_action(id, label, category, default);
             }
         }
         self.action_table = table;

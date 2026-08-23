@@ -11,7 +11,7 @@ use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
 
 pub use petramond::events::tick::TICK_DT;
-pub use petramond::events::tick::{MobSoundEvent, ModSound, ModSpatialSoundCommand};
+pub use petramond::events::tick::{MobSoundEvent, SoundEvent, SpatialSoundCommand};
 
 /// What the place-prediction pass decided for a use click (see
 /// `Game::try_predict_place_ghost`). Distinguishing `Plausible` from `No`
@@ -133,7 +133,7 @@ pub struct GameEvents {
     pub open_gui: Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)>,
     /// A mod asked to close the open mod GUI this frame (`GuiClose`); the app
     /// honours it only while a mod GUI screen is actually up.
-    pub close_mod_gui: bool,
+    pub close_document_gui: bool,
     /// The player right-clicked a door this frame. Carries the door's NEW open
     /// state (after the toggle applied). The open/close SOUND is driven by the
     /// positional [`WorldEvent::DoorToggled`] every observer receives; this
@@ -168,10 +168,10 @@ pub struct GameEvents {
     /// Every sound mods emitted across this frame's fixed ticks, in emission
     /// order. NON-lossy (unlike the latched booleans above): each entry plays
     /// exactly once.
-    pub mod_sounds: Vec<ModSound>,
+    pub sounds: Vec<SoundEvent>,
     /// Spatial sound start/stop commands emitted by mods across this frame's
     /// fixed ticks. NON-lossy; the app/audio side owns active playback state.
-    pub mod_spatial_sounds: Vec<ModSpatialSoundCommand>,
+    pub spatial_sounds: Vec<SpatialSoundCommand>,
     /// Semantic mob sound events emitted by gameplay across this frame's fixed
     /// ticks. NON-lossy; the app resolves species data and plays them.
     pub mob_sounds: Vec<MobSoundEvent>,
@@ -272,8 +272,8 @@ impl ReplicaClock {
 pub struct ClientEvents {
     pub world: Vec<WorldEvent>,
     pub self_events: SelfEvents,
-    pub mod_sounds: Vec<ModSound>,
-    pub mod_spatial_sounds: Vec<ModSpatialSoundCommand>,
+    pub sounds: Vec<SoundEvent>,
+    pub spatial_sounds: Vec<SpatialSoundCommand>,
     pub mob_sounds: Vec<MobSoundEvent>,
 }
 
@@ -306,6 +306,20 @@ impl Game {
         self.tick_replica_view();
         self.refresh_target();
         self.update_third_person(dt);
+        // The local body's bones ease at the same rate as the item in its fist
+        // — the local player sees their own arms in third person, and an arm
+        // that snaps while its shield glides is the shield trailing its own
+        // hand.
+        let mut target = std::mem::take(&mut self.local_bone_target);
+        target.clear();
+        super::render_bone_offsets(
+            &self
+                .client_mods
+                .local_bone_poses(&self.self_view.bone_poses),
+            &mut target,
+        );
+        self.local_bones.advance(&target, dt);
+        self.local_bone_target = target;
         self.tick_local_mining(dt, input);
 
         let update = self.build_player_update(input);
@@ -359,6 +373,7 @@ impl Game {
         let alpha = self.replica_clock.alpha();
         self.remote_players.advance(dt, alpha);
         let events = std::mem::take(&mut self.pending_events);
+        self.deliver_client_mod_events(&events.self_events.client_events);
         self.sync_sleep_camera_on_open(&events.self_events);
         // World-anchored effects the tick batch carried (break bursts, door
         // swings) spawn from the replicated events — the identical path a
@@ -395,15 +410,17 @@ impl Game {
     fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
         let tool = self.self_view.inventory.selected().and_then(|st| st.tool());
         let look = self.look.map(|h| h.block);
-        let inventory_open = !input.gameplay_enabled;
-        let event = self.local_mining.update(
-            dt,
-            look,
-            input.break_held && input.gameplay_enabled,
-            inventory_open,
-            &self.replica,
-            tool,
-        );
+        // One question, the same one the server asks: a body barred from mining
+        // stops predicting one, whether the bar is a pack's claim or the open
+        // menu the engine claims for. Without it the crack creeps up a block
+        // the authority already refused and then snaps back.
+        let barred = self
+            .player
+            .denied_actions()
+            .denies(mod_api::BodyAction::Mine);
+        let event =
+            self.local_mining
+                .update(dt, look, input.break_held, barred, &self.replica, tool);
         // The own crack overlay is CLIENT-OWNED: the local timer is its only
         // source (the server never ships it back — SelfState carries no
         // `mining` echo).
@@ -444,7 +461,7 @@ impl Game {
             swung_hand: local_swing,
             picked_up_item: se.picked_up_item,
             threw_item: local_threw,
-            close_mod_gui: se.close_mod_gui,
+            close_document_gui: se.close_document_gui,
             toggled_door: se.toggled_door,
             bed_interacted: se.bed_interacted,
             interacted: local_jab,
@@ -453,8 +470,8 @@ impl Game {
             player_died: se.player_died,
             sleep_ended: se.sleep_ended,
             respawned: se.respawned,
-            mod_sounds: events.mod_sounds,
-            mod_spatial_sounds: events.mod_spatial_sounds,
+            sounds: events.sounds,
+            spatial_sounds: events.spatial_sounds,
             mob_sounds: events.mob_sounds,
             world_events: events.world,
             ..Default::default()
@@ -545,14 +562,15 @@ impl Game {
     ) -> (bool, bool, PlacePrediction) {
         use petramond_world::inventory::Hand;
         self.player.acting_hand = Hand::Main;
-        let (mod_claimed, mut place) = self.predict_use_click(input.movement.sneak);
+        let (mod_claimed, mut place) = self.predict_use_click(input.movement.sneak, use_mob);
         let mut jabbed = mod_claimed
             || !matches!(place, PlacePrediction::No)
             || self.use_click_predicts_effect(input, use_mob);
         let mut off_hand = false;
         if !jabbed && self.self_view.inventory.off_hand().is_some() {
             self.player.acting_hand = Hand::Off;
-            let (mod_claimed_off, place_off) = self.predict_use_click(input.movement.sneak);
+            let (mod_claimed_off, place_off) =
+                self.predict_use_click(input.movement.sneak, use_mob);
             let off_jab = mod_claimed_off
                 || !matches!(place_off, PlacePrediction::No)
                 || self.use_click_predicts_effect(input, use_mob);
@@ -565,6 +583,28 @@ impl Game {
         // Never leak the acting hand past the verdict (level-state reads —
         // the render frame, the roster — are main-hand by definition).
         self.player.acting_hand = Hand::Main;
+        // NOTHING claimed it: offer the gesture, exactly as the server does
+        // once its own chain has passed. This is the frame a guard goes up on.
+        if !jabbed {
+            let actor = self.client_actor_snapshot(input.movement.sneak);
+            let payload = mod_api::EventPayload::UseUnclaimed {
+                block: self.look.map(|h| h.block.to_array()),
+                face: self.look.map(|h| h.normal.to_array()),
+                mob: use_mob,
+                player: mod_api::PlayerId(self.self_id.0),
+            };
+            // The verdict is NOT a jab: nothing happened to the world, and
+            // whoever took the gesture poses the body itself. Predicting a
+            // swing here would punch the air every time a guard went up.
+            self.client_mods
+                .predict_claim(&self.replica, &actor, &payload);
+        }
+        // Mirror whoever took it onto the body, so the predicted player answers
+        // "is this press spoken for" the way the authority will.
+        self.player.use_gesture = match self.client_mods.use_holder() {
+            Some(owner) => petramond::player::UseGesture::Held(owner.into()),
+            None => petramond::player::UseGesture::Free,
+        };
         (jabbed, off_hand, place)
     }
 
@@ -592,7 +632,12 @@ impl Game {
         self.frame_messages
             .push(ClientToServer::PlayerUpdate(update));
         if input.gameplay_enabled {
-            if input.place_clicked {
+            // A barred body sends no click, runs no prediction and plays no
+            // jab: the server would spend the press for nothing, so predicting
+            // one would put a place ghost on screen that the next batch takes
+            // straight back. The button is dead on both mirrors at once.
+            let denied = self.player.denied_actions();
+            if input.place_clicked && !denied.denies(mod_api::BodyAction::Use) {
                 // The click's block target rides the wire: the server resolves
                 // the interact/place against THIS cell, never a fresher look —
                 // a click racing the crosshair must land where the ghost is.
@@ -618,7 +663,9 @@ impl Game {
                         jabbed,
                     }));
             }
-            if input.attack_clicked {
+            // Same for the swing — it would be the one visible thing a denied
+            // action is allowed to leave behind.
+            if input.attack_clicked && !denied.denies(mod_api::BodyAction::Attack) {
                 self.local_hand_swing = true;
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::AttackClick {

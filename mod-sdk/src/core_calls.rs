@@ -92,3 +92,21 @@ host_fn! {
     pub fn emit_event(key: &str, data: &[u8])
         => EmitEvent { key: key.into(), data: data.to_vec() }
 }
+
+host_fn! {
+    /// Deliver one of this mod's OWN events to `player`'s CLIENT instance —
+    /// [`emit_event`] across the wire. Same key rule, same payload cap; the
+    /// client half receives it as an ordinary [`EventKind::ModEvent`]
+    /// dispatch. `false` = no such reachable session.
+    ///
+    /// Reach for it when the CLIENT has to present something only the server
+    /// could know: a client mod predicts what local input implies and nothing
+    /// else, so a hit landing or a timer expiring is invisible to it. Send the
+    /// EDGE and let the client run its own envelope. The cue arrives with the
+    /// next batch, so keep the RULE on the server — this lane is presentation,
+    /// never simulation.
+    ///
+    /// [`EventKind::ModEvent`]: mod_api::EventKind::ModEvent
+    pub fn emit_event_to(player: mod_api::PlayerId, key: &str, data: &[u8]) -> bool
+        => EmitEventTo { player, key: key.into(), data: data.to_vec() } => Bool
+}

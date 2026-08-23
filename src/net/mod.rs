@@ -27,7 +27,18 @@ pub mod remap;
 //     after the cursor, `MenuSlotWire::OffHand`, the hovered-slot swap
 //     gesture (`ClientToServer::MenuSwapOffHand`), the off-hand item +
 //     acting-hand eat/use flags on the player rows.
-pub const PROTOCOL_VERSION: u16 = 31;
+// 32: claimed player body state — `SelfState` gains the resolved
+//     `move_scale`, the barred-action set, and the per-hand held poses, which
+//     the player rows carry too so every observer sees a raised guard on
+//     somebody else's body, plus the rig-bone offsets that move the arm
+//     holding it. Bones ride as RIG IDS (`player::BonePose`), never names: the
+//     row ships for every player every tick, and the ABI's names resolve once
+//     at the host call.
+//     `move_scale` and the barred-action set carry only the half the recipient
+//     cannot derive: the engine's own claim (status-effect speed, spectator, an
+//     open menu) is folded by BOTH mirrors from state they both hold, so
+//     sending it would double it. Same shape, same size — no bump.
+pub const PROTOCOL_VERSION: u16 = 32;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

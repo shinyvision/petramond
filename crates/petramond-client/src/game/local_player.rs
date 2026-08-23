@@ -112,6 +112,21 @@ impl Game {
         // Stash for `build_player_update`: the wire intent must be the exact
         // input the local physics consumed this frame.
         self.predicted_input = player_input;
+        // The gameplay-gated use intent this frame — the client twin of the
+        // server's `sess.using()` (the snapshot's `use_held`, and what the
+        // wire ships in `PlayerUpdate`).
+        self.intent_use_held = input.use_held && input.gameplay_enabled;
+        // LETTING GO ends the gesture, here as on the server. Every hold is
+        // released together: whoever had the press, they no longer do.
+        if !self.intent_use_held {
+            self.client_mods.release_use();
+            self.player.use_gesture = petramond::player::UseGesture::Free;
+        }
+        // The engine's own half of this body's claims, re-derived here rather
+        // than waited for: every input is state the client already holds, so
+        // the effect slow and the menu that takes the hands stay PREDICTED
+        // instead of arriving a batch after the player felt them.
+        self.player.refresh_engine_claims(input.gameplay_enabled);
 
         // Speed-coupled FOV: the camera eases toward the WISHED land speed —
         // the same number the physics below applies — so sprint (only while

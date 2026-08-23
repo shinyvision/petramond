@@ -37,14 +37,14 @@ fn interact_with_bed(game: &mut super::common::TestGame, base: IVec3) -> TickEve
 fn make_night(game: &mut super::common::TestGame) {
     game.server
         .world
-        .mod_kv_set("petramond:is_night".into(), vec![1]);
+        .world_kv_set("petramond:is_night".into(), vec![1]);
 }
 
 fn clock(game: &super::common::TestGame) -> u64 {
     u64::from_le_bytes(
         game.server
             .world
-            .mod_kv_get(CLOCK_KEY)
+            .world_kv_get(CLOCK_KEY)
             .expect("core day/night publishes a clock")
             .try_into()
             .expect("8-byte LE clock"),

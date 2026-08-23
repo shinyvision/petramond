@@ -1,0 +1,9 @@
+{
+  "name": "Combat",
+  "id": "combat",
+  "version": "0.1.0",
+  "description": "A craftable shield (4 planks + 4 iron ingots). Hold the use button with it in either hand to raise it: monster melee coming at your front is blocked while it is up, you move at half speed, and both hands are committed \u2014 no punching, mining or interacting until you lower it. A hit it absorbs knocks it aside for half a second, so a pack of monsters still gets through. Built entirely on the engine's generic body seams \u2014 damage cancellation, the speed scale, the barred-action claim, per-hand held poses, rig bone offsets and the server-to-client cue \u2014 with every shield rule authored in the mod and predicted client-side.",
+  "summary": "Adds a shield that blocks monster melee from the front, and reels when it does.",
+  "wasm": "mod.wasm",
+  "client_wasm": "mod.wasm"
+}

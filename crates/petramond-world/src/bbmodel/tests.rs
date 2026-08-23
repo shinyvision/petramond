@@ -114,8 +114,57 @@ fn multi_texture_faces_remap_into_stacked_sheet() {
     // Cube a's face spans the top (red) half, cube b's the bottom (blue) half.
     let uv_a = m.cubes[0].faces[2].expect("cube a up face");
     let uv_b = m.cubes[1].faces[2].expect("cube b up face");
-    assert_eq!(uv_a, [0.0, 0.0, 1.0, 0.5]);
-    assert_eq!(uv_b, [0.0, 0.5, 1.0, 1.0]);
+    assert_eq!(uv_a.uv, [0.0, 0.0, 1.0, 0.5]);
+    assert_eq!(uv_b.uv, [0.0, 0.5, 1.0, 1.0]);
+}
+
+/// A face's `rotation` is PARSED and turns into a cyclic shift of the corner
+/// UVs — the only thing a UV rect cannot express on its own.
+///
+/// The parser dropped this field until 2026-08-22, and the symptom was never
+/// "the texture looks rotated": the shield's plate cubes came apart into a seam
+/// that is not in the model, and a row of its rim would not appear. Anything
+/// authored with a rotated face renders as a subtly different drawing, silently.
+#[test]
+fn a_faces_rotation_is_parsed_and_permutes_its_corner_uvs() {
+    let src = r#"{
+        "meta": { "format_version": "4.5", "model_format": "free", "box_uv": false },
+        "resolution": { "width": 16, "height": 16 },
+        "textures": [{ "source": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" }],
+        "elements": [
+            { "uuid": "a", "type": "cube", "from": [0,0,0], "to": [1,1,1],
+              "faces": { "up":   { "uv": [0,0,16,16], "texture": 0, "rotation": 180 },
+                         "down": { "uv": [0,0,16,16], "texture": 0, "rotation": 90 },
+                         "north":{ "uv": [0,0,16,16], "texture": 0 } } }
+        ],
+        "outliner": ["a"]
+    }"#;
+    let m = Model::load(src).expect("model parses");
+    let up = m.cubes[0].faces[2].expect("up face");
+    let down = m.cubes[0].faces[3].expect("down face");
+    let north = m.cubes[0].faces[5].expect("north face");
+    assert_eq!((up.rot, down.rot, north.rot), (2, 1, 0), "degrees / 90");
+
+    // Corner order is bottom-left, bottom-right, top-right, top-left; a
+    // rotation shifts which corner shows which end of the rect. Half a turn
+    // swaps opposite corners, and a quarter turn is the case the rect could
+    // never have carried — it swaps the u and v axes.
+    let plain = north.corner_uv();
+    assert_eq!(plain, [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+    assert_eq!(up.corner_uv(), [plain[2], plain[3], plain[0], plain[1]]);
+    assert_eq!(down.corner_uv(), [plain[1], plain[2], plain[3], plain[0]]);
+
+    // Four quarter turns is the identity, and the shift direction matches the
+    // reference block-model implementation (`(index + rotation / 90) % 4`).
+    let mut spun = north;
+    spun.rot = 4;
+    assert_eq!(spun.corner_uv(), plain);
+
+    // Atlas placement and the half-texel inset REBUILD the rect on the way to
+    // the mesher (`ModelInstance`, `push_template_face`, the item bake). The
+    // rotation has to ride through that untouched, or a remapped face loses it
+    // again for exactly the reasons above.
+    assert_eq!(up.with_uv([0.25, 0.25, 0.5, 0.5]).rot, up.rot);
 }
 
 /// Overlay layers (a skin's hat/jacket/sleeves) author the SAME box as their
@@ -460,18 +509,8 @@ fn position_tracks_translate_the_bone() {
 fn compiled_model_layout_change_requires_a_format_version_bump() {
     use crate::asset_cache::CompiledAsset;
 
-    const GOLDEN_VERSION: u32 = 6;
-    const GOLDEN_HEX: &str = concat!(
-        "01000000000000000400000000000000726f6f7400000040000000400000004000000000",
-        "00000000000000000001000000000000000400000000000000626f647900000000000000",
-        "000000000000008040000080400000804000000000000000000000000000000000000000",
-        "0000000000000000000000000000000100000000000000000000803f0000803f00000001",
-        "00000000000000090000000000000069646c655f776176650000803f0001000000000000",
-        "00000000000000000001000000000000000000803e00002041000000000000a040010000",
-        "0000000000000000000000000001000000000000000000003f00000000000040c0000000",
-        "000100000000000000090000000000000069646c655f776176650400000000000000ff00",
-        "00ff0100000001000000",
-    );
+    const GOLDEN_VERSION: u32 = 7;
+    const GOLDEN_HEX: &str = "01000000000000000400000000000000726f6f740000004000000040000000400000000000000000000000000001000000000000000400000000000000626f6479000000000000000000000000000080400000804000008040000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000100000000000000090000000000000069646c655f776176650000803f000100000000000000000000000000000001000000000000000000803e00002041000000000000a0400100000000000000000000000000000001000000000000000000003f00000000000040c0000000000100000000000000090000000000000069646c655f776176650400000000000000ff0000ff0100000001000000";
 
     let tex = one_pixel_texture([255, 0, 0, 255]);
     let src = format!(

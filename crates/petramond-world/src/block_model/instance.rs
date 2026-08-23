@@ -292,10 +292,11 @@ impl ModelInstance {
                 rotation: c.rotation,
                 cull: c.cull,
                 faces: c.faces.map(|f| {
-                    f.map(|[u0, v0, u1, v1]| {
+                    f.map(|face| {
+                        let [u0, v0, u1, v1] = face.uv;
                         let [au0, av0] = at.remap(kind, [u0, v0]);
                         let [au1, av1] = at.remap(kind, [u1, v1]);
-                        [au0, av0, au1, av1]
+                        face.with_uv([au0, av0, au1, av1])
                     })
                 }),
             })
@@ -390,7 +391,7 @@ impl ModelInstance {
             let mut blend = [false; 6];
             for (slot, f) in c.faces.iter().enumerate() {
                 if let Some(uv) = f {
-                    let (visible, b) = at.rect_alpha_class(*uv);
+                    let (visible, b) = at.rect_alpha_class(uv.uv);
                     draw[slot] = visible;
                     blend[slot] = b;
                 }
@@ -689,7 +690,7 @@ fn push_template_face(
     from: Vec3,
     to: Vec3,
     bias: Vec3,
-    uv: [f32; 4],
+    uv: crate::bbmodel::FaceUv,
     shade: f32,
     ao: [f32; 4],
     tinted: bool,
@@ -705,12 +706,10 @@ fn push_template_face(
     if (p[1] - p[0]).cross(p[3] - p[0]).length_squared() < 1e-9 {
         return;
     }
-    // UV rect is [u0, v0_top, u1, v1_bottom]; assign per `quad_box` corner order
-    // (p0 bottom-left, p1 bottom-right, p2 top-right, p3 top-left). The rect is
-    // inset half an atlas texel so edge fragments can't spill onto neighbouring
-    // sheet texels (see `ModelAtlas::inset_face_uv`).
-    let [u0, v0, u1, v1] = atlas().inset_face_uv(uv);
-    let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+    // Corner UVs in `quad_box` order, per-face rotation applied. The rect is
+    // inset half an atlas texel first so edge fragments can't spill onto
+    // neighbouring sheet texels (see `ModelAtlas::inset_face_uv`).
+    let corner_uv = uv.with_uv(atlas().inset_face_uv(uv.uv)).corner_uv();
     let mut emit = |order: [usize; 4]| {
         let start = verts.len() as u32;
         for &i in &order {
@@ -810,7 +809,7 @@ mod tests {
             to: Vec3::ONE,
             origin: Vec3::ZERO,
             rotation: Vec3::ZERO,
-            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
             cull,
         }
     }

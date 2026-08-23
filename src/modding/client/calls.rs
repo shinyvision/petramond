@@ -91,7 +91,18 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ClientLoopSet { .. }
         | HostCall::ClientMoodSet { .. }
         | HostCall::ClientBlocksAt { .. }
-        | HostCall::ClientCellKvAt { .. } => true,
+        | HostCall::ClientCellKvAt { .. }
+        // Held poses are pure PRESENTATION, so predicting one costs nothing
+        // when it is wrong and removes a round trip of latency when it is
+        // right (it almost always is — the rule reads local input). The mod
+        // publishes through the same `SetPlayerHeldPose` its server half
+        // uses, addressed at the local player.
+        | HostCall::SetPlayerHeldPose { .. }
+        | HostCall::SetPlayerBonePose { .. }
+        // Taking the use gesture is what a client mod predicts BEST: the press
+        // is local input, so the answer is the same one the server reaches a
+        // round trip later.
+        | HostCall::HoldUse { .. } => true,
         // The prediction seam (2026-07-21): a client instance may REGISTER
         // event handlers — the client runtime keeps only the predictable PRE
         // kinds (interact_attempt / block_place_pre / item_use_pre) as
@@ -123,6 +134,9 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SetHealth { .. }
         | HostCall::Teleport { .. }
         | HostCall::EmitSound { .. }
+        // A cue a mod sends TO a client — the client is the recipient, never
+        // the sender.
+        | HostCall::EmitEventTo { .. }
         | HostCall::WorldKvGet { .. }
         | HostCall::WorldKvSet { .. }
         | HostCall::WorldKvDelete { .. }
@@ -209,6 +223,15 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // write state the server owns, and a client mirror only ever mirrors.
         | HostCall::UnlockRecipe { .. }
         | HostCall::RecipeUnlocked { .. }
+        // The land-speed scale is SIMULATION: the server validates how fast a
+        // client may have moved (`player::movement`'s caps), so a client that
+        // predicted its own speed would be arguing with the validator. It is
+        // mirrored from the authority instead — a scalar a batch late is
+        // imperceptible, unlike the pose you are staring at.
+        | HostCall::SetPlayerSpeedScale { .. }
+        // Same reason: what a body is ALLOWED to do is authority, and a client
+        // predicting it would be predicting its own permission.
+        | HostCall::SetPlayerDeniedActions { .. }
         | HostCall::EmitEvent { .. }
         | HostCall::Players => false,
     }
@@ -400,6 +423,62 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 return HostRet::Bool(false);
             };
             client.sound_loops.insert(sound, gain.clamp(0.0, 4.0));
+            HostRet::Bool(true)
+        }
+        // The PREDICTED twin of the server's `SetPlayerHeldPose`: the same
+        // call, the same `BodyClaims`, addressed at the local player. A client
+        // has exactly one addressable body, so naming anybody else is a mod
+        // bug worth saying out loud rather than a silent no-op.
+        HostCall::SetPlayerHeldPose { player, main, off } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "SetPlayerHeldPose: a client instance may pose only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            client.poses_hands[0] |= main.is_some();
+            client.poses_hands[1] |= off.is_some();
+            if client.body.set_held_pose(&mod_id, main, off) {
+                HostRet::Bool(true)
+            } else {
+                HostRet::Error(
+                    "SetPlayerHeldPose: non-finite rotation/translation component".into(),
+                )
+            }
+        }
+        // The body counterpart, same predicted path and same local-only rule.
+        HostCall::SetPlayerBonePose { player, bones } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "SetPlayerBonePose: a client instance may pose only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            // Names resolve to rig ids here, exactly as on the server.
+            let Some(bones) = crate::modding::resolve_bone_poses(bones) else {
+                return HostRet::Error(crate::modding::BONE_POSE_REFUSAL.into());
+            };
+            // Latch per BONE, not per body: a mod bending an arm owns that
+            // arm locally, but must not blank an unrelated bone another pack
+            // is bending server-side.
+            client.poses_bones.extend(bones.iter().map(|b| b.bone));
+            client.body.set_bone_poses(&mod_id, bones);
+            HostRet::Bool(true)
+        }
+        // The PREDICTED twin of the server's `HoldUse`: a client has one
+        // addressable body, so the only question is whether this mod is taking
+        // its press.
+        HostCall::HoldUse { player } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "HoldUse: a client instance may take only the LOCAL player's gesture \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            client.holds_use = true;
             HostRet::Bool(true)
         }
         HostCall::ClientMoodSet { darken, desaturate } => {

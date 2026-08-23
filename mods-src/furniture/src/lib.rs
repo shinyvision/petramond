@@ -53,8 +53,8 @@ const STRUT_SPAN: f32 = 2.0 / 16.0;
 ///
 /// It is NOT free at distance, which is the reason for this exact number. A
 /// vertex tint does not mipmap: looked at END-ON down a receding run, the boxes
-/// alternate faster than a pixel and nothing averages them. Measured on a
-/// north/south run at 16 and 28 blocks (`harness/src/bin/chainshot.rs`), against
+/// alternate faster than a pixel and nothing averages them. Measured by
+/// counting speckled pixels down a north/south run at 16 and 28 blocks, against
 /// a plain stone cube as the control:
 ///
 ///   0.55 (1.82x) 116 speckled px | 0.68 (1.47x) 77 | 0.72 (1.39x) 24

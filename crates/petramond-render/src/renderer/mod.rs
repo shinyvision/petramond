@@ -312,6 +312,9 @@ struct ActorPass {
     player_view: Option<PlayerRenderInstance>,
     /// The remote players' bodies + held-item views for this frame.
     remote_players: Vec<RemotePlayerRender>,
+    /// This frame's bone offsets for every drawn body, back to back — each
+    /// body addresses its own slice by `PlayerRenderInstance::bones`.
+    bone_offsets: Vec<crate::BoneOffset>,
     /// Frustum-visible bodies this frame (local first, then remotes), each
     /// paired with the held-item view that animates its hand.
     player_visible: Vec<(PlayerRenderInstance, HeldItemView, HeldItemView)>,
@@ -346,6 +349,7 @@ impl ActorPass {
         self.player_gpu.draw.index_count = 0;
         self.player_view = None;
         self.remote_players.clear();
+        self.bone_offsets.clear();
         self.player_visible.clear();
         self.item_draw.index_count = 0;
         self.model_item_draw.index_count = 0;

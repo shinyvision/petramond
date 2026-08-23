@@ -106,7 +106,7 @@ impl ServerGame {
             save.save_level(crate::save::level::encode(
                 self.world.seed,
                 self.world.current_tick(),
-                self.world.mod_kv(),
+                self.world.world_kv(),
                 self.world.populated_columns(),
             ));
             for (name, bytes) in players {
@@ -123,12 +123,12 @@ impl ServerGame {
     /// overflow drops) before encoding players and world entities. This runs
     /// independently of fixed ticks and therefore also works while paused.
     pub fn close_sessions_and_save(&mut self) {
-        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_mod_sound_handle);
+        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_spatial_sound_handle);
         for s in 0..self.sessions.len() {
             self.close_open_menu_for(s, &mut events);
             self.tick_drops(s, &mut events);
         }
-        self.next_mod_sound_handle = events.next_spatial_sound_handle();
+        self.next_spatial_sound_handle = events.next_spatial_sound_handle();
         self.save_all();
     }
 

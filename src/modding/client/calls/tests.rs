@@ -532,3 +532,180 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
         HostRet::Error(_)
     ));
 }
+
+/// A client instance may pose only the LOCAL player, and a hand becomes
+/// client-authoritative on its first NON-empty pose.
+///
+/// The latch rule is the whole reason the prediction composes: a mod that
+/// publishes "no pose" every frame (the shield you are not carrying) must NOT
+/// claim the hand, or it would blank a pose another pack set server-side; and
+/// once it HAS posed a hand, releasing must present locally rather than wait a
+/// round trip for the authority to agree.
+#[test]
+fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
+    use mod_api::{HeldPose, HeldPoseData, PlayerId, PlayerSnapshot};
+    use petramond_world::inventory::Hand;
+
+    let mut data = client_data("held-pose");
+    let guard = HeldPose {
+        first_person: HeldPoseData {
+            rotation: [0.0; 3],
+            translation: [0.0, 7.0, -2.0],
+        },
+        third_person: HeldPoseData::IDENTITY,
+    };
+    let pose = |data: &mut ModStoreData, player: u8, main, off| {
+        handle_host_call(
+            data,
+            HostCall::SetPlayerHeldPose {
+                player: PlayerId(player),
+                main,
+                off,
+            },
+        )
+    };
+    let local = PlayerSnapshot {
+        id: Some(PlayerId(3)),
+        pos: [0.0; 3],
+        vel: [0.0; 3],
+        yaw: 0.0,
+        pitch: 0.0,
+        health: 20,
+        on_ground: true,
+        spectator: false,
+        sneak: false,
+        use_held: false,
+        holds_use: false,
+        held: None,
+        off_held: None,
+        held_count: 0,
+        pose_anchor: None,
+    };
+
+    crate::modding::client::scope::enter_actor(local, || {
+        // Someone else's body is not this mirror's to pose.
+        assert!(matches!(
+            pose(&mut data, 4, Some(guard), None),
+            HostRet::Error(_)
+        ));
+
+        // "Nothing in either hand" claims nothing: another pack's replicated
+        // pose still owns both hands.
+        assert_eq!(pose(&mut data, 3, None, None), HostRet::Bool(true));
+        assert_eq!(
+            data.client.as_ref().unwrap().poses_hands,
+            [false, false],
+            "an empty publish must not claim a hand"
+        );
+
+        // The first real pose claims that hand — and only that hand.
+        assert_eq!(pose(&mut data, 3, Some(guard), None), HostRet::Bool(true));
+        assert_eq!(data.client.as_ref().unwrap().poses_hands, [true, false]);
+
+        // Releasing keeps the claim, so the drop presents on this frame.
+        assert_eq!(pose(&mut data, 3, None, None), HostRet::Bool(true));
+        assert_eq!(data.client.as_ref().unwrap().poses_hands, [true, false]);
+        assert_eq!(
+            data.client.as_ref().unwrap().body.held_pose(Hand::Main),
+            None,
+            "the claim outlives the pose; the pose itself is gone"
+        );
+
+        // A NaN pose is refused whole, exactly as on the server.
+        let mut nan = guard;
+        nan.third_person.translation[2] = f32::NAN;
+        assert!(matches!(
+            pose(&mut data, 3, Some(nan), None),
+            HostRet::Error(_)
+        ));
+    });
+}
+
+/// Bone offsets latch PER BONE, and their names resolve to rig ids at the call.
+///
+/// Per bone because they COMPOSE: a pack predicting a shoulder must leave
+/// another pack's replicated head tilt exactly where it was, which a body-wide
+/// latch cannot express — it would blank every bone the predicting mod never
+/// touched. A name the rig does not carry is dropped rather than refused, so
+/// one stale bone in a list does not cost the caller the rest of its stance.
+#[test]
+fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
+    use mod_api::{BonePoseData, BonePoseMode, PlayerId, PlayerSnapshot};
+
+    let mut data = client_data("bone-pose");
+    let bend = |bone: &str| BonePoseData {
+        bone: bone.into(),
+        rotation: [-22.0, 0.0, 0.0],
+        translation: [0.0; 3],
+        mode: BonePoseMode::Replace,
+    };
+    let set = |data: &mut ModStoreData, bones: Vec<BonePoseData>| {
+        handle_host_call(
+            data,
+            HostCall::SetPlayerBonePose {
+                player: PlayerId(3),
+                bones,
+            },
+        )
+    };
+    let local = PlayerSnapshot {
+        id: Some(PlayerId(3)),
+        pos: [0.0; 3],
+        vel: [0.0; 3],
+        yaw: 0.0,
+        pitch: 0.0,
+        health: 20,
+        on_ground: true,
+        spectator: false,
+        sneak: false,
+        use_held: false,
+        holds_use: false,
+        held: None,
+        off_held: None,
+        held_count: 0,
+        pose_anchor: None,
+    };
+    let want = crate::player::model::bone_id(mod_api::bone::MAIN_SHOULDER)
+        .expect("the rig carries the main arm");
+
+    crate::modding::client::scope::enter_actor(local, || {
+        // An empty publish claims nothing — another pack's replicated bend
+        // still owns every bone.
+        assert_eq!(set(&mut data, Vec::new()), HostRet::Bool(true));
+        assert!(data.client.as_ref().unwrap().poses_bones.is_empty());
+
+        // A real bend latches THAT bone and nothing else, stored by id.
+        assert_eq!(
+            set(&mut data, vec![bend(mod_api::bone::MAIN_SHOULDER)]),
+            HostRet::Bool(true)
+        );
+        let client = data.client.as_ref().unwrap();
+        assert_eq!(
+            client.poses_bones.iter().copied().collect::<Vec<_>>(),
+            [want]
+        );
+        assert_eq!(
+            client.body.bone_poses().map(|b| b.bone).collect::<Vec<_>>(),
+            [want]
+        );
+
+        // Releasing keeps the latch (the drop must present on THIS frame),
+        // and a bone the rig does not have is dropped, not an error.
+        assert_eq!(
+            set(&mut data, vec![bend("no_such_bone")]),
+            HostRet::Bool(true)
+        );
+        let client = data.client.as_ref().unwrap();
+        assert_eq!(client.body.bone_poses().count(), 0, "unknown names drop");
+        assert_eq!(
+            client.poses_bones.iter().copied().collect::<Vec<_>>(),
+            [want],
+            "the latch outlives the offset"
+        );
+
+        // A NaN is refused whole, exactly as on the server.
+        let mut nan = bend(mod_api::bone::MAIN_SHOULDER);
+        nan.rotation[1] = f32::NAN;
+        assert!(matches!(set(&mut data, vec![nan]), HostRet::Error(_)));
+    });
+}

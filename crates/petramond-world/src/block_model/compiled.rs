@@ -26,9 +26,9 @@ pub struct ModelCube {
     pub origin: Vec3,
     /// Static euler rotation in degrees, about `origin`.
     pub rotation: Vec3,
-    /// Normalized `[u0, v0_top, u1, v1_bottom]` per face, `Face::ALL` order. Raw corner
-    /// order (flips preserved), exactly as the mob model stores it.
-    pub faces: [Option<[f32; 4]>; 6],
+    /// Per-face texture mapping, `Face::ALL` order — exactly as the mob model
+    /// stores it, per-face rotation included.
+    pub faces: [Option<crate::bbmodel::FaceUv>; 6],
     /// The face's authored `cullface`, `Face::ALL` order: `Some(slot)` = the mesher
     /// omits this face when the world neighbour in direction `slot` is an opaque
     /// block. Block-only (mobs never sit in a chunk mesh), so the shared mob
@@ -322,7 +322,7 @@ impl CompiledAsset for BlockModel {
     /// v8: cubes carry their authored element NAME (per-row `hidden_parts`
     /// filtering needs it).
     /// v9: cubes carry their per-face `cullface` directions.
-    const FORMAT_VERSION: u32 = 10;
+    const FORMAT_VERSION: u32 = 11;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 

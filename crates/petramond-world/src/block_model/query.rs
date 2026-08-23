@@ -267,7 +267,7 @@ pub(super) fn face_texel_opaque(
     at: &ModelAtlas,
 ) -> bool {
     let slot = Face::ALL.iter().position(|&f| f == face).unwrap_or(0);
-    let Some([u0, v0, u1, v1]) = cube.faces[slot] else {
+    let Some(face_uv) = cube.faces[slot] else {
         return true;
     };
     // face_corners order: bl, br, tr, tl. Edge vectors from bl span the face.
@@ -278,11 +278,14 @@ pub(super) fn face_texel_opaque(
     let rel = hit - bl;
     let s = (rel.dot(es) / es.length_squared().max(1e-12)).clamp(0.0, 1.0);
     let t = (rel.dot(et) / et.length_squared().max(1e-12)).clamp(0.0, 1.0);
-    // Corner UVs (mirroring `item_model::build_block_model_item`): bl=(u0,v1),
-    // br=(u1,v1), tr=(u1,v0), tl=(u0,v0).
-    let u = u0 + s * (u1 - u0);
-    let v = v1 + t * (v0 - v1);
-    at.alpha_at([u, v]) >= 128
+    // Bilerp the CORNER UVs (rotation applied) rather than the raw rect, so a
+    // rotated face's alpha is probed where it is actually drawn.
+    let c = face_uv.corner_uv();
+    let lerp =
+        |a: [f32; 2], b: [f32; 2], k: f32| [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+    let bottom = lerp(c[0], c[1], s);
+    let top = lerp(c[3], c[2], s);
+    at.alpha_at(lerp(bottom, top, t)) >= 128
 }
 
 #[cfg(test)]
@@ -332,7 +335,7 @@ mod tests {
             to: Vec3::ONE,
             origin: Vec3::ZERO,
             rotation: Vec3::ZERO,
-            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
             cull: [None; 6],
         };
 
@@ -379,7 +382,7 @@ mod tests {
             to,
             origin: Vec3::ZERO,
             rotation: Vec3::ZERO,
-            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
             cull: [None; 6],
         };
         // A horn overhanging past x=1 and the body inside 0..1.
@@ -425,7 +428,7 @@ mod tests {
             to: Vec3::ONE,
             origin: Vec3::ZERO,
             rotation: Vec3::ZERO,
-            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
             cull: [None; 6],
         };
         let hit = ray_vs_model_cubes(

@@ -85,6 +85,11 @@ pub struct GamePresentationScratch {
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
     remote_players: Vec<RemotePlayerRender>,
+    /// Every drawn body's eased bone offsets, back to back — each body's
+    /// `PlayerRenderInstance::bones` is a range into this. One arena instead
+    /// of a list per body keeps the render rows `Copy` and puts no ceiling on
+    /// how many bones a body wears.
+    bone_offsets: Vec<petramond_render::BoneOffset>,
     shadows: Vec<EntityShadow>,
     footsteps: Vec<FootstepSource>,
     break_overlays: Vec<BreakOverlayView>,
@@ -115,10 +120,11 @@ impl GamePresentationScratch {
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
         self.collect_mob_emitters(tick_alpha, view);
+        self.bone_offsets.clear();
         self.collect_remote_players(game, tick_alpha);
         self.collect_footsteps(game, tick_alpha);
         self.collect_break_overlays(game);
-        let player = collect_player(game);
+        let player = collect_player(game, &mut self.bone_offsets);
         self.collect_entity_shadows(game, view, tick_alpha, player);
 
         GamePresentation {
@@ -131,6 +137,7 @@ impl GamePresentationScratch {
             doors: &self.doors,
             mobs: &self.mobs,
             remote_players: &self.remote_players,
+            bone_offsets: &self.bone_offsets,
             footsteps: &self.footsteps,
             player,
             held_item_light: game.held_item_light(),
@@ -503,6 +510,7 @@ impl GamePresentationScratch {
                     blocklight: petramond_world::light::BlockLight6::from_x2(
                         world.blocklight_rgb_at_world(c.x, c.y, c.z),
                     ),
+                    bones: push_bones(&mut self.bone_offsets, p.bones.current()),
                 },
                 held: p.view,
                 held_off: p.off_view,
@@ -676,7 +684,10 @@ fn mount_renders_seated(mount: petramond::net::protocol::PlayerMount) -> bool {
     }
 }
 
-fn collect_player(game: &Game) -> Option<PlayerPresentation> {
+fn collect_player(
+    game: &Game,
+    arena: &mut Vec<petramond_render::BoneOffset>,
+) -> Option<PlayerPresentation> {
     // The body draws only once the boom camera is actually placed — never on a
     // frame whose render camera is still the first-person eye (inside the head).
     if !game.third_person_enabled() || game.third_person.cam.is_none() {
@@ -725,7 +736,25 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
         sleeping,
         skylight,
         blocklight,
+        // The LOCAL body's eased offsets (advanced in `tick_send`): a client
+        // mod posing bones owns them here for the same reason it owns a held
+        // pose — the release has to present now, not a round trip later.
+        bones: push_bones(arena, game.local_bones.current()),
     })
+}
+
+/// Append one body's eased bone offsets to the frame's arena and return the
+/// range that addresses them.
+fn push_bones(
+    arena: &mut Vec<petramond_render::BoneOffset>,
+    bones: &[petramond_render::BoneOffset],
+) -> petramond_render::BoneRange {
+    let start = arena.len() as u32;
+    arena.extend_from_slice(bones);
+    petramond_render::BoneRange {
+        start,
+        len: bones.len() as u32,
+    }
 }
 
 /// The crack overlay for a miner's `(block, stage)` — the target + stage come

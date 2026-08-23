@@ -785,6 +785,7 @@ fn render_held_item_preview() {
             eat,
             eat_bob,
             eat_near,
+            pose: Default::default(),
         };
         let (tile, mvp) = held_sprite(&view, aspect).expect("sprite item");
         let mut verts = Vec::new();
@@ -916,4 +917,570 @@ fn render_held_item_preview() {
         .expect("save zoom");
         println!("wrote {full} + {zoom}  (roll={:.2})", item.held_pose().roll);
     }
+}
+
+/// Visual preview harness (NOT an assertion): photograph a mod-set held pose
+/// (`SetPlayerHeldPose`) in BOTH views, BOTH hands, and both of a two-state
+/// rule's states — the instrument for any "position the held item exactly
+/// like this" work.
+///
+/// A pose looks right in source and wrong on screen, and the two views start
+/// from DIFFERENT authored holds, so a number that reads well in one is
+/// routinely nonsense in the other. Shooting all four cells at once is what
+/// makes that visible in one glance instead of three playtest rounds.
+///
+/// Reads the real `held_model` / `held_model_off` MVPs and the real
+/// `held_model_transform*` body attach chain, so what it draws is what the
+/// game draws — the poses below are the ones the mod publishes.
+///
+/// Run (the pack registry needs the built mods):
+///   `bash scripts/with-test-mods.sh cargo test -p petramond-render --lib \
+///        -- --ignored --nocapture render_held_pose_preview`
+/// Writes /tmp/held_pose_<item>.png — a 2×4 grid, rows = states, columns =
+/// [1P main, 1P off, 3P front, 3P side].
+#[test]
+#[ignore = "visual preview harness; run explicitly to regenerate /tmp/held_pose_*.png"]
+fn render_held_pose_preview() {
+    use crate::item_model::ItemVertex;
+    use crate::lighting::LightEnv;
+    use crate::HeldPose;
+    use petramond::player::model::player_model;
+    use petramond_world::block_model::DisplayTransform;
+    use petramond_world::item::{ItemRenderKind, ItemType};
+    use petramond_world::light::BlockLight6;
+
+    // The item under the lens: any bbmodel item in the registry. `HELD_POSE_ITEM`
+    // names a pack's (run under `scripts/with-test-mods.sh` so it resolves);
+    // the default is an engine item, so the harness works in a bare checkout.
+    //
+    // NOTHING here mirrors a pack's tuned numbers. A pose is authored in the
+    // pack that owns it and driven in through `HELD_POSE_STATES`, which is the
+    // whole point: iterating is a re-run, not an edit — of this file least of
+    // all.
+    let item_name =
+        std::env::var("HELD_POSE_ITEM").unwrap_or_else(|_| "petramond:wooden_bucket".into());
+    // The default rows are single-axis probes, not somebody's finished pose:
+    // render `identity` plus one nudge per channel and read what each does.
+    let nudged = |rotation: [f32; 3], translation: [f32; 3]| DisplayTransform {
+        rotation,
+        translation,
+        ..Default::default()
+    };
+    let mut states: Vec<(String, HeldPose, Vec<crate::BoneOffset>)> = vec![
+        ("identity".into(), HeldPose::default(), Vec::new()),
+        (
+            "+4px up".into(),
+            HeldPose {
+                first_person: nudged([0.0; 3], [0.0, 4.0, 0.0]),
+                third_person: nudged([0.0; 3], [0.0, 4.0, 0.0]),
+            },
+            Vec::new(),
+        ),
+        (
+            "-30deg x".into(),
+            HeldPose {
+                first_person: nudged([-30.0, 0.0, 0.0], [0.0; 3]),
+                third_person: nudged([-30.0, 0.0, 0.0], [0.0; 3]),
+            },
+            Vec::new(),
+        ),
+    ];
+    // Iterating a pose is a RE-RUN, not an edit: `HELD_POSE_STATES` replaces
+    // the rows above with
+    // `label=rx,ry,rz,tx,ty,tz|rx,ry,rz,tx,ty,tz[|bone:rx,ry,rz,tx,ty,tz]`
+    // (first person | third person | one optional BONE offset),
+    // semicolon-separated between rows.
+    if let Ok(spec) = std::env::var("HELD_POSE_STATES") {
+        states.clear();
+        for row in spec.split(';').filter(|r| !r.trim().is_empty()) {
+            let (label, rest) = row.split_once('=').expect("label=…");
+            let mut parts = rest.split('|');
+            let parse = |t: &str| {
+                let n: Vec<f32> = t
+                    .split(',')
+                    .map(|v| v.trim().parse().expect("number"))
+                    .collect();
+                DisplayTransform {
+                    rotation: [n[0], n[1], n[2]],
+                    translation: [n[3], n[4], n[5]],
+                    ..Default::default()
+                }
+            };
+            let first_person = parse(parts.next().expect("first-person pose"));
+            let third_person = parse(parts.next().expect("third-person pose"));
+            let mut bones: Vec<crate::BoneOffset> = Vec::new();
+            for spec in parts.filter(|s| !s.trim().is_empty()) {
+                let (bone, nums) = spec.split_once(':').expect("bone:rx,…");
+                let t = parse(nums);
+                let Some(bone) = player_model().bone_named(bone.trim()) else {
+                    panic!("the player rig has no bone '{bone}'");
+                };
+                bones.push(crate::BoneOffset {
+                    bone,
+                    rotation: t.rotation,
+                    translation: t.translation,
+                    hold: true,
+                });
+            }
+            states.push((
+                label.to_string(),
+                HeldPose {
+                    first_person,
+                    third_person,
+                },
+                bones,
+            ));
+        }
+    }
+
+    let Some(item) = ItemType::by_name(&item_name) else {
+        panic!(
+            "'{item_name}' is not in the registry — a pack item needs scripts/with-test-mods.sh"
+        );
+    };
+    let ItemRenderKind::Model(kind) = item.render_kind() else {
+        panic!("'{item_name}' is not a bbmodel item");
+    };
+
+    // Tiles are the game's 16:9, and the first-person columns are rendered
+    // at that same aspect: shot square, a right-anchored hand falls off the
+    // edge and every pose reads as "invisible" for a reason that is the
+    // harness's fault, not the pose's.
+    const TILE_W: usize = 640;
+    const TILE_H: usize = 360;
+    let aspect = TILE_W as f32 / TILE_H as f32;
+    // 5 columns: the two first-person fists, the third-person body from the
+    // front and the side, and the third-person item ISOLATED and framed.
+    // The isolated shot is what settles ORIENTATION questions — "is it upside
+    // down" is unanswerable against a torso that hides half the silhouette,
+    // and a crop of the body shot is guesswork about where the item went.
+    let cols = 5usize;
+    let rows = states.len();
+    let (w, h) = (TILE_W * cols, TILE_H * rows);
+    // A flat mid-grey ground tone: a shield lost against the background is
+    // the exact failure this harness exists to catch, so the backdrop must
+    // not be near the art's own colours.
+    let bg = [64u8, 68, 78];
+    let mut color = vec![0u8; w * h * 3];
+    for px in color.chunks_mut(3) {
+        px.copy_from_slice(&bg);
+    }
+    let mut zbuf = vec![f32::INFINITY; w * h];
+
+    let (atlas, aw, ah) = petramond_world::block_model::atlas().texture();
+    let model = player_model();
+    let skin = (model.texture_rgba.as_slice(), model.tex_w, model.tex_h);
+
+    // Rasterize `verts` (already in the space `mvp` expects) into one tile.
+    let raster = |verts: &[ItemVertex],
+                  tex: (&[u8], u32, u32),
+                  mvp: Mat4,
+                  col: usize,
+                  row: usize,
+                  zbuf: &mut [f32],
+                  color: &mut [u8]| {
+        let (pix, tw, th) = tex;
+        for tri in verts.chunks_exact(3) {
+            let mut s = [[0f32; 3]; 3];
+            let mut ok = true;
+            for (dst, v) in s.iter_mut().zip(tri) {
+                let c = mvp * glam::Vec4::new(v.pos[0], v.pos[1], v.pos[2], 1.0);
+                if c.w <= 1e-6 {
+                    ok = false;
+                    break;
+                }
+                let n = c / c.w;
+                *dst = [
+                    (n.x * 0.5 + 0.5) * TILE_W as f32,
+                    (1.0 - (n.y * 0.5 + 0.5)) * TILE_H as f32,
+                    n.z,
+                ];
+            }
+            if !ok {
+                continue;
+            }
+            let (x0, y0, x1, y1, x2, y2) = (s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1]);
+            let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+            if area.abs() < 1e-6 {
+                continue;
+            }
+            let inv_area = 1.0 / area;
+            let minx = x0.min(x1).min(x2).floor().max(0.0) as usize;
+            let maxx = x0.max(x1).max(x2).ceil().min(TILE_W as f32 - 1.0) as usize;
+            let miny = y0.min(y1).min(y2).floor().max(0.0) as usize;
+            let maxy = y0.max(y1).max(y2).ceil().min(TILE_H as f32 - 1.0) as usize;
+            for y in miny..=maxy {
+                for x in minx..=maxx {
+                    let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                    let w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv_area;
+                    let w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv_area;
+                    let w2 = 1.0 - w0 - w1;
+                    if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                        continue;
+                    }
+                    let z = w0 * s[0][2] + w1 * s[1][2] + w2 * s[2][2];
+                    let gx = col * TILE_W + x;
+                    let gy = row * TILE_H + y;
+                    let li = gy * w + gx;
+                    if z >= zbuf[li] {
+                        continue;
+                    }
+                    let u = w0 * tri[0].uv[0] + w1 * tri[1].uv[0] + w2 * tri[2].uv[0];
+                    let v = w0 * tri[0].uv[1] + w1 * tri[1].uv[1] + w2 * tri[2].uv[1];
+                    let tx = (u * tw as f32).clamp(0.0, tw as f32 - 1.0) as u32;
+                    let ty = (v * th as f32).clamp(0.0, th as f32 - 1.0) as u32;
+                    let ti = ((ty * tw + tx) * 4) as usize;
+                    if pix[ti + 3] < 128 {
+                        continue;
+                    }
+                    let shade = w0 * tri[0].shade + w1 * tri[1].shade + w2 * tri[2].shade;
+                    zbuf[li] = z;
+                    let o = (gy * w + gx) * 3;
+                    for c in 0..3 {
+                        color[o + c] = (pix[ti + c] as f32 * shade).min(255.0) as u8;
+                    }
+                }
+            }
+        }
+    };
+
+    // The held bbmodel's triangles under an arbitrary model matrix.
+    let model_tris = |m: Mat4| -> Vec<ItemVertex> {
+        let (mut v, mut i) = (Vec::new(), Vec::new());
+        crate::item_model::build_block_model_item(
+            kind,
+            m,
+            DynLight::FULL,
+            LightEnv::IDENTITY,
+            None,
+            &mut v,
+            &mut i,
+        );
+        i.iter().map(|&i| v[i as usize]).collect()
+    };
+
+    for (row, (label, pose, bones)) in states.iter().enumerate() {
+        let view = HeldItemView {
+            item: Some(item),
+            pose: *pose,
+            ..Default::default()
+        };
+
+        // --- columns 0/1: FIRST PERSON, each fist, the real hand camera ----
+        for (col, mvp) in [
+            held_model(&view, aspect).expect("bbmodel item").1,
+            held_model_off(&view, aspect).expect("bbmodel item").1,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // The unit-cube geometry is rebased by the MVP itself.
+            raster(
+                &model_tris(Mat4::IDENTITY),
+                (atlas, aw, ah),
+                mvp,
+                col,
+                row,
+                &mut zbuf,
+                &mut color,
+            );
+        }
+
+        // --- columns 2/3: THIRD PERSON, front and side, both fists ---------
+        let inst = crate::PlayerRenderInstance {
+            pos: Vec3::ZERO,
+            body_yaw: 0.0,
+            head_yaw: 0.0,
+            head_pitch: 0.0,
+            anim_time: 0.0,
+            // `HELD_POSE_WALK=<0..1>` drives the gait, so a STANCE can be
+            // checked against a moving body — the arm that holds a guard must
+            // not swing with the stride, and a still shot cannot show that.
+            walk_weight: std::env::var("HELD_POSE_WALK")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0),
+            sneak_weight: 0.0,
+            sleeping: false,
+            seated: false,
+            hurt: 0.0,
+            skylight: 63,
+            blocklight: BlockLight6::DARK,
+            bones: crate::BoneRange {
+                start: 0,
+                len: bones.len() as u32,
+            },
+        };
+        let (mut bv, mut bi) = (Vec::new(), Vec::new());
+        let (_, hand, off_hand) = crate::player_model::build_player_body(
+            model,
+            LightEnv::IDENTITY,
+            &inst,
+            bones,
+            &view,
+            &view,
+            &mut bv,
+            &mut bi,
+        );
+        let body: Vec<ItemVertex> = bi
+            .iter()
+            .map(|&i| {
+                let v = bv[i as usize];
+                ItemVertex {
+                    pos: v.pos,
+                    uv: v.uv,
+                    shade: v.shade,
+                    tint: [1.0; 3],
+                }
+            })
+            .collect();
+        let hand = crate::player_model::posed_hand(hand, &pose.third_person, false);
+        let off_hand = crate::player_model::posed_hand(off_hand, &pose.third_person, true);
+        let proj = Mat4::perspective_rh(40f32.to_radians(), aspect, 0.05, 20.0);
+        for (col, eye) in [Vec3::new(0.0, 1.25, 2.9), Vec3::new(2.9, 1.25, 0.0)]
+            .into_iter()
+            .enumerate()
+        {
+            let mvp = proj * Mat4::look_at_rh(eye, Vec3::new(0.0, 0.95, 0.0), Vec3::Y);
+            let col = col + 2;
+            raster(&body, skin, mvp, col, row, &mut zbuf, &mut color);
+            for m in [
+                crate::player_model::held_model_transform(hand, kind),
+                crate::player_model::held_model_transform_off(off_hand, kind),
+            ] {
+                raster(
+                    &model_tris(m),
+                    (atlas, aw, ah),
+                    mvp,
+                    col,
+                    row,
+                    &mut zbuf,
+                    &mut color,
+                );
+            }
+        }
+
+        // The main hand's item alone, from the same front camera, but framed
+        // on its own bounds so the whole silhouette fills the tile.
+        let solo = model_tris(crate::player_model::held_model_transform(hand, kind));
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for v in &solo {
+            lo = lo.min(Vec3::from(v.pos));
+            hi = hi.max(Vec3::from(v.pos));
+        }
+        let centre = (lo + hi) * 0.5;
+        // Back off far enough that the tallest extent fits the vertical FOV,
+        // looking along the SAME axis as the front body shot so "up" means the
+        // same thing in both.
+        let span = (hi - lo).max_element().max(0.05);
+        let eye = centre + Vec3::new(0.0, 0.0, span * 1.9);
+        let mvp = Mat4::perspective_rh(40f32.to_radians(), aspect, 0.01, 20.0)
+            * Mat4::look_at_rh(eye, centre, Vec3::Y);
+        raster(&solo, (atlas, aw, ah), mvp, 4, row, &mut zbuf, &mut color);
+        println!("row {row}: {label}");
+    }
+
+    // Tile borders + a first-person crosshair: without a frame of reference
+    // "a bit left of centre" is unreadable, and the crosshair is where the
+    // player is actually looking.
+    for r in 0..rows {
+        for c in 0..cols {
+            for x in 0..TILE_W {
+                for y in [0usize, TILE_H - 1] {
+                    let o = ((r * TILE_H + y) * w + c * TILE_W + x) * 3;
+                    color[o..o + 3].copy_from_slice(&[20, 20, 24]);
+                }
+            }
+            for y in 0..TILE_H {
+                for x in [0usize, TILE_W - 1] {
+                    let o = ((r * TILE_H + y) * w + c * TILE_W + x) * 3;
+                    color[o..o + 3].copy_from_slice(&[20, 20, 24]);
+                }
+            }
+            if c < 2 {
+                let (cx, cy) = (c * TILE_W + TILE_W / 2, r * TILE_H + TILE_H / 2);
+                for d in 0..8usize {
+                    for (x, y) in [(cx + d, cy), (cx - d, cy), (cx, cy + d), (cx, cy - d)] {
+                        let o = (y * w + x) * 3;
+                        color[o..o + 3].copy_from_slice(&[235, 235, 235]);
+                    }
+                }
+            }
+        }
+    }
+
+    let out = format!("/tmp/held_pose_{}.png", item_name.replace(':', "_"));
+    image::save_buffer(
+        &out,
+        &color,
+        w as u32,
+        h as u32,
+        image::ExtendedColorType::Rgb8,
+    )
+    .expect("save preview");
+    println!(
+        "wrote {out}  (rows = states, cols = 1P main | 1P off | 3P front | 3P side | 3P item alone)"
+    );
+}
+
+/// One corner of an axis-aligned box, `i` in `0..8` (bit per axis).
+#[cfg(test)]
+fn corner(from: Vec3, to: Vec3, i: usize) -> Vec3 {
+    Vec3::new(
+        if i & 1 == 0 { from.x } else { to.x },
+        if i & 2 == 0 { from.y } else { to.y },
+        if i & 4 == 0 { from.z } else { to.z },
+    )
+}
+
+/// A pose in the OFF hand is the exact mirror image of the same pose in the
+/// main hand, arm stance included.
+///
+/// TWO independent mirror rules meet on one body: the caller mirrors an
+/// authored ARM (negate the y/z rotations, Blockbench's own left-hand rule)
+/// and the engine mirrors the HELD POSE by conjugating the attach frame.
+/// Where they meet is precisely where an item ends up facing backwards on the
+/// wrong side — and only for the hand nobody checks first. The numbers below
+/// are arbitrary on purpose: this pins the ALGEBRA, not anybody's tuned pose.
+#[test]
+fn an_off_hand_pose_is_the_mirror_of_the_main_hands() {
+    use crate::lighting::LightEnv;
+    use petramond::player::model::player_model;
+    use petramond_world::block_model::DisplayTransform;
+    use petramond_world::item::{ItemRenderKind, ItemType};
+    use petramond_world::light::BlockLight6;
+
+    let item = ItemType::by_name("petramond:wooden_bucket").expect("engine bbmodel item");
+    let ItemRenderKind::Model(kind) = item.render_kind() else {
+        panic!("the bucket is a bbmodel item")
+    };
+    // Deliberately arbitrary, and deliberately NOT any pack's tuned pose: a
+    // number here that happened to match one in `mods-src/` would read as a
+    // value to keep in sync, which is how the engine ends up owning a mod's
+    // content again. All three axes are non-zero so nothing cancels by luck.
+    let stance_shoulder = [41.0, 27.0, -13.0];
+    let stance_elbow = [6.0, -11.0, -32.0];
+    let held = DisplayTransform {
+        rotation: [-63.0, 21.0, 17.0],
+        translation: [2.0, 4.0, 7.0],
+        ..Default::default()
+    };
+    let model = player_model();
+    let bone = |name: &str, r: [f32; 3], mirror: bool| crate::BoneOffset {
+        bone: model.bone_named(name).expect(name),
+        rotation: if mirror { [r[0], -r[1], -r[2]] } else { r },
+        translation: [0.0; 3],
+        hold: true,
+    };
+
+    // The item's corners for one hand, in the body's own space.
+    let corners = |off_side: bool| -> Vec<Vec3> {
+        let bones = if off_side {
+            vec![
+                bone("right_shoulder", stance_shoulder, true),
+                bone("right_elbow", stance_elbow, true),
+            ]
+        } else {
+            vec![
+                bone("left_shoulder", stance_shoulder, false),
+                bone("left_elbow", stance_elbow, false),
+            ]
+        };
+        let inst = crate::PlayerRenderInstance {
+            pos: Vec3::ZERO,
+            body_yaw: 0.0,
+            head_yaw: 0.0,
+            head_pitch: 0.0,
+            anim_time: 0.0,
+            walk_weight: 0.0,
+            sneak_weight: 0.0,
+            sleeping: false,
+            seated: false,
+            hurt: 0.0,
+            skylight: 63,
+            blocklight: BlockLight6::DARK,
+            bones: crate::BoneRange {
+                start: 0,
+                len: bones.len() as u32,
+            },
+        };
+        let view = crate::HeldItemView {
+            item: Some(item),
+            ..Default::default()
+        };
+        let (mut bv, mut bi) = (Vec::new(), Vec::new());
+        let (_, hand, off_hand) = crate::player_model::build_player_body(
+            model,
+            LightEnv::IDENTITY,
+            &inst,
+            &bones,
+            &view,
+            &view,
+            &mut bv,
+            &mut bi,
+        );
+        let m = if off_side {
+            crate::player_model::held_model_transform_off(
+                crate::player_model::posed_hand(off_hand, &held, true),
+                kind,
+            )
+        } else {
+            crate::player_model::held_model_transform(
+                crate::player_model::posed_hand(hand, &held, false),
+                kind,
+            )
+        };
+        let geo = petramond_world::block_model::instance(kind);
+        let fp = Vec3::new(
+            geo.footprint[0] as f32,
+            geo.footprint[1] as f32,
+            geo.footprint[2] as f32,
+        );
+        let uspan = fp.max_element().max(1.0);
+        geo.cubes
+            .iter()
+            .flat_map(|c| {
+                (0..8).map(move |i| {
+                    let p = Mat4::from_translation(c.origin)
+                        * Mat4::from_quat(petramond_world::bbmodel::euler_quat(c.rotation))
+                        * Mat4::from_translation(-c.origin);
+                    (p.transform_point3(corner(c.from, c.to, i)) - fp * 0.5) / uspan
+                })
+            })
+            .map(|unit| m.transform_point3(unit))
+            .collect()
+    };
+
+    let main = corners(false);
+    let off = corners(true);
+    assert_eq!(main.len(), off.len());
+    assert!(!main.is_empty(), "the item has geometry");
+
+    // The body faces engine +Z at yaw 0, so mirroring the world X flips left
+    // for right. A mirrored corner SET is the same set — the reflection
+    // renumbers which corner is which — so each main corner is matched to its
+    // nearest mirrored partner rather than by index.
+    let worst = main
+        .iter()
+        .map(|m| {
+            let want = Vec3::new(-m.x, m.y, m.z);
+            off.iter()
+                .map(|o| (*o - want).length())
+                .fold(f32::MAX, f32::min)
+        })
+        .fold(0.0f32, f32::max);
+    assert!(
+        worst < 0.01,
+        "the off-hand pose is not the main hand's mirror: {worst:.4} blocks out"
+    );
+
+    // Non-vacuous on both counts: the item is genuinely off the body's centre
+    // line (so an x-flip says something), and the two hands are genuinely on
+    // opposite sides of it (so this is not comparing a set with itself).
+    let centre = |v: &[Vec3]| v.iter().fold(Vec3::ZERO, |a, p| a + *p) / v.len() as f32;
+    let (cm, co) = (centre(&main), centre(&off));
+    assert!(
+        cm.x.abs() > 0.1 && (cm.x + co.x).abs() < 0.01,
+        "hands at {cm:?} and {co:?} are not opposite sides of the body"
+    );
 }

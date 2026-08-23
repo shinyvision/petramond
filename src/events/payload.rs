@@ -148,7 +148,7 @@ impl DamageSource {
 /// post-event drain) and routes each through the same funnel the engine's own
 /// code uses, so global engine immunity and registered pre handlers still apply.
 #[derive(Clone, Debug)]
-pub enum ModAction {
+pub enum DeferredAction {
     /// `Game::damage_player(amount, DamageSource::Mod(mod_id))`.
     DamagePlayer { amount: i32, mod_id: &'static str },
     /// The mob-damage pipeline (`mob_damage_pre` → `Mobs::damage_mob` → death loot).

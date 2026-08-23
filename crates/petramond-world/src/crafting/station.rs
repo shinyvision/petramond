@@ -20,7 +20,7 @@ use crate::gui_state::GuiKind;
 pub struct CraftingStation(GuiKind);
 
 /// Pack-registered station kinds (the engine pair lives in the consts).
-static MOD_STATIONS: Mutex<Vec<GuiKind>> = Mutex::new(Vec::new());
+static REGISTERED_STATIONS: Mutex<Vec<GuiKind>> = Mutex::new(Vec::new());
 
 #[allow(non_upper_case_globals)]
 impl CraftingStation {
@@ -42,7 +42,7 @@ impl CraftingStation {
             Self::FURNITURE_WORKBENCH_KEY => Some(Self::FurnitureWorkbench),
             _ => {
                 let kind = crate::gui_state::intern_kind(key)?;
-                let mut stations = MOD_STATIONS.lock().unwrap();
+                let mut stations = REGISTERED_STATIONS.lock().unwrap();
                 if !stations.contains(&kind) {
                     stations.push(kind);
                 }
@@ -58,7 +58,7 @@ impl CraftingStation {
             GuiKind::Inventory => Some(Self::Inventory),
             GuiKind::CraftingTable => Some(Self::CraftingTable),
             GuiKind::FurnitureWorkbench => Some(Self::FurnitureWorkbench),
-            _ => MOD_STATIONS
+            _ => REGISTERED_STATIONS
                 .lock()
                 .unwrap()
                 .contains(&kind)

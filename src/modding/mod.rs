@@ -77,7 +77,7 @@ use crate::events::{
     TickSystems,
 };
 use crate::mob::{Mob, MobCategory};
-use crate::player::Player;
+use crate::player::{BonePose, Player};
 use crate::world::World;
 use petramond_math::math::IVec3;
 
@@ -118,7 +118,7 @@ pub struct ModHost {
     metas: Vec<ModMeta>,
     hostile_spawners: Vec<HostileSpawnerRegistration>,
     /// `blocks.json` `behavior` key (`mod_id:name`) → the owning mod's
-    /// handler, for routing [`ModBlockHook`](petramond_world::block::behavior::ModBlockHook)s.
+    /// handler, for routing [`BlockHook`](petramond_world::block::behavior::BlockHook)s.
     block_behaviors: std::collections::HashMap<String, BlockBehaviorRegistration>,
     /// The session's scripted AI-node registrations, retained so the server
     /// thread can install them into ITS thread-local dispatch registry
@@ -398,7 +398,7 @@ impl ModHost {
     pub fn dispatch_block_hooks(
         &self,
         ctx: &mut SimCtx,
-        hooks: &[petramond_world::block::behavior::ModBlockHook],
+        hooks: &[petramond_world::block::behavior::BlockHook],
     ) {
         for hook in hooks {
             let Some(reg) = self.block_behaviors.get(hook.key) else {
@@ -752,6 +752,14 @@ fn wire_event_handler(
                 None => Outcome::Continue,
             }
         }),
+        EventKind::UseUnclaimed => {
+            bus.on_use_unclaimed(priority, move |ctx, ev| {
+                match call_event(&inst, ctx, handler_id, convert::use_unclaimed(ev)) {
+                    Some((outcome, _)) => convert::outcome(outcome),
+                    None => Outcome::Continue,
+                }
+            })
+        }
         EventKind::ItemUsePre => bus.on_item_use_pre(priority, move |ctx, ev| {
             match call_event(&inst, ctx, handler_id, convert::item_use_pre(ev)) {
                 Some((outcome, _)) => convert::outcome(outcome),
@@ -848,3 +856,38 @@ fn finite_nonnegative(value: f32, fallback: f32) -> f32 {
 
 #[cfg(test)]
 pub mod tests;
+
+/// Resolve a `SetPlayerBonePose` payload into the runtime form the claim, the
+/// wire and the renderer all carry: rig ids, no names.
+///
+/// `None` is a REFUSAL (a non-finite component — see [`BONE_POSE_REFUSAL`]).
+/// A name the rig does not carry resolves to nothing and is DROPPED, like a
+/// disabled pack: an offset aimed at a bone this build's player model lacks
+/// must not cost the caller its other bones, or a frame.
+///
+/// Shared by the host and the client mirror, so the two cannot disagree about
+/// what a payload means.
+pub(crate) fn resolve_bone_poses(bones: Vec<mod_api::BonePoseData>) -> Option<Vec<BonePose>> {
+    if !bones.iter().all(mod_api::BonePoseData::is_finite) {
+        return None;
+    }
+    Some(
+        bones
+            .into_iter()
+            .filter_map(|b| {
+                Some(BonePose {
+                    bone: crate::player::model::bone_id(&b.bone)?,
+                    rotation: b.rotation,
+                    translation: b.translation,
+                    hold: b.mode == mod_api::BonePoseMode::Replace,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Why a `SetPlayerBonePose` was refused. One message, because the host and
+/// the client mirror validate through the same path and must say the same
+/// thing about it.
+pub(crate) const BONE_POSE_REFUSAL: &str =
+    "SetPlayerBonePose: non-finite rotation/translation component";

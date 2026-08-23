@@ -1,8 +1,9 @@
-//! Persistent mod data on the world: the world KV
-//! map (rides `level.dat`, restored at session open) and the per-cell section
-//! KV accessors (each cell's entries ride its section's save record).
+//! The world's persistent key/value data: the world KV map (rides `level.dat`,
+//! restored at session open) and the per-cell section KV accessors (each
+//! cell's entries ride its section's save record). The day/night clock and the
+//! operator list live here alongside anything a pack stores.
 //!
-//! Namespacing (`mod_id:key`, own-prefix writes) is enforced at the HostCall
+//! Namespacing (`namespace:key`, own-prefix writes) is enforced at the HostCall
 //! boundary (`modding::host`), not here — engine/test code may use any key.
 //! The GUI-session state map is NOT here: it lives on the player session
 //! (`ConnectedPlayer::gui_state` + the `crate::gui` state helpers).

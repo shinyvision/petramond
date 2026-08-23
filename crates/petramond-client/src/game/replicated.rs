@@ -20,14 +20,14 @@ use glam::{Quat, Vec3};
 use petramond_world::gui_state::ContainerView;
 
 use petramond::net::protocol::{
-    ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, ModSpatialSoundMsg,
-    PlayerActionKind, PlayerStateRow, SelfState, TickUpdate, WorldEventMsg,
+    ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, PlayerActionKind,
+    PlayerStateRow, SelfState, SpatialSoundMsg, TickUpdate, WorldEventMsg,
 };
 use petramond::player::PlayerId;
 use petramond::player::{Player, PlayerMode};
 use petramond_math::math::IVec3;
 use petramond_world::gui_state::GuiStateMap;
-use petramond_world::inventory::Inventory;
+use petramond_world::inventory::{Hand, Inventory};
 use petramond_world::item::ItemStack;
 
 use super::tick::WorldEvent;
@@ -256,6 +256,22 @@ pub struct SelfView {
     pub sleeping: Option<f32>,
     /// The in-progress sleep's bed base (foot) cell.
     pub sleep_bed: Option<IVec3>,
+    /// The body-level land-speed scale the movement code reads every step
+    /// (adopted onto the predicted player beside the effect list).
+    pub move_scale: f32,
+    /// The actions mods denied on this body
+    /// adopted onto the predicted player with the speed scale — the local
+    /// mining timer and the attack click read it, so the button goes dead here
+    /// at the same moment it does on the authority.
+    pub denied_actions: petramond::player::DeniedActions,
+    /// Per-hand held poses — the AUTHORITATIVE answer
+    /// for this player's hands, which a client mod predicting the same rule
+    /// overrides locally (see `ClientModRuntime::local_held_poses`).
+    pub held_pose_main: Option<mod_api::HeldPose>,
+    pub held_pose_off: Option<mod_api::HeldPose>,
+    /// claimed rig-bone offsets — the authoritative
+    /// answer, overridden locally by a client mod predicting the same rule.
+    pub bone_poses: Vec<petramond::player::BonePose>,
 }
 
 impl SelfView {
@@ -278,6 +294,11 @@ impl SelfView {
             eating_off_hand: false,
             sleeping: None,
             sleep_bed: None,
+            move_scale: player.claims.replicated_speed_scale(),
+            denied_actions: player.claims.replicated_denied_actions(),
+            held_pose_main: player.claims.held_pose(Hand::Main),
+            held_pose_off: player.claims.held_pose(Hand::Off),
+            bone_poses: player.claims.bone_poses().collect(),
         }
     }
 
@@ -311,9 +332,13 @@ impl SelfView {
         self.eating_off_hand = state.eating_off_hand;
         self.sleeping = state.sleeping.map(|p| p as f32 / 255.0);
         self.sleep_bed = state.sleep_bed;
+        self.move_scale = state.move_scale;
+        self.denied_actions = state.denied_actions;
+        self.held_pose_main = state.held_pose_main;
+        self.held_pose_off = state.held_pose_off;
+        self.bone_poses.clone_from(&state.bone_poses);
     }
 }
-
 /// The client's MENU-session mirror, fed by [`MenuSyncMsg`]s (sent on-change
 /// only) and temporarily mutated by rollback-backed P1 menu predictions — the
 /// exclusive source `Game::menu_read_model` renders from. Wire ids arrive
@@ -800,6 +825,12 @@ impl Game {
                     )
                     .collect(),
             );
+            // Same rule for the resolved mod body — the speed scale the
+            // movement code reads every step, and the actions this body is
+            // barred from. Both are authority, so the predicted body adopts
+            // them with the effects.
+            self.player
+                .adopt_resolved_body(self.self_view.move_scale, self.self_view.denied_actions);
             // Tick-side transform mutations (teleports, knockback) win over
             // the local prediction — per-field against what we last sent.
             if let Some(t) = &state.transform {
@@ -910,7 +941,7 @@ impl Game {
     /// Observers' / natural breaks still present. Server-side strip is the
     /// primary filter; this is the belt for races.
     fn buffer_world_event(&mut self, msg: WorldEventMsg, suppress: &rustc_hash::FxHashSet<IVec3>) {
-        use crate::game::tick::{MobSoundEvent, ModSound, ModSpatialSoundCommand};
+        use crate::game::tick::{MobSoundEvent, SoundEvent, SpatialSoundCommand};
         let ev = &mut self.pending_events;
         match msg {
             WorldEventMsg::BlockBroken {
@@ -958,7 +989,7 @@ impl Game {
                 category: petramond::mob::MobSoundCategory::from_u8(category),
                 pos,
             }),
-            WorldEventMsg::ModSound { sound_id, pos } => ev.mod_sounds.push(ModSound {
+            WorldEventMsg::Sound { sound_id, pos } => ev.sounds.push(SoundEvent {
                 sound: petramond_world::sound_registry::Sound(sound_id),
                 pos,
             }),
@@ -971,28 +1002,28 @@ impl Game {
                 pos,
                 intensity,
             }),
-            WorldEventMsg::ModSpatialSound(cmd) => ev.mod_spatial_sounds.push(match cmd {
-                ModSpatialSoundMsg::PlayAt {
+            WorldEventMsg::SpatialSound(cmd) => ev.spatial_sounds.push(match cmd {
+                SpatialSoundMsg::PlayAt {
                     handle,
                     sound_id,
                     pos,
                     volume,
                     pitch,
-                } => ModSpatialSoundCommand::PlayAt {
+                } => SpatialSoundCommand::PlayAt {
                     handle,
                     sound: petramond_world::sound_registry::Sound(sound_id),
                     pos,
                     volume,
                     pitch,
                 },
-                ModSpatialSoundMsg::PlayOnMob {
+                SpatialSoundMsg::PlayOnMob {
                     handle,
                     sound_id,
                     mob_id,
                     volume,
                     pitch,
                     last_pos,
-                } => ModSpatialSoundCommand::PlayOnMob {
+                } => SpatialSoundCommand::PlayOnMob {
                     handle,
                     sound: petramond_world::sound_registry::Sound(sound_id),
                     mob_id,
@@ -1000,7 +1031,7 @@ impl Game {
                     pitch,
                     last_pos,
                 },
-                ModSpatialSoundMsg::Stop { handle } => ModSpatialSoundCommand::Stop { handle },
+                SpatialSoundMsg::Stop { handle } => SpatialSoundCommand::Stop { handle },
             }),
         }
     }

@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "item": "combat:shield",
+      "key": "combat:shield",
+      "name": "Shield",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "model": "combat:shield",
+      "tags": []
+    }
+  ]
+}

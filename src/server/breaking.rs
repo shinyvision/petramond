@@ -37,12 +37,19 @@ impl ServerGame {
             .and_then(|st| st.tool());
         let look = self.sessions[s].look;
         let break_held = self.sessions[s].intent_break_held;
-        let inventory_open = !self.sessions[s].intent_gameplay;
+        // A barred mine reads exactly like a released button: the timer RESETS
+        // rather than pausing, so releasing the claim starts the break over
+        // instead of resuming a cell the player stopped looking at. The open
+        // menu that used to be checked separately here is one of the claims.
+        let barred = self.sessions[s]
+            .player
+            .denied_actions()
+            .denies(mod_api::BodyAction::Mine);
         if let Some(event) = self.sessions[s].mining.update(
             TICK_DT,
             look.map(|t| t.block),
             break_held,
-            inventory_open,
+            barred,
             &self.world,
             tool,
         ) {
@@ -119,6 +126,19 @@ impl ServerGame {
             tool_item_id,
             predicted,
         } = req;
+
+        // The claimed finish is validated like any other client claim, so the
+        // denial is checked HERE too and not only on the hold path: a client
+        // that kept its own timer running (stale mirror, or a forged message)
+        // must not break a cell its body was barred from touching.
+        if self.sessions[s]
+            .player
+            .denied_actions()
+            .denies(mod_api::BodyAction::Mine)
+        {
+            self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
+            return;
+        }
 
         // Reach from the claimed eye, BOUNDED by the F1 drift ring — the same
         // reference the look latch was validated against, so an accepted

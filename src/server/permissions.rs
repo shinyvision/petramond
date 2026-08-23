@@ -16,7 +16,7 @@ pub fn canonical_name(name: &str) -> String {
 }
 
 pub fn load(world: &World) -> BTreeSet<String> {
-    let Some(bytes) = world.mod_kv_get(OPERATORS_KEY) else {
+    let Some(bytes) = world.world_kv_get(OPERATORS_KEY) else {
         return BTreeSet::new();
     };
     match serde_json::from_slice::<BTreeSet<String>>(bytes) {
@@ -34,5 +34,5 @@ pub fn load(world: &World) -> BTreeSet<String> {
 
 pub fn store(world: &mut World, names: &BTreeSet<String>) {
     let bytes = serde_json::to_vec(names).expect("a string set always serializes");
-    world.mod_kv_set(OPERATORS_KEY.into(), bytes);
+    world.world_kv_set(OPERATORS_KEY.into(), bytes);
 }

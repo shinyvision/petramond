@@ -233,11 +233,11 @@ pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
     // First-person hold of a sprite item. The extruded sprite is a unit, origin-
     // centred slab built upright; the item's own [`held_pose`](petramond_world::item::ItemType::held_pose)
     // (item data) tilts it before it's seated in the hand:
-    //   * roll (Z), applied FIRST in the sprite's own plane, lays the long axis
-    //     diagonally for a swung tool (pickaxes); it's 0 for upright items;
-    //   * yaw (Y) then swings the slab past head-on to a steep, near-side-on angle
-    //     so the EXTRUDED THICKNESS — not the flat face — reads, for a chunky 3D
-    //     look; pitch (X) is a spare tilt, flat for now.
+    // * roll (Z), applied FIRST in the sprite's own plane, lays the long axis
+    // diagonally for a swung tool (pickaxes); it's 0 for upright items;
+    // * yaw (Y) then swings the slab past head-on to a steep, near-side-on angle
+    // so the EXTRUDED THICKNESS — not the flat face — reads, for a chunky 3D
+    // look; pitch (X) is a spare tilt, flat for now.
     // `nudge` lifts/shifts it within the shared held anchor so it sits at the
     // screen's lower-right (sprite-only; the anchor is unchanged for held blocks).
     // `s` sizes the slab like a held item.
@@ -450,15 +450,15 @@ fn held_item_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
     placement_at(view, rest, 1.0)
 }
 
-/// Seat the held item at `rest` (view units) and fold in the mining-punch swing, its
-/// translation throw scaled by `throw_scale` so an item seated nearer the camera
-/// (the bbmodel anchor) jabs proportionally, not across the whole screen. The EAT
-/// pose (mouth carry + nibble) composes here too, so every held render kind
-/// (block cube, extruded sprite, bbmodel) eats identically.
+/// Seat the held item at `rest` (view units) and fold in the mining-punch
+/// swing, its translation throw scaled by `throw_scale` so an item seated
+/// nearer the camera (the bbmodel anchor) jabs proportionally, not across
+/// the whole screen. The claimed held-pose offset (base stance) and the EAT
+/// pose (mouth carry + nibble) compose here too, so every held render kind
+/// (block cube, extruded sprite, bbmodel) poses identically.
 fn placement_at(view: &HeldItemView, rest: Vec3, throw_scale: f32) -> Mat4 {
     let mut pos = rest + bob_offset(view);
     let mut rot = Quat::IDENTITY;
-
     if view.eat > 0.0 {
         let e = view.eat;
         // Carry the food from its rest anchor up to the MOUTH: toward the
@@ -508,7 +508,17 @@ fn placement_at(view: &HeldItemView, rest: Vec3, throw_scale: f32) -> Mat4 {
         rot = attack * rot;
     }
 
-    Mat4::from_translation(pos) * Mat4::from_quat(rot)
+    // The claimed pose composes INSIDE the seat, so the punch and the eat
+    // carry a posed item instead of fighting it, and its 1/16-block
+    // translation lands in view space (which is blocks — the hand's own
+    // camera puts the anchor at `MODEL_HAND_ANCHOR` in block units).
+    //
+    // Every off-hand path mirrors a chain that contains this one — the block
+    // cube and the bbmodel by CONJUGATION, the sprite by true reflection —
+    // and conjugating a display transform by the x-flip is exactly
+    // `DisplayTransform::left_hand`, so one authored pose reads correctly
+    // from either fist with no per-hand rule here.
+    Mat4::from_translation(pos) * Mat4::from_quat(rot) * view.pose.first_person.base_matrix()
 }
 
 #[cfg(test)]

@@ -177,11 +177,12 @@ impl Player {
     /// of the overlap smoothly and can still walk against it. Vertical is ignored (pushing
     /// is horizontal); a noclip spectator has no body to jostle.
     /// The land speed this INPUT wishes: sneak, sprint or walk, scaled by the
-    /// active effects (see `EffectBehavior::Speed`). The mode keys are
-    /// modifiers on a WISH — with no deliberate movement there is nothing for
-    /// them to modify, so a held sprint key over planted feet selects plain
-    /// walk — while the effect scale is the body's own state and applies
-    /// whether or not it moves.
+    /// body's [`move_scale`](crate::player::state::Player::move_scale) — ONE
+    /// number, into which status effects, the mode and every pack's claim have
+    /// already been folded. The mode keys are modifiers on a WISH — with no
+    /// deliberate movement there is nothing for them to modify, so a held
+    /// sprint key over planted feet selects plain walk — while the scale is the
+    /// body's own state and applies whether or not it moves.
     ///
     /// This is the one statement of that selection: movement applies it (the
     /// wish gate costs it nothing — a zero wish never reads the speed), and
@@ -190,7 +191,7 @@ impl Player {
     /// mode — reaches every consumer without per-cause wiring anywhere.
     pub fn wish_speed(&self, input: Input) -> f32 {
         let wishing = input.wishdir.length_squared() > 1e-12;
-        self.speed_scale()
+        self.move_scale()
             * if input.sneak && wishing {
                 WALK * SNEAK_FACTOR
             } else if input.sprint && wishing {
@@ -400,15 +401,15 @@ impl Player {
             // through the waterline and land on the block rather than bobbing at its
             // base. Mark it as a jump arc so gravity eases at the apex once you
             // surface, floating you the last bit onto the ledge.
-            //   - Requiring jump keeps it an explicit action — wading through
-            //     shallow/edge water toward shore never hops you out on its own.
-            //   - Requiring vel.y >= 0 makes a *failed* hop behave: if you don't
-            //     make the ledge and fall back in against the wall, your downward
-            //     fall velocity is preserved (this branch is skipped, so the normal
-            //     swim handling lets you sink) instead of being discarded by the
-            //     `max` below and relaunching you instantly. You sink back down
-            //     once — the harder you fell in, the deeper — before the boost can
-            //     fire again.
+            // - Requiring jump keeps it an explicit action — wading through
+            // shallow/edge water toward shore never hops you out on its own.
+            // - Requiring vel.y >= 0 makes a *failed* hop behave: if you don't
+            // make the ledge and fall back in against the wall, your downward
+            // fall velocity is preserved (this branch is skipped, so the normal
+            // swim handling lets you sink) instead of being discarded by the
+            // `max` below and relaunching you instantly. You sink back down
+            // once — the harder you fell in, the deeper — before the boost can
+            // fire again.
             let deck = self.deck_ahead(input.wishdir, obstacles);
             let climbing_out = input.jump
                 && self.vel.y >= 0.0
@@ -441,10 +442,10 @@ impl Player {
             // fall through the cell is caught by the hard clamp (the "grab").
             // The speed is a fraction of base WALK on purpose: sprint and sneak
             // change nothing here.
-            //   A FREE-hanging climbable (a vine curtain) has no wall to press
-            //   against, so jump is its only ascent — pressing a compass
-            //   direction must do nothing, which is why the grip carries the
-            //   DECLARED facing rather than `Block::panel_facing`'s North default.
+            // A FREE-hanging climbable (a vine curtain) has no wall to press
+            // against, so jump is its only ascent — pressing a compass
+            // direction must do nothing, which is why the grip carries the
+            // DECLARED facing rather than `Block::panel_facing`'s North default.
             let into_wall = |facing: petramond_math::facing::Facing| {
                 let d = facing.dir();
                 -(input.wishdir.x * d.x as f32 + input.wishdir.z * d.z as f32)

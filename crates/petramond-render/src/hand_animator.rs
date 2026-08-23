@@ -10,7 +10,9 @@
 //! one too (`game/remote_players.rs`), fed from replicated flags, so every
 //! view animates from the same triggers.
 
-use super::{HeldItemFrame, HeldItemView};
+use petramond_world::item::ItemType;
+
+use super::{HeldItemFrame, HeldItemView, HeldPose, POSE_EASE_RATE};
 
 /// Mining-punch swings per second. Drives the looping hand swing phase while the
 /// sim reports active mining, and the one-shot break/place jab speed.
@@ -66,6 +68,21 @@ pub struct HeldItemAnimator {
     eat_near: f32,
     /// Nibble oscillator phase, advanced only while eating.
     eat_phase: f32,
+    /// The eased held pose (see [`HeldItemView::pose`]): lags `pose_target`
+    /// the way the bob lags the camera.
+    pose: HeldPose,
+    /// Which item the eased pose belongs to. A pose is state ABOUT AN ITEM,
+    /// so a hand that changed item must not glide the old item's offset onto
+    /// the new one — see the reset in [`HeldItemAnimator::update`].
+    posed_item: Option<ItemType>,
+    /// Which item the in-progress EAT belongs to, latched when it starts.
+    ///
+    /// The eat flag is REPLICATED and the hotbar swap that aborts it is local,
+    /// so for a batch the sim still says "eating" about food this hand is no
+    /// longer holding. The item is the authority in that window, not the flag.
+    eat_item: Option<ItemType>,
+    /// Whether the sim reported an eat last frame — the edge the latch rides.
+    was_eating: bool,
     /// The hand's lagging copy of the camera's walk sway, normalized.
     bob: [f32; 2],
 }
@@ -79,6 +96,10 @@ impl Default for HeldItemAnimator {
             eat_blend: 0.0,
             eat_near: 0.0,
             eat_phase: 0.0,
+            pose: HeldPose::default(),
+            posed_item: None,
+            eat_item: None,
+            was_eating: false,
             bob: [0.0, 0.0],
         }
     }
@@ -88,6 +109,22 @@ impl HeldItemAnimator {
     pub fn update(&mut self, frame: HeldItemFrame) -> HeldItemView {
         let dt = frame.dt.max(0.0);
 
+        // A NEW ITEM starts at its own authored hold, with no trace of the
+        // outgoing one's animation. Everything positional here is state ABOUT
+        // AN ITEM: carried across a hotbar switch it draws the incoming item
+        // where the outgoing one was and animates it into place, which reads
+        // as the new item rising into position rather than simply being held.
+        //
+        // The EAT channels need it as much as the pose does — swapping out
+        // mid-meal glided a pickaxe down from the mouth — and they cannot just
+        // ease out, because the eat that owned them is already over.
+        if frame.item != self.posed_item {
+            self.posed_item = frame.item;
+            self.pose = HeldPose::default();
+            self.eat_blend = 0.0;
+            self.eat_near = 0.0;
+            self.eat_phase = 0.0;
+        }
         // The hand CHASES the camera's sway instead of wearing it: the arm has
         // mass, and a hand locked to the camera reads as painted on the screen.
         let chase = 1.0 - (-HAND_BOB_CHASE_RATE * dt).exp();
@@ -111,7 +148,13 @@ impl HeldItemAnimator {
         // glide); `eat_near` then tracks the sim's progress so the food, while
         // wiggling in place, slowly closes the remaining DEPTH toward the
         // camera over the whole eat.
-        if let Some(progress) = frame.eating {
+        // An eat belongs to the item it STARTED on (see `eat_item`).
+        if frame.eating.is_some() && !self.was_eating {
+            self.eat_item = frame.item;
+        }
+        self.was_eating = frame.eating.is_some();
+        let eating = frame.eating.filter(|_| self.eat_item == frame.item);
+        if let Some(progress) = eating {
             self.eat_blend = (self.eat_blend + dt / EAT_BLEND_IN_S).min(1.0);
             self.eat_phase = (self.eat_phase + dt * EAT_CHEW_HZ).fract();
             let target = progress.clamp(0.0, 1.0);
@@ -126,6 +169,14 @@ impl HeldItemAnimator {
                 self.eat_near = 0.0;
             }
         }
+
+        // From there the pose CHASES its target like the bob chases the
+        // camera — the lag is what turns a replicated publisher's stair-steps
+        // into a glide. `None` eases back to the item's authored hold.
+        self.pose.ease_toward(
+            &frame.pose_target.unwrap_or_default(),
+            1.0 - (-POSE_EASE_RATE * dt).exp(),
+        );
 
         if frame.mining {
             self.swing_finishing = false;
@@ -150,9 +201,10 @@ impl HeldItemAnimator {
             }
         }
 
-        // Smoothstep the blend so the raise/drop settle gently at both ends;
-        // the nibble is a plain sine — its amplitude is already gated by `eat`
-        // at the consumer, as is the `eat_near` approach.
+        // Smoothstep the eat blend so the raise/drop settle gently at both
+        // ends; the nibble is a plain sine — its amplitude is already gated
+        // by `eat` at the consumer, as is the `eat_near` approach. The pose
+        // offset is already smoothed by its chase.
         let e = self.eat_blend * self.eat_blend * (3.0 - 2.0 * self.eat_blend);
         HeldItemView {
             item: frame.item,
@@ -164,6 +216,7 @@ impl HeldItemAnimator {
             eat: e,
             eat_bob: (self.eat_phase * std::f32::consts::TAU).sin(),
             eat_near: self.eat_near,
+            pose: self.pose,
         }
     }
 }
@@ -172,6 +225,103 @@ impl HeldItemAnimator {
 mod tests {
     use super::*;
     use petramond_world::item::ItemType;
+
+    /// The held pose eases toward its published target and back to the
+    /// authored hold when it clears — the smoothing that turns a REPLICATED
+    /// publisher's 20 Hz steps into a glide, and the reason a released guard
+    /// drops rather than snaps.
+    #[test]
+    fn pose_eases_toward_its_target_and_back_to_the_authored_hold() {
+        let mut anim = HeldItemAnimator::default();
+        let dt = 1.0 / 60.0;
+        let mut guard = HeldPose::default();
+        guard.first_person.translation = [0.0, -7.0, 2.0];
+        guard.third_person.rotation = [-40.0, 0.0, 0.0];
+        let frame = |target: Option<HeldPose>| HeldItemFrame {
+            item: None,
+            variant: petramond_world::item::VariantId::NONE,
+            block_state: Default::default(),
+            mining: false,
+            broke_block: false,
+            placed: false,
+            swung: false,
+            eating: None,
+            pose_target: target,
+            bob: [0.0, 0.0],
+            dt,
+        };
+
+        for _ in 0..120 {
+            let view = anim.update(frame(Some(guard)));
+            assert_eq!(view.swing, 0.0, "a pose is not a swing");
+            if view.pose.first_person.translation[1] < -6.9 {
+                break;
+            }
+        }
+        assert!(anim.pose.first_person.translation[1] < -6.9);
+        assert!((anim.pose.third_person.rotation[0] + 40.0).abs() < 2.0);
+        assert_eq!(
+            anim.pose.first_person.scale, [1.0; 3],
+            "easing must never disturb the channels a mod cannot set"
+        );
+
+        for _ in 0..120 {
+            let p = anim.update(frame(None)).pose;
+            if p.first_person.translation[1] > -0.05 && p.third_person.rotation[0].abs() < 0.05 {
+                break;
+            }
+        }
+        assert!(anim.pose.first_person.translation[1] > -0.05);
+        assert!(anim.pose.third_person.rotation[0].abs() < 0.05);
+    }
+
+    /// A pose belongs to the ITEM it was eased for. Swapping the hotbar must
+    /// draw the incoming item at its own authored hold, not glide it out of
+    /// the outgoing item's offset.
+    ///
+    /// The bug this pins was invisible in the case you would test first —
+    /// switching away from a RAISED guard, whose offset is already neutral —
+    /// and obvious only when switching away from a LOWERED one, which is why
+    /// the reset is keyed on the item rather than on the target going `None`.
+    #[test]
+    fn a_new_item_starts_at_its_own_hold_instead_of_the_last_ones() {
+        let mut anim = HeldItemAnimator::default();
+        let dt = 1.0 / 60.0;
+        let mut lowered = HeldPose::default();
+        lowered.first_person.translation = [0.0, -6.0, 0.0];
+        let frame = |item, target| HeldItemFrame {
+            item,
+            variant: petramond_world::item::VariantId::NONE,
+            block_state: Default::default(),
+            mining: false,
+            broke_block: false,
+            placed: false,
+            swung: false,
+            eating: None,
+            pose_target: target,
+            bob: [0.0, 0.0],
+            dt,
+        };
+
+        // Settle the first item at its lowered offset.
+        for _ in 0..60 {
+            anim.update(frame(Some(ItemType::Stone), Some(lowered)));
+        }
+        assert!(anim.pose.first_person.translation[1] < -5.0);
+
+        // The next item is drawn at ITS hold on the very first frame.
+        let view = anim.update(frame(Some(ItemType::Dirt), None));
+        assert_eq!(
+            view.pose.first_person.translation, [0.0; 3],
+            "a swapped-in item must not wear the last item's offset"
+        );
+
+        // An empty hand counts as a change too — and so does picking the
+        // first item back up.
+        anim.update(frame(Some(ItemType::Stone), Some(lowered)));
+        let view = anim.update(frame(None, None));
+        assert_eq!(view.pose.first_person.translation, [0.0; 3]);
+    }
 
     #[test]
     fn animator_completes_active_swing_when_mining_stops() {
@@ -188,6 +338,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -205,6 +356,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 0.5 / HAND_SWING_HZ,
         });
@@ -224,6 +376,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 0.0,
         });
@@ -241,6 +394,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -258,6 +412,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / HAND_SWING_HZ,
         });
@@ -276,6 +431,7 @@ mod tests {
             placed: false,
             swung: true,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -295,6 +451,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / HAND_SWING_HZ,
         });
@@ -313,6 +470,7 @@ mod tests {
             placed: true,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -332,6 +490,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / HAND_SWING_HZ,
         });
@@ -352,6 +511,7 @@ mod tests {
             placed: true,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -378,6 +538,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: Some(progress),
+            pose_target: None,
             bob: [0.0, 0.0],
             dt,
         };
@@ -444,6 +605,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -467,6 +629,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            pose_target: None,
             bob,
             dt,
         };

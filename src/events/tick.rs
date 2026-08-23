@@ -19,7 +19,7 @@ pub const TICK_DT: f32 = 0.05;
 /// never touches audio. `pos` is where it happened (`None` = non-spatial);
 /// positional reach comes from the sound row's `attenuation_distance`.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ModSound {
+pub struct SoundEvent {
     pub sound: petramond_world::sound_registry::Sound,
     pub pos: Option<petramond_math::math::Vec3>,
 }
@@ -38,7 +38,7 @@ pub struct MobSoundEvent {
 /// The app/audio side owns actual playback and active sinks; the sim only carries
 /// resolved sound ids, stable handles, and positions through the tick event queue.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum ModSpatialSoundCommand {
+pub enum SpatialSoundCommand {
     PlayAt {
         handle: u64,
         sound: petramond_world::sound_registry::Sound,
@@ -101,6 +101,20 @@ pub struct PlayerTickEvents {
     pub ate_off_hand: bool,
 }
 
+/// One keyed event addressed at a single player's CLIENT instance
+/// (`EmitEventTo`): a namespaced key and an opaque payload, carried to that
+/// session's replication batch and dispatched into its client runtime.
+///
+/// Per-player but NON-lossy, which is why it rides here rather than in
+/// [`PlayerTickEvents`]: those are latched one-shots the newest overwrites,
+/// and cues are a queue nobody may silently drop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientEvent {
+    pub player: PlayerId,
+    pub key: String,
+    pub data: Vec<u8>,
+}
+
 /// A block the sim destroyed this tick (player-mined or natural), with
 /// everything a CLIENT needs to present it: break-burst particles at `pos`,
 /// sampled against the post-tick world. Position-carrying and broadcastable —
@@ -124,8 +138,8 @@ pub struct BlockBrokenEvent {
 /// messages when the wire exists.
 #[derive(Clone, Debug)]
 pub struct WorldEvents {
-    pub sounds: Vec<ModSound>,
-    pub spatial_sounds: Vec<ModSpatialSoundCommand>,
+    pub sounds: Vec<SoundEvent>,
+    pub spatial_sounds: Vec<SpatialSoundCommand>,
     pub mob_sounds: Vec<MobSoundEvent>,
     pub block_broken: Vec<BlockBrokenEvent>,
     /// A block placed by a player: (anchor cell, block).
@@ -168,6 +182,10 @@ impl WorldEvents {
 pub struct TickEvents {
     players: Vec<PlayerTickEvents>,
     pub world: WorldEvents,
+    /// Cues addressed at ONE player's client (`EmitEventTo`), in emission
+    /// order. A third audience beside "this player's one-shots" and "everyone
+    /// in range": addressed like the former, queued like the latter.
+    pub client_events: Vec<ClientEvent>,
 }
 
 impl Default for TickEvents {
@@ -181,6 +199,7 @@ impl TickEvents {
         Self {
             players: Vec::new(),
             world: WorldEvents::with_next_spatial_sound_handle(next_spatial_sound_handle),
+            client_events: Vec::new(),
         }
     }
 

@@ -121,14 +121,22 @@ impl ServerGame {
                 bus,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            bus.player_damage_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
+            // The VICTIM acts: the sessions view rides the dispatch so a
+            // handler can name whose damage this is (`PlayerSnapshot::id`)
+            // and read the session-side actor context that decides whether
+            // to cancel — a raised guard is `use_held`, which lives on the
+            // roster row, not on the body. Without the view every one of
+            // those reads silently answers "no", and a mod that cancels on
+            // one never fires.
+            Self::with_sessions_view(sessions, s, |sess| {
+                bus.player_damage_pre(
+                    world,
+                    &mut sess.player,
+                    &mut sess.gui_state,
+                    events,
+                    &mut pre,
+                ) == Outcome::Cancel
+            })
         };
         if cancelled {
             return false;
@@ -255,5 +263,71 @@ mod tests {
         // The collision sweep can leave the landing a hair high, so a nominal 4.0 fall
         // arrives as 4 − ~1 ULP. FALL_EPS must keep it a half-heart, not silently zero.
         assert_eq!(fall_damage_health(4.0 - 8e-6), 1);
+    }
+
+    /// `player_damage_pre` must dispatch under the SESSIONS VIEW, naming the
+    /// victim.
+    ///
+    /// Without it, `acting_player_id` is `None` here and every session-side
+    /// field of the actor snapshot — `sneak`, `use_held`, and the victim's own
+    /// id — silently answers its default. A handler that cancels on one of
+    /// those (a raised guard is exactly `use_held`) then never fires, and
+    /// nothing anywhere reports a problem: the feature is simply dead. The
+    /// second session is here because the failure mode this replaced would
+    /// also have handed the handler whichever body the tick happened to run
+    /// as, which reads fine right up until somebody else is hit.
+    #[test]
+    fn the_pre_damage_dispatch_names_its_victim_and_carries_their_intents() {
+        use std::sync::{Arc, Mutex};
+
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        let other = crate::server::session_build::spawn_player(server.world.seed);
+        let victim_s = server.add_session_for_test(other);
+        let victim_id = server.sessions[victim_s].id;
+        assert_ne!(victim_s, 0, "the victim must not be the host session");
+
+        // The victim is holding the use button; the host is not. A handler
+        // reading the WRONG session sees the host's `false`.
+        server.sessions[victim_s].intent_use_held = true;
+        server.sessions[victim_s].intent_gameplay = true;
+        server.publish_player_inputs();
+
+        /// What the handler saw: whose damage it is, and whether that
+        /// session's own use-held intent reached it.
+        type Seen = Vec<(Option<crate::player::PlayerId>, bool)>;
+        let seen: Arc<Mutex<Seen>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        server.bus.on_player_damage_pre(0, move |ctx, _ev| {
+            let id = ctx.acting_player_id();
+            let use_held = id
+                .and_then(|id| {
+                    ctx.world
+                        .player_roster()
+                        .iter()
+                        .find(|r| r.id == id.0)
+                        .map(|r| r.use_held)
+                })
+                .unwrap_or(false);
+            sink.lock().unwrap().push((id, use_held));
+            crate::events::Outcome::Continue
+        });
+
+        let mut events = crate::events::tick::TickEvents::default();
+        server.damage_player(
+            victim_s,
+            3,
+            crate::events::DamageSource::Fall,
+            None,
+            &mut events,
+        );
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "the handler ran once");
+        assert_eq!(
+            seen[0].0,
+            Some(victim_id),
+            "the ACTING player is the victim"
+        );
+        assert!(seen[0].1, "the victim's own session intents are readable");
     }
 }

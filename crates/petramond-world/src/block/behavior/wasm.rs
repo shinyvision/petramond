@@ -4,7 +4,7 @@
 //!
 //! Behaviors fire deep inside `World::game_tick`, where no mod host is
 //! reachable (and the trait is `Sync`, while wasm instances are not), so the
-//! hooks don't dispatch inline: they enqueue a [`ModBlockHook`] on the world,
+//! hooks don't dispatch inline: they enqueue a [`BlockHook`] on the world,
 //! and the game drains the queue right after the world's scheduled/random
 //! ticks in the same game tick and forwards each entry to the owning mod
 //! (`ModHost::dispatch_block_hooks`). The handler then edits the world
@@ -24,7 +24,7 @@ use super::BlockBehavior;
 /// One queued behavior hook, drained per tick in fire order (deterministic:
 /// the world tick that enqueues is itself deterministic).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct ModBlockHook {
+pub struct BlockHook {
     pub kind: BlockHookKind,
     /// The `mod_id:name` behavior key the block's row declares — the dispatch
     /// routes on it, so the block id itself doesn't ride along.
@@ -50,7 +50,7 @@ impl BlockBehavior for WasmBehavior {
     }
 
     fn random_tick(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
-        world.queue_mod_block_hook(ModBlockHook {
+        world.queue_block_hook(BlockHook {
             kind: BlockHookKind::RandomTick,
             key: self.key,
             pos,
@@ -58,7 +58,7 @@ impl BlockBehavior for WasmBehavior {
     }
 
     fn neighbor_update(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
-        world.queue_mod_block_hook(ModBlockHook {
+        world.queue_block_hook(BlockHook {
             kind: BlockHookKind::NeighborUpdate,
             key: self.key,
             pos,
@@ -66,7 +66,7 @@ impl BlockBehavior for WasmBehavior {
     }
 
     fn scheduled_tick(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
-        world.queue_mod_block_hook(ModBlockHook {
+        world.queue_block_hook(BlockHook {
             kind: BlockHookKind::ScheduledTick,
             key: self.key,
             pos,

@@ -22,9 +22,9 @@ use super::{
     MobCollision, MobRng, MobSize,
 };
 
+mod control;
 mod drops;
 mod lifecycle;
-mod mod_control;
 mod simulation;
 #[cfg(test)]
 mod tests;

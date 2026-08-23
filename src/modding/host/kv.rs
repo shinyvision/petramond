@@ -27,13 +27,13 @@ fn guarded_write(
 pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::WorldKvGet { key } => {
-            sim_query(|ctx| HostRet::Bytes(ctx.world.mod_kv_get(&key).map(<[u8]>::to_vec)))
+            sim_query(|ctx| HostRet::Bytes(ctx.world.world_kv_get(&key).map(<[u8]>::to_vec)))
         }
         HostCall::WorldKvSet { key, value } => guarded_write(mod_id, key, value.len(), |key| {
-            sim_call(|ctx| ctx.world.mod_kv_set(key, value))
+            sim_call(|ctx| ctx.world.world_kv_set(key, value))
         }),
         HostCall::WorldKvDelete { key } => guarded_write(mod_id, key, 0, |key| {
-            sim_query(|ctx| HostRet::Bool(ctx.world.mod_kv_remove(&key)))
+            sim_query(|ctx| HostRet::Bool(ctx.world.world_kv_remove(&key)))
         }),
         HostCall::SectionKvGet { pos, key } => sim_query(|ctx| {
             let p = IVec3::from(pos);

@@ -123,8 +123,8 @@ impl World {
         self.terrain.hidden_parked.clear();
         self.terrain.sealed_parked.clear();
         self.block_entity_sections.clear();
-        self.mod_stream.block_draws.clear();
-        self.mod_stream.block_draw_sections.clear();
+        self.draw_stream.block_draws.clear();
+        self.draw_stream.block_draw_sections.clear();
         self.particle_emitter_sections.clear();
         self.columns.clear();
         self.column_payload_revisions.clear();

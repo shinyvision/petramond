@@ -105,9 +105,11 @@ pub fn build_block_model_item(
             // The same startup-baked self-AO the chunk mesh shades with, so the
             // held/dropped model matches the placed one.
             let ao = inst.face_ao[ci][slot];
-            // Half-texel-inset against edge-texel spill, like the chunk bake.
-            let [u0, v0, u1, v1] = block_model::atlas().inset_face_uv(uv);
-            let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+            // Half-texel-inset against edge-texel spill, like the chunk bake;
+            // corner order + per-face rotation come from `FaceUv`.
+            let corner_uv = uv
+                .with_uv(block_model::atlas().inset_face_uv(uv.uv))
+                .corner_uv();
             let start = verts.len() as u32;
             for i in 0..4 {
                 verts.push(ItemVertex {
@@ -176,9 +178,11 @@ pub fn build_block_model_icon(
             let shade = SHADES[face.shade_idx() as usize] * light;
             // Icons carry the same baked self-AO as the placed/held model.
             let ao = inst.face_ao[ci][slot];
-            // Half-texel-inset against edge-texel spill, like the chunk bake.
-            let [u0, v0, u1, v1] = block_model::atlas().inset_face_uv(uv);
-            let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+            // Half-texel-inset against edge-texel spill, like the chunk bake;
+            // corner order + per-face rotation come from `FaceUv`.
+            let corner_uv = uv
+                .with_uv(block_model::atlas().inset_face_uv(uv.uv))
+                .corner_uv();
             let corner = |i: usize| ItemVertex {
                 pos: p[i].to_array(),
                 uv: corner_uv[i],

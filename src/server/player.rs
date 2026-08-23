@@ -356,7 +356,7 @@ pub struct ConnectedPlayer {
     /// The GUI session the tick opened for this client this tick, if any —
     /// one field for every kind (engine containers and mod GUIs alike).
     pub request_open_gui: Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)>,
-    pub request_close_mod_gui: bool,
+    pub request_close_gui: bool,
     pub request_open_sleep: bool,
     /// The open mod-GUI session's state map (written by mods on the tick via
     /// `GuiStateSet`, cleared by the menu funnels on open/close). Snapshotted
@@ -451,7 +451,7 @@ impl ConnectedPlayer {
             wake_requested: false,
             respawn_requested: false,
             request_open_gui: None,
-            request_close_mod_gui: false,
+            request_close_gui: false,
             request_open_sleep: false,
             gui_state: petramond_world::gui_state::empty_gui_state(),
             last_sent_inventory_revision: None,
@@ -478,6 +478,15 @@ impl ConnectedPlayer {
     #[inline]
     pub fn sneaking(&self) -> bool {
         self.intent_sneak && self.intent_gameplay
+    }
+
+    /// Whether this session is HOLDING the interact (use) button right now:
+    /// the held use intent, gated on gameplay focus like
+    /// [`sneaking`](Self::sneaking). The one definition published to mods
+    /// (roster/snapshot `use_held`) and available to engine consumers.
+    #[inline]
+    pub fn using(&self) -> bool {
+        self.intent_use_held && self.intent_gameplay
     }
 
     /// A snapshot of the raw held-rotation state for the placement inputs —

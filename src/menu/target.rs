@@ -40,6 +40,6 @@ impl ContainerTarget {
     /// block). Transient station kinds keep their stacks on the menu itself.
     #[inline]
     pub fn kind_block_backed(kind: GuiKind) -> bool {
-        kind == GuiKind::Chest || kind == GuiKind::Furnace || kind.is_mod()
+        kind == GuiKind::Chest || kind == GuiKind::Furnace || kind.is_registered()
     }
 }

@@ -17,15 +17,15 @@ impl App {
         // Mod-emitted sounds (the non-lossy tick queue): each plays once,
         // attenuated by distance to the player when positional.
         let listener = self.game.as_ref().map(|g| g.listener_position());
-        for s in &events.mod_sounds {
+        for s in &events.sounds {
             let gain = match (s.pos, listener) {
-                (Some(pos), Some(ear)) => mod_sound_gain(s.sound, pos, ear),
+                (Some(pos), Some(ear)) => positional_sound_gain(s.sound, pos, ear),
                 _ => 1.0,
             };
             self.audio.play_attenuated(s.sound, gain);
         }
         self.spatial_sound_commands
-            .extend(events.mod_spatial_sounds.iter().copied());
+            .extend(events.spatial_sounds.iter().copied());
         self.mob_sound_events
             .extend(events.mob_sounds.iter().copied());
 
@@ -104,7 +104,7 @@ impl App {
     }
 }
 
-fn mod_sound_gain(sound: Sound, pos: Vec3, ear: Vec3) -> f32 {
+fn positional_sound_gain(sound: Sound, pos: Vec3, ear: Vec3) -> f32 {
     let dist = (pos - ear).length();
     sound.distance_gain(dist)
 }

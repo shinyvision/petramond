@@ -1,5 +1,5 @@
 //! `level.dat`: the per-world header — format version, seed, the world's
-//! game-tick counter, the mod world KV map, and the populated-chunk set (which
+//! game-tick counter, the world KV map, and the populated-chunk set (which
 //! chunk columns already spawned their one-time worldgen herd — see
 //! `mob::populate`). Per-player state (position, inventory, effects…) lives in
 //! `players/<name>.dat` (see [`super::player`]).
@@ -22,7 +22,7 @@ pub struct LevelData {
     /// tick-anchored state (the `petramond:clock` day cycle) continue across
     /// sessions instead of restarting at 0.
     pub tick: u64,
-    /// The mod world KV map (`mod_id:key` → bytes).
+    /// The world KV map (`mod_id:key` → bytes).
     pub world_kv: BTreeMap<String, Vec<u8>>,
     /// Chunk columns whose one-time worldgen herd already spawned. Restored
     /// through [`crate::world::World::set_populated_columns`] so the stock

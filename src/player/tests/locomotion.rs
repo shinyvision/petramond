@@ -25,6 +25,57 @@ fn mode_keys_select_nothing_without_a_wish() {
     assert_eq!(pl.wish_speed(moving(false, false)), WALK);
 }
 
+/// The claimed body scale reaches the SELECTED land speed — the one
+/// signal every consumer (movement, the speed-coupled FOV) reads. What the
+/// claims resolve to is `BodyClaims`'s business; what locomotion owes is that
+/// the resolved number multiplies the wish, and that a mirror body (the
+/// client's predicted player) walks at the answer it was handed.
+#[test]
+fn the_mod_body_scale_multiplies_the_wished_land_speed() {
+    let mut pl = p(Vec3::ZERO);
+    let walk = Input {
+        wishdir: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        sprint: false,
+        sneak: false,
+    };
+    assert_eq!(pl.wish_speed(walk), WALK);
+
+    pl.claims.set_speed_scale("combat", 0.5);
+    assert_eq!(pl.wish_speed(walk), WALK * 0.5);
+
+    // A second pack's claim composes rather than replacing the first.
+    pl.claims.set_speed_scale("armour", 0.5);
+    assert_eq!(pl.wish_speed(walk), WALK * 0.25);
+
+    // The mirror path: told an answer, the body walks at it, and the denial
+    // rides with the scale — a client that took one and not the other would
+    // predict a body the authority is not simulating.
+    //
+    // It replaces only the MIRRORED slot. A mirror also carries the ENGINE's
+    // claim, worked out from state it holds rather than waited for, so an
+    // adopt that cleared the whole set would drop the effect slow and the
+    // menu bar until the next frame re-stated them.
+    use crate::player::DeniedActions;
+    use mod_api::BodyAction;
+    pl.claims.set_speed_scale("armour", 1.0);
+    pl.claims.set_speed_scale("combat", 1.0);
+    pl.claims
+        .set_speed_scale(crate::player::ENGINE_CLAIMANT, 0.5);
+    pl.adopt_resolved_body(0.5, DeniedActions::of([BodyAction::Mine]));
+    assert_eq!(
+        pl.wish_speed(walk),
+        WALK * 0.25,
+        "the adopted answer composes with the half the mirror derives"
+    );
+    assert!(pl.denied_actions().denies(BodyAction::Mine));
+    assert!(!pl.denied_actions().denies(BodyAction::Attack));
+
+    pl.adopt_resolved_body(1.0, DeniedActions::NONE);
+    assert_eq!(pl.wish_speed(walk), WALK * 0.5, "and releases only its own");
+    assert!(pl.denied_actions().is_empty(), "the mirror releases too");
+}
+
 #[test]
 fn air_decays_slower_than_ground() {
     // No input: both decay gradually toward zero, but air friction is far

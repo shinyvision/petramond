@@ -6,6 +6,7 @@
 
 use petramond_math::math::SelectionShape;
 use petramond_render::camera::Camera;
+use petramond_render::BoneOffset;
 use petramond_world::block::Block;
 use petramond_world::block_state::HeldBlockState;
 use petramond_world::item::ItemType;
@@ -34,9 +35,58 @@ pub struct ClientHeldItem {
     /// `[0, 1)` — the animation carries the food deeper toward the mouth as it
     /// advances. `None` on ordinary frames.
     pub eating: Option<f32>,
+    /// This hand's claimed held pose — the target the
+    /// hand animator eases toward. PREDICTED by a client mod when one poses
+    /// hands here, replicated otherwise. `None` = the item's authored hold.
+    pub pose_target: Option<mod_api::HeldPose>,
     /// The camera's normalized walk sway this frame — the hand follows a
     /// LAGGED copy of it (see `game::view_bob` and `HeldItemAnimator`).
     pub bob: [f32; 2],
+}
+
+/// Carry a claimed held pose across the ABI → RENDERER boundary.
+///
+/// The two structs are deliberately not one type: the mod ABI's is a wire
+/// value with its own compatibility rules, the renderer's is a
+/// `DisplayTransform` pair it composes with the authored hold. They agree on
+/// the vocabulary — Blockbench display units, rotation degrees XYZ,
+/// translation in 1/16-block pixels — so the carry is a field copy, and the
+/// scale/pivot channels a mod cannot set stay at their authored identity.
+pub fn render_held_pose(pose: mod_api::HeldPose) -> petramond_render::HeldPose {
+    let view = |p: mod_api::HeldPoseData| petramond_world::block_model::DisplayTransform {
+        rotation: p.rotation,
+        translation: p.translation,
+        ..Default::default()
+    };
+    petramond_render::HeldPose {
+        first_person: view(pose.first_person),
+        third_person: view(pose.third_person),
+    }
+}
+
+/// Carry resolved bone poses across the SIM → RENDERER boundary the way
+/// [`render_held_pose`] carries a held pose.
+///
+/// Both sides address a bone by its index in the player rig — the mod ABI's
+/// names were resolved once, at the host call — so this is a field copy. An id
+/// this build's rig has no bone for is DROPPED, not an error: an offset aimed
+/// at a bone that is not there is a disabled pack, and the frame still draws.
+///
+/// Appends into `out` rather than returning, because every drawn body's
+/// offsets share ONE per-frame arena (see `petramond_render::BoneRange`).
+pub fn render_bone_offsets(poses: &[petramond::player::BonePose], out: &mut Vec<BoneOffset>) {
+    let bones = petramond::player::model::player_model().bones().len();
+    out.extend(
+        poses
+            .iter()
+            .filter(|p| (p.bone as usize) < bones)
+            .map(|p| BoneOffset {
+                bone: p.bone as usize,
+                rotation: p.rotation,
+                translation: p.translation,
+                hold: p.hold,
+            }),
+    );
 }
 
 impl Game {
@@ -60,6 +110,12 @@ impl Game {
             (eating, None)
         };
         let bob = self.view_bob.offset();
+        // A client mod running the same rule as its server half answers a
+        // round trip sooner, so it owns the hands it poses; hands no client
+        // mod poses keep the replicated answer.
+        let (pose_main, pose_off) = self
+            .client_mods
+            .local_held_poses((view.held_pose_main, view.held_pose_off));
         ClientFrame {
             // The third-person boom camera when active; the first-person eye
             // otherwise. Sim consumers keep reading `self.cam` directly.
@@ -77,6 +133,7 @@ impl Game {
                 mining,
                 mining_block,
                 eating: eat_main,
+                pose_target: pose_main,
                 bob,
             },
             off_hand_item: ClientHeldItem {
@@ -91,6 +148,7 @@ impl Game {
                 mining: false,
                 mining_block: None,
                 eating: eat_off,
+                pose_target: pose_off,
                 bob,
             },
         }

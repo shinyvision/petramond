@@ -1,0 +1,14 @@
+{
+  "sounds": [
+    {
+      "sound": "combat:shield_block",
+      "variants": [
+        "sounds/shield_block.ogg"
+      ],
+      "gain": 0.9,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 16.0,
+      "category": "ui"
+    }
+  ]
+}

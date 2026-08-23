@@ -301,6 +301,17 @@ fn tick_updates_roundtrip() {
             mining: Some((IVec3::new(4, 70, -2), 6)),
             eating: false,
             eating_off_hand: false,
+            held_pose_main: None,
+            held_pose_off: None,
+            // Non-empty on the ROW, because this is the field that ships for
+            // every player every tick — an encoding that silently drops it
+            // would look exactly like nobody posing anything.
+            bone_poses: vec![crate::player::BonePose {
+                bone: 3,
+                rotation: [-11.0, 3.0, 41.0],
+                translation: [0.0, 1.0, -2.0],
+                hold: true,
+            }],
             hurt_recent: true,
             snap: true,
             mount: None,
@@ -324,6 +335,22 @@ fn tick_updates_roundtrip() {
             ]),
             eating: Some(128),
             eating_off_hand: true,
+            move_scale: 0.5,
+            denied_actions: crate::player::DeniedActions::of([mod_api::BodyAction::Mine]),
+            held_pose_main: Some(mod_api::HeldPose {
+                first_person: mod_api::HeldPoseData {
+                    rotation: [0.0, 2.5, 0.0],
+                    translation: [1.25, -3.5, -4.0],
+                },
+                third_person: mod_api::HeldPoseData::IDENTITY,
+            }),
+            held_pose_off: None,
+            bone_poses: vec![crate::player::BonePose {
+                bone: 7,
+                rotation: [8.0, -2.0, -29.0],
+                translation: [0.5, 0.0, 1.5],
+                hold: false,
+            }],
             sleeping: None,
             sleep_bed: None,
             transform: Some(SelfTransform {
@@ -352,7 +379,7 @@ fn tick_updates_roundtrip() {
                 pos: Vec3::new(1.0, 65.0, 2.0),
                 by: PlayerId(1),
             },
-            WorldEventMsg::ModSpatialSound(ModSpatialSoundMsg::PlayOnMob {
+            WorldEventMsg::SpatialSound(SpatialSoundMsg::PlayOnMob {
                 handle: 3,
                 sound_id: 2,
                 mob_id: 4211,

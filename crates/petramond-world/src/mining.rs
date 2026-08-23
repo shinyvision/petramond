@@ -80,7 +80,8 @@ impl MiningState {
     /// - `look`: the targeted cell of the current raycast, or `None` if nothing
     ///   is targeted.
     /// - `mining_held`: left mouse button currently held down (not edge).
-    /// - `inventory_open`: gates mining off entirely while the inventory is open.
+    /// - `barred`: this body may not mine at all (an open menu, a pack's claim).
+    ///   Gates mining off entirely, resetting rather than pausing.
     /// - `world`: looked up to resolve the targeted block.
     /// - `tool`: the held mining tool (`None` = bare hand). Drives break speed +
     ///   whether the block is harvested.
@@ -93,11 +94,11 @@ impl MiningState {
         dt: f32,
         look: Option<IVec3>,
         mining_held: bool,
-        inventory_open: bool,
+        barred: bool,
         world: &WorldData,
         tool: Option<Tool>,
     ) -> Option<BreakEvent> {
-        self.update_core(dt, look, mining_held, inventory_open, tool, &|p| {
+        self.update_core(dt, look, mining_held, barred, tool, &|p| {
             Block::from_id(world.chunk_block(p.x, p.y, p.z))
         })
     }
@@ -110,12 +111,12 @@ impl MiningState {
         dt: f32,
         look: Option<IVec3>,
         mining_held: bool,
-        inventory_open: bool,
+        barred: bool,
         tool: Option<Tool>,
         block_at: &impl Fn(IVec3) -> Block,
     ) -> Option<BreakEvent> {
-        // Not mining, inventory open, or nothing targeted -> reset and bail.
-        let pos = match (mining_held, inventory_open, look) {
+        // Not mining, barred, or nothing targeted -> reset and bail.
+        let pos = match (mining_held, barred, look) {
             (true, false, Some(cell)) => cell,
             _ => {
                 self.reset();

@@ -42,7 +42,19 @@ impl ServerGame {
         // queuing past one tick); it only resolves once the cooldown elapsed.
         let mob_target = std::mem::take(&mut sess.pending_attack_mob);
         let player_target = std::mem::take(&mut sess.pending_attack_player);
-        if !std::mem::take(&mut sess.pending_attack) || sess.attack_cooldown != 0 {
+        let pressed = std::mem::take(&mut sess.pending_attack);
+        // A mod-denied swing is CONSUMED and dropped, never queued: the press
+        // is spent the same as one the cooldown ate, so releasing the claim
+        // cannot fire a stored punch. It arms no cooldown either — a denied
+        // action did not happen, so nothing about it may be felt afterwards.
+        if sess
+            .player
+            .denied_actions()
+            .denies(mod_api::BodyAction::Attack)
+        {
+            return;
+        }
+        if !pressed || sess.attack_cooldown != 0 {
             return;
         }
         if self.resolve_attack(s, mob_target, player_target, events) {
@@ -383,7 +395,7 @@ impl ServerGame {
         } else {
             petramond_world::sound_registry::Sound::WaterSplashSmall
         };
-        events.world.sounds.push(crate::events::tick::ModSound {
+        events.world.sounds.push(crate::events::tick::SoundEvent {
             sound,
             pos: Some(pos),
         });

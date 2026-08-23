@@ -60,6 +60,9 @@ pub struct Scene {
     /// Every other connected player's body + held item (already interpolated
     /// by the presentation layer — a pass-through here, like the local body).
     remote_players: Vec<RemotePlayerRender>,
+    /// This frame's bone offsets for every drawn body, back to back — the
+    /// backing each body's `PlayerRenderInstance::bones` range indexes into.
+    bone_offsets: Vec<crate::BoneOffset>,
     /// Two-channel light for the first-person hand / held item, sampled at the
     /// camera each frame so it brightens AND takes the colour of nearby block
     /// light (which keeps it lit at night).
@@ -85,6 +88,7 @@ impl Scene {
         self.shadows.clear();
         self.player = None;
         self.remote_players.clear();
+        self.bone_offsets.clear();
         self.held_item_skylight = 0;
         self.held_item_blocklight = petramond_world::light::BlockLight6::DARK;
     }
@@ -132,10 +136,14 @@ impl Scene {
             hurt: player_hurt,
             skylight: p.skylight,
             blocklight: p.blocklight,
+            bones: p.bones,
         });
         self.remote_players.clear();
         self.remote_players
             .extend_from_slice(presentation.remote_players);
+        self.bone_offsets.clear();
+        self.bone_offsets
+            .extend_from_slice(presentation.bone_offsets);
         (self.held_item_skylight, self.held_item_blocklight) = presentation.held_item_light;
     }
 
@@ -193,6 +201,7 @@ impl Scene {
         renderer.set_shadows(&self.shadows);
         renderer.set_player(self.player);
         renderer.set_remote_players(&self.remote_players);
+        renderer.set_bone_offsets(&self.bone_offsets);
         renderer.set_particles(&self.particles);
         renderer.set_model_particles(&self.model_particles);
         renderer.set_solid_particles(&self.solid_particles);

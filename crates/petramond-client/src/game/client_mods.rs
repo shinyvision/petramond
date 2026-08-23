@@ -23,7 +23,34 @@ impl Game {
             open_gui: open_gui.map(str::to_owned),
             open_canvas: open_canvas.map(str::to_owned),
         };
-        self.client_mods.frame(&self.replica, frame);
+        // The per-frame hook gets the SAME actor snapshot the prediction
+        // dispatches publish, so a mod's rule is one predicate that reads
+        // `player_state()` wherever it runs — and knows which player it is
+        // acting for, which is what lets it address the pose call.
+        let actor = self.client_actor_snapshot(self.predicted_input.sneak);
+        self.client_mods.frame(&self.replica, &actor, frame);
+    }
+
+    /// Deliver the mod cues this batch carried for us (`EmitEventTo`) into
+    /// their owning client mods, with the SAME actor snapshot the per-frame
+    /// hook publishes — the cue is about this player, and its handler poses
+    /// this player.
+    ///
+    /// Drained where the batch lands, not where the frame is assembled: the
+    /// cue exists so a pack can start presenting something on the frame it
+    /// hears about it.
+    pub fn deliver_client_mod_events(
+        &mut self,
+        events: &[petramond::net::protocol::ClientEventMsg],
+    ) {
+        if events.is_empty() {
+            return;
+        }
+        let actor = self.client_actor_snapshot(self.predicted_input.sneak);
+        for ev in events {
+            self.client_mods
+                .mod_event(&self.replica, &actor, &ev.key, &ev.data);
+        }
     }
 
     /// Bake the SIM geometry of any custom-shape cells the replica

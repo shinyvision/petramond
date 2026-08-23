@@ -61,7 +61,7 @@ impl GuiKind {
     /// Whether this is a pack-registered (namespaced) kind, as opposed to an
     /// engine kind or the [`Other`](GuiKind::Other) sentinel.
     #[inline]
-    pub fn is_mod(self) -> bool {
+    pub fn is_registered(self) -> bool {
         self.0 as usize >= ENGINE_GUI_KIND_NAMES.len() && self != GuiKind::Other
     }
 }
@@ -104,7 +104,7 @@ const MAX_KINDS: usize = 250;
 static INTERNED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 /// Mod kind keys in registration order; index + engine count == id.
-static MOD_KINDS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+static REGISTERED_KINDS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 /// Deduplicate `s` into a `'static` string (see `INTERNED`).
 pub fn intern_str(s: &str) -> &'static str {
@@ -130,7 +130,7 @@ pub fn intern_kind(key: &str) -> Option<GuiKind> {
     if !crate::registry::is_namespaced(key) {
         return None;
     }
-    let mut kinds = MOD_KINDS.lock().unwrap();
+    let mut kinds = REGISTERED_KINDS.lock().unwrap();
     if let Some(i) = kinds.iter().position(|n| *n == key) {
         return Some(GuiKind((ENGINE_GUI_KIND_NAMES.len() + i) as u8));
     }
@@ -150,7 +150,7 @@ pub fn resolve_kind(key: &str) -> Option<GuiKind> {
     if let Some(i) = ENGINE_GUI_KIND_NAMES.iter().position(|n| *n == key) {
         return Some(GuiKind(i as u8));
     }
-    let kinds = MOD_KINDS.lock().unwrap();
+    let kinds = REGISTERED_KINDS.lock().unwrap();
     kinds
         .iter()
         .position(|n| *n == key)
@@ -164,7 +164,7 @@ pub fn kind_key(kind: GuiKind) -> Option<&'static str> {
     if let Some(name) = ENGINE_GUI_KIND_NAMES.get(i) {
         return Some(name);
     }
-    let kinds = MOD_KINDS.lock().unwrap();
+    let kinds = REGISTERED_KINDS.lock().unwrap();
     kinds.get(i - ENGINE_GUI_KIND_NAMES.len()).copied()
 }
 
@@ -196,8 +196,8 @@ mod tests {
     fn engine_names_resolve_to_consts_and_mod_keys_intern_once() {
         assert_eq!(intern_kind("petramond:furnace"), Some(GuiKind::Furnace));
         assert_eq!(resolve_kind("petramond:hotbar"), Some(GuiKind::Hotbar));
-        assert!(!GuiKind::Furnace.is_mod());
-        assert!(!GuiKind::Other.is_mod());
+        assert!(!GuiKind::Furnace.is_registered());
+        assert!(!GuiKind::Other.is_registered());
 
         // A new bare name is refused; a namespaced key registers exactly once.
         assert_eq!(intern_kind("wheel"), None);
@@ -205,7 +205,7 @@ mod tests {
         let a = intern_kind("kindtest:wheel").expect("namespaced key registers");
         let b = intern_kind("kindtest:wheel").unwrap();
         assert_eq!(a, b, "re-interning returns the same id");
-        assert!(a.is_mod());
+        assert!(a.is_registered());
         assert_eq!(kind_key(a), Some("kindtest:wheel"));
         assert_eq!(resolve_kind("kindtest:wheel"), Some(a));
         // resolve_kind never registers.

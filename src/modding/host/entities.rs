@@ -7,7 +7,7 @@ use mod_api::{
 };
 
 use crate::entity::DroppedItem;
-use crate::events::{ModAction, PostEvent, SimCtx};
+use crate::events::{DeferredAction, PostEvent, SimCtx};
 use petramond_math::math::Vec3;
 use petramond_world::item::{ItemStack, ItemType};
 
@@ -139,7 +139,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 let mod_id = intern_mod_id(mod_id);
                 let feedback = feedback.map(crate::modding::mob_damage_feedback);
                 sim_call(|ctx| {
-                    ctx.queue.push_action(ModAction::DamageMob {
+                    ctx.queue.push_action(DeferredAction::DamageMob {
                         mob_id,
                         amount,
                         mod_id,
@@ -156,7 +156,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             HostRet::Bool(ctx.world.mobs_mut().remove(index))
         }),
         // Presentation-only mob state (no bus funnel), so unlike DamageMob it
-        // applies immediately instead of queueing a ModAction.
+        // applies immediately instead of queueing a DeferredAction.
         HostCall::MobEmitterSet {
             mob_id,
             key,

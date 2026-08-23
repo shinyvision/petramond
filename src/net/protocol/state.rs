@@ -153,6 +153,16 @@ pub struct PlayerStateRow {
     /// The in-progress eat consumes from the OFF hand — the remote body
     /// raises the left arm to the mouth instead of the right.
     pub eating_off_hand: bool,
+    /// The resolved held-item pose per hand: composed onto that hand's item by
+    /// every recipient, so an observer sees the same guard the wielder does.
+    pub held_pose_main: Option<mod_api::HeldPose>,
+    pub held_pose_off: Option<mod_api::HeldPose>,
+    /// The resolved rig-bone offsets — what makes a raised arm visible on
+    /// somebody else's body. Empty on ordinary rows.
+    ///
+    /// Rig IDS, not names: this row ships for every player every tick, and a
+    /// bone name is authoring vocabulary with no business on the wire.
+    pub bone_poses: Vec<crate::player::BonePose>,
     /// The player took damage this tick window. Sessions track no hurt TIMER
     /// (unlike `MobStateRow::hurt_timer`), so this ships the EDGE and each
     /// client runs its own flash envelope — the same one as the local
@@ -267,6 +277,23 @@ pub struct SelfState {
     /// The in-progress sleep's bed base (foot) cell — the client derives the
     /// lying body's head yaw from it. `None` while awake.
     pub sleep_bed: Option<IVec3>,
+    /// The resolved body-level land-speed scale — adopted onto the predicted
+    /// player beside the effect list, since the same movement code reads it
+    /// every step. Mirrored, not predicted: a scalar a batch late is
+    /// imperceptible.
+    pub move_scale: f32,
+    /// The resolved set of actions barred on this body. Rides the RECIPIENT's
+    /// own state, not the shared player rows: what a body may do is not
+    /// presentation, so no observer needs it — but the owner's client does, or
+    /// it goes on predicting actions the server will refuse.
+    pub denied_actions: crate::player::DeniedActions,
+    /// The AUTHORITATIVE held-item pose for the owner's own hands, which a
+    /// client running the same rule overrides locally until it arrives.
+    pub held_pose_main: Option<mod_api::HeldPose>,
+    pub held_pose_off: Option<mod_api::HeldPose>,
+    /// The AUTHORITATIVE rig-bone offsets for this body, as rig IDS, which a
+    /// client running the same rule overrides per bone locally.
+    pub bone_poses: Vec<crate::player::BonePose>,
     /// A transform correction when the ticks moved this player (see
     /// [`SelfTransform`]); `None` on ordinary updates.
     pub transform: Option<SelfTransform>,
@@ -316,8 +343,8 @@ pub enum WorldEventMsg {
         category: u8,
         pos: Vec3,
     },
-    /// A mod-emitted one-shot (`EmitSound`); `pos = None` is non-spatial.
-    ModSound {
+    /// A one-shot sound (`EmitSound`); `pos = None` is non-spatial.
+    Sound {
         sound_id: u8,
         pos: Option<Vec3>,
     },
@@ -328,13 +355,13 @@ pub enum WorldEventMsg {
         pos: Vec3,
         intensity: f32,
     },
-    /// A mod-owned spatial sound command (`SoundPlayAt`/`OnMob`/`Stop`).
-    ModSpatialSound(ModSpatialSoundMsg),
+    /// A handle-addressed spatial sound command (`SoundPlayAt`/`OnMob`/`Stop`).
+    SpatialSound(SpatialSoundMsg),
 }
 
-/// [`crate::events::tick::ModSpatialSoundCommand`] on the wire (sound ids as wire ids).
+/// [`crate::events::tick::SpatialSoundCommand`] on the wire (sound ids as wire ids).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ModSpatialSoundMsg {
+pub enum SpatialSoundMsg {
     PlayAt {
         handle: u64,
         sound_id: u8,
@@ -393,7 +420,7 @@ pub struct SelfEvents {
     pub sleep_ended: bool,
     pub respawned: bool,
     pub open_screen: Option<OpenScreen>,
-    pub close_mod_gui: bool,
+    pub close_document_gui: bool,
     /// The door toggle's NEW open state — only the TOGGLER gets this one-shot
     /// (the world-anchored `DoorToggled` event reaches every observer).
     pub toggled_door: Option<bool>,
@@ -405,6 +432,23 @@ pub struct SelfEvents {
     /// use-click ladder's second pass) — the jab plays on the left hand.
     /// Meaningless while `used_unpredicted` is false.
     pub used_unpredicted_off: bool,
+    /// Cues addressed at this recipient's CLIENT instance (`EmitEventTo`), in
+    /// emission order. The one NON-lossy lane here: the booleans above are
+    /// latched states the newest overwrites, these are a queue.
+    ///
+    /// No registry ids ride here — the key is a namespaced string and the
+    /// payload is bytes only its owner reads — so this lane needs no remap.
+    pub client_events: Vec<ClientEventMsg>,
+}
+
+/// One addressed event on the wire (`EmitEventTo`): a namespaced key and its
+/// opaque payload. The key carries its owner's prefix (the host guards that at
+/// the call), which is also how the receiving client routes it — so no
+/// separate owner id rides along.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientEventMsg {
+    pub key: String,
+    pub data: Vec<u8>,
 }
 
 impl SelfEvents {
@@ -420,10 +464,11 @@ impl SelfEvents {
         if other.open_screen.is_some() {
             self.open_screen = other.open_screen;
         }
-        self.close_mod_gui |= other.close_mod_gui;
+        self.close_document_gui |= other.close_document_gui;
         self.toggled_door = other.toggled_door.or(self.toggled_door);
         self.used_unpredicted |= other.used_unpredicted;
         self.used_unpredicted_off |= other.used_unpredicted_off;
+        self.client_events.extend(other.client_events);
     }
 }
 

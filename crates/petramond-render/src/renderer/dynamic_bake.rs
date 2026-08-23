@@ -612,11 +612,17 @@ impl Renderer {
                 model,
                 env,
                 inst,
+                inst.bones.of(&self.actor.bone_offsets),
                 held,
                 off,
                 &mut scratch_verts,
                 &mut scratch_indices,
             );
+            // claimed poses ride their own per-hand attach frames (the off
+            // frame mirrors the pose, lefthand-style), upstream of the
+            // per-render-kind transforms below so every kind wears them.
+            let hand = crate::player_model::posed_hand(hand, &held.pose.third_person, false);
+            let off_hand = crate::player_model::posed_hand(off_hand, &off.pose.third_person, true);
             let base = body_verts.len() as u32;
             body_verts.extend_from_slice(&scratch_verts);
             body_indices.extend(scratch_indices.iter().map(|&i| i + base));

@@ -173,6 +173,10 @@ impl App {
                 placed: hand.placed,
                 swung: hand.swung,
                 eating: frame.held_item.eating,
+                pose_target: frame
+                    .held_item
+                    .pose_target
+                    .map(crate::game::render_held_pose),
                 bob: frame.held_item.bob,
                 dt,
             });
@@ -187,6 +191,10 @@ impl App {
                 placed: hand.placed_off,
                 swung: false,
                 eating: frame.off_hand_item.eating,
+                pose_target: frame
+                    .off_hand_item
+                    .pose_target
+                    .map(crate::game::render_held_pose),
                 bob: frame.off_hand_item.bob,
                 dt,
             });
@@ -213,7 +221,7 @@ impl App {
             );
             for command in self.spatial_sound_commands.drain(..) {
                 match command {
-                    crate::game::ModSpatialSoundCommand::PlayAt {
+                    crate::game::SpatialSoundCommand::PlayAt {
                         handle,
                         sound,
                         pos,
@@ -228,7 +236,7 @@ impl App {
                         listener,
                         pos,
                     ),
-                    crate::game::ModSpatialSoundCommand::PlayOnMob {
+                    crate::game::SpatialSoundCommand::PlayOnMob {
                         handle,
                         sound,
                         mob_id,
@@ -252,7 +260,7 @@ impl App {
                             initial,
                         );
                     }
-                    crate::game::ModSpatialSoundCommand::Stop { handle } => {
+                    crate::game::SpatialSoundCommand::Stop { handle } => {
                         self.audio.stop_spatial(handle);
                     }
                 }
@@ -301,8 +309,8 @@ impl App {
                 .update_spatial(listener, &self.spatial_mob_positions);
             // Client-mod looping ambience (rain beds, wind): sync desired
             // gains, ease audio-side.
-            game.client_mod_sound_loops(&mut self.mod_loop_scratch);
-            self.audio.update_mod_loops(&self.mod_loop_scratch, dt);
+            game.client_mod_sound_loops(&mut self.loop_gain_scratch);
+            self.audio.update_gain_loops(&self.loop_gain_scratch, dt);
             renderer.set_mood(game.client_mod_mood(), dt);
             // The hurt vignette envelope doubles as the body's red hurt flash.
             self.scene.bake(&presentation, shake.flash);

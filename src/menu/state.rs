@@ -100,7 +100,7 @@ impl ContainerMenu {
     /// anchor (multi-cell model blocks share ONE container at the group base,
     /// whichever cell was clicked) and a container sized to the document is
     /// created — or grown, never shrunk — at it.
-    pub fn open_mod_gui(
+    pub fn open_document_gui(
         &mut self,
         world: &mut World,
         kind: GuiKind,
@@ -116,8 +116,8 @@ impl ContainerMenu {
 
     /// End the mod GUI session (the state map is cleared by `Game`'s close
     /// funnel, which knows the world).
-    pub fn close_mod_gui(&mut self) {
-        self.close_kind(|kind| kind.is_mod());
+    pub fn close_document_gui(&mut self) {
+        self.close_kind(|kind| kind.is_registered());
     }
 
     /// Close player crafting: return its real output to inventory (overflow is

@@ -206,7 +206,9 @@ impl IdRemap {
                 // World events: block ids map to air (a cell-shaped fact);
                 // unknown mob/sound events are DROPPED (skip semantics).
                 // `self_events` carries no registry ids (the hand one-shots
-                // are client-predicted, never echoed).
+                // are client-predicted, never echoed; a mod cue's key is the
+                // emitting pack's own namespaced string and its payload is
+                // bytes only that pack reads).
                 t.events.retain_mut(|ev| self.remap_world_event(ev));
                 if let Some(sync) = &mut t.menu_sync {
                     self.remap_menu_sync(sync);
@@ -249,7 +251,7 @@ impl IdRemap {
     /// Rewrite one world event's ids in place; `false` = drop the event (an
     /// unknown mob/sound — a disabled server-side mod's residue).
     fn remap_world_event(&self, ev: &mut super::protocol::WorldEventMsg) -> bool {
-        use super::protocol::{ModSpatialSoundMsg, WorldEventMsg};
+        use super::protocol::{SpatialSoundMsg, WorldEventMsg};
         match ev {
             WorldEventMsg::BlockBroken { block_id, .. }
             | WorldEventMsg::BlockPlaced { block_id, .. } => {
@@ -267,7 +269,7 @@ impl IdRemap {
                 }
                 None => false,
             },
-            WorldEventMsg::ModSound { sound_id, .. } => match self.sound(*sound_id) {
+            WorldEventMsg::Sound { sound_id, .. } => match self.sound(*sound_id) {
                 Some(id) => {
                     *sound_id = id;
                     true
@@ -281,9 +283,9 @@ impl IdRemap {
                 }
                 None => false,
             },
-            WorldEventMsg::ModSpatialSound(cmd) => match cmd {
-                ModSpatialSoundMsg::PlayAt { sound_id, .. }
-                | ModSpatialSoundMsg::PlayOnMob { sound_id, .. } => match self.sound(*sound_id) {
+            WorldEventMsg::SpatialSound(cmd) => match cmd {
+                SpatialSoundMsg::PlayAt { sound_id, .. }
+                | SpatialSoundMsg::PlayOnMob { sound_id, .. } => match self.sound(*sound_id) {
                     Some(id) => {
                         *sound_id = id;
                         true
@@ -293,7 +295,7 @@ impl IdRemap {
                 // Stops carry no registry id and must reach the client so a
                 // dropped-play's handle stays inert (stop of an unknown
                 // handle is already a no-op).
-                ModSpatialSoundMsg::Stop { .. } => true,
+                SpatialSoundMsg::Stop { .. } => true,
             },
         }
     }
@@ -694,6 +696,9 @@ mod tests {
             mining: None,
             eating: false,
             eating_off_hand: false,
+            held_pose_main: None,
+            held_pose_off: None,
+            bone_poses: Vec::new(),
             hurt_recent: false,
             snap: false,
             mount: None,
@@ -705,6 +710,7 @@ mod tests {
             self_state: Some(SelfState {
                 health: 20,
                 mode: 0,
+                denied_actions: Default::default(),
                 effects: vec![(0, 100), (unknown_effect, 50)],
                 inventory_revision: 1,
                 inventory: Some(vec![
@@ -721,6 +727,10 @@ mod tests {
                 ]),
                 eating: None,
                 eating_off_hand: false,
+                move_scale: 1.0,
+                held_pose_main: None,
+                held_pose_off: None,
+                bone_poses: Vec::new(),
                 sleeping: None,
                 sleep_bed: None,
                 transform: None,

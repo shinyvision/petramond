@@ -1,0 +1,23 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "combat:shield",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 4
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "combat:shield",
+        "count": 1
+      }
+    }
+  ]
+}

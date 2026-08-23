@@ -1,0 +1,10 @@
+{
+  "models": [
+    {
+      "key": "combat:shield",
+      "model_file": "models/shield.bbmodel",
+      "cells": [1, 1, 1],
+      "orientation": "left_to_right"
+    }
+  ]
+}

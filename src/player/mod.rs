@@ -43,6 +43,7 @@ mod interaction;
 )]
 pub struct PlayerId(pub u8);
 
+mod body_claims;
 pub mod model;
 mod movement;
 mod progression;
@@ -51,6 +52,9 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+pub use body_claims::{
+    BodyClaims, BonePose, DeniedActions, ENGINE_CLAIMANT, MOVE_SCALE_DEFAULT, MOVE_SCALE_MAX,
+};
 pub use interaction::block_within_reach;
 pub use interaction::ray_vs_aabb;
 pub use interaction::{RaycastHit, REACH};
@@ -62,6 +66,7 @@ pub use movement::WATER_PROBE_Y;
 /// and gravity (correction deadband scaling).
 pub use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL, WALK};
 pub use progression::Progression;
+pub use state::UseGesture;
 pub use state::{
     BedSpawn, Input, Player, PlayerInputSnapshot, PlayerMode, PlayerRosterSnapshot, DT_MAX, EYE,
     HALF_W, HEIGHT, MAX_HEALTH, PITCH_LIMIT,

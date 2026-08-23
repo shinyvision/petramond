@@ -67,6 +67,7 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         K::BlockPlacePre
         | K::BlockBreakPre
         | K::InteractAttempt
+        | K::UseUnclaimed
         | K::ItemUsePre
         | K::MobDamagePre
         | K::PlayerDamagePre => return None,
@@ -212,6 +213,15 @@ pub(super) fn item_stack_in(data: &api::ItemStackData) -> Option<petramond_world
 
 pub(super) fn interact_attempt(ev: &InteractAttempt) -> api::EventPayload {
     api::EventPayload::InteractAttempt {
+        block: ev.block.map(ivec),
+        face: ev.face.map(ivec),
+        mob: ev.mob,
+        player: api::PlayerId(ev.player.0),
+    }
+}
+
+pub(super) fn use_unclaimed(ev: &InteractAttempt) -> api::EventPayload {
+    api::EventPayload::UseUnclaimed {
         block: ev.block.map(ivec),
         face: ev.face.map(ivec),
         mob: ev.mob,

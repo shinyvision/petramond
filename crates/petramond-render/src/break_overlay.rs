@@ -461,7 +461,7 @@ mod tests {
                 * Mat4::from_quat(euler_quat(cube.rotation))
                 * Mat4::from_translation(-cube.origin);
             for (slot, face) in Face::ALL.into_iter().enumerate() {
-                let Some([u0, v0, u1, v1]) = cube.faces[slot] else {
+                let Some(face_uv) = cube.faces[slot] else {
                     continue;
                 };
                 let lc = face.quad_box(cube.from.to_array(), cube.to.to_array());
@@ -472,7 +472,7 @@ mod tests {
                     &mut zbuf,
                     W,
                     sc,
-                    [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
+                    face_uv.corner_uv(),
                     atlas,
                     aw,
                     ah,

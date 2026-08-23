@@ -652,6 +652,7 @@ pub(super) fn new_renderer_inner(
             block_item_draw: player_block_item_draw,
             player_view: None,
             remote_players: Vec::new(),
+            bone_offsets: Vec::new(),
             player_visible: Vec::new(),
             body_verts: Vec::new(),
             body_indices: Vec::new(),

@@ -117,9 +117,9 @@ pub struct ServerGame {
     /// for GUI click dispatch and diagnostics.
     pub mods: ModHost,
     pub spawn_counter: u32,
-    /// Next deterministic session handle for mod-owned spatial sounds. The app
+    /// Next deterministic session handle for spatial sounds. The app
     /// owns playback; this counter only gives mods stable identities for stop calls.
-    pub next_mod_sound_handle: u64,
+    pub next_spatial_sound_handle: u64,
     /// Wall-clock seconds banked toward the next fixed simulation tick.
     pub tick_accumulator: f32,
     /// Singleplayer pause (`ClientToServer::Pause`): while set, `pump` skips

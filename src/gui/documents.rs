@@ -139,7 +139,7 @@ pub fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
 /// storage, capped), plus the standard `player_inv`/`hotbar` grids with the
 /// engine counts. Any other role is refused — a mod document can never name
 /// an engine block-entity's roles. `Err` skips the document loudly at load.
-fn mod_contract_for(doc: &Document) -> Result<SlotContract, String> {
+fn document_contract_for(doc: &Document) -> Result<SlotContract, String> {
     // The engine grids' sizes come from the inventory layout itself.
     const MAIN_GRID: usize =
         petramond_world::inventory::TOTAL_SLOTS - petramond_world::inventory::HOTBAR_LEN;
@@ -238,7 +238,7 @@ fn resolve_slot_filter(
 }
 
 /// The engine's slot expectations per kind. Mod kinds derive their contract
-/// from their own document via `mod_contract_for`; shell kinds carry no
+/// from their own document via `document_contract_for`; shell kinds carry no
 /// role slots.
 pub fn contract_for(kind: GuiKind) -> SlotContract {
     match kind {
@@ -272,7 +272,7 @@ pub fn contract_for(kind: GuiKind) -> SlotContract {
 /// The mod-kind ownership rule, shared with the baked path: a namespaced
 /// document kind must ship from the pack owning the namespace.
 fn kind_permitted(kind: GuiKind, pack_id: Option<&str>) -> Result<(), String> {
-    if !kind.is_mod() {
+    if !kind.is_registered() {
         return Ok(());
     }
     let key = super::kind_key(kind).unwrap_or("?");
@@ -538,8 +538,8 @@ fn load() -> Registry {
             eprintln!("gui: ignoring {} — {e}", found.json.display());
             continue;
         }
-        let contract = if kind.is_mod() {
-            match mod_contract_for(&doc) {
+        let contract = if kind.is_registered() {
+            match document_contract_for(&doc) {
                 Ok(contract) => contract,
                 Err(e) => {
                     eprintln!("gui: ignoring {} — {e}", found.json.display());

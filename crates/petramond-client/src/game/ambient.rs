@@ -89,19 +89,19 @@ impl AmbientDrives {
     /// effective range; the ABI documents the cap) and wind. A target at or
     /// below the liveness floor retires the volume after its ease-out (a
     /// sub-floor target would otherwise park a zombie drive forever).
-    pub fn set(&mut self, mod_id: &str, bundle: u8, intensity: f32, wind: [f32; 2]) {
+    pub fn set(&mut self, owner: &str, bundle: u8, intensity: f32, wind: [f32; 2]) {
         let target = if intensity <= DEAD_INTENSITY {
             0.0
         } else {
             intensity.clamp(0.0, 1.0)
         };
-        if let Some(drive) = self.drives.get_mut(mod_id).and_then(|m| m.get_mut(&bundle)) {
+        if let Some(drive) = self.drives.get_mut(owner).and_then(|m| m.get_mut(&bundle)) {
             drive.target = target;
             drive.wind = wind;
             return;
         }
         if target > 0.0 {
-            self.drives.entry(mod_id.to_owned()).or_default().insert(
+            self.drives.entry(owner.to_owned()).or_default().insert(
                 bundle,
                 Drive {
                     target,
@@ -136,24 +136,24 @@ impl AmbientDrives {
         self.last_time = Some(time);
         self.clock += dt as f64;
         let ease = 1.0 - (-dt / EASE_SECONDS).exp();
-        for per_mod in self.drives.values_mut() {
-            per_mod.retain(|_, d| {
+        for per_owner in self.drives.values_mut() {
+            per_owner.retain(|_, d| {
                 d.intensity += (d.target - d.intensity) * ease;
                 d.target > 0.0 || d.intensity > DEAD_INTENSITY
             });
         }
-        self.drives.retain(|_, per_mod| !per_mod.is_empty());
+        self.drives.retain(|_, per_owner| !per_owner.is_empty());
         if self.drives.is_empty() || density <= 0.0 {
             return;
         }
         let clock = self.clock as f32;
         self.ceilings.clear();
-        for (mod_id, per_mod) in &mut self.drives {
+        for (owner, per_owner) in &mut self.drives {
             // FNV-1a over the mod id: two mods on one bundle interleave.
-            let mod_salt = mod_id.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
+            let owner_salt = owner.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
                 (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01B3)
             });
-            for (bundle, drive) in per_mod.iter_mut() {
+            for (bundle, drive) in per_owner.iter_mut() {
                 if drive.intensity <= DEAD_INTENSITY {
                     continue;
                 }
@@ -176,7 +176,7 @@ impl AmbientDrives {
                 derive_volume(
                     spec,
                     splash,
-                    mod_salt ^ (*bundle as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                    owner_salt ^ (*bundle as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15),
                     drive.intensity * density.clamp(0.0, 1.0),
                     drive.wind,
                     drive.adv,

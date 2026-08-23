@@ -1,8 +1,9 @@
-//! Persistent mod data on the world: the world KV
-//! map (rides `level.dat`, restored at session open) and the per-cell section
-//! KV accessors (each cell's entries ride its section's save record).
+//! The world's persistent key/value data: the world KV map (rides `level.dat`,
+//! restored at session open) and the per-cell section KV accessors (each
+//! cell's entries ride its section's save record). The day/night clock and the
+//! operator list live here alongside anything a pack stores.
 //!
-//! Namespacing (`mod_id:key`, own-prefix writes) is enforced at the HostCall
+//! Namespacing (`namespace:key`, own-prefix writes) is enforced at the HostCall
 //! boundary (`modding::host`), not here — engine/test code may use any key.
 //! The GUI-session state map is NOT here: it lives on the player session
 //! (`ConnectedPlayer::gui_state` + the `crate::gui` state helpers).
@@ -16,27 +17,27 @@ impl WorldData {
     /// The whole world KV map, for the save encoder (deterministic iteration —
     /// it is a BTreeMap on purpose).
     #[inline]
-    pub fn mod_kv(&self) -> &BTreeMap<String, Vec<u8>> {
-        &self.mods.mod_kv
+    pub fn world_kv(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.content.world_kv
     }
 
     #[inline]
-    pub fn mod_kv_get(&self, key: &str) -> Option<&[u8]> {
-        self.mods.mod_kv.get(key).map(Vec::as_slice)
+    pub fn world_kv_get(&self, key: &str) -> Option<&[u8]> {
+        self.content.world_kv.get(key).map(Vec::as_slice)
     }
 
-    pub fn mod_kv_set(&mut self, key: String, value: Vec<u8>) {
-        self.mods.mod_kv.insert(key, value);
+    pub fn world_kv_set(&mut self, key: String, value: Vec<u8>) {
+        self.content.world_kv.insert(key, value);
     }
 
     /// Remove `key`; returns whether it was present.
-    pub fn mod_kv_remove(&mut self, key: &str) -> bool {
-        self.mods.mod_kv.remove(key).is_some()
+    pub fn world_kv_remove(&mut self, key: &str) -> bool {
+        self.content.world_kv.remove(key).is_some()
     }
 
     /// Replace the whole map — the session-open restore from `level.dat`.
-    pub fn set_mod_kv(&mut self, map: BTreeMap<String, Vec<u8>>) {
-        self.mods.mod_kv = map;
+    pub fn set_world_kv(&mut self, map: BTreeMap<String, Vec<u8>>) {
+        self.content.world_kv = map;
     }
 
     /// A cell's KV entry at world coords, or `None` when absent or the owning

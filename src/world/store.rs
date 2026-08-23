@@ -21,7 +21,7 @@ use petramond_world::world::tick_state::TickState;
 
 // Moved halves, re-exported under their historical `store::` paths.
 pub use petramond_world::world::column_heightmaps::SkyCoverChange;
-pub use petramond_world::world::data::{ModSimState, WorldData, WorldRole};
+pub use petramond_world::world::data::{ContentState, WorldData, WorldRole};
 pub use petramond_world::world::load_targets::{
     LoadAnchor, LoadTarget, RENDER_DIST, VERTICAL_LOAD_RADIUS,
 };
@@ -179,13 +179,13 @@ pub(in crate::world) struct ReplicationLog {
     /// drained by [`take_block_deltas`](Self::take_block_deltas).
     pub(in crate::world) block_delta_log:
         FxHashMap<petramond_math::math::IVec3, crate::net::protocol::BlockDelta>,
-    /// This tick's coalesced per-cell mod KV changes, latest value per
+    /// This tick's coalesced per-cell KV changes, latest value per
     /// `(pos, key)` — drained by
     /// [`take_cell_kv_deltas`](Self::take_cell_kv_deltas). Captured behind
     /// the same [`replication_capture`](Self::replication_capture) gate.
     pub(in crate::world) cell_kv_delta_log:
         FxHashMap<(petramond_math::math::IVec3, String), Option<Vec<u8>>>,
-    /// Cells whose mod DRAW SET changed this tick — drained by
+    /// Cells whose DRAW SET changed this tick — drained by
     /// [`take_block_draw_deltas`](Self::take_block_draw_deltas) as whole sets
     /// (they are a handful of prims, and half a set draws nothing sensible).
     pub(in crate::world) block_draw_log: FxHashSet<petramond_math::math::IVec3>,
@@ -223,14 +223,13 @@ pub(in crate::world) struct SessionState {
     pub(in crate::world) day_cycle_ticks: u64,
 }
 
-/// Mod-owned SIM state: the block hooks packs registered, their key/value
-/// store, the disabled set, and the custom-shape bake cache their WASM fills.
-/// Deterministic tick state — lives on [`WorldData`].
-pub(in crate::world) struct ModStreamState {
-    /// Per-cell mod DRAW SETS: retained presentation geometry a mod submits
-    /// for a placed block, redrawn every frame with no re-mesh. Sparse (empty
-    /// in almost every world) and per-cell, exactly like `custom_bake` — mod
-    /// state, so it lives with the rest of it rather than on the root.
+/// Retained DRAW state and the stream-event queue over it: per-block draw sets
+/// submitted for placed cells, indexed by section. Presentation and
+/// orchestration, so it lives on `World`, not [`WorldData`].
+pub(in crate::world) struct DrawStreamState {
+    /// Per-cell DRAW SETS: retained presentation geometry submitted for a
+    /// placed block, redrawn every frame with no re-mesh. Sparse (empty in
+    /// almost every world) and per-cell, exactly like `custom_bake`.
     pub(in crate::world) block_draws:
         FxHashMap<petramond_math::math::IVec3, crate::world::draw::PlacedDraw>,
     /// The same sets indexed by the SECTION their anchor sits in, with a union
@@ -267,7 +266,7 @@ pub struct World {
     /// SERVER-side session roster + world rules.
     pub(in crate::world) session: SessionState,
     /// Mod-owned streaming/draw state (retained draws, stream events).
-    pub(in crate::world) mod_stream: ModStreamState,
+    pub(in crate::world) draw_stream: DrawStreamState,
     /// This tick's shared navigation reachability-probe budget (see
     /// `mob::nav::REACH_PROBE_TICK_BUDGET`), refilled by `tick_mobs`. It lives
     /// here because both askers — the mob brains and the mod ABI's
@@ -352,9 +351,9 @@ impl World {
                 light_edited_since_persist: FxHashSet::default(),
                 sim: TickState::new(seed),
                 environment: WorldEnvironment::default(),
-                mods: ModSimState {
-                    mod_block_hooks: Vec::new(),
-                    mod_kv: BTreeMap::new(),
+                content: ContentState {
+                    block_hooks: Vec::new(),
+                    world_kv: BTreeMap::new(),
                     disabled_mods: std::collections::BTreeSet::new(),
                     custom_bake: FxHashMap::default(),
                     custom_bake_dirty: FxHashSet::default(),
@@ -412,7 +411,7 @@ impl World {
                 keep_inventory: false,
                 day_cycle_ticks: crate::server::daynight::DEFAULT_CYCLE_TICKS,
             },
-            mod_stream: ModStreamState {
+            draw_stream: DrawStreamState {
                 block_draws: FxHashMap::default(),
                 block_draw_sections: FxHashMap::default(),
                 stream_events: Vec::new(),

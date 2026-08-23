@@ -96,12 +96,12 @@ pub struct Audio {
     spatial: HashMap<u64, ActiveSpatialSound>,
     /// Gain-controlled continuous loops driven by client mods
     /// (`ClientLoopSet`): resolved sound → its infinite sink + eased gain.
-    mod_loops: HashMap<Sound, ActiveModLoop>,
+    gain_loops: HashMap<Sound, ActiveGainLoop>,
 }
 
 /// One continuous mod-driven loop: an infinite repeating sink whose volume
 /// eases toward the mod's requested gain (ambience must never pop).
-struct ActiveModLoop {
+struct ActiveGainLoop {
     sink: rodio::Player,
     gain: f32,
     target: f32,
@@ -164,7 +164,7 @@ impl Audio {
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),
-            mod_loops: HashMap::new(),
+            gain_loops: HashMap::new(),
         }
     }
 
@@ -218,7 +218,7 @@ impl Audio {
     /// absent from `desired` (or at gain 0) eases to silence and stops. The
     /// clip repeats seamlessly (variant 0 — loop assets are single-variant);
     /// mixer sliders apply live like every other sound.
-    pub fn update_mod_loops(&mut self, desired: &[(Sound, f32)], dt: f32) {
+    pub fn update_gain_loops(&mut self, desired: &[(Sound, f32)], dt: f32) {
         /// Seconds for a gain change to close ~63% of its gap.
         const LOOP_EASE_SECONDS: f32 = 1.0;
         /// Below this eased gain a silenced loop stops and is dropped.
@@ -228,7 +228,7 @@ impl Audio {
         };
         for &(sound, gain) in desired {
             let gain = gain.clamp(0.0, 4.0);
-            if let Some(active) = self.mod_loops.get_mut(&sound) {
+            if let Some(active) = self.gain_loops.get_mut(&sound) {
                 active.target = gain;
                 continue;
             }
@@ -248,9 +248,9 @@ impl Audio {
                 SamplesBuffer::new(buf.channels, buf.sample_rate, buf.samples.clone())
                     .repeat_infinite(),
             );
-            self.mod_loops.insert(
+            self.gain_loops.insert(
                 sound,
-                ActiveModLoop {
+                ActiveGainLoop {
                     sink: loop_sink,
                     gain: 0.0,
                     target: gain,
@@ -258,7 +258,7 @@ impl Audio {
             );
         }
         // Any active loop no longer desired eases to silence.
-        for (sound, active) in self.mod_loops.iter_mut() {
+        for (sound, active) in self.gain_loops.iter_mut() {
             if !desired.iter().any(|(s, _)| s == sound) {
                 active.target = 0.0;
             }
@@ -267,7 +267,7 @@ impl Audio {
         let master = self.master_gain;
         let sound_gain = self.sound_gain;
         let music_gain = self.music_gain;
-        self.mod_loops.retain(|sound, active| {
+        self.gain_loops.retain(|sound, active| {
             active.gain += (active.target - active.gain) * ease;
             if active.target <= 0.0 && active.gain < LOOP_DEAD_GAIN {
                 active.sink.stop();
@@ -287,8 +287,8 @@ impl Audio {
 
     /// Stop every mod loop immediately (session teardown — no ease; the
     /// world the loops belonged to is gone).
-    pub fn stop_mod_loops(&mut self) {
-        for (_, active) in self.mod_loops.drain() {
+    pub fn stop_gain_loops(&mut self) {
+        for (_, active) in self.gain_loops.drain() {
             active.sink.stop();
         }
     }
@@ -386,7 +386,7 @@ impl Audio {
         );
     }
 
-    /// Stop a mod-owned spatial sound. Unknown handles are intentionally inert.
+    /// Stop a spatial sound. Unknown handles are intentionally inert.
     pub fn stop_spatial(&mut self, handle: u64) {
         if let Some(active) = self.spatial.remove(&handle) {
             active.sink.stop();
@@ -562,7 +562,7 @@ mod tests {
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),
-            mod_loops: HashMap::new(),
+            gain_loops: HashMap::new(),
         }
     }
 

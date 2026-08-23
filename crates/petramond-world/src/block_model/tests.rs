@@ -99,7 +99,7 @@ fn flat_model_cubes_emit_one_biased_surface_face() {
         to: Vec3::new(1.0, 0.5, 1.0),
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
     let support = ModelCube {
@@ -108,7 +108,7 @@ fn flat_model_cubes_emit_one_biased_surface_face() {
         to: Vec3::new(1.0, 0.5, 1.0),
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
     let all = [cube, support];
@@ -129,7 +129,7 @@ fn flat_model_cubes_bias_away_from_backing_surface() {
         to: Vec3::new(1.0, 1.0, 0.5),
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
     let backing = ModelCube {
@@ -138,7 +138,7 @@ fn flat_model_cubes_bias_away_from_backing_surface() {
         to: Vec3::new(1.0, 1.0, 0.75),
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
     let all = [poster, backing];
@@ -157,7 +157,7 @@ fn unsupported_flat_model_cubes_fall_back_to_authored_positive_face() {
         to: Vec3::new(1.0, 0.5, 1.0),
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
     let all = [cube.clone()];
@@ -181,7 +181,7 @@ fn thick_model_cubes_emit_all_faces_without_bias() {
         to: Vec3::ONE,
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
 
@@ -267,7 +267,7 @@ fn collision_hidden_parts_keep_visuals_but_remove_collision() {
         to: Vec3::new(16.0, 16.0, 16.0),
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
     let water = ModelCube {
@@ -276,7 +276,7 @@ fn collision_hidden_parts_keep_visuals_but_remove_collision() {
         to: Vec3::new(14.0, 14.0, 14.0),
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
-        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        faces: [Some(crate::bbmodel::FaceUv::new([0.0, 0.0, 1.0, 1.0])); 6],
         cull: [None; 6],
     };
     let mut model = BlockModel {
@@ -488,23 +488,8 @@ const GOLDEN_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB
 /// update GOLDEN_VERSION + GOLDEN_HEX together.
 #[test]
 fn compiled_block_model_layout_change_requires_a_format_version_bump() {
-    const GOLDEN_VERSION: u32 = 10;
-    const GOLDEN_HEX: &str = concat!(
-        "01000000000000000400000000000000626f6479000000000000000000000000",
-        "0000804100008040000080410000000000000000000000000000000000000000",
-        "0000000000000100000000000000000000803f0000803f000000000000000000",
-        "0400000000000000ff0000ff0100000001000000010000000000000000000000",
-        "0000000000000000000080410000804000008041000000000000000000000000",
-        "0000804100008040000080410000000000007041000000000000000000000000",
-        "000000000000803f0000803f0000803f00000000000000000000000000000000",
-        "0000000000000000000000f0410000344200000000000000000000803f000000",
-        "009a99193f9a99193f9a99193f00000000000000000000000000000000000000",
-        "0000000000000000000000000000000000000000000000000000000000000080",
-        "3f0000803f0000803f0000000000000000000000000000000000000000000000",
-        "00000000000000000000000000000000000000000000000000000000803f0000",
-        "803f0000803f0000000000000000000000000000000000000000000000000000",
-        "00000000004100000000",
-    );
+    const GOLDEN_VERSION: u32 = 11;
+    const GOLDEN_HEX: &str = "01000000000000000400000000000000626f647900000000000000000000000000008041000080400000804100000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000000000000000400000000000000ff0000ff010000000100000001000000000000000000000000000000000000000000804100008040000080410000000000000000000000000000804100008040000080410000000000007041000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000f0410000344200000000000000000000803f000000009a99193f9a99193f9a99193f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000004100000000";
 
     const SRC: &str = r##"{
         "resolution": { "width": 16, "height": 16 },

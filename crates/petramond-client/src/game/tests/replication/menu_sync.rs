@@ -423,7 +423,7 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     game.set_mods_for_test(petramond::modding::ModHost::test_unit_guest_host("modtest"));
     let kind =
         petramond_world::gui_state::intern_kind("modtest:panel").expect("mod kind registers");
-    game.server.open_mod_gui_screen_for(0, kind, None);
+    game.server.open_registered_gui_screen_for(0, kind, None);
 
     let up = pump_one_tick(&mut game);
     let MenuTargetWire::Container { gui_state, .. } = up.menu_sync.expect("the open ships").target
@@ -475,7 +475,8 @@ fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
     let kind = petramond_world::gui_state::intern_kind("kitchen:oven").expect("mod kind registers");
     let pos = petramond_math::math::IVec3::new(4, 64, 4);
 
-    game.server.open_mod_gui_screen_for(remote, kind, Some(pos));
+    game.server
+        .open_registered_gui_screen_for(remote, kind, Some(pos));
     petramond_world::gui_state::gui_state_set(
         &mut game.server.sessions[0].gui_state,
         "kitchen:cook01".into(),

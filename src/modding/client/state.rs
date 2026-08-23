@@ -1,7 +1,7 @@
 //! Host-side state a client instance publishes: images, UI state, retained
 //! canvas scenes, overlay/key registrations, and queued shell commands.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -88,6 +88,36 @@ pub(in crate::modding) struct ClientStoreData {
     /// This mod's post-process mood `[darken, desaturate]` (each `0..=0.5`).
     /// Mods combine by max; eased app-side before it reaches the grade pass.
     pub mood: [f32; 2],
+    /// This mod's PREDICTED body claims for the local player — today the
+    /// per-hand held poses . The same `BodyClaims` the
+    /// server resolves, so a mod that runs its rule on both sides cannot
+    /// have the two answers disagree by construction; the client's answer
+    /// simply arrives a round trip earlier.
+    pub body: crate::player::BodyClaims,
+    /// Whether this mod has ever posed each hand (`[main, off]`), latched on
+    /// the first NON-empty write.
+    ///
+    /// A mod that poses a hand owns it locally from then on, because the
+    /// moment it RELEASES that pose has to present immediately — falling back
+    /// to the replicated answer there would hold the stale pose for a whole
+    /// round trip, which is the latency prediction exists to remove. Latching
+    /// on a non-empty write (rather than on any write) is what keeps a mod
+    /// that publishes "nothing" every frame from claiming hands it never
+    /// touches, so another pack's server-side pose still lands there.
+    pub poses_hands: [bool; 2],
+    /// Which rig BONES this mod has ever offset, latched like
+    /// [`poses_hands`](Self::poses_hands) and for the same reason: a mod that
+    /// bends an arm owns it locally, so straightening it again presents on
+    /// this frame rather than a round trip later.
+    ///
+    /// Per BONE rather than per body, because bone offsets COMPOSE: one pack
+    /// predicting a shoulder must leave another pack's replicated head tilt
+    /// exactly where it was.
+    pub poses_bones: BTreeSet<u16>,
+    /// Whether this mod holds the LOCAL player's current use gesture — the
+    /// predicted twin of the session's owner, latched by `HoldUse` and cleared
+    /// when the button comes up.
+    pub holds_use: bool,
     pub commands: Vec<ClientCommand>,
     pub(super) next_image_revision: u64,
 }
@@ -104,6 +134,10 @@ impl ClientStoreData {
             ambient_sets: BTreeMap::new(),
             sound_loops: BTreeMap::new(),
             mood: [0.0, 0.0],
+            body: Default::default(),
+            poses_hands: [false; 2],
+            poses_bones: BTreeSet::new(),
+            holds_use: false,
             commands: Vec::new(),
             next_image_revision: 1,
         }

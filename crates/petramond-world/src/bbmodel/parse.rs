@@ -42,7 +42,10 @@ pub(super) fn walk_outliner(
 
 /// Parse one element's `faces` map into the `Face::ALL`-ordered UV array, each
 /// face's UVs normalized into its referenced texture's band of the sheet.
-pub(super) fn parse_faces(faces: Option<&Value>, sheet: &TextureSheet) -> [Option<[f32; 4]>; 6] {
+pub(super) fn parse_faces(
+    faces: Option<&Value>,
+    sheet: &TextureSheet,
+) -> [Option<super::FaceUv>; 6] {
     // Blockbench face name -> our `Face::ALL` slot (PosX, NegX, PosY, NegY, PosZ, NegZ).
     const NAMES: [(&str, usize); 6] = [
         ("east", 0),  // +X
@@ -72,7 +75,18 @@ pub(super) fn parse_faces(faces: Option<&Value>, sheet: &TextureSheet) -> [Optio
                         // render.
                         let (u0, v0) = r.remap(v[0], v[1]);
                         let (u1, v1) = r.remap(v[2], v[3]);
-                        out[slot] = Some([u0, v0, u1, v1]);
+                        // Blockbench's per-face `rotation` is degrees clockwise
+                        // on the face; a quarter turn swaps the u/v axes, so it
+                        // cannot be folded into the rect and rides along.
+                        let rot = face
+                            .get("rotation")
+                            .and_then(num)
+                            .map(|d| (d / 90.0).rem_euclid(4.0).round() as u8)
+                            .unwrap_or(0);
+                        out[slot] = Some(super::FaceUv {
+                            uv: [u0, v0, u1, v1],
+                            rot,
+                        });
                     }
                 }
             }

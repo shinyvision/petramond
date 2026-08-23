@@ -23,8 +23,12 @@ impl Game {
     /// The acting player's snapshot for a client-mod PREDICTION dispatch —
     /// the same `PlayerSnapshot` vocabulary a server handler queries, built
     /// from the client's predicted local player + replicated self view.
-    fn client_actor_snapshot(&self, sneak: bool) -> mod_api::PlayerSnapshot {
+    pub(super) fn client_actor_snapshot(&self, sneak: bool) -> mod_api::PlayerSnapshot {
         mod_api::PlayerSnapshot {
+            // A client has exactly one addressable body, and naming it is
+            // what lets a mod use the SAME player-addressed calls its server
+            // half does.
+            id: Some(mod_api::PlayerId(self.self_id.0)),
             pos: self.player.pos.to_array(),
             vel: self.player.vel.to_array(),
             yaw: self.player.yaw,
@@ -41,6 +45,16 @@ impl Game {
                 .predicted_held()
                 .map(|st| mod_api::ItemId(st.item.id())),
             held_count: self.predicted_held().map_or(0, |st| st.count),
+            // The literal off-hand slot (the client twin of the server's
+            // snapshot field), so a predictor sees both hands at once.
+            off_held: self
+                .self_view
+                .inventory
+                .off_hand()
+                .map(|st| mod_api::ItemId(st.item.id())),
+            use_held: self.intent_use_held,
+            // Patched per mod at the dispatch (each sees its own answer).
+            holds_use: false,
             pose_anchor: self.self_mount.and_then(|m| match m {
                 petramond::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos.to_array()),
                 petramond::net::protocol::PlayerMount::Mob { .. } => None,
@@ -67,26 +81,57 @@ impl Game {
     /// client mod predictors (registry position: before every engine
     /// consumer, exactly like the server walk). `true` = a mod consumer is
     /// predicted to claim this click: the jab plays and NO ghost may appear.
-    fn predict_interact_claim(&mut self, sneak: bool) -> bool {
-        let Some(look) = self.look else {
+    fn predict_interact_claim(&mut self, sneak: bool, use_mob: Option<u64>) -> bool {
+        // A targeted mob BLANKS the block look, so a mob click has no cell —
+        // and it is still an attempt. Bailing on the missing block is what
+        // hid every mob interact from prediction.
+        if self.look.is_none() && use_mob.is_none() {
             return false;
-        };
+        }
         let payload = mod_api::EventPayload::InteractAttempt {
-            block: Some(look.block.to_array()),
-            face: Some(look.normal.to_array()),
-            mob: None,
+            block: self.look.map(|l| l.block.to_array()),
+            face: self.look.map(|l| l.normal.to_array()),
+            mob: use_mob,
             player: mod_api::PlayerId(self.self_id.0),
         };
         self.predict_mod_claim(sneak, payload)
     }
 
+    /// Whether the ENGINE's shear consumer will take this mob click: shears in
+    /// the acting hand, a species that can be shorn, and a coat still on it.
+    ///
+    /// The replica carries all three (`kind_id` resolves the species row,
+    /// `shorn` is replicated), so this is the real rule rather than a guess —
+    /// which matters because the guess it replaces was "a mob click always
+    /// claims", and that is wrong for nearly every mob in the game.
+    fn predicts_shear(&self, use_mob: Option<u64>) -> bool {
+        use petramond_world::item::ItemUse;
+        let Some(id) = use_mob else {
+            return false;
+        };
+        if self.predicted_held().and_then(|st| st.item.item_use()) != Some(ItemUse::Shear) {
+            return false;
+        }
+        self.replicated_mobs.iter().any(|e| {
+            e.curr.id == id
+                && !e.curr.shorn
+                && petramond::mob::def(petramond::mob::Mob(e.curr.kind_id))
+                    .shear
+                    .is_some()
+        })
+    }
+
     /// The whole use-click prediction, in server-registry order: the mod
     /// interact predictors first (a predicted claim suppresses the ghost —
     /// a consumed attempt reaches no later consumer, placement included),
-    /// then the place ghost. Returns `(mod_claimed, place)` — the jab is
-    /// `mod_claimed || place != No || use_click_predicts_effect(..)`.
-    pub(super) fn predict_use_click(&mut self, sneak: bool) -> (bool, PlacePrediction) {
-        if self.predict_interact_claim(sneak) {
+    /// then the place ghost. Returns `(claimed, place)` — the jab is
+    /// `claimed || place != No || use_click_predicts_effect(..)`.
+    pub(super) fn predict_use_click(
+        &mut self,
+        sneak: bool,
+        use_mob: Option<u64>,
+    ) -> (bool, PlacePrediction) {
+        if self.predict_interact_claim(sneak, use_mob) {
             return (true, PlacePrediction::No);
         }
         (false, self.try_predict_place_ghost(sneak))
@@ -168,9 +213,13 @@ impl Game {
     ) -> bool {
         use petramond_world::item::ItemUse;
 
-        // A targeted mob: the mod consumers (boarding, trading) or the
-        // shears may claim it — a claim the replica cannot rule out.
-        if use_mob.is_some() {
+        // The ENGINE's shear, predicted exactly. This used to be a blanket
+        // "a mob click always claims", which made every mob in the game
+        // consume the press whether or not anything happened — and left
+        // nothing for the unclaimed fall-through to offer. Mod consumers
+        // (boarding, trading) are predicted upstream through the ordinary
+        // `interact_attempt` dispatch, which now carries the mob.
+        if self.predicts_shear(use_mob) {
             return true;
         }
         // The mod `interact_attempt` predictors were already dispatched

@@ -182,6 +182,9 @@ pub struct PlayerPresentation {
     pub sleeping: bool,
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
+    /// This body's bone offsets, as a range into
+    /// [`GamePresentation::bone_offsets`](GamePresentation::bone_offsets).
+    pub bones: crate::BoneRange,
 }
 
 /// One body whose FOOTSTEPS the client may sound this frame — the local player
@@ -246,6 +249,11 @@ pub struct GamePresentation<'a> {
     /// (`build_player_body` consumes `PlayerRenderInstance` directly, so no
     /// second translation buys anything).
     pub remote_players: &'a [RemotePlayerRender],
+    /// Every drawn body's bone offsets, back to back — the local third-person
+    /// body and each remote address their own slice by
+    /// [`BoneRange`](crate::BoneRange). One arena keeps every render row a
+    /// plain `Copy` value and puts no ceiling on how many bones a body wears.
+    pub bone_offsets: &'a [crate::BoneOffset],
     /// Every body that could sound a footstep this frame (see
     /// [`FootstepSource`]) — INCLUDING bodies standing still, so `App` can
     /// retire the cadence state of players who left without a second list.

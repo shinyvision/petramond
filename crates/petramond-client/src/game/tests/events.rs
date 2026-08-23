@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::common::game;
-use crate::game::{GameInput, ModSpatialSoundCommand};
+use crate::game::{GameInput, SpatialSoundCommand};
 use petramond::events::tick::TickEvents;
 use petramond::events::{Attach, DamageSource, PostEvent, PostEventKind, Stage};
 use petramond_math::math::Vec3;
@@ -102,7 +102,7 @@ fn spatial_sound_commands_reach_game_events_without_loss() {
             ctx.feed
                 .world
                 .spatial_sounds
-                .push(ModSpatialSoundCommand::PlayAt {
+                .push(SpatialSoundCommand::PlayAt {
                     handle: 7,
                     sound,
                     pos: Vec3::new(3.0, 81.0, -2.0),
@@ -113,8 +113,8 @@ fn spatial_sound_commands_reach_game_events_without_loss() {
 
     let events = game.tick(0.05, &GameInput::default());
     assert_eq!(
-        events.mod_spatial_sounds,
-        vec![ModSpatialSoundCommand::PlayAt {
+        events.spatial_sounds,
+        vec![SpatialSoundCommand::PlayAt {
             handle: 7,
             sound,
             pos: Vec3::new(3.0, 81.0, -2.0),

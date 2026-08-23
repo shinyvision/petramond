@@ -102,10 +102,10 @@ impl ServerGame {
             debug_assert!(false, "the local session never leaves");
             return None;
         }
-        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_mod_sound_handle);
+        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_spatial_sound_handle);
         self.close_open_menu_for(s, &mut events);
         self.tick_drops(s, &mut events);
-        self.next_mod_sound_handle = events.next_spatial_sound_handle();
+        self.next_spatial_sound_handle = events.next_spatial_sound_handle();
         self.pending_wire_events
             .extend(wire_world_events(&mut events.world));
         let obstacles = self.world.mobs().solid_obstacles();

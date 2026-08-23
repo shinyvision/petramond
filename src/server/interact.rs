@@ -19,6 +19,7 @@ use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::events::{InteractAttempt, Outcome, PostEvent};
 use crate::net::protocol::TargetRef;
+use crate::player::UseGesture;
 use crate::server::player::PendingUseClick;
 use petramond_math::math::IVec3;
 use petramond_world::block::{Block, BlockInteraction};
@@ -63,7 +64,7 @@ type Consumer = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut Ti
 const CONSUMERS: &[Consumer] = &[
     // Mods first: every attempt, sneak or not, block or mob — a handler's
     // Cancel is a claim (mod GUIs, boat boarding, the trough take-out).
-    ServerGame::consume_mod_attempt,
+    ServerGame::consume_registered_attempt,
     // Engine mob use: shears on a shearable mob.
     ServerGame::consume_shear,
     // The block's built-in capability (GUI open, door, bed) — passes on
@@ -89,6 +90,36 @@ impl ServerGame {
     /// press once and dispatch it down the consumer registry. An in-progress
     /// EAT (held button on a food item) advances every tick, click or not.
     pub fn tick_place(&mut self, s: usize, events: &mut TickEvents) {
+        // LETTING GO ends the gesture, whoever had it and however it ended.
+        // This runs before every other gate: a body that cannot use is still a
+        // body whose button came up, and a gesture that could not be released
+        // while barred would never be released at all.
+        if !self.sessions[s].using() {
+            self.sessions[s].player.use_gesture = UseGesture::Free;
+        }
+        // A barred body still HOLDS the button — that intent is what raised
+        // whatever is barring it — but the press buys nothing. Taking the
+        // click spends it rather than queueing it, so releasing the claim
+        // cannot fire a stored interact, and the repeat never starts. The eat
+        // still advances below, which is how it notices and aborts.
+        if self.sessions[s]
+            .player
+            .denied_actions()
+            .denies(mod_api::BodyAction::Use)
+        {
+            self.sessions[s].pending_use_click = None;
+            self.advance_eating(s, events);
+            return;
+        }
+        // A gesture with an owner is offered to nobody — not a fresh click, not
+        // the repeat. That is the whole difference between a one-shot and a
+        // continuous use: an eat runs to its end and a raised guard stays up,
+        // and neither is interrupted by the button it is still riding.
+        if !self.sessions[s].player.use_gesture.is_free() {
+            self.sessions[s].pending_use_click = None;
+            self.advance_eating(s, events);
+            return;
+        }
         // Taking the whole click clears its target, request, presentation
         // verdict, and held-selection guard together. A newer hotbar
         // selection invalidates the attempt before any consumer can observe
@@ -124,12 +155,11 @@ impl ServerGame {
     /// observers, the `used_unpredicted` echo for the initiator's own jab
     /// (there was no client click to animate it).
     fn tick_use_repeat(&mut self, s: usize, events: &mut TickEvents) {
+        // Whether this body may use AT ALL — spectator, corpse, open menu, a
+        // pack's claim — was asked once in `tick_place`, which is the only
+        // caller. What is left is what only a repeat cares about.
         let sess = &mut self.sessions[s];
-        if !sess.intent_use_held
-            || !sess.intent_gameplay
-            || sess.eating.is_some()
-            || sess.player.is_spectator()
-        {
+        if !sess.intent_use_held || sess.eating.is_some() {
             return;
         }
         sess.use_repeat_cooldown = sess.use_repeat_cooldown.saturating_sub(1);
@@ -218,6 +248,46 @@ impl ServerGame {
         // main-hand by definition).
         self.sessions[s].player.acting_hand = petramond_world::inventory::Hand::Main;
         events.player(s).click_off_hand = off_hand_acted;
+        // NOTHING took it. This is the fall-through a CONTINUOUS use lives on
+        // (`HoldUse`): a shield raises here and nowhere else, which is what
+        // stops it going up on the click that opened a door. Fired even with
+        // no target at all — a click at empty air is the ordinary way to raise
+        // one.
+        // ...and only on a REAL press. A continuous use starts from a deliberate
+        // right click, never from the server-paced repeat — the same rule the
+        // engine's own eat follows (`consume_eat` refuses on a repeat).
+        //
+        // It is also what keeps the two mirrors honest: the client predicts the
+        // PRESS and nothing else, so a gesture taken on a repeat would be one
+        // the client never saw. The body would slow and its hands go quiet
+        // while the shield stayed visually down — the authority guarding and
+        // the picture disagreeing, for as long as the button was held.
+        if !consumed && !meta.repeat {
+            let mut ev = attempt;
+            let claimed = {
+                let Self {
+                    world,
+                    sessions,
+                    bus,
+                    ..
+                } = self;
+                Self::with_sessions_view(sessions, s, |sess| {
+                    bus.use_unclaimed(
+                        world,
+                        &mut sess.player,
+                        &mut sess.gui_state,
+                        events,
+                        &mut ev,
+                    ) == Outcome::Cancel
+                })
+            };
+            // Deliberately NOT folded into `consumed`: the chain already
+            // passed, so nothing happened to the world and the hand has
+            // nothing to jab about. Taking the gesture is a claim on the
+            // BUTTON, not an interaction — whoever took it poses the body
+            // itself. `Cancel` here only ends the dispatch for later handlers.
+            let _ = claimed;
+        }
         // The attempt RESOLVED: announce it once, whoever took it. A claim
         // ends the pre dispatch, so `interact_attempt` handlers after the
         // claimant never saw it — this is where anything that only wants to
@@ -233,7 +303,7 @@ impl ServerGame {
             });
         }
         // A consumed click whose initiator stayed silent (its replica could
-        // not foresee the effect — a mod-claimed attempt like tilling or a
+        // not foresee the effect — a registered consumer's claim like tilling or a
         // right-click harvest) gets its hand jab echoed back; `jabbed`
         // guarantees this can never double an already-played one.
         if consumed && !jabbed {
@@ -300,7 +370,7 @@ impl ServerGame {
     /// `interact_attempt` handler; a handler's Cancel is a claim. Dispatched
     /// within the sessions view so handlers (and the host calls they make —
     /// `PlayerState`, `Players`) resolve the acting session.
-    fn consume_mod_attempt(
+    fn consume_registered_attempt(
         &mut self,
         s: usize,
         attempt: &InteractAttempt,
@@ -473,6 +543,10 @@ impl ServerGame {
         events: &mut TickEvents,
     ) -> Claim {
         if !meta.repeat && self.try_start_eating(s, events) {
+            // An eat is CONTINUOUS: it takes the gesture, so the repeat stops
+            // offering the button and the next food is not started behind it.
+            self.sessions[s].player.use_gesture =
+                UseGesture::Held(crate::player::ENGINE_CLAIMANT.into());
             Claim::Claimed
         } else {
             Claim::Pass
@@ -517,6 +591,10 @@ impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn queue_place_click_for_test(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
+        // A real client sends a use click only from gameplay focus, and the
+        // engine bars the hands of a body whose menu is open — so a click that
+        // did not say so would model a body that cannot act.
+        sess.intent_gameplay = true;
         // The hook models a client that ran its full place prediction (the
         // common case), so the echo strip applies like production.
         sess.pending_use_click = Some(PendingUseClick::capture(
@@ -536,6 +614,7 @@ impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn queue_mob_use_click_for_test(&mut self, s: usize, mob: u64) {
         let sess = &mut self.sessions[s];
+        sess.intent_gameplay = true;
         sess.pending_use_click = Some(PendingUseClick::capture(
             &sess.player,
             Some(mob),
@@ -628,6 +707,10 @@ mod tests {
                 }
             }
         }
+
+        // A use click is a GAMEPLAY click: the engine bars the hands of a body
+        // whose menu is open, and the client never sends one from a menu.
+        server.sessions[0].intent_gameplay = true;
 
         let boat = ItemType::by_key("vehicles:boat").expect("the vehicles pack item registered");
         server.sessions[0]

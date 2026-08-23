@@ -36,6 +36,7 @@ mod client_mods;
 mod client_presentation;
 #[cfg(test)]
 pub use petramond::menu as container;
+mod bone_ease;
 pub mod environment;
 mod frame;
 mod local_player;
@@ -71,8 +72,9 @@ use petramond_world::block_state::HeldBlockState;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 pub use environment::GameEnvironment;
+pub use frame::{render_bone_offsets, render_held_pose};
 pub use tick::{
-    GameEvents, GameInput, MobSoundEvent, ModSpatialSoundCommand, MovementInput, WorldEvent,
+    GameEvents, GameInput, MobSoundEvent, MovementInput, SpatialSoundCommand, WorldEvent,
 };
 
 /// Mining-dust emission interval, seconds.
@@ -237,6 +239,18 @@ pub struct Game {
     /// (`tick_player`) — reused verbatim by `build_player_update` so the wire
     /// intent can never drift from what the prediction simulated.
     predicted_input: petramond::player::Input,
+    /// The gameplay-gated use (interact) button intent this frame — the
+    /// client twin of the server's `sess.using()`; feeds the client actor
+    /// snapshot's `use_held` for mod predictors.
+    intent_use_held: bool,
+    /// The local body's eased bone offsets — the third-person twin of the
+    /// hand animator's held-pose easing, at the same rate. Holds the eased
+    /// value between frames; the presentation gather copies it into the
+    /// frame's arena.
+    local_bones: bone_ease::BoneEase,
+    /// Scratch for this frame's resolved bone-offset target, reused so
+    /// advancing the local body's easing allocates nothing.
+    local_bone_target: Vec<petramond_render::BoneOffset>,
     /// First-person walking sway — a presentation offset on the camera, and
     /// the signal the hand follows (lagged) so the two are not in lockstep.
     view_bob: view_bob::ViewBob,
@@ -820,7 +834,7 @@ impl Game {
         });
         // The full click composition (mod interact predictors first), so
         // tests exercise the same walk production clicks run.
-        self.predict_use_click(sneak).1
+        self.predict_use_click(sneak, None).1
     }
 
     /// Test injection: run the full local break prediction at `pos`.

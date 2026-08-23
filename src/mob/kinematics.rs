@@ -28,10 +28,14 @@ const SWIM_VACCEL: f32 = 14.0;
 /// player's thigh-height probe). The mob keeps swimming up until this point clears the
 /// water, so its body breaks the surface before gravity takes back over.
 const SWIM_PROBE_FRAC: f32 = 1.0 / 3.0;
-/// Firm upward boost (m/s) a swimming mob gets when steering toward a 1-block ledge it
-/// can climb onto — enough to crest the waterline and land on the block instead of
-/// hugging its base forever. Mirrors the player's `SWIM_CLIMB`.
+/// FLOOR for the upward boost (m/s) a swimming mob gets when steering toward a ledge
+/// it can climb onto. The boost itself is sized to the ledge (see
+/// [`swim_climb_speed`]) — this only keeps a low step feeling firm rather than
+/// limp.
 const SWIM_CLIMB: f32 = 4.5;
+/// How far ABOVE a ledge top the climb boost aims, so the feet land on the block
+/// instead of grazing its lip and sliding back.
+const SWIM_CLIMB_CLEARANCE: f32 = 0.1;
 /// Highest ledge top (metres above current feet) that the swim-climb boost treats as
 /// reachable. A ledge much above the current waterline is a wall until the mob swims up.
 const SWIM_CLIMB_MAX_LEDGE_DELTA: f32 = 1.25;
@@ -331,12 +335,11 @@ impl Instance {
                 // Climbing out: when steering toward a 1-block ledge it can get onto (and
                 // not already falling back), a firm boost crests the waterline and lands it
                 // on the block instead of hugging the shore forever — else the swim bob.
-                let climbing_out = self.vel.y >= 0.0
-                    && can_steer
-                    && wish.length_squared() > 1e-12
-                    && self.ledge_ahead(wish, d.size.half_width, support);
-                if climbing_out {
-                    self.vel.y = self.vel.y.max(SWIM_CLIMB);
+                let ledge = (self.vel.y >= 0.0 && can_steer && wish.length_squared() > 1e-12)
+                    .then(|| self.ledge_ahead(wish, d.size.half_width, support))
+                    .flatten();
+                if let Some(top) = ledge {
+                    self.vel.y = self.vel.y.max(swim_climb_speed(top - self.pos.y));
                 } else {
                     self.vel.y = approach(self.vel.y, SWIM_RISE, SWIM_VACCEL * dt);
                 }
@@ -444,10 +447,15 @@ impl Instance {
     /// collision) at the feet level (or one above) with open space directly above
     /// it — a single step, not a taller wall (so swimming into a cliff face won't
     /// lift the mob up it). Mirrors the player's climb-out probe.
-    fn ledge_ahead(&self, dir: Vec3, half_width: f32, support: &impl Fn(IVec3) -> bool) -> bool {
+    fn ledge_ahead(
+        &self,
+        dir: Vec3,
+        half_width: f32,
+        support: &impl Fn(IVec3) -> bool,
+    ) -> Option<f32> {
         let d = Vec3::new(dir.x, 0.0, dir.z);
         if d.length_squared() <= 1e-12 {
-            return false;
+            return None;
         }
         let d = d.normalize_or_zero();
         // A cell just beyond the body's footprint in the move direction.
@@ -458,11 +466,13 @@ impl Instance {
         // below the ledge top, giving runway to crest it).
         let step_at = |y: i32| {
             let top = (y + 1) as f32;
-            top <= self.pos.y + SWIM_CLIMB_MAX_LEDGE_DELTA
+            (top <= self.pos.y + SWIM_CLIMB_MAX_LEDGE_DELTA
                 && support(IVec3::new(fx, y, fz))
-                && !support(IVec3::new(fx, y + 1, fz))
+                && !support(IVec3::new(fx, y + 1, fz)))
+            .then_some(top)
         };
-        step_at(base) || step_at(base + 1)
+        // The LOWER step first: it is the one the body actually has to clear.
+        step_at(base).or_else(|| step_at(base + 1))
     }
 
     /// Whether the body rests on the ground this tick — the same fact the
@@ -505,6 +515,25 @@ fn surface_vertical_velocity(current: f32, feet_y: f32, surface: Option<f32>, dt
 /// Move `cur` toward `target` by at most `step` (linear, no wrapping).
 pub(super) fn approach(cur: f32, target: f32, step: f32) -> f32 {
     cur + (target - cur).clamp(-step, step)
+}
+
+/// The upward speed that just clears a ledge `rise` metres above the feet.
+///
+/// It has to be SOLVED, not picked: a floating body sits `height / 3` below the
+/// waterline (the swim probe — see [`SWIM_PROBE_FRAC`]), so how far a mob must rise to
+/// crest a shore is a function of how TALL it is. A fixed boost silently sorts mobs
+/// into those short enough to get out and those not: 4.5 m/s against this gravity buys
+/// 0.46 m, which cleared a rabbit (0.25) and a sheep (0.43) and stranded every
+/// 1.8-metre body (0.60) in any water it walked into.
+///
+/// The reachable ledge is already bounded by [`SWIM_CLIMB_MAX_LEDGE_DELTA`], so this
+/// stays in the range of an ordinary jump; [`SWIM_CLIMB`] floors it so a low step
+/// still reads as a firm push rather than a drift.
+fn swim_climb_speed(rise: f32) -> f32 {
+    let needed = (2.0 * -GRAVITY * (rise + SWIM_CLIMB_CLEARANCE))
+        .max(0.0)
+        .sqrt();
+    needed.max(SWIM_CLIMB)
 }
 
 pub(super) fn route_steering_supported(

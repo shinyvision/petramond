@@ -555,7 +555,7 @@ fn a_mob_bobs_up_and_down_through_the_water_surface_like_the_player() {
 fn a_swimming_mob_climbs_out_onto_an_adjacent_ledge() {
     // A shore the climb-boost can actually clear: water (cells y in 0..SURFACE) over a
     // bed at y<0, with land at x>=1 whose top is AT the waterline. The swim climb-boost
-    // (`SWIM_CLIMB`, fired by `ledge_ahead`) lifts the mob's feet just over the surface
+    // (sized by `swim_climb_speed`, fired by `ledge_ahead`) lifts the feet over the surface
     // so it steps out onto the land instead of hugging the shore forever. How high the
     // boost reaches depends on the (tunable) swim constants, so the land is kept at the
     // waterline and the checks derive from the owl's own size + this geometry — no swim
@@ -604,7 +604,8 @@ fn swim_climb_does_not_boost_toward_a_ledge_above_reach() {
     let water = |c: IVec3| c.x <= 0 && (0..SURFACE).contains(&c.y);
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, SURFACE as f32 - 0.7, 0.5), 0.0, 1);
     assert!(
-        !owl.ledge_ahead(Vec3::new(1.0, 0.0, 0.0), owl_def().size.half_width, &solid),
+        owl.ledge_ahead(Vec3::new(1.0, 0.0, 0.0), owl_def().size.half_width, &solid)
+            .is_none(),
         "ledge top is too far above the mob's current feet"
     );
     let y0 = owl.pos.y;

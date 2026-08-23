@@ -51,6 +51,20 @@ pub enum EventKind {
     ///
     /// [`HostCall::EmitEvent`]: crate::HostCall::EmitEvent
     ModEvent,
+    /// A use gesture NOTHING claimed — the fall-through, fired once after the
+    /// whole interact chain passed (including on a click at nothing at all).
+    ///
+    /// A real PRESS only: the held-button repeat never offers it, because a
+    /// continuous use is something the player asked for, and because a client
+    /// predicts the press and nothing else.
+    ///
+    /// This is where a CONTINUOUS use lives: call [`HostCall::HoldUse`] to take
+    /// the press and keep it until the button comes up. Cancel only ends the
+    /// dispatch for later handlers — by the time this fires the chain has
+    /// already passed, so nothing happened to the world and no hand jabs.
+    ///
+    /// [`HostCall::HoldUse`]: crate::HostCall::HoldUse
+    UseUnclaimed,
 }
 
 /// Why an entity is taking damage.
@@ -457,6 +471,19 @@ pub enum EventPayload {
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
+    /// A use gesture the whole interact chain passed on ([`EventKind::UseUnclaimed`]).
+    ///
+    /// The same context [`InteractAttempt`](Self::InteractAttempt) carries, and
+    /// every field may be absent: a click at empty air is exactly the case this
+    /// exists for. [`HostCall::HoldUse`] is what takes the press.
+    ///
+    /// [`HostCall::HoldUse`]: crate::HostCall::HoldUse
+    UseUnclaimed {
+        block: Option<[i32; 3]>,
+        face: Option<[i32; 3]>,
+        mob: Option<u64>,
+        player: PlayerId,
+    },
 }
 
 impl EventPayload {
@@ -465,6 +492,7 @@ impl EventPayload {
             EventPayload::BlockPlacePre { .. } => EventKind::BlockPlacePre,
             EventPayload::BlockBreakPre { .. } => EventKind::BlockBreakPre,
             EventPayload::InteractAttempt { .. } => EventKind::InteractAttempt,
+            EventPayload::UseUnclaimed { .. } => EventKind::UseUnclaimed,
             EventPayload::ItemUsePre { .. } => EventKind::ItemUsePre,
             EventPayload::MobDamagePre { .. } => EventKind::MobDamagePre,
             EventPayload::PlayerDamagePre { .. } => EventKind::PlayerDamagePre,

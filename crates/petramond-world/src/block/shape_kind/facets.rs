@@ -1,7 +1,7 @@
 //! The two shape facet traits — the composable seam a shape family implements
 //! so consumers dispatch through it instead of matching a closed enum.
 //!
-//! The split is by AUDIENCE (see the plan / WIKI/modding.md): [`ShapeSim`] is
+//! The split is by AUDIENCE: [`ShapeSim`] is
 //! authoritative and deterministic (collision, support, nav — the multiplayer
 //! tick reads it, on the server and re-evaluated against the client replica);
 //! [`ShapeRender`] is client presentation (selection outline, item form). Both

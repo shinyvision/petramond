@@ -59,7 +59,7 @@ pub struct App {
     scene: Scene,
     /// Spatial sound commands emitted by ticks since the last render. They are
     /// applied alongside the same mob presentation snapshot the renderer uses.
-    spatial_sound_commands: Vec<crate::game::ModSpatialSoundCommand>,
+    spatial_sound_commands: Vec<crate::game::SpatialSoundCommand>,
     spatial_mob_positions: Vec<(u64, petramond_math::math::Vec3)>,
     /// Gameplay-originated mob sound events waiting for the next presentation
     /// snapshot, where they can be pinned to interpolated mob positions.
@@ -77,7 +77,7 @@ pub struct App {
     /// due. Retired with the bodies themselves each frame.
     footstep_next_tick: HashMap<u64, u64>,
     /// Reused per-frame scratch for client-mod loop gains (rain/wind beds).
-    mod_loop_scratch: Vec<(petramond_world::sound_registry::Sound, f32)>,
+    loop_gain_scratch: Vec<(petramond_world::sound_registry::Sound, f32)>,
     next_mob_sound_handle: u64,
     /// Client-side sound engine. Drains the sim's per-tick [`petramond_audio::SoundEvent`]s
     /// each frame and plays them; never part of the deterministic simulation.
@@ -243,7 +243,7 @@ impl App {
             world_sound_cues: Vec::new(),
             mob_sound_state: HashMap::new(),
             footstep_next_tick: HashMap::new(),
-            mod_loop_scratch: Vec::new(),
+            loop_gain_scratch: Vec::new(),
             next_mob_sound_handle: MOB_SOUND_HANDLE_START,
             audio,
             last: now_seconds(),

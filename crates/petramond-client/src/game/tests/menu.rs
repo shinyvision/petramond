@@ -181,8 +181,11 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
         "modtest:stale".into(),
         GuiValue::I32(9),
     );
-    game.server
-        .open_mod_gui_screen_for(0, kind, Some(petramond_math::math::IVec3::new(1, 2, 3)));
+    game.server.open_registered_gui_screen_for(
+        0,
+        kind,
+        Some(petramond_math::math::IVec3::new(1, 2, 3)),
+    );
     assert!(
         game.server.sessions[0]
             .gui_state

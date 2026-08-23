@@ -83,6 +83,7 @@ pub(super) fn build_player_body(
     model: &Model,
     env: LightEnv,
     inst: &PlayerRenderInstance,
+    bones: &[crate::BoneOffset],
     held: &crate::HeldItemView,
     off: &crate::HeldItemView,
     verts: &mut Vec<ItemVertex>,
@@ -243,6 +244,40 @@ pub(super) fn build_player_body(
             model.apply_bone_rotation(&mut pose, shoulder, rot);
         }
     }
+    // Claimed bone offsets LAST, so they compose on top of every engine layer
+    // (walk, sneak, head-look, the swing and eat arm raises) rather than
+    // fighting one. `apply_bone_offset` carries each through the bone's
+    // descendants, so one shoulder offset raises the whole arm AND the item in
+    // its fist — the held-pose seam never has to know.
+    //
+    // The engine's own layers are NOT claims, unlike the speed scale and the
+    // barred actions, and the asymmetry is deliberate: a claim is replicated
+    // authority, while an animation is derived presentation every viewer
+    // computes for itself from a few replicated flags. Folding the walk cycle
+    // into claims would put a sampled pose per bone per body on the wire to
+    // buy nothing. That is exactly why `BonePoseMode::Replace` exists — a claim
+    // needs a way to overrule a layer it cannot take part in.
+    for offset in bones {
+        let translation = Vec3::from(offset.translation) / 16.0 / PLAYER_MODEL_SCALE;
+        if offset.hold {
+            // A STANCE: the bone is held at rest + this rotation, discarding
+            // the walk/sneak swing it would otherwise still be wearing
+            // underneath. Degrees, added like an animation channel would.
+            model.hold_bone(
+                &mut pose,
+                offset.bone,
+                Vec3::from(offset.rotation),
+                translation,
+            );
+        } else {
+            model.apply_bone_offset(
+                &mut pose,
+                offset.bone,
+                petramond_world::bbmodel::euler_quat(Vec3::from(offset.rotation)),
+                translation,
+            );
+        }
+    }
 
     // Authored front is −Z; engine yaw 0 faces +Z — hence the π.
     let global = Mat4::from_translation(inst.pos)
@@ -284,6 +319,36 @@ fn bake_cubes(
     (indices.len() as u32, hand, off_hand)
 }
 
+/// Compose a claimed held pose ([`HeldItemView::pose`]) onto a hand attach
+/// frame, once and upstream of the per-kind transforms, so EVERY held render
+/// kind (block cube, extruded sprite, bbmodel) wears it identically.
+///
+/// The pose is authored in Blockbench display units (1/16-block pixels) and
+/// `base_matrix` yields blocks, while the attach frames are in MODEL pixels;
+/// conjugating by the body scale converts the translation and leaves the
+/// rotation alone. The off-hand frame is the mirrored twin of the right, so
+/// conjugating there negates the x-translation and the y/z rotations —
+/// exactly [`DisplayTransform::left_hand`], reached without restating it.
+///
+/// [`DisplayTransform::left_hand`]: petramond_world::block_model::DisplayTransform::left_hand
+pub(super) fn posed_hand(
+    hand: Mat4,
+    pose: &petramond_world::block_model::DisplayTransform,
+    off_side: bool,
+) -> Mat4 {
+    if *pose == Default::default() {
+        return hand;
+    }
+    let to_px = Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE));
+    let to_blocks = Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
+    let local = to_px * pose.base_matrix() * to_blocks;
+    if off_side {
+        hand * mirror_local(local)
+    } else {
+        hand * local
+    }
+}
+
 /// World transform for the EXTRUDED sprite item (unit XY slab). Tool art runs
 /// diagonally (handle lower-left, head upper-right); rolling the art 55° in its
 /// plane stands the tool along the sprite's +Y, the yaw turns the slab edge-on
@@ -322,6 +387,18 @@ pub(super) fn held_block_transform(hand: Mat4) -> Mat4 {
 /// display unit is one world block, and the authored pose does the rest. A model
 /// that sits wrong in hand has an untuned `thirdperson_righthand` pose; tune it
 /// in Blockbench, not here.
+///
+/// The reorientation is `Rx(-90°)` and NOTHING ELSE. It carried an extra
+/// `Ry(180°)` until 2026-08-22, which turned every bbmodel item end-over-end in
+/// the fist relative to its own Blockbench preview — the game showing something
+/// the model does not say.
+///
+/// It was nearly invisible because the only bbmodel items were the buckets,
+/// which are four-fold symmetric about the axis it flipped; it surfaced the
+/// moment an item with a top and a bottom went in a hand. DO NOT "fix" a
+/// mis-oriented hold by turning the asset: that makes the `.bbmodel` lie, and
+/// every other consumer of the model inherits the lie. When the game and
+/// Blockbench disagree about a model, the GAME is wrong.
 pub(super) fn held_model_transform(
     hand: Mat4,
     kind: petramond_world::block_model::BlockModelKind,
@@ -330,7 +407,6 @@ pub(super) fn held_model_transform(
     hand * Mat4::from_translation(HAND_GRIP_PX)
         * Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE))
         * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
-        * Mat4::from_rotation_y(std::f32::consts::PI)
         * pose.base_matrix()
         * petramond_world::block_model::instance(kind).display_from_unit
 }
@@ -372,8 +448,8 @@ pub(super) fn held_block_transform_off(off_hand: Mat4) -> Mat4 {
 /// The bbmodel off-hand attach — the third-person twin of the first-person
 /// rule (`hand::held_model_off`, Blockbench's lefthand composition): the
 /// hand-layer FRAME mirrors by conjugation (`mirror_local` — for this frame
-/// that is just the grip's x negated: x-rotations and the 180° yaw are
-/// mirror-symmetric), the pose is the slot's values with `translation.x` /
+/// that is just the grip's x negated: an x-rotation is mirror-symmetric), the
+/// pose is the slot's values with `translation.x` /
 /// `rotation.y` / `rotation.z` negated ([`DisplayTransform::left_hand`],
 /// authored `thirdperson_lefthand` included), and the geometry + its
 /// `display_from_unit` rebase stay untouched — no reflection.
@@ -391,8 +467,7 @@ pub(super) fn held_model_transform_off(
         * mirror_local(
             Mat4::from_translation(HAND_GRIP_PX)
                 * Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE))
-                * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
-                * Mat4::from_rotation_y(std::f32::consts::PI),
+                * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2),
         )
         * pose.base_matrix()
         * petramond_world::block_model::instance(kind).display_from_unit
@@ -427,6 +502,7 @@ mod tests {
             hurt: 0.0,
             skylight: 63,
             blocklight: petramond_world::light::BlockLight6::DARK,
+            bones: Default::default(),
         }
     }
 
@@ -444,6 +520,7 @@ mod tests {
             player_model(),
             LightEnv::IDENTITY,
             inst,
+            &[],
             &swing_view(swing),
             &crate::HeldItemView::default(),
             &mut v,
@@ -459,6 +536,7 @@ mod tests {
             player_model(),
             LightEnv::IDENTITY,
             inst,
+            &[],
             &swing_view(swing),
             &crate::HeldItemView::default(),
             &mut v,
@@ -473,6 +551,7 @@ mod tests {
             player_model(),
             LightEnv::IDENTITY,
             inst,
+            &[],
             &crate::HeldItemView::default(),
             &swing_view(off_swing),
             &mut v,
@@ -659,6 +738,176 @@ mod tests {
         );
     }
 
+    /// A HELD arm ignores the walk cycle; a COMPOSED one rides it.
+    ///
+    /// This is the whole difference between a nudge and a STANCE, and the
+    /// failure is quiet: a guard raised with a composed offset still swings
+    /// with the stride, because the swing is underneath it. `walk` and `sneak`
+    /// both drive the shoulder AND the elbow, so this cannot be checked
+    /// against a standing body — the animation has to be running.
+    ///
+    /// Measured RELATIVE TO THE TORSO, because the gaits also bob the root and
+    /// a stance is not supposed to stop the body moving — only the arm.
+    ///
+    /// It also pins the part that surprises: holding a SHOULDER does not
+    /// freeze the arm. Descendants keep their own animation relative to the
+    /// held bone (which is what makes a held shoulder usable as a nudge
+    /// point), so a stance has to hold every joint it owns.
+    #[test]
+    fn a_held_arm_ignores_the_walk_cycle_and_a_composed_one_rides_it() {
+        let model = player_model();
+        let body = model.bone_named("body").expect("torso");
+        let shoulder = model.bone_named(HELD_SHOULDER_BONE).expect("main arm");
+        let elbow = model.bone_named(HELD_ELBOW_BONE).expect("main forearm");
+        let off_elbow = model.bone_named(OFF_ELBOW_BONE).expect("off forearm");
+        let rot = Vec3::new(59.0, 19.0, -20.0);
+
+        // The fist's pose in the TORSO's frame — what "the arm moved" means.
+        let fist = |gait: &str, phase: f32, hold_shoulder: bool, hold_elbow: bool, bone: usize| {
+            let anim = model.animation(gait).expect(gait);
+            let mut pose = model.pose_layers(&[(anim, phase, 1.0)]);
+            for (b, hold) in [(shoulder, hold_shoulder), (elbow, hold_elbow)] {
+                if hold {
+                    model.hold_bone(&mut pose, b, rot, Vec3::ZERO);
+                } else {
+                    model.apply_bone_offset(
+                        &mut pose,
+                        b,
+                        petramond_world::bbmodel::euler_quat(rot),
+                        Vec3::ZERO,
+                    );
+                }
+            }
+            pose[body].inverse() * pose[bone]
+        };
+        let moved = |a: Mat4, b: Mat4| {
+            a.to_cols_array()
+                .iter()
+                .zip(b.to_cols_array())
+                .map(|(x, y)| (x - y).abs())
+                .fold(0.0f32, f32::max)
+        };
+
+        for gait in ["walk", "sneak"] {
+            let rest = fist(gait, 0.0, true, true, elbow);
+            for phase in [0.2, 0.45, 0.7] {
+                assert!(
+                    moved(rest, fist(gait, phase, true, true, elbow)) < 1e-4,
+                    "a held arm must not move through the {gait} cycle"
+                );
+                // Non-vacuous: the OTHER arm swings at these very phases.
+                assert!(
+                    moved(
+                        fist(gait, 0.0, true, true, off_elbow),
+                        fist(gait, phase, true, true, off_elbow)
+                    ) > 1e-3,
+                    "the unheld arm must still swing, or this proves nothing"
+                );
+                assert!(
+                    moved(rest, fist(gait, phase, false, false, elbow)) > 1e-3,
+                    "a composed offset rides the {gait} instead of replacing it"
+                );
+                assert!(
+                    moved(rest, fist(gait, phase, true, false, elbow)) > 1e-3,
+                    "holding only the shoulder leaves the elbow animating"
+                );
+            }
+        }
+    }
+
+    /// The third-person bbmodel attach adds `Rx(-90°)` and NOTHING ELSE.
+    ///
+    /// It carried an extra `Ry(180°)` until 2026-08-22, which turned every
+    /// bbmodel item end-over-end in the fist relative to its own Blockbench
+    /// preview — the game contradicting the model file. It hid for as long as
+    /// it did because the only bbmodel items were the buckets, which are
+    /// four-fold symmetric about exactly the axis it flipped; it surfaced the
+    /// moment an item with a top and a bottom went in a hand.
+    ///
+    /// Pinned as DIRECTIONS rather than a matrix so it reads as the contract
+    /// it is: display "up" (+Y) points forward out of the fist, display
+    /// "forward" (+Z) points up, and neither the item's left nor its top is
+    /// mirrored. The bucket is the subject because its authored third-person
+    /// rotation is identity, so what is left IS the attach.
+    #[test]
+    fn the_third_person_attach_reorients_without_flipping_the_item() {
+        use petramond_world::item::{ItemRenderKind, ItemType};
+
+        let bucket = ItemType::by_name("petramond:wooden_bucket").expect("engine item");
+        let ItemRenderKind::Model(kind) = bucket.render_kind() else {
+            panic!("the bucket is a bbmodel item")
+        };
+        // In the ARM's own frame (the rest arm hangs unrotated, so its axes are
+        // the authored model's: +Y up, −Z the body's front).
+        let m = held_model_transform(Mat4::IDENTITY, kind);
+        let dir = |v: Vec3| m.transform_vector3(v).normalize();
+
+        let forward = dir(Vec3::Y);
+        assert!(
+            forward.z < -0.9,
+            "display up must point out of the fist along the body's front, got {forward:?}"
+        );
+        let up = dir(Vec3::Z);
+        assert!(
+            up.y > 0.9,
+            "display forward must point UP, not down — a down y is the old spurious yaw: {up:?}"
+        );
+        let right = dir(Vec3::X);
+        assert!(
+            right.x > 0.9,
+            "the item's own +X must not be mirrored in the fist, got {right:?}"
+        );
+    }
+
+    /// The load-bearing identity behind every off-hand pose in the engine:
+    /// CONJUGATING a display transform by the x-flip IS
+    /// `DisplayTransform::left_hand`.
+    ///
+    /// It is why neither view needs a per-hand rule for a claimed pose — the
+    /// off-hand paths already conjugate the frame the pose rides in. Off-hand
+    /// mirroring has been got wrong here before, and the failure is always
+    /// silent: the item hangs somewhere plausible and wrong. Pin the algebra so
+    /// a change of euler convention argues with a test, not with a playtest.
+    #[test]
+    fn conjugating_a_display_transform_is_exactly_the_left_hand_rule() {
+        use petramond_world::block_model::DisplayTransform;
+
+        for pose in [
+            DisplayTransform {
+                rotation: [0.0, 0.0, 0.0],
+                translation: [1.5, -3.0, -5.0],
+                ..Default::default()
+            },
+            DisplayTransform {
+                rotation: [-16.0, 40.0, -25.0],
+                translation: [0.0, 7.0, -2.0],
+                ..Default::default()
+            },
+        ] {
+            let conjugated = mirror_local(pose.base_matrix());
+            let authored = pose.left_hand().base_matrix();
+            let (a, b) = (conjugated.to_cols_array(), authored.to_cols_array());
+            for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+                assert!(
+                    (x - y).abs() < 1e-5,
+                    "element {i} of {pose:?}: conjugated {x} vs left_hand {y}"
+                );
+            }
+        }
+    }
+
+    /// A pose that changes nothing must leave the attach frame BIT-identical,
+    /// not merely close: every hand without a mod pose takes this path every
+    /// frame, and a matrix round trip there would move every held item in the
+    /// game by a rounding error.
+    #[test]
+    fn an_identity_pose_leaves_the_hand_frame_untouched() {
+        let inst = instance();
+        let frame = hand(&inst, 0.0);
+        assert_eq!(posed_hand(frame, &Default::default(), false), frame);
+        assert_eq!(posed_hand(frame, &Default::default(), true), frame);
+    }
+
     #[test]
     fn held_grip_is_on_the_visual_right_side() {
         let inst = instance();
@@ -841,6 +1090,7 @@ mod tests {
                 model,
                 LightEnv::IDENTITY,
                 &inst,
+                &[],
                 &held_view,
                 &off_view,
                 &mut bv,

@@ -14,7 +14,7 @@ use crate::player::PlayerId;
 use crate::world::World;
 
 use super::payload::{
-    BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre, MobDamagePre, ModAction,
+    BlockBreakPre, BlockPlacePre, DeferredAction, InteractAttempt, ItemUsePre, MobDamagePre,
     PlayerDamagePre, PostEvent, PostEventKind,
 };
 
@@ -278,9 +278,9 @@ pub struct PostQueue {
     /// Bit per [`PostEventKind`] with at least one registered handler.
     wanted: u32,
     /// Engine actions queued by mod HostCalls from inside a guest dispatch
-    /// (see [`ModAction`]); `Game` drains them at its per-tick action points.
+    /// (see [`DeferredAction`]); `Game` drains them at its per-tick action points.
     /// Never gated: a queued action always applies.
-    actions: Vec<ModAction>,
+    actions: Vec<DeferredAction>,
 }
 
 impl PostQueue {
@@ -294,7 +294,7 @@ impl PostQueue {
 
     /// Queue an engine action for `Game`'s next action drain point.
     #[inline]
-    pub fn push_action(&mut self, action: ModAction) {
+    pub fn push_action(&mut self, action: DeferredAction) {
         self.actions.push(action);
     }
 
@@ -302,7 +302,7 @@ impl PostQueue {
     /// being applied land in the fresh vector, for the NEXT drain point — no
     /// recursion.
     #[inline]
-    pub fn take_actions(&mut self) -> Vec<ModAction> {
+    pub fn take_actions(&mut self) -> Vec<DeferredAction> {
         std::mem::take(&mut self.actions)
     }
 
@@ -336,6 +336,7 @@ pub struct EventBus {
     pre_block_place: Vec<PreHandler<BlockPlacePre>>,
     pre_block_break: Vec<PreHandler<BlockBreakPre>>,
     pre_interact_attempt: Vec<PreHandler<InteractAttempt>>,
+    pre_use_unclaimed: Vec<PreHandler<InteractAttempt>>,
     pre_item_use: Vec<PreHandler<ItemUsePre>>,
     pre_mob_damage: Vec<PreHandler<MobDamagePre>>,
     pre_player_damage: Vec<PreHandler<PlayerDamagePre>>,
@@ -410,6 +411,12 @@ pre_events!(
         on_interact_attempt,
         interact_attempt,
         pre_interact_attempt,
+        InteractAttempt
+    ),
+    (
+        on_use_unclaimed,
+        use_unclaimed,
+        pre_use_unclaimed,
         InteractAttempt
     ),
     (on_item_use_pre, item_use_pre, pre_item_use, ItemUsePre),

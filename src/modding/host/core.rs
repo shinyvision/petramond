@@ -11,7 +11,7 @@ use mod_api::{HostCall, HostRet};
 
 use crate::modding::scope;
 
-use super::guards::{key_owned_by_namespace, public_write_key_guard, sim_call};
+use super::guards::{key_owned_by_namespace, public_write_key_guard, sim_call, sim_query};
 use super::{ModStoreData, Registration};
 
 /// Store-side core calls: logging, the tick counter, RNG streams, the
@@ -91,12 +91,46 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
             // Emitting under another mod's namespace would let a mod forge
             // events its owner is trusted for; the key is the only filter a
             // handler has. Same rule, same guard, as a KV write.
-            if let Some(e) = event_key_guard(&data.mod_id, &key, bytes.len()) {
+            if let Some(e) = event_key_guard("EmitEvent", &data.mod_id, &key, bytes.len()) {
                 return e;
             }
             sim_call(|ctx| {
                 ctx.queue
                     .emit(crate::events::PostEvent::ModEvent { key, data: bytes })
+            })
+        }
+        // The same event, addressed at one player's CLIENT. It rides the
+        // tick→presentation feed rather than the post queue: nothing on THIS
+        // side handles it, so queueing a dispatch here would only make every
+        // server handler filter it out again.
+        HostCall::EmitEventTo {
+            player,
+            key,
+            data: bytes,
+        } => {
+            if let Some(e) = event_key_guard("EmitEventTo", &data.mod_id, &key, bytes.len()) {
+                return e;
+            }
+            let mod_id = data.mod_id.clone();
+            sim_query(move |ctx| {
+                let player = crate::player::PlayerId(player.0);
+                // Reachability is the sessions view's answer, exactly as for
+                // every other explicitly-addressed player call — silence here
+                // would look identical to a delivered cue nobody handled.
+                if ctx.with_player(player, |_| ()).is_none() {
+                    log::warn!(
+                        "[mod {mod_id}] EmitEventTo '{key}': player {} is not reachable from this \
+                         dispatch (no such session, or this site publishes no sessions view)",
+                        player.0
+                    );
+                    return HostRet::Bool(false);
+                }
+                ctx.feed.client_events.push(crate::events::ClientEvent {
+                    player,
+                    key,
+                    data: bytes,
+                });
+                HostRet::Bool(true)
             })
         }
         other => HostRet::Error(format!(
@@ -107,16 +141,18 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
 
 /// A mod event's key must be the emitter's OWN namespace (an engine
 /// `petramond:` event is the engine's to fire), and its payload is bounded
-/// like a KV value — the queue holds these until the next drain.
-fn event_key_guard(mod_id: &str, key: &str, len: usize) -> Option<HostRet> {
+/// like a KV value — a queue holds these until they are delivered. Shared by
+/// both emitters, because "whose event is this" and "how big may it be" are
+/// properties of the EVENT, not of which queue it happens to ride.
+fn event_key_guard(call: &str, mod_id: &str, key: &str, len: usize) -> Option<HostRet> {
     if !key_owned_by_namespace(mod_id, key) {
         return Some(HostRet::Error(format!(
-            "EmitEvent key '{key}' is not in mod '{mod_id}'s namespace"
+            "{call} key '{key}' is not in mod '{mod_id}'s namespace"
         )));
     }
     (len > super::guards::EVENT_MAX_DATA_BYTES).then(|| {
         HostRet::Error(format!(
-            "EmitEvent payload is {len} bytes; the limit is {}",
+            "{call} payload is {len} bytes; the limit is {}",
             super::guards::EVENT_MAX_DATA_BYTES
         ))
     })

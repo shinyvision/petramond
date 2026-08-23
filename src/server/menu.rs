@@ -262,7 +262,7 @@ impl ServerGame {
                 let Some(pos) = pos else { return false };
                 self.open_chest_screen_for(s, pos, events);
             }
-            kind if kind.is_mod() => self.open_mod_gui_screen_for(s, kind, pos),
+            kind if kind.is_registered() => self.open_registered_gui_screen_for(s, kind, pos),
             _ => return false,
         }
         true
@@ -285,7 +285,7 @@ impl ServerGame {
         // ends, exactly like a content-only pack's. Station sessions are
         // engine-driven even under a pack kind — their buttons belong to the
         // client crafting browser, never to a mod dispatch.
-        if !kind.is_mod() || CraftingStation::of_kind(kind).is_some() {
+        if !kind.is_registered() || CraftingStation::of_kind(kind).is_some() {
             return;
         }
         let Some(kind_key) = petramond_world::gui_state::kind_key(kind) else {
@@ -371,18 +371,18 @@ impl ServerGame {
     /// `pos` (`None` for a programmatic `GuiOpen`). The session's state map
     /// starts empty — cleared here so no session can read a predecessor's
     /// values.
-    pub fn open_mod_gui_screen_for(
+    pub fn open_registered_gui_screen_for(
         &mut self,
         s: usize,
         kind: petramond_world::gui_state::GuiKind,
         pos: Option<IVec3>,
     ) {
-        if !self.any_mod_gui_open() {
-            self.clear_all_mod_gui_states();
+        if !self.any_registered_gui_open() {
+            self.clear_all_gui_states();
         }
         let sess = &mut self.sessions[s];
         petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
-        sess.menu.open_mod_gui(&mut self.world, kind, pos);
+        sess.menu.open_document_gui(&mut self.world, kind, pos);
         self.emit_container_opened(s);
     }
 
@@ -401,7 +401,7 @@ impl ServerGame {
         self.close_crafting_for(s);
         self.sessions[s].menu.close_furnace();
         self.sessions[s].menu.close_chest();
-        self.close_mod_gui_for(s);
+        self.close_registered_gui_for(s);
         self.clear_menu_open_requests(s);
     }
 
@@ -428,29 +428,32 @@ impl ServerGame {
     }
 
     /// End the mod GUI session and clear its state map.
-    fn close_mod_gui_for(&mut self, s: usize) {
+    fn close_registered_gui_for(&mut self, s: usize) {
         if self.sessions[s]
             .menu
             .target()
             .kind()
-            .is_some_and(|kind| kind.is_mod())
+            .is_some_and(|kind| kind.is_registered())
         {
             let sess = &mut self.sessions[s];
             petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
-            sess.menu.close_mod_gui();
-            if !self.any_mod_gui_open() {
-                self.clear_all_mod_gui_states();
+            sess.menu.close_document_gui();
+            if !self.any_registered_gui_open() {
+                self.clear_all_gui_states();
             }
         }
     }
 
-    fn any_mod_gui_open(&self) -> bool {
-        self.sessions
-            .iter()
-            .any(|sess| sess.menu.target().kind().is_some_and(|kind| kind.is_mod()))
+    fn any_registered_gui_open(&self) -> bool {
+        self.sessions.iter().any(|sess| {
+            sess.menu
+                .target()
+                .kind()
+                .is_some_and(|kind| kind.is_registered())
+        })
     }
 
-    fn clear_all_mod_gui_states(&mut self) {
+    fn clear_all_gui_states(&mut self) {
         for sess in &mut self.sessions {
             petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
             sess.last_sent_gui_state = None;

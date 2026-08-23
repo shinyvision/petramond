@@ -126,10 +126,10 @@ impl ServerGame {
     }
 
     /// Advance the in-progress eat one tick (runs every tick, click or not):
-    /// abort when the button lifted, the eating hand's item changed under the
-    /// eat, or — for a main-hand eat — the selection moved to ANY other slot;
-    /// consume the item and grant its effects when the hold reaches the row's
-    /// `eat_ticks`.
+    /// abort when the button lifted, the body was barred from using at all,
+    /// the eating hand's item changed under the eat, or — for a main-hand eat
+    /// — the selection moved to ANY other slot; consume the item and grant its
+    /// effects when the hold reaches the row's `eat_ticks`.
     pub fn advance_eating(&mut self, s: usize, events: &mut TickEvents) {
         let sess = &mut self.sessions[s];
         let Some(eat) = sess.eating else {
@@ -138,8 +138,25 @@ impl ServerGame {
         let held = sess.player.inventory.held_in(eat.hand).map(|st| st.item);
         let selection_moved = eat.hand == petramond_world::inventory::Hand::Main
             && sess.player.inventory.active_slot() != eat.slot;
-        if !sess.intent_use_held || selection_moved || held != Some(eat.item) {
+        // An eat is the use still happening, so barring the use ends it — a
+        // meal that finished while the hands were tied would be the one thing
+        // a denial let through.
+        let barred = sess
+            .player
+            .denied_actions()
+            .denies(mod_api::BodyAction::Use);
+        if !sess.intent_use_held || barred || selection_moved || held != Some(eat.item) {
             sess.eating = None;
+            // The eat gave the gesture up; the button, if still down, is free
+            // for the next interaction. (A release frees it in `tick_place`
+            // anyway — this is the swap-mid-eat case.)
+            if sess
+                .player
+                .use_gesture
+                .held_by(crate::player::ENGINE_CLAIMANT)
+            {
+                sess.player.use_gesture = crate::player::UseGesture::Free;
+            }
             return;
         }
         let Some(food) = eat.item.food() else {
@@ -152,8 +169,11 @@ impl ServerGame {
             return;
         }
         // Done: the food leaves the hand and its effects land, atomically on
-        // this tick.
+        // this tick. The gesture is SPENT, not freed — finishing is not the
+        // same as letting go, and without the distinction a held button eats
+        // the whole stack.
         sess.eating = None;
+        sess.player.use_gesture = crate::player::UseGesture::Spent;
         sess.player.inventory.decrement_held(eat.hand);
         for &(effect, ticks) in food.effects {
             sess.player.apply_effect(effect, ticks);

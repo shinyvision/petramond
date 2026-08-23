@@ -60,7 +60,7 @@ impl ServerGame {
             // accumulator stays pinned so resume doesn't fast-forward.
             self.tick_accumulator = 0.0;
             (
-                TickEvents::with_next_spatial_sound_handle(self.next_mod_sound_handle),
+                TickEvents::with_next_spatial_sound_handle(self.next_spatial_sound_handle),
                 0,
             )
         } else {

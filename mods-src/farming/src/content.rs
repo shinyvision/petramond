@@ -189,8 +189,8 @@ const CROPS: &[CropSpec] = &[
     },
     // Hemp is the one crop whose stock and produce are ENGINE items: the wild
     // stands and the rope they lash the first stone tools with are core
-    // progression (WIKI/progression.md), so cultivating it is this pack
-    // making a core material renewable, not owning it.
+    // progression, so cultivating it is this pack making a core material
+    // renewable, not owning it.
     CropSpec {
         name: "hemp",
         block_stem: "hemp",

@@ -412,6 +412,21 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
             ),
         };
     }
+    // A client instance's body writes are PREDICTIONS against its own mirror,
+    // not sim mutations, so they land on the client store beside the rest of
+    // the presentation surface. Every call listed as a client capability must
+    // be routed here too — one that is permitted but not routed falls through
+    // to the sim handler and dies on "no simulation context is active".
+    if data.side == RuntimeSide::Client
+        && matches!(
+            call,
+            HostCall::SetPlayerHeldPose { .. }
+                | HostCall::SetPlayerBonePose { .. }
+                | HostCall::HoldUse { .. }
+        )
+    {
+        return super::client::handle_client_call(data, call);
+    }
     match call {
         HostCall::Log { .. }
         | HostCall::RuntimeSide
@@ -423,6 +438,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::RegisterBlockBehavior { .. }
         | HostCall::RegisterAiNode { .. }
         | HostCall::EmitEvent { .. }
+        | HostCall::EmitEventTo { .. }
         | HostCall::ShaderSetParam { .. } => core::handle_core_call(data, call),
         HostCall::GetBlock { .. }
         | HostCall::GetBlocks { .. }
@@ -477,6 +493,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::RecipeUnlocked { .. }
         | HostCall::PlayerHeld { .. }
         | HostCall::SetPlayerHeldData { .. }
+        | HostCall::SetPlayerSpeedScale { .. }
+        | HostCall::SetPlayerHeldPose { .. }
+        | HostCall::SetPlayerBonePose { .. }
+        | HostCall::SetPlayerDeniedActions { .. }
+        | HostCall::HoldUse { .. }
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }

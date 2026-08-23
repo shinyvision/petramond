@@ -12,7 +12,7 @@ impl ServerGame {
         // Clamp long stalls and cap catch-up so fixed ticks never spiral.
         self.tick_accumulator += dt.clamp(0.0, 1.0);
         let mut ran = 0;
-        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_mod_sound_handle);
+        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_spatial_sound_handle);
         while self.tick_accumulator >= TICK_DT && ran < MAX_TICKS_PER_FRAME {
             self.game_tick_step(&mut events);
             self.tick_accumulator -= TICK_DT;
@@ -21,7 +21,7 @@ impl ServerGame {
         if self.tick_accumulator > TICK_DT {
             self.tick_accumulator = TICK_DT;
         }
-        self.next_mod_sound_handle = events.next_spatial_sound_handle();
+        self.next_spatial_sound_handle = events.next_spatial_sound_handle();
         (events, ran)
     }
 
@@ -41,7 +41,7 @@ impl ServerGame {
         // mod_init) apply here first.
         self.pump_stream_events();
         self.publish_dismounted();
-        self.apply_mod_actions(events);
+        self.apply_deferred_actions(events);
         self.drain_post_events(events);
 
         // Keep action intent before world/entity simulation so inputs resolve
@@ -51,6 +51,13 @@ impl ServerGame {
         // `PlayerInput` HostCall's read model) capture the same intents the
         // movement integration consumes.
         self.publish_player_inputs();
+        // The engine re-states its own body claims before anything reads them:
+        // movement takes the speed on the very next line, and the action stages
+        // below ask the barred set. Idempotent, so there is no edge to miss.
+        for s in 0..self.sessions.len() {
+            let gameplay = self.sessions[s].intent_gameplay;
+            self.sessions[s].player.refresh_engine_claims(gameplay);
+        }
         self.tick_movements();
 
         self.begin_stage(Stage::Mining, events);
@@ -104,7 +111,7 @@ impl ServerGame {
         // → random ticks) is its own sealed contract; the stage wraps it whole.
         self.begin_stage(Stage::WorldScheduled, events);
         self.world.game_tick(&self.recipes);
-        self.dispatch_mod_block_hooks(events);
+        self.dispatch_block_hooks(events);
         // Re-bake any custom-shape cells placed/edited this tick so their
         // collision is ready for the next tick's physics (see `ModHost::bake_custom_shapes`).
         self.bake_dirty_custom_shapes(events);
@@ -211,7 +218,7 @@ impl ServerGame {
                 events.world.emitter_bursts.push((bundle, fx.pos, 1.0));
             }
             if let Some(sound) = fx.sound {
-                events.world.sounds.push(crate::events::tick::ModSound {
+                events.world.sounds.push(crate::events::tick::SoundEvent {
                     sound,
                     pos: Some(fx.pos),
                 });
@@ -239,7 +246,7 @@ impl ServerGame {
                 }
             }
         }
-        self.tick_mod_hostile_mob_spawns(&anchors, events);
+        self.tick_hostile_mob_spawns(&anchors, events);
         // Discovery is measured once per tick, after every stage that can put
         // an item in a hand (pickup, craft, furnace/chest take, a mod's
         // `GiveItem`), and inside the last stage so `item_obtained` drains at
@@ -252,8 +259,8 @@ impl ServerGame {
     /// (see `block::behavior::wasm`) to their owning mods, inside the same
     /// stage window as the world tick that fired them. The queue is drained
     /// unconditionally so it never carries over between ticks.
-    fn dispatch_mod_block_hooks(&mut self, events: &mut TickEvents) {
-        let hooks = self.world.take_mod_block_hooks();
+    fn dispatch_block_hooks(&mut self, events: &mut TickEvents) {
+        let hooks = self.world.take_block_hooks();
         if hooks.is_empty() || !self.mods.has_block_behaviors() {
             return;
         }
@@ -309,7 +316,7 @@ impl ServerGame {
         });
     }
 
-    fn tick_mod_hostile_mob_spawns(
+    fn tick_hostile_mob_spawns(
         &mut self,
         anchors: &[crate::mob::PlayerAnchor],
         events: &mut TickEvents,
@@ -438,12 +445,12 @@ impl ServerGame {
     }
 
     /// Open a stage: run its `Before` systems, then apply any mod actions they
-    /// queued (`DamagePlayer`/`DamageMob`/... — see `apply_mod_actions`) BEFORE
+    /// queued (`DamagePlayer`/`DamageMob`/... — see `apply_deferred_actions`) BEFORE
     /// the engine step runs, so mob indices captured by those systems cannot be
     /// shifted by the step in between.
     fn begin_stage(&mut self, stage: Stage, events: &mut TickEvents) {
         self.run_systems(Attach::Before(stage), events);
-        self.apply_mod_actions(events);
+        self.apply_deferred_actions(events);
     }
 
     /// Close a stage: run its `After` systems, apply the mod actions they (or
@@ -454,7 +461,7 @@ impl ServerGame {
     /// next action point (next stage or next tick's start) — no recursion.
     fn end_stage(&mut self, stage: Stage, events: &mut TickEvents) {
         self.run_systems(Attach::After(stage), events);
-        self.apply_mod_actions(events);
+        self.apply_deferred_actions(events);
         self.drain_post_events(events);
     }
 

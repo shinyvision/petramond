@@ -62,9 +62,57 @@ pub struct Cube {
     pub rotation: Vec3,
     /// Owning bone index (animation transforms compose from here up to the root).
     pub bone: usize,
-    /// Normalized `[u0, v0_top, u1, v1_bottom]` per face, `Face::ALL` order
-    /// (PosX, NegX, PosY, NegY, PosZ, NegZ). Raw corner order (flips preserved).
-    pub faces: [Option<[f32; 4]>; 6],
+    /// Per-face texture mapping, `Face::ALL` order (PosX, NegX, PosY, NegY,
+    /// PosZ, NegZ). `None` = the face is omitted.
+    pub faces: [Option<FaceUv>; 6],
+}
+
+/// One face's texture mapping: the UV rect PLUS Blockbench's per-face
+/// `rotation`.
+///
+/// The rect alone cannot express a quarter turn — that swaps the u and v axes
+/// — so the rotation rides beside it and is applied in [`corner_uv`], the one
+/// place that knows the quad's corner order. Dropping it (which this parser
+/// did until 2026-08-22) mis-maps every authored face that has one, and the
+/// symptom is never "the texture is rotated": it is a seam that is not in the
+/// model, or a row of pixels that will not appear.
+///
+/// [`corner_uv`]: Self::corner_uv
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub struct FaceUv {
+    /// Normalized `[u0, v0_top, u1, v1_bottom]`. Raw corner order — a reversed
+    /// rect is an authored FLIP and reproduces on render.
+    pub uv: [f32; 4],
+    /// Quarter turns CLOCKWISE on the face (`0..4`): Blockbench's per-face
+    /// `rotation` divided by 90.
+    pub rot: u8,
+}
+
+impl FaceUv {
+    /// A face with no rotation — the plain rect.
+    pub const fn new(uv: [f32; 4]) -> Self {
+        Self { uv, rot: 0 }
+    }
+
+    /// The same face with a remapped rect (atlas placement, half-texel inset),
+    /// keeping the rotation.
+    pub const fn with_uv(self, uv: [f32; 4]) -> Self {
+        Self { uv, ..self }
+    }
+
+    /// The four corner UVs in the shared quad order — `p0` bottom-left, `p1`
+    /// bottom-right, `p2` top-right, `p3` top-left — with the rotation
+    /// applied.
+    ///
+    /// Rotating the TEXTURE clockwise moves what each corner shows one step
+    /// around the rect, which is why a quarter turn is a cyclic shift here and
+    /// not something the rect could have carried.
+    pub fn corner_uv(self) -> [[f32; 2]; 4] {
+        let [u0, v0, u1, v1] = self.uv;
+        let c = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+        let r = (self.rot % 4) as usize;
+        std::array::from_fn(|i| c[(i + r) % 4])
+    }
 }
 
 /// A bone: a named pivot in the hierarchy. Animation rotates geometry about
@@ -209,6 +257,66 @@ impl Model {
                 pose[i] = delta * pose[i];
             }
         }
+    }
+
+    /// [`apply_bone_rotation`](Self::apply_bone_rotation) with a TRANSLATION
+    /// as well: rotate about the bone's posed pivot, then shift, and carry the
+    /// whole delta through the descendants. `translation` is in the bone's
+    /// posed frame, in model units.
+    ///
+    /// The rotation-only form stays because that is what every engine layer
+    /// wants; this is the form a claimed offset takes, where "move the bone"
+    /// is as reasonable a request as "turn it".
+    pub fn apply_bone_offset(&self, pose: &mut [Mat4], bone: usize, rot: Quat, translation: Vec3) {
+        let Some(b) = self.bones.get(bone) else {
+            return;
+        };
+        let Some(posed) = pose.get(bone).copied() else {
+            return;
+        };
+        let pivot = posed.transform_point3(b.pivot);
+        let delta = Mat4::from_translation(pivot + translation)
+            * Mat4::from_quat(rot)
+            * Mat4::from_translation(-pivot);
+        for i in 0..pose.len().min(self.bones.len()) {
+            if i == bone || self.is_descendant_of(i, bone) {
+                pose[i] = delta * pose[i];
+            }
+        }
+    }
+
+    /// HOLD `bone` at its rest pose plus `rot`/`translation`, DISCARDING
+    /// whatever animation posed it, and carry the change through its
+    /// descendants (which keep their own animation relative to it).
+    ///
+    /// The replacing counterpart of
+    /// [`apply_bone_offset`](Self::apply_bone_offset), built the same way
+    /// [`apply_head_look`](Self::apply_head_look) is: a stance is not a nudge
+    /// on top of a stride, it is instead of one. `rot` is in DEGREES and adds
+    /// to the bone's authored rest rotation, exactly as an animation channel
+    /// would — so a pose read off a posed `.bbmodel` transfers verbatim.
+    pub fn hold_bone(&self, pose: &mut [Mat4], bone: usize, rot: Vec3, translation: Vec3) {
+        let Some(b) = self.bones.get(bone) else {
+            return;
+        };
+        let Some(old) = pose.get(bone).copied() else {
+            return;
+        };
+        let parent = b
+            .parent
+            .and_then(|p| pose.get(p).copied())
+            .unwrap_or(Mat4::IDENTITY);
+        let delta = (parent * bone_transform(b, rot, translation)) * old.inverse();
+        for i in 0..pose.len().min(self.bones.len()) {
+            if i == bone || self.is_descendant_of(i, bone) {
+                pose[i] = delta * pose[i];
+            }
+        }
+    }
+
+    /// The rig's bones, for a caller resolving a name to an index.
+    pub fn bones(&self) -> &[Bone] {
+        &self.bones
     }
 
     fn is_descendant_of(&self, mut child: usize, ancestor: usize) -> bool {
@@ -491,10 +599,12 @@ impl CompiledAsset for Model {
     /// this bump is LATE: v5-era caches mis-decoded under the grown layout, and
     /// an unlucky byte order decoded into valid-but-empty garbage instead of a
     /// clean failure — the invisible-hushjaw bug).
+    /// v7: faces carry Blockbench's per-face `rotation` ([`FaceUv`]), which the
+    /// parser had been silently dropping.
     /// Bump on any change to these fields or to [`Model::load`]'s output; the
     /// `compiled_model_layout_change_requires_a_format_version_bump` guard
     /// fails until you do.
-    const FORMAT_VERSION: u32 = 6;
+    const FORMAT_VERSION: u32 = 7;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 

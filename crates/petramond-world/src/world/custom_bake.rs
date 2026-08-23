@@ -23,7 +23,7 @@ impl WorldData {
     /// boxes).
     #[inline]
     pub fn custom_shape_boxes(&self, pos: IVec3) -> Option<&'static [Aabb]> {
-        self.mods.custom_bake.get(&pos).copied()
+        self.content.custom_bake.get(&pos).copied()
     }
 
     /// Record a custom shape cell's freshly-baked collision boxes. A full intern
@@ -32,10 +32,10 @@ impl WorldData {
     pub fn set_custom_bake(&mut self, pos: IVec3, boxes: &[Aabb]) {
         match intern_boxes(boxes) {
             Some(interned) => {
-                self.mods.custom_bake.insert(pos, interned);
+                self.content.custom_bake.insert(pos, interned);
             }
             None => {
-                self.mods.custom_bake.remove(&pos);
+                self.content.custom_bake.remove(&pos);
             }
         }
     }
@@ -44,7 +44,7 @@ impl WorldData {
     /// invalidation the block-write lanes call.
     #[inline]
     pub fn invalidate_custom_bake(&mut self, pos: IVec3) {
-        self.mods.custom_bake.remove(&pos);
+        self.content.custom_bake.remove(&pos);
     }
 
     /// The ENTIRE wire input a WASM shape bake receives for one cell: `block`'s
@@ -98,7 +98,7 @@ impl WorldData {
         // on the server and every client replica (C1): the dirty set is a hashed
         // set with no stable order, and a bake that touched instance state would
         // otherwise diverge between the two and desync.
-        let mut dirty: Vec<IVec3> = self.mods.custom_bake_dirty.drain().collect();
+        let mut dirty: Vec<IVec3> = self.content.custom_bake_dirty.drain().collect();
         dirty.sort_by_key(|p| (p.x, p.y, p.z));
         dirty
             .into_iter()
@@ -122,7 +122,7 @@ impl WorldData {
     /// tick's bake step checks before building a mod dispatch scope.
     #[inline]
     pub fn has_pending_custom_bakes(&self) -> bool {
-        !self.mods.custom_bake_dirty.is_empty()
+        !self.content.custom_bake_dirty.is_empty()
     }
 
     /// Mark every custom-shape cell in a freshly-LOADED section dirty for
@@ -151,7 +151,7 @@ impl WorldData {
             }
         }
         for p in dirty {
-            self.mods.custom_bake_dirty.insert(p);
+            self.content.custom_bake_dirty.insert(p);
         }
     }
 
@@ -183,7 +183,7 @@ impl WorldData {
                 && b.shape_kind_def().params.state_key() == Some(key)
             {
                 self.invalidate_custom_bake(p);
-                self.mods.custom_bake_dirty.insert(p);
+                self.content.custom_bake_dirty.insert(p);
             }
         }
     }
@@ -196,8 +196,8 @@ impl WorldData {
     pub fn evict_custom_bake_section(&mut self, pos: SectionPos) {
         let in_section =
             |p: &IVec3| WorldData::split_world(p.x, p.y, p.z).map(|s| s.0) == Some(pos);
-        self.mods.custom_bake.retain(|p, _| !in_section(p));
-        self.mods.custom_bake_dirty.retain(|p| !in_section(p));
+        self.content.custom_bake.retain(|p, _| !in_section(p));
+        self.content.custom_bake_dirty.retain(|p| !in_section(p));
     }
 
     /// Drop every cached custom bake in a column being evicted.
@@ -208,14 +208,14 @@ impl WorldData {
                 p.z.div_euclid(crate::chunk::SECTION_SIZE as i32),
             ) == pos
         };
-        self.mods.custom_bake.retain(|p, _| !in_column(p));
-        self.mods.custom_bake_dirty.retain(|p| !in_column(p));
+        self.content.custom_bake.retain(|p, _| !in_column(p));
+        self.content.custom_bake_dirty.retain(|p| !in_column(p));
     }
 
     /// Drop the whole custom-bake cache (the regen path clears every section).
     pub fn clear_custom_bake(&mut self) {
-        self.mods.custom_bake.clear();
-        self.mods.custom_bake_dirty.clear();
+        self.content.custom_bake.clear();
+        self.content.custom_bake_dirty.clear();
     }
 }
 

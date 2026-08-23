@@ -45,7 +45,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             // The sim never touches audio: the sound rides the NON-lossy tick
             // queue on `TickEvents` and the app layer plays it next frame.
-            ctx.feed.world.sounds.push(crate::events::tick::ModSound {
+            ctx.feed.world.sounds.push(crate::events::tick::SoundEvent {
                 sound,
                 pos: pos.map(Vec3::from),
             });
@@ -66,15 +66,16 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 return HostRet::U64(0);
             }
             let handle = ctx.feed.alloc_spatial_sound_handle();
-            ctx.feed.world.spatial_sounds.push(
-                crate::events::tick::ModSpatialSoundCommand::PlayAt {
+            ctx.feed
+                .world
+                .spatial_sounds
+                .push(crate::events::tick::SpatialSoundCommand::PlayAt {
                     handle,
                     sound,
                     pos: pos.into(),
                     volume,
                     pitch,
-                },
-            );
+                });
             HostRet::U64(handle)
         }),
         HostCall::SoundPlayOnMob {
@@ -106,7 +107,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             let handle = ctx.feed.alloc_spatial_sound_handle();
             ctx.feed.world.spatial_sounds.push(
-                crate::events::tick::ModSpatialSoundCommand::PlayOnMob {
+                crate::events::tick::SpatialSoundCommand::PlayOnMob {
                     handle,
                     sound,
                     mob_id,
@@ -122,7 +123,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 ctx.feed
                     .world
                     .spatial_sounds
-                    .push(crate::events::tick::ModSpatialSoundCommand::Stop { handle });
+                    .push(crate::events::tick::SpatialSoundCommand::Stop { handle });
             }
         }),
         other => HostRet::Error(format!(
@@ -196,7 +197,7 @@ mod tests {
 
     #[test]
     fn spatial_sound_calls_queue_resolved_commands_with_deterministic_handles() {
-        fn run_once() -> (u64, u64, Vec<crate::events::tick::ModSpatialSoundCommand>) {
+        fn run_once() -> (u64, u64, Vec<crate::events::tick::SpatialSoundCommand>) {
             let mut data = ModStoreData::new("alpha", 1);
             let mut world = World::new(1, 1);
             assert!(world
@@ -275,7 +276,7 @@ mod tests {
         assert_eq!(first.2.len(), 3);
         assert_eq!(
             first.2[0],
-            crate::events::tick::ModSpatialSoundCommand::PlayAt {
+            crate::events::tick::SpatialSoundCommand::PlayAt {
                 handle: first.0,
                 sound,
                 pos: Vec3::new(1.0, 81.0, 1.0),
@@ -284,7 +285,7 @@ mod tests {
             }
         );
         match first.2[1] {
-            crate::events::tick::ModSpatialSoundCommand::PlayOnMob {
+            crate::events::tick::SpatialSoundCommand::PlayOnMob {
                 handle,
                 sound: queued_sound,
                 mob_id,
@@ -303,7 +304,7 @@ mod tests {
         }
         assert_eq!(
             first.2[2],
-            crate::events::tick::ModSpatialSoundCommand::Stop { handle: first.0 }
+            crate::events::tick::SpatialSoundCommand::Stop { handle: first.0 }
         );
     }
 }

@@ -111,14 +111,14 @@ impl World {
     /// touches the buffer. Turning capture off drops anything already buffered.
     pub fn set_stream_event_capture(&mut self, on: bool) {
         if !on {
-            self.mod_stream.stream_events.clear();
+            self.draw_stream.stream_events.clear();
         }
-        self.mod_stream.stream_events_enabled = on;
+        self.draw_stream.stream_events_enabled = on;
     }
 
     /// Drain the section stream events buffered by `poll` since the last take.
     pub fn take_stream_events(&mut self) -> Vec<StreamEvent> {
-        std::mem::take(&mut self.mod_stream.stream_events)
+        std::mem::take(&mut self.draw_stream.stream_events)
     }
 
     /// Poll the worker and the save thread, then ingest: install each landed column's
@@ -239,8 +239,8 @@ impl World {
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
                     w.classify_deep_on_install(sp);
-                    if w.mod_stream.stream_events_enabled {
-                        w.mod_stream.stream_events.push(StreamEvent::Generated(sp));
+                    if w.draw_stream.stream_events_enabled {
+                        w.draw_stream.stream_events.push(StreamEvent::Generated(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -362,8 +362,8 @@ impl World {
                     w.classify_deep_on_install(sp);
                     w.dropped_items.extend(loaded.entities);
                     w.restore_mobs(loaded.mobs);
-                    if w.mod_stream.stream_events_enabled {
-                        w.mod_stream.stream_events.push(StreamEvent::Loaded(sp));
+                    if w.draw_stream.stream_events_enabled {
+                        w.draw_stream.stream_events.push(StreamEvent::Loaded(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -382,9 +382,11 @@ impl World {
 
         // 4. Overlay any buffered saved sections whose generated section is now installed.
         let overlaid = self.apply_pending_overlays();
-        if self.mod_stream.stream_events_enabled {
+        if self.draw_stream.stream_events_enabled {
             for sp in &overlaid {
-                self.mod_stream.stream_events.push(StreamEvent::Loaded(*sp));
+                self.draw_stream
+                    .stream_events
+                    .push(StreamEvent::Loaded(*sp));
             }
         }
         for sp in &overlaid {

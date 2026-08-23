@@ -1526,6 +1526,144 @@ pub enum HostCall {
         key: String,
         cell: [i32; 3],
     },
+    /// Claim a LAND-SPEED multiplier on one body: a scale on whatever mode
+    /// the player's own input selected (walk, sprint and sneak together; swim,
+    /// climb and flight untouched).
+    ///
+    /// Every claimant gets its own slot and the engine applies the PRODUCT,
+    /// beside the speed-carrying status effects — two packs' slows compose
+    /// rather than stomping. `1.0` releases this claim, `0.0` roots the body,
+    /// finite values clamp into `[0, 5]` and a non-finite one is a
+    /// [`HostRet::Error`]. TRANSIENT: never saved, so re-state it on your own
+    /// cadence (a per-tick system naturally does).
+    ///
+    /// Server only — the server validates how fast a client may have moved, so
+    /// a client predicting its own speed would be arguing with the validator.
+    /// → [`HostRet::Bool`] (`false` = no such reachable session).
+    SetPlayerSpeedScale {
+        player: PlayerId,
+        scale: f32,
+    },
+    /// Claim a HELD-ITEM POSE on one body, per hand: an extra Blockbench
+    /// display transform ([`HeldPose`](crate::HeldPose)) composed onto
+    /// whatever that hand already holds, in first person and on every
+    /// observer's third-person body.
+    ///
+    /// Authored in the `display` block's own units and composed OUTSIDE the
+    /// item's hold, so the offset moves the item within the hold frame. One
+    /// per view, because the two views start from different authored poses.
+    /// The off hand needs no separate authoring — the engine mirrors by
+    /// Blockbench's own left-hand rule — and every held render kind (bbmodel,
+    /// sprite, block cube) wears it alike.
+    ///
+    /// `None` releases a hand; claims resolve last-wins in claimant order.
+    /// TRANSIENT, and the client eases between updates so a 20 Hz publisher
+    /// still glides. A non-finite component is a [`HostRet::Error`], never a
+    /// silently dropped pose.
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, which is how a pose
+    /// presents on the frame the input asks for it rather than a round trip
+    /// later. → [`HostRet::Bool`] (`false` = no such reachable session).
+    SetPlayerHeldPose {
+        player: PlayerId,
+        main: Option<crate::HeldPose>,
+        off: Option<crate::HeldPose>,
+    },
+    /// Claim BONE OFFSETS on one body — rotate or shift named bones of the
+    /// player rig, composed onto whatever animation already posed them.
+    ///
+    /// The body counterpart of
+    /// [`SetPlayerHeldPose`](Self::SetPlayerHeldPose): that poses what a hand
+    /// is HOLDING, this poses the hand. An offset on a shoulder carries
+    /// through the whole arm and everything in its fist.
+    ///
+    /// Degrees about the bone's posed pivot, translations in 1/16-block pixels
+    /// ([`BonePoseData`](crate::BonePoseData)); bones are named from
+    /// [`bone`](crate::bone). Unlike a held pose, every claimant's offsets
+    /// APPLY — a rotation about one joint composes with another about a
+    /// different one. An empty list releases; TRANSIENT; a non-finite
+    /// component is a [`HostRet::Error`] and a name this rig lacks is dropped.
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, the same predicted
+    /// path as [`SetPlayerHeldPose`](Self::SetPlayerHeldPose).
+    /// → [`HostRet::Bool`] (`false` = no such reachable session).
+    SetPlayerBonePose {
+        player: PlayerId,
+        bones: Vec<crate::BonePoseData>,
+    },
+    /// Deliver one of this mod's OWN events to `player`'s CLIENT instance —
+    /// the wire-crossing half of [`EmitEvent`](Self::EmitEvent), with the same
+    /// key/payload vocabulary and the same namespace and size guards. The
+    /// client half of the pack receives it as an ordinary
+    /// [`EventKind::ModEvent`] dispatch, so a mod handles it with the handler
+    /// it already knows how to write. → [`HostRet::Bool`] (`false` = no such
+    /// reachable session).
+    ///
+    /// It exists because a client mod can predict what LOCAL INPUT implies
+    /// and nothing else. Anything the server decided — a hit landing, a timer
+    /// expiring, another player acting — is otherwise unknowable there. Send
+    /// the EDGE, not a state mirror: ship "it happened" once (like the hurt
+    /// flash it sits beside) and let the client run its own envelope.
+    ///
+    /// The cue rides the recipient's next replication batch, so it arrives one
+    /// batch late. That makes this lane presentation, never simulation:
+    /// anything both sides must agree about stays on the server.
+    ///
+    /// [`EventKind::ModEvent`]: crate::EventKind::ModEvent
+    EmitEventTo {
+        player: PlayerId,
+        key: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+    /// Bar a set of [`BodyAction`](crate::BodyAction)s on one body — the claim
+    /// for "these hands are busy". An empty list releases it.
+    /// → [`HostRet::Bool`] (`false` = no such reachable session).
+    ///
+    /// The sibling of [`SetPlayerSpeedScale`](Self::SetPlayerSpeedScale) but
+    /// resolved by UNION, not product: two claimants barring different things
+    /// both mean it, and one able to un-bar another's would make "may this
+    /// body mine" depend on claimant order. TRANSIENT, and MIRRORED to the
+    /// barred player's client so their own prediction stops with it — a client
+    /// still predicting a break the server will refuse shows a crack creeping
+    /// up a block that never breaks.
+    ///
+    /// Cancelling at [`EventKind::BlockBreakPre`] is not a substitute: it
+    /// refuses the break only at the END of the timer, after a second of crack
+    /// animation, and a swing at the air has no pre-event at all. Barring the
+    /// ACTION is the honest shape — the button simply does nothing, on both
+    /// sides, for as long as the claim stands.
+    ///
+    /// [`EventKind::BlockBreakPre`]: crate::EventKind::BlockBreakPre
+    SetPlayerDeniedActions {
+        player: PlayerId,
+        actions: Vec<crate::BodyAction>,
+    },
+    /// Take `player`'s current USE GESTURE — one press of the interact button —
+    /// and keep it until they let go. → [`HostRet::Bool`] (`false` = no such
+    /// reachable session).
+    ///
+    /// A gesture has at most one owner. Most interactions resolve inside it and
+    /// leave it free, which is what lets a held button keep placing blocks or
+    /// flapping a door; this is how something CONTINUOUS says otherwise. While
+    /// it is held nothing else is offered the button — no repeat, no fresh
+    /// click — and [`PlayerSnapshot::holds_use`] answers `true` for the owner
+    /// and nobody else.
+    ///
+    /// Call it from a [`EventKind::UseUnclaimed`] handler — the fall-through
+    /// fired once the whole interact chain has passed. Taking the press is not
+    /// an interaction: nothing happened to the world and no hand jabs, so
+    /// whoever takes it poses the body itself. The engine's own eat holds a
+    /// gesture the same way, which is why a held button does not eat a stack.
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, so a rule that runs on
+    /// both sides presents on the frame the button goes down.
+    ///
+    /// [`PlayerSnapshot::holds_use`]: crate::PlayerSnapshot::holds_use
+    /// [`EventKind::UseUnclaimed`]: crate::EventKind::UseUnclaimed
+    HoldUse {
+        player: PlayerId,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].

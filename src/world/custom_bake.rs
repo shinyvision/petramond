@@ -42,7 +42,7 @@ impl World {
                 Block::from_id(self.chunk_block(p.x, p.y, p.z))
             };
             if cell.shape_family() == ShapeFamily::Custom {
-                self.mods.custom_bake_dirty.insert(p);
+                self.content.custom_bake_dirty.insert(p);
             } else {
                 // The cell is no longer a custom shape: drop any stale baked
                 // light aperture so a later ungated read can't see it (the

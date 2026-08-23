@@ -74,8 +74,11 @@ impl ServerGame {
                 on_ground: sess.player.on_ground,
                 spectator: sess.player.is_spectator(),
                 sneak: sess.sneaking(),
+                use_held: sess.using(),
+                use_gesture: sess.player.use_gesture.clone(),
                 held: sess.selected_item(),
                 held_count: sess.player.inventory.selected().map_or(0, |st| st.count),
+                off_held: sess.player.inventory.off_hand().map(|st| st.item),
             })
             .collect();
         roster.sort_by_key(|p| p.id);

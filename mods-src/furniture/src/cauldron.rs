@@ -583,8 +583,6 @@ mod shape_tests {
     ///
     /// A full texel apart is a real step and fine — the floor slab sits inside
     /// the wall ring that way. It is the sub-texel offsets that fight.
-    /// `harness/src/bin/zfight.rs --gap` measures the same thing on the emitted
-    /// mesh, including across blocks.
     #[test]
     fn no_shape_in_this_pack_buries_a_face_a_sliver_deep() {
         let shapes: [(&str, Vec<ShapeAabb>); 2] = [

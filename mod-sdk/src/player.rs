@@ -1,7 +1,9 @@
 //! Sim-scoped player calls: state, input, the damage funnel, knockback,
 //! items, health, teleports, status effects, and chat delivery.
 
-use mod_api::{EffectStateData, PlayerId, PlayerInputData, PlayerSnapshot};
+use mod_api::{
+    BodyAction, BonePoseData, EffectStateData, HeldPose, PlayerId, PlayerInputData, PlayerSnapshot,
+};
 
 use crate::__rt::host_fn;
 
@@ -209,4 +211,104 @@ host_fn! {
     /// gating a mod's own hints or follow-up rewards.
     pub fn recipe_unlocked(player: PlayerId, recipe: &str) -> bool
         => RecipeUnlocked { player, recipe: recipe.into() } => Bool
+}
+
+host_fn! {
+    /// Claim a land-speed multiplier on `player`, applied to whatever mode
+    /// their own input selected (walk/sprint/sneak together; swim/climb/flight
+    /// untouched).
+    ///
+    /// Every claimant gets a slot and the engine applies the PRODUCT, beside
+    /// the status effects' own — your slow and another pack's compose instead
+    /// of stomping. `1.0` releases yours, `0.0` roots the body, finite values
+    /// clamp into `[0, 5]`, non-finite is a hard error. Transient: re-state it
+    /// on your own cadence. `false` = no such reachable session.
+    ///
+    /// SERVER only — the server validates how fast a client may have moved, so
+    /// speed is mirrored rather than predicted.
+    pub fn set_player_speed_scale(player: PlayerId, scale: f32) -> bool
+        => SetPlayerSpeedScale { player, scale } => Bool
+}
+
+host_fn! {
+    /// Claim a HELD-ITEM POSE on `player`, per hand — an extra Blockbench
+    /// display transform composed onto whatever that hand already holds, in
+    /// first person and on every observer's third-person body.
+    ///
+    /// Author it exactly as a `display` entry: rotation in DEGREES (X, Y, Z),
+    /// translation in 1/16-BLOCK pixels, relative to the item's authored hold.
+    /// One per view ([`HeldPose`]) — the two start from different authored
+    /// poses. The off hand mirrors by Blockbench's own left-hand rule, and
+    /// every held render kind wears it alike.
+    ///
+    /// `None` releases a hand; claims resolve last-wins in claimant order.
+    /// Transient — re-publish on your own cadence; the client eases between
+    /// updates, so a 20 Hz publisher still glides.
+    ///
+    /// Legal on the CLIENT for the LOCAL player ([`PlayerSnapshot::id`]), so
+    /// the pose presents on the frame the input asks for it. Run the same
+    /// predicate on both sides and the two answers cannot disagree.
+    pub fn set_player_held_pose(
+        player: PlayerId,
+        main: Option<HeldPose>,
+        off: Option<HeldPose>,
+    ) -> bool => SetPlayerHeldPose { player, main, off } => Bool
+}
+
+host_fn! {
+    /// Claim BONE OFFSETS on `player`'s body — rotate or shift named rig
+    /// bones, composed onto whatever animation is already posing them (a walk
+    /// cycle, a punch, a head-look).
+    ///
+    /// The body counterpart of [`set_player_held_pose`]: that poses what a
+    /// hand is HOLDING, this poses the hand. An offset on a shoulder carries
+    /// through the whole arm and everything in its fist.
+    ///
+    /// Name bones from [`bone`](mod_api::bone) — the arms especially, because
+    /// the rig authors the MAIN hand's arm as the model's left. Degrees about
+    /// the bone's posed pivot, translations in 1/16-block pixels. Every
+    /// claimant's offsets apply; an empty list releases yours, and a name the
+    /// rig lacks is dropped. Transient.
+    ///
+    /// Legal on the CLIENT for the LOCAL player, the same predicted path as
+    /// [`set_player_held_pose`].
+    pub fn set_player_bone_pose(player: PlayerId, bones: Vec<BonePoseData>) -> bool
+        => SetPlayerBonePose { player, bones } => Bool
+}
+
+host_fn! {
+    /// Take `player`'s current USE GESTURE — one press of the interact button —
+    /// and keep it until they let go. `false` = no such reachable session.
+    ///
+    /// A gesture has at most one owner. Most interactions resolve inside it and
+    /// leave it free, which is what lets a held button keep placing blocks;
+    /// this is how a CONTINUOUS use says otherwise. While you hold it nothing
+    /// else is offered the button, and [`PlayerSnapshot::holds_use`] answers
+    /// `true` for you and nobody else — write the rule against THAT, never
+    /// against the raw held button.
+    ///
+    /// Call it from a [`EventKind::UseUnclaimed`] handler — the fall-through
+    /// fired once the whole interact chain has passed. Taking the press is not
+    /// an interaction: nothing happened to the world and no hand jabs, so pose
+    /// the body yourself.
+    ///
+    /// [`EventKind::UseUnclaimed`]: mod_api::EventKind::UseUnclaimed
+    pub fn hold_use(player: PlayerId) -> bool => HoldUse { player } => Bool
+}
+
+host_fn! {
+    /// Bar a set of [`BodyAction`]s on `player` — the claim for "these hands
+    /// are busy". An empty list releases yours; `false` = no such reachable
+    /// session.
+    ///
+    /// The sibling of [`set_player_speed_scale`], but resolved by UNION: two
+    /// packs barring different things both get their way, and neither can
+    /// un-bar the other's. Transient — re-state it from whatever tick system
+    /// owns the rule.
+    ///
+    /// SERVER only, and MIRRORED to that player's client so their own
+    /// prediction stops with it: a client still predicting a break the server
+    /// will refuse shows a crack creeping up a block that never breaks.
+    pub fn set_player_denied_actions(player: PlayerId, actions: Vec<BodyAction>) -> bool
+        => SetPlayerDeniedActions { player, actions } => Bool
 }

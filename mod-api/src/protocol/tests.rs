@@ -496,6 +496,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         moving: false,
     }]));
     roundtrip(HostRet::Player(PlayerSnapshot {
+        id: Some(PlayerId(1)),
         pos: [0.5, 80.0, 0.5],
         vel: [0.0, -1.0, 0.0],
         yaw: 0.5,
@@ -506,6 +507,9 @@ fn abi_roundtrip_host_and_guest_calls() {
         sneak: true,
         held: Some(ItemId(3)),
         held_count: 2,
+        off_held: Some(ItemId(4)),
+        use_held: false,
+        holds_use: false,
         pose_anchor: Some([0.5, 64.0, -3.5]),
     }));
     roundtrip(HostRet::Bytes(Some(vec![1, 2, 3])));

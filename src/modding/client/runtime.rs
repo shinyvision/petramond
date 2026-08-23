@@ -10,9 +10,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mod_api::{
-    ClientFrameData, ClientUiEvent, EventKind, EventPayload, GuestCall, GuestRet, Outcome,
-    PlayerSnapshot, RuntimeSide,
+    ClientFrameData, ClientUiEvent, EventKind, EventPayload, GuestCall, GuestRet, HeldPose,
+    Outcome, PlayerSnapshot, RuntimeSide,
 };
+use petramond_world::inventory::Hand;
+
+use crate::player::BonePose;
 
 use crate::world::World;
 
@@ -24,21 +27,31 @@ struct ClientMod {
     instance: ModInstance,
 }
 
-/// One client-registered PREDICTOR: a pre-event handler the mod asked for
-/// during `mod_init`, dispatched speculatively against the replica (see
-/// [`ClientModRuntime::predict_claim`]).
-struct Predictor {
+/// One client-registered event handler: the kind it asked for during
+/// `mod_init`, and where to dispatch it. Serves both client routes — the
+/// speculative PRE kinds ([`ClientModRuntime::predict_claim`]) and the mod
+/// cues the server addressed at this client ([`ClientModRuntime::mod_event`]).
+struct Handler {
     kind: EventKind,
     mod_index: usize,
     handler_id: u32,
 }
 
-/// The pre kinds a client instance may predict. Anything else registered on
-/// a client instance is a mistake — logged and ignored, never dispatched.
-fn predictable(kind: EventKind) -> bool {
+/// The kinds a client instance may register, and they are two different
+/// things. The PRE kinds are dispatched speculatively against the replica, so
+/// a mod consumer is as predictable as an engine one; `ModEvent` is not a
+/// prediction at all but the DELIVERY of a cue the server addressed here
+/// (`EmitEventTo`), which is the only way a client mod hears about something
+/// local input does not imply. Anything else registered on a client instance
+/// is a mistake — logged and ignored, never dispatched.
+fn client_dispatchable(kind: EventKind) -> bool {
     matches!(
         kind,
-        EventKind::InteractAttempt | EventKind::BlockPlacePre | EventKind::ItemUsePre
+        EventKind::InteractAttempt
+            | EventKind::BlockPlacePre
+            | EventKind::ItemUsePre
+            | EventKind::UseUnclaimed
+            | EventKind::ModEvent
     )
 }
 
@@ -74,9 +87,14 @@ pub struct ModKeyAction {
 
 pub struct ClientModRuntime {
     mods: Vec<ClientMod>,
-    /// Prediction handlers in dispatch order: `(priority, load order,
+    /// Indices into [`mods`](Self::mods) in MOD-ID order — the sequence the
+    /// server's `BodyClaims` folds body claims in. Load order is a dependency
+    /// topo sort and is deliberately NOT it.
+    fold_order: Vec<usize>,
+    /// Client event handlers in dispatch order: `(priority, load order,
     /// registration order)` — the same ordering contract as the server bus.
-    predictors: Vec<Predictor>,
+    /// Filtered by kind at each dispatch site.
+    handlers: Vec<Handler>,
     actions: Vec<ModKeyAction>,
     overlays: Vec<super::state::ClientOverlayRegistration>,
     /// Currently-down action `full_id`s — the edge filter for `ClientKey`
@@ -96,7 +114,7 @@ impl ClientModRuntime {
     /// server does not run therefore never activates.
     pub fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
         let mut mods = Vec::new();
-        let mut predictor_rows: Vec<(i32, Predictor)> = Vec::new();
+        let mut handler_rows: Vec<(i32, Handler)> = Vec::new();
         let session = session_client_mods(petramond_world::assets::packs(), enabled);
         crate::modding::host::module_cache::prewarm(session.iter().map(|(_, path)| path.clone()));
         for (id, path) in session {
@@ -126,9 +144,10 @@ impl ClientModRuntime {
                 continue;
             }
             // Client registrations live in ClientStoreData; of the
-            // simulation registrations only PREDICTOR event handlers are
-            // meaningful here — the rest are irrelevant to this isolated
-            // instance (a dual-side wasm branches its init on RuntimeSide).
+            // simulation registrations only the client-dispatchable event
+            // handlers are meaningful here — the rest are irrelevant to this
+            // isolated instance (a dual-side wasm branches its init on
+            // RuntimeSide).
             let registrations = instance.take_registrations();
             let mod_index = mods.len();
             for reg in registrations {
@@ -138,10 +157,10 @@ impl ClientModRuntime {
                     handler_id,
                 } = reg
                 {
-                    if predictable(event) {
-                        predictor_rows.push((
+                    if client_dispatchable(event) {
+                        handler_rows.push((
                             priority,
-                            Predictor {
+                            Handler {
                                 kind: event,
                                 mod_index,
                                 handler_id,
@@ -149,7 +168,7 @@ impl ClientModRuntime {
                         ));
                     } else {
                         log::warn!(
-                            "client mod '{id}': event kind {event:?} is not predictable on a client instance; handler ignored"
+                            "client mod '{id}': event kind {event:?} is not dispatched on a client instance; handler ignored"
                         );
                     }
                 }
@@ -208,12 +227,17 @@ impl ClientModRuntime {
             }
         }
         // Stable sort: ties keep (load order, registration order).
-        predictor_rows.sort_by_key(|(priority, _)| *priority);
-        let predictors = predictor_rows.into_iter().map(|(_, p)| p).collect();
+        handler_rows.sort_by_key(|(priority, _)| *priority);
+        let handlers = handler_rows.into_iter().map(|(_, h)| h).collect();
+
+        // Body claims fold in MOD-ID order, not load order — see `fold_order`.
+        let mut fold_order: Vec<usize> = (0..mods.len()).collect();
+        fold_order.sort_by(|&a, &b| mods[a].id.cmp(&mods[b].id));
 
         let mut rt = Self {
             mods,
-            predictors,
+            fold_order,
+            handlers,
             actions,
             overlays,
             pressed: HashSet::new(),
@@ -270,7 +294,7 @@ impl ClientModRuntime {
         payload: &EventPayload,
     ) -> bool {
         let kind = payload.kind();
-        for p in &self.predictors {
+        for p in &self.handlers {
             if p.kind != kind {
                 continue;
             }
@@ -282,9 +306,10 @@ impl ClientModRuntime {
                 id: p.handler_id,
                 payload: payload.clone(),
             };
-            let ret = super::scope::enter_actor(actor.clone(), || {
-                loaded.instance.call_guest_client(world, &call)
-            });
+            let mut mine = actor.clone();
+            mine.holds_use = loaded.instance.client_data().is_some_and(|d| d.holds_use);
+            let ret =
+                super::scope::enter_actor(mine, || loaded.instance.call_guest_client(world, &call));
             match ret {
                 Some(GuestRet::Event {
                     outcome: Outcome::Cancel,
@@ -297,6 +322,53 @@ impl ClientModRuntime {
             }
         }
         false
+    }
+
+    /// Deliver a mod cue the server addressed at this client (`EmitEventTo`)
+    /// to the pack that OWNS the key's namespace, as an ordinary `ModEvent`
+    /// dispatch.
+    ///
+    /// Only the owner is dispatched, unlike the server bus where every
+    /// `ModEvent` handler sees every key: this lane is addressed twice over —
+    /// at a player AND at a pack — and a cross-pack broadcast is what
+    /// `EmitEvent` on the server already is. An `actor` snapshot rides along
+    /// so the handler reads `player_state()` exactly as the frame hook does;
+    /// a cue about the local player that could not name them would be useless
+    /// for the pose calls it exists to drive.
+    pub fn mod_event(&mut self, world: &World, actor: &PlayerSnapshot, key: &str, data: &[u8]) {
+        let Some(mod_index) = self.owner_index(key) else {
+            return;
+        };
+        let payload = EventPayload::ModEvent {
+            key: key.to_owned(),
+            data: data.to_vec(),
+        };
+        let ids: Vec<u32> = self
+            .handlers
+            .iter()
+            .filter(|h| h.kind == EventKind::ModEvent && h.mod_index == mod_index)
+            .map(|h| h.handler_id)
+            .collect();
+        for id in ids {
+            let loaded = &mut self.mods[mod_index];
+            if loaded.instance.disabled() {
+                return;
+            }
+            let call = GuestCall::HandleEvent {
+                id,
+                payload: payload.clone(),
+            };
+            super::scope::enter_actor(actor.clone(), || {
+                // The verdict is meaningless here — nothing downstream is
+                // cancellable — so any well-formed event reply is accepted.
+                match loaded.instance.call_guest_client(world, &call) {
+                    None | Some(GuestRet::Event { .. }) => {}
+                    Some(_) => loaded
+                        .instance
+                        .disable("returned a non-event reply to a mod-event dispatch"),
+                }
+            });
+        }
     }
 
     /// The client twin of the server's custom-shape placement dispatch: ask
@@ -494,26 +566,155 @@ impl ClientModRuntime {
     }
 
     /// The live (non-disabled) mod owning a namespaced `mod_id:name` key.
-    fn owner_mod(&self, key: &str) -> Option<&ClientMod> {
+    /// THE ownership rule for every keyed dispatch — images, canvases, shapes,
+    /// mod cues — so a key routes to one place however it arrived.
+    fn owner_index(&self, key: &str) -> Option<usize> {
         let owner = key.split_once(':')?.0;
         self.mods
             .iter()
-            .find(|loaded| loaded.id == owner && !loaded.instance.disabled())
+            .position(|loaded| loaded.id == owner && !loaded.instance.disabled())
+    }
+
+    fn owner_mod(&self, key: &str) -> Option<&ClientMod> {
+        self.owner_index(key).map(|i| &self.mods[i])
     }
 
     /// [`owner_mod`](Self::owner_mod) for dispatching into the owner.
     fn owner_mod_mut(&mut self, key: &str) -> Option<&mut ClientMod> {
-        let owner = key.split_once(':')?.0;
-        self.mods
-            .iter_mut()
-            .find(|loaded| loaded.id == owner && !loaded.instance.disabled())
+        self.owner_index(key).map(|i| &mut self.mods[i])
     }
 
-    pub fn frame(&mut self, world: &World, frame: ClientFrameData) {
+    /// Drive every client mod's per-frame hook, with `actor` published as the
+    /// `PlayerState` snapshot — the same query-the-snapshot vocabulary the
+    /// prediction dispatches and the whole server side use, so a mod's rule
+    /// reads identically wherever it runs. This is what lets a rule derived
+    /// from local input (a raised guard) present on the frame the button goes
+    /// down instead of a round trip later.
+    pub fn frame(&mut self, world: &World, actor: &PlayerSnapshot, frame: ClientFrameData) {
         let call = GuestCall::ClientFrame { frame };
         for loaded in &mut self.mods {
-            dispatch_unit(&mut loaded.instance, world, &call, "client frame");
+            // Each mod sees ITS OWN answer to "is this press mine", the same
+            // way the server resolves the field per caller.
+            let mut mine = actor.clone();
+            mine.holds_use = loaded.instance.client_data().is_some_and(|d| d.holds_use);
+            super::scope::enter_actor(mine, || {
+                dispatch_unit(&mut loaded.instance, world, &call, "client frame");
+            });
         }
+    }
+
+    /// The mod holding the local player's use gesture, if any.
+    pub fn use_holder(&self) -> Option<&str> {
+        self.mods
+            .iter()
+            .find(|m| {
+                !m.instance.disabled() && m.instance.client_data().is_some_and(|d| d.holds_use)
+            })
+            .map(|m| m.id.as_str())
+    }
+
+    /// The button came up: every hold ends with it.
+    pub fn release_use(&mut self) {
+        for loaded in &mut self.mods {
+            if let Some(data) = loaded.instance.client_data_mut() {
+                data.holds_use = false;
+            }
+        }
+    }
+
+    /// Every enabled client mod's store, in MOD-ID order.
+    ///
+    /// The order is the whole point: the server folds body claims through one
+    /// `BodyClaims` keyed by pack id, so a prediction that folded in LOAD order
+    /// (a dependency topo sort, which is a different sequence) could pick a
+    /// different winner than the authority for a contested hand. Same input,
+    /// same order, same answer.
+    fn claim_stores(&self) -> impl Iterator<Item = &crate::modding::client::ClientStoreData> {
+        self.fold_order.iter().filter_map(|&i| {
+            let m = &self.mods[i];
+            (!m.instance.disabled())
+                .then(|| m.instance.client_data())
+                .flatten()
+        })
+    }
+
+    /// The local player's hand poses: this client's own PREDICTION for any
+    /// hand a client mod poses, and `replicated` for the rest.
+    ///
+    /// A hand a client mod poses is client-authoritative from its first pose
+    /// onward — including when that mod RELEASES it, which is the edge the
+    /// replicated answer is a round trip late on. A hand no client mod has
+    /// ever posed keeps the server's answer untouched, so a pack that poses
+    /// only on the server still reaches the local hands.
+    pub fn local_held_poses(
+        &self,
+        replicated: (Option<HeldPose>, Option<HeldPose>),
+    ) -> (Option<HeldPose>, Option<HeldPose>) {
+        let mut claimed = [false; 2];
+        let mut predicted: [Option<HeldPose>; 2] = [None, None];
+        for data in self.claim_stores() {
+            for (h, hand) in [Hand::Main, Hand::Off].into_iter().enumerate() {
+                claimed[h] |= data.poses_hands[h];
+                // Later mods in MOD-ID order win a contested hand — the
+                // server's own rule, run over the same sequence.
+                predicted[h] = data.body.held_pose(hand).or(predicted[h]);
+            }
+        }
+        let pick = |h: usize, replicated| if claimed[h] { predicted[h] } else { replicated };
+        (pick(0, replicated.0), pick(1, replicated.1))
+    }
+
+    /// The local player's rig-bone offsets: this client's own PREDICTION for
+    /// every bone a client mod poses, and `replicated` for the rest — the body
+    /// twin of [`Self::local_held_poses`], with the same latch and the same
+    /// reason for it.
+    ///
+    /// The latch is per BONE. Bone offsets compose (each is a rotation about
+    /// its own joint), so one pack predicting a shoulder must leave another
+    /// pack's server-side head tilt standing; only the bone actually being
+    /// predicted may be taken over.
+    ///
+    /// A predicted offset takes the replicated one's PLACE in the list rather
+    /// than being appended: offsets on an ancestor bone and its descendant do
+    /// not commute (a shoulder delta carries the elbow with it), so predicting
+    /// one must not reorder the set and quietly pose the body differently from
+    /// the authority.
+    pub fn local_bone_poses(&self, replicated: &[BonePose]) -> Vec<BonePose> {
+        let mut claimed: BTreeSet<u16> = BTreeSet::new();
+        let mut predicted: Vec<BonePose> = Vec::new();
+        for data in self.claim_stores() {
+            claimed.extend(data.poses_bones.iter().copied());
+            predicted.extend(data.body.bone_poses());
+        }
+        if claimed.is_empty() {
+            return replicated.to_vec();
+        }
+        let mut taken = vec![false; predicted.len()];
+        let mut out: Vec<BonePose> = Vec::with_capacity(replicated.len() + predicted.len());
+        for r in replicated {
+            if !claimed.contains(&r.bone) {
+                out.push(*r);
+                continue;
+            }
+            if let Some((i, p)) = predicted
+                .iter()
+                .enumerate()
+                .find(|(i, p)| p.bone == r.bone && !taken[*i])
+            {
+                out.push(*p);
+                taken[i] = true;
+            }
+        }
+        // Whatever the authority is not carrying yet — the raise that has not
+        // round-tripped, and the bones only a client mod ever bends.
+        out.extend(
+            predicted
+                .iter()
+                .zip(&taken)
+                .filter(|(_, done)| !**done)
+                .map(|(p, _)| *p),
+        );
+        out
     }
 
     /// Dispatch one bound-action edge to its owning mod, by the action's
