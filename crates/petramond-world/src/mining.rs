@@ -4,14 +4,17 @@
 //! The model is deliberately small and pure: progress is a single `elapsed`
 //! accumulator measured against [`break_time`]. Changing the target, releasing
 //! the button, opening the inventory, switching tools, or losing the raycast all
-//! reset progress. Instant blocks (`hardness == 0`) break the first qualifying
-//! frame and never display a break overlay.
+//! reset progress. A block that breaks in no time at all (`hardness == 0`, or a
+//! CUT — see below) goes the first qualifying frame and never displays a break
+//! overlay.
 //!
 //! Tools: a held tool whose KIND matches the block's
 //! [`Block::preferred_tool`] (a pickaxe on stone/ore, an axe on wood, a shovel on
-//! dirt/sand, shears on wool) mines it faster by its tier (×2/×4/×6/×8 up the
-//! shared ladder), scaled by the kind's efficiency — the shovel digs at 0.5625×
-//! so it is uniformly slower than a pickaxe/axe of equal tier. For a
+//! dirt/sand, shears on wool and foliage) mines it faster by its tier (×2/×4/×6/×8
+//! up the shared ladder), scaled by the kind's efficiency — the shovel digs at
+//! 0.5625× so it is uniformly slower than a pickaxe/axe of equal tier. A
+//! material its tool PARTS rather than grinds ([`Block::cut_by_preferred_tool`],
+//! shipped on foliage) skips the ladder entirely and breaks instantly. For a
 //! tool-gated block (stone, ore, LOGS) the tool must also meet the block's
 //! [`Block::harvest_tier`] to unlock the drop; a wrong-kind, insufficient, or
 //! absent tool yields nothing there AND pays the [`FRUITLESS_BREAK_PENALTY`],
@@ -237,7 +240,10 @@ pub fn harvests(block: Block, tool: Option<Tool>) -> bool {
 /// rung — [`default_speed`](crate::item::default_speed)) scaled by the kind's
 /// [`mining_efficiency`](crate::item::ToolKind::mining_efficiency) (so a shovel
 /// digs slower than a pickaxe/axe of equal tier), floored at the bare-hand
-/// rate; a wrong-kind, insufficient, or absent tool mines at that rate.
+/// rate; a wrong-kind, insufficient, or absent tool mines at that rate. The one
+/// break that skips the ladder entirely is a
+/// [`cut`](Block::cut_by_preferred_tool) — shears through leaves — which takes
+/// no time at all.
 #[inline]
 pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     let h = block.hardness();
@@ -251,6 +257,12 @@ pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     // gets it. `max(1)` covers the tier-0 blocks: any matching tool speeds them,
     // a bare hand never does.
     if power >= block.harvest_tier().max(1) {
+        // A block its tool PARTS rather than grinds gives way with no
+        // resistance at all — shears through leaves. Its `hardness` is the
+        // rate for tearing it apart by hand, and nothing else.
+        if block.cut_by_preferred_tool() {
+            return 0.0;
+        }
         // `power >= 1` means the tool's kind matched the block, so `tool` is Some.
         // Scale the shared tier ladder by the kind's efficiency so a clumsier kind —
         // the shovel — is uniformly slower than a pickaxe/axe of the same tier.
@@ -722,6 +734,33 @@ mod tests {
         for b in [Block::Stone, Block::OakLog, Block::Dirt] {
             assert_eq!(break_time(b, shears()), break_time(b, None), "{b:?}");
         }
+    }
+
+    /// Shears PART foliage instead of grinding it, and that is keyed on the
+    /// material, so it has to hold for every leaf row in the game — a canopy
+    /// you can clear with one blade and one that fights you leaf by leaf are
+    /// different games.
+    #[test]
+    fn shears_cut_through_every_leaf_instantly() {
+        let mut checked_any = false;
+        for &leaves in Block::all() {
+            if !leaves.is_leaves() {
+                continue;
+            }
+            checked_any = true;
+            assert_eq!(break_time(leaves, shears()), 0.0, "{leaves:?}");
+            // A bare hand still tears each leaf loose, and no other kind of
+            // tool helps at all.
+            let hand = break_time(leaves, None);
+            assert!(hand > 0.0, "{leaves:?} should not break instantly by hand");
+            for tool in [pick(4), axe(4), shovel(4)] {
+                assert_eq!(break_time(leaves, tool), hand, "{leaves:?} with {tool:?}");
+            }
+        }
+        assert!(checked_any, "expected at least one leaf block");
+        // The cut is foliage's, not the shears': wool is the other material
+        // they pair with and it stays a timed grind.
+        assert!(break_time(Block::WoolBlock, shears()) > 0.0);
     }
 
     #[test]

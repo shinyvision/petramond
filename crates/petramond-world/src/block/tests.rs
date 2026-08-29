@@ -296,8 +296,19 @@ fn preferred_tool_pairs_pickaxe_axe_shovel_with_their_materials() {
         assert_eq!(b.material(), BlockMaterial::Plant, "{b:?} should be plant");
         assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
     }
-    // Everything a hand mines just as well has no preferred tool (leaves, air).
-    for b in [Block::OakLeaves, Block::Air] {
+    // Leaves pair with shears too, and theirs is the pairing that PARTS the
+    // block rather than speeding it up (`mining::break_time` returns 0).
+    for b in [Block::OakLeaves, Block::SpruceLeaves] {
+        assert_eq!(
+            b.material(),
+            BlockMaterial::Foliage,
+            "{b:?} should be foliage"
+        );
+        assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
+        assert!(b.cut_by_preferred_tool(), "{b:?}");
+    }
+    // Everything a hand mines just as well has no preferred tool (glass, air).
+    for b in [Block::Glass, Block::Air] {
         assert_eq!(b.preferred_tool(), None, "{b:?}");
     }
     // The shears harvest gate itself: bare-handed short grass is destroyed

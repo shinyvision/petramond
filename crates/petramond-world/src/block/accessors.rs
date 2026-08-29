@@ -629,9 +629,9 @@ impl Block {
     /// The tool kind that mines this block efficiently — a [`Pickaxe`](ToolKind::Pickaxe)
     /// for stone & ore, an [`Axe`](ToolKind::Axe) for wood (logs, planks, the
     /// crafting table, the chest), a [`Shovel`](ToolKind::Shovel) for dirt & sand
-    /// (grass, podzol, gravel, clay, snow…), [`Shears`](ToolKind::Shears) for wool
-    /// and plants — or `None` for blocks a bare hand mines just as fast
-    /// (leaves, glass-likes). Holding the matching tool grants the tier speed-up
+    /// (grass, podzol, gravel, clay, snow…), [`Shears`](ToolKind::Shears) for wool,
+    /// plants and foliage — or `None` for blocks a bare hand mines just as fast
+    /// (the glass-likes). Holding the matching tool grants the tier speed-up
     /// in [`crate::mining::break_time`], and for tool-gated blocks it also
     /// unlocks the drop (see [`harvest_tier`](Self::harvest_tier)); the item half
     /// of the pairing is [`ItemType::tool`](crate::item::ItemType::tool).
@@ -649,9 +649,27 @@ impl Block {
             }
             BlockMaterial::Wood => Some(ToolKind::Axe),
             BlockMaterial::Dirt | BlockMaterial::Sand => Some(ToolKind::Shovel),
-            BlockMaterial::Wool | BlockMaterial::Plant => Some(ToolKind::Shears),
+            BlockMaterial::Wool | BlockMaterial::Plant | BlockMaterial::Foliage => {
+                Some(ToolKind::Shears)
+            }
             _ => None,
         }
+    }
+
+    /// Whether this block's [`preferred_tool`](Self::preferred_tool) PARTS it
+    /// instead of grinding it down: the right tool meets no resistance at all,
+    /// so the break is instant no matter what the row's `hardness` says. That
+    /// hardness measures the hands — how long it takes to tear the block apart
+    /// without the tool — and stays the rate for everything else.
+    ///
+    /// Foliage is the shipped case: shears go through a canopy the moment they
+    /// touch it, a fist still pulls every leaf loose one at a time. Keyed on
+    /// the MATERIAL like the pairing itself, so it needs no per-block list and
+    /// a pack's own foliage row inherits it. Read by
+    /// [`crate::mining::break_time`].
+    #[inline]
+    pub fn cut_by_preferred_tool(self) -> bool {
+        matches!(self.material(), BlockMaterial::Foliage)
     }
 
     /// Minimum tool tier needed to HARVEST this block — i.e. to get a drop AND
@@ -726,8 +744,8 @@ impl Block {
             BlockMaterial::Stone | BlockMaterial::Ore => &sounds::STONE,
             BlockMaterial::Dirt => &sounds::DIRT,
             BlockMaterial::Sand => &sounds::SAND,
-            // Leaves are hand-mined and plants pair with shears, but both are
-            // plant matter and rustle alike (the Ice/Glass precedent below).
+            // Shears part leaves and grind plants, but both are plant matter
+            // and rustle alike (the Ice/Glass precedent below).
             BlockMaterial::Plant | BlockMaterial::Foliage => &sounds::LEAF,
             // Ice mines like stone (see `preferred_tool`) but SOUNDS like
             // glass — the sound follows the shatter, not the pickaxe.

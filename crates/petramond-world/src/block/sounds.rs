@@ -102,7 +102,7 @@ pub static SAND: BlockSoundSet = BlockSoundSet {
 /// Plant matter: LEAVES (`BlockMaterial::Foliage`) and every cross plant
 /// (`BlockMaterial::Plant` — grass, flowers, saplings, the cactus, crops, the
 /// exploration pack's cave flora and vines). Two materials because they mine
-/// differently — a plant pairs with shears, leaves with the bare hand — but
+/// differently — shears grind a plant down and part foliage outright — but
 /// they are the same matter and rustle the same, the way `Ice` shares the glass
 /// set. Plant matter is walked THROUGH, not on, so its step slot only sounds
 /// for the rare plant a body can stand on.
