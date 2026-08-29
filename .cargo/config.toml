@@ -14,3 +14,12 @@
 # altered terrain and must be reverted.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+# 14 parallel rustc jobs on the 22-core dev machine: a full build used to spawn
+# at least one job per core, which saturates every core at default priority and
+# starves the desktop (measured: load 35+ and 33% CPU pressure-stall during a
+# build). 14 keeps the edit→playtest loop fast and ~8 cores free. Applies to
+# the mods-src workspace too — config discovery walks up from that directory.
+# Command-line `cargo build -j N` still overrides this.
+[build]
+jobs = 14

@@ -1,0 +1,20 @@
+{
+    "format": 1,
+    "kind": "furniture:counter_cabinet",
+    "class": "container",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": { "pad": [4, 2, 4, 4], "gap": 6 },
+        "children": [
+            { "type": "label", "text": "Counter Cabinet" },
+            { "type": "slot_grid", "role": "container", "cols": 9, "rows": 2 },
+            { "type": "spacer", "layout": { "h": 2 } },
+            { "type": "slot_grid", "role": "player_inv", "cols": 9, "rows": 3 },
+            {
+                "type": "slot_grid", "role": "hotbar", "cols": 9, "rows": 1,
+                "layout": { "margin": [0, 2, 0, 0] }
+            }
+        ]
+    }
+}

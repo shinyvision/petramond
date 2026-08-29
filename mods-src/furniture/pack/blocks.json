@@ -388,7 +388,7 @@
       ],
       "tags": [],
       "behavior": "inert",
-      "interaction": "none",
+      "interaction": { "open_gui": "furniture:cabinet" },
       "collision": [],
       "emission": 0,
       "tiles": [
@@ -791,7 +791,7 @@
       ],
       "tags": [],
       "behavior": "inert",
-      "interaction": "none",
+      "interaction": { "open_gui": "furniture:counter_cabinet" },
       "collision": [],
       "emission": 0,
       "tiles": [

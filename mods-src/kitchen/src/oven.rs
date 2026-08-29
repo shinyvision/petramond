@@ -76,7 +76,7 @@ impl MachineSpec for OvenSpec {
         caches: &mut Caches,
         slots: Option<Vec<Option<ItemStackData>>>,
         stored: &mut Vec<u8>,
-        _out: &mut Presentation,
+        out: &mut Presentation,
     ) {
         let Some(mut slots) = slots else {
             return;
@@ -144,6 +144,18 @@ impl MachineSpec for OvenSpec {
                 swap_model_block(ctx.pos, if now_lit { lit } else { ctx.block });
             }
         }
+        // What the oven shows: the item cooking in its chamber and the
+        // finished bake on the sill. Submitted every tick — the engine drops
+        // an unchanged set — because a draw set survives neither a reload nor
+        // an unloaded section, and the slots can change under it at any time.
+        out.draw(
+            ctx.pos,
+            crate::oven_draw::contents(
+                slots[SLOT_INPUT].as_ref(),
+                slots[SLOT_OUTPUT].as_ref(),
+                state.cook_progress as f32 / COOK_TICKS as f32,
+            ),
+        );
         if ctx.gui_open() {
             ctx.publish(
                 "kitchen:cook01",

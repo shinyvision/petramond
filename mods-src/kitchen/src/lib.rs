@@ -8,6 +8,9 @@
 //!   that row's data).
 //! - [`vessels`] — the bowl a finished dish leaves behind, hung on the
 //!   engine's `item_used` primitive (`ItemUseEvent::Eaten`).
+//! - [`oven_draw`] — what a placed oven shows: its cooking input in the
+//!   chamber's middle and its finished output on the sill, drawn each tick
+//!   with `set_block_draw` item prims off the machine's own slots.
 //! - [`miller`] — the miller: grinds one input into its `kitchen:milling`
 //!   product every 200 ticks, no fuel. While the output slot holds anything
 //!   it flips to the `kitchen:miller_full` row (the authored `flour` cube).
@@ -32,6 +35,7 @@
 
 mod miller;
 mod oven;
+mod oven_draw;
 mod vessels;
 
 use machine_core::Caches;

@@ -22,7 +22,14 @@
 # the Options slider across restarts). The headless server has no client.json,
 # so it falls back to 32.
 
-CARGO ?= cargo
+# Builds run niced by default: a compile saturates cores either way, and the
+# nice lets the compositor, the game, and anything else interactive win the
+# scheduler when it cares (the game child keeps the nice too, which costs
+# nothing — it is GPU-bound and single-digit CPU). Override for full-speed
+# builds: `make run CARGO=cargo`. Pair with the [build].jobs cap in
+# .cargo/config.toml, which bounds the parallelism of every cargo invocation,
+# make or no make.
+CARGO ?= nice -n 10 cargo
 SEED  ?= 0x312
 RD    ?=
 

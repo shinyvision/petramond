@@ -434,6 +434,93 @@ fn held_places_a_block(held: Option<ItemId>) -> bool {
 
 mod_sdk::register_mod!(Furniture);
 
+/// The cabinets are PACK-ONLY containers: the whole machine is the block row's
+/// `open_gui` kind meeting a container-class document whose `container` slots
+/// size it. Nothing validates the PAIR at load — a renamed document or an
+/// edited grid skips/undersizes the storage with nothing but a stderr line,
+/// and every click in the opened GUI then routes nowhere. These assertions
+/// are the only place the rows and the documents are compared.
+#[cfg(test)]
+mod cabinet_documents {
+    use mod_sdk::json::Value;
+
+    const BLOCKS: &str = include_str!("../pack/blocks.json");
+    const DOCUMENTS: &[(&str, &str)] = &[
+        (
+            "furniture:cabinet",
+            include_str!("../pack/ui/documents/cabinet.gui.json"),
+        ),
+        (
+            "furniture:counter_cabinet",
+            include_str!("../pack/ui/documents/counter_cabinet.gui.json"),
+        ),
+    ];
+
+    fn slots_in_role(node: &Value, role: &str) -> usize {
+        let mut n = match (
+            node.get("type").and_then(Value::as_str),
+            node.get("role").and_then(Value::as_str),
+        ) {
+            (Some("slot_grid"), Some(r)) if r == role => {
+                let cols = node.get("cols").and_then(Value::as_u8).unwrap_or(1) as usize;
+                let rows = node.get("rows").and_then(Value::as_u8).unwrap_or(1) as usize;
+                cols * rows
+            }
+            (Some("slot"), Some(r)) if r == role => 1,
+            _ => 0,
+        };
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                n += slots_in_role(child, role);
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn the_cabinet_rows_open_container_documents_sized_to_two_rows() {
+        let blocks = Value::parse(BLOCKS).expect("pack/blocks.json parses");
+        for (kind, doc_text) in DOCUMENTS {
+            let doc = Value::parse(doc_text).expect("the shipped document parses");
+            assert_eq!(
+                doc.get("kind").and_then(Value::as_str),
+                Some(*kind),
+                "document kind must equal the block row's open_gui kind"
+            );
+            assert_eq!(
+                doc.get("class").and_then(Value::as_str),
+                Some("container"),
+                "a storage container document is container-class"
+            );
+            let root = doc.get("root").expect("the document has a root node");
+            assert_eq!(
+                slots_in_role(root, "container"),
+                18,
+                "{kind}: 2 rows of 9 — resizing the grid changes the storage"
+            );
+            assert_eq!(slots_in_role(root, "player_inv"), 27, "{kind}");
+            assert_eq!(slots_in_role(root, "hotbar"), 9, "{kind}");
+
+            let row = blocks
+                .get("blocks")
+                .and_then(Value::as_array)
+                .expect("blocks.json has a blocks list")
+                .iter()
+                .find(|b| b.get("block").and_then(Value::as_str) == Some(*kind))
+                .unwrap_or_else(|| panic!("{kind} has a block row"));
+            let opened = row
+                .get("interaction")
+                .and_then(|i| i.get("open_gui"))
+                .and_then(Value::as_str)
+                .expect("{kind} opens a GUI on click");
+            assert_eq!(
+                opened, *kind,
+                "the row and the shipped document must name the SAME kind"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod bake_tests {
     use super::*;
