@@ -4,6 +4,12 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
+# A missing rg empties the file list and the audit silently guards nothing.
+command -v rg >/dev/null || {
+    echo "source audit needs ripgrep (rg) to enumerate sources" >&2
+    exit 2
+}
+
 # Raw line counts make test-heavy modules look much worse than the code that
 # ships. Measure only the portion before a conventional trailing test module,
 # and ignore dedicated test files. The host protocol is one declarative wire

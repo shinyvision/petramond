@@ -2,7 +2,8 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cargo_bin=${CARGO:-cargo}
+# CARGO may be multi-word (Makefile default: nice -n 10 cargo), so split it into words once.
+IFS=' ' read -r -a cargo_cmd <<< "${CARGO:-cargo}"
 wasm_target=wasm32-unknown-unknown
 wasm_target_dir="$repo_root/target"
 
@@ -11,7 +12,7 @@ if ! rustup target list --installed | grep -qx "$wasm_target"; then
     exit 2
 fi
 
-"$cargo_bin" build \
+"${cargo_cmd[@]}" build \
     --manifest-path "$repo_root/mods-src/Cargo.toml" \
     --target-dir "$wasm_target_dir" \
     --release \
