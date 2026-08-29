@@ -30,9 +30,28 @@ pub(super) fn sample_track(kfs: &[Keyframe], t: f32) -> Vec3 {
     kfs[last].v
 }
 
-/// Quaternion from euler degrees (XYZ order — exact for single-axis rotations).
-/// Shared with `crate::render::mob_model` for the static per-cube tilt.
+/// Quaternion from an OUTLINER NODE's euler degrees — a `.bbmodel` cube tilt, a
+/// bone's rest rotation, an animation rotation channel. X turns first, then Y,
+/// then Z, which is Blockbench's `Format.euler_order` (`'ZYX'`, the default for
+/// every format it ships). Single-axis rotations are order-free, so this only
+/// shows on a cube or bone turned about two axes at once — and then it shows
+/// hugely: the weapons workbench's shield lands 10.7 px out under the other
+/// order, buried inside the board it hangs on.
+///
+/// NOT the order for a display transform or a pose offset — those are
+/// [`display_euler_quat`].
 pub fn euler_quat(deg: Vec3) -> Quat {
+    Quat::from_rotation_z(deg.z.to_radians())
+        * Quat::from_rotation_y(deg.y.to_radians())
+        * Quat::from_rotation_x(deg.x.to_radians())
+}
+
+/// Quaternion from a DISPLAY TRANSFORM's euler degrees — a `.bbmodel` `display`
+/// slot (the held/GUI pose) and the engine's pose-offset seams, which are
+/// authored in the same vocabulary. Z turns first here, matching Minecraft's
+/// own item transform; a display slot is not an outliner node and Blockbench
+/// does not preview it under `Format.euler_order`.
+pub fn display_euler_quat(deg: Vec3) -> Quat {
     Quat::from_euler(
         glam::EulerRot::XYZ,
         deg.x.to_radians(),

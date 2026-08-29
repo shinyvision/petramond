@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::parse::{base64_decode, project_resolution};
+use super::parse::{base64_decode, per_texture_uv_size, project_resolution};
 
 /// One texture's slot in the combined sheet: its own UV divisor plus the
 /// normalized offset/scale of its band, so a face UV remaps in one step.
@@ -45,6 +45,7 @@ impl TextureSheet {
 
     pub(super) fn decode(root: &Value) -> Result<TextureSheet, String> {
         let (res_w, res_h) = project_resolution(root);
+        let per_texture = per_texture_uv_size(root);
         let empty = Vec::new();
         let texs = root
             .get("textures")
@@ -58,8 +59,9 @@ impl TextureSheet {
             rgba: Vec<u8>,
             w: u32,
             h: u32,
-            /// UV-space size the face coordinates are authored in (entry override
-            /// or the project resolution).
+            /// UV-space size the face coordinates are authored in (this
+            /// texture's own, in the formats that have one; else the project
+            /// resolution).
             uv_w: f32,
             uv_h: f32,
         }
@@ -73,7 +75,7 @@ impl TextureSheet {
                 let (w, h) = (img.width(), img.height());
                 let uv_w = t.get("uv_width").and_then(Value::as_f64).unwrap_or(0.0) as f32;
                 let uv_h = t.get("uv_height").and_then(Value::as_f64).unwrap_or(0.0) as f32;
-                let (uv_w, uv_h) = if uv_w > 0.0 && uv_h > 0.0 {
+                let (uv_w, uv_h) = if per_texture && uv_w > 0.0 && uv_h > 0.0 {
                     (uv_w, uv_h)
                 } else {
                     (res_w, res_h)

@@ -170,8 +170,23 @@ pub(super) fn parse_animations(
     out
 }
 
-/// The project `resolution` `(width, height)` — the UV divisor for a texture that
-/// carries no `uv_width`/`uv_height` of its own. Falls back to 16.
+/// Whether face UVs are authored in each TEXTURE's own pixel space rather than
+/// the project `resolution`. Bedrock formats give every texture its own UV
+/// size; a Java block model has ONE project-wide UV space, and the `uv_width`
+/// Blockbench writes beside a Java texture is merely that image's natural size.
+/// Reading it as an override there scales every face by the ratio between the
+/// image and the project — a 32² texture in a 128² project authors UVs up to
+/// 128, and dividing those by 32 sends them clean off the sheet.
+pub(super) fn per_texture_uv_size(root: &Value) -> bool {
+    root.get("meta")
+        .and_then(|m| m.get("model_format"))
+        .and_then(Value::as_str)
+        .is_some_and(|f| f.starts_with("bedrock"))
+}
+
+/// The project `resolution` `(width, height)` — the UV divisor for every face
+/// unless [`per_texture_uv_size`] says the textures carry their own. Falls
+/// back to 16.
 pub(super) fn project_resolution(root: &Value) -> (f32, f32) {
     if let Some(res) = root.get("resolution") {
         let w = res.get("width").and_then(Value::as_f64).unwrap_or(16.0);

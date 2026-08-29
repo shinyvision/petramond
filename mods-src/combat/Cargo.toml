@@ -2,7 +2,7 @@
 name = "combat"
 version = "0.1.0"
 edition = "2021"
-description = "Combat: a craftable shield. Hold the use button with one in either hand to raise it — frontal monster melee is blocked, the body slows to half speed, and both hands are committed. Every rule is authored here, on the engine's generic body seams."
+description = "Combat: a weapons workbench and the shield you craft on it. Hold the use button with one in either hand to raise it — frontal monster melee is blocked, the body slows to half speed, and both hands are committed. Every rule is authored here, on the engine's generic body seams."
 license = "MIT"
 
 [lib]

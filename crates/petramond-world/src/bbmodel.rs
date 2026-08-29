@@ -40,7 +40,7 @@ mod parse;
 mod tests;
 mod texture;
 
-pub use anim::euler_quat;
+pub use anim::{display_euler_quat, euler_quat};
 
 use anim::{bone_transform, head_look_transform, sample_track};
 use parse::{arr3, num, parse_animations, parse_faces, walk_outliner};
@@ -604,7 +604,7 @@ impl CompiledAsset for Model {
     /// Bump on any change to these fields or to [`Model::load`]'s output; the
     /// `compiled_model_layout_change_requires_a_format_version_bump` guard
     /// fails until you do.
-    const FORMAT_VERSION: u32 = 7;
+    const FORMAT_VERSION: u32 = 8;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 

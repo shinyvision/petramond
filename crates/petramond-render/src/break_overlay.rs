@@ -407,7 +407,7 @@ mod tests {
         use glam::{Mat4, Vec3};
         use petramond_math::face::Face;
         use petramond_mesh::SHADES;
-        use petramond_world::bbmodel::euler_quat;
+        use petramond_world::bbmodel::{display_euler_quat, euler_quat};
         use petramond_world::block_model::{self, BlockModelKind};
 
         let kind = BlockModelKind::FurnitureWorkbench;
@@ -425,7 +425,7 @@ mod tests {
         // iso view of the footprint (front-3/4 so the desk top / legs / board read).
         let fp = block_model::footprint(kind);
         let center = Vec3::new(fp[0] as f32, fp[1] as f32, fp[2] as f32) * 0.5;
-        let rotm = Mat4::from_quat(euler_quat(Vec3::new(28.0, 330.0, 0.0)));
+        let rotm = Mat4::from_quat(display_euler_quat(Vec3::new(28.0, 330.0, 0.0)));
         let (mut half, mut half_z) = (1e-3f32, 1e-3f32);
         for &x in &[0.0, fp[0] as f32] {
             for &y in &[0.0, fp[1] as f32] {

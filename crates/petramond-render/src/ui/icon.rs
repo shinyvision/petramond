@@ -141,7 +141,7 @@ pub fn iso_icon_mvp(screen: (u32, u32), r: SlotRect) -> Mat4 {
 fn gui_rotation(kind: petramond_world::block_model::BlockModelKind) -> glam::Quat {
     let r = petramond_world::block_model::display(kind).gui.rotation;
     glam::Quat::from_rotation_y(std::f32::consts::PI)
-        * petramond_world::bbmodel::euler_quat(Vec3::new(r[0], -r[1], -r[2]))
+        * petramond_world::bbmodel::display_euler_quat(Vec3::new(r[0], -r[1], -r[2]))
 }
 
 /// Icon MVP for a bbmodel block: the authored Blockbench `display.gui` pose mapped through

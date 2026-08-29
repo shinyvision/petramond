@@ -1,0 +1,37 @@
+{
+  "blocks": [
+    {
+      "block": "combat:weapons_workbench",
+      "shape": {
+        "model": "combat:weapons_workbench"
+      },
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": {
+        "open_gui": "combat:weapons_workbench"
+      },
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "hardness": 2.5,
+      "drops": [
+        {
+          "item": "combat:weapons_workbench",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    }
+  ]
+}

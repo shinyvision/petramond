@@ -2,8 +2,31 @@
   "recipes": [
     {
       "type": "crafting",
-      "recipe": "combat:shield",
+      "recipe": "combat:weapons_workbench",
       "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:crafting_table",
+          "count": 1
+        },
+        {
+          "tag": "petramond:logs",
+          "count": 3
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 5
+        }
+      ],
+      "result": {
+        "item": "combat:weapons_workbench",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "combat:shield",
+      "station": "combat:weapons_workbench",
       "ingredients": [
         {
           "tag": "petramond:planks",

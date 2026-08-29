@@ -1,10 +1,11 @@
 //! combat — the shield.
 //!
-//! A craftable shield (4 planks + 4 iron ingots) raised by holding the use
-//! button. While it is up, monster melee coming at your FRONT is cancelled,
-//! the body moves at half speed, and the hands are barred from attacking,
-//! mining and interacting. A hit it absorbs knocks it aside for
-//! [`IMPACT_TICKS`], during which the next attacker gets through.
+//! A shield, crafted at the pack's weapons workbench (4 planks + 4 iron
+//! ingots), raised by holding the use button. While it is up, monster melee
+//! coming at your FRONT is cancelled, the body moves at half speed, and the
+//! hands are barred from attacking, mining and interacting. A hit it absorbs
+//! knocks it aside for [`IMPACT_TICKS`], during which the next attacker gets
+//! through.
 //!
 //! Every rule lives in [`guard`], in ONE pure function. This file is the
 //! wiring, in three pieces:

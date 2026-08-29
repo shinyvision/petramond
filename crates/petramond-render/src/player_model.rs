@@ -273,7 +273,7 @@ pub(super) fn build_player_body(
             model.apply_bone_offset(
                 &mut pose,
                 offset.bone,
-                petramond_world::bbmodel::euler_quat(Vec3::from(offset.rotation)),
+                petramond_world::bbmodel::display_euler_quat(Vec3::from(offset.rotation)),
                 translation,
             );
         }
@@ -773,7 +773,7 @@ mod tests {
                     model.apply_bone_offset(
                         &mut pose,
                         b,
-                        petramond_world::bbmodel::euler_quat(rot),
+                        petramond_world::bbmodel::display_euler_quat(rot),
                         Vec3::ZERO,
                     );
                 }

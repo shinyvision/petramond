@@ -12,6 +12,19 @@
       },
       "model": "combat:shield",
       "tags": []
+    },
+    {
+      "item": "combat:weapons_workbench",
+      "key": "combat:weapons_workbench",
+      "name": "Weapons Workbench",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "combat:weapons_workbench"
     }
   ]
 }

@@ -5,6 +5,12 @@
       "model_file": "models/shield.bbmodel",
       "cells": [1, 1, 1],
       "orientation": "left_to_right"
+    },
+    {
+      "key": "combat:weapons_workbench",
+      "model_file": "models/weapons_workbench.bbmodel",
+      "cells": [2, 2, 1],
+      "orientation": "left_to_right"
     }
   ]
 }

@@ -2,7 +2,7 @@ use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::bbmodel::euler_quat;
+use crate::bbmodel::display_euler_quat;
 
 use super::{BlockModelKind, MODELS};
 
@@ -44,7 +44,7 @@ impl DisplayTransform {
     /// scale component degrades to 0.001 exactly as Blockbench does; a negative one
     /// mirrors that axis (the authored "mirror" flag).
     pub fn base_matrix(&self) -> Mat4 {
-        let rot = euler_quat(Vec3::from(self.rotation));
+        let rot = display_euler_quat(Vec3::from(self.rotation));
         let s = Vec3::from(self.scale);
         let guarded = |v: f32| if v == 0.0 { 0.001 } else { v };
         let scale = Vec3::new(guarded(s.x), guarded(s.y), guarded(s.z));
