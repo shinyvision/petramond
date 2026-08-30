@@ -2,10 +2,9 @@
 //! support they rest on is gone.
 //!
 //! Lives here in `world` (not `block`) for the same reason water does — it drives the
-//! world tick scheduler (`World::schedule_block_tick`) and the natural-break hand-off
-//! ([`World::note_block_destroyed`]), world internals a `block`-side behaviour can't
-//! reach — while still implementing the `block`-defined `BlockBehavior`. Carried by
-//! every block tagged [`BlockTag::FRAGILE`](petramond_world::block::BlockTag::FRAGILE) (see
+//! natural-break hand-off ([`World::note_block_destroyed`]), world internals a
+//! `block`-side behaviour can't reach — while still implementing the `block`-defined
+//! `BlockBehavior`. Carried by every block tagged [`BlockTag::FRAGILE`](petramond_world::block::BlockTag::FRAGILE) (see
 //! `block::data`): the tag is the categorisation (the water sim reads it to know which
 //! cells it may flow into), this behaviour is what such a block DOES when its support
 //! changes.
@@ -15,35 +14,20 @@ use petramond_world::block::Block;
 
 use super::store::World;
 
-/// Ticks a now-unsupported fragile block waits before it breaks: the next tick. The
-/// break resolves on the deterministic game tick *after* the change that undercut it,
-/// never mid-frame — the same scheduled-tick model water uses, so a chain of supports
-/// collapsing falls one layer per tick instead of all at once.
-const FRAGILE_BREAK_DELAY: u64 = 1;
-
-/// Break behaviour for fragile blocks (the cross-plants and the torch). A neighbour
-/// change that takes away the block's support schedules its break for the next tick;
-/// the scheduled tick re-checks (the support may have returned, or the cell may now hold
-/// something else) and, only if the block is still fragile and still unsupported,
-/// shatters it — dropping and bursting exactly as a player's hand-break would (see
-/// [`World::note_block_destroyed`]).
+/// Break behaviour for fragile blocks (the cross-plants and the torch). A block update
+/// that takes away the block's support resolves the verdict at the update itself: the
+/// dispatch re-reads the cell (a later write in the same tick may have won it) and,
+/// only if the block is still fragile and still unsupported, shatters it — dropping
+/// and bursting exactly as a player's hand-break would (see
+/// [`World::note_block_destroyed`]). Support is a pure predicate of the live
+/// neighbourhood, so there is nothing to wait for and nothing to reschedule.
 pub struct Fragile;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Fragile {
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
-        // Dispatch already read this cell as the fragile block; re-read to learn which
-        // one — the support cell is per-block (a torch sideways, a plant below, a
-        // hanging block above).
+        // Dispatch already read this cell as the fragile block when the update was
+        // queued; re-read — the cell may hold something else now (mined, replaced).
         let block = Block::from_id(world.chunk_block(pos.x, pos.y, pos.z));
-        if !world.fragile_supported(pos, block) {
-            world.schedule_block_tick(pos, FRAGILE_BREAK_DELAY);
-        }
-    }
-
-    fn scheduled_tick(&self, world: &mut World, pos: IVec3) {
-        let block = Block::from_id(world.chunk_block(pos.x, pos.y, pos.z));
-        // The cell may have changed since the break was scheduled (mined, replaced, or
-        // re-supported); only break a still-fragile, still-unsupported block.
         if !block.is_fragile() || world.fragile_supported(pos, block) {
             return;
         }
@@ -170,7 +154,7 @@ mod tests {
 
     /// The compass mapping of a wall support. Getting this backwards puts every
     /// wall-mounted block's support cell on the far side of the wall, where it
-    /// is usually air — and the block then breaks the tick after it is placed.
+    /// is usually air — and the block then breaks at the update that placed it.
     #[test]
     fn a_wall_supports_row_reads_the_cell_its_side_names() {
         for (dir, facing) in [
@@ -187,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plant_breaks_the_tick_after_its_support_is_dug_away() {
+    fn a_plant_breaks_with_the_update_that_undermines_it() {
         let mut w = world();
         let ground = IVec3::new(8, 64, 8);
         let plant = IVec3::new(8, 65, 8);
@@ -196,13 +180,14 @@ mod tests {
         run_ticks(&mut w, 2); // settle: supported, nothing happens
         assert_eq!(block(&w, plant), Block::Poppy);
 
-        // Dig the support out: the flower is scheduled, then breaks on the next tick.
+        // Dig the support out: the flower dies inside the first tick's update
+        // dispatch — the verdict resolves at the update, no delay lane involved.
         w.set_block_world(ground.x, ground.y, ground.z, Block::Air);
-        run_ticks(&mut w, 2);
+        run_ticks(&mut w, 1);
         assert_eq!(
             block(&w, plant),
             Block::Air,
-            "unsupported flower must break"
+            "unsupported flower must break at the undermining update"
         );
         // ...and it was handed to the presentation layer as a hand-style break.
         let breaks = w.take_natural_breaks();
@@ -213,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cactus_breaks_the_tick_after_the_sand_under_it_is_dug() {
+    fn a_cactus_breaks_with_the_update_that_undermines_it() {
         // The cactus is fragile just like the dead bush: undermine it and it shatters.
         let mut w = world();
         let sand = IVec3::new(8, 64, 8);
@@ -223,9 +208,9 @@ mod tests {
         run_ticks(&mut w, 2); // settle: the sand holds it up, nothing happens
         assert_eq!(block(&w, cactus), Block::Cactus);
 
-        // Dig the sand out: the cactus is scheduled, then breaks on the next tick.
+        // Dig the sand out: the cactus breaks at the undermining update.
         w.set_block_world(sand.x, sand.y, sand.z, Block::Air);
-        run_ticks(&mut w, 2);
+        run_ticks(&mut w, 1);
         assert_eq!(
             block(&w, cactus),
             Block::Air,
@@ -265,9 +250,10 @@ mod tests {
         run_ticks(&mut w, 2);
         assert_eq!(block(&w, torch), Block::Torch, "held up by its wall");
 
-        // Mine the wall: the torch loses its sideways support and breaks next tick.
+        // Mine the wall: the torch loses its sideways support and breaks at the
+        // undermining update.
         w.set_block_world(wall.x, wall.y, wall.z, Block::Air);
-        run_ticks(&mut w, 2);
+        run_ticks(&mut w, 1);
         assert_eq!(
             block(&w, torch),
             Block::Air,
@@ -278,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ladder_breaks_the_tick_after_its_wall_is_mined() {
+    fn a_ladder_breaks_with_the_update_that_mines_its_wall() {
         let mut w = world();
         let ladder = IVec3::new(8, 65, 8);
         // An east-facing ladder (its own block row) hangs on the wall to its west.
@@ -288,14 +274,14 @@ mod tests {
         run_ticks(&mut w, 2);
         assert_eq!(block(&w, ladder), Block::LadderEast, "held up by its wall");
 
-        // Mine the wall: the ladder loses its support and breaks on the next tick
-        // (the same announce → scheduled-break cadence as the wall torch above).
+        // Mine the wall: the ladder loses its support and breaks at the update's
+        // dispatch (the same announce → resolve-at-update cadence as the wall torch).
         w.set_block_world(wall.x, wall.y, wall.z, Block::Air);
-        run_ticks(&mut w, 2);
+        run_ticks(&mut w, 1);
         assert_eq!(
             block(&w, ladder),
             Block::Air,
-            "a ladder falls with its wall on the following tick"
+            "a ladder falls with its wall"
         );
         let breaks = w.take_natural_breaks();
         assert!(
@@ -309,7 +295,7 @@ mod tests {
     #[test]
     fn a_snow_layer_rests_on_any_full_cube_but_sheds_off_partial_shapes() {
         // Both sites stay >= SIM_READ_REACH cells from the lone chunk's
-        // borders, or the streaming-finality guard drops the scheduled break.
+        // borders, or the streaming-finality guard drops the dispatched break.
         let mut w = world();
         // Leaves are a full collision cube without being opaque: canopy snow
         // must persist (the weather mod lays it there; it used to shatter on
@@ -340,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wall_torch_on_a_stair_flat_side_survives_support_rechecks() {
+    fn a_wall_torch_on_a_stair_flat_side_survives_its_support_checks() {
         let mut w = world();
         let stair = IVec3::new(8, 66, 8);
         assert!(w.place_stair(

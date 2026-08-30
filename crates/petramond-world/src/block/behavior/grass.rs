@@ -14,7 +14,10 @@ use super::BlockBehavior;
 /// [`BlockTag::NO_GRASS_DECAY`] cover) nor water. The exact inverse of
 /// [`Dirt`](super::dirt::Dirt)'s spread (which refuses to green such a cell), so a
 /// surface settles into a stable state: grass only where its top is open or
-/// canopied and dry, dirt under solid cover or water.
+/// canopied and dry, dirt under solid cover or water. The death is a DECAY — a
+/// random-tick cadence like leaf decay, deliberately gradual, never an instant
+/// verdict at the covering update (a solid placed overhead greens nothing and
+/// the grass under it fades out on the same ambience cadence that spread runs on).
 pub struct Grass;
 
 impl BlockBehavior for Grass {

@@ -103,8 +103,11 @@ impl World {
     /// Order per tick, which must stay exact (reordering reorders the simulation):
     /// 1. run the scheduled block ticks due now (these may set blocks, which
     ///    enqueue fresh block updates),
-    /// 2. dispatch every queued block update (which may schedule future ticks;
-    ///    dispatch never sets blocks, so the drain terminates within the tick),
+    /// 2. dispatch every queued block update — which may also SET blocks now: the
+    ///    support-loss reactions (fragile, door, grass) resolve their verdict at the
+    ///    update itself. Such a write enqueues fresh updates for the NEXT tick's
+    ///    batch, so the drain still terminates within the tick; a support chain
+    ///    collapses one cell per tick like it always did,
     /// 3. advance furnace smelting on the same clock (needs `recipes`, which the
     ///    storage layer is kept ignorant of — see `World::tick_furnaces`),
     /// 4. run random block ticks near the player (probabilistic per-block
@@ -147,7 +150,8 @@ impl World {
         }
 
         // 2. Dispatch the block updates accumulated since the last tick (ANNOUNCE
-        //    phase). MUST run after scheduled ticks: collapsing or reordering the
+        //    phase; may also set blocks — support rules resolve at the update).
+        //    MUST run after scheduled ticks: collapsing or reordering the
         //    two reorders the simulation.
         if !self.sim.update_queue.is_empty() {
             let mut updates = due; // reuse the drained phase-1 buffer

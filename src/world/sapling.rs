@@ -9,9 +9,8 @@
 //! so a data row reads `behavior::SAPLING`.
 //!
 //! A sapling is BOTH fragile and a grower, but a block has ONE behaviour, so this
-//! one composes: its support hooks (`neighbor_update` /
-//! `scheduled_tick`) delegate to [`FRAGILE`] (the sapling
-//! breaks when its ground is dug, exactly like a flower), while
+//! one composes: its `neighbor_update` support hook delegates to [`FRAGILE`] (the
+//! sapling breaks when its ground is dug, exactly like a flower), while
 //! `random_tick` drives the growth.
 //!
 //! Growth stages are DISTINCT BLOCK ROWS (visually identical): on each random
@@ -74,14 +73,11 @@ impl crate::world::engine_behavior::EngineBlockBehavior for Sapling {
         }
     }
 
-    // A sapling is fragile: it shatters the tick after the soil under it is dug away
-    // (or water floods its cell), exactly like a flower. Delegate both support hooks
-    // to the shared FRAGILE behaviour rather than duplicate its schedule-and-break.
+    // A sapling is fragile: an update that takes away its soil (or floods its cell)
+    // breaks it exactly like a flower. Delegate the support hook to the shared
+    // FRAGILE behaviour rather than duplicate its break.
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         FRAGILE.neighbor_update(world, pos);
-    }
-    fn scheduled_tick(&self, world: &mut World, pos: IVec3) {
-        FRAGILE.scheduled_tick(world, pos);
     }
 }
 

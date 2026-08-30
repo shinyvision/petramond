@@ -42,13 +42,13 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
     let cases = [(Block::SnowLayer, 0usize), (Block::Poppy, 1usize)];
     for (i, (block, expected_drops)) in cases.into_iter().enumerate() {
         // Keep both sites ≥ SIM_READ_REACH cells from the lone chunk's borders,
-        // or the streaming-finality guard drops the scheduled break.
+        // or the streaming-finality guard drops the dispatched break.
         let ground = IVec3::new(7 + 2 * i as i32, 64, 8);
         let cell = ground + IVec3::new(0, 1, 0);
         let w = &mut game.server.world;
         w.set_block_world(ground.x, ground.y, ground.z, Block::Grass);
         w.set_block_world(cell.x, cell.y, cell.z, block);
-        // Undermine it: the fragile block schedules, then breaks next tick.
+        // Undermine it: the fragile block breaks at the undermining update.
         w.set_block_world(ground.x, ground.y, ground.z, Block::Air);
         let mut feed = TickEvents::default();
         for _ in 0..3 {

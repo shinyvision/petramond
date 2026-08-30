@@ -507,8 +507,8 @@ impl WorldData {
         // A fragile row whose support is NOT the ground below has no substrate
         // vocabulary to gate on — `roots_on` names GROUNDS, and this row's
         // support is a ceiling or a wall — so the two rules above accept open
-        // air and the FRAGILE tick would shatter the block one tick later,
-        // eating the item. Gate on the fragile rule itself, so placement and
+        // air and the FRAGILE block update would shatter the block at its
+        // dispatch, eating the item. Gate on the fragile rule itself, so placement and
         // survival agree by construction (the ladder's rule, which the torch
         // and ladder families already reach through their own pre-gate).
         !(block.is_fragile()

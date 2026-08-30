@@ -21,29 +21,19 @@ use petramond_world::world::query::door_support;
 /// Cell offset from a door's lower cell to its upper cell.
 const UP: IVec3 = IVec3::new(0, 1, 0);
 
-/// Ticks a now-unsupported door waits before it breaks — the next tick, the same
-/// scheduled-break model fragile blocks and water use (see [`Door`]).
-const DOOR_BREAK_DELAY: u64 = 1;
-
-/// Break behaviour for doors: a neighbour change that takes away the floor under the
-/// door's LOWER cell schedules the whole door to break next tick; the scheduled tick
-/// re-checks (the floor may have returned, or the cell may now hold something else) and,
-/// only if it is still an unsupported door, shatters the pair — dropping ONE door item
-/// and bursting, exactly as a hand-break would. Mirrors [`Fragile`](super::fragile), but
-/// resolves over the 2-cell door so the upper half (which rests on the lower, not on an
-/// opaque block) is never mistaken for unsupported.
+/// Break behaviour for doors: a block update that takes away the floor under the
+/// door's LOWER cell resolves the whole door's break at the update itself — no timer,
+/// no reschedule. It re-checks (the floor may have returned, or the cell may now hold
+/// something else) and, only if it is still an unsupported door, shatters the pair —
+/// dropping ONE door item and bursting, exactly as a hand-break would. Mirrors
+/// [`Fragile`](super::fragile), but resolves over the 2-cell door so the upper half
+/// (which rests on the lower, not on an opaque block) is never mistaken for unsupported.
 pub struct Door;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Door {
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
-        if !world.door_supported(pos) {
-            world.schedule_block_tick(pos, DOOR_BREAK_DELAY);
-        }
-    }
-
-    fn scheduled_tick(&self, world: &mut World, pos: IVec3) {
-        // The cell may have changed since the break was scheduled (mined, re-supported,
-        // or replaced); only break a door that is still there and still unsupported.
+        // The cell may have changed after its update was queued (mined, replaced);
+        // only break a door that is still there and still unsupported.
         if world.door_state_at(pos.x, pos.y, pos.z).is_none() || world.door_supported(pos) {
             return;
         }
@@ -123,7 +113,7 @@ impl World {
     /// (a full opaque block, per [`door_support`]). The upper half's "floor" is the
     /// lower door cell, which is never opaque, so we always resolve to the lower cell
     /// first — both halves share the one support test. `false` when `pos` isn't a door
-    /// (the scheduled break guards that separately).
+    /// (the break resolves that at the update).
     fn door_supported(&self, pos: IVec3) -> bool {
         let Some((lower, _)) = self.door_cells(pos) else {
             return false;
@@ -324,16 +314,17 @@ mod tests {
     }
 
     #[test]
-    fn a_door_breaks_the_tick_after_its_floor_is_dug_away() {
+    fn a_door_breaks_with_the_update_that_undermines_its_floor() {
         let (mut w, base) = world_with_floor();
         let upper = base + UP;
         w.place_door(base, DOOR, Facing::South);
         run_ticks(&mut w, 2); // settle: supported, nothing happens
         assert_eq!(Block::from_id(w.chunk_block(base.x, base.y, base.z)), DOOR);
 
-        // Dig the floor out from under it: the door is scheduled, then breaks next tick.
+        // Dig the floor out from under it: the door breaks at the undermining
+        // update, in the first tick's dispatch.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Air);
-        run_ticks(&mut w, 2);
+        run_ticks(&mut w, 1);
         assert_eq!(
             Block::from_id(w.chunk_block(base.x, base.y, base.z)),
             Block::Air,
