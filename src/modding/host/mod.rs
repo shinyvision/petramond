@@ -422,6 +422,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
             call,
             HostCall::SetPlayerHeldPose { .. }
                 | HostCall::SetPlayerBonePose { .. }
+                | HostCall::SetPlayerHandMotions { .. }
                 | HostCall::HoldUse { .. }
         )
     {
@@ -456,7 +457,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::SetBlockDraw { .. }
         | HostCall::SetBlockDraws { .. }
         | HostCall::SetModelPartsMany { .. }
-        | HostCall::BlockLocalToWorld { .. } => blocks::handle_block_call(&data.mod_id, call),
+        | HostCall::BlockLocalToWorld { .. }
+        | HostCall::Raycast { .. } => blocks::handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
         | HostCall::MobInfo { .. }
         | HostCall::MobCanReach { .. }
@@ -493,9 +495,10 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::RecipeUnlocked { .. }
         | HostCall::PlayerHeld { .. }
         | HostCall::SetPlayerHeldData { .. }
-        | HostCall::SetPlayerSpeedScale { .. }
+        | HostCall::SetPlayerAttribute { .. }
         | HostCall::SetPlayerHeldPose { .. }
         | HostCall::SetPlayerBonePose { .. }
+        | HostCall::SetPlayerHandMotions { .. }
         | HostCall::SetPlayerDeniedActions { .. }
         | HostCall::HoldUse { .. }
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),

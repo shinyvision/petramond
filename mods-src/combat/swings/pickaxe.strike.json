@@ -1,0 +1,89 @@
+{
+  "format": "petramond-swing-animation",
+  "version": 1,
+  "tool": "pickaxe",
+  "tier": "iron",
+  "name": "my-chop-3",
+  "window_attack": 0.3,
+  "window_mine": 0.25,
+  "loop": true,
+  "keys": [
+    {
+      "t": 0,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.40045568302622253,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        -26,
+        -20,
+        -10
+      ],
+      "translation": [
+        3.5,
+        2.5,
+        3
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.5017413403614458,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        -72.5,
+        0,
+        -3
+      ],
+      "translation": [
+        -2,
+        -5,
+        -4
+      ],
+      "scale": 1,
+      "impact": true
+    },
+    {
+      "t": 1,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ]
+}

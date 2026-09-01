@@ -8,7 +8,7 @@
 //! `"farming:wheat"`); [`ItemId`]s in event payloads bridge to it through
 //! [`resolve_item`] / [`item_names`].
 
-use mod_api::{BlockId, ItemId, ItemInfoData, MobId};
+use mod_api::{BlockId, ItemId, ItemInfoData, ItemStackData, MobId};
 
 // Imported for intra-doc links only.
 #[allow(unused_imports)]
@@ -96,11 +96,24 @@ host_fn! {
 }
 
 host_fn! {
-    /// One item's registry row by registry NAME (stack cap, fuel burn ticks,
-    /// tags, display name, block link, tool, food, engine use key) — the same
-    /// rows engine mechanics read. `None` = unknown name. Row data is
-    /// session-stable — cache it mod-side instead of re-asking per tick.
-    pub fn item_info(item: &str) -> Option<Box<ItemInfoData>> => ItemInfo { item: item.into() } => ItemInfo
+    /// One item's BARE registry row by registry NAME (stack cap, fuel burn
+    /// ticks, tags, display name, block link, tool, food, engine use key) —
+    /// the same rows engine mechanics read. `None` = unknown name. Row data
+    /// is session-stable — cache it mod-side instead of re-asking per tick.
+    /// A tool read off a HELD stack goes through [`stack_info`] instead: the
+    /// bare row silently ignores an augment's override.
+    pub fn item_info(item: &str) -> Option<Box<ItemInfoData>>
+        => ItemInfo { item: item.into(), data: Vec::new() } => ItemInfo
+}
+
+host_fn! {
+    /// [`item_info`] for ONE STACK: the row as that stack carries it, every
+    /// instance override the engine honours applied (an augmented tool's
+    /// `petramond:tool` override lands in `tool`). What a mod reading a held
+    /// tool's damage or speed asks for — the engine's own melee and mining
+    /// resolve through exactly this. `None` = unknown item name.
+    pub fn stack_info(stack: &ItemStackData) -> Option<Box<ItemInfoData>>
+        => ItemInfo { item: stack.item.clone(), data: stack.data.clone() } => ItemInfo
 }
 
 /// [`resolve_block`] that also logs a "not registered" line on `None` — the

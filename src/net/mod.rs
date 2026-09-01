@@ -38,7 +38,11 @@ pub mod remap;
 //     cannot derive: the engine's own claim (status-effect speed, spectator, an
 //     open menu) is folded by BOTH mirrors from state they both hold, so
 //     sending it would double it. Same shape, same size — no bump.
-pub const PROTOCOL_VERSION: u16 = 32;
+// 33: the per-hand hand-motion claim (`motion_claims: [HandMotions; 2]`) on
+//     the player rows and `SelfState` — while a motion is claimed, every
+//     mirror's vanilla copy of it stands down for that hand because the
+//     claimant animates it through the pose seams.
+pub const PROTOCOL_VERSION: u16 = 33;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

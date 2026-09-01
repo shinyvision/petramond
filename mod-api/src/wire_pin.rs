@@ -67,6 +67,7 @@ fn samples() -> Samples {
                 crate::events::MobDamageFeedbackComponent::Immunity { ticks: 10 },
             ],
         }),
+        attacker: Some(EntityRef::Player(PlayerId(3))),
     });
     s.pin("HostCall::DespawnMob", &HostCall::DespawnMob { mob_id: 7 });
     s.pin("HostCall::SpawnItem", &HostCall::SpawnItem {
@@ -74,7 +75,10 @@ fn samples() -> Samples {
         data: Vec::new(),
     });
     s.pin("HostCall::PlayerState", &HostCall::PlayerState);
-    s.pin("HostCall::DamagePlayer", &HostCall::DamagePlayer { amount: 2 });
+    s.pin("HostCall::DamagePlayer", &HostCall::DamagePlayer {
+        player: PlayerId(1), amount: 2, origin: Some([1.0, 2.0, 3.0]),
+        attacker: Some(EntityRef::Mob(9)),
+    });
     s.pin("HostCall::ApplyKnockback", &HostCall::ApplyKnockback { impulse: [1.0, 2.0, 3.0] });
     s.pin("HostCall::GiveItem", &HostCall::GiveItem {
         item: "m:i".into(),
@@ -142,7 +146,9 @@ fn samples() -> Samples {
         pos: [1, 2, 3],
         slots: vec![(0, Some(ItemStackData { item: "m:i".into(), count: 1, data: Vec::new() })), (1, None)],
     });
-    s.pin("HostCall::ItemInfo", &HostCall::ItemInfo { item: "m:i".into() });
+    s.pin("HostCall::ItemInfo", &HostCall::ItemInfo {
+        item: "m:i".into(), data: vec![("m:k".into(), vec![7])],
+    });
     s.pin("HostCall::RecipeResult", &HostCall::RecipeResult {
         class: "m:c".into(), item: "m:i".into(),
     });
@@ -367,8 +373,8 @@ fn samples() -> Samples {
         },
     );
     s.pin("HostCall::SiteOpen", &HostCall::SiteOpen { key: "m:k".into(), cell: [1, -2, 3] });
-    s.pin("HostCall::SetPlayerSpeedScale", &HostCall::SetPlayerSpeedScale {
-        player: PlayerId(3), scale: 1.5,
+    s.pin("HostCall::SetPlayerAttribute", &HostCall::SetPlayerAttribute {
+        player: PlayerId(3), attribute: PlayerAttribute::AttackCooldown, scale: 1.5,
     });
     s.pin("HostCall::SetPlayerBonePose", &HostCall::SetPlayerBonePose {
         player: PlayerId(5),
@@ -392,6 +398,12 @@ fn samples() -> Samples {
         player: PlayerId(7), actions: vec![BodyAction::Attack, BodyAction::Mine],
     });
     s.pin("HostCall::HoldUse", &HostCall::HoldUse { player: PlayerId(8) });
+    s.pin("HostCall::SetPlayerHandMotions", &HostCall::SetPlayerHandMotions {
+        player: PlayerId(9), main: vec![HandMotion::Swing, HandMotion::Jab], off: vec![],
+    });
+    s.pin("HostCall::Raycast", &HostCall::Raycast {
+        from: [1.0, 2.0, 3.0], dir: [0.0, -1.0, 0.0], max: 8.0, filter: RayFilter::Collidable,
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -404,6 +416,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
+        half_width: 0.4, height: 1.2, half_length: 0.4,
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
         id: Some(PlayerId(1)),
@@ -411,6 +424,8 @@ fn samples() -> Samples {
         health: 20, on_ground: true, spectator: false, sneak: true, held: Some(ItemId(2)), held_count: 3,
         off_held: None, use_held: false, holds_use: false,
         pose_anchor: Some([1.5, 2.0, -3.5]),
+        swing: crate::HandSwing { mining: true, main: Some(crate::SwingKind::Attack), off: None },
+        half_width: 0.3, height: 1.8, eye_height: 1.62,
     }));
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
     s.pin("HostRet::MobTag", &HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
@@ -472,6 +487,8 @@ fn samples() -> Samples {
             health: 20, on_ground: true, spectator: false, sneak: false, held: None, held_count: 0,
             off_held: Some(ItemId(5)), use_held: true, holds_use: false,
             pose_anchor: None,
+            swing: crate::HandSwing::default(),
+            half_width: 0.3, height: 1.8, eye_height: 1.62,
         },
     }]));
     s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
@@ -488,6 +505,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Mob", &HostRet::Mob(Some(MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
+        half_width: 0.4, height: 1.2, half_length: 0.4,
     })));
     s.pin("HostRet::BytesMany", &HostRet::BytesMany(vec![Some(vec![1, 2]), None]));
     s.pin("HostRet::ItemDataRows", &HostRet::ItemDataRows(vec![(ItemId(3), "{}".into())]));
@@ -506,6 +524,9 @@ fn samples() -> Samples {
     }))));
     s.pin("HostRet::HeldStack", &HostRet::HeldStack(Some(ItemStackData {
         item: "m:i".into(), count: 1, data: vec![("m:k".into(), vec![7])],
+    })));
+    s.pin("HostRet::Raycast", &HostRet::Raycast(Some(RaycastHitData {
+        block: [1, 2, 3], face: [0, 1, 0], distance: 2.5,
     })));
 
     // --- GuestCall: every variant, declaration order -------------------------
@@ -643,6 +664,9 @@ fn samples() -> Samples {
     s.pin("EventPayload::UseUnclaimed", &EventPayload::UseUnclaimed {
         block: Some([1, 2, 3]), face: Some([0, 1, 0]), mob: Some(7), player: PlayerId(0),
     });
+    s.pin("EventPayload::AttackAttempt", &EventPayload::AttackAttempt {
+        block: None, face: None, mob: Some(7), target: Some(PlayerId(2)), player: PlayerId(0),
+    });
     s.pin("EventPayload::ItemUsePre", &EventPayload::ItemUsePre {
         item: ItemId(1), target: Some([1, 2, 3]),
     });
@@ -742,7 +766,7 @@ fn samples() -> Samples {
         EventKind::PlayerDismounted, EventKind::MobTagAdded, EventKind::MobTagRemoved,
         EventKind::ItemPickedUp, EventKind::ItemObtained, EventKind::MobDamaged,
         EventKind::Interacted, EventKind::ModEvent,
-            EventKind::UseUnclaimed,
+            EventKind::UseUnclaimed, EventKind::AttackAttempt,
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
@@ -827,11 +851,11 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::LightAt", "0b020406"),
     ("HostCall::SpawnMob", "0c036d3a6b0000803f00000040000040400000003f01"),
     ("HostCall::MobsInRadius", "0d0000803f000000400000404000008040"),
-    ("HostCall::DamageMob", "0e0700000040010000803f0000004000004040010200050a"),
+    ("HostCall::DamageMob", "0e0700000040010000803f0000004000004040010200050a010003"),
     ("HostCall::DespawnMob", "0f07"),
     ("HostCall::SpawnItem", "10036d3a69030000803f000000400000404000"),
     ("HostCall::PlayerState", "11"),
-    ("HostCall::DamagePlayer", "1204"),
+    ("HostCall::DamagePlayer", "120104010000803f0000004000004040010109"),
     ("HostCall::ApplyKnockback", "130000803f0000004000004040"),
     ("HostCall::GiveItem", "14036d3a690201036d3a6b03010203"),
     ("HostCall::SetHealth", "1528"),
@@ -864,7 +888,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::RegisterAiNode", "30036d3a6e02"),
     ("HostCall::ContainerGet", "31020406"),
     ("HostCall::ContainerSet", "32020406020001036d3a6901000100"),
-    ("HostCall::ItemInfo", "33036d3a69"),
+    ("HostCall::ItemInfo", "33036d3a6901036d3a6b0107"),
     ("HostCall::RecipeResult", "34036d3a63036d3a69"),
     ("HostCall::EffectApply", "35036d3a6505"),
     ("HostCall::EffectsActive", "36"),
@@ -955,12 +979,14 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::GiveItemTo", "8b010201690301016b0107"),
     ("HostCall::SetPlayerHeldData", "8c0102016901016b010601016b0107"),
     ("HostCall::SiteOpen", "8d01036d3a6b020306"),
-    ("HostCall::SetPlayerSpeedScale", "8e01030000c03f"),
+    ("HostCall::SetPlayerAttribute", "8e0103010000c03f"),
     ("HostCall::SetPlayerBonePose", "900105010d6c6566745f73686f756c6465720000b0c10000000000000000000000000000803f000000c001"),
     ("HostCall::SetPlayerHeldPose", "8f010401000000000000c03f00000000cdcccc3dcdcc4cbe9a9999be0000003f0000003f0000003fcdcccc3ecdcccc3ecdcccc3e00"),
     ("HostCall::EmitEventTo", "910106036d3a65020102"),
     ("HostCall::SetPlayerDeniedActions", "920107020001"),
     ("HostCall::HoldUse", "930108"),
+    ("HostCall::SetPlayerHandMotions", "94010902000100"),
+    ("HostCall::Raycast", "95010000803f000000400000404000000000000080bf000000000000004101"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -968,8 +994,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203030201"),
-    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f0000803f00000000000000400100"),
-    ("HostRet::Player", "0801010000803f00000040000040400000000000000000000000000000003f0000803e28010001010200000003010000c03f00000040000060c0"),
+    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f0000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
+    ("HostRet::Player", "0801010000803f00000040000040400000000000000000000000000000003f0000803e28010001010200000003010000c03f00000040000060c0010100009a99993e6666e63f295ccf3f"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
@@ -990,7 +1016,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobAnimState", "1a010000c03f0000403f0100000040"),
     ("HostRet::MaybeByte", "1b0104"),
     ("HostRet::MaybeI32", "1c010d"),
-    ("HostRet::Players", "1d010101010000803f00000040000040400000000000000000000000000000003f0000803e2801000000010501000000"),
+    ("HostRet::Players", "1d010101010000803f00000040000040400000000000000000000000000000003f0000803e28010000000105010000000000009a99993e6666e63f295ccf3f"),
     ("HostRet::EnvParams", "1e0200010000803f000000400000404000008040"),
     ("HostRet::BlockList", "1f020109"),
     ("HostRet::ItemList", "20020109"),
@@ -1000,7 +1026,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTags", "240101036d3a6b0001"),
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
-    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f0000803f00000000000000400100"),
+    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f0000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
     ("HostRet::BytesMany", "28020102010200"),
     ("HostRet::ItemDataRows", "290103027b7d"),
     ("HostRet::BlockDataRows", "2a0104027b7d"),
@@ -1012,6 +1038,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::GuiViewers", "300102036d3a6701020406"),
     ("HostRet::BlockInfo", "31010573746f6e650000c03f0101077069636b61786501ac02"),
     ("HostRet::HeldStack", "3201036d3a690101036d3a6b0107"),
+    ("HostRet::Raycast", "330102040600020000002040"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -1048,6 +1075,7 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::BlockBreakPre", "010204060101020101036d3a690101036d3a6b0107"),
     ("EventPayload::InteractAttempt", "020102040601000200010700"),
     ("EventPayload::UseUnclaimed", "190102040601000200010700"),
+    ("EventPayload::AttackAttempt", "1a00000107010200"),
     ("EventPayload::ItemUsePre", "030101020406"),
     ("EventPayload::MobDamagePre", "0407020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
     ("EventPayload::PlayerDamagePre", "0502010100"),
@@ -1076,7 +1104,7 @@ const PINS: &[(&str, &str)] = &[
     ("Stage::*", "0c000102030405060708090a0b"),
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
-    ("EventKind::*", "1a000102030405060708090a0b0c0d0e0f10111213141516171819"),
+    ("EventKind::*", "1b000102030405060708090a0b0c0d0e0f101112131415161718191a"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "031370657472616d6f6e643a696e76656e746f72790f70657472616d6f6e643a6368657374036d3a67"),
     ("Facing::*", "0400010203"),

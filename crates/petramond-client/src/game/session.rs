@@ -174,6 +174,7 @@ impl Game {
             local_hand_jab_off: false,
             local_hand_swing: false,
             local_hand_threw: false,
+            swing_events: Default::default(),
             local_broke_block: None,
             local_placed_block: None,
             local_placed_off_hand: false,

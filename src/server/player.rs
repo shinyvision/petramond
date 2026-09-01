@@ -328,6 +328,11 @@ pub struct ConnectedPlayer {
     /// (movement skip, replication row). Detach events are recorded at the
     /// authoritative registry transition, not inferred from this mirror.
     pub mount: Option<crate::mob::riding::Mount>,
+    /// Hand-swing one-shots latched by this tick's action stages (attack,
+    /// break, place, throw) via [`ConnectedPlayer::latch_swing`], published
+    /// on the next roster and cleared — the swing facts behind the mod ABI's
+    /// `PlayerSnapshot::swing`.
+    pub swing_events: mod_api::HandSwing,
     /// Last tick's sneak level — the rising edge while mounted is the
     /// dismount gesture (there is deliberately no other server-side sneak
     /// edge state; see `ConnectedPlayer::sneaking`).
@@ -440,6 +445,7 @@ impl ConnectedPlayer {
             move_jump: false,
             move_sprint: false,
             mount: None,
+            swing_events: Default::default(),
             prev_sneak: false,
             claim_pos: pos_before_ticks,
             claim_vel: petramond_math::math::Vec3::ZERO,
@@ -468,6 +474,19 @@ impl ConnectedPlayer {
     #[inline]
     pub fn selected_item(&self) -> Option<ItemType> {
         self.player.inventory.selected().map(|s| s.item)
+    }
+
+    /// Latch one hand's swing one-shot for the next roster publish (see
+    /// [`ConnectedPlayer::swing_events`]). Newest wins within a hand.
+    pub fn latch_swing(
+        &mut self,
+        hand: petramond_world::inventory::Hand,
+        kind: mod_api::SwingKind,
+    ) {
+        match hand {
+            petramond_world::inventory::Hand::Main => self.swing_events.main = Some(kind),
+            petramond_world::inventory::Hand::Off => self.swing_events.off = Some(kind),
+        }
     }
 
     /// Whether this session is sneaking RIGHT NOW: the held sneak intent,

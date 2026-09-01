@@ -268,6 +268,14 @@ pub struct Game {
     local_hand_jab_off: bool,
     local_hand_swing: bool,
     local_hand_threw: bool,
+    /// Hand-swing one-shots latched at event assembly for the client-mod
+    /// frame hook (the ABI's swing facts, `PlayerSnapshot::swing`) and taken
+    /// by `drive_client_mods`. Its own latch, deliberately: the app's hand
+    /// triggers feed the vanilla animator and drain at RENDER — a different
+    /// clock — and a shared latch is whoever-eats-first, which once left a
+    /// swing-claim pack dark on every one-shot. `mining` is unused here (the
+    /// level is read live at dispatch, like the server's roster build).
+    swing_events: mod_api::HandSwing,
     /// The block the LOCAL mining timer finished this frame (hand pop).
     local_broke_block: Option<petramond_world::block::Block>,
     /// The block the place ghost predicted this frame (hand pop).

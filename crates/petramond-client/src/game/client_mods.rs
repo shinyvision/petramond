@@ -27,7 +27,16 @@ impl Game {
         // dispatches publish, so a mod's rule is one predicate that reads
         // `player_state()` wherever it runs — and knows which player it is
         // acting for, which is what lets it address the pose call.
-        let actor = self.client_actor_snapshot(self.predicted_input.sneak);
+        //
+        // The swing facts ride with them: the one-shots latched since the
+        // last hook (the SAME edges the vanilla animator plays, on their own
+        // latch — see `Game::swing_events`), the mining level read live —
+        // the exact shape of the server's roster build.
+        let swing = mod_api::HandSwing {
+            mining: self.self_view.mining.is_some(),
+            ..std::mem::take(&mut self.swing_events)
+        };
+        let actor = self.client_actor_snapshot(self.predicted_input.sneak, swing);
         self.client_mods.frame(&self.replica, &actor, frame);
     }
 
@@ -46,7 +55,7 @@ impl Game {
         if events.is_empty() {
             return;
         }
-        let actor = self.client_actor_snapshot(self.predicted_input.sneak);
+        let actor = self.client_actor_snapshot(self.predicted_input.sneak, Default::default());
         for ev in events {
             self.client_mods
                 .mod_event(&self.replica, &actor, &ev.key, &ev.data);

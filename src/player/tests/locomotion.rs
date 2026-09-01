@@ -41,11 +41,13 @@ fn the_mod_body_scale_multiplies_the_wished_land_speed() {
     };
     assert_eq!(pl.wish_speed(walk), WALK);
 
-    pl.claims.set_speed_scale("combat", 0.5);
+    pl.claims
+        .set_attribute("combat", mod_api::PlayerAttribute::MoveSpeed, 0.5);
     assert_eq!(pl.wish_speed(walk), WALK * 0.5);
 
     // A second pack's claim composes rather than replacing the first.
-    pl.claims.set_speed_scale("armour", 0.5);
+    pl.claims
+        .set_attribute("armour", mod_api::PlayerAttribute::MoveSpeed, 0.5);
     assert_eq!(pl.wish_speed(walk), WALK * 0.25);
 
     // The mirror path: told an answer, the body walks at it, and the denial
@@ -58,10 +60,15 @@ fn the_mod_body_scale_multiplies_the_wished_land_speed() {
     // menu bar until the next frame re-stated them.
     use crate::player::DeniedActions;
     use mod_api::BodyAction;
-    pl.claims.set_speed_scale("armour", 1.0);
-    pl.claims.set_speed_scale("combat", 1.0);
     pl.claims
-        .set_speed_scale(crate::player::ENGINE_CLAIMANT, 0.5);
+        .set_attribute("armour", mod_api::PlayerAttribute::MoveSpeed, 1.0);
+    pl.claims
+        .set_attribute("combat", mod_api::PlayerAttribute::MoveSpeed, 1.0);
+    pl.claims.set_attribute(
+        crate::player::ENGINE_CLAIMANT,
+        mod_api::PlayerAttribute::MoveSpeed,
+        0.5,
+    );
     pl.adopt_resolved_body(0.5, DeniedActions::of([BodyAction::Mine]));
     assert_eq!(
         pl.wish_speed(walk),

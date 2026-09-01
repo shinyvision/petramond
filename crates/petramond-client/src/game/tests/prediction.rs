@@ -361,6 +361,7 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
             held_pose_main: None,
             held_pose_off: None,
             bone_poses: Vec::new(),
+            motion_claims: [Default::default(); 2],
             sleeping: None,
             sleep_bed: None,
             transform: None,

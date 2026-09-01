@@ -185,6 +185,25 @@ pub struct GameEvents {
     pub connection_lost: Option<String>,
 }
 
+impl GameEvents {
+    /// The MAIN hand's use jab this batch. `interacted` is the client's own
+    /// "this click predictably does something" verdict, so every effectful
+    /// use click — screens, mod GUIs, doors, beds, item uses, placements —
+    /// jabs exactly once; the hand that acted takes it.
+    pub fn jab_main(&self) -> bool {
+        (self.placed_block.is_some() && !self.placed_off_hand)
+            || self.threw_item
+            || (self.interacted && !self.interacted_off_hand)
+    }
+
+    /// The LEFT hand's use jab this batch (the click's effect came from the
+    /// off-hand pass).
+    pub fn jab_off(&self) -> bool {
+        (self.placed_block.is_some() && self.placed_off_hand)
+            || (self.interacted && self.interacted_off_hand)
+    }
+}
+
 /// Client-side PHASE-ACCUMULATOR clock over a STAGED interpolation window.
 /// `tick_alpha` used to read the server accumulator, which now lives on the
 /// server thread; tying it to each update's arrival time instead makes batch
@@ -499,6 +518,30 @@ impl Game {
             }
             Some(OpenScreen::Sleep) => out.open_sleep = true,
         }
+        // The hand one-shots, latched AGAIN for the client-mod frame hook
+        // (`Game::swing_events`): the app's own latch feeds the vanilla
+        // animator and drains at render, so a consumer on the update clock
+        // needs its own copy — a shared latch is whoever-eats-first, and the
+        // frame hook always ate second. The RAW kind is latched, matching
+        // the server's per-site facts; newest wins within a hand, and the
+        // priority order is cosmetic (the edges share one button, so they
+        // almost never coincide).
+        if out.swung_hand {
+            self.swing_events.main = Some(mod_api::SwingKind::Attack);
+        } else if out.broke_block.is_some() {
+            self.swing_events.main = Some(mod_api::SwingKind::Break);
+        } else if out.placed_block.is_some() && !out.placed_off_hand {
+            self.swing_events.main = Some(mod_api::SwingKind::Place);
+        } else if out.threw_item {
+            self.swing_events.main = Some(mod_api::SwingKind::Throw);
+        } else if out.interacted && !out.interacted_off_hand {
+            self.swing_events.main = Some(mod_api::SwingKind::Interact);
+        }
+        if out.placed_block.is_some() && out.placed_off_hand {
+            self.swing_events.off = Some(mod_api::SwingKind::Place);
+        } else if out.interacted && out.interacted_off_hand {
+            self.swing_events.off = Some(mod_api::SwingKind::Interact);
+        }
         out
     }
 
@@ -586,7 +629,7 @@ impl Game {
         // NOTHING claimed it: offer the gesture, exactly as the server does
         // once its own chain has passed. This is the frame a guard goes up on.
         if !jabbed {
-            let actor = self.client_actor_snapshot(input.movement.sneak);
+            let actor = self.client_actor_snapshot(input.movement.sneak, Default::default());
             let payload = mod_api::EventPayload::UseUnclaimed {
                 block: self.look.map(|h| h.block.to_array()),
                 face: self.look.map(|h| h.normal.to_array()),

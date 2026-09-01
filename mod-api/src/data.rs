@@ -115,6 +115,59 @@ pub struct MobSnapshot {
     /// [`vel`](Self::vel) alone cannot distinguish a mob going somewhere
     /// from a mob being pushed around.
     pub moving: bool,
+    /// Body extents — the same envelope the engine's collision, targeting
+    /// and riding use: a box `half_width` either side of the feet position,
+    /// `height` tall from the feet up. A LONG body (a hull) also has a
+    /// `half_length` ALONG its facing: it occupies a run of `half_width`
+    /// squares whose centres span `±(half_length - half_width)` along
+    /// `(-sin yaw, 0, -cos yaw)`. Square bodies answer `half_length ==
+    /// half_width`.
+    pub half_width: f32,
+    pub height: f32,
+    pub half_length: f32,
+}
+
+/// A living thing a call can name as the ACTOR behind something — the
+/// attacker a damage request is landed on behalf of
+/// ([`HostCall::DamageMob`], [`HostCall::DamagePlayer`]). Players by
+/// session id, mobs by their stable id.
+///
+/// [`HostCall::DamageMob`]: crate::HostCall::DamageMob
+/// [`HostCall::DamagePlayer`]: crate::HostCall::DamagePlayer
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum EntityRef {
+    Player(PlayerId),
+    Mob(u64),
+}
+
+/// What stops a [`HostCall::Raycast`].
+///
+/// [`HostCall::Raycast`]: crate::HostCall::Raycast
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RayFilter {
+    /// What the crosshair selects: every block with a selection shape —
+    /// solids, sub-cell shapes by their real geometry, plants by their
+    /// selection box. Air and water pass.
+    Selectable,
+    /// What a body collides with: only cells holding collision boxes, tested
+    /// by their shape. Plants, snow layers, water and decorative
+    /// no-collision models pass — the ray a swung tool or a projectile
+    /// follows.
+    Collidable,
+}
+
+/// One [`HostCall::Raycast`] hit.
+///
+/// [`HostCall::Raycast`]: crate::HostCall::Raycast
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub struct RaycastHitData {
+    /// The cell the ray stopped in.
+    pub block: [i32; 3],
+    /// The crossed face's normal, pointing back toward the ray's origin
+    /// (zero when the origin started inside the cell).
+    pub face: [i32; 3],
+    /// Distance from the origin to the hit, in blocks.
+    pub distance: f32,
 }
 
 /// What a player is attached to, for mount HostCalls and
@@ -403,6 +456,103 @@ pub enum BodyAction {
     Use,
 }
 
+/// One of a body's engine QUANTITIES a claim can scale
+/// ([`HostCall::SetPlayerAttribute`]): the engine keeps the base — a
+/// constant, a mode, a formula — and the resolved claims multiply it.
+///
+/// The vocabulary is engine-defined and grows by appending a variant at the
+/// engine quantity that wants a knob; a claim is always a MULTIPLIER
+/// (product across claimants, `1.0` releases), never an absolute, so any
+/// two packs' claims compose without an order to argue about.
+///
+/// [`HostCall::SetPlayerAttribute`]: crate::HostCall::SetPlayerAttribute
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PlayerAttribute {
+    /// The land-speed multiplier: scales whatever mode the player's own
+    /// input selected (walk, sprint and sneak together; swim, climb and
+    /// flight untouched). The engine's own claim — the speed-carrying
+    /// status effects — multiplies in beside yours.
+    MoveSpeed,
+    /// The cooldown between primary-button attack swings (the engine's
+    /// melee rate limit). `0.0` removes it — for a pack whose own pacing
+    /// already gates the hand (a swing-claim animation barring attacks
+    /// mid-arc), so the ANIMATION becomes the attack pace instead of a
+    /// constant the animation has to chase.
+    AttackCooldown,
+}
+
+impl PlayerAttribute {
+    /// Every attribute, in declaration order — the index space claim
+    /// storage sizes itself on. A new variant is appended here too.
+    pub const ALL: [PlayerAttribute; 2] = [Self::MoveSpeed, Self::AttackCooldown];
+
+    /// This attribute's slot in [`Self::ALL`]: the declaration order, which
+    /// is also its wire discriminant.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// One kind of one-shot hand action the engine latches per tick (client:
+/// per frame) — the raw gesture that fired, so a body-posing mod keys its
+/// own curve off the same trigger and off nothing pre-interpreted. The
+/// engine's own animation collapses these into two motions (the
+/// [`HandMotion`] vocabulary): `Attack`/`Break` play the full swing, the
+/// rest the softer jab.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SwingKind {
+    /// An attack swing — a mob, another player, or a punch at the air.
+    Attack,
+    /// A block broke under this hand's mining timer.
+    Break,
+    /// A block placement.
+    Place,
+    /// A throw or drop left this hand.
+    Throw,
+    /// A use click that something consumed: a screen, a door, a bed, an
+    /// item use.
+    Interact,
+}
+
+/// One of the engine's OWN hand motions a claim can silence
+/// ([`HostCall::SetPlayerHandMotions`]): the vocabulary of what the engine
+/// animates on a hand by itself, so a claimant names exactly the motions it
+/// takes over and the engine keeps playing the rest.
+///
+/// [`HostCall::SetPlayerHandMotions`]: crate::HostCall::SetPlayerHandMotions
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum HandMotion {
+    /// The full-strength swing family: the mining loop and the
+    /// break/attack punches.
+    Swing,
+    /// The soft use jab (a [`SwingKind::Place`]/[`SwingKind::Throw`]/
+    /// [`SwingKind::Interact`] edge's motion).
+    Jab,
+}
+
+/// What a body's hands are doing with the PRIMARY button this tick (client:
+/// frame), as [`HostCall::PlayerState`] / [`HostCall::Players`] publish it —
+/// the raw swing facts a body-posing mod animates from when it claims the
+/// hands via [`HostCall::SetPlayerHandMotions`].
+///
+/// Deliberately raw TRIGGERS, not a phase: each side runs its own clock off
+/// them (ticks on the server, frame seconds on the client) exactly as the
+/// recoil-cue pattern does. The mining level is a LEVEL (the held button is
+/// working a block), the one-shots are edges the newest wins.
+///
+/// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
+/// [`HostCall::Players`]: crate::HostCall::Players
+/// [`HostCall::SetPlayerHandMotions`]: crate::HostCall::SetPlayerHandMotions
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct HandSwing {
+    /// The MAIN hand is mid-mine (held button on a block, timer running).
+    pub mining: bool,
+    /// The main hand's one-shot this tick, if it fired one.
+    pub main: Option<SwingKind>,
+    /// The off hand's one-shot (its place jab), if it fired one.
+    pub off: Option<SwingKind>,
+}
+
 /// The player's state for [`HostCall::PlayerState`].
 ///
 /// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
@@ -471,6 +621,19 @@ pub struct PlayerSnapshot {
     ///
     /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
     pub pose_anchor: Option<[f32; 3]>,
+    /// What this body's hands did with the action buttons this tick (client:
+    /// this frame) — the swing facts a hand-animating mod keys its curves
+    /// off. See [`HostCall::SetPlayerHandMotions`], the matching ownership
+    /// claim.
+    ///
+    /// [`HostCall::SetPlayerHandMotions`]: crate::HostCall::SetPlayerHandMotions
+    pub swing: HandSwing,
+    /// Body extents, the same envelope the engine collides and targets:
+    /// a box `half_width` either side of the feet, `height` tall, with the
+    /// eye `eye_height` above the feet (where this body's look ray starts).
+    pub half_width: f32,
+    pub height: f32,
+    pub eye_height: f32,
 }
 
 /// One entry of [`HostCall::Players`]: a connected player's session id plus

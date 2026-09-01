@@ -1,4 +1,5 @@
-//! Transient claims on a player's body: how fast it moves, what it may do,
+//! Transient claims on a player's body: the scales on its engine
+//! quantities (speed, the attack cooldown), what it may do,
 //! how it holds what it holds, and how its bones are bent.
 //!
 //! Claims are keyed by CLAIMANT, so two of them can want the same knob at
@@ -12,7 +13,7 @@
 //! One resolution rule, so a prediction cannot disagree with the authority by
 //! construction.
 
-use mod_api::{BodyAction, HeldPose};
+use mod_api::{BodyAction, HandMotion, HeldPose, PlayerAttribute};
 use serde::{Deserialize, Serialize};
 
 use petramond_world::inventory::Hand;
@@ -89,6 +90,48 @@ impl DeniedActions {
     }
 }
 
+/// The set of a hand's engine [`HandMotion`]s claimed away — the resolved
+/// answer, as a bitmask, for the same reasons [`DeniedActions`] is one: it
+/// ships for every player every tick, and the resolution is a UNION. The
+/// ABI speaks the enum; the conversion happens once, at the host call.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct HandMotions(u8);
+
+impl HandMotions {
+    /// Nothing claimed — the engine plays every motion itself.
+    pub const NONE: Self = HandMotions(0);
+
+    fn bit(motion: HandMotion) -> u8 {
+        match motion {
+            HandMotion::Swing => 1 << 0,
+            HandMotion::Jab => 1 << 1,
+        }
+    }
+
+    /// The set naming exactly `motions`.
+    pub fn of(motions: impl IntoIterator<Item = HandMotion>) -> Self {
+        HandMotions(motions.into_iter().fold(0, |m, a| m | Self::bit(a)))
+    }
+
+    /// Is `motion` claimed away from the engine on this hand?
+    #[inline]
+    pub fn contains(self, motion: HandMotion) -> bool {
+        self.0 & Self::bit(motion) != 0
+    }
+
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Both sets' claims — the resolution rule, public because the client
+    /// runtime folds its mods' predictions with it too.
+    #[inline]
+    pub fn union(self, other: Self) -> Self {
+        HandMotions(self.0 | other.0)
+    }
+}
+
 /// The claimant the ENGINE itself publishes under.
 ///
 /// The engine is not privileged here: its own rules — a status effect's speed,
@@ -99,13 +142,37 @@ impl DeniedActions {
 /// nothing can squat it.
 pub const ENGINE_CLAIMANT: &str = "petramond";
 
-/// The land-speed scale a body runs at with nothing claimed.
-pub const MOVE_SCALE_DEFAULT: f32 = 1.0;
+/// The scale every attribute runs at with nothing claimed — a claim at this
+/// value IS a release.
+pub const ATTRIBUTE_DEFAULT: f32 = 1.0;
+
+/// [`ATTRIBUTE_DEFAULT`] under its older, movement-specific name — the
+/// callers that mean "the unscaled land speed" read better saying so.
+pub const MOVE_SCALE_DEFAULT: f32 = ATTRIBUTE_DEFAULT;
+
 /// Widest land-speed scale the resolved product may reach — generous enough
 /// for any haste, low enough that a hostile or typo'd claim cannot fling a
 /// body past what the terrain streamer keeps up with. Matches the
 /// status-effect row bound.
 pub const MOVE_SCALE_MAX: f32 = 5.0;
+
+/// The widest resolved product each attribute may reach. Per quantity,
+/// because the harm a runaway scale can do is per quantity.
+fn attribute_max(attribute: PlayerAttribute) -> f32 {
+    match attribute {
+        PlayerAttribute::MoveSpeed => MOVE_SCALE_MAX,
+        // Ten times the engine cooldown (~3 s between swings): slower than
+        // that is no longer an attack rate, it is a bar on attacking — which
+        // is the denial claim's job, not a number's.
+        PlayerAttribute::AttackCooldown => 10.0,
+    }
+}
+
+/// One scale per [`PlayerAttribute`], indexed by declaration order
+/// ([`PlayerAttribute::index`]) and sized by the vocabulary itself.
+type AttributeScales = [f32; PlayerAttribute::ALL.len()];
+
+const ATTRIBUTES_RELEASED: AttributeScales = [ATTRIBUTE_DEFAULT; PlayerAttribute::ALL.len()];
 
 /// One claimant's claim on one body.
 #[derive(Clone, Debug, PartialEq)]
@@ -113,23 +180,31 @@ struct Claim {
     /// Who is claiming — also the deterministic ordering key, so the fold
     /// never depends on who happened to call first.
     claimant: Box<str>,
-    /// Land-speed multiplier ([`MOVE_SCALE_DEFAULT`] = released).
-    speed_scale: f32,
+    /// One multiplier per engine quantity ([`ATTRIBUTE_DEFAULT`] =
+    /// released).
+    attributes: AttributeScales,
     main: Option<HeldPose>,
     off: Option<HeldPose>,
     bones: Vec<BonePose>,
     denied: DeniedActions,
+    /// Which of each hand's engine motions this claimant owns (`[main,
+    /// off]`): while a motion is claimed the engine plays none of its own
+    /// copy of it, because the claimant is animating the hand itself.
+    /// [`HandMotions::NONE`] = released.
+    motions: [HandMotions; 2],
 }
 
 impl Claim {
     /// Nothing left to say: the claim is dropped rather than kept at its
     /// neutral value, so the vector holds exactly the live claimants.
     fn is_released(&self) -> bool {
-        self.speed_scale == MOVE_SCALE_DEFAULT
+        self.attributes == ATTRIBUTES_RELEASED
             && self.main.is_none()
             && self.off.is_none()
             && self.bones.is_empty()
             && self.denied.is_empty()
+            && self.motions[0].is_empty()
+            && self.motions[1].is_empty()
     }
 }
 
@@ -176,11 +251,12 @@ impl BodyClaims {
                     i,
                     Claim {
                         claimant: claimant.into(),
-                        speed_scale: MOVE_SCALE_DEFAULT,
+                        attributes: ATTRIBUTES_RELEASED,
                         main: None,
                         off: None,
                         bones: Vec::new(),
                         denied: DeniedActions::NONE,
+                        motions: [HandMotions::NONE; 2],
                     },
                 );
                 i
@@ -194,19 +270,25 @@ impl BodyClaims {
         }
     }
 
-    /// Set `claimant`'s land-speed multiplier, replacing its previous value.
-    /// Non-finite is refused (`false`); finite values clamp into
-    /// `[0, MOVE_SCALE_MAX]` so no single claim can reverse or fling the body.
-    pub fn set_speed_scale(&mut self, claimant: &str, scale: f32) -> bool {
+    /// Set `claimant`'s multiplier on one engine quantity, replacing its
+    /// previous value. Non-finite is refused (`false`); finite values clamp
+    /// into `[0, attribute_max]` so no single claim can reverse a quantity
+    /// or fling it past what the engine tolerates.
+    pub fn set_attribute(
+        &mut self,
+        claimant: &str,
+        attribute: PlayerAttribute,
+        scale: f32,
+    ) -> bool {
         if !scale.is_finite() {
             return false;
         }
-        let scale = scale.clamp(0.0, MOVE_SCALE_MAX);
-        if scale == MOVE_SCALE_DEFAULT && !self.holds(claimant) {
+        let scale = scale.clamp(0.0, attribute_max(attribute));
+        if scale == ATTRIBUTE_DEFAULT && !self.holds(claimant) {
             return true;
         }
         let at = self.slot(claimant);
-        self.by_claimant[at].speed_scale = scale;
+        self.by_claimant[at].attributes[attribute.index()] = scale;
         self.prune(at);
         true
     }
@@ -261,6 +343,18 @@ impl BodyClaims {
         true
     }
 
+    /// Set the engine motions `claimant` owns on each hand
+    /// ([`HandMotions::NONE`] releases a hand). Infallible, like the denied
+    /// actions: a set of enum values has no malformed form to refuse.
+    pub fn set_hand_motions(&mut self, claimant: &str, main: HandMotions, off: HandMotions) {
+        if main.is_empty() && off.is_empty() && !self.holds(claimant) {
+            return;
+        }
+        let at = self.slot(claimant);
+        self.by_claimant[at].motions = [main, off];
+        self.prune(at);
+    }
+
     /// Set the actions `claimant` bars on this body (an empty set releases
     /// them). Infallible, unlike the pose setters: a set of enum values has no
     /// malformed form to refuse.
@@ -304,9 +398,10 @@ impl BodyClaims {
         self.by_claimant.iter().any(|c| !c.bones.is_empty())
     }
 
-    /// The resolved answer over the claims a MIRROR cannot work out for itself
-    /// — everything except [`ENGINE_CLAIMANT`]'s, which both sides derive from
-    /// state they both hold (the effect list, the mode, the open menu).
+    /// The resolved answer for one attribute over the claims a MIRROR cannot
+    /// work out for itself — everything except [`ENGINE_CLAIMANT`]'s, which
+    /// both sides derive from state they both hold (the effect list, the
+    /// mode, the open menu).
     ///
     /// Replication sends THIS, not the full fold. Sending the whole answer
     /// would make the engine's own half arrive a batch late and stop being
@@ -314,16 +409,16 @@ impl BodyClaims {
     /// neither half would leave the mirror guessing at rules only the server
     /// can see. Each side computes the half it can and is told the half it
     /// cannot.
-    pub fn replicated_speed_scale(&self) -> f32 {
+    pub fn replicated_attribute(&self, attribute: PlayerAttribute) -> f32 {
         self.by_claimant
             .iter()
             .filter(|c| &*c.claimant != ENGINE_CLAIMANT)
-            .map(|c| c.speed_scale)
+            .map(|c| c.attributes[attribute.index()])
             .product::<f32>()
-            .clamp(0.0, MOVE_SCALE_MAX)
+            .clamp(0.0, attribute_max(attribute))
     }
 
-    /// [`replicated_speed_scale`](Self::replicated_speed_scale) for the barred
+    /// [`replicated_attribute`](Self::replicated_attribute) for the barred
     /// set, and for the same reason.
     pub fn replicated_denied_actions(&self) -> DeniedActions {
         self.by_claimant
@@ -332,16 +427,16 @@ impl BodyClaims {
             .fold(DeniedActions::NONE, |set, c| set.union(c.denied))
     }
 
-    /// The resolved land-speed multiplier: the PRODUCT of every claim, clamped
-    /// once at the end. A product is the composable answer — two slows both
-    /// apply, neither stomps the other, and the order they were set in cannot
-    /// change the result.
-    pub fn speed_scale(&self) -> f32 {
+    /// The resolved multiplier on one engine quantity: the PRODUCT of every
+    /// claim, clamped once at the end. A product is the composable answer —
+    /// two slows both apply, neither stomps the other, and the order they
+    /// were set in cannot change the result.
+    pub fn attribute(&self, attribute: PlayerAttribute) -> f32 {
         self.by_claimant
             .iter()
-            .map(|c| c.speed_scale)
+            .map(|c| c.attributes[attribute.index()])
             .product::<f32>()
-            .clamp(0.0, MOVE_SCALE_MAX)
+            .clamp(0.0, attribute_max(attribute))
     }
 
     /// The resolved pose for one hand: the LAST claim in claimant order.
@@ -355,6 +450,21 @@ impl BodyClaims {
             Hand::Main => c.main,
             Hand::Off => c.off,
         })
+    }
+
+    /// The resolved motion ownership for one hand: a UNION across
+    /// claimants, like the denials — a claim says "this vanilla motion
+    /// stands down", so it holds while ANY claimant states it, and one
+    /// claimant releasing cannot release another's. Which pose the hand then
+    /// wears is the pose seam's own conflict to resolve.
+    pub fn hand_motions(&self, hand: Hand) -> HandMotions {
+        let hand = match hand {
+            Hand::Main => 0,
+            Hand::Off => 1,
+        };
+        self.by_claimant
+            .iter()
+            .fold(HandMotions::NONE, |set, c| set.union(c.motions[hand]))
     }
 }
 
@@ -378,20 +488,24 @@ mod tests {
     #[test]
     fn claims_compose_per_claimant_and_release_independently() {
         let mut body = BodyClaims::default();
-        assert_eq!(body.speed_scale(), 1.0);
+        assert_eq!(body.attribute(PlayerAttribute::MoveSpeed), 1.0);
 
-        assert!(body.set_speed_scale("combat", 0.5));
-        assert!(body.set_speed_scale("armour", 0.8));
-        assert_eq!(body.speed_scale(), 0.4);
+        assert!(body.set_attribute("combat", PlayerAttribute::MoveSpeed, 0.5));
+        assert!(body.set_attribute("armour", PlayerAttribute::MoveSpeed, 0.8));
+        assert_eq!(body.attribute(PlayerAttribute::MoveSpeed), 0.4);
 
         // Re-stating replaces that claimant's own value, never accumulates.
-        assert!(body.set_speed_scale("combat", 0.5));
-        assert_eq!(body.speed_scale(), 0.4);
+        assert!(body.set_attribute("combat", PlayerAttribute::MoveSpeed, 0.5));
+        assert_eq!(body.attribute(PlayerAttribute::MoveSpeed), 0.4);
 
-        assert!(body.set_speed_scale("combat", 1.0));
-        assert_eq!(body.speed_scale(), 0.8, "the other claim stands");
-        assert!(body.set_speed_scale("armour", 1.0));
-        assert_eq!(body.speed_scale(), 1.0);
+        assert!(body.set_attribute("combat", PlayerAttribute::MoveSpeed, 1.0));
+        assert_eq!(
+            body.attribute(PlayerAttribute::MoveSpeed),
+            0.8,
+            "the other claim stands"
+        );
+        assert!(body.set_attribute("armour", PlayerAttribute::MoveSpeed, 1.0));
+        assert_eq!(body.attribute(PlayerAttribute::MoveSpeed), 1.0);
         assert!(body.is_empty(), "a fully released body keeps no claims");
     }
 
@@ -441,7 +555,7 @@ mod tests {
     #[test]
     fn non_finite_claims_are_refused_and_clamps_bound_the_rest() {
         let mut body = BodyClaims::default();
-        assert!(!body.set_speed_scale("combat", f32::NAN));
+        assert!(!body.set_attribute("combat", PlayerAttribute::MoveSpeed, f32::NAN));
         assert!(body.is_empty(), "a refused claim stores nothing");
 
         let mut nan = pose(0.0);
@@ -450,10 +564,14 @@ mod tests {
         assert_eq!(body.held_pose(Hand::Main), None);
 
         // A single wild claim is clamped, and so is a product of many.
-        assert!(body.set_speed_scale("combat", 1e9));
-        assert_eq!(body.speed_scale(), MOVE_SCALE_MAX);
-        assert!(body.set_speed_scale("armour", -3.0));
-        assert_eq!(body.speed_scale(), 0.0, "negative clamps to a rooted body");
+        assert!(body.set_attribute("combat", PlayerAttribute::MoveSpeed, 1e9));
+        assert_eq!(body.attribute(PlayerAttribute::MoveSpeed), MOVE_SCALE_MAX);
+        assert!(body.set_attribute("armour", PlayerAttribute::MoveSpeed, -3.0));
+        assert_eq!(
+            body.attribute(PlayerAttribute::MoveSpeed),
+            0.0,
+            "negative clamps to a rooted body"
+        );
     }
 
     /// Bone offsets are the one claim that genuinely COMPOSES across
@@ -496,14 +614,14 @@ mod tests {
     #[test]
     fn a_neutral_write_from_an_unclaimed_body_touches_nothing() {
         let mut body = BodyClaims::default();
-        assert!(body.set_speed_scale("combat", 1.0));
+        assert!(body.set_attribute("combat", PlayerAttribute::MoveSpeed, 1.0));
         assert!(body.set_held_pose("combat", None, None));
         assert!(body.set_bone_poses("combat", Vec::new()));
         assert!(body.is_empty(), "no claim was ever built");
 
         // ...and it still RELEASES a claim that does exist.
-        assert!(body.set_speed_scale("combat", 0.5));
-        assert!(body.set_speed_scale("combat", 1.0));
+        assert!(body.set_attribute("combat", PlayerAttribute::MoveSpeed, 0.5));
+        assert!(body.set_attribute("combat", PlayerAttribute::MoveSpeed, 1.0));
         assert!(body.is_empty());
     }
 
@@ -515,5 +633,42 @@ mod tests {
         assert!(body.set_held_pose("combat", Some(HeldPose::IDENTITY), None));
         assert!(body.is_empty());
         assert_eq!(body.held_pose(Hand::Main), None);
+    }
+
+    /// Motion claims UNION across claimants per hand and per motion — the
+    /// denials' rule, not the poses' last-wins — and a release releases only
+    /// its own: one claimant letting go must uncover another's
+    /// still-standing claim, never hand the vanilla motion back underneath
+    /// it.
+    #[test]
+    fn motion_claims_union_across_mods_and_release_only_their_own() {
+        use mod_api::HandMotion;
+        let swing = HandMotions::of([HandMotion::Swing]);
+        let jab = HandMotions::of([HandMotion::Jab]);
+
+        let mut body = BodyClaims::default();
+        assert!(body.hand_motions(Hand::Main).is_empty(), "nobody owns any");
+        assert!(body.is_empty());
+
+        body.set_hand_motions("aaa", swing, HandMotions::NONE);
+        body.set_hand_motions("zzz", jab, swing);
+        let main = body.hand_motions(Hand::Main);
+        assert!(
+            main.contains(HandMotion::Swing) && main.contains(HandMotion::Jab),
+            "per-motion claims from different claimants union"
+        );
+        assert!(body.hand_motions(Hand::Off).contains(HandMotion::Swing));
+
+        // "zzz" releases everything it claimed; "aaa"'s main-hand swing
+        // stands untouched.
+        body.set_hand_motions("zzz", HandMotions::NONE, HandMotions::NONE);
+        let main = body.hand_motions(Hand::Main);
+        assert!(main.contains(HandMotion::Swing) && !main.contains(HandMotion::Jab));
+        assert!(body.hand_motions(Hand::Off).is_empty());
+
+        // A neutral write before ANY claim touches nothing.
+        let mut fresh = BodyClaims::default();
+        fresh.set_hand_motions("combat", HandMotions::NONE, HandMotions::NONE);
+        assert!(fresh.is_empty());
     }
 }

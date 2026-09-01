@@ -20,18 +20,33 @@ impl ServerGame {
         if !self.bus.queue_mut().has_actions() {
             return;
         }
-        // The mod ABI is single-player-shaped: player-directed actions target
-        // the HOST session (0) until per-player ABI addressing exists.
+        // The GUI and chat actions below are single-player-shaped: they
+        // target the HOST session (0) until per-player ABI addressing
+        // reaches them.
         let s = 0;
         for action in self.bus.queue_mut().take_actions() {
             match action {
-                DeferredAction::DamagePlayer { amount, mod_id } => {
-                    self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
+                DeferredAction::DamagePlayer {
+                    player,
+                    amount,
+                    source,
+                    origin,
+                } => {
+                    let Some(t) = self.sessions.iter().position(|sess| sess.id == player) else {
+                        continue; // the named session left before the drain
+                    };
+                    // A named attacker's hit is the engine's own melee in
+                    // every consequence, the shove included.
+                    if self.damage_player(t, amount, source, origin, events) && source.is_attack() {
+                        if let Some(from) = origin {
+                            self.shove_player(t, from);
+                        }
+                    }
                 }
                 DeferredAction::DamageMob {
                     mob_id,
                     amount,
-                    mod_id,
+                    source,
                     origin,
                     feedback,
                 } => {
@@ -42,14 +57,19 @@ impl ServerGame {
                     let Some(index) = self.world.mobs().index_of_id(mob_id) else {
                         continue;
                     };
+                    // The pipeline's acting session is the attacker's when
+                    // the source names one (a `mob_damage_pre` handler then
+                    // reads the same actor the engine's own hit shows it).
+                    let acting = match source {
+                        DamageSource::PlayerAttack(id) => self
+                            .sessions
+                            .iter()
+                            .position(|sess| sess.id == id)
+                            .unwrap_or(s),
+                        _ => s,
+                    };
                     self.damage_mob_through_pipeline(
-                        s,
-                        index,
-                        amount,
-                        DamageSource::Mod(mod_id),
-                        origin,
-                        feedback,
-                        events,
+                        acting, index, amount, source, origin, feedback, events,
                     );
                 }
                 // GUI opens share the ordered menu boundary with player

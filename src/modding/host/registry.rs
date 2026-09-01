@@ -96,9 +96,20 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 None => Vec::new(),
             })
         }
-        HostCall::ItemInfo { item } => HostRet::ItemInfo(
-            petramond_world::item::ItemType::by_name(&item).map(|t| Box::new(item_info_data(t))),
-        ),
+        // The row AS A STACK CARRIES IT: the instance data interns to the
+        // same variant the inventory would hold, so `ItemStack::tool` applies
+        // an augment's override exactly as mining and melee do.
+        HostCall::ItemInfo { item, data } => {
+            let variant = match super::guards::intern_abi_data("ItemInfo", &data) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            HostRet::ItemInfo(petramond_world::item::ItemType::by_name(&item).map(|t| {
+                Box::new(item_info_data(
+                    &petramond_world::item::ItemStack::with_variant(t, 1, variant),
+                ))
+            }))
+        }
         // The shape-kind resolver: like the block/item/mob resolvers, a key→id
         // lookup over the process-wide registry, unknown key = `None`.
         HostCall::ResolveShape { key } => {
@@ -168,14 +179,15 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
 
 /// One item row as its ABI crossing — the stable, mod-relevant fields of the
 /// `items.json` row (presentation internals stay engine-side).
-fn item_info_data(item: petramond_world::item::ItemType) -> mod_api::ItemInfoData {
+fn item_info_data(stack: &petramond_world::item::ItemStack) -> mod_api::ItemInfoData {
+    let item = stack.item;
     mod_api::ItemInfoData {
         max_stack: item.max_stack_size(),
         fuel_burn_ticks: item.fuel_burn_ticks() as u32,
         tags: item.tags().iter().map(|t| t.name().to_owned()).collect(),
         display_name: item.name().to_owned(),
         block: item.as_block().map(|b| mod_api::BlockId(b.id())),
-        tool: item.tool().map(|t| mod_api::ToolInfoData {
+        tool: stack.tool().map(|t| mod_api::ToolInfoData {
             kind: t.kind.name().to_owned(),
             tier: t.tier,
             speed: t.speed,
@@ -401,6 +413,7 @@ mod tests {
             &mut data,
             HostCall::ItemInfo {
                 item: "petramond:iron_pickaxe".into(),
+                data: vec![],
             },
         ) else {
             panic!("item info expected");
@@ -414,6 +427,7 @@ mod tests {
             &mut data,
             HostCall::ItemInfo {
                 item: "petramond:stone".into(),
+                data: vec![],
             },
         ) else {
             panic!("item info expected");
@@ -428,6 +442,7 @@ mod tests {
                 &mut data,
                 HostCall::ItemInfo {
                     item: "alpha:not_a_thing".into(),
+                    data: vec![],
                 },
             ),
             HostRet::ItemInfo(None)

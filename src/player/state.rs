@@ -130,6 +130,12 @@ pub struct PlayerRosterSnapshot {
     /// The off-hand slot's item, if any — the literal off slot (the roster is
     /// outside any acting-hand dispatch), so a reader sees both hands.
     pub off_held: Option<petramond_world::item::ItemType>,
+    /// The swing facts a hand-animating mod keys off (the mod ABI's
+    /// `PlayerSnapshot::swing`): the mining level as of this roster, plus
+    /// the one-shots the stages latched during the tick that just ran —
+    /// published on exactly one roster each, so a mod's tick system sees an
+    /// edge once, one tick after it fired (which the eased pose lane hides).
+    pub swing: mod_api::HandSwing,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -362,10 +368,13 @@ impl Player {
     /// Idempotent and re-stated every tick on BOTH mirrors — every input is
     /// state the client also holds, so the engine's half is derived rather than
     /// replicated and stays predicted (see
-    /// [`BodyClaims::replicated_speed_scale`]).
+    /// [`BodyClaims::replicated_attribute`]).
     pub fn refresh_engine_claims(&mut self, gameplay: bool) {
-        self.claims
-            .set_speed_scale(super::ENGINE_CLAIMANT, self.effect_speed_scale());
+        self.claims.set_attribute(
+            super::ENGINE_CLAIMANT,
+            mod_api::PlayerAttribute::MoveSpeed,
+            self.effect_speed_scale(),
+        );
         // A spectator has no body to act with and an open menu has the hands.
         // Both used to be a separate condition at every action site.
         //
@@ -388,10 +397,17 @@ impl Player {
     }
 
     /// The body-level land-speed scale: the resolved product over every claim
-    /// (see [`BodyClaims::speed_scale`]).
+    /// (see [`BodyClaims::attribute`]).
     #[inline]
     pub fn move_scale(&self) -> f32 {
-        self.claims.speed_scale()
+        self.claims.attribute(mod_api::PlayerAttribute::MoveSpeed)
+    }
+
+    /// The engine's `base` ticks for `attribute`, scaled by the resolved
+    /// claims — how a consulting site reads a claimed engine constant.
+    #[inline]
+    pub fn scaled_ticks(&self, attribute: mod_api::PlayerAttribute, base: u32) -> u32 {
+        (base as f32 * self.claims.attribute(attribute)).round() as u32
     }
 
     /// The set of actions this body is barred from (see
@@ -417,7 +433,8 @@ impl Player {
     /// (see [`refresh_engine_claims`](Self::refresh_engine_claims)), and
     /// clearing would drop it until the next frame re-stated it.
     pub fn adopt_resolved_body(&mut self, scale: f32, denied: super::DeniedActions) {
-        self.claims.set_speed_scale(MIRRORED_CLAIM, scale);
+        self.claims
+            .set_attribute(MIRRORED_CLAIM, mod_api::PlayerAttribute::MoveSpeed, scale);
         self.claims.set_denied_actions(MIRRORED_CLAIM, denied);
     }
 

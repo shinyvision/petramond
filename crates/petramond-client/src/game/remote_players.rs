@@ -249,6 +249,8 @@ impl RemotePlayers {
                 swung: latch.swung,
                 eating: eating_main.then_some(p.eat_t),
                 pose_target: p.curr.held_pose_main.map(super::render_held_pose),
+                swing_claim: p.curr.motion_claims[0].contains(mod_api::HandMotion::Swing),
+                jab_claim: p.curr.motion_claims[0].contains(mod_api::HandMotion::Jab),
                 dt,
             });
             // The LEFT hand: its own item, its own jabs, its own eats. Mining
@@ -270,6 +272,8 @@ impl RemotePlayers {
                 eating: eating_off.then_some(p.eat_t),
                 dt,
                 pose_target: p.curr.held_pose_off.map(super::render_held_pose),
+                swing_claim: p.curr.motion_claims[1].contains(mod_api::HandMotion::Swing),
+                jab_claim: p.curr.motion_claims[1].contains(mod_api::HandMotion::Jab),
             });
             // The body's bones ease at the same rate as the item in its
             // fist, so a raised guard and the arm raising it arrive together.
@@ -349,6 +353,7 @@ mod tests {
             held_pose_main: None,
             held_pose_off: None,
             bone_poses: Vec::new(),
+            motion_claims: [Default::default(); 2],
             hurt_recent: false,
             snap: false,
             mount: None,

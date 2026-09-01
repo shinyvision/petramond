@@ -39,6 +39,10 @@ pub struct ClientHeldItem {
     /// hand animator eases toward. PREDICTED by a client mod when one poses
     /// hands here, replicated otherwise. `None` = the item's authored hold.
     pub pose_target: Option<mod_api::HeldPose>,
+    /// Which of this hand's engine motions a mod claims (the vanilla copy
+    /// of each claimed motion is silenced because the claimant animates it).
+    /// PREDICTED locally when a client mod claims, replicated otherwise.
+    pub motions: petramond::player::HandMotions,
     /// The camera's normalized walk sway this frame — the hand follows a
     /// LAGGED copy of it (see `game::view_bob` and `HeldItemAnimator`).
     pub bob: [f32; 2],
@@ -112,10 +116,12 @@ impl Game {
         let bob = self.view_bob.offset();
         // A client mod running the same rule as its server half answers a
         // round trip sooner, so it owns the hands it poses; hands no client
-        // mod poses keep the replicated answer.
+        // mod poses keep the replicated answer. Motion ownership folds the
+        // same way, one byte per hand.
         let (pose_main, pose_off) = self
             .client_mods
             .local_held_poses((view.held_pose_main, view.held_pose_off));
+        let [motions_main, motions_off] = self.client_mods.local_motion_claims(view.motion_claims);
         ClientFrame {
             // The third-person boom camera when active; the first-person eye
             // otherwise. Sim consumers keep reading `self.cam` directly.
@@ -134,6 +140,7 @@ impl Game {
                 mining_block,
                 eating: eat_main,
                 pose_target: pose_main,
+                motions: motions_main,
                 bob,
             },
             off_hand_item: ClientHeldItem {
@@ -149,6 +156,7 @@ impl Game {
                 mining_block: None,
                 eating: eat_off,
                 pose_target: pose_off,
+                motions: motions_off,
                 bob,
             },
         }

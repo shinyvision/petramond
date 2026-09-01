@@ -268,11 +268,16 @@ impl Guard {
 /// shield is still reeling. It arrives as a FRACTION rather than a count
 /// because each side measures it off a different clock (ticks on the server,
 /// frame seconds on the client) and only the meaning has to agree.
-pub fn guard_of(shield: ItemId, state: &PlayerSnapshot, impact: Option<f32>) -> Guard {
+/// `shield` is `None` when the registry carries no shield row — no hand can
+/// hold one, so the guard resolves released; the caller's other rules (the
+/// tools' swings) run regardless.
+pub fn guard_of(shield: Option<ItemId>, state: &PlayerSnapshot, impact: Option<f32>) -> Guard {
     // Deciding a spectator HERE rather than by skipping the publish is what
     // RELEASES the claim: skipping would leave half speed and a raised shield
     // latched on a body no rule is evaluating any more.
-    let holds = |slot: Option<ItemId>| !state.spectator && slot == Some(shield);
+    let holds = |slot: Option<ItemId>| {
+        !state.spectator && shield.is_some_and(|shield| slot == Some(shield))
+    };
     let main_holds = holds(state.held);
     let off_holds = holds(state.off_held);
     // `holds_use`, never the raw button: the press only becomes a guard once
@@ -311,6 +316,10 @@ mod tests {
             off_held,
             held_count: 1,
             pose_anchor: None,
+            swing: Default::default(),
+            half_width: 0.3,
+            height: 1.8,
+            eye_height: 1.62,
         }
     }
 
@@ -320,11 +329,11 @@ mod tests {
 
     #[test]
     fn a_guard_needs_the_press_and_a_shield_in_either_hand() {
-        assert!(guard_of(SHIELD, &guarding(), None).raised);
-        assert!(guard_of(SHIELD, &actor(None, Some(SHIELD), true), None).raised);
-        assert!(!guard_of(SHIELD, &actor(Some(SHIELD), None, false), None).raised);
-        assert!(!guard_of(SHIELD, &actor(Some(OTHER), None, true), None).raised);
-        assert!(!guard_of(SHIELD, &actor(None, None, true), None).raised);
+        assert!(guard_of(Some(SHIELD), &guarding(), None).raised);
+        assert!(guard_of(Some(SHIELD), &actor(None, Some(SHIELD), true), None).raised);
+        assert!(!guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None).raised);
+        assert!(!guard_of(Some(SHIELD), &actor(Some(OTHER), None, true), None).raised);
+        assert!(!guard_of(Some(SHIELD), &actor(None, None, true), None).raised);
     }
 
     /// A shield that just took a hit is still UP but stops nothing until it
@@ -332,11 +341,11 @@ mod tests {
     /// not a shield that blinks away.
     #[test]
     fn a_reeling_shield_stays_raised_and_stops_absorbing() {
-        let settled = guard_of(SHIELD, &guarding(), None);
+        let settled = guard_of(Some(SHIELD), &guarding(), None);
         assert!(settled.raised && settled.absorbs());
 
         for progress in [0.0, 0.5, 0.99] {
-            let hit = guard_of(SHIELD, &guarding(), Some(progress));
+            let hit = guard_of(Some(SHIELD), &guarding(), Some(progress));
             assert!(hit.raised, "the button is still held");
             assert!(!hit.absorbs(), "the shield is out of the way at {progress}");
             assert_eq!(hit.speed_scale(), settled.speed_scale(), "still heavy");
@@ -347,13 +356,13 @@ mod tests {
     /// the shield parked somewhere the settled rule would never put it.
     #[test]
     fn the_recoil_returns_to_the_settled_guard_at_both_ends() {
-        let settled = guard_of(SHIELD, &guarding(), None);
+        let settled = guard_of(Some(SHIELD), &guarding(), None);
         for progress in [0.0, 1.0] {
-            let hit = guard_of(SHIELD, &guarding(), Some(progress));
+            let hit = guard_of(Some(SHIELD), &guarding(), Some(progress));
             assert_eq!(hit.pose(true), settled.pose(true), "at {progress}");
             assert_eq!(hit.arms(), settled.arms(), "at {progress}");
         }
-        let peak = guard_of(SHIELD, &guarding(), Some(IMPACT_ATTACK));
+        let peak = guard_of(Some(SHIELD), &guarding(), Some(IMPACT_ATTACK));
         assert_ne!(peak.pose(true), settled.pose(true), "and moves in between");
         assert_ne!(peak.arms(), settled.arms());
     }
@@ -391,7 +400,7 @@ mod tests {
     /// renderer bug rather than a mod one.
     #[test]
     fn each_view_overrides_only_the_state_its_authored_hold_is_wrong_for() {
-        let raised = guard_of(SHIELD, &guarding(), None);
+        let raised = guard_of(Some(SHIELD), &guarding(), None);
         let up = raised.pose(raised.main_holds).expect("shielding hand");
         assert!(
             up.first_person.is_identity(),
@@ -399,7 +408,7 @@ mod tests {
         );
         assert!(!up.third_person.is_identity(), "raising moves the body");
 
-        let idle = guard_of(SHIELD, &actor(Some(SHIELD), None, false), None);
+        let idle = guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None);
         let down = idle.pose(idle.main_holds).expect("shielding hand");
         assert!(!down.first_person.is_identity(), "idle lowers the screen");
         assert!(
@@ -418,17 +427,17 @@ mod tests {
     /// the elbow swinging with the stride.
     #[test]
     fn only_a_shielding_arm_is_held_and_each_hand_holds_its_own_joints() {
-        let idle = guard_of(SHIELD, &actor(Some(SHIELD), None, false), None);
+        let idle = guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None);
         assert!(idle.arms().is_empty(), "an idle arm hangs normally");
 
         let names = |g: Guard| -> Vec<String> { g.arms().into_iter().map(|b| b.bone).collect() };
-        let main = guard_of(SHIELD, &actor(Some(SHIELD), Some(OTHER), true), None);
+        let main = guard_of(Some(SHIELD), &actor(Some(SHIELD), Some(OTHER), true), None);
         assert_eq!(names(main), [bone::MAIN_SHOULDER, bone::MAIN_ELBOW]);
 
-        let off = guard_of(SHIELD, &actor(Some(OTHER), Some(SHIELD), true), None);
+        let off = guard_of(Some(SHIELD), &actor(Some(OTHER), Some(SHIELD), true), None);
         assert_eq!(names(off), [bone::OFF_SHOULDER, bone::OFF_ELBOW]);
 
-        let both = guard_of(SHIELD, &actor(Some(SHIELD), Some(SHIELD), true), None);
+        let both = guard_of(Some(SHIELD), &actor(Some(SHIELD), Some(SHIELD), true), None);
         assert_eq!(both.arms().len(), 4, "a whole arm per shielding hand");
         let mirrored: Vec<[f32; 3]> = both.arms().iter().map(|b| b.rotation).collect();
         assert!(
@@ -441,11 +450,19 @@ mod tests {
     #[test]
     fn only_the_shielding_hand_is_posed() {
         for holds_use in [false, true] {
-            let g = guard_of(SHIELD, &actor(Some(SHIELD), Some(OTHER), holds_use), None);
+            let g = guard_of(
+                Some(SHIELD),
+                &actor(Some(SHIELD), Some(OTHER), holds_use),
+                None,
+            );
             assert!(g.pose(g.main_holds).is_some());
             assert!(g.pose(g.off_holds).is_none());
 
-            let g = guard_of(SHIELD, &actor(Some(OTHER), Some(SHIELD), holds_use), None);
+            let g = guard_of(
+                Some(SHIELD),
+                &actor(Some(OTHER), Some(SHIELD), holds_use),
+                None,
+            );
             assert!(g.pose(g.main_holds).is_none());
             assert!(g.pose(g.off_holds).is_some());
         }
@@ -459,7 +476,7 @@ mod tests {
     fn a_spectator_is_not_guarding_and_so_releases_every_claim() {
         let mut watching = actor(Some(SHIELD), Some(SHIELD), true);
         watching.spectator = true;
-        let guard = guard_of(SHIELD, &watching, Some(0.3));
+        let guard = guard_of(Some(SHIELD), &watching, Some(0.3));
         assert!(!guard.raised);
         assert!(!guard.absorbs());
         assert_eq!(guard.speed_scale(), 1.0, "the speed claim is released");
@@ -473,11 +490,11 @@ mod tests {
     /// with its hands tied.
     #[test]
     fn releasing_the_guard_releases_every_claim() {
-        let up = guard_of(SHIELD, &guarding(), None);
+        let up = guard_of(Some(SHIELD), &guarding(), None);
         assert_eq!(up.speed_scale(), GUARD_SPEED_SCALE);
         assert_eq!(up.denied(), [BodyAction::Attack, BodyAction::Mine]);
 
-        let down = guard_of(SHIELD, &actor(Some(SHIELD), None, false), None);
+        let down = guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None);
         assert_eq!(down.speed_scale(), 1.0);
         assert!(down.denied().is_empty());
     }
@@ -487,7 +504,7 @@ mod tests {
     /// make taking a hit the best moment to attack.
     #[test]
     fn a_reeling_shield_still_denies_the_hands() {
-        let hit = guard_of(SHIELD, &guarding(), Some(0.5));
+        let hit = guard_of(Some(SHIELD), &guarding(), Some(0.5));
         assert!(!hit.absorbs());
         assert_eq!(hit.denied(), [BodyAction::Attack, BodyAction::Mine]);
     }

@@ -101,7 +101,7 @@ fn raycast_target_selection_cases() {
     for case in cases {
         let dir = case.dir.normalize();
         let result = if case.precise {
-            Player::raycast_blocks_core(case.eye, dir, &case.blocks, &|e, d, pos, block| {
+            Player::raycast_blocks_core(case.eye, dir, REACH, &case.blocks, &|e, d, pos, block| {
                 if block != Block::DirtSlab {
                     return None;
                 }
@@ -109,7 +109,7 @@ fn raycast_target_selection_cases() {
                 interaction::ray_vs_aabb_hit(e, d, base, base + Vec3::new(1.0, 0.5, 1.0))
             })
         } else {
-            Player::raycast_blocks_core(case.eye, dir, &case.blocks, &|_, _, _, _| None)
+            Player::raycast_blocks_core(case.eye, dir, REACH, &case.blocks, &|_, _, _, _| None)
         };
         let got = result.map(|(hit, _)| (hit.block, hit.normal));
         assert_eq!(
@@ -150,6 +150,7 @@ fn raycast_targets_a_walk_through_cover_by_its_visible_box() {
     let (hit, _) = Player::raycast_blocks_core(
         Vec3::new(0.5, 64.03, 0.5),
         Vec3::new(1.0, 0.0, 0.0),
+        REACH,
         &blocks,
         &precise,
     )
@@ -161,6 +162,7 @@ fn raycast_targets_a_walk_through_cover_by_its_visible_box() {
         Player::raycast_blocks_core(
             Vec3::new(0.5, 64.5, 0.5),
             Vec3::new(1.0, 0.0, 0.0),
+            REACH,
             &blocks,
             &precise,
         )
@@ -181,9 +183,14 @@ fn raycast_hits_a_plants_selection_box_without_pixel_precision() {
     // z = 0.5 crosses the cell centre where the sparse poppy art may well be
     // transparent — a BOX hitbox must select it anyway.
     let eye = Vec3::new(0.5, 64.25, 0.5);
-    let (hit, _) =
-        Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None)
-            .unwrap();
+    let (hit, _) = Player::raycast_blocks_core(
+        eye,
+        Vec3::new(1.0, 0.0, 0.0),
+        REACH,
+        &blocks,
+        &|_, _, _, _| None,
+    )
+    .unwrap();
     assert_eq!(hit.block, IVec3::new(2, 64, 0));
     assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
     // The outline is the SAME square box the ray hit, trimmed to the art —

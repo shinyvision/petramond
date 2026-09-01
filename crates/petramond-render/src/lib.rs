@@ -34,6 +34,7 @@ pub mod selection;
 pub mod shader_pack;
 pub mod ui;
 pub mod uniforms;
+mod vanilla_swing;
 
 pub use hand_animator::HeldItemAnimator;
 pub use renderer::new_offscreen_renderer;
@@ -285,6 +286,17 @@ pub struct HeldItemFrame {
     /// hold. The animator eases toward it; geometry reads the eased
     /// [`HeldItemView::pose`].
     pub pose_target: Option<HeldPose>,
+    /// Whether a mod claims this hand's SWING family — while set, the
+    /// animator plays none of its own swing for this hand (the mining loop
+    /// and the break/attack punches stand down): the claimant is animating
+    /// those, and the vanilla motion layered under a mod's curve is two
+    /// swings fighting one another. The claimant re-poses the hands through
+    /// the ordinary pose seam per phase.
+    pub swing_claim: bool,
+    /// Whether a mod claims this hand's use JAB — while set, `placed`
+    /// starts no engine jab; unclaimed, the jab keeps playing even on a
+    /// swing-claimed hand (a different gesture, separately owned).
+    pub jab_claim: bool,
     /// The camera's normalized walk sway this frame (`side`, `up` — see
     /// `game::view_bob`). The hand does NOT wear it directly: the animator
     /// lags it, which is what stops the item riding the screen rigidly.

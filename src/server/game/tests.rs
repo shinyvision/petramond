@@ -70,8 +70,12 @@ fn a_published_body_claim_reaches_the_addressed_sessions_movement() {
     assert_ne!(s, 0, "the claimed body must not be the host session");
 
     let claimed = &mut server.sessions[s].player;
-    assert!(claimed.claims.set_speed_scale("alpha", 0.5));
-    assert!(claimed.claims.set_speed_scale("beta", 0.5));
+    assert!(claimed
+        .claims
+        .set_attribute("alpha", mod_api::PlayerAttribute::MoveSpeed, 0.5));
+    assert!(claimed
+        .claims
+        .set_attribute("beta", mod_api::PlayerAttribute::MoveSpeed, 0.5));
     assert_eq!(claimed.move_scale(), 0.25, "two packs' claims multiply");
     assert_eq!(
         server.sessions[0].player.move_scale(),

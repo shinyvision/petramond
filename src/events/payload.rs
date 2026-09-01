@@ -68,6 +68,32 @@ pub struct InteractAttempt {
     pub player: crate::player::PlayerId,
 }
 
+/// `attack_attempt` — the player's primary-button press as its most
+/// PRIMITIVE gesture: what the crosshair held (a block cell, a live mob,
+/// another player) and who pressed, nothing more. Dispatched for every
+/// accepted press — one at nothing included — so a consumer that decides
+/// for itself where a swing lands hears the presses the crosshair missed.
+/// Cancel = the press is consumed: the engine's melee stands down, the hand
+/// still swings and the cooldown still arms; landing anything is the
+/// claimant's business.
+#[derive(Copy, Clone, Debug)]
+pub struct AttackAttempt {
+    /// The block cell under the crosshair, if any — mining's press, which
+    /// the engine's melee passes on.
+    pub block: Option<IVec3>,
+    /// The clicked face's normal (back toward the eye). `Some` exactly when
+    /// `block` is.
+    pub face: Option<IVec3>,
+    /// The live mob under the crosshair, authority-validated like the
+    /// interact attempt's.
+    pub mob: Option<u64>,
+    /// The OTHER session under the crosshair, validated (alive,
+    /// non-spectator, in reach).
+    pub target: Option<crate::player::PlayerId>,
+    /// The pressing session.
+    pub player: crate::player::PlayerId,
+}
+
 /// `item_use_pre` — cancel = the click was consumed (the engine's own use is
 /// skipped, but the item still reports as used).
 #[derive(Copy, Clone, Debug)]
@@ -149,16 +175,25 @@ impl DamageSource {
 /// code uses, so global engine immunity and registered pre handlers still apply.
 #[derive(Clone, Debug)]
 pub enum DeferredAction {
-    /// `Game::damage_player(amount, DamageSource::Mod(mod_id))`.
-    DamagePlayer { amount: i32, mod_id: &'static str },
+    /// `damage_player` on that session, with the source the call resolved —
+    /// the mod's own (`DamageSource::Mod`) or the attacker it named. An
+    /// attack source with an origin also shoves the victim, like the
+    /// engine's own melee hit.
+    DamagePlayer {
+        player: crate::player::PlayerId,
+        amount: i32,
+        source: DamageSource,
+        origin: Option<Vec3>,
+    },
     /// The mob-damage pipeline (`mob_damage_pre` → `Mobs::damage_mob` → death loot).
     /// Carries the STABLE mob id; the drain resolves it to a live index only
-    /// then (earlier actions this drain may have shifted storage). Mod damage
-    /// is not an attack, so it does not receive default knockback.
+    /// then (earlier actions this drain may have shifted storage). The
+    /// source is what the call resolved: the mod's own damage (no default
+    /// knockback, no retaliation memory) or the named attacker's strike.
     DamageMob {
         mob_id: u64,
         amount: f32,
-        mod_id: &'static str,
+        source: DamageSource,
         origin: Option<Vec3>,
         /// The request's composed damage pipeline; `None` = the species'
         /// resolved `damage_feedback`. No `Immunity` component = DoT (burn):

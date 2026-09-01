@@ -248,6 +248,16 @@ impl ServerGame {
         // main-hand by definition).
         self.sessions[s].player.acting_hand = petramond_world::inventory::Hand::Main;
         events.player(s).click_off_hand = off_hand_acted;
+        if consumed {
+            // The acting hand's jab, mirrored onto the swing facts the roster
+            // publishes — the mod-facing twin of `click_off_hand` beside it.
+            let hand = if off_hand_acted {
+                petramond_world::inventory::Hand::Off
+            } else {
+                petramond_world::inventory::Hand::Main
+            };
+            self.sessions[s].latch_swing(hand, mod_api::SwingKind::Interact);
+        }
         // NOTHING took it. This is the fall-through a CONTINUOUS use lives on
         // (`HoldUse`): a shield raises here and nowhere else, which is what
         // stops it going up on the click that opened a door. Fired even with

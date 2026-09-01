@@ -717,6 +717,33 @@ impl ClientModRuntime {
         out
     }
 
+    /// The local player's hand-motion ownership: this client's own
+    /// PREDICTION for any hand a client mod has ever claimed, `replicated`
+    /// for the rest — the same latch-and-override rule
+    /// [`local_held_poses`](Self::local_held_poses) uses, because the failure
+    /// it prevents is the same one: a released claim falling back to the
+    /// replicated answer would drag the stale "this motion is mine" state
+    /// out by a round trip, playing the vanilla motion under the claimant's
+    /// animation.
+    pub fn local_motion_claims(
+        &self,
+        replicated: [crate::player::HandMotions; 2],
+    ) -> [crate::player::HandMotions; 2] {
+        let mut latched = [false; 2];
+        let mut owned = [crate::player::HandMotions::NONE; 2];
+        for data in self.claim_stores() {
+            for (h, hand) in [Hand::Main, Hand::Off].into_iter().enumerate() {
+                latched[h] |= data.owns_motions[h];
+                // A UNION across mods, the server's own resolution rule.
+                owned[h] = data.body.hand_motions(hand).union(owned[h]);
+            }
+        }
+        [
+            if latched[0] { owned[0] } else { replicated[0] },
+            if latched[1] { owned[1] } else { replicated[1] },
+        ]
+    }
+
     /// Dispatch one bound-action edge to its owning mod, by the action's
     /// namespaced `full_id`. Returns whether a live mod owns the action.
     pub fn action(&mut self, world: &World, full_id: &str, pressed: bool) -> bool {

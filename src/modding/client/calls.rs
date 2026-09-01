@@ -99,6 +99,9 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // uses, addressed at the local player.
         | HostCall::SetPlayerHeldPose { .. }
         | HostCall::SetPlayerBonePose { .. }
+        // ...and the swing claim beside them — the same presentation-only
+        // shape (silencing the local motions the mod animates).
+        | HostCall::SetPlayerHandMotions { .. }
         // Taking the use gesture is what a client mod predicts BEST: the press
         // is local input, so the answer is the same one the server reaches a
         // round trip later.
@@ -123,6 +126,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::IsLoaded { .. }
         | HostCall::LightAt { .. }
         | HostCall::SpawnMob { .. }
+        | HostCall::Raycast { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
@@ -228,7 +232,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // predicted its own speed would be arguing with the validator. It is
         // mirrored from the authority instead — a scalar a batch late is
         // imperceptible, unlike the pose you are staring at.
-        | HostCall::SetPlayerSpeedScale { .. }
+        | HostCall::SetPlayerAttribute { .. }
         // Same reason: what a body is ALLOWED to do is authority, and a client
         // predicting it would be predicting its own permission.
         | HostCall::SetPlayerDeniedActions { .. }
@@ -465,6 +469,26 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             // is bending server-side.
             client.poses_bones.extend(bones.iter().map(|b| b.bone));
             client.body.set_bone_poses(&mod_id, bones);
+            HostRet::Bool(true)
+        }
+        // The predicted twin of the server's hand-motion claim, same
+        // local-only rule: the first owned write latches the hand locally, so
+        // a release presents as the vanilla motion returning on this frame.
+        HostCall::SetPlayerHandMotions { player, main, off } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "SetPlayerHandMotions: a client instance may claim only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let (main, off) = (
+                crate::player::HandMotions::of(main),
+                crate::player::HandMotions::of(off),
+            );
+            client.owns_motions[0] |= !main.is_empty();
+            client.owns_motions[1] |= !off.is_empty();
+            client.body.set_hand_motions(&mod_id, main, off);
             HostRet::Bool(true)
         }
         // The PREDICTED twin of the server's `HoldUse`: a client has one

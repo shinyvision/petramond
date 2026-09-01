@@ -1,14 +1,16 @@
-//! A minimal JSON reader for the row-data interop surface.
+//! A minimal JSON reader shared by the engine and the guests.
 //!
-//! Item/block consumer-data entries ([`crate::item_data`],
-//! [`crate::items_with_data`] and the block twins) cross the ABI as RAW JSON
-//! TEXT — the catalogs' native substance — so a consuming mod needs to read
-//! JSON without hauling a full serde stack into its wasm. This is a small
-//! strict recursive-descent parser producing a [`Value`] tree with the
-//! accessor helpers an interop consumer actually needs (`get`, `as_*`).
-//! Parsing is deterministic and allocation-bounded by the input (which the
-//! engine caps at load); malformed input is `None` — the consumer's contract
-//! is "parse what you understand, ignore the rest".
+//! Item/block consumer-data entries cross the ABI as RAW JSON TEXT — the
+//! catalogs' native substance — so a consuming mod needs to read JSON
+//! without hauling a full serde stack into its wasm; and the shared
+//! [`crate::animation`] formats parse through the same reader on BOTH sides
+//! of the boundary, which is what makes "the engine and a pack read this
+//! file identically" a fact instead of a convention. This is a small strict
+//! recursive-descent parser producing a [`Value`] tree with the accessor
+//! helpers a consumer actually needs (`get`, `as_*`). Parsing is
+//! deterministic and allocation-bounded by the input; malformed input is
+//! `None` — the consumer's contract is "parse what you understand, ignore
+//! the rest".
 
 /// One parsed JSON value. Object fields keep declaration order.
 #[derive(Clone, Debug, PartialEq)]

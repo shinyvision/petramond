@@ -7,11 +7,11 @@ use mod_api::{
 };
 
 use crate::entity::DroppedItem;
-use crate::events::{DeferredAction, PostEvent, SimCtx};
+use crate::events::{DamageSource, DeferredAction, PostEvent, SimCtx};
 use petramond_math::math::Vec3;
 use petramond_world::item::{ItemStack, ItemType};
 
-use super::guards::{finite3, item_by_name, live_mob, sim_call, sim_query};
+use super::guards::{finite3, item_by_name, live_mob, sim_mutate, sim_query};
 use super::intern_mod_id;
 
 /// Maximum horizontal speed accepted from `MobDrive`, derived from the
@@ -43,6 +43,7 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
 /// The ABI snapshot of the live mob at list `index` — the one construction
 /// shared by `MobsInRadius` and `MobsWithTag`.
 pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapshot {
+    let size = crate::mob::def(m.kind).size;
     MobSnapshot {
         index: index as u32,
         kind: mod_api::MobId(m.kind.0),
@@ -53,7 +54,43 @@ pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapsho
         vel: m.vel().to_array(),
         on_ground: m.on_ground(),
         moving: m.moving,
+        half_width: size.half_width,
+        height: size.height,
+        half_length: size.half_length.unwrap_or(size.half_width),
     }
+}
+
+/// The damage source a call's named `attacker` resolves to — the ONE rule
+/// `DamageMob` and `DamagePlayer` share. A player attacker must be a
+/// connected session (a mod bug otherwise: the id came from the roster or
+/// an event payload); a mob attacker no longer alive degrades to the mod's
+/// own damage, since the strike still happened and there is simply nobody
+/// left to remember.
+pub(super) fn attack_source(
+    ctx: &SimCtx<'_>,
+    mod_id: &'static str,
+    attacker: Option<mod_api::EntityRef>,
+    call: &str,
+) -> Result<DamageSource, HostRet> {
+    Ok(match attacker {
+        None => DamageSource::Mod(mod_id),
+        Some(mod_api::EntityRef::Player(id)) => {
+            if !ctx.world.player_roster().iter().any(|r| r.id == id.0) {
+                return Err(HostRet::Error(format!(
+                    "{call}: attacker player {} is not a connected session",
+                    id.0
+                )));
+            }
+            DamageSource::PlayerAttack(crate::player::PlayerId(id.0))
+        }
+        Some(mod_api::EntityRef::Mob(id)) => match live_mob(ctx, id) {
+            Some(index) => DamageSource::MobAttack {
+                kind: ctx.world.mobs().instances()[index].kind,
+                id,
+            },
+            None => DamageSource::Mod(mod_id),
+        },
+    })
 }
 
 /// Entity calls (mob spawn/query/hurt/despawn, item drops).
@@ -133,19 +170,22 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             amount,
             origin,
             feedback,
+            attacker,
         } => match origin.map(|p| finite3(p, "DamageMob.origin")).transpose() {
             Err(e) => e,
             Ok(origin) => {
                 let mod_id = intern_mod_id(mod_id);
                 let feedback = feedback.map(crate::modding::mob_damage_feedback);
-                sim_call(|ctx| {
+                sim_mutate(|ctx| {
+                    let source = attack_source(ctx, mod_id, attacker, "DamageMob")?;
                     ctx.queue.push_action(DeferredAction::DamageMob {
                         mob_id,
                         amount,
-                        mod_id,
+                        source,
                         origin,
                         feedback,
-                    })
+                    });
+                    Ok(())
                 })
             }
         },

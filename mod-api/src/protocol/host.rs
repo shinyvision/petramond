@@ -6,9 +6,10 @@ use crate::client::{
     ClientTextRun,
 };
 use crate::data::{
-    BlockInfoData, CollisionShape, EffectStateData, GuiValue, GuiViewerData, ItemInfoData,
-    ItemStackData, LightData, MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup,
-    MobTagValue, PlayerInputData, PlayerListEntry, PlayerSnapshot, RuntimeSide,
+    BlockInfoData, CollisionShape, EffectStateData, EntityRef, GuiValue, GuiViewerData, HandMotion,
+    ItemInfoData, ItemStackData, LightData, MobAnimStateData, MobRidersData, MobSnapshot,
+    MobTagLookup, MobTagValue, PlayerAttribute, PlayerInputData, PlayerListEntry, PlayerSnapshot,
+    RayFilter, RaycastHitData, RuntimeSide,
 };
 use crate::events::EventKind;
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
@@ -62,8 +63,8 @@ use crate::sched::{AttachSide, Stage, WorldgenStage};
 /// stack) are the reference examples: each names the session it acts on
 /// rather than inheriting one, and answers `false` when no such session is
 /// connected. The older single-player-era calls
-/// ([`HostCall::PlayerState`], [`HostCall::DamagePlayer`],
-/// [`HostCall::GiveItem`], [`HostCall::Teleport`], ...) address the ACTING
+/// ([`HostCall::PlayerState`], [`HostCall::GiveItem`],
+/// [`HostCall::Teleport`], ...) address the ACTING
 /// session's player as a documented default — the session whose dispatch is
 /// running (the interacting player for event handlers, the host session for
 /// global tick systems). They are the legacy exception, not the pattern;
@@ -184,21 +185,37 @@ pub enum HostCall {
         radius: f32,
     },
     /// Damage the live mob `mob_id` through its global engine-owned i-frames
-    /// and the `mob_damage_pre` pipeline. Mod damage is not an attack, so
-    /// default knockback is not applied; `origin` is only spatial context for
-    /// feedback/handlers. Applied at the next action drain point (same tick),
-    /// so a handler cannot re-enter the bus; a mob gone by then is a silent
-    /// no-op. → [`HostRet::Unit`].
+    /// and the `mob_damage_pre` pipeline. Applied at the next action drain
+    /// point (same tick), so a handler cannot re-enter the bus; a mob gone
+    /// by then is a silent no-op. → [`HostRet::Unit`].
+    ///
+    /// `attacker` names WHO the hit is landed for. `None` is the mod's own
+    /// damage ([`DamageSource::Mod`]): not an attack, so no default
+    /// knockback and no retaliation memory; `origin` is then only spatial
+    /// context for feedback/handlers. `Some(EntityRef::Player(..))` makes
+    /// the request that player's melee strike
+    /// ([`DamageSource::PlayerAttack`]) — the victim remembers them, and
+    /// with an `origin` the species' knockback shoves away from it —
+    /// exactly as if the engine's own crosshair hit had landed; the id must
+    /// be a connected session ([`HostRet::Error`] otherwise).
+    /// `Some(EntityRef::Mob(..))` is that mob's strike
+    /// ([`DamageSource::MobAttack`]); a mob no longer alive degrades to the
+    /// mod's own damage.
     ///
     /// `feedback` composes the damage pipeline for THIS request; `None` uses
     /// the species' resolved `damage_feedback`. A pipeline without the
     /// `Immunity` component is damage-over-time (burn): neither blocked by
     /// the victim's active i-frame window nor granting one.
+    ///
+    /// [`DamageSource::Mod`]: crate::DamageSource::Mod
+    /// [`DamageSource::PlayerAttack`]: crate::DamageSource::PlayerAttack
+    /// [`DamageSource::MobAttack`]: crate::DamageSource::MobAttack
     DamageMob {
         mob_id: u64,
         amount: f32,
         origin: Option<[f32; 3]>,
         feedback: Option<crate::events::MobDamageFeedback>,
+        attacker: Option<EntityRef>,
     },
     /// Remove the live mob `mob_id` from the world immediately (not saved,
     /// no death/loot). `false` = no such live mob. → [`HostRet::Bool`].
@@ -221,19 +238,30 @@ pub enum HostCall {
     // --- player ---------------------------------------------------------------
     /// The player's current state. → [`HostRet::Player`].
     PlayerState,
-    /// Damage the player through the single engine funnel. The victim's global
-    /// engine-owned i-frames and `player_damage_pre` apply, with
-    /// [`DamageSource::Mod`] carrying the calling mod's id. Queued; applied at
-    /// the next action drain point (same tick, defined order). →
-    /// [`HostRet::Unit`].
+    /// Damage `player` through the single engine funnel. The victim's global
+    /// engine-owned i-frames and `player_damage_pre` apply. Queued; applied
+    /// at the next action drain point (same tick, defined order); an
+    /// unknown session is a silent no-op. → [`HostRet::Unit`].
     ///
-    /// To KILL the player, pass their current health ([`HostCall::PlayerState`])
-    /// as `amount` — same funnel, and i-frames or a pre-event handler can still
-    /// reject it. There is no separate kill call.
+    /// `attacker` names who the hit is landed for, exactly as on
+    /// [`HostCall::DamageMob`]: `None` is the mod's own damage
+    /// ([`DamageSource::Mod`], `origin` spatial context only);
+    /// `Some(EntityRef::Player(..))` is that player's melee strike — a
+    /// `player_damage_pre` handler sees [`DamageSource::PlayerAttack`] with
+    /// the `origin`, and an applied hit shoves the victim away from it like
+    /// the engine's own hit does; `Some(EntityRef::Mob(..))` is that mob's.
+    ///
+    /// To KILL a player, pass their current health ([`HostCall::Players`])
+    /// as `amount` — same funnel, and i-frames or a pre-event handler can
+    /// still reject it. There is no separate kill call.
     ///
     /// [`DamageSource::Mod`]: crate::DamageSource::Mod
+    /// [`DamageSource::PlayerAttack`]: crate::DamageSource::PlayerAttack
     DamagePlayer {
+        player: PlayerId,
         amount: i32,
+        origin: Option<[f32; 3]>,
+        attacker: Option<EntityRef>,
     },
     /// Add a knockback impulse to the player's velocity on the tick (spectator
     /// no-op; a positive-y impulse reads as a launch). Non-finite components
@@ -516,12 +544,18 @@ pub enum HostCall {
     /// Read one item's registry row (by registry NAME): the same
     /// [`ItemInfoData`] fields engine mechanics read, so mod logic (a
     /// fuel-fired oven, a filtering hopper, a tool gate) composes with
-    /// pack-added items for free. Registry-only like
-    /// [`HostCall::ResolveItem`]: legal on any instance, any time; row data is
-    /// session-stable — cache it mod-side. `None` = unknown name. →
-    /// [`HostRet::ItemInfo`].
+    /// pack-added items for free. `data` is a stack's instance data (empty
+    /// = the bare row): the answer is the row AS THAT STACK CARRIES IT,
+    /// every instance override the engine itself honours applied (an
+    /// augmented tool's `petramond:tool` override lands in `tool`) — what a
+    /// mod reading a HELD tool's damage or speed must ask for, since the
+    /// bare row silently ignores augments. Registry-only like
+    /// [`HostCall::ResolveItem`]: legal on any instance, any time; row data
+    /// is session-stable — cache the bare row mod-side. `None` = unknown
+    /// name. → [`HostRet::ItemInfo`].
     ItemInfo {
         item: String,
+        data: Vec<(String, Vec<u8>)>,
     },
     /// The loaded machine-processing result for one input item (by registry
     /// NAME) under a recipe `class` (`"petramond:smelting"` = the furnace's
@@ -1526,22 +1560,27 @@ pub enum HostCall {
         key: String,
         cell: [i32; 3],
     },
-    /// Claim a LAND-SPEED multiplier on one body: a scale on whatever mode
-    /// the player's own input selected (walk, sprint and sneak together; swim,
-    /// climb and flight untouched).
+    /// Claim a SCALE on one of a body's engine quantities
+    /// ([`PlayerAttribute`](crate::PlayerAttribute)): the engine keeps the
+    /// base — a constant, a mode, a formula — and the claim multiplies it.
     ///
-    /// Every claimant gets its own slot and the engine applies the PRODUCT,
-    /// beside the speed-carrying status effects — two packs' slows compose
-    /// rather than stomping. `1.0` releases this claim, `0.0` roots the body,
-    /// finite values clamp into `[0, 5]` and a non-finite one is a
-    /// [`HostRet::Error`]. TRANSIENT: never saved, so re-state it on your own
-    /// cadence (a per-tick system naturally does).
+    /// A multiplier rather than an absolute, deliberately: every claimant
+    /// gets its own slot and the engine applies the PRODUCT (beside its own
+    /// claim, e.g. the speed-carrying status effects), so two packs' scales
+    /// compose rather than stomping, and no claim can force "exactly X" over
+    /// another's head — the same reason the denials union. `1.0` releases
+    /// this claim, `0.0` zeroes the quantity (a rooted body, a cooldown-free
+    /// hand), finite values clamp into the attribute's own bound and a
+    /// non-finite one is a [`HostRet::Error`]. TRANSIENT: never saved, so
+    /// re-state it on your own cadence (a per-tick system naturally does).
     ///
-    /// Server only — the server validates how fast a client may have moved, so
-    /// a client predicting its own speed would be arguing with the validator.
+    /// Server only — every attribute is simulation the server enforces
+    /// (movement speed is validated, the attack cooldown gates damage), so a
+    /// client claiming one would be predicting its own permission.
     /// → [`HostRet::Bool`] (`false` = no such reachable session).
-    SetPlayerSpeedScale {
+    SetPlayerAttribute {
         player: PlayerId,
+        attribute: PlayerAttribute,
         scale: f32,
     },
     /// Claim a HELD-ITEM POSE on one body, per hand: an extra Blockbench
@@ -1620,7 +1659,7 @@ pub enum HostCall {
     /// for "these hands are busy". An empty list releases it.
     /// → [`HostRet::Bool`] (`false` = no such reachable session).
     ///
-    /// The sibling of [`SetPlayerSpeedScale`](Self::SetPlayerSpeedScale) but
+    /// The sibling of [`SetPlayerAttribute`](Self::SetPlayerAttribute) but
     /// resolved by UNION, not product: two claimants barring different things
     /// both mean it, and one able to un-bar another's would make "may this
     /// body mine" depend on claimant order. TRANSIENT, and MIRRORED to the
@@ -1663,6 +1702,55 @@ pub enum HostCall {
     /// [`EventKind::UseUnclaimed`]: crate::EventKind::UseUnclaimed
     HoldUse {
         player: PlayerId,
+    },
+    /// Claim some of a hand's OWN MOTIONS on one body
+    /// ([`HandMotion`](crate::HandMotion)) — the claim that says "these
+    /// gestures this hand plays are mine". While a motion is claimed on a
+    /// hand the engine plays none of its own copy of it: `Swing` stands the
+    /// mining loop and the full-strength break/attack punches down, `Jab`
+    /// the soft use gesture. The swing facts on [`PlayerSnapshot::swing`]
+    /// (the mining level and the per-tick one-shot edges) keep publishing
+    /// so the claimant can build its own curve off them.
+    ///
+    /// The ownership counterpart of
+    /// [`SetPlayerHeldPose`](Self::SetPlayerHeldPose): that poses the item in
+    /// the hand, this takes over the MOTION the hand makes — the whole reason
+    /// this exists is that the engine's punch does not compose, and a mod's
+    /// curve layered over it is two swings fighting one another. Claim
+    /// exactly the motions you animate, EVERY frame they matter: a claimed
+    /// motion never plays its vanilla form, so the claimant owes the hand
+    /// that animation, and a motion you leave unclaimed keeps its engine
+    /// default (a swing-only claimant's hand still jabs on a placement).
+    ///
+    /// Per hand and per motion, claims UNION across mods like
+    /// [`SetPlayerDeniedActions`](Self::SetPlayerDeniedActions): a motion
+    /// stands down while ANY claim on it is live, and releasing yours cannot
+    /// release another's (which pose the hand then wears is the pose seam's
+    /// own last-wins conflict). TRANSIENT — re-state it from whatever owns
+    /// the rule; an empty list releases a hand, and when it was the last
+    /// claim the vanilla motion returns. → [`HostRet::Bool`] (`false` = no
+    /// such reachable session).
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, the same predicted
+    /// path as [`SetPlayerHeldPose`](Self::SetPlayerHeldPose).
+    SetPlayerHandMotions {
+        player: PlayerId,
+        main: Vec<HandMotion>,
+        off: Vec<HandMotion>,
+    },
+    /// The first block along the ray from `from` in direction `dir`
+    /// (any length, normalised host-side) within `max` blocks (finite,
+    /// `0 < max <= 64`), stopping on what `filter` says — the crosshair's
+    /// selection rule or a body's collision rule ([`RayFilter`]). Unloaded
+    /// cells read as air, like the crosshair's own ray. The line-of-sight
+    /// primitive: a swung weapon reaching for a body, a projectile's flight,
+    /// an AI's sightline. `None` = nothing within `max`.
+    /// → [`HostRet::Raycast`].
+    Raycast {
+        from: [f32; 3],
+        dir: [f32; 3],
+        max: f32,
+        filter: RayFilter,
     },
 }
 
@@ -1801,4 +1889,7 @@ pub enum HostRet {
     BlockInfo(Option<Box<BlockInfoData>>),
     /// [`HostCall::PlayerHeld`]: `None` = empty hand / no such session.
     HeldStack(Option<ItemStackData>),
+    /// [`HostCall::Raycast`]: the first block the ray stops on; `None` =
+    /// nothing within `max`.
+    Raycast(Option<RaycastHitData>),
 }

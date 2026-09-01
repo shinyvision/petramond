@@ -9,6 +9,7 @@ description = "Petramond wgpu renderer: pipelines, composed texture atlas, camer
 petramond = { path = "../.." }
 petramond-math = { path = "../petramond-math" }
 petramond-world = { path = "../petramond-world" }
+mod-api = { path = "../../mod-api" }
 petramond-mesh = { path = "../petramond-mesh" }
 petramond-util = { path = "../petramond-util" }
 petramond-ui = { path = "../../petramond-ui" }

@@ -113,6 +113,10 @@ impl ServerGame {
                     held_pose_main: sess.player.claims.held_pose(Hand::Main),
                     held_pose_off: sess.player.claims.held_pose(Hand::Off),
                     bone_poses: sess.player.claims.bone_poses().collect(),
+                    motion_claims: [
+                        sess.player.claims.hand_motions(Hand::Main),
+                        sess.player.claims.hand_motions(Hand::Off),
+                    ],
                     hurt_recent: events.player_at(s).player_damaged,
                     snap: sess.tick_teleported,
                     mount: sess
@@ -416,6 +420,10 @@ impl ServerGame {
             held_pose_main: player.claims.held_pose(Hand::Main),
             held_pose_off: player.claims.held_pose(Hand::Off),
             bone_poses: player.claims.bone_poses().collect(),
+            motion_claims: [
+                player.claims.hand_motions(Hand::Main),
+                player.claims.hand_motions(Hand::Off),
+            ],
             inventory_revision: revision,
             inventory,
             eating: sess
@@ -430,7 +438,9 @@ impl ServerGame {
             // Only the half the recipient cannot work out for itself: it folds
             // the engine's own claim from its own effect list, mode and menu,
             // so sending that half too would double it.
-            move_scale: player.claims.replicated_speed_scale(),
+            move_scale: player
+                .claims
+                .replicated_attribute(mod_api::PlayerAttribute::MoveSpeed),
             denied_actions: player.claims.replicated_denied_actions(),
             transform,
         }

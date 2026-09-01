@@ -1,0 +1,519 @@
+{
+  "format": "petramond-player-animation",
+  "version": 1,
+  "name": "engine-hand-swing",
+  "loop": false,
+  "bones": [
+    {
+      "name": "body",
+      "mode": "compose"
+    },
+    {
+      "name": "left_shoulder",
+      "mode": "compose"
+    }
+  ],
+  "keys": [
+    {
+      "t": 0.0,
+      "pose": {}
+    },
+    {
+      "t": 0.003,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -3.866,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            2.58,
+            -3.866,
+            -0.216
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.008,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -6.106,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            6.818,
+            -6.106,
+            -0.576
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.016,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -8.178,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            13.409,
+            -8.178,
+            -1.152
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.028,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -9.948,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            22.757,
+            -9.948,
+            -2.013
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.045,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -11.136,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            34.666,
+            -11.136,
+            -3.229
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.068,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -11.433,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            47.924,
+            -11.433,
+            -4.859
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.098,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -10.572,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            60.046,
+            -10.572,
+            -6.945
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.135,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -8.479,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            67.544,
+            -8.479,
+            -9.431
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.18,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -5.25,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            67.979,
+            -5.25,
+            -12.28
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.235,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            -1.095,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            60.507,
+            -1.095,
+            -15.424
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.3,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            3.385,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            47.082,
+            3.385,
+            -18.541
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.375,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            7.435,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            31.711,
+            7.435,
+            -21.174
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.46,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            10.314,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            18.149,
+            10.314,
+            -22.738
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.555,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            11.453,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            8.449,
+            11.453,
+            -22.577
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.66,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            10.59,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            2.886,
+            10.59,
+            -20.083
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.77,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            7.975,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            0.604,
+            7.975,
+            -15.156
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.885,
+      "pose": {
+        "body": {
+          "rotation": [
+            0.0,
+            4.169,
+            0.0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_shoulder": {
+          "rotation": [
+            0.038,
+            4.169,
+            -8.101
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 1.0,
+      "pose": {}
+    }
+  ]
+}

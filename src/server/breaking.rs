@@ -327,6 +327,12 @@ impl ServerGame {
             pre.drops
         };
         events.player(s).broke_block = Some(event.block);
+        // Mining is main-hand by definition (breaks land outside any
+        // acting-hand dispatch).
+        self.sessions[s].latch_swing(
+            petramond_world::inventory::Hand::Main,
+            mod_api::SwingKind::Break,
+        );
         // Echo rule: strip the initiator's BlockBroken only on evidence they
         // already presented it locally; a client that never presented still
         // needs the event, and one whose finish is in flight suppresses the

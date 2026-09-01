@@ -53,11 +53,12 @@ mod state;
 mod tests;
 
 pub use body_claims::{
-    BodyClaims, BonePose, DeniedActions, ENGINE_CLAIMANT, MOVE_SCALE_DEFAULT, MOVE_SCALE_MAX,
+    BodyClaims, BonePose, DeniedActions, HandMotions, ENGINE_CLAIMANT, MOVE_SCALE_DEFAULT,
+    MOVE_SCALE_MAX,
 };
 pub use interaction::block_within_reach;
 pub use interaction::ray_vs_aabb;
-pub use interaction::{RaycastHit, REACH};
+pub use interaction::{RayFilter, RaycastHit, REACH};
 /// The swim probe height above the feet — also what the server-side fall
 /// tracker samples to mirror `track_fall`'s water reset from reported positions.
 pub use movement::WATER_PROBE_Y;

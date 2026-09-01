@@ -1,0 +1,86 @@
+{
+  "format": "petramond-swing-animation",
+  "version": 1,
+  "tool": "arm",
+  "name": "engine-bare-arm",
+  "window_attack": 0.25,
+  "window_mine": 0.25,
+  "keys": [
+    {
+      "t": 0,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.2553543845057034,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        1.5,
+        0,
+        5.5
+      ],
+      "translation": [
+        -1.5,
+        -5.75,
+        -1.75
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.46722388902091255,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        -30,
+        -21.5,
+        -41.5
+      ],
+      "translation": [
+        2.25,
+        -3,
+        -5.75
+      ],
+      "scale": 1
+    },
+    {
+      "t": 1,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ]
+}

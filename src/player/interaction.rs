@@ -40,6 +40,18 @@ impl ShapeHit {
     }
 }
 
+/// What stops a [`Player::raycast_filtered`] ray.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RayFilter {
+    /// The crosshair's own rule: every block with a selection shape (solids,
+    /// sub-cell shapes by their geometry, plants by their selection box).
+    Selectable,
+    /// A body's rule: only cells holding collision boxes, tested by their
+    /// shape — plants, walk-through covers, water and no-collision models
+    /// pass.
+    Collidable,
+}
+
 /// Result of a block raycast.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RaycastHit {
@@ -62,6 +74,7 @@ impl Player {
         let (mut hit, dist) = Self::raycast_blocks_core(
             eye,
             dir,
+            REACH,
             &|x, y, z| Block::from_id(world.chunk_block(x, y, z)),
             // Inset/thin blocks (chest, torch) are tested against their real shape so
             // the ray only selects them where they actually are; the torch's tilt
@@ -139,6 +152,45 @@ impl Player {
         Some((hit, dist))
     }
 
+    /// The general block ray: `filter` picks what stops it, `max` how far it
+    /// looks (the crosshair's own rays are [`REACH`]-bounded). No outline
+    /// work — this is the line-of-sight query, not a selection. Under
+    /// [`RayFilter::Collidable`] a cell without collision boxes reads as air,
+    /// so the ray passes plants, walk-through covers and water the way a
+    /// body does; what it does stop on is still tested by its precise shape.
+    pub fn raycast_filtered(
+        eye: Vec3,
+        dir: Vec3,
+        max: f32,
+        filter: RayFilter,
+        world: &World,
+    ) -> Option<(RaycastHit, f32)> {
+        let shape_hit = |e, d, pos, block| precise_shape_hit(e, d, pos, block, world);
+        match filter {
+            RayFilter::Selectable => Self::raycast_blocks_core(
+                eye,
+                dir,
+                max,
+                &|x, y, z| Block::from_id(world.chunk_block(x, y, z)),
+                &shape_hit,
+            ),
+            RayFilter::Collidable => Self::raycast_blocks_core(
+                eye,
+                dir,
+                max,
+                &|x, y, z| {
+                    let block = Block::from_id(world.chunk_block(x, y, z));
+                    if block == Block::Air || world.collision_boxes_at(x, y, z).is_empty() {
+                        Block::Air
+                    } else {
+                        block
+                    }
+                },
+                &shape_hit,
+            ),
+        }
+    }
+
     /// Like [`raycast_with_dist`](Self::raycast_with_dist), but ANY water cell
     /// stops the ray too (as a full cube). Normal selection deliberately sees
     /// THROUGH water; a bucket POUR must target the water surface itself.
@@ -175,6 +227,7 @@ impl Player {
         Self::raycast_blocks_core(
             eye,
             dir,
+            REACH,
             &|x, y, z| {
                 let b = Block::from_id(world.chunk_block(x, y, z));
                 if b == Block::Water {
@@ -193,10 +246,11 @@ impl Player {
 
     /// The DDA core, returning the hit and its distance from `eye` (the entry
     /// parameter — `t_enter` for a full cube, the precise crossing `t` for a
-    /// custom-shaped block / cross-plant).
+    /// custom-shaped block / cross-plant), looking at most `max` along `dir`.
     pub(super) fn raycast_blocks_core<F, S>(
         eye: Vec3,
         dir: Vec3,
+        max: f32,
         block_at: &F,
         shape_hit: &S,
     ) -> Option<(RaycastHit, f32)>
@@ -249,7 +303,7 @@ impl Player {
                 }
                 if let Some(shape) = shape_hit(eye, dir, pos, block) {
                     let t = shape.t;
-                    if t <= REACH && hit_in_cell(eye, dir, t, pos) {
+                    if t <= max && hit_in_cell(eye, dir, t, pos) {
                         return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
@@ -261,7 +315,7 @@ impl Player {
                 // blocks behind/below it.
                 if let Some(shape) = ray_vs_aabb_hit(eye, dir, mn, mx) {
                     let t = shape.t;
-                    if t <= REACH && hit_in_cell(eye, dir, t, pos) {
+                    if t <= max && hit_in_cell(eye, dir, t, pos) {
                         return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
@@ -275,7 +329,7 @@ impl Player {
             } else {
                 (2, t_max.z)
             };
-            if t_exit > REACH {
+            if t_exit > max {
                 return None;
             }
             let mut normal = IVec3::ZERO;

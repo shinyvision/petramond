@@ -12,11 +12,8 @@
 
 use petramond_world::item::ItemType;
 
+use super::vanilla_swing::vanilla_swing;
 use super::{HeldItemFrame, HeldItemView, HeldPose, POSE_EASE_RATE};
-
-/// Mining-punch swings per second. Drives the looping hand swing phase while the
-/// sim reports active mining, and the one-shot break/place jab speed.
-const HAND_SWING_HZ: f32 = 4.2;
 
 /// Amplitude of the place jab relative to a full mining punch. Placing reuses the
 /// punch motion at this reduced strength so it reads as "similar but softer".
@@ -136,7 +133,9 @@ impl HeldItemAnimator {
         // at reduced amplitude. Restart the phase so the jab reads cleanly even
         // mid-recovery; when the placement empties the hand it carries straight
         // onto the bare arm, since both placements read this same `swing` phase.
-        if frame.placed {
+        // A claimed JAB never starts (the claimant animates the use gesture
+        // itself); one already in flight finishes home below.
+        if frame.placed && !frame.jab_claim {
             self.swing_t = 0.0;
             self.swing_finishing = true;
             self.swing_scale = PLACE_SWING_SCALE;
@@ -178,10 +177,26 @@ impl HeldItemAnimator {
             1.0 - (-POSE_EASE_RATE * dt).exp(),
         );
 
-        if frame.mining {
+        // The swing state machine. Each claimed MOTION plays nothing of the
+        // engine's own: under a swing claim the mining loop is silenced (the
+        // level is ignored) and the full-strength break/attack punches never
+        // start, because the claimant animates those through the pose seam
+        // and the vanilla motion layered under its curve would be two swings
+        // fighting one another; a jab claim stops `placed` latching above
+        // the same way. Unclaimed motions keep their engine defaults — a
+        // swing-only claimant's hand still pops on a placement. An arc
+        // already in flight when a claim lands finishes home rather than
+        // snapping. The swing FACTS keep publishing exactly as before; only
+        // the engine's own copy of a claimed motion stands down.
+        if frame.swing_claim {
+            self.advance_one_shot(dt);
+        } else if frame.mining {
             self.swing_finishing = false;
             self.swing_scale = 1.0;
-            self.swing_t = (self.swing_t + dt * HAND_SWING_HZ).fract();
+            // The mining sawtooth paces on the AUTHORED work window
+            // (hand_swing.json `window_mine`) — the vanilla swing rate is
+            // data now, exactly like a pack's.
+            self.swing_t = (self.swing_t + dt / vanilla_swing().loop_seconds).fract();
         } else {
             // A block break and an attack swing (mob hit / punch) both play a single
             // full-strength swing. They never coincide with `mining` (mining needs a
@@ -190,15 +205,7 @@ impl HeldItemAnimator {
                 self.swing_finishing = true;
                 self.swing_scale = 1.0;
             }
-            if self.swing_finishing || self.swing_t > 0.0 {
-                let next = self.swing_t + dt * HAND_SWING_HZ;
-                if next >= 1.0 {
-                    self.swing_t = 0.0;
-                    self.swing_finishing = false;
-                } else {
-                    self.swing_t = next;
-                }
-            }
+            self.advance_one_shot(dt);
         }
 
         // Smoothstep the eat blend so the raise/drop settle gently at both
@@ -217,6 +224,21 @@ impl HeldItemAnimator {
             eat_bob: (self.eat_phase * std::f32::consts::TAU).sin(),
             eat_near: self.eat_near,
             pose: self.pose,
+        }
+    }
+
+    /// Advance a ONE-SHOT swing (a jab or a punch) toward rest on the
+    /// authored attack window (hand_swing.json `window_attack`); an idle
+    /// hand stays at rest.
+    fn advance_one_shot(&mut self, dt: f32) {
+        if self.swing_finishing || self.swing_t > 0.0 {
+            let next = self.swing_t + dt / vanilla_swing().one_shot_seconds;
+            if next >= 1.0 {
+                self.swing_t = 0.0;
+                self.swing_finishing = false;
+            } else {
+                self.swing_t = next;
+            }
         }
     }
 }
@@ -247,6 +269,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: target,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt,
         };
@@ -299,6 +323,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: target,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt,
         };
@@ -339,6 +365,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -357,8 +385,10 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
-            dt: 0.5 / HAND_SWING_HZ,
+            dt: 0.5 * vanilla_swing().one_shot_seconds,
         });
         assert_eq!(settled.swing, 0.0);
     }
@@ -377,6 +407,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt: 0.0,
         });
@@ -395,6 +427,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -413,8 +447,10 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
-            dt: 1.0 / HAND_SWING_HZ,
+            dt: vanilla_swing().one_shot_seconds,
         });
         assert_eq!(settled.swing, 0.0);
     }
@@ -432,6 +468,8 @@ mod tests {
             swung: true,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -452,8 +490,10 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
-            dt: 1.0 / HAND_SWING_HZ,
+            dt: vanilla_swing().one_shot_seconds,
         });
         assert_eq!(settled.swing, 0.0, "the attack swing completes");
     }
@@ -471,6 +511,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -491,8 +533,10 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
-            dt: 1.0 / HAND_SWING_HZ,
+            dt: vanilla_swing().one_shot_seconds,
         });
         assert_eq!(settled.swing, 0.0);
     }
@@ -512,6 +556,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
@@ -539,6 +585,8 @@ mod tests {
             swung: false,
             eating: Some(progress),
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt,
         };
@@ -606,11 +654,100 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
         assert_eq!(view.swing_scale, 1.0, "mining is the full-strength punch");
     }
+
+    /// A claimed hand swings NOTHING of the engine's own — the mining level
+    /// and the break/attack triggers are the claimant's to animate — but the
+    /// place/use JAB is deliberately outside the claim: it still pops, at
+    /// its reduced amplitude, so a claimed hand placing a block reads
+    /// exactly like an unclaimed one. The POSE seam keeps easing under the
+    /// claim throughout, and releasing the claim restores the full machine.
+    #[test]
+    fn a_claimed_hand_swings_nothing_but_still_jabs_and_poses() {
+        let mut anim = HeldItemAnimator::default();
+        let dt = 1.0 / 60.0;
+        let mut guard = HeldPose::default();
+        guard.first_person.translation = [0.0, -4.0, 0.0];
+        let frame = |claim: bool, placed: bool, pose: Option<HeldPose>| HeldItemFrame {
+            item: None,
+            variant: petramond_world::item::VariantId::NONE,
+            block_state: Default::default(),
+            mining: true,
+            broke_block: true,
+            placed,
+            swung: true,
+            eating: None,
+            pose_target: pose,
+            swing_claim: claim,
+            jab_claim: false,
+            bob: [0.0, 0.0],
+            dt,
+        };
+
+        // The mining level and the break/attack triggers do nothing.
+        for _ in 0..20 {
+            let view = anim.update(frame(true, false, Some(guard)));
+            assert_eq!(view.swing, 0.0, "a claimed hand never plays the swing");
+            // The pose channel still chases its target under the claim.
+            assert!(view.pose.first_person.translation[1] <= 0.0);
+        }
+        assert!(
+            anim.pose.first_person.translation[1] < -3.0,
+            "the eased pose moved"
+        );
+
+        // A placement still jabs — reduced amplitude, exactly the unclaimed
+        // read — and finishes home while the claim stands.
+        let view = anim.update(frame(true, true, Some(guard)));
+        assert!(view.swing > 0.0, "the place jab is not part of the claim");
+        assert_eq!(view.swing_scale, PLACE_SWING_SCALE);
+        for _ in 0..((vanilla_swing().one_shot_seconds / dt) as usize + 2) {
+            anim.update(frame(true, false, Some(guard)));
+        }
+        assert_eq!(anim.swing_t, 0.0, "the jab finished home under the claim");
+
+        // Releasing the claim hands the full machine back.
+        let view = anim.update(frame(false, false, None));
+        assert!(view.swing > 0.0, "releasing the claim restores the punch");
+    }
+
+    /// A claimed JAB starts no engine jab — `placed` is the claimant's to
+    /// animate — while the SWING machine keeps running untouched: the two
+    /// motions are separately owned, so a jab-only claimant still gets the
+    /// full vanilla mining loop and punches.
+    #[test]
+    fn a_claimed_jab_never_starts_and_the_swing_machine_keeps_running() {
+        let mut anim = HeldItemAnimator::default();
+        let frame = |placed: bool, mining: bool| HeldItemFrame {
+            item: None,
+            variant: petramond_world::item::VariantId::NONE,
+            block_state: Default::default(),
+            mining,
+            broke_block: false,
+            placed,
+            swung: false,
+            eating: None,
+            pose_target: None,
+            swing_claim: false,
+            jab_claim: true,
+            bob: [0.0, 0.0],
+            dt: 1.0 / 60.0,
+        };
+
+        let view = anim.update(frame(true, false));
+        assert_eq!(view.swing, 0.0, "a claimed jab never starts");
+
+        let view = anim.update(frame(false, true));
+        assert!(view.swing > 0.0, "the swing motion stays the engine's");
+        assert_eq!(view.swing_scale, 1.0, "at mining strength, not a jab");
+    }
+
     /// The hand CHASES the camera's sway; it does not wear it. Pinned because
     /// the obvious "simplification" — assigning `frame.bob` straight through —
     /// puts the item in rigid lockstep with the camera, which is precisely the
@@ -630,6 +767,8 @@ mod tests {
             swung: false,
             eating: None,
             pose_target: None,
+            swing_claim: false,
+            jab_claim: false,
             bob,
             dt,
         };

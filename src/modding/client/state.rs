@@ -114,6 +114,11 @@ pub(in crate::modding) struct ClientStoreData {
     /// predicting a shoulder must leave another pack's replicated head tilt
     /// exactly where it was.
     pub poses_bones: BTreeSet<u16>,
+    /// Which hands this mod has ever claimed MOTIONS on (`[main, off]`),
+    /// latched on the first owned write like [`poses_hands`](Self::poses_hands)
+    /// and for the same reason: releasing a motion claim must present as the
+    /// vanilla motion returning on this frame, not a round trip later.
+    pub owns_motions: [bool; 2],
     /// Whether this mod holds the LOCAL player's current use gesture — the
     /// predicted twin of the session's owner, latched by `HoldUse` and cleared
     /// when the button comes up.
@@ -137,6 +142,7 @@ impl ClientStoreData {
             body: Default::default(),
             poses_hands: [false; 2],
             poses_bones: BTreeSet::new(),
+            owns_motions: [false; 2],
             holds_use: false,
             commands: Vec::new(),
             next_image_revision: 1,

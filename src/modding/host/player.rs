@@ -9,7 +9,7 @@ use petramond_world::item::variant::{self, VariantMap};
 use petramond_world::item::ItemStack;
 
 use super::entities::{give_item, give_item_to};
-use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_query};
+use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_mutate, sim_query};
 use super::intern_mod_id;
 
 /// The pose anchor a player is pinned at, read LIVE from the riding registry
@@ -27,20 +27,20 @@ fn pose_anchor_of(world: &crate::world::World, id: u8) -> Option<[f32; 3]> {
 pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::PlayerState => sim_query(|ctx| {
-            // Sneak and use-held live on the session, not the `Player` body:
-            // read the acting session's published roster row (same tick, same
-            // intent latches). No roster published (mod init, unit fixtures)
-            // reads as neither.
-            let (sneak, use_held) = ctx
+            // Sneak, use-held and the swing facts live on the session, not
+            // the `Player` body: read the acting session's published roster
+            // row (same tick, same intent latches). No roster published (mod
+            // init, unit fixtures) reads as neither.
+            let (sneak, use_held, swing) = ctx
                 .acting_player_id()
                 .and_then(|id| {
                     ctx.world
                         .player_roster()
                         .iter()
                         .find(|r| r.id == id.0)
-                        .map(|r| (r.sneak, r.use_held))
+                        .map(|r| (r.sneak, r.use_held, r.swing))
                 })
-                .unwrap_or((false, false));
+                .unwrap_or((false, false, Default::default()));
             let id = ctx.acting_player_id().map(|id| mod_api::PlayerId(id.0));
             let p = &*ctx.player;
             HostRet::Player(PlayerSnapshot {
@@ -70,6 +70,10 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 pose_anchor: ctx
                     .acting_player_id()
                     .and_then(|id| pose_anchor_of(ctx.world, id.0)),
+                swing,
+                half_width: crate::player::HALF_W,
+                height: crate::player::HEIGHT,
+                eye_height: crate::player::EYE,
             })
         }),
         HostCall::Players => sim_query(|ctx| {
@@ -95,18 +99,40 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                             held_count: p.held_count,
                             off_held: p.off_held.map(|i| mod_api::ItemId(i.id())),
                             pose_anchor: pose_anchor_of(ctx.world, p.id),
+                            swing: p.swing,
+                            half_width: crate::player::HALF_W,
+                            height: crate::player::HEIGHT,
+                            eye_height: crate::player::EYE,
                         },
                     })
                     .collect(),
             )
         }),
-        HostCall::DamagePlayer { amount } => {
-            let mod_id = intern_mod_id(mod_id);
-            sim_call(|ctx| {
-                ctx.queue
-                    .push_action(DeferredAction::DamagePlayer { amount, mod_id })
-            })
-        }
+        HostCall::DamagePlayer {
+            player,
+            amount,
+            origin,
+            attacker,
+        } => match origin
+            .map(|p| finite3(p, "DamagePlayer.origin"))
+            .transpose()
+        {
+            Err(e) => e,
+            Ok(origin) => {
+                let mod_id = intern_mod_id(mod_id);
+                sim_mutate(|ctx| {
+                    let source =
+                        super::entities::attack_source(ctx, mod_id, attacker, "DamagePlayer")?;
+                    ctx.queue.push_action(DeferredAction::DamagePlayer {
+                        player: crate::player::PlayerId(player.0),
+                        amount,
+                        source,
+                        origin,
+                    });
+                    Ok(())
+                })
+            }
+        },
         HostCall::ApplyKnockback { impulse } => match finite3(impulse, "ApplyKnockback.impulse") {
             Err(e) => e,
             Ok(impulse) => sim_call(|ctx| ctx.player.apply_knockback(impulse)),
@@ -307,16 +333,20 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // the acting-session shortcut. `BodyClaims` owns the invariants: the
         // claim is keyed by THIS mod, non-finite is refused whole, and finite
         // values clamp.
-        HostCall::SetPlayerSpeedScale { player, scale } => {
+        HostCall::SetPlayerAttribute {
+            player,
+            attribute,
+            scale,
+        } => {
             let mod_id = mod_id.to_owned();
             sim_query(move |ctx| {
                 match ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.claims.set_speed_scale(&mod_id, scale)
+                    p.claims.set_attribute(&mod_id, attribute, scale)
                 }) {
                     None => HostRet::Bool(false),
                     Some(true) => HostRet::Bool(true),
                     Some(false) => {
-                        HostRet::Error(format!("SetPlayerSpeedScale: {scale} is not finite"))
+                        HostRet::Error(format!("SetPlayerAttribute: {scale} is not finite"))
                     }
                 }
             })
@@ -372,6 +402,24 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 // answer left is whether the addressed session exists.
                 let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
                     p.claims.set_bone_poses(&mod_id, bones);
+                });
+                HostRet::Bool(wrote.is_some())
+            })
+        }
+        // The motion-ownership claim: which of each hand's engine motions
+        // the CLAIMING mod animates itself, silencing the engine's own copy.
+        // Infallible like the denial claim (a set of enum values), transient,
+        // and addressed explicitly through the sessions view. Enum-to-bits
+        // happens HERE, once, like bone names resolving to rig ids.
+        HostCall::SetPlayerHandMotions { player, main, off } => {
+            let mod_id = mod_id.to_owned();
+            let (main, off) = (
+                crate::player::HandMotions::of(main),
+                crate::player::HandMotions::of(off),
+            );
+            sim_query(move |ctx| {
+                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_hand_motions(&mod_id, main, off);
                 });
                 HostRet::Bool(wrote.is_some())
             })
@@ -602,7 +650,7 @@ mod tests {
         assert_eq!(acting.progression.unlocked(), std::slice::from_ref(&key));
         assert_eq!(other.progression.unlocked(), [key]);
     }
-    /// The body-claim primitives (`SetPlayerSpeedScale` /
+    /// The body-claim primitives (`SetPlayerAttribute` /
     /// `SetPlayerHeldPose`): per-player writes through the sessions view — an
     /// unreachable player answers `false` and the ADDRESSED body is written,
     /// not whoever the tick happens to run as. The claim is keyed by the
@@ -624,8 +672,9 @@ mod tests {
         let scale = |data: &mut ModStoreData, id: u8, v: f32| {
             handle_host_call(
                 data,
-                HostCall::SetPlayerSpeedScale {
+                HostCall::SetPlayerAttribute {
                     player: mod_api::PlayerId(id),
+                    attribute: mod_api::PlayerAttribute::MoveSpeed,
                     scale: v,
                 },
             )

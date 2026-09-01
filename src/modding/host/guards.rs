@@ -93,6 +93,24 @@ pub(super) fn sim_call(f: impl FnOnce(&mut SimCtx<'_>)) -> HostRet {
     }
 }
 
+/// [`sim_call`] for a mutation that first RESOLVES something off the live
+/// context and may refuse (an attacker to validate, an owner to check): the
+/// closure's `Err` is the reply, `Ok` is [`HostRet::Unit`].
+pub(super) fn sim_mutate(f: impl FnOnce(&mut SimCtx<'_>) -> Result<(), HostRet>) -> HostRet {
+    if scope::read_only_active() {
+        return HostRet::Error(
+            "this host call mutates the world, which is not allowed during a read-only dispatch \
+             (e.g. a shape placement plan)"
+                .into(),
+        );
+    }
+    match scope::with_active(f) {
+        Some(Ok(())) => HostRet::Unit,
+        Some(Err(e)) => e,
+        None => HostRet::Error("no simulation context is active".into()),
+    }
+}
+
 /// [`sim_call`] for calls that compute their own reply.
 pub(super) fn sim_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
     scope::with_active(f)

@@ -23,6 +23,7 @@ use glam::{Mat4, Quat, Vec3};
 use super::item_model::ItemVertex;
 use super::lighting::{fold_tint, DynLight, LightEnv};
 use super::mob_model::{bake_model_cubes, hurt_tint};
+use super::vanilla_swing::vanilla_swing;
 use super::PlayerRenderInstance;
 use petramond::player::model::PLAYER_MODEL_SCALE;
 use petramond_world::bbmodel::Model;
@@ -164,32 +165,27 @@ pub(super) fn build_player_body(
         }
     }
 
-    // Reference biped attack swing, mirrored for this model's −Z front: the body
-    // twists with the punch, the head compensates so the gaze stays fixed, and
-    // the arm raise composes over whatever the walk pose put on the shoulder.
+    // The vanilla third-person swing is the AUTHORED hand_player.json body
+    // channel, played through the same bone machinery a pack's body curve
+    // uses: verbatim for the MAIN hand (the authored left arm, visual right
+    // under the yaw+π placement) and MIRRORED for the off jab (left_/right_
+    // names swapped, the chirality channels negated — the same left-hand
+    // rule every pose seam follows). Angles scale linearly with the hand's
+    // swing amplitude, so a softer jab is a smaller arc, not another shape.
     let s = swing.clamp(0.0, 1.0);
-    // Negative: the twist must wind the HELD (visual-right) shoulder back then
-    // drive it forward; like the roll below, it mirrors with the arm swap.
-    let twist = if swing > 0.0 {
-        (s.sqrt() * std::f32::consts::TAU).sin() * -0.2 * swing_scale
-    } else {
-        0.0
-    };
-    // The LEFT arm's jab twists the torso the OTHER way (its chirality terms
-    // are the right arm's negated). The two compose additively — a same-frame
-    // main swing + off jab is rare, and each stays a small angle.
     let off_s = off.swing.clamp(0.0, 1.0);
-    let off_twist = if off.swing > 0.0 {
-        (off_s.sqrt() * std::f32::consts::TAU).sin() * 0.2 * off.swing_scale
-    } else {
-        0.0
-    };
-    let twist_total = twist + off_twist;
-    if twist_total != 0.0 {
-        if let Some(body) = model.bone_named("body") {
-            model.apply_bone_rotation(&mut pose, body, Quat::from_rotation_y(twist_total));
-        }
+    let mut twist_total = 0.0;
+    if swing > 0.0 {
+        twist_total += play_swing_body(model, &mut pose, s, swing_scale, false);
     }
+    if off.swing > 0.0 {
+        twist_total += play_swing_body(model, &mut pose, off_s, off.swing_scale, true);
+    }
+    // The GAZE layers stay procedural on top of the data, deliberately: a
+    // keyframe file cannot know where this viewer's player is looking.
+    // Head-look compensates the twist the data put on the torso (the engine
+    // is the sampler, so it knows), and the aim term leans each swinging
+    // shoulder into the look pitch so a punch goes where the eyes do.
     if let Some(hb) = model.head_bone() {
         if !head_animated(hb) {
             model.apply_head_look(&mut pose, hb, inst.head_yaw - twist_total, inst.head_pitch);
@@ -197,32 +193,22 @@ pub(super) fn build_player_body(
     }
     if swing > 0.0 {
         if let Some(shoulder) = model.bone_named(HELD_SHOULDER_BONE) {
-            // Quartic-eased raise + the look-pitch term, then the arm follows the
-            // body twist at 2× total (1× inherited from the body bone + 1× here).
-            let eased = 1.0 - (1.0 - s).powi(4);
-            let raise = (eased * std::f32::consts::PI).sin() * 1.2;
-            let pitch_term = (s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
-            let roll = (s * std::f32::consts::PI).sin() * 0.4;
-            // The visual right arm is the authored left arm after the yaw+π
-            // placement, so the shoulder roll mirrors the authored-right swing.
-            let rot = Quat::from_rotation_x((raise + pitch_term) * swing_scale)
-                * Quat::from_rotation_y(twist)
-                * Quat::from_rotation_z(-roll * swing_scale);
-            model.apply_bone_rotation(&mut pose, shoulder, rot);
+            let aim = (s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
+            model.apply_bone_rotation(
+                &mut pose,
+                shoulder,
+                Quat::from_rotation_x(aim * swing_scale),
+            );
         }
     }
-    // The LEFT arm's jab: the same raise (X terms are mirror-symmetric), the
-    // chirality-carrying Y/Z terms negated for the mirrored arm.
     if off.swing > 0.0 {
         if let Some(shoulder) = model.bone_named(OFF_SHOULDER_BONE) {
-            let eased = 1.0 - (1.0 - off_s).powi(4);
-            let raise = (eased * std::f32::consts::PI).sin() * 1.2;
-            let pitch_term = (off_s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
-            let roll = (off_s * std::f32::consts::PI).sin() * 0.4;
-            let rot = Quat::from_rotation_x((raise + pitch_term) * off.swing_scale)
-                * Quat::from_rotation_y(off_twist)
-                * Quat::from_rotation_z(roll * off.swing_scale);
-            model.apply_bone_rotation(&mut pose, shoulder, rot);
+            let aim = (off_s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
+            model.apply_bone_rotation(
+                &mut pose,
+                shoulder,
+                Quat::from_rotation_x(aim * off.swing_scale),
+            );
         }
     }
     // Eating: hold the forearm up so the food sits at the mouth (following the
@@ -284,6 +270,56 @@ pub(super) fn build_player_body(
         * Mat4::from_rotation_y(inst.body_yaw + std::f32::consts::PI)
         * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
     bake_cubes(model, &pose, global, inst, env, verts, indices)
+}
+
+/// Play one hand's share of the authored vanilla swing body channel
+/// (`hand_player.json`) onto `pose` at `phase`, amplitude-scaled, and answer
+/// the yaw (radians) it put on the torso — the head-look compensation's
+/// input. `mirrored` plays the off hand's twin: `left`/`right` bone names
+/// swapped and the chirality channels (rotation Y/Z, translation X) negated.
+/// A missing/refused file swings nothing — rest.
+fn play_swing_body(model: &Model, pose: &mut [Mat4], phase: f32, amp: f32, mirrored: bool) -> f32 {
+    let swing = vanilla_swing();
+    let Some(curve) = &swing.body else {
+        return 0.0;
+    };
+    let mut torso_yaw = 0.0;
+    for (at, (name, mode)) in curve.entries().iter().enumerate() {
+        let (mut rot, mut trans) = curve.sample_entry(at, phase);
+        for c in rot.iter_mut().chain(trans.iter_mut()) {
+            *c *= amp;
+        }
+        let target: &str = if mirrored {
+            rot[1] = -rot[1];
+            rot[2] = -rot[2];
+            trans[0] = -trans[0];
+            // Names pre-swapped at load (`body_mirrored`), index-aligned.
+            &swing.body_mirrored[at]
+        } else {
+            name
+        };
+        let Some(bone) = model.bone_named(target) else {
+            continue;
+        };
+        let translation = Vec3::from(trans) / 16.0 / PLAYER_MODEL_SCALE;
+        match mode {
+            mod_api::BonePoseMode::Replace => {
+                model.hold_bone(pose, bone, Vec3::from(rot), translation);
+            }
+            mod_api::BonePoseMode::Compose => {
+                model.apply_bone_offset(
+                    pose,
+                    bone,
+                    petramond_world::bbmodel::display_euler_quat(Vec3::from(rot)),
+                    translation,
+                );
+            }
+        }
+        if target == "body" {
+            torso_yaw += rot[1].to_radians();
+        }
+    }
+    torso_yaw
 }
 
 /// Emit every cube of the posed model under `global`, lit and hurt-tinted, and

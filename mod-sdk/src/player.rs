@@ -2,7 +2,8 @@
 //! items, health, teleports, status effects, and chat delivery.
 
 use mod_api::{
-    BodyAction, BonePoseData, EffectStateData, HeldPose, PlayerId, PlayerInputData, PlayerSnapshot,
+    BodyAction, BonePoseData, EffectStateData, EntityRef, HandMotion, HeldPose, PlayerAttribute,
+    PlayerId, PlayerInputData, PlayerSnapshot,
 };
 
 use crate::__rt::host_fn;
@@ -59,15 +60,28 @@ host_fn! {
 }
 
 host_fn! {
-    /// Damage the player through the engine funnel. The victim's global
-    /// engine-owned i-frames and `player_damage_pre` apply, with
-    /// `DamageSource::Mod` carrying this mod's id. Queued; applied at the next
-    /// in-tick drain point.
+    /// Damage `player` through the engine funnel. The victim's global
+    /// engine-owned i-frames and `player_damage_pre` apply. Queued; applied
+    /// at the next in-tick drain point; an unknown session is a no-op.
     ///
-    /// To KILL the player, pass their current health ([`player_state`]) as
+    /// `attacker` is WHO the hit lands for, exactly as on [`crate::damage_mob`]:
+    /// `None` is the mod's own damage (`DamageSource::Mod`, `origin` spatial
+    /// context only); `Some(EntityRef::Player(..))` is that player's melee
+    /// strike — the victim's `player_damage_pre` sees
+    /// `DamageSource::PlayerAttack` with the `origin` (a shield judges its
+    /// arc from it) and an applied hit shoves them away from it like the
+    /// engine's own hit; `Some(EntityRef::Mob(..))` is that mob's.
+    ///
+    /// To KILL a player, pass their current health ([`players`]) as
     /// `amount` — same funnel; i-frames or a pre-event handler can still
     /// reject it. There is no separate kill call.
-    pub fn damage_player(amount: i32) => DamagePlayer { amount }
+    pub fn damage_player(
+        player: PlayerId,
+        amount: i32,
+        origin: Option<[f32; 3]>,
+        attacker: Option<EntityRef>,
+    )
+        => DamagePlayer { player, amount, origin, attacker }
 }
 
 host_fn! {
@@ -214,20 +228,24 @@ host_fn! {
 }
 
 host_fn! {
-    /// Claim a land-speed multiplier on `player`, applied to whatever mode
-    /// their own input selected (walk/sprint/sneak together; swim/climb/flight
-    /// untouched).
+    /// Claim a SCALE on one of `player`'s engine quantities
+    /// ([`PlayerAttribute`]): the engine keeps the base — a constant, a
+    /// mode, a formula — and your claim multiplies it. `MoveSpeed` slows or
+    /// hastes the body; `AttackCooldown` at `0.0` removes the engine's melee
+    /// rate limit, for a pack whose own pacing already gates the hand.
     ///
     /// Every claimant gets a slot and the engine applies the PRODUCT, beside
-    /// the status effects' own — your slow and another pack's compose instead
-    /// of stomping. `1.0` releases yours, `0.0` roots the body, finite values
-    /// clamp into `[0, 5]`, non-finite is a hard error. Transient: re-state it
-    /// on your own cadence. `false` = no such reachable session.
+    /// its own claim (the status effects' speed) — your scale and another
+    /// pack's compose instead of stomping, which is also why the claim is a
+    /// multiplier and never an absolute. `1.0` releases yours, `0.0` zeroes
+    /// the quantity, finite values clamp into the attribute's own bound,
+    /// non-finite is a hard error. Transient: re-state it on your own
+    /// cadence. `false` = no such reachable session.
     ///
-    /// SERVER only — the server validates how fast a client may have moved, so
-    /// speed is mirrored rather than predicted.
-    pub fn set_player_speed_scale(player: PlayerId, scale: f32) -> bool
-        => SetPlayerSpeedScale { player, scale } => Bool
+    /// SERVER only — every attribute is simulation the server enforces, so
+    /// the answers are mirrored rather than predicted.
+    pub fn set_player_attribute(player: PlayerId, attribute: PlayerAttribute, scale: f32) -> bool
+        => SetPlayerAttribute { player, attribute, scale } => Bool
 }
 
 host_fn! {
@@ -311,4 +329,27 @@ host_fn! {
     /// will refuse shows a crack creeping up a block that never breaks.
     pub fn set_player_denied_actions(player: PlayerId, actions: Vec<BodyAction>) -> bool
         => SetPlayerDeniedActions { player, actions } => Bool
+}
+
+host_fn! {
+    /// Take over some of a hand's ENGINE MOTIONS on `player`
+    /// ([`HandMotion`]) — the claim that stops the engine playing its own
+    /// copy of each named gesture, so the animation this mod publishes
+    /// (poses and bone offsets per [`player_state`]`().swing` phase) is the
+    /// whole motion, not a layer fighting the vanilla one.
+    ///
+    /// `Swing` silences the mining loop and the break/attack punches; `Jab`
+    /// the soft use gesture. A claimed motion plays nothing of the engine's,
+    /// so the claimant owes that hand an animation every frame the facts say
+    /// it is happening; a motion left unclaimed keeps its engine default (a
+    /// swing-only claimant's hand still jabs on a placement). The facts stay
+    /// published exactly as before.
+    ///
+    /// An empty list releases a hand; a vanilla motion returns once no mod
+    /// claims it (claims UNION across mods per motion, like the denied
+    /// actions). CLIENT-legal for the LOCAL player, the predicted path of
+    /// [`set_player_held_pose`] — pose the hands a round trip early by
+    /// running the same rule on both sides.
+    pub fn set_player_hand_motions(player: PlayerId, main: Vec<HandMotion>, off: Vec<HandMotion>) -> bool
+        => SetPlayerHandMotions { player, main, off } => Bool
 }

@@ -32,6 +32,8 @@ impl ServerGame {
             .and_then(|st| st.item.as_block());
         let pos = self.try_place(s, target, events)?;
         events.player(s).placed_block = held;
+        let hand = self.sessions[s].player.acting_hand;
+        self.sessions[s].latch_swing(hand, mod_api::SwingKind::Place);
         // Strip this cell from the initiator's TickUpdate.events
         // only when they PRESENTED the place locally (full ghost).
         // An unpredicted placement — oriented model, replace-in-

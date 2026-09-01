@@ -63,7 +63,7 @@ impl ServerGame {
         // roster SORTS by id so the ABI's "session-id order" stays true.
         let mut roster: Vec<crate::player::PlayerRosterSnapshot> = self
             .sessions
-            .iter()
+            .iter_mut()
             .map(|sess| crate::player::PlayerRosterSnapshot {
                 id: sess.id.0,
                 pos: sess.player.pos.to_array(),
@@ -79,6 +79,15 @@ impl ServerGame {
                 held: sess.selected_item(),
                 held_count: sess.player.inventory.selected().map_or(0, |st| st.count),
                 off_held: sess.player.inventory.off_hand().map(|st| st.item),
+                // The mining LEVEL is read live (the same overlay state the
+                // remote rows derive the arm-swing level from; instant
+                // blocks read as not mining). The one-shots publish-and-
+                // clear: an edge lands on exactly one roster, one tick after
+                // its stage latched it, which the eased pose lane hides.
+                swing: mod_api::HandSwing {
+                    mining: sess.mining.overlay().is_some(),
+                    ..std::mem::take(&mut sess.swing_events)
+                },
             })
             .collect();
         roster.sort_by_key(|p| p.id);

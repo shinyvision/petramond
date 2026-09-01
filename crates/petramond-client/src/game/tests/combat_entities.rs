@@ -323,8 +323,10 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
         .bus
         .queue_mut()
         .push_action(DeferredAction::DamagePlayer {
+            player: game.server.sessions[0].id,
             amount: 3,
-            mod_id: "testmod",
+            source: DamageSource::Mod("testmod"),
+            origin: None,
         });
     game.server.apply_deferred_actions(&mut ev);
     assert_eq!(
@@ -349,8 +351,10 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
         .bus
         .queue_mut()
         .push_action(DeferredAction::DamagePlayer {
+            player: game.server.sessions[0].id,
             amount: 5,
-            mod_id: "testmod",
+            source: DamageSource::Mod("testmod"),
+            origin: None,
         });
     game.server.apply_deferred_actions(&mut ev);
     assert_eq!(
@@ -373,8 +377,10 @@ fn queued_mod_actions_apply_within_a_game_tick() {
         .bus
         .queue_mut()
         .push_action(DeferredAction::DamagePlayer {
+            player: game.server.sessions[0].id,
             amount: 2,
-            mod_id: "testmod",
+            source: DamageSource::Mod("testmod"),
+            origin: None,
         });
     game.server.game_tick_step(&mut ev);
     assert_eq!(game.server.sessions[0].player.health(), h0 - 2);
@@ -595,6 +601,120 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
         !game.server.world.mobs().instances()[0].is_dead(),
         "rate-limited, so the owl survives the burst"
     );
+}
+
+/// A registered `attack_attempt` handler's Cancel is a CLAIM: the engine's
+/// melee stands down (the crosshair's mob is untouched), yet the press was
+/// still a swing — the hand swings, the cooldown arms and the Attack edge
+/// latches — because whoever took the press owes the hit, not the gesture.
+/// A handler that passes leaves the engine's hit exactly as it was.
+#[test]
+fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
+    let mut game = game();
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+    let h0 = game.server.world.mobs().instances()[0].health();
+    let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = std::sync::Arc::clone(&seen);
+    let claim = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let verdict = std::sync::Arc::clone(&claim);
+    game.server.bus.on_attack_attempt(0, move |_, ev| {
+        assert!(
+            ev.mob.is_some(),
+            "the validated crosshair mob rides the attempt"
+        );
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if verdict.load(std::sync::atomic::Ordering::SeqCst) {
+            Outcome::Cancel
+        } else {
+            Outcome::Continue
+        }
+    });
+    let mut ev = TickEvents::default();
+
+    click_attack_at(&mut game, 0);
+    game.server.tick_attack(0, &mut ev);
+    assert_eq!(
+        seen.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "dispatched once"
+    );
+    assert_eq!(
+        game.server.world.mobs().instances()[0].health(),
+        h0,
+        "a claimed press lands no engine hit"
+    );
+    assert!(ev.player_at(0).swung_hand, "but the hand swung");
+    assert_eq!(
+        game.server.sessions[0].attack_cooldown, ATTACK_COOLDOWN_TICKS,
+        "and the cooldown armed"
+    );
+    assert_eq!(
+        game.server.sessions[0].swing_events.main,
+        Some(mod_api::SwingKind::Attack),
+        "and the Attack edge latched for the swing facts"
+    );
+
+    // Passing hands the press back to the engine's melee.
+    claim.store(false, std::sync::atomic::Ordering::SeqCst);
+    for _ in 0..ATTACK_COOLDOWN_TICKS {
+        game.server.tick_attack(0, &mut ev);
+    }
+    click_attack_at(&mut game, 0);
+    game.server.tick_attack(0, &mut ev);
+    assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(
+        game.server.world.mobs().instances()[0].health() < h0,
+        "a passed press is the engine's hit"
+    );
+}
+
+/// A mod-landed hit naming a player attacker IS that player's melee in its
+/// consequences: the attack source with an origin shoves the victim, where
+/// the mod's own damage (no attacker) only hurts. The distinction is the
+/// whole reason a `DamageMob` can name an attacker.
+#[test]
+fn a_mod_hit_landed_for_a_player_shoves_like_the_players_own_melee() {
+    let mut game = game_on_empty_chunk();
+    let mut ev = TickEvents::default();
+    let from = Vec3::new(6.0, 200.0, 8.0);
+    for (attack, label) in [(false, "the mod's own damage"), (true, "a player's strike")] {
+        assert!(game
+            .server
+            .world
+            .mobs_mut()
+            .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+        let idx = game.server.world.mobs().instances().len() - 1;
+        let id = game.server.world.mobs().instances()[idx].id();
+        let h0 = game.server.world.mobs().instances()[idx].health();
+        let source = if attack {
+            DamageSource::PlayerAttack(game.server.sessions[0].id)
+        } else {
+            DamageSource::Mod("testmod")
+        };
+        game.server
+            .bus
+            .queue_mut()
+            .push_action(petramond::events::DeferredAction::DamageMob {
+                mob_id: id,
+                amount: 1.0,
+                source,
+                origin: Some(from),
+                feedback: None,
+            });
+        game.server.apply_deferred_actions(&mut ev);
+        let mob = &game.server.world.mobs().instances()[idx];
+        assert!(mob.health() < h0, "{label}: the hit lands");
+        assert_eq!(
+            mob.staggered(),
+            attack,
+            "{label}: shoved = {}",
+            mob.staggered()
+        );
+    }
 }
 
 #[test]
@@ -940,6 +1060,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
             held_pose_main: None,
             held_pose_off: None,
             bone_poses: Vec::new(),
+            motion_claims: [Default::default(); 2],
             hurt_recent: false,
             snap: false,
             mount: None,
@@ -1325,6 +1446,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
             held_pose_main: None,
             held_pose_off: None,
             bone_poses: Vec::new(),
+            motion_claims: [Default::default(); 2],
             hurt_recent: false,
             snap: false,
             mount: None,

@@ -7,7 +7,8 @@ use mod_api::{HostCall, HostRet};
 use petramond_math::math::IVec3;
 
 use super::guards::{
-    batch_guard, checked_block, key_owned_by_namespace, sim_call, sim_query, stream_final_cell,
+    batch_guard, checked_block, finite3, key_owned_by_namespace, sim_call, sim_query,
+    stream_final_cell,
 };
 
 /// The three presentation WRITES below all ask the same question first: does
@@ -258,6 +259,43 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
+        HostCall::Raycast {
+            from,
+            dir,
+            max,
+            filter,
+        } => {
+            let from = match finite3(from, "Raycast.from") {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            let dir = match finite3(dir, "Raycast.dir") {
+                Ok(v) if v.length_squared() > f32::EPSILON => v.normalize(),
+                Ok(_) => return HostRet::Error("Raycast: zero direction".into()),
+                Err(e) => return e,
+            };
+            if !max.is_finite() || max <= 0.0 || max > mod_api::RAYCAST_MAX_DISTANCE {
+                return HostRet::Error(format!(
+                    "Raycast: max must be finite and in (0, {}]",
+                    mod_api::RAYCAST_MAX_DISTANCE
+                ));
+            }
+            let filter = match filter {
+                mod_api::RayFilter::Selectable => crate::player::RayFilter::Selectable,
+                mod_api::RayFilter::Collidable => crate::player::RayFilter::Collidable,
+            };
+            sim_query(move |ctx| {
+                HostRet::Raycast(
+                    crate::player::Player::raycast_filtered(from, dir, max, filter, ctx.world).map(
+                        |(hit, distance)| mod_api::RaycastHitData {
+                            block: hit.block.to_array(),
+                            face: hit.normal.to_array(),
+                            distance,
+                        },
+                    ),
+                )
+            })
+        }
         HostCall::FindBlocks { min, max, blocks } => {
             if let Some(err) = batch_guard("FindBlocks block", blocks.len()) {
                 return err;
@@ -475,6 +513,78 @@ mod tests {
                 },
             );
             assert!(matches!(got, HostRet::Blocks(v) if v.len() == SIM_BATCH_MAX));
+        });
+    }
+
+    /// The two ray filters answer two different questions about the same
+    /// cells: the crosshair's rule stops on a plant's selection box, a
+    /// body's rule passes it and stops on the solid behind — and the
+    /// distance answers where. A ray past `max` or with nothing in it
+    /// answers `None`; a malformed request is an error, never a fabricated
+    /// miss.
+    #[test]
+    fn raycast_filters_stop_on_what_they_say_and_report_the_distance() {
+        use petramond_world::block::Block;
+        let mut store = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 4);
+        world.clear_world();
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        world.set_block_world(4, 64, 8, Block::Poppy);
+        world.set_block_world(7, 64, 8, Block::Stone);
+        let cast = |store: &mut ModStoreData, max: f32, filter: mod_api::RayFilter| {
+            handle_host_call(
+                store,
+                HostCall::Raycast {
+                    from: [1.5, 64.2, 8.5],
+                    dir: [2.0, 0.0, 0.0],
+                    max,
+                    filter,
+                },
+            )
+        };
+        with_world_ctx(&mut world, || {
+            let HostRet::Raycast(Some(plant)) =
+                cast(&mut store, 10.0, mod_api::RayFilter::Selectable)
+            else {
+                panic!("the crosshair's ray selects the plant");
+            };
+            assert_eq!(plant.block, [4, 64, 8]);
+            assert_eq!(plant.face, [-1, 0, 0]);
+            assert!(
+                plant.distance > 2.0 && plant.distance < 3.5,
+                "{}",
+                plant.distance
+            );
+
+            let HostRet::Raycast(Some(solid)) =
+                cast(&mut store, 10.0, mod_api::RayFilter::Collidable)
+            else {
+                panic!("a body's ray reaches the stone");
+            };
+            assert_eq!(solid.block, [7, 64, 8]);
+            assert!((solid.distance - 5.5).abs() < 1e-3, "{}", solid.distance);
+
+            assert_eq!(
+                cast(&mut store, 4.0, mod_api::RayFilter::Collidable),
+                HostRet::Raycast(None),
+                "nothing within max"
+            );
+            assert!(matches!(
+                cast(&mut store, 0.0, mod_api::RayFilter::Collidable),
+                HostRet::Error(_)
+            ));
+            assert!(matches!(
+                handle_host_call(
+                    &mut store,
+                    HostCall::Raycast {
+                        from: [1.5, 64.2, 8.5],
+                        dir: [0.0, 0.0, 0.0],
+                        max: 4.0,
+                        filter: mod_api::RayFilter::Selectable,
+                    },
+                ),
+                HostRet::Error(_)
+            ));
         });
     }
 

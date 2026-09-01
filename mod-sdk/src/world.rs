@@ -1,7 +1,7 @@
 //! Sim-scoped world reads and writes: blocks, light, scheduled ticks,
 //! model-block swaps, and spawn-support queries.
 
-use mod_api::{BlockId, CollisionShape, LightData, ModelGroupData};
+use mod_api::{BlockId, CollisionShape, LightData, ModelGroupData, RayFilter, RaycastHitData};
 
 use crate::__rt::host_fn;
 
@@ -217,4 +217,18 @@ host_fn! {
     /// build higher in the column that has not streamed in yet is invisible
     /// to this scan — answers are provisional during join streaming.
     pub fn surface_y_at(pos: [i32; 2]) -> Option<i32> => SurfaceYAt { pos } => MaybeI32
+}
+
+host_fn! {
+    /// The first block along the ray from `from` in direction `dir` (any
+    /// length) within `max` blocks (`0 < max <= 64`), stopping on what
+    /// `filter` says: [`RayFilter::Selectable`] is the crosshair's rule
+    /// (plants stop it), [`RayFilter::Collidable`] a body's (only cells with
+    /// collision boxes). Unloaded cells read as air, like the crosshair's own
+    /// ray. THE line-of-sight primitive — a swung weapon reaching for a
+    /// body, a projectile's flight, an AI's sightline. `None` = nothing
+    /// within `max`.
+    pub fn raycast(from: [f32; 3], dir: [f32; 3], max: f32, filter: RayFilter)
+        -> Option<RaycastHitData>
+        => Raycast { from, dir, max, filter } => Raycast
 }

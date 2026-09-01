@@ -9,6 +9,7 @@
 //! loop through [`remote::RemoteHub`] ("Open to LAN").
 
 pub mod actions;
+pub mod attack;
 pub mod bed;
 pub mod breaking;
 pub mod chat;

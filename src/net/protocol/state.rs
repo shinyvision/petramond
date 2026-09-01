@@ -163,6 +163,12 @@ pub struct PlayerStateRow {
     /// Rig IDS, not names: this row ships for every player every tick, and a
     /// bone name is authoring vocabulary with no business on the wire.
     pub bone_poses: Vec<crate::player::BonePose>,
+    /// Which of each hand's engine motions carry a live claim — the
+    /// resolved `SetPlayerHandMotions` answer, one byte per hand. An
+    /// observer silences its own copy of exactly the claimed motions (the
+    /// swing family, the jab), because the claim holder is animating them
+    /// itself; unclaimed motions stay the engine's on every mirror.
+    pub motion_claims: [crate::player::HandMotions; 2],
     /// The player took damage this tick window. Sessions track no hurt TIMER
     /// (unlike `MobStateRow::hurt_timer`), so this ships the EDGE and each
     /// client runs its own flash envelope — the same one as the local
@@ -294,6 +300,12 @@ pub struct SelfState {
     /// The AUTHORITATIVE rig-bone offsets for this body, as rig IDS, which a
     /// client running the same rule overrides per bone locally.
     pub bone_poses: Vec<crate::player::BonePose>,
+    /// The AUTHORITATIVE hand-motion ownership for this body (`[main,
+    /// off]`), which a client mod running the same claim overrides locally.
+    /// Like the poses beside it, this is the half the mirror cannot derive —
+    /// while a claim stands, the vanilla motion must not play under the
+    /// claimant's animation.
+    pub motion_claims: [crate::player::HandMotions; 2],
     /// A transform correction when the ticks moved this player (see
     /// [`SelfTransform`]); `None` on ordinary updates.
     pub transform: Option<SelfTransform>,

@@ -1,0 +1,107 @@
+{
+  "format": "petramond-swing-animation",
+  "version": 1,
+  "tool": "axe",
+  "tier": "iron",
+  "name": "my-chop-2",
+  "window_attack": 0.54,
+  "loop": true,
+  "keys": [
+    {
+      "t": 0,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.2551861387310606,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        14,
+        -56,
+        60.5
+      ],
+      "translation": [
+        -15,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.5112963780918728,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        4.5,
+        -126,
+        89
+      ],
+      "translation": [
+        6,
+        0,
+        0
+      ],
+      "scale": 1,
+      "impact": true
+    },
+    {
+      "t": 0.7530295632102273,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        4.5,
+        -126,
+        89
+      ],
+      "translation": [
+        6,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "t": 1,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ]
+}

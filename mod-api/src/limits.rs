@@ -30,6 +30,11 @@ pub const SIM_BATCH_MAX: usize = 4096;
 /// (17³ = 4913).
 pub const FIND_BLOCKS_VOLUME_MAX: i64 = 32 * 32 * 32;
 
+/// Longest `Raycast` a mod may ask for, in blocks — the same bounded-host-
+/// work doctrine: the DDA pays per cell crossed. 64 covers every melee
+/// reach, sightline and short projectile flight many times over.
+pub const RAYCAST_MAX_DISTANCE: f32 = 64.0;
+
 /// Per-entry limits for the mod KV surfaces (world / section-cell / mob).
 pub const KV_MAX_KEY_BYTES: usize = 256;
 /// A single KV value's byte cap. A mod storing a list longer than this must

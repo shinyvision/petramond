@@ -65,6 +65,21 @@ pub enum EventKind {
     ///
     /// [`HostCall::HoldUse`]: crate::HostCall::HoldUse
     UseUnclaimed,
+    /// PRE — the player's primary-button press as its most primitive
+    /// gesture: what the crosshair held (a block, a live mob, another
+    /// player) and who pressed. Fires for EVERY accepted press, a press at
+    /// nothing included; a body whose attack is denied or still on cooldown
+    /// never dispatches one. Cancel = the press is yours: the engine's own
+    /// melee (the crosshair hit, the air punch) stands down for it, the
+    /// hand still swings, the attack cooldown still arms, and landing the
+    /// hit — when, on whom, how hard — is the claimant's to do through
+    /// [`HostCall::DamageMob`] / [`HostCall::DamagePlayer`] naming the
+    /// presser as the attacker. Mining is the held button on a block, not
+    /// the press, so it runs whoever takes the press.
+    ///
+    /// [`HostCall::DamageMob`]: crate::HostCall::DamageMob
+    /// [`HostCall::DamagePlayer`]: crate::HostCall::DamagePlayer
+    AttackAttempt,
 }
 
 /// Why an entity is taking damage.
@@ -484,6 +499,25 @@ pub enum EventPayload {
         mob: Option<u64>,
         player: PlayerId,
     },
+    /// PRE — one primary-button press ([`EventKind::AttackAttempt`]): what
+    /// the crosshair held and who pressed, nothing pre-interpreted. `mob`
+    /// and `target` are authority-validated (a forged, vanished, dead,
+    /// occluded or out-of-reach claim never appears here); a press at
+    /// nothing carries all three `None`. Cancel = claimed — see the kind.
+    AttackAttempt {
+        /// The block cell under the crosshair, if any (a press here is
+        /// mining's; the engine's melee passes on it).
+        block: Option<[i32; 3]>,
+        /// The clicked face's normal (back toward the eye). `Some` exactly
+        /// when `block` is.
+        face: Option<[i32; 3]>,
+        /// The live mob under the crosshair, by stable id.
+        mob: Option<u64>,
+        /// The OTHER player under the crosshair (alive, in reach).
+        target: Option<PlayerId>,
+        /// The pressing session.
+        player: PlayerId,
+    },
 }
 
 impl EventPayload {
@@ -493,6 +527,7 @@ impl EventPayload {
             EventPayload::BlockBreakPre { .. } => EventKind::BlockBreakPre,
             EventPayload::InteractAttempt { .. } => EventKind::InteractAttempt,
             EventPayload::UseUnclaimed { .. } => EventKind::UseUnclaimed,
+            EventPayload::AttackAttempt { .. } => EventKind::AttackAttempt,
             EventPayload::ItemUsePre { .. } => EventKind::ItemUsePre,
             EventPayload::MobDamagePre { .. } => EventKind::MobDamagePre,
             EventPayload::PlayerDamagePre { .. } => EventKind::PlayerDamagePre,

@@ -68,6 +68,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         feedback: Some(crate::events::MobDamageFeedback {
             components: vec![crate::events::MobDamageFeedbackComponent::Immunity { ticks: 10 }],
         }),
+        attacker: Some(crate::EntityRef::Player(PlayerId(2))),
     });
     roundtrip(HostCall::DespawnMob { mob_id: 7 });
     roundtrip(HostCall::MobEmitterSet {
@@ -87,7 +88,12 @@ fn abi_roundtrip_host_and_guest_calls() {
         data: vec![("m:tint".into(), vec![9, 8, 7])],
     });
     roundtrip(HostCall::PlayerState);
-    roundtrip(HostCall::DamagePlayer { amount: 4 });
+    roundtrip(HostCall::DamagePlayer {
+        player: PlayerId(1),
+        amount: 4,
+        origin: Some([1.0, 64.0, 1.0]),
+        attacker: Some(crate::EntityRef::Mob(9)),
+    });
     roundtrip(HostCall::ApplyKnockback {
         impulse: [1.0, 3.0, -1.0],
     });
@@ -494,6 +500,9 @@ fn abi_roundtrip_host_and_guest_calls() {
         vel: [1.0, 0.0, -2.0],
         on_ground: true,
         moving: false,
+        half_width: 0.4,
+        height: 1.2,
+        half_length: 0.4,
     }]));
     roundtrip(HostRet::Player(PlayerSnapshot {
         id: Some(PlayerId(1)),
@@ -511,6 +520,14 @@ fn abi_roundtrip_host_and_guest_calls() {
         use_held: false,
         holds_use: false,
         pose_anchor: Some([0.5, 64.0, -3.5]),
+        swing: HandSwing {
+            mining: true,
+            main: Some(SwingKind::Attack),
+            off: Some(SwingKind::Place),
+        },
+        half_width: 0.3,
+        height: 1.8,
+        eye_height: 1.62,
     }));
     roundtrip(HostRet::Bytes(Some(vec![1, 2, 3])));
     roundtrip(GuestRet::Event {
@@ -579,5 +596,18 @@ fn every_payload_kind_is_registerable() {
         let bytes = encode(&s).unwrap();
         let back: EventPayload = decode(&bytes).unwrap();
         assert_eq!(back.kind(), s.kind());
+    }
+}
+
+/// `PlayerAttribute::ALL` is dense and in declaration order — the invariant
+/// per-attribute claim storage indexes on. The exhaustive match is the
+/// tripwire: a new variant fails to compile here until `ALL` carries it.
+#[test]
+fn player_attribute_all_is_the_declaration_order() {
+    for (at, attribute) in PlayerAttribute::ALL.into_iter().enumerate() {
+        assert_eq!(attribute.index(), at);
+        match attribute {
+            PlayerAttribute::MoveSpeed | PlayerAttribute::AttackCooldown => {}
+        }
     }
 }

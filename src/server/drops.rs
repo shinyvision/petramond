@@ -123,6 +123,10 @@ impl ServerGame {
             if let Some(stack) = stack {
                 self.spawn_thrown_item(s, stack);
                 events.player(s).threw_item = true;
+                self.sessions[s].latch_swing(
+                    petramond_world::inventory::Hand::Main,
+                    mod_api::SwingKind::Throw,
+                );
             }
             if let Some(id) = request_id {
                 self.push_action_outcome(

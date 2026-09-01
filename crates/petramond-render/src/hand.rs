@@ -22,8 +22,11 @@ use glam::{Mat4, Quat, Vec3};
 
 use super::item_cube::{push_block_item_cube_lit_with_state, push_cube_solid_lit};
 use super::lighting::DynLight;
+use super::vanilla_swing::vanilla_swing;
 use super::HeldItemView;
+use mod_api::animation::PoseSample;
 use petramond_mesh::Vertex;
+use petramond_world::bbmodel::display_euler_quat;
 use petramond_world::block::Block;
 use petramond_world::item::ItemRenderKind;
 use petramond_world::tile::Tile;
@@ -389,30 +392,39 @@ fn arm_rest_pose() -> Mat4 {
         * Mat4::from_translation(Vec3::new(5.6, 0.0, 0.0))
 }
 
-/// Forearm-local shoulder pivot: the bottom (`-Y`) end of the 4x12x4 arm cuboid,
-/// which the rest pose sends off-screen toward the lower-right. The punch swings
-/// the fist (`+Y` end) about this point so the cuboid hinges like a real arm.
-const ARM_SHOULDER_LOCAL: Vec3 = Vec3::new(0.0, -6.0, 0.0);
+/// One sampled instant of a vanilla swing channel, amplitude-scaled: the
+/// authored degrees and px scale LINEARLY with `swing_scale`, so a softer
+/// place jab is the same arc at a smaller angle, not a different shape.
+fn scaled_sample(sample: PoseSample, amp: f32) -> PoseSample {
+    let s = |v: [f32; 3]| [v[0] * amp, v[1] * amp, v[2] * amp];
+    PoseSample {
+        rotation: s(sample.rotation),
+        translation: s(sample.translation),
+        origin: sample.origin,
+    }
+}
 
-/// Peak forward-jab angle of the bare-arm punch, in degrees. A rotation about the
-/// arm-local `-Z` axis at the shoulder, which (through the rest pose) drives the
-/// fist toward screen centre and into the screen — a forward punch, not a sweep.
-const ARM_PUNCH_DEG: f32 = 62.0;
-/// Secondary roll folded into the punch so the cuboid doesn't hinge flatly; gives
-/// the wrist a little twist as the fist comes forward.
-const ARM_PUNCH_ROLL_DEG: f32 = 16.0;
+/// One sampled pose instant as a transform: the rotation applied about the
+/// sample's own pivot (`origin`), then the sample's translation. A curve
+/// that keys an origin hinges there; one that keys none rotates in place
+/// and carries its motion in translation — both are the author's choice,
+/// and this sandwich is what makes either read back exactly as keyed.
+fn pose_matrix(s: PoseSample) -> Mat4 {
+    let origin = Vec3::from(s.origin);
+    Mat4::from_translation(origin + Vec3::from(s.translation))
+        * Mat4::from_quat(display_euler_quat(Vec3::from(s.rotation)))
+        * Mat4::from_translation(-origin)
+}
 
-/// Bare-arm forward jab about the shoulder, mirroring the held-item punch feel:
-/// a fast strike out (peaks early, near `swing` 0.2) easing back to rest at 1.0.
-/// `amp` scales the throw (1.0 mining, less for the gentler place jab). Built in
-/// the arm-local frame; the caller pivots it at [`ARM_SHOULDER_LOCAL`].
-fn arm_punch_rotation(swing: f32, amp: f32) -> Quat {
-    let s = swing.clamp(0.0, 1.0);
-    // Punchy, asymmetric envelope: 0 at the ends, peaks early at s~=0.2 so the
-    // jab snaps out then recovers — same sqrt-eased shape the held item uses.
-    let strike = (std::f32::consts::PI * s.sqrt()).sin() * amp;
-    Quat::from_rotation_z(radians(-ARM_PUNCH_DEG * strike))
-        * Quat::from_rotation_x(radians(-ARM_PUNCH_ROLL_DEG * strike))
+/// Bare-arm jab: the authored `hand_arm.json` channel played through
+/// [`pose_matrix`] in the arm's local frame. `amp` scales the throw (1.0
+/// mining, less for the gentler place jab). A missing/refused file jabs
+/// nothing — rest.
+fn arm_punch(swing: f32, amp: f32) -> Mat4 {
+    let Some(curve) = &vanilla_swing().arm else {
+        return Mat4::IDENTITY;
+    };
+    pose_matrix(scaled_sample(curve.sample(swing.clamp(0.0, 1.0)), amp))
 }
 
 /// The hand's walking sway as a view-space translation. Already lagged and
@@ -434,12 +446,9 @@ fn bare_arm_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
         * Mat4::from_scale(Vec3::splat(VANILLA_ARM_SCALE))
         * arm_rest_pose();
 
-    // Hinge the fist about the shoulder so the empty hand punches forward. A
-    // placement that just emptied the hand reuses this same jab, softened.
-    let punch = Mat4::from_translation(ARM_SHOULDER_LOCAL)
-        * Mat4::from_quat(arm_punch_rotation(view.swing, view.swing_scale))
-        * Mat4::from_translation(-ARM_SHOULDER_LOCAL);
-    rest * punch
+    // The authored jab plays in the arm's local frame. A placement that
+    // just emptied the hand reuses it, softened.
+    rest * arm_punch(view.swing, view.swing_scale)
 }
 
 /// Place held item models in the lower-right and apply the punch animation. The
@@ -486,26 +495,15 @@ fn placement_at(view: &HeldItemView, rest: Vec3, throw_scale: f32) -> Mat4 {
     }
 
     if view.swing > 0.0 {
-        let s = view.swing.clamp(0.0, 1.0);
-        let amp = view.swing_scale;
-        let root_sin = (std::f32::consts::PI * s.sqrt()).sin();
-        let swing_sin = (std::f32::consts::PI * s).sin();
-        let swing_sq_sin = (std::f32::consts::PI * s * s).sin();
-
-        // Only the translation throw scales with the seat depth; the punch ANGLES are
-        // unit-free and keep their full arc.
-        pos += amp
-            * throw_scale
-            * Vec3::new(
-                -0.30 * root_sin,
-                0.40 * (std::f32::consts::TAU * s.sqrt()).sin(),
-                -0.40 * swing_sin,
-            );
-        let attack = Quat::from_rotation_y(radians(45.0 + amp * swing_sq_sin * -20.0))
-            * Quat::from_rotation_z(radians(amp * root_sin * -20.0))
-            * Quat::from_rotation_x(radians(amp * root_sin * -80.0))
-            * Quat::from_rotation_y(radians(-45.0));
-        rot = attack * rot;
+        if let Some(curve) = &vanilla_swing().held {
+            // The authored held-item channel (hand_swing.json), amplitude-
+            // scaled. Only the translation throw scales with the seat depth;
+            // the punch ANGLES are unit-free and keep their full arc. The
+            // file's px are 1/16-block, and view space here is blocks.
+            let s = scaled_sample(curve.sample(view.swing.clamp(0.0, 1.0)), view.swing_scale);
+            pos += Vec3::from(s.translation) / 16.0 * throw_scale;
+            rot = display_euler_quat(Vec3::from(s.rotation)) * rot;
+        }
     }
 
     // The claimed pose composes INSIDE the seat, so the punch and the eat

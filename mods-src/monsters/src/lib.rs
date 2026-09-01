@@ -486,7 +486,7 @@ impl Monsters {
                 // NO `Immunity` — burn ticks are neither blocked by the
                 // engine i-frame window nor grant one, so a burning zombie
                 // can still be meleed at full cadence.
-                damage_mob_with_feedback(mob.id, amount, None, burn_feedback());
+                damage_mob_with_feedback(mob.id, amount, None, burn_feedback(), None);
             }
         }
         for id in extinguished {

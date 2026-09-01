@@ -2365,6 +2365,7 @@ dependencies = [
  "glam",
  "image",
  "log",
+ "mod-api",
  "naga",
  "petramond",
  "petramond-math",

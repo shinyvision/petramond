@@ -23,7 +23,7 @@ mod core_calls;
 mod entities;
 mod gui;
 mod instance_data;
-pub mod json;
+pub use mod_api::{animation, json};
 mod kv;
 mod player;
 mod registry;

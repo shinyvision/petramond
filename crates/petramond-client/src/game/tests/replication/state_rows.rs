@@ -206,6 +206,7 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
             held_pose_main: None,
             held_pose_off: None,
             bone_poses: Vec::new(),
+            motion_claims: [Default::default(); 2],
             hurt_recent: false,
             snap: false,
             mount: None,

@@ -18,8 +18,8 @@ pub use crate::mob::{MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSou
 pub use bus::PostQueue;
 pub use bus::{with_sessions_scope, EventBus, OpenGui, Outcome, SessionPlayerRef, SimCtx};
 pub use payload::{
-    BlockBreakPre, BlockPlacePre, DamageSource, DeferredAction, InteractAttempt, ItemUseEvent,
-    ItemUsePre, MobDamagePre, PlayerDamagePre, PostEvent, PostEventKind,
+    AttackAttempt, BlockBreakPre, BlockPlacePre, DamageSource, DeferredAction, InteractAttempt,
+    ItemUseEvent, ItemUsePre, MobDamagePre, PlayerDamagePre, PostEvent, PostEventKind,
 };
 pub use stages::{Attach, Stage, TickSystems};
 pub use tick::ClientEvent;

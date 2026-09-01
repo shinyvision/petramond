@@ -23,7 +23,14 @@ impl Game {
     /// The acting player's snapshot for a client-mod PREDICTION dispatch —
     /// the same `PlayerSnapshot` vocabulary a server handler queries, built
     /// from the client's predicted local player + replicated self view.
-    pub(super) fn client_actor_snapshot(&self, sneak: bool) -> mod_api::PlayerSnapshot {
+    /// `swing` is what this frame's hand triggers say (`Default` = idle; the
+    /// frame hook passes the real edges, prediction dispatches need only the
+    /// identity).
+    pub(super) fn client_actor_snapshot(
+        &self,
+        sneak: bool,
+        swing: mod_api::HandSwing,
+    ) -> mod_api::PlayerSnapshot {
         mod_api::PlayerSnapshot {
             // A client has exactly one addressable body, and naming it is
             // what lets a mod use the SAME player-addressed calls its server
@@ -59,6 +66,10 @@ impl Game {
                 petramond::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos.to_array()),
                 petramond::net::protocol::PlayerMount::Mob { .. } => None,
             }),
+            swing,
+            half_width: petramond::player::HALF_W,
+            height: petramond::player::HEIGHT,
+            eye_height: petramond::player::EYE,
         }
     }
 
@@ -68,7 +79,7 @@ impl Game {
     /// as an engine one, through the same event vocabulary the server
     /// dispatches, evaluated against the replica.
     fn predict_mod_claim(&mut self, sneak: bool, payload: mod_api::EventPayload) -> bool {
-        let actor = self.client_actor_snapshot(sneak);
+        let actor = self.client_actor_snapshot(sneak, Default::default());
         let Self {
             client_mods,
             replica,
@@ -570,7 +581,7 @@ impl Game {
             player_facing: petramond::server::placement::facing_from_forward(self.player.forward())
                 as u8,
         };
-        let actor = self.client_actor_snapshot(sneak);
+        let actor = self.client_actor_snapshot(sneak, Default::default());
         let result = {
             let Self {
                 client_mods,

@@ -149,6 +149,13 @@ impl Instance {
         self.death.is_dead()
     }
 
+    /// Is the mob still reeling from a knockback — the stagger a
+    /// `petramond:knockback` component started has not run out?
+    #[inline]
+    pub fn staggered(&self) -> bool {
+        self.stagger_timer > 0.0
+    }
+
     /// Current health (`0` = dead) — the `petramond:health` tag, seeded at
     /// spawn from the species row and persisted with the mob. A missing or
     /// mistyped tag (a mod deleted/rewrote it) reads as the species' spawn

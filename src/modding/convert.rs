@@ -7,8 +7,9 @@
 //! compile.
 
 use crate::events::{
-    self, BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre, MobDamageFeedbackComponent,
-    MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent, PostEventKind,
+    self, AttackAttempt, BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre,
+    MobDamageFeedbackComponent, MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent,
+    PostEventKind,
 };
 use mod_api as api;
 use petramond_math::facing::Facing;
@@ -68,6 +69,7 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         | K::BlockBreakPre
         | K::InteractAttempt
         | K::UseUnclaimed
+        | K::AttackAttempt
         | K::ItemUsePre
         | K::MobDamagePre
         | K::PlayerDamagePre => return None,
@@ -225,6 +227,16 @@ pub(super) fn use_unclaimed(ev: &InteractAttempt) -> api::EventPayload {
         block: ev.block.map(ivec),
         face: ev.face.map(ivec),
         mob: ev.mob,
+        player: api::PlayerId(ev.player.0),
+    }
+}
+
+pub(super) fn attack_attempt(ev: &AttackAttempt) -> api::EventPayload {
+    api::EventPayload::AttackAttempt {
+        block: ev.block.map(ivec),
+        face: ev.face.map(ivec),
+        mob: ev.mob,
+        target: ev.target.map(|p| api::PlayerId(p.0)),
         player: api::PlayerId(ev.player.0),
     }
 }

@@ -312,6 +312,10 @@ fn tick_updates_roundtrip() {
                 translation: [0.0, 1.0, -2.0],
                 hold: true,
             }],
+            motion_claims: [
+                crate::player::HandMotions::of([mod_api::HandMotion::Swing]),
+                crate::player::HandMotions::NONE,
+            ],
             hurt_recent: true,
             snap: true,
             mount: None,
@@ -351,6 +355,10 @@ fn tick_updates_roundtrip() {
                 translation: [0.5, 0.0, 1.5],
                 hold: false,
             }],
+            motion_claims: [
+                crate::player::HandMotions::NONE,
+                crate::player::HandMotions::of([mod_api::HandMotion::Jab]),
+            ],
             sleeping: None,
             sleep_bed: None,
             transform: Some(SelfTransform {

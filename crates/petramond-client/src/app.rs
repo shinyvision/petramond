@@ -133,7 +133,11 @@ pub struct App {
     /// advances by draw time even when the platform coalesces or skips a redraw.
     last_render: f64,
     /// First-person hand-animation triggers latched since the last render, so a
-    /// swing/place/break begun on an un-drawn update isn't lost before the next draw.
+    /// swing/place/break begun on an un-drawn update isn't lost before the next
+    /// draw. Consumed (taken) by [`App::render`] and by NOTHING else: any other
+    /// consumer of these one-shot edges keeps its own latch
+    /// (`Game::swing_events` is the client mods'), because a shared latch is
+    /// whoever-eats-first and the other reader always ate second.
     hand: HandTriggers,
     /// Seconds left of the hurt screen/hand shake, latched to
     /// [`HURT_SHAKE_SECS`] when a `player_damaged` event arrives and decayed by

@@ -760,6 +760,14 @@ fn wire_event_handler(
                 }
             })
         }
+        EventKind::AttackAttempt => {
+            bus.on_attack_attempt(priority, move |ctx, ev| {
+                match call_event(&inst, ctx, handler_id, convert::attack_attempt(ev)) {
+                    Some((outcome, _)) => convert::outcome(outcome),
+                    None => Outcome::Continue,
+                }
+            })
+        }
         EventKind::ItemUsePre => bus.on_item_use_pre(priority, move |ctx, ev| {
             match call_event(&inst, ctx, handler_id, convert::item_use_pre(ev)) {
                 Some((outcome, _)) => convert::outcome(outcome),

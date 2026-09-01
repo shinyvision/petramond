@@ -2,7 +2,7 @@
 //! emitters, riding, kinematic drive, named animations, and dropped-item
 //! spawns.
 
-use mod_api::{Facing, MobAnimStateData, MobRidersData, MobSnapshot, PlayerId};
+use mod_api::{EntityRef, Facing, MobAnimStateData, MobRidersData, MobSnapshot, PlayerId};
 
 use crate::__rt::host_fn;
 
@@ -78,13 +78,26 @@ host_fn! {
 }
 
 host_fn! {
-    /// Damage a live mob (STABLE id) through the `mob_damage_pre` pipeline with
-    /// the species' resolved `damage_feedback` (applied at the next in-tick
-    /// drain point; a mob gone by then is a silent no-op). Mod damage is not an
-    /// attack, so the default engine knockback is not applied; `origin` is
-    /// spatial context for handlers/feedback.
-    pub fn damage_mob(mob_id: u64, amount: f32, origin: Option<[f32; 3]>)
-        => DamageMob { mob_id, amount, origin, feedback: None }
+    /// Damage a live mob (STABLE id) through the `mob_damage_pre` pipeline
+    /// with the species' resolved `damage_feedback` (applied at the next
+    /// in-tick drain point; a mob gone by then is a silent no-op).
+    ///
+    /// `attacker` is WHO the hit lands for. `None` is the mod's own damage
+    /// (`DamageSource::Mod`): not an attack, so no default knockback and no
+    /// retaliation memory, and `origin` is spatial context for handlers
+    /// only. `Some(EntityRef::Player(..))` lands it as that player's melee
+    /// strike (`DamageSource::PlayerAttack` — the victim remembers them and,
+    /// with an `origin`, the species' knockback shoves away from it), which
+    /// is how a mod that took the player's `attack_attempt` lands the hit
+    /// it owes; the id must be a connected session (a mod bug otherwise).
+    /// `Some(EntityRef::Mob(..))` is that mob's strike.
+    pub fn damage_mob(
+        mob_id: u64,
+        amount: f32,
+        origin: Option<[f32; 3]>,
+        attacker: Option<EntityRef>,
+    )
+        => DamageMob { mob_id, amount, origin, feedback: None, attacker }
 }
 
 host_fn! {
@@ -97,8 +110,9 @@ host_fn! {
         amount: f32,
         origin: Option<[f32; 3]>,
         feedback: crate::MobDamageFeedback,
+        attacker: Option<EntityRef>,
     )
-        => DamageMob { mob_id, amount, origin, feedback: Some(feedback) }
+        => DamageMob { mob_id, amount, origin, feedback: Some(feedback), attacker }
 }
 
 host_fn! {

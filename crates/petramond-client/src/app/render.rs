@@ -177,6 +177,8 @@ impl App {
                     .held_item
                     .pose_target
                     .map(crate::game::render_held_pose),
+                swing_claim: frame.held_item.motions.contains(mod_api::HandMotion::Swing),
+                jab_claim: frame.held_item.motions.contains(mod_api::HandMotion::Jab),
                 bob: frame.held_item.bob,
                 dt,
             });
@@ -195,6 +197,14 @@ impl App {
                     .off_hand_item
                     .pose_target
                     .map(crate::game::render_held_pose),
+                swing_claim: frame
+                    .off_hand_item
+                    .motions
+                    .contains(mod_api::HandMotion::Swing),
+                jab_claim: frame
+                    .off_hand_item
+                    .motions
+                    .contains(mod_api::HandMotion::Jab),
                 bob: frame.off_hand_item.bob,
                 dt,
             });

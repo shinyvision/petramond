@@ -580,6 +580,10 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
         off_held: None,
         held_count: 0,
         pose_anchor: None,
+        swing: Default::default(),
+        half_width: 0.3,
+        height: 1.8,
+        eye_height: 1.62,
     };
 
     crate::modding::client::scope::enter_actor(local, || {
@@ -664,6 +668,10 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
         off_held: None,
         held_count: 0,
         pose_anchor: None,
+        swing: Default::default(),
+        half_width: 0.3,
+        height: 1.8,
+        eye_height: 1.62,
     };
     let want = crate::player::model::bone_id(mod_api::bone::MAIN_SHOULDER)
         .expect("the rig carries the main arm");
@@ -707,5 +715,81 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
         let mut nan = bend(mod_api::bone::MAIN_SHOULDER);
         nan.rotation[1] = f32::NAN;
         assert!(matches!(set(&mut data, vec![nan]), HostRet::Error(_)));
+    });
+}
+
+/// The motion claim latches per hand like the poses, and a nobody's claim
+/// with both hands empty claims nothing (the same neutral-write latch shape).
+#[test]
+fn hand_motion_claims_latch_on_the_first_owned_write_and_survive_a_release() {
+    use mod_api::{HandMotion, PlayerId, PlayerSnapshot};
+    use petramond_world::inventory::Hand;
+
+    let mut data = client_data("swing");
+    let claim = |data: &mut ModStoreData, main: Vec<HandMotion>, off: Vec<HandMotion>| {
+        handle_host_call(
+            data,
+            HostCall::SetPlayerHandMotions {
+                player: PlayerId(3),
+                main,
+                off,
+            },
+        )
+    };
+    let local = PlayerSnapshot {
+        id: Some(PlayerId(3)),
+        pos: [0.0; 3],
+        vel: [0.0; 3],
+        yaw: 0.0,
+        pitch: 0.0,
+        health: 20,
+        on_ground: true,
+        spectator: false,
+        sneak: false,
+        use_held: false,
+        holds_use: false,
+        held: None,
+        off_held: None,
+        held_count: 0,
+        pose_anchor: None,
+        swing: Default::default(),
+        half_width: 0.3,
+        height: 1.8,
+        eye_height: 1.62,
+    };
+
+    crate::modding::client::scope::enter_actor(local, || {
+        // "I own nothing" claims nothing.
+        assert_eq!(claim(&mut data, vec![], vec![]), HostRet::Bool(true));
+        assert_eq!(data.client.as_ref().unwrap().owns_motions, [false, false]);
+        assert!(data.client.as_ref().unwrap().body.is_empty());
+
+        // The first owned write claims that hand — and only that hand.
+        assert_eq!(
+            claim(&mut data, vec![HandMotion::Swing], vec![]),
+            HostRet::Bool(true)
+        );
+        assert_eq!(data.client.as_ref().unwrap().owns_motions, [true, false]);
+        assert!(data
+            .client
+            .as_ref()
+            .unwrap()
+            .body
+            .hand_motions(Hand::Main)
+            .contains(HandMotion::Swing));
+
+        // Releasing keeps the latch: the vanilla motion must return on THIS
+        // frame, not a round trip of "still claimed" later.
+        assert_eq!(claim(&mut data, vec![], vec![]), HostRet::Bool(true));
+        assert_eq!(data.client.as_ref().unwrap().owns_motions, [true, false]);
+        assert!(
+            data.client
+                .as_ref()
+                .unwrap()
+                .body
+                .hand_motions(Hand::Main)
+                .is_empty(),
+            "the latch outlives the claim; the claim itself is gone"
+        );
     });
 }

@@ -87,19 +87,11 @@ impl App {
         }
 
         self.hand.broke |= events.broke_block.is_some();
-        // `interacted` is the client's own "this click predictably does
-        // something" verdict (latched at click time — the server never echoes
-        // self one-shots back), so every effectful use click — screens, mod
-        // GUIs, doors, beds, item uses, placements — jabs exactly once. The
-        // hand that acted takes the jab: an off-hand effect flicks the LEFT
-        // hand (`placed_off`), everything else the right.
-        let placed_off = (events.placed_block.is_some() && events.placed_off_hand)
-            || (events.interacted && events.interacted_off_hand);
-        let placed_main = (events.placed_block.is_some() && !events.placed_off_hand)
-            || events.threw_item
-            || (events.interacted && !events.interacted_off_hand);
-        self.hand.placed |= placed_main;
-        self.hand.placed_off |= placed_off;
+        // The hand that acted takes the use jab: an off-hand effect flicks
+        // the LEFT hand (`placed_off`), everything else the right (see
+        // `GameEvents::jab_main`).
+        self.hand.placed |= events.jab_main();
+        self.hand.placed_off |= events.jab_off();
         self.hand.swung |= events.swung_hand;
     }
 }

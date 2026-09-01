@@ -8,165 +8,18 @@ use petramond_math::math::{voxel_at, Vec3};
 pub const WATER_SPLASH_MIN_FALL: f32 = 1.5;
 /// Falls at least this deep play the BIG splash sound instead of the small one.
 const WATER_SPLASH_BIG_FALL: f32 = 5.0;
-use crate::player;
 use crate::world::World;
 
-use super::game::{ServerGame, ATTACK_COOLDOWN_TICKS};
-use super::player::PlayerId;
+use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::server::health::fall_damage_health;
 
 /// Upward pop of a mob strike's knockback, as a fraction of its horizontal strength —
 /// mirrors the mob-side knockback feel (`KNOCKBACK_UP / KNOCKBACK_SPEED` ≈ 0.65 in
 /// `mob::instance`), so the player is launched like a mob is when hit.
-const MOB_ATTACK_UP_RATIO: f32 = 0.65;
-
-/// Horizontal knockback speed of a player-vs-player melee hit (m/s), with the
-/// same [`MOB_ATTACK_UP_RATIO`] upward pop — tuned to read like a mob strike
-/// of ordinary strength.
-const PVP_ATTACK_KNOCKBACK: f32 = 5.0;
+pub(super) const MOB_ATTACK_UP_RATIO: f32 = 0.65;
 
 impl ServerGame {
-    /// Attack, on the tick: resolve a buffered primary-button press (consumed once, so a
-    /// press never lands more than one hit). The damage lands the tick *after* the click —
-    /// `pending_attack` is latched per frame and consumed here. Rate-limited by
-    /// [`ATTACK_COOLDOWN_TICKS`]: the cooldown counts down one tick at a time and an attack
-    /// is refused (no swing, no damage) while it's running, so mashing the button can't
-    /// land a hit every tick — only one swing per cooldown connects, so an owl can't be
-    /// spam-clicked to death. A swing that connects (a mob hit or a punch at the air) arms
-    /// the cooldown and reports `swung_hand`; a click on a block (mining) does neither.
-    pub fn tick_attack(&mut self, s: usize, events: &mut TickEvents) {
-        let sess = &mut self.sessions[s];
-        sess.attack_cooldown = sess.attack_cooldown.saturating_sub(1);
-        // Consume the press AND its targets whether or not it lands (no
-        // queuing past one tick); it only resolves once the cooldown elapsed.
-        let mob_target = std::mem::take(&mut sess.pending_attack_mob);
-        let player_target = std::mem::take(&mut sess.pending_attack_player);
-        let pressed = std::mem::take(&mut sess.pending_attack);
-        // A mod-denied swing is CONSUMED and dropped, never queued: the press
-        // is spent the same as one the cooldown ate, so releasing the claim
-        // cannot fire a stored punch. It arms no cooldown either — a denied
-        // action did not happen, so nothing about it may be felt afterwards.
-        if sess
-            .player
-            .denied_actions()
-            .denies(mod_api::BodyAction::Attack)
-        {
-            return;
-        }
-        if !pressed || sess.attack_cooldown != 0 {
-            return;
-        }
-        if self.resolve_attack(s, mob_target, player_target, events) {
-            self.sessions[s].attack_cooldown = ATTACK_COOLDOWN_TICKS;
-            events.player(s).swung_hand = true;
-        }
-    }
-
-    /// Apply one attack swing: damage the targeted mob or PLAYER (rolling the held
-    /// weapon's damage; a mob kill spawns loot), or — looking at nothing — punch the air.
-    /// Returns whether the hand swung (a mob/player hit or an air punch); a click on a
-    /// block doesn't swing (mining is the held action). `mob_target` is only the STABLE
-    /// id the click claimed: the authoritative view-ray validator must resolve it to the
-    /// nearest live, unoccluded body now. A forged or vanished mob degrades to an air
-    /// punch. A click carries at most one of mob/player; a player target that fails
-    /// validation (gone, dead, spectator, out of reach) degrades to an air punch the same
-    /// way.
-    fn resolve_attack(
-        &mut self,
-        s: usize,
-        mob_target: Option<u64>,
-        player_target: Option<u8>,
-        events: &mut TickEvents,
-    ) -> bool {
-        if let Some(target) = player_target {
-            // The swing happened whether or not the hit validates — mirror
-            // the vanished-mob air punch (and arm the cooldown either way).
-            self.resolve_player_attack(s, PlayerId(target), events);
-            true
-        } else if let Some(target) = mob_target {
-            if let Some(idx) = self.authoritative_mob_target(s, Some(target)) {
-                let damage = self.roll_attack_damage(s);
-                let from = self.sessions[s].player.body_center();
-                // The pipeline may cancel the damage; the swing still happened and
-                // still arms the cooldown.
-                self.damage_mob_through_pipeline(
-                    s,
-                    idx,
-                    damage,
-                    DamageSource::PlayerAttack(self.sessions[s].id),
-                    Some(from),
-                    None,
-                    events,
-                );
-            }
-            // A claimed target always swings, even when authority rejects it:
-            // the click becomes the same air punch as a vanished target.
-            true
-        } else {
-            // No mob: a punch swing only when looking at nothing.
-            self.sessions[s].look.is_none()
-        }
-    }
-
-    /// The held weapon's damage roll for session `s` (the same roll a mob hit
-    /// uses; deterministic off the spawn counter).
-    fn roll_attack_damage(&mut self, s: usize) -> f32 {
-        let (lo, hi) =
-            petramond_world::item::attack_damage(self.sessions[s].player.inventory.selected());
-        self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo)
-    }
-
-    /// PvP: one validated melee hit on another session, through the single
-    /// [`damage_player`](ServerGame::damage_player) funnel with
-    /// [`DamageSource::PlayerAttack`]. Validation (any failure = silent no-op — the
-    /// swing already happened): the target session exists, is not the
-    /// attacker, both ends are alive non-spectators, and the target's body
-    /// AABB is within `player::REACH + 1.0` of the attacker's EYE measured to
-    /// the AABB's closest point — the same closest-point-plus-slack rule the
-    /// block-target reach check uses (`apply_player_update`). An applied hit
-    /// shoves the victim horizontally away from the attacker with the mob
-    /// strike's upward pop ratio; engine immunity or a cancelled
-    /// `player_damage_pre` suppresses damage AND knockback — the same contract
-    /// as mob strikes.
-    fn resolve_player_attack(&mut self, s: usize, target: PlayerId, events: &mut TickEvents) {
-        let Some(t) = self.sessions.iter().position(|sess| sess.id == target) else {
-            return; // the clicked player left before the tick
-        };
-        if t == s {
-            return; // self-attack impossible (targeting skips own id; belt and braces)
-        }
-        let attacker = &self.sessions[s].player;
-        if attacker.is_spectator() || attacker.health() == 0 {
-            return; // spectators and the dead can't attack
-        }
-        let victim = &self.sessions[t].player;
-        if victim.is_spectator() || victim.health() == 0 {
-            return; // spectators and the dead can't be attacked
-        }
-        let eye = attacker.eye();
-        let lo = victim.pos - Vec3::new(player::HALF_W, 0.0, player::HALF_W);
-        let hi = victim.pos + Vec3::new(player::HALF_W, player::HEIGHT, player::HALF_W);
-        let closest = eye.clamp(lo, hi);
-        if (closest - eye).length() > player::REACH + 1.0 {
-            return; // out of reach (with the client-camera slack)
-        }
-        let from = attacker.body_center();
-        let victim_center = victim.body_center();
-        let damage = self.roll_attack_damage(s);
-        let amount = damage.max(0.0).round() as i32;
-        let attacker_id = self.sessions[s].id;
-        let source = DamageSource::PlayerAttack(attacker_id);
-        if self.damage_player(t, amount, source, Some(from), events) {
-            let away = victim_center - from;
-            let dir = Vec3::new(away.x, 0.0, away.z).normalize_or_zero();
-            let impulse = dir * PVP_ATTACK_KNOCKBACK
-                + Vec3::new(0.0, PVP_ATTACK_KNOCKBACK * MOB_ATTACK_UP_RATIO, 0.0);
-            self.sessions[t].player.apply_knockback(impulse);
-        }
-    }
-
     /// THE mob-damage pipeline, shared by every source: reject the victim's
     /// engine-owned immunity, dispatch `mob_damage_pre` (mutable amount,
     /// cancellable), apply what survives through

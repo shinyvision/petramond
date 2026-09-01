@@ -1,0 +1,73 @@
+{
+  "format": "petramond-player-animation",
+  "version": 1,
+  "name": "axe",
+  "window_seconds": 0.3,
+  "loop": true,
+  "bones": [
+    {
+      "name": "left_shoulder",
+      "mode": "compose"
+    },
+    {
+      "name": "left_elbow",
+      "mode": "compose"
+    }
+  ],
+  "keys": [
+    {
+      "t": 0,
+      "pose": {}
+    },
+    {
+      "t": 0.3,
+      "pose": {
+        "left_shoulder": {
+          "rotation": [
+            107.5,
+            -20.5,
+            35
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.52,
+      "pose": {
+        "left_shoulder": {
+          "rotation": [
+            65,
+            -50,
+            -6.5
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_elbow": {
+          "rotation": [
+            0,
+            37.5,
+            0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 1,
+      "pose": {}
+    }
+  ]
+}

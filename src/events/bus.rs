@@ -14,8 +14,8 @@ use crate::player::PlayerId;
 use crate::world::World;
 
 use super::payload::{
-    BlockBreakPre, BlockPlacePre, DeferredAction, InteractAttempt, ItemUsePre, MobDamagePre,
-    PlayerDamagePre, PostEvent, PostEventKind,
+    AttackAttempt, BlockBreakPre, BlockPlacePre, DeferredAction, InteractAttempt, ItemUsePre,
+    MobDamagePre, PlayerDamagePre, PostEvent, PostEventKind,
 };
 
 /// A pre handler's verdict. The first `Cancel` wins AND ends the dispatch:
@@ -337,6 +337,7 @@ pub struct EventBus {
     pre_block_break: Vec<PreHandler<BlockBreakPre>>,
     pre_interact_attempt: Vec<PreHandler<InteractAttempt>>,
     pre_use_unclaimed: Vec<PreHandler<InteractAttempt>>,
+    pre_attack_attempt: Vec<PreHandler<AttackAttempt>>,
     pre_item_use: Vec<PreHandler<ItemUsePre>>,
     pre_mob_damage: Vec<PreHandler<MobDamagePre>>,
     pre_player_damage: Vec<PreHandler<PlayerDamagePre>>,
@@ -418,6 +419,12 @@ pre_events!(
         use_unclaimed,
         pre_use_unclaimed,
         InteractAttempt
+    ),
+    (
+        on_attack_attempt,
+        attack_attempt,
+        pre_attack_attempt,
+        AttackAttempt
     ),
     (on_item_use_pre, item_use_pre, pre_item_use, ItemUsePre),
     (

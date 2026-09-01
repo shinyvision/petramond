@@ -617,112 +617,6 @@ fn bare_hand_rest_does_not_show_large_fist_cap() {
 }
 
 #[test]
-fn swing_punches_forward_instead_of_right_hooking() {
-    let aspect = 16.0 / 9.0;
-    let rest_view = HeldItemView {
-        item: None,
-        variant: petramond_world::item::VariantId::NONE,
-        ..Default::default()
-    };
-    let early_view = HeldItemView {
-        swing: 0.25,
-        ..rest_view
-    };
-    let mid_view = HeldItemView {
-        swing: 0.5,
-        ..rest_view
-    };
-    let late_view = HeldItemView {
-        swing: 0.75,
-        ..rest_view
-    };
-    let done_view = HeldItemView {
-        swing: 1.0,
-        ..rest_view
-    };
-
-    let rest = bare_arm_placement(&rest_view, aspect).transform_point3(Vec3::ZERO);
-    let early = bare_arm_placement(&early_view, aspect).transform_point3(Vec3::ZERO);
-    let mid = bare_arm_placement(&mid_view, aspect).transform_point3(Vec3::ZERO);
-    let late = bare_arm_placement(&late_view, aspect).transform_point3(Vec3::ZERO);
-    let done = bare_arm_placement(&done_view, aspect).transform_point3(Vec3::ZERO);
-
-    assert!(
-        early.x < rest.x,
-        "vanilla swing should move toward center, not right: {early:?} vs {rest:?}"
-    );
-    assert!(
-        mid.x < rest.x,
-        "mid-swing should not hook right: {mid:?} vs {rest:?}"
-    );
-    assert!(
-        mid.z < rest.z,
-        "mid-swing should punch forward into the target block: {mid:?} vs {rest:?}"
-    );
-    assert!(
-        late.x < rest.x,
-        "late swing should still be returning from a forward/center punch, not finishing right"
-    );
-    assert!(
-        (done - rest).length() < 0.001,
-        "swing phase 1.0 should return to rest"
-    );
-
-    let rest_up = bare_arm_placement(&rest_view, aspect)
-        .transform_vector3(Vec3::Y)
-        .normalize();
-    let mid_up = bare_arm_placement(&mid_view, aspect)
-        .transform_vector3(Vec3::Y)
-        .normalize();
-    assert!(
-        rest_up.dot(mid_up) < 0.86,
-        "swing should rotate around the pivot, not just translate"
-    );
-}
-
-#[test]
-fn arm_punch_hinges_the_fist_forward_from_the_shoulder() {
-    let aspect = 16.0 / 9.0;
-    let fist_local = Vec3::new(0.0, 6.0, 0.0); // +Y end of the arm cuboid
-    let view = |swing| HeldItemView {
-        item: None,
-        variant: petramond_world::item::VariantId::NONE,
-        block_state: Default::default(),
-        swing,
-        swing_scale: 1.0,
-        ..Default::default()
-    };
-    let fist = |swing| bare_arm_placement(&view(swing), aspect).transform_point3(fist_local);
-    let shoulder =
-        |swing| bare_arm_placement(&view(swing), aspect).transform_point3(ARM_SHOULDER_LOCAL);
-
-    let rest = fist(0.0);
-    let mid = fist(0.5);
-    // The fist drives toward screen centre (smaller x) and into the screen
-    // (more negative z): a forward punch, not the old sideways wipe.
-    assert!(
-        mid.x < rest.x,
-        "fist should swing toward center: {mid:?} vs {rest:?}"
-    );
-    assert!(
-        mid.z < rest.z,
-        "fist should punch into the screen: {mid:?} vs {rest:?}"
-    );
-
-    // The shoulder pivot barely moves — the arm hinges, it doesn't slide.
-    assert!(
-        (shoulder(0.5) - shoulder(0.0)).length() < 1e-4,
-        "shoulder is the fixed pivot of the punch"
-    );
-
-    // The strike returns home: phase 1.0 matches the rest pose.
-    assert!(
-        (fist(1.0) - rest).length() < 1e-3,
-        "punch should ease back to rest at phase 1.0"
-    );
-}
-
-#[test]
 fn swing_and_place_change_the_mvp() {
     let rest = HeldItemView {
         item: Some(ItemType::Stone),
@@ -1038,9 +932,10 @@ fn render_held_pose_preview() {
             "'{item_name}' is not in the registry — a pack item needs scripts/with-test-mods.sh"
         );
     };
-    let ItemRenderKind::Model(kind) = item.render_kind() else {
-        panic!("'{item_name}' is not a bbmodel item");
-    };
+    // The harness covers BOTH held item render kinds: a bbmodel item through
+    // `held_model` and the player rig; a sprite item (tools!) through the
+    // extruded item3d chains. The pack's tool swings are sprites, so the
+    // sprite column pair is not a fallback — it is the subject.
 
     // Tiles are the game's 16:9, and the first-person columns are rendered
     // at that same aspect: shot square, a right-anchored hand falls off the
@@ -1145,19 +1040,20 @@ fn render_held_pose_preview() {
     };
 
     // The held bbmodel's triangles under an arbitrary model matrix.
-    let model_tris = |m: Mat4| -> Vec<ItemVertex> {
-        let (mut v, mut i) = (Vec::new(), Vec::new());
-        crate::item_model::build_block_model_item(
-            kind,
-            m,
-            DynLight::FULL,
-            LightEnv::IDENTITY,
-            None,
-            &mut v,
-            &mut i,
-        );
-        i.iter().map(|&i| v[i as usize]).collect()
-    };
+    let model_tris =
+        |kind: petramond_world::block_model::BlockModelKind, m: Mat4| -> Vec<ItemVertex> {
+            let (mut v, mut i) = (Vec::new(), Vec::new());
+            crate::item_model::build_block_model_item(
+                kind,
+                m,
+                DynLight::FULL,
+                LightEnv::IDENTITY,
+                None,
+                &mut v,
+                &mut i,
+            );
+            i.iter().map(|&i| v[i as usize]).collect()
+        };
 
     for (row, (label, pose, bones)) in states.iter().enumerate() {
         let view = HeldItemView {
@@ -1166,27 +1062,9 @@ fn render_held_pose_preview() {
             ..Default::default()
         };
 
-        // --- columns 0/1: FIRST PERSON, each fist, the real hand camera ----
-        for (col, mvp) in [
-            held_model(&view, aspect).expect("bbmodel item").1,
-            held_model_off(&view, aspect).expect("bbmodel item").1,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            // The unit-cube geometry is rebased by the MVP itself.
-            raster(
-                &model_tris(Mat4::IDENTITY),
-                (atlas, aw, ah),
-                mvp,
-                col,
-                row,
-                &mut zbuf,
-                &mut color,
-            );
-        }
-
-        // --- columns 2/3: THIRD PERSON, front and side, both fists ---------
+        // The third-person body build is SHARED by both render kinds: the
+        // arm and its pose are item-kind-independent; only the item's own
+        // transform (and its texture sheet) differ.
         let inst = crate::PlayerRenderInstance {
             pos: Vec3::ZERO,
             body_yaw: 0.0,
@@ -1237,6 +1115,121 @@ fn render_held_pose_preview() {
         let hand = crate::player_model::posed_hand(hand, &pose.third_person, false);
         let off_hand = crate::player_model::posed_hand(off_hand, &pose.third_person, true);
         let proj = Mat4::perspective_rh(40f32.to_radians(), aspect, 0.05, 20.0);
+
+        // The SPRITE chain: the item's own extrusion, textured from its own
+        // sheet, at the held anchor and the fist transforms the game uses.
+        if let ItemRenderKind::Sprite(tile) = item.render_kind() {
+            let texture = format!("{}.png", tile.name());
+            for (col, mvp) in [
+                held_sprite(&view, aspect).expect("sprite item").1,
+                held_sprite_off(&view, aspect).expect("sprite item").1,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                raster_sprite_cell(
+                    tile,
+                    &texture,
+                    mvp,
+                    (TILE_W, TILE_H),
+                    (col, row),
+                    5,
+                    &mut color,
+                );
+            }
+            for (col, eye) in [Vec3::new(0.0, 1.25, 2.9), Vec3::new(2.9, 1.25, 0.0)]
+                .into_iter()
+                .enumerate()
+            {
+                let mvp = proj * Mat4::look_at_rh(eye, Vec3::new(0.0, 0.95, 0.0), Vec3::Y);
+                raster(&body, skin, mvp, col + 2, row, &mut zbuf, &mut color);
+                for t in [
+                    crate::player_model::held_sprite_transform(hand),
+                    crate::player_model::held_sprite_transform_off(off_hand),
+                ] {
+                    raster_sprite_cell(
+                        tile,
+                        &texture,
+                        mvp * t,
+                        (TILE_W, TILE_H),
+                        (col + 2, row),
+                        5,
+                        &mut color,
+                    );
+                }
+            }
+            // The solo shot: the item alone, framed on its bounds, from the
+            // same front axis — the orientation read a torso hides.
+            let mut base: Vec<ItemVertex> = Vec::new();
+            crate::item_model::build_extruded_item_lit(
+                tile,
+                DynLight::FULL,
+                crate::lighting::LightEnv::IDENTITY,
+                &mut base,
+            );
+            let model = crate::player_model::held_sprite_transform(hand);
+            let world: Vec<ItemVertex> = base
+                .iter()
+                .map(|v| {
+                    let p = model * glam::Vec4::new(v.pos[0], v.pos[1], v.pos[2], 1.0);
+                    ItemVertex {
+                        pos: [p.x, p.y, p.z],
+                        uv: v.uv,
+                        shade: v.shade,
+                        tint: v.tint,
+                    }
+                })
+                .collect();
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for v in &world {
+                lo = lo.min(Vec3::from(v.pos));
+                hi = hi.max(Vec3::from(v.pos));
+            }
+            let centre = (lo + hi) * 0.5;
+            let span = (hi - lo).max_element().max(0.05);
+            let solo_eye = centre + Vec3::new(0.0, 0.0, span * 1.9);
+            let solo_mvp = Mat4::perspective_rh(40f32.to_radians(), aspect, 0.01, 50.0)
+                * Mat4::look_at_rh(solo_eye, centre, Vec3::Y);
+            raster_sprite_cell(
+                tile,
+                &texture,
+                solo_mvp,
+                (TILE_W, TILE_H),
+                (4, row),
+                5,
+                &mut color,
+            );
+            println!("row {row}: {label} (sprite)");
+            continue;
+        }
+
+        let ItemRenderKind::Model(kind) = item.render_kind() else {
+            panic!(
+                "'{item_name}' is a block-cube item — the preview shoots sprite and bbmodel items"
+            );
+        };
+
+        // --- columns 0/1: FIRST PERSON, each fist, the real hand camera ----
+        for (col, mvp) in [
+            held_model(&view, aspect).expect("bbmodel item").1,
+            held_model_off(&view, aspect).expect("bbmodel item").1,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // The unit-cube geometry is rebased by the MVP itself.
+            raster(
+                &model_tris(kind, Mat4::IDENTITY),
+                (atlas, aw, ah),
+                mvp,
+                col,
+                row,
+                &mut zbuf,
+                &mut color,
+            );
+        }
+
+        // --- columns 2/3: THIRD PERSON, front and side, both fists ---------
         for (col, eye) in [Vec3::new(0.0, 1.25, 2.9), Vec3::new(2.9, 1.25, 0.0)]
             .into_iter()
             .enumerate()
@@ -1249,7 +1242,7 @@ fn render_held_pose_preview() {
                 crate::player_model::held_model_transform_off(off_hand, kind),
             ] {
                 raster(
-                    &model_tris(m),
+                    &model_tris(kind, m),
                     (atlas, aw, ah),
                     mvp,
                     col,
@@ -1262,7 +1255,7 @@ fn render_held_pose_preview() {
 
         // The main hand's item alone, from the same front camera, but framed
         // on its own bounds so the whole silhouette fills the tile.
-        let solo = model_tris(crate::player_model::held_model_transform(hand, kind));
+        let solo = model_tris(kind, crate::player_model::held_model_transform(hand, kind));
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for v in &solo {
             lo = lo.min(Vec3::from(v.pos));
@@ -1482,5 +1475,47 @@ fn an_off_hand_pose_is_the_mirror_of_the_main_hands() {
     assert!(
         cm.x.abs() > 0.1 && (cm.x + co.x).abs() < 0.01,
         "hands at {cm:?} and {co:?} are not opposite sides of the body"
+    );
+}
+
+/// The pose sandwich honors the sample's own pivot: rotation happens ABOUT
+/// `origin` (the pivot maps to itself plus only the keyed translation), and
+/// distances from the pivot are preserved. Pinned on synthetic data because
+/// the obvious "simplification" — dropping the `T(origin)…T(-origin)`
+/// sandwich for a plain `T*R` — reads identically for zero-origin files and
+/// silently unhinges every curve that keys a pivot.
+#[test]
+fn pose_matrix_rotates_about_the_sampled_origin() {
+    let origin = [1.0, -6.0, 2.0];
+    let hinged = pose_matrix(PoseSample {
+        rotation: [0.0, 0.0, 90.0],
+        translation: [0.0; 3],
+        origin,
+    });
+    let pivot = Vec3::from(origin);
+    assert!(
+        (hinged.transform_point3(pivot) - pivot).length() < 1e-5,
+        "an untranslated sample holds its pivot fixed"
+    );
+    let tip = pivot + Vec3::new(0.0, 4.0, 0.0);
+    let swung = hinged.transform_point3(tip);
+    assert!(
+        ((swung - pivot).length() - 4.0).abs() < 1e-4,
+        "the tip stays on the hinge radius"
+    );
+    assert!(
+        (swung - tip).length() > 1.0,
+        "the tip actually travelled around the pivot"
+    );
+
+    // The keyed translation rides on top of the hinge, not inside it.
+    let carried = pose_matrix(PoseSample {
+        rotation: [0.0, 0.0, 90.0],
+        translation: [0.5, 0.0, 0.0],
+        origin,
+    });
+    assert!(
+        (carried.transform_point3(pivot) - (pivot + Vec3::new(0.5, 0.0, 0.0))).length() < 1e-5,
+        "translation displaces the pivot verbatim"
     );
 }
