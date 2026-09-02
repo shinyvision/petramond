@@ -42,19 +42,18 @@ const PICKAXE_COMBO_JSON: &[&str] = &[include_str!("../swings/pickaxe.strike.jso
 const PICKAXE_PLAYER_JSON: &str = include_str!("../swings/pickaxe.player.json");
 const AXE_PLAYER_JSON: &str = include_str!("../swings/axe.player.json");
 
-/// One tool this pack animates: its resolved item, its curve family, and —
-/// when the pack ships harness curves for the family — its attack combo, in
-/// chain order.
-#[derive(Clone)]
-struct Tool {
-    id: ItemId,
+/// One curve FAMILY this pack animates — a tool `kind`'s harness-authored
+/// curves and windows, loaded once at init and shared by every registry row
+/// of that kind, whichever pack registered it and whatever its tier.
+struct Family {
     style: swing::Style,
-    /// Empty = no data shipped; the compiled family curve plays every swing.
-    combo: Rc<[PoseCurve]>,
+    /// The attack combo in chain order. Empty = no data shipped; the
+    /// compiled family curve plays every swing.
+    combo: Box<[PoseCurve]>,
     /// Per-combo-step ATTACK windows, positional with `combo`: each item
     /// export's authored `window_attack` (the default where a file carries
     /// none). Empty when no data shipped — every attack plays the default.
-    attack_windows: Rc<[f32]>,
+    attack_windows: Box<[f32]>,
     /// The WORK window — the mining loop and its break impacts — from the
     /// first export's `window_mine` (mining always plays step 0).
     mine_window: f32,
@@ -64,17 +63,83 @@ struct Tool {
     /// would land some attacks at the click and others at the arc, so it is
     /// all or nothing: empty leaves the family's hits to the engine's
     /// crosshair melee, exactly like a family that ships no data.
-    impacts: Rc<[f32]>,
+    impacts: Box<[f32]>,
     /// The family's authored third-person choreography; `None` = the
     /// compiled arm columns stand in.
-    body: Option<Rc<BodyCurve>>,
+    body: Option<BodyCurve>,
 }
 
-impl Tool {
-    /// The harness curve for one play, when this tool ships any. The chain
-    /// position picks the combo step, wrapping, so a combo of any length
-    /// alternates forever. (Every play IS the tool's own swing — the clock
-    /// animates nothing else; use jabs stay the engine's.)
+impl Family {
+    /// Parse one family's shipped exports. Each parses by the same
+    /// whole-or-nothing rule: a refused file leaves the compiled curve
+    /// playing and logs loudly, never half a chain.
+    fn load(style: swing::Style) -> Family {
+        // A family's harness combo parses ONCE, WHOLE: the entries are
+        // positional (the first is also the mining loop's repeat, the
+        // rest are the chain), so one broken file refuses the whole set
+        // — loudly — and the compiled family curve stands in. Never half
+        // a chain, and never a chop2 promoted into the mining loop.
+        let sources: &[&str] = match style {
+            swing::Style::Pickaxe => PICKAXE_COMBO_JSON,
+            swing::Style::Axe => AXE_COMBO_JSON,
+        };
+        let combo: Box<[PoseCurve]> = match sources
+            .iter()
+            .map(|text| PoseCurve::from_harness(text))
+            .collect::<Option<Vec<_>>>()
+        {
+            Some(curves) => curves.into_boxed_slice(),
+            None => {
+                log(&format!(
+                    "[combat] a {style:?} swing export did not parse — the compiled curve stands in"
+                ));
+                Box::default()
+            }
+        };
+        let attack_windows: Box<[f32]> = combo
+            .iter()
+            .map(|c| c.window_attack().unwrap_or(swing::ATTACK_SECONDS))
+            .collect();
+        let mine_window = combo
+            .first()
+            .and_then(|c| c.window_mine())
+            .unwrap_or(swing::MINE_SECONDS);
+        let impacts: Box<[f32]> = match combo.iter().map(|c| c.impact()).collect::<Option<Vec<_>>>()
+        {
+            Some(phases) if !phases.is_empty() => phases.into_boxed_slice(),
+            _ => {
+                if !combo.is_empty() {
+                    log(&format!(
+                        "[combat] not every {style:?} export marks an impact — its hits stay the engine's"
+                    ));
+                }
+                Box::default()
+            }
+        };
+        let player: &str = match style {
+            swing::Style::Pickaxe => PICKAXE_PLAYER_JSON,
+            swing::Style::Axe => AXE_PLAYER_JSON,
+        };
+        let body = BodyCurve::from_harness(player);
+        if body.is_none() {
+            log(&format!(
+                "[combat] the {style:?} player-animation export did not parse — the compiled arm stands in"
+            ));
+        }
+        Family {
+            style,
+            combo,
+            attack_windows,
+            mine_window,
+            impacts,
+            body,
+        }
+    }
+
+    /// The harness curve for one play, when this family ships any. The
+    /// chain position picks the combo step, wrapping, so a combo of any
+    /// length alternates forever. (Every play IS the tool's own swing — the
+    /// clock animates nothing else; use jabs stay the engine's.)
     fn curve_for(&self, combo: usize) -> Option<&PoseCurve> {
         if self.combo.is_empty() {
             return None;
@@ -83,13 +148,21 @@ impl Tool {
     }
 }
 
+/// One tool this pack animates: a registry row whose tool `kind` named one
+/// of the families.
+#[derive(Clone)]
+struct Tool {
+    id: ItemId,
+    family: Rc<Family>,
+}
+
 /// The tool table and the swing clocks — everything the per-body publish
 /// reads and advances.
 #[derive(Default)]
 pub struct Bodies {
-    /// The tools this pack animates, resolved once at init. A missing row (a
-    /// tier not in this build's registry) is one disabled curve, never a
-    /// dead pack.
+    /// The tools this pack animates, swept from the registry once at init.
+    /// A family with no rows in this build is one curve the pack never
+    /// runs, never a dead pack.
     tools: Vec<Tool>,
     /// SERVER: one swing clock per body, pruned against the roster each
     /// pass ([`Bodies::prune`]), so a leaver's slot dies with their session.
@@ -99,89 +172,44 @@ pub struct Bodies {
 }
 
 impl Bodies {
-    /// Resolve the tool rows. Registry-only, legal on every instance; a row
-    /// that does not resolve is one curve the pack will never run, so it
-    /// logs loudly rather than dying silently.
+    /// Build the tool table off the registry's tool rows: every item whose
+    /// tool data names a `kind` this pack swings joins that family, whichever
+    /// pack registered it and whatever its tier — the family is a fact of
+    /// the row, never a list kept here. Registry-only, legal on every
+    /// instance. (The row's tool data and the per-stack override share the
+    /// engine's one tool key; this reads the row side.)
     pub fn resolve(&mut self) {
-        for (names, style) in [
-            (swing::PICKAXES, swing::Style::Pickaxe),
-            (swing::AXES, swing::Style::Axe),
-        ] {
-            // A family's harness combo parses ONCE, WHOLE: the entries are
-            // positional (the first is also the mining loop's repeat, the
-            // rest are the chain), so one broken file refuses the whole set
-            // — loudly — and the compiled family curve stands in. Never half
-            // a chain, and never a chop2 promoted into the mining loop.
-            let sources: &[&str] = match style {
-                swing::Style::Pickaxe => PICKAXE_COMBO_JSON,
-                swing::Style::Axe => AXE_COMBO_JSON,
+        let families: Vec<Rc<Family>> = swing::Style::ALL
+            .into_iter()
+            .map(|style| Rc::new(Family::load(style)))
+            .collect();
+        for (id, text) in items_with_data(TOOL_OVERRIDE_KEY) {
+            let kind = json::Value::parse(&text)
+                .and_then(|row| row.get("kind")?.as_str().map(str::to_owned));
+            let Some(kind) = kind else {
+                log(&format!(
+                    "[combat] a tool row's data names no kind — its swings stay vanilla: {text}"
+                ));
+                continue;
             };
-            let combo: Rc<[PoseCurve]> = match sources
-                .iter()
-                .map(|text| PoseCurve::from_harness(text))
-                .collect::<Option<Vec<_>>>()
-            {
-                Some(curves) => curves.into(),
-                None => {
-                    log(&format!(
-                        "[combat] a {style:?} swing export did not parse — the compiled curve stands in"
-                    ));
-                    Vec::new().into()
-                }
+            // Shovels and shears are tools too; they are simply not this
+            // pack's to swing.
+            let Some(family) = swing::Style::of_kind(&kind)
+                .and_then(|style| families.iter().find(|f| f.style == style))
+            else {
+                continue;
             };
-            let attack_windows: Rc<[f32]> = combo
-                .iter()
-                .map(|c| c.window_attack().unwrap_or(swing::ATTACK_SECONDS))
-                .collect();
-            let mine_window = combo
-                .first()
-                .and_then(|c| c.window_mine())
-                .unwrap_or(swing::MINE_SECONDS);
-            let impacts: Rc<[f32]> = match combo
-                .iter()
-                .map(|c| c.impact())
-                .collect::<Option<Vec<_>>>()
-            {
-                Some(phases) if !phases.is_empty() => phases.into(),
-                _ => {
-                    if !combo.is_empty() {
-                        log(&format!(
-                            "[combat] not every {style:?} export marks an impact — its hits stay the engine's"
-                        ));
-                    }
-                    Vec::new().into()
-                }
-            };
-            // The family's body export parses by the same whole-or-nothing
-            // rule; a refused file leaves the compiled arm playing.
-            let player: Option<&str> = match style {
-                swing::Style::Pickaxe => Some(PICKAXE_PLAYER_JSON),
-                swing::Style::Axe => Some(AXE_PLAYER_JSON),
-            };
-            let body: Option<Rc<BodyCurve>> = player.and_then(|text| {
-                let parsed = BodyCurve::from_harness(text);
-                if parsed.is_none() {
-                    log(&format!(
-                        "[combat] the {style:?} player-animation export did not parse — the compiled arm stands in"
-                    ));
-                }
-                parsed.map(Rc::new)
+            self.tools.push(Tool {
+                id,
+                family: family.clone(),
             });
-            for name in names {
-                match resolve_item(name) {
-                    Some(id) => self.tools.push(Tool {
-                        id,
-                        style,
-                        combo: combo.clone(),
-                        attack_windows: attack_windows.clone(),
-                        mine_window,
-                        impacts: impacts.clone(),
-                        body: body.clone(),
-                    }),
-                    None => log(&format!(
-                        "[combat] '{name}' did not resolve — that tool's swings stay vanilla"
-                    )),
-                }
+        }
+        for family in &families {
+            if !self.tools.iter().any(|t| Rc::ptr_eq(&t.family, family)) {
+                log(&format!(
+                    "[combat] this registry has no {:?} rows — that family never swings",
+                    family.style
+                ));
             }
         }
     }
@@ -202,7 +230,8 @@ impl Bodies {
     /// every export marks an impact — the attack-attempt handler's question,
     /// since claiming a press is a promise to land it.
     pub fn lands(&self, held: Option<ItemId>) -> bool {
-        self.tool_of(held).is_some_and(|t| !t.impacts.is_empty())
+        self.tool_of(held)
+            .is_some_and(|t| !t.family.impacts.is_empty())
     }
 
     /// Drop the server clocks of every body not in `roster` — a leaver's
@@ -212,9 +241,9 @@ impl Bodies {
             .retain(|(id, _)| roster.iter().any(|entry| entry.id == *id));
     }
 
-    /// Which of this pack's tools `held` names. OWNED (the curve is an `Rc`
-    /// handle), so the row outlives no borrow and the mutable clock borrow
-    /// in [`Bodies::publish`] never conflicts with it.
+    /// Which of this pack's tools `held` names. OWNED (the family is an
+    /// `Rc` handle), so the row outlives no borrow and the mutable clock
+    /// borrow in [`Bodies::publish`] never conflicts with it.
     fn tool_of(&self, held: Option<ItemId>) -> Option<Tool> {
         self.tools.iter().find(|t| Some(t.id) == held).cloned()
     }
@@ -255,7 +284,7 @@ impl Bodies {
         // hands while its denial keeps them still. Only the Swing motion:
         // the jab stays the engine's, so a tool interacts like any item.
         let tool = self.tool_of(state.held);
-        let style = tool.as_ref().map(|t| t.style);
+        let style = tool.as_ref().map(|t| t.family.style);
         let claimed = swing::claim(style, guard.raised);
         let motions = if claimed {
             vec![HandMotion::Swing]
@@ -270,9 +299,9 @@ impl Bodies {
         let pace = tool
             .as_ref()
             .map(|t| swing::Pace {
-                attack: &t.attack_windows,
-                mine: t.mine_window,
-                impact: &t.impacts,
+                attack: &t.family.attack_windows,
+                mine: t.family.mine_window,
+                impact: &t.family.impacts,
             })
             .unwrap_or_default();
         let played = clock.step(
@@ -286,8 +315,8 @@ impl Bodies {
         let landed = (authority && clock.impact()).then_some(style).flatten();
         let swung = played.map(|play| {
             let tool = tool.as_ref();
-            let data = tool.and_then(|t| t.curve_for(play.combo));
-            let body = tool.and_then(|t| t.body.as_deref());
+            let data = tool.and_then(|t| t.family.curve_for(play.combo));
+            let body = tool.and_then(|t| t.family.body.as_ref());
             swing::pose(play.act, play.phase, data, body)
         });
 

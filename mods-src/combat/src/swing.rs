@@ -28,25 +28,26 @@
 use mod_sdk::animation::{self, mix3, BodyCurve, PoseCurve};
 use mod_sdk::*;
 
-/// The pickaxe's registry rows, every tier.
-pub const PICKAXES: &[&str] = &[
-    "petramond:stone_pickaxe",
-    "petramond:iron_pickaxe",
-    "petramond:diamond_pickaxe",
-];
-
-/// The axe's registry rows, every tier.
-pub const AXES: &[&str] = &[
-    "petramond:stone_axe",
-    "petramond:iron_axe",
-    "petramond:diamond_axe",
-];
-
 /// Which tool a claimed hand is swinging.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Style {
     Pickaxe,
     Axe,
+}
+
+impl Style {
+    pub const ALL: [Style; 2] = [Style::Pickaxe, Style::Axe];
+
+    /// The family a tool row's `kind` names — the engine's own tool
+    /// vocabulary, so any pack's pickaxe or axe of any tier swings here.
+    /// Other kinds (shovel, shears) are nobody's in this pack.
+    pub fn of_kind(kind: &str) -> Option<Style> {
+        match kind {
+            "pickaxe" => Some(Style::Pickaxe),
+            "axe" => Some(Style::Axe),
+            _ => None,
+        }
+    }
 }
 
 /// What a claimed hand is doing — which curve its phase runs along. Use
