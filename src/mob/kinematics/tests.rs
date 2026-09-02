@@ -41,6 +41,52 @@ fn gravity_settles_the_mob_on_the_floor() {
 }
 
 #[test]
+fn a_body_embedded_in_a_grown_column_slides_out_sideways_without_bobbing() {
+    // A trunk grew around the sheep (a door shut on it, ...): the foot heal
+    // lifts it by its cap, gravity drops it back through the box it still
+    // overlaps, forever. It must leave sideways, with the feet never rising.
+    let full = Block::Stone.collision_boxes();
+    // Floor at y < 0; a 3-high column in cell (0, 0..3, 0).
+    let boxes = |x: i32, y: i32, z: i32| {
+        if y < 0 || (x == 0 && z == 0 && (0..3).contains(&y)) {
+            full
+        } else {
+            &[][..]
+        }
+    };
+    let solid = |c: IVec3| c.y < 0 || (c.x == 0 && c.z == 0 && (0..3).contains(&c.y));
+    let dry = |_: IVec3| false;
+    let still = |_: Vec3| Vec3::ZERO;
+    let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.4, 0.0, 0.5), 0.0, 1);
+    let mut peak = 0.0f32;
+    for _ in 0..40 {
+        sheep.integrate_with_flow(
+            0.05,
+            sheep_def(),
+            Vec3::ZERO,
+            false,
+            true,
+            &boxes,
+            &[],
+            &[],
+            &solid,
+            &dry,
+            &|_| None,
+            &still,
+        );
+        peak = peak.max(sheep.pos.y);
+    }
+    let hw = sheep_def().size.half_width;
+    assert!(
+        sheep.pos.x + hw <= 0.0 + 1e-3 || sheep.pos.x - hw >= 1.0 - 1e-3,
+        "the body left the column sideways: x {}",
+        sheep.pos.x
+    );
+    assert!(peak < 0.05, "the feet never lifted (bob): peak {peak}");
+    assert!(sheep.on_ground());
+}
+
+#[test]
 fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
     // Model-aware body collision: a mob settling onto an INSET block (a chest, top at
     // 14/16) rests its feet on that real top, not the full-cube cell top (y = 1). The

@@ -312,6 +312,66 @@ where
     sweep_axis_dyn(min, max, 1, need, boxes_fn, dyn_boxes, ignore).max(0.0)
 }
 
+/// A body is EMBEDDED when a world box it overlaps tops out more than this
+/// many heal lifts above its feet: the upward heal converges on anything
+/// closer (lift, fall a hair, lift again) and can never clear anything
+/// farther — a trunk that grew around the body, a door that shut on it.
+const EMBEDDED_HEAL_REACH: f32 = 2.0;
+
+/// The shortest horizontal translation that frees `[min, max]` from every
+/// world box it is embedded in (see [`EMBEDDED_HEAL_REACH`]); zero when it is
+/// not embedded. For such a body the upward heal is worse than useless: it
+/// lifts by its cap, the next sweep ignores the still-overlapped box and drops
+/// the body straight back, and the pair repeat every tick — a mob bobbing in
+/// place for as long as the block stands. Sideways there is always a face
+/// within half a block, so the caller slides the body out along the cheapest
+/// axis instead (capped per tick — a slide, not a teleport).
+pub fn embedded_escape<F>(min: [f32; 3], max: [f32; 3], max_lift: f32, boxes_fn: F) -> [f32; 2]
+where
+    F: Fn(i32, i32, i32) -> &'static [Aabb],
+{
+    // Needed travel per direction: +x, −x, +z, −z.
+    let mut need = [0.0f32; 4];
+    let mut any = false;
+    for cx in min[0].floor() as i32..=max[0].floor() as i32 {
+        for cy in min[1].floor() as i32..=max[1].floor() as i32 {
+            for cz in min[2].floor() as i32..=max[2].floor() as i32 {
+                let cell = [cx as f32, cy as f32, cz as f32];
+                for b in boxes_fn(cx, cy, cz) {
+                    let lo = [cell[0] + b.min[0], cell[1] + b.min[1], cell[2] + b.min[2]];
+                    let hi = [cell[0] + b.max[0], cell[1] + b.max[1], cell[2] + b.max[2]];
+                    let overlaps = (0..3).all(|i| max[i] > lo[i] + EPS && min[i] < hi[i] - EPS);
+                    if !overlaps || hi[1] <= min[1] + EMBEDDED_HEAL_REACH * max_lift + EPS {
+                        continue;
+                    }
+                    any = true;
+                    need[0] = need[0].max(hi[0] - min[0]);
+                    need[1] = need[1].max(max[0] - lo[0]);
+                    need[2] = need[2].max(hi[2] - min[2]);
+                    need[3] = need[3].max(max[2] - lo[2]);
+                }
+            }
+        }
+    }
+    if !any {
+        return [0.0; 2];
+    }
+    let (mut best, mut best_need) = (0usize, f32::INFINITY);
+    for (i, n) in need.iter().enumerate() {
+        if *n < best_need {
+            best = i;
+            best_need = *n;
+        }
+    }
+    let d = best_need + EPS;
+    match best {
+        0 => [d, 0.0],
+        1 => [-d, 0.0],
+        2 => [0.0, d],
+        _ => [0.0, -d],
+    }
+}
+
 /// Shrink a horizontal move `(dx, dz)` so the body `[min, max]` keeps solid support
 /// within `max_drop` below its feet at the destination — the sneak edge guard. A
 /// drop within `max_drop` (stepping down a slab, the mirror of the auto step-up)

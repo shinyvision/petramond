@@ -12,8 +12,9 @@
 //!
 //! RULES: a sheep follows while the nearest player holds wheat within
 //! [`FOLLOW_RADIUS`], but STOPS once inside [`STOP_RADIUS`] — it stands at
-//! arm's length instead of crowding the player, resuming when the wheat
-//! moves back out of reach. A followed player straying beyond the follow
+//! arm's length instead of crowding the player, resuming only once the
+//! wheat is past [`RESUME_RADIUS`] (a band, never a line — see the
+//! constant). A followed player straying beyond the follow
 //! radius breaks the follow AND makes the sheep refuse to re-follow for
 //! 200–300 ticks; merely lowering the wheat ends the follow quietly with no
 //! refusal. The goal emitted is the engine-computed foothold near the
@@ -30,12 +31,20 @@ const FOLLOW_RADIUS: f32 = 8.0;
 /// also keeps wander from strolling it away mid-lure) instead of pressing
 /// into the player.
 const STOP_RADIUS: f32 = 3.0;
+/// A standing sheep resumes only once the lure is this far again. Without
+/// the band a player walking away at about sheep pace keeps the sheep ON
+/// the stop line, where it walks a tick and stands a tick forever — the
+/// stuttering, shaking follow.
+const RESUME_RADIUS: f32 = 4.0;
 /// Re-follow refusal after a broken follow: 200 + (0..=100) ticks.
 const SULK_MIN: u64 = 200;
 const SULK_SPAN: u64 = 101;
 
 /// `Bool(true)` while the sheep is actively following the lure.
 const FOLLOWING: &str = "farming:following";
+/// `Bool(true)` while a following sheep stands at the lure (inside
+/// [`STOP_RADIUS`], until the lure is past [`RESUME_RADIUS`] again).
+const NEAR: &str = "farming:follow_near";
 /// `Int` absolute game tick the re-follow refusal holds until (`ctx.tick`
 /// based, so a sulk keeps its real duration even across skipped dispatches —
 /// and now across save/reload too, since tags persist).
@@ -97,6 +106,9 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         if following {
             tags.push(delete(FOLLOWING));
         }
+        if tag_bool(ctx, NEAR) {
+            tags.push(delete(NEAR));
+        }
         return tags_only(tags);
     }
     let [dx, dy, dz] = [
@@ -110,10 +122,14 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
             // The lure walked off: the follow breaks and the sheep refuses
             // to re-engage for a deterministic per-break roll.
             let until = now + SULK_MIN + rng_u64("follow_sulk") % SULK_SPAN;
-            return tags_only(vec![
+            let mut tags = vec![
                 delete(FOLLOWING),
                 set(SULK_UNTIL, MobTagValue::I64(until as i64)),
-            ]);
+            ];
+            if tag_bool(ctx, NEAR) {
+                tags.push(delete(NEAR));
+            }
+            return tags_only(tags);
         }
         // Expired sulk, lure out of range: nothing left to remember.
         return tags_only(expired_sulk.into_iter().collect());
@@ -123,8 +139,24 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     if !following {
         tags.push(set(FOLLOWING, MobTagValue::Bool(true)));
     }
-    if dist2 <= STOP_RADIUS * STOP_RADIUS {
-        // Close enough — stand attentively at the lure until it moves.
+    // Standing at the lure is a BAND, not a line: stop inside STOP_RADIUS,
+    // resume only past RESUME_RADIUS, so a lure drifting along the stop line
+    // never toggles walk/stand every tick.
+    let was_near = tag_bool(ctx, NEAR);
+    let near = if was_near {
+        dist2 <= RESUME_RADIUS * RESUME_RADIUS
+    } else {
+        dist2 <= STOP_RADIUS * STOP_RADIUS
+    };
+    if near != was_near {
+        tags.push(if near {
+            set(NEAR, MobTagValue::Bool(true))
+        } else {
+            delete(NEAR)
+        });
+    }
+    if near {
+        // Close enough — stand attentively at the lure until it moves off.
         return Some(AiNodeDecision {
             goal: Some(ctx.cell),
             tags,

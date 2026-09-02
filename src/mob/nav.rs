@@ -574,6 +574,23 @@ fn preserve_waypoint_path(
     if suffix.first() != Some(&waypoint) || suffix.len() <= 1 {
         return None;
     }
+    // Preserving is only worth it while the waypoint stays ON THE WAY. A goal
+    // that moved to the mob's own cell or behind it makes the suffix double
+    // back through `start` (start → wp → start → …) or hairpin off the
+    // preserved step; steering then projects the body as already PAST the
+    // waypoint along that return leg and walks it back to where it stands —
+    // one tick out, one tick back, every tick, for as long as the goal keeps
+    // flipping (the herd-at-the-lure shaking). A route that revisits the
+    // start, or turns more than 90° at the preserved step, is never a
+    // one-cell detour: fall through to the direct search instead.
+    if suffix.contains(&start) {
+        return None;
+    }
+    let (ax, az) = (waypoint.x - start.x, waypoint.z - start.z);
+    let (bx, bz) = (suffix[1].x - waypoint.x, suffix[1].z - waypoint.z);
+    if ax * bx + az * bz < 0 {
+        return None;
+    }
     let mut stitched = step;
     stitched.extend_from_slice(&suffix[1..]);
     Some(stitched)
@@ -2185,6 +2202,47 @@ mod tests {
             Some(&moved_goal),
             "and the preserved route still reaches the new goal"
         );
+    }
+
+    #[test]
+    fn a_goal_at_or_behind_the_mob_never_stitches_a_u_turn_through_the_kept_waypoint() {
+        // The hold pattern (a node emitting the mob's OWN cell to stand still)
+        // and a target passing the mob both move the goal to/behind the start.
+        // Preserving the in-progress waypoint there builds start → wp → start,
+        // whose return leg steers the body straight back — the every-tick
+        // out-and-back shaking at a lure. The kept step must be dropped.
+        let world = flat_world();
+        let start = IVec3::new(3, 64, 3);
+        let old_waypoint = IVec3::new(4, 64, 4);
+        let first_goal = IVec3::new(6, 64, 6);
+
+        let mut nav = Navigator::new(1, 0.45, 1.3);
+        nav.path = vec![start, old_waypoint, IVec3::new(5, 64, 5), first_goal];
+        nav.index = 1;
+        nav.goal = Some(first_goal);
+        nav.path_reaches_goal = true;
+
+        // Goal = own cell: a hold, not a route.
+        nav.update_goal_when_supported(Some(start), start, &world, true, &NavObstacles::none());
+        assert!(nav.is_idle(), "holding position is arrival, never a detour");
+        assert!(
+            !nav.path().contains(&old_waypoint),
+            "no out-and-back through the old waypoint: {:?}",
+            nav.path()
+        );
+
+        // Goal behind the mob: the direct route, whose first step is not the
+        // old (now hairpin) waypoint.
+        let mut nav = Navigator::new(1, 0.45, 1.3);
+        nav.path = vec![start, old_waypoint, IVec3::new(5, 64, 5), first_goal];
+        nav.index = 1;
+        nav.goal = Some(first_goal);
+        nav.path_reaches_goal = true;
+        let behind = IVec3::new(1, 64, 1);
+        nav.update_goal_when_supported(Some(behind), start, &world, true, &NavObstacles::none());
+        assert_ne!(nav.path().get(1), Some(&old_waypoint));
+        assert!(!nav.path()[1..].contains(&start));
+        assert_eq!(nav.path().last(), Some(&behind));
     }
 
     #[test]

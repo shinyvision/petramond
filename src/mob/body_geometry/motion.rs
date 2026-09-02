@@ -5,6 +5,9 @@ use super::{
     arc_component_bounds, body_boxes, segment_centre, segment_offsets, wrap_angle, WorldBox,
 };
 
+/// How far (m) an embedded body slides out per tick.
+const EMBEDDED_ESCAPE_STEP: f32 = 0.1;
+
 /// Resolve one tick of terrain/dynamic-body motion for the shared mob body
 /// geometry. Ordinary mobs retain the one-box resolver (including step-up).
 /// A long body sweeps all of its segments with one common displacement, so
@@ -31,14 +34,38 @@ where
         let hw = size.half_width;
         let mut min = [pos.x - hw, pos.y, pos.z - hw];
         let mut max = [pos.x + hw, pos.y + size.height, pos.z + hw];
-        let healed = petramond_world::collision::depenetrate_up_dyn(
+        // A body embedded past the heal's reach slides out sideways (see
+        // `collision::embedded_escape`) and is NOT lifted — the lift is what
+        // bobs it. Capped per tick so it reads as being squeezed out.
+        let escape = petramond_world::collision::embedded_escape(
             min,
             max,
             petramond_world::collision::STEP_HEIGHT,
             boxes_fn,
-            healing_dyn_boxes,
-            ignore,
         );
+        let escape = if escape == [0.0; 2] {
+            escape
+        } else {
+            let len = (escape[0] * escape[0] + escape[1] * escape[1]).sqrt();
+            let s = (EMBEDDED_ESCAPE_STEP / len).min(1.0);
+            [escape[0] * s, escape[1] * s]
+        };
+        min[0] += escape[0];
+        max[0] += escape[0];
+        min[2] += escape[1];
+        max[2] += escape[1];
+        let healed = if escape == [0.0; 2] {
+            petramond_world::collision::depenetrate_up_dyn(
+                min,
+                max,
+                petramond_world::collision::STEP_HEIGHT,
+                boxes_fn,
+                healing_dyn_boxes,
+                ignore,
+            )
+        } else {
+            0.0
+        };
         min[1] += healed;
         max[1] += healed;
         let (mut moved, grounded, hit) =
@@ -52,7 +79,9 @@ where
                 dyn_boxes,
                 ignore,
             );
+        moved[0] += escape[0];
         moved[1] += healed;
+        moved[2] += escape[1];
         return (moved, grounded, hit, healed);
     }
 

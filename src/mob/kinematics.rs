@@ -230,13 +230,24 @@ impl Instance {
             }
             self.moving = false;
         } else if can_steer {
-            self.vel.x = wish.x * d.walk_speed;
-            self.vel.z = wish.z * d.walk_speed;
             self.moving = wish.length_squared() > 1e-6;
+            let mut speed = d.walk_speed;
             if self.moving {
                 let target = heading_yaw(wish);
-                requested_yaw = Some(turn_toward(self.yaw, target, d.turn_rate * dt));
+                let turned = turn_toward(self.yaw, target, d.turn_rate * dt);
+                requested_yaw = Some(turned);
+                // Walk only as fast as the body faces the wish: a reversal
+                // pivots on the spot and then goes, instead of sliding
+                // backward at full speed for the half-second the turn takes
+                // (with the wish snapping around a lure or a peer, that slide
+                // is the "shaking" a viewer sees). A step-up approach keeps
+                // full speed — the jump needs its run-up.
+                if !nav_jumped {
+                    speed *= facing_speed_factor(wrap_angle(target - turned));
+                }
             }
+            self.vel.x = wish.x * speed;
+            self.vel.z = wish.z * speed;
         } else {
             // Unsteered mid-air (a fall's descent) a mob whose airborne arc
             // BEGAN as a walk still reads as walking while its horizontal
@@ -488,6 +499,12 @@ impl Instance {
 /// `atan2(-vx, -vz)`.
 fn heading_yaw(v: Vec3) -> f32 {
     (-v.x).atan2(-v.z)
+}
+
+/// How much of the walk speed a body still misaligned with its wish by
+/// `delta` radians gets: full when facing it, none at 90° and beyond.
+fn facing_speed_factor(delta: f32) -> f32 {
+    delta.cos().max(0.0)
 }
 
 /// Turn `yaw` toward `target` by at most `max_step`, along the shortest arc.
