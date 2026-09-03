@@ -39,7 +39,8 @@ impl ServerGame {
                     // every consequence, the shove included.
                     if self.damage_player(t, amount, source, origin, events) && source.is_attack() {
                         if let Some(from) = origin {
-                            self.shove_player(t, from);
+                            let scale = self.weapon_knockback(source);
+                            self.shove_player(t, from, scale);
                         }
                     }
                 }

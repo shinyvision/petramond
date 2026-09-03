@@ -149,6 +149,15 @@
                                 "small": true,
                                 "style": "label.accent",
                                 "bind": {
+                                    "text": "forge:preview_knockback",
+                                    "visible": "forge:preview_knockback"
+                                }
+                            },
+                            {
+                                "type": "label",
+                                "small": true,
+                                "style": "label.accent",
+                                "bind": {
                                     "text": "forge:preview_gentle",
                                     "visible": "forge:preview_gentle"
                                 }

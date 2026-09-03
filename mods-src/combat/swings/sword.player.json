@@ -1,0 +1,114 @@
+{
+  "format": "petramond-player-animation",
+  "version": 1,
+  "name": "sword",
+  "window_seconds": 0.3,
+  "loop": true,
+  "bones": [
+    {
+      "name": "left_shoulder",
+      "mode": "compose"
+    },
+    {
+      "name": "left_elbow",
+      "mode": "compose"
+    }
+  ],
+  "keys": [
+    {
+      "t": 0,
+      "pose": {}
+    },
+    {
+      "t": 0.22,
+      "pose": {
+        "left_shoulder": {
+          "rotation": [
+            78,
+            28,
+            24
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_elbow": {
+          "rotation": [
+            0,
+            0,
+            -22
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.45,
+      "pose": {
+        "left_shoulder": {
+          "rotation": [
+            62,
+            -48,
+            -8
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_elbow": {
+          "rotation": [
+            0,
+            30,
+            0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 0.62,
+      "pose": {
+        "left_shoulder": {
+          "rotation": [
+            60,
+            -46,
+            -8
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "left_elbow": {
+          "rotation": [
+            0,
+            28,
+            0
+          ],
+          "translation": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "t": 1,
+      "pose": {}
+    }
+  ]
+}

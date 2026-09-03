@@ -293,6 +293,7 @@ impl AnvilSpec {
             let damage = live().fold(stats.damage, |d, f| {
                 [d[0] * f.damage_mult, d[1] * f.damage_mult]
             });
+            let knockback = live().fold(stats.knockback, |k, f| k * f.knockback_mult);
             // The IDENTITIES recorded are the fits' canonical overlays; the
             // ART drawn is the family-resolved list, so a stone pickaxe's tip
             // hugs the stone silhouette while both record "forge:diamond_tip".
@@ -306,7 +307,7 @@ impl AnvilSpec {
             }
             data.push((
                 TOOL_OVERRIDE_KEY.to_owned(),
-                tool_override_json(tier, speed, damage).into_bytes(),
+                tool_override_json(tier, speed, damage, knockback).into_bytes(),
             ));
             data.push((OVERLAY_DATA_KEY.to_owned(), arts.into_bytes()));
         }

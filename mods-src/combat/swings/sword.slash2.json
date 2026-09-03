@@ -1,0 +1,108 @@
+{
+  "format": "petramond-swing-animation",
+  "version": 1,
+  "tool": "sword",
+  "tier": "diamond",
+  "name": "sword-slash-2",
+  "window_attack": 0.3,
+  "window_mine": 0.3,
+  "loop": false,
+  "keys": [
+    {
+      "t": 0,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.2590861157319392,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        -26.5,
+        100
+      ],
+      "translation": [
+        -13.25,
+        -1,
+        -3
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.5408559588878327,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        -180,
+        100
+      ],
+      "translation": [
+        10,
+        -1,
+        -3
+      ],
+      "scale": 1,
+      "impact": true
+    },
+    {
+      "t": 0.7569807509505704,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        17.5,
+        -180,
+        100
+      ],
+      "translation": [
+        13.25,
+        -5,
+        -3
+      ],
+      "scale": 1
+    },
+    {
+      "t": 1,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ]
+}

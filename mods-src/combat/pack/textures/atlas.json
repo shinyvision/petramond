@@ -1,0 +1,16 @@
+{
+    "tiles": [
+        {
+            "name": "combat:iron_sword",
+            "file": "iron_sword.png"
+        },
+        {
+            "name": "combat:sword_diamond_tip",
+            "file": "sword_diamond_tip.png"
+        },
+        {
+            "name": "combat:sword_fang",
+            "file": "sword_fang.png"
+        }
+    ]
+}

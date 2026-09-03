@@ -1275,6 +1275,7 @@ mod tests {
                 icon: None,
                 wasm: None,
                 client_wasm: client_wasm.map(PathBuf::from),
+                integrations: Vec::new(),
             }
         };
         let packs = [

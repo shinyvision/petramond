@@ -68,10 +68,16 @@ impl AnvilSpec {
 
         // The preview shows for every staged fit, affordable or not — the
         // hint covers the shortfall; only the button gates on the cost.
-        let (speed_mult, damage_mult) =
-            staged.iter().fold((1.0f32, 1.0f32), |(s, d), (_, fit, _)| {
-                (s * fit.speed_mult, d * fit.damage_mult)
-            });
+        let (speed_mult, damage_mult, knockback_mult) =
+            staged
+                .iter()
+                .fold((1.0f32, 1.0f32, 1.0f32), |(s, d, k), (_, fit, _)| {
+                    (
+                        s * fit.speed_mult,
+                        d * fit.damage_mult,
+                        k * fit.knockback_mult,
+                    )
+                });
         // A behaviour grant is a preview line too — a stat panel that shows
         // only the -20% half of the gold inlay reads as a downgrade.
         let gentle = staged
@@ -90,6 +96,10 @@ impl AnvilSpec {
         ctx.publish(
             "forge:preview_damage",
             GuiValue::Str(delta_line("Damage", damage_mult)),
+        );
+        ctx.publish(
+            "forge:preview_knockback",
+            GuiValue::Str(delta_line("Knockback", knockback_mult)),
         );
         ctx.publish("forge:preview_gentle", GuiValue::Str(gentle));
         ctx.publish(

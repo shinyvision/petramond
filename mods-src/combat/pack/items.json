@@ -25,6 +25,58 @@
       },
       "tags": [],
       "block": "combat:weapons_workbench"
+    },
+    {
+      "item": "combat:iron_sword",
+      "key": "combat:iron_sword",
+      "name": "Iron Sword",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "combat:iron_sword",
+      "tags": [],
+      "data": {
+        "petramond:tool": {
+          "kind": "sword",
+          "tier": 3,
+          "damage": [
+            3.5,
+            5.0
+          ]
+        },
+        "forge:augment_slots": {
+          "lockable": 3
+        }
+      }
+    },
+    {
+      "item": "combat:sword_diamond_tip",
+      "key": "combat:sword_diamond_tip",
+      "sprite": "combat:sword_diamond_tip",
+      "name": "Diamond Tip",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "combat:sword_fang",
+      "key": "combat:sword_fang",
+      "sprite": "combat:sword_fang",
+      "name": "Hushjaw Fang",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
     }
   ]
 }

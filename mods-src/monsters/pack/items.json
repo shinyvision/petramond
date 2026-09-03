@@ -43,6 +43,19 @@
               "on": "hit",
               "max": 800
             }
+          },
+          {
+            "tool": "sword",
+            "damage_mult": 1.3333,
+            "cost": 3,
+            "overlay": "monsters:fang",
+            "overlays": {
+              "default": "combat:sword_fang"
+            },
+            "wear": {
+              "on": "hit",
+              "max": 800
+            }
           }
         ]
       }

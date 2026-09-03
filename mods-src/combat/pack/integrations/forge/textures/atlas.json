@@ -1,0 +1,16 @@
+{
+    "tiles": [
+        {
+            "name": "combat:clay_sword_blade_mould",
+            "file": "clay_sword_blade_mould.png"
+        },
+        {
+            "name": "combat:sword_blade_mould",
+            "file": "sword_blade_mould.png"
+        },
+        {
+            "name": "combat:iron_sword_blade",
+            "file": "iron_sword_blade.png"
+        }
+    ]
+}

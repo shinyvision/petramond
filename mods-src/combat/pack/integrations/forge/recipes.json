@@ -1,0 +1,58 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "combat:clay_sword_blade_mould",
+      "station": "forge:pottery_table",
+      "ingredients": [
+        {
+          "item": "petramond:clay",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "combat:clay_sword_blade_mould",
+        "count": 1
+      }
+    },
+    {
+      "type": "processing",
+      "recipe": "combat:fire_sword_blade_mould",
+      "class": "petramond:smelting",
+      "ingredient": "combat:clay_sword_blade_mould",
+      "result": "combat:sword_blade_mould"
+    },
+    {
+      "type": "processing",
+      "recipe": "combat:cast_sword_blade_raw_iron",
+      "class": "combat:cast_sword_blade",
+      "ingredient": "petramond:raw_iron",
+      "result": "combat:iron_sword_blade"
+    },
+    {
+      "type": "crafting",
+      "recipe": "combat:forged_iron_sword",
+      "station": "combat:weapons_workbench",
+      "ingredients": [
+        {
+          "item": "combat:iron_sword_blade",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "combat:iron_sword",
+        "count": 1
+      }
+    },
+    {
+      "patch": "combat:iron_sword",
+      "data": {
+        "petramond:enabled": false
+      }
+    }
+  ]
+}

@@ -798,7 +798,7 @@ pub struct ItemInfoData {
 /// default ladder — the duplicated-constants trap.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ToolInfoData {
-    /// Tool family: `"pickaxe"`, `"axe"`, `"shovel"`, or `"shears"`.
+    /// Tool family: `"pickaxe"`, `"axe"`, `"shovel"`, `"shears"`, or `"sword"`.
     pub kind: String,
     /// Material tier `1..=4` (wooden, stone, iron, diamond).
     pub tier: u8,
@@ -807,6 +807,9 @@ pub struct ToolInfoData {
     pub speed: f32,
     /// Melee damage range `[min, max]` (the row's, or the derived rung).
     pub damage: [f32; 2],
+    /// Knockback multiplier over the victim's own authored shove (`1.0` =
+    /// a plain hit; the row's, or a stack override's).
+    pub knockback: f32,
 }
 
 /// One block's registry row (see [`HostCall::BlockInfo`]) — the stable,

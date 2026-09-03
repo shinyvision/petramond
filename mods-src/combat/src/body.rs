@@ -34,6 +34,15 @@ const AXE_COMBO_JSON: &[&str] = &[
 /// `include_str!` each when their exports land.
 const PICKAXE_COMBO_JSON: &[&str] = &[include_str!("../swings/pickaxe.strike.json")];
 
+/// The sword's combo: a cut across, the return cut, and a thrust. Each
+/// export authors its own (fast) attack window — the arc is the weapon's
+/// rate, so the sword's speed is these files, not a constant.
+const SWORD_COMBO_JSON: &[&str] = &[
+    include_str!("../swings/sword.slash.json"),
+    include_str!("../swings/sword.slash2.json"),
+    include_str!("../swings/sword.slash3.json"),
+];
+
 /// The families' harness-authored BODY animations
 /// (`petramond-player-animation`, v1): the third-person arm choreography
 /// every swing of a family plays, shipped verbatim from the
@@ -41,6 +50,7 @@ const PICKAXE_COMBO_JSON: &[&str] = &[include_str!("../swings/pickaxe.strike.jso
 /// steps, the body plays its one choreography throughout.
 const PICKAXE_PLAYER_JSON: &str = include_str!("../swings/pickaxe.player.json");
 const AXE_PLAYER_JSON: &str = include_str!("../swings/axe.player.json");
+const SWORD_PLAYER_JSON: &str = include_str!("../swings/sword.player.json");
 
 /// One curve FAMILY this pack animates — a tool `kind`'s harness-authored
 /// curves and windows, loaded once at init and shared by every registry row
@@ -82,6 +92,7 @@ impl Family {
         let sources: &[&str] = match style {
             swing::Style::Pickaxe => PICKAXE_COMBO_JSON,
             swing::Style::Axe => AXE_COMBO_JSON,
+            swing::Style::Sword => SWORD_COMBO_JSON,
         };
         let combo: Box<[PoseCurve]> = match sources
             .iter()
@@ -119,6 +130,7 @@ impl Family {
         let player: &str = match style {
             swing::Style::Pickaxe => PICKAXE_PLAYER_JSON,
             swing::Style::Axe => AXE_PLAYER_JSON,
+            swing::Style::Sword => SWORD_PLAYER_JSON,
         };
         let body = BodyCurve::from_harness(player);
         if body.is_none() {
@@ -374,7 +386,7 @@ mod tests {
     /// file into the mining loop.
     #[test]
     fn the_shipped_combos_parse_and_their_steps_differ() {
-        for sources in [AXE_COMBO_JSON, PICKAXE_COMBO_JSON] {
+        for sources in [AXE_COMBO_JSON, PICKAXE_COMBO_JSON, SWORD_COMBO_JSON] {
             let combo: Vec<PoseCurve> = sources
                 .iter()
                 .map(|text| PoseCurve::from_harness(text).expect("every shipped step parses"))
@@ -386,7 +398,8 @@ mod tests {
             }
         }
         assert!(AXE_COMBO_JSON.len() >= 2, "the axe ships a chain");
-        for text in [PICKAXE_PLAYER_JSON, AXE_PLAYER_JSON] {
+        assert!(SWORD_COMBO_JSON.len() >= 2, "the sword ships a chain");
+        for text in [PICKAXE_PLAYER_JSON, AXE_PLAYER_JSON, SWORD_PLAYER_JSON] {
             BodyCurve::from_harness(text).expect("every shipped body export parses");
         }
     }

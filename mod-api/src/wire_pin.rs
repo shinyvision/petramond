@@ -441,6 +441,7 @@ fn samples() -> Samples {
             tier: 1,
             speed: 2.0,
             damage: [1.0, 1.5],
+            knockback: 1.0,
         }),
         food: Some(FoodInfoData {
             eat_ticks: 60,
@@ -1000,7 +1001,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
     ("HostRet::ContainerSlots", "0c010201036d3a69010000"),
-    ("HostRet::ItemInfo", "0d014000010174014e010201077069636b61786501000000400000803f0000c03f013c01036d3a6564010b6275636b65745f66696c6c"),
+    ("HostRet::ItemInfo", "0d014000010174014e010201077069636b61786501000000400000803f0000c03f0000803f013c01036d3a6564010b6275636b65745f66696c6c"),
     ("HostRet::ItemStack", "0e01036d3a690200"),
     ("HostRet::Effects", "0f01036d3a6509"),
     ("HostRet::Containers", "100201010000"),

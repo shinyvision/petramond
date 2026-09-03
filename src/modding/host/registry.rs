@@ -192,6 +192,7 @@ fn item_info_data(stack: &petramond_world::item::ItemStack) -> mod_api::ItemInfo
             tier: t.tier,
             speed: t.speed,
             damage: [t.damage.0, t.damage.1],
+            knockback: t.knockback,
         }),
         food: item.food().map(|f| mod_api::FoodInfoData {
             eat_ticks: f.eat_ticks,

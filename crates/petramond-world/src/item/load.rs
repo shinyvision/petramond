@@ -182,6 +182,9 @@ pub(super) struct RawTool {
     /// Melee damage `[min, max]`. Defaults to the `(kind, tier)` rung.
     #[serde(default)]
     pub damage: Option<[f32; 2]>,
+    /// Knockback multiplier over the victim's own. Defaults to `1.0`.
+    #[serde(default)]
+    pub knockback: Option<f32>,
 }
 
 /// The `petramond:fuel` data entry: game ticks one of this item burns as
@@ -353,11 +356,21 @@ fn convert(
                     ))
                 }
             };
+            let knockback = match t.knockback {
+                None => crate::item::DEFAULT_KNOCKBACK,
+                Some(k) if k.is_finite() && k >= 0.0 => k,
+                Some(k) => {
+                    return Err(format!(
+                        "tool knockback {k} must be finite and non-negative"
+                    ))
+                }
+            };
             Some(Tool {
                 kind: t.kind,
                 tier: t.tier,
                 speed,
                 damage,
+                knockback,
             })
         }
         None => None,

@@ -33,18 +33,20 @@ use mod_sdk::*;
 pub enum Style {
     Pickaxe,
     Axe,
+    Sword,
 }
 
 impl Style {
-    pub const ALL: [Style; 2] = [Style::Pickaxe, Style::Axe];
+    pub const ALL: [Style; 3] = [Style::Pickaxe, Style::Axe, Style::Sword];
 
     /// The family a tool row's `kind` names — the engine's own tool
-    /// vocabulary, so any pack's pickaxe or axe of any tier swings here.
-    /// Other kinds (shovel, shears) are nobody's in this pack.
+    /// vocabulary, so any pack's pickaxe, axe or sword of any tier swings
+    /// here. Other kinds (shovel, shears) are nobody's in this pack.
     pub fn of_kind(kind: &str) -> Option<Style> {
         match kind {
             "pickaxe" => Some(Style::Pickaxe),
             "axe" => Some(Style::Axe),
+            "sword" => Some(Style::Sword),
             _ => None,
         }
     }
@@ -60,6 +62,8 @@ pub enum Act {
     Strike,
     /// The axe's chop: mining, breaks, attacks — the right-to-left swing.
     Chop,
+    /// The sword's slash: a flat, fast cut across the body.
+    Slash,
 }
 
 // ---- timing ---------------------------------------------------------------
@@ -149,6 +153,7 @@ pub fn swing_act(style: Style) -> Act {
     match style {
         Style::Pickaxe => Act::Strike,
         Style::Axe => Act::Chop,
+        Style::Sword => Act::Slash,
     }
 }
 
@@ -253,11 +258,42 @@ const CHOP: &[Key] = &[
     rest(1.0),
 ];
 
+/// The sword slash: a shallower LOAD out to the right (0→0.22) and a flat
+/// SWEEP across the body (0.22→HOLD_AT) — the chop's arc with the rise
+/// taken out, since a blade cuts level where an axe head falls. The pack
+/// ships harness curves for the sword; this is the stand-in.
+const SLASH: &[Key] = &[
+    rest(0.0),
+    key(
+        0.22,
+        [6.0, -42.0, -28.0],
+        [5.0, 2.5, 2.0],
+        [78.0, 28.0, 24.0],
+        [0.0, 0.0, -22.0],
+    ),
+    key(
+        HOLD_AT,
+        [-12.0, 72.0, -52.0],
+        [-9.0, -2.0, -6.5],
+        [62.0, -48.0, -8.0],
+        [0.0, 30.0, 0.0],
+    ),
+    key(
+        0.66,
+        [-12.0, 70.0, -50.0],
+        [-9.0, -2.0, -6.5],
+        [60.0, -46.0, -8.0],
+        [0.0, 28.0, 0.0],
+    ),
+    rest(1.0),
+];
+
 /// One curve.
 fn curve_of(act: Act) -> &'static [Key] {
     match act {
         Act::Strike => STRIKE,
         Act::Chop => CHOP,
+        Act::Slash => SLASH,
     }
 }
 
@@ -567,7 +603,7 @@ mod tests {
     /// both views would do the arm's work twice).
     #[test]
     fn curves_leave_and_return_to_the_authored_hold() {
-        for act in [Act::Strike, Act::Chop] {
+        for act in [Act::Strike, Act::Chop, Act::Slash] {
             for phase in [0.0, 0.05, 0.3, 0.5, HOLD_AT, 0.6, 0.8, 1.0] {
                 let (pose, bones) = pose(act, phase, None, None);
                 let all = pose
@@ -608,7 +644,7 @@ mod tests {
     #[test]
     fn work_shares_the_dig_cadence_and_attacks_play_heavier() {
         let step = 0.05;
-        for style in [Style::Pickaxe, Style::Axe] {
+        for style in Style::ALL {
             let mut loop_hand = Clock::default();
             let looped = loop_hand
                 .step(Some(style), None, true, step, Pace::default())

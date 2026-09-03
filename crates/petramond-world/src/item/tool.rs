@@ -2,8 +2,8 @@ use super::ItemStack;
 
 /// The `petramond:tool` INSTANCE-data key: a stack may carry a JSON override
 /// of its row-resolved tool properties (`{"tier": u8, "speed": f32,
-/// "damage": [min, max]}` — any subset; `kind` is deliberately not
-/// overridable). Same vocabulary as the row's data entry, resolved by
+/// "damage": [min, max], "knockback": f32}` — any subset; `kind` is
+/// deliberately not overridable). Same vocabulary as the row's data entry, resolved by
 /// [`ItemStack::tool`]: absent fields keep the row's values. This is how a
 /// pack upgrades ONE tool in the world (the forge's diamond augments) without
 /// minting an item row per combination.
@@ -20,6 +20,10 @@ pub const TOOL_DATA_KEY: &str = "petramond:tool";
 /// on stone, a shovel on a log) mines no faster than a bare hand and unlocks no
 /// drop. The block half of this pairing is
 /// [`Block::preferred_tool`](crate::block::Block::preferred_tool).
+///
+/// A [`Sword`](ToolKind::Sword) is a weapon: no block prefers it, so it mines
+/// like a bare hand whatever its tier, and its `damage` is the whole of what
+/// it is for.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolKind {
@@ -27,6 +31,7 @@ pub enum ToolKind {
     Axe,
     Shovel,
     Shears,
+    Sword,
 }
 
 impl ToolKind {
@@ -38,6 +43,7 @@ impl ToolKind {
             ToolKind::Axe => "axe",
             ToolKind::Shovel => "shovel",
             ToolKind::Shears => "shears",
+            ToolKind::Sword => "sword",
         }
     }
 
@@ -54,7 +60,7 @@ impl ToolKind {
     #[inline]
     pub fn mining_efficiency(self) -> f32 {
         match self {
-            ToolKind::Pickaxe | ToolKind::Axe | ToolKind::Shears => 1.0,
+            ToolKind::Pickaxe | ToolKind::Axe | ToolKind::Shears | ToolKind::Sword => 1.0,
             // 0.5625 = 9/16: scales the ×8 diamond tier down to ×4.5.
             ToolKind::Shovel => 0.5625,
         }
@@ -87,7 +93,16 @@ pub struct Tool {
     pub speed: f32,
     /// Melee damage range `(min, max)`; the attacker rolls uniformly in it.
     pub damage: (f32, f32),
+    /// How hard a hit with this tool SHOVES, as a multiplier over the
+    /// victim's own authored knockback (a mob's feedback component, the
+    /// PvP shove). `1.0` is a plain hit; a row or an augment may raise it.
+    pub knockback: f32,
 }
+
+/// The knockback a `(kind, tier)` implies when a row does not state one:
+/// every tool shoves exactly as hard as a fist. Weight is authored, never
+/// derived from the ladder.
+pub const DEFAULT_KNOCKBACK: f32 = 1.0;
 
 /// The mining speed a `tier` implies when a row does not state one — the
 /// shipped ladder.
@@ -132,6 +147,8 @@ struct RawToolOverride {
     speed: Option<f32>,
     #[serde(default)]
     damage: Option<[f32; 2]>,
+    #[serde(default)]
+    knockback: Option<f32>,
 }
 
 impl Tool {
@@ -156,6 +173,11 @@ impl Tool {
                 t.damage = (lo, hi);
             }
         }
+        if let Some(k) = raw.knockback {
+            if k.is_finite() && k >= 0.0 {
+                t.knockback = k;
+            }
+        }
         t
     }
 
@@ -167,6 +189,7 @@ impl Tool {
             tier,
             speed: default_speed(tier),
             damage: default_damage(kind, tier),
+            knockback: DEFAULT_KNOCKBACK,
         }
     }
 

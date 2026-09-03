@@ -40,7 +40,9 @@ pub use stack::ItemStack;
 pub use tags::ItemTag;
 #[allow(unused_imports)]
 pub use tool::FIST_DAMAGE;
-pub use tool::{attack_damage, default_damage, default_speed, Tool, ToolKind, TOOL_DATA_KEY};
+pub use tool::{
+    attack_damage, default_damage, default_speed, Tool, ToolKind, DEFAULT_KNOCKBACK, TOOL_DATA_KEY,
+};
 pub use uses::{ItemUse, UseRay};
 pub use variant::VariantId;
 

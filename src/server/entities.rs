@@ -51,7 +51,18 @@ impl ServerGame {
             return false;
         };
         let (kind, mob_id, pos, was_dead, damage_immune) = snapshot;
-        let feedback = feedback.unwrap_or_else(|| mob_def(kind).damage_feedback.clone());
+        let mut feedback = feedback.unwrap_or_else(|| mob_def(kind).damage_feedback.clone());
+        // The WEAPON scales the victim's authored shove, before any handler
+        // sees the pipeline — so `mob_damage_pre` reads the knockback that
+        // will land, and a plain hit stays exactly the row's number.
+        let weapon = self.weapon_knockback(source);
+        if weapon != 1.0 {
+            for component in &mut feedback.components {
+                if let crate::mob::MobDamageFeedbackComponent::Knockback { scale, .. } = component {
+                    *scale *= weapon;
+                }
+            }
+        }
         // The i-frame window is itself a pipeline component: only requests
         // whose pipeline participates (`petramond:immunity`) are blocked by
         // an active window. Blocking happens before `mob_damage_pre` — a

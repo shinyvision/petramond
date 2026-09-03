@@ -965,6 +965,17 @@
               "on": "break",
               "max": 3000
             }
+          },
+          {
+            "tool": "sword",
+            "damage_mult": 1.5,
+            "knockback_mult": 1.25,
+            "cost": 2,
+            "overlay": "combat:sword_diamond_tip",
+            "wear": {
+              "on": "hit",
+              "max": 1500
+            }
           }
         ]
       }

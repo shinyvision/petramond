@@ -79,11 +79,25 @@ const PICKAXE: Profile = Profile {
     cleave: false,
 };
 
+/// The sword: a level cut — the axe's sweep, a little tighter and a little
+/// shorter (a blade, not a haft), and it lands more evenly across its reach
+/// because a fast weapon is meant to be swung often, not lined up.
+const SWORD: Profile = Profile {
+    reach: 3.0,
+    sweet: 1.8,
+    arc_yaw: radians(28.0),
+    arc_pitch: radians(20.0),
+    peak: 1.15,
+    floor: 0.45,
+    cleave: true,
+};
+
 /// The family's profile.
 pub fn profile(style: Style) -> Profile {
     match style {
         Style::Axe => AXE,
         Style::Pickaxe => PICKAXE,
+        Style::Sword => SWORD,
     }
 }
 

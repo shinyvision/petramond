@@ -943,6 +943,26 @@ mod registry_palette {
             r#"{ "items": [ { "item": "testmod:glowrock", "key": "testmod:glowrock", "name": "Glowrock", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "testmod:glowrock" } ] }"#,
         )
         .unwrap();
+        // Integration overlays: the one for an installed pack registers its
+        // row, the one for a pack that is not there registers nothing.
+        let helper = root.join("mods/helper");
+        std::fs::create_dir_all(&helper).unwrap();
+        std::fs::write(
+            helper.join("pack.json"),
+            r#"{ "name": "Helper", "id": "helper", "description": "integration target" }"#,
+        )
+        .unwrap();
+        for (target, item) in [("helper", "bridge"), ("absent", "ghost")] {
+            let overlay = pack.join("integrations").join(target);
+            std::fs::create_dir_all(&overlay).unwrap();
+            std::fs::write(
+                overlay.join("items.json"),
+                format!(
+                    r#"{{ "items": [ {{ "item": "testmod:{item}", "key": "testmod:{item}", "name": "{item}", "max_stack_size": 64, "held_pose": {{"pitch": 0, "yaw": 0, "roll": 0}}, "sprite": "stick", "tags": [] }} ] }}"#
+                ),
+            )
+            .unwrap();
+        }
 
         let exe = std::env::current_exe().expect("test binary path");
         let out = std::process::Command::new(exe)
@@ -977,7 +997,11 @@ mod registry_palette {
 
         // --- Registration: one fresh id past each engine set, name-addressed. ---
         assert_eq!(Block::all().len(), engine_blocks + 1);
-        assert_eq!(ItemType::all().len(), engine_items + 1);
+        // The glowrock plus the installed integration's row; the overlay for
+        // the absent pack contributed nothing.
+        assert_eq!(ItemType::all().len(), engine_items + 2);
+        assert!(ItemType::by_name("testmod:bridge").is_some());
+        assert!(ItemType::by_name("testmod:ghost").is_none());
         let glow = Block(engine_blocks as u16);
         let glow_item = ItemType(engine_items as u16);
         assert_eq!(names().blocks.id("testmod:glowrock"), Some(glow.0));

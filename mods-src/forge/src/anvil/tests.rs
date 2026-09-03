@@ -8,6 +8,7 @@ fn fit(tool: &str, overlay: &str, cost: u8, speed: f32, damage: f32) -> Fit {
         tier: 4,
         speed_mult: speed,
         damage_mult: damage,
+        knockback_mult: 1.0,
         cost,
         overlay: overlay.into(),
         overlays: Vec::new(),
@@ -20,6 +21,7 @@ fn spec() -> AnvilSpec {
     let mut s = AnvilSpec::default();
     let mut tip = fit("pickaxe", "forge:diamond_tip", 2, 1.5, 2.0);
     tip.overlays = vec![("stone".into(), "forge:diamond_tip_stone".into())];
+    tip.knockback_mult = 1.25;
     s.augments.insert("petramond:diamond".into(), vec![tip]);
     let mut inlay = fit("pickaxe", "forge:gold_inlay", 3, 0.8, 1.0);
     inlay.gentle = Some(25);
@@ -50,6 +52,7 @@ fn spec() -> AnvilSpec {
                 tier: 2,
                 speed: 4.0,
                 damage: [1.0, 2.5],
+                knockback: 1.0,
             },
         ),
     );
@@ -65,6 +68,7 @@ fn spec() -> AnvilSpec {
                 tier: 3,
                 speed: 6.0,
                 damage: [2.0, 4.0],
+                knockback: 1.0,
             },
         ),
     );
@@ -80,6 +84,7 @@ fn spec() -> AnvilSpec {
                 tier: 3,
                 speed: 1.0,
                 damage: [1.0, 1.0],
+                knockback: 1.0,
             },
         ),
     );
@@ -230,7 +235,7 @@ fn a_staged_material_stamps_the_three_keys_with_the_edge_tier() {
     );
     assert_eq!(
         get(&fitted, TOOL_OVERRIDE_KEY).as_deref(),
-        Some(r#"{"tier":4,"speed":6.0000,"damage":[2.0000,5.0000]}"#)
+        Some(r#"{"tier":4,"speed":6.0000,"damage":[2.0000,5.0000],"knockback":1.2500}"#)
     );
     // Keys are sorted — the canonical order the ABI ingest expects.
     let keys: Vec<&String> = fitted.data.iter().map(|(k, _)| k).collect();
@@ -386,10 +391,10 @@ fn staged_materials_apply_positionally_and_recompute_from_the_base() {
         "identities sit in the cells the materials were staged in"
     );
     // Base 6.0 speed × 1.5 (tip) × 0.8 (inlay) × 1.0 (fang) = 7.2;
-    // damage [2,4] × 2.0 × 1.3333.
+    // damage [2,4] × 2.0 × 1.3333; knockback 1.0 × 1.25 (tip only).
     assert_eq!(
         get(&fitted, TOOL_OVERRIDE_KEY).as_deref(),
-        Some(r#"{"tier":4,"speed":7.2000,"damage":[5.3333,10.6667]}"#)
+        Some(r#"{"tier":4,"speed":7.2000,"damage":[5.3333,10.6667],"knockback":1.2500}"#)
     );
     assert_eq!(
         get(&fitted, OVERLAY_DATA_KEY).as_deref(),

@@ -27,9 +27,9 @@ pub const OVERLAY_DATA_KEY: &str = "petramond:overlay";
 /// not a formatting accident: ample for any stat the ladder produces, and it
 /// keeps equal stat sets stamping byte-identical JSON regardless of how a
 /// writer computed them, which is what lets equally-augmented stacks merge.
-pub fn tool_override_json(tier: u8, speed: f32, damage: [f32; 2]) -> String {
+pub fn tool_override_json(tier: u8, speed: f32, damage: [f32; 2], knockback: f32) -> String {
     format!(
-        "{{\"tier\":{tier},\"speed\":{speed:.4},\"damage\":[{:.4},{:.4}]}}",
+        "{{\"tier\":{tier},\"speed\":{speed:.4},\"damage\":[{:.4},{:.4}],\"knockback\":{knockback:.4}}}",
         damage[0], damage[1]
     )
 }

@@ -66,6 +66,19 @@
 //!   returned base-first and the caller merges — by entry key (later packs
 //!   replace or extend) or by appending (recipes) — so a pack states only what
 //!   it changes, never a full copy of the catalogue.
+//!
+//! # Integrations
+//!
+//! A pack may ship `integrations/<mod id>/` directories, each laid out like
+//! the pack itself (catalogs, `textures/`, `ui/documents/`). Such a directory
+//! is an overlay of its own that joins the load ONLY while `<mod id>` names an
+//! installed, enabled pack — content the shipping pack states in another
+//! pack's vocabulary (its moulds for a forge, its dishes for a kitchen), with
+//! the rows simply absent when the other pack is not there. Its keys still
+//! carry the SHIPPING pack's id (the same ownership rule), it counts against
+//! the same id budget, and it merges after every plain pack layer, because an
+//! integration is written knowing both packs and is therefore the most
+//! specific statement in the overlay. See [`layers`].
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -113,6 +126,91 @@ pub struct Pack {
     /// Optional presentation-only client module. It runs in a separate
     /// restricted instance and cannot mutate the deterministic simulation.
     pub client_wasm: Option<PathBuf>,
+    /// The pack's `integrations/<mod id>/` overlays whose target pack is
+    /// installed, by target name. Ones naming an absent pack are dropped at
+    /// discovery with a logged note.
+    pub integrations: Vec<Integration>,
+}
+
+/// One `integrations/<target>/` directory of a pack (see the module docs).
+pub struct Integration {
+    /// The mod id the overlay is written against.
+    pub target: String,
+    pub dir: PathBuf,
+}
+
+/// One content overlay directory in merge order: a pack, or one pack's
+/// integration with another.
+pub struct Layer {
+    pub dir: PathBuf,
+    /// The pack whose namespace the layer's keys carry (`None` for an id-less
+    /// override pack).
+    pub owner: Option<String>,
+    /// Every mod id the layer's content presumes: the owner, plus the target
+    /// for an integration. A per-world disable of ANY of them must take the
+    /// layer's session-scoped content (recipes) with it — an integration's
+    /// patch rows retire the owner's own routes in favour of the target's,
+    /// which is exactly wrong once the target is switched off.
+    pub requires: Vec<String>,
+}
+
+/// Every overlay in merge order: packs in load order, then their integrations
+/// in the same order. Base `assets/` is not a layer here; the readers below
+/// put it first.
+pub fn layers() -> &'static [Layer] {
+    static LAYERS: LazyLock<Vec<Layer>> = LazyLock::new(|| {
+        let mut out: Vec<Layer> = packs()
+            .iter()
+            .map(|p| Layer {
+                dir: p.dir.clone(),
+                owner: p.id.clone(),
+                requires: p.id.iter().cloned().collect(),
+            })
+            .collect();
+        for pack in packs() {
+            for integration in &pack.integrations {
+                let mut requires: Vec<String> = pack.id.iter().cloned().collect();
+                requires.push(integration.target.clone());
+                out.push(Layer {
+                    dir: integration.dir.clone(),
+                    owner: pack.id.clone(),
+                    requires,
+                });
+            }
+        }
+        out
+    });
+    &LAYERS
+}
+
+/// The `integrations/<name>/` subdirectories under a pack dir, by name.
+fn integration_dirs(dir: &std::path::Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(dir.join("integrations")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .collect();
+    out.sort();
+    out
+}
+
+/// The directories whose catalogs a pack contributes given the installed id
+/// set: its own, plus each integration whose target is installed.
+fn catalog_dirs(
+    dir: &std::path::Path,
+    installed: &std::collections::BTreeSet<String>,
+) -> Vec<PathBuf> {
+    let mut dirs = vec![dir.to_path_buf()];
+    dirs.extend(
+        integration_dirs(dir)
+            .into_iter()
+            .filter(|(target, _)| installed.contains(target))
+            .map(|(_, sub)| sub),
+    );
+    dirs
 }
 
 /// Discovered packs in LOAD order (lowest priority first — the merge order for
@@ -223,10 +321,18 @@ fn discover_packs() -> Vec<Pack> {
                 ));
             }
         }
-        let keys = match manifest::registration_keys(dir) {
+        let mut keys = match manifest::registration_keys(dir) {
             Ok(keys) => keys,
             Err(e) => return disable(&e),
         };
+        // An integration's rows are the pack's own statements, so they obey
+        // the pack's namespace whether or not the target is installed.
+        for (target, sub) in integration_dirs(dir) {
+            match manifest::registration_keys(&sub) {
+                Ok(more) => keys.extend(more),
+                Err(e) => return disable(&format!("integrations/{target}: {e}")),
+            }
+        }
         let foreign = manifest::foreign_namespaced_keys(m.id.as_deref(), &keys);
         if !foreign.is_empty() {
             return disable(&format!(
@@ -253,12 +359,37 @@ fn discover_packs() -> Vec<Pack> {
         log::error!("mod pack '{}' disabled: {why}", metas[i].dir_name);
     });
     let order = enforce_id_budget(&found, &metas, order);
+    let installed: std::collections::BTreeSet<String> = order
+        .iter()
+        .filter_map(|&i| found[i].2.id.clone())
+        .collect();
 
     order
         .into_iter()
         .map(|i| {
             let (_, dir, m) = &found[i];
             log::info!("mod pack '{}' loaded from {}", m.name, dir.display());
+            let integrations = integration_dirs(dir)
+                .into_iter()
+                .filter_map(|(target, sub)| {
+                    if m.id.as_deref() == Some(target.as_str()) {
+                        log::error!(
+                            "mod pack '{}' ignores integrations/{target}: a pack cannot integrate with itself",
+                            m.name
+                        );
+                        return None;
+                    }
+                    if !installed.contains(&target) {
+                        log::info!(
+                            "mod pack '{}' integration '{target}' skipped: that mod is not installed",
+                            m.name
+                        );
+                        return None;
+                    }
+                    log::info!("mod pack '{}' integrates with '{target}'", m.name);
+                    Some(Integration { target, dir: sub })
+                })
+                .collect();
             Pack {
                 dir: dir.clone(),
                 name: m.name.clone(),
@@ -269,6 +400,7 @@ fn discover_packs() -> Vec<Pack> {
                 icon: m.icon.as_ref().map(|i| dir.join(i)).filter(|p| p.is_file()),
                 wasm: m.wasm.as_ref().map(|w| dir.join(w)),
                 client_wasm: m.client_wasm.as_ref().map(|w| dir.join(w)),
+                integrations,
             }
         })
         .collect()
@@ -294,10 +426,27 @@ fn enforce_id_budget(
 
     // One catalog read per pack, reused for both capped catalogs. Admission
     // already parsed these files; a second read here keeps the budget rule
-    // where the rest of the load-order policy lives.
+    // where the rest of the load-order policy lives. An integration's rows
+    // cost the SHIPPING pack, and are costed against the packs found rather
+    // than the final order — a target dropped below simply leaves the
+    // estimate slightly generous.
+    let installed: std::collections::BTreeSet<String> =
+        found.iter().filter_map(|(_, _, m)| m.id.clone()).collect();
     let per_pack: Vec<Vec<(&'static str, Vec<String>)>> = order
         .iter()
-        .map(|&i| manifest::registration_keys_by_catalog(&found[i].1).unwrap_or_default())
+        .map(|&i| {
+            let mut merged: Vec<(&'static str, Vec<String>)> = Vec::new();
+            for dir in catalog_dirs(&found[i].1, &installed) {
+                for (rel, keys) in manifest::registration_keys_by_catalog(&dir).unwrap_or_default()
+                {
+                    match merged.iter_mut().find(|(r, _)| *r == rel) {
+                        Some((_, known)) => known.extend(keys),
+                        None => merged.push((rel, keys)),
+                    }
+                }
+            }
+            merged
+        })
         .collect();
 
     let mut dropped: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
@@ -370,7 +519,7 @@ fn workspace_root() -> PathBuf {
 /// Candidate absolute paths for the asset at `rel` (e.g. `recipes.json`), in
 /// priority order: packs (highest priority first), then the base roots.
 pub fn candidate_paths(rel: &str) -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = packs().iter().rev().map(|p| p.dir.join(rel)).collect();
+    let mut paths: Vec<PathBuf> = layers().iter().rev().map(|l| l.dir.join(rel)).collect();
     paths.extend(base_roots().into_iter().map(|r| r.join(rel)));
     paths
 }
@@ -415,30 +564,51 @@ pub fn layer_dirs_with_ids(rel: &str) -> Vec<(PathBuf, Option<String>)> {
         .rev()
         .map(|r| (r.join(rel), None))
         .collect();
-    out.extend(packs().iter().map(|p| (p.dir.join(rel), p.id.clone())));
+    out.extend(layers().iter().map(|l| (l.dir.join(rel), l.owner.clone())));
     out.retain(|(p, _)| p.is_dir());
     out
 }
 
-/// [`read_layers`] with each layer's owning pack namespace (`None` for the
-/// base catalog or an id-less override pack). Recipe loading needs the owner
-/// so disabling a pack removes even rows that reference engine content only.
-pub fn read_layers_with_ids(rel: &str) -> Vec<(String, PathBuf, Option<String>)> {
-    let mut layers = Vec::new();
+/// One copy of a layered catalog with the overlay it came from.
+pub struct CatalogLayer {
+    pub text: String,
+    pub path: PathBuf,
+    /// The owning pack namespace (`None` for the base catalog or an id-less
+    /// override pack).
+    pub owner: Option<String>,
+    /// The mod ids the layer presumes ([`Layer::requires`]; empty for base).
+    pub requires: Vec<String>,
+}
+
+/// [`read_layers`] with each layer's overlay identity. Recipe loading needs
+/// it so disabling a pack removes even rows that reference engine content
+/// only, and an integration's rows go with EITHER of its packs.
+pub fn read_catalog_layers(rel: &str) -> Vec<CatalogLayer> {
+    let mut out = Vec::new();
     for root in base_roots() {
         let path = root.join(rel);
-        if let Ok(s) = std::fs::read_to_string(&path) {
-            layers.push((s, path, None));
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            out.push(CatalogLayer {
+                text,
+                path,
+                owner: None,
+                requires: Vec::new(),
+            });
             break; // base roots shadow each other; only one base layer
         }
     }
-    for pack in packs() {
-        let path = pack.dir.join(rel);
-        if let Ok(s) = std::fs::read_to_string(&path) {
-            layers.push((s, path, pack.id.clone()));
+    for layer in layers() {
+        let path = layer.dir.join(rel);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            out.push(CatalogLayer {
+                text,
+                path,
+                owner: layer.owner.clone(),
+                requires: layer.requires.clone(),
+            });
         }
     }
-    layers
+    out
 }
 
 /// Read EVERY copy of the layered catalog `rel`, lowest priority first: the
@@ -446,8 +616,8 @@ pub fn read_layers_with_ids(rel: &str) -> Vec<(String, PathBuf, Option<String>)>
 /// load order. The caller merges layers by its catalogue's key semantics.
 /// Empty if nothing provides the file.
 pub fn read_layers(rel: &str) -> Vec<(String, PathBuf)> {
-    read_layers_with_ids(rel)
+    read_catalog_layers(rel)
         .into_iter()
-        .map(|(text, path, _)| (text, path))
+        .map(|layer| (layer.text, layer.path))
         .collect()
 }

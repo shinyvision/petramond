@@ -1,0 +1,108 @@
+{
+  "format": "petramond-swing-animation",
+  "version": 1,
+  "tool": "sword",
+  "tier": "diamond",
+  "name": "sword-stab-3",
+  "window_attack": 0.3,
+  "window_mine": 0.3,
+  "loop": true,
+  "keys": [
+    {
+      "t": 0,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.28,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        -89,
+        86,
+        -29.5
+      ],
+      "translation": [
+        0,
+        2.5,
+        4
+      ],
+      "scale": 1
+    },
+    {
+      "t": 0.501441976584022,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        -89,
+        52.5,
+        -18
+      ],
+      "translation": [
+        0,
+        2.5,
+        -0.5
+      ],
+      "scale": 1,
+      "impact": true
+    },
+    {
+      "t": 0.7138349044421488,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        -89,
+        52.5,
+        -18
+      ],
+      "translation": [
+        0,
+        2.5,
+        -5.25
+      ],
+      "scale": 1
+    },
+    {
+      "t": 1,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": 1
+    }
+  ]
+}

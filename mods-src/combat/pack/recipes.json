@@ -41,6 +41,25 @@
         "item": "combat:shield",
         "count": 1
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "combat:iron_sword",
+      "station": "combat:weapons_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 2
+        },
+        {
+          "item": "petramond:stick",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "combat:iron_sword",
+        "count": 1
+      }
     }
   ]
 }

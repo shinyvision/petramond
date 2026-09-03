@@ -13,6 +13,7 @@ use super::recipe::{
     Recipes,
 };
 use super::station::CraftingStation;
+use crate::assets::CatalogLayer;
 
 const EMBEDDED: &str = include_str!("../../../../assets/recipes.json");
 
@@ -72,24 +73,31 @@ fn one_u8() -> u8 {
 /// Load base + enabled pack recipe layers in deterministic pack order.
 ///
 /// Layer ownership is retained: disabling a pack removes its whole layer even
-/// when one of its rows mentions engine content only. Reference filtering then
-/// removes enabled/base rows that touch another disabled namespace.
+/// when one of its rows mentions engine content only, and an integration
+/// layer goes with EITHER pack it joins. Reference filtering then removes
+/// enabled/base rows that touch another disabled namespace.
 pub fn load_recipes_for(disabled: &std::collections::BTreeSet<String>) -> Recipes {
     load_layers(read_recipe_layers(), disabled)
 }
 
 fn load_layers(
-    layers: impl IntoIterator<Item = (String, std::path::PathBuf, Option<String>)>,
+    layers: impl IntoIterator<Item = CatalogLayer>,
     disabled: &std::collections::BTreeSet<String>,
 ) -> Recipes {
     let mut crafting: Vec<(CraftingRecipe, serde_json::Map<String, serde_json::Value>)> =
         Vec::new();
     let mut processing = Vec::new();
     let mut patches = Vec::new();
-    for (text, path, owner) in layers {
-        if owner.as_ref().is_some_and(|id| disabled.contains(id)) {
+    for CatalogLayer {
+        text,
+        path,
+        owner,
+        requires,
+    } in layers
+    {
+        if let Some(id) = requires.iter().find(|id| disabled.contains(*id)) {
             log::info!(
-                "skipping recipes layer {}: owning mod is disabled",
+                "skipping recipes layer {}: mod '{id}' is disabled",
                 path.display()
             );
             continue;
@@ -174,15 +182,16 @@ fn compile_row(
     }
 }
 
-fn read_recipe_layers() -> Vec<(String, std::path::PathBuf, Option<String>)> {
-    let layers = crate::assets::read_layers_with_ids("recipes.json");
+fn read_recipe_layers() -> Vec<CatalogLayer> {
+    let layers = crate::assets::read_catalog_layers("recipes.json");
     if layers.is_empty() {
         log::info!("crafting recipes: no on-disk recipes.json found, using embedded defaults");
-        vec![(
-            EMBEDDED.to_owned(),
-            std::path::PathBuf::from("<embedded recipes.json>"),
-            None,
-        )]
+        vec![CatalogLayer {
+            text: EMBEDDED.to_owned(),
+            path: std::path::PathBuf::from("<embedded recipes.json>"),
+            owner: None,
+            requires: Vec::new(),
+        }]
     } else {
         layers
     }
@@ -395,6 +404,55 @@ fn disabled_namespace_in<'a>(
 mod tests {
     use super::*;
 
+    fn layer(text: &str, path: &str, owner: Option<&str>, requires: &[&str]) -> CatalogLayer {
+        CatalogLayer {
+            text: text.to_owned(),
+            path: std::path::PathBuf::from(path),
+            owner: owner.map(str::to_owned),
+            requires: requires.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
+
+    /// A pack's integration with another retires the pack's OWN route in
+    /// favour of the other's. That layer must follow the TARGET, not just its
+    /// owner: with the target switched off for a world, the plain route is
+    /// the only one left and the retirement must not land.
+    #[test]
+    fn an_integration_layer_is_dropped_with_either_mod_it_joins() {
+        let own = r#"{ "recipes": [{
+            "type":"crafting","recipe":"combat:test_blade","station":"petramond:inventory",
+            "ingredients":[{"item":"petramond:iron_ingot","count":2}],
+            "result":{"item":"petramond:iron_pickaxe","count":1}
+        }] }"#;
+        let bridge = r#"{ "recipes": [
+            {"patch":"combat:test_blade","data":{"petramond:enabled":false}}
+        ] }"#;
+        let loaded = |disabled: &[&str]| {
+            let disabled = disabled.iter().map(|s| (*s).to_owned()).collect();
+            load_layers(
+                vec![
+                    layer(own, "combat/recipes.json", Some("combat"), &["combat"]),
+                    layer(
+                        bridge,
+                        "combat/integrations/forge/recipes.json",
+                        Some("combat"),
+                        &["combat", "forge"],
+                    ),
+                ],
+                &disabled,
+            )
+        };
+        assert!(loaded(&[]).crafting().get("combat:test_blade").is_none());
+        assert!(loaded(&["forge"])
+            .crafting()
+            .get("combat:test_blade")
+            .is_some());
+        assert!(loaded(&["combat"])
+            .crafting()
+            .get("combat:test_blade")
+            .is_none());
+    }
+
     #[test]
     fn shipped_catalog_parses_both_interaction_models() {
         let (crafting, processing) = parse(EMBEDDED);
@@ -474,17 +532,9 @@ mod tests {
             "result":{"item":"petramond:iron_pickaxe","count":1}
         }] }"#;
         let layers = |pack: Option<&str>| {
-            let mut layers = vec![(
-                base.to_owned(),
-                std::path::PathBuf::from("<base>"),
-                None::<String>,
-            )];
+            let mut layers = vec![layer(base, "<base>", None, &[])];
             if let Some(text) = pack {
-                layers.push((
-                    text.to_owned(),
-                    std::path::PathBuf::from("forge/recipes.json"),
-                    Some("forge".to_owned()),
-                ));
+                layers.push(layer(text, "forge/recipes.json", Some("forge"), &["forge"]));
             }
             layers
         };
@@ -515,17 +565,9 @@ mod tests {
             {"patch":"petramond:test_smelt","data":{"petramond:enabled":false}}
         ] }"#;
         let with_smelt = |pack: Option<&str>| {
-            let mut layers = vec![(
-                smelt.to_owned(),
-                std::path::PathBuf::from("<base>"),
-                None::<String>,
-            )];
+            let mut layers = vec![layer(smelt, "<base>", None, &[])];
             if let Some(text) = pack {
-                layers.push((
-                    text.to_owned(),
-                    std::path::PathBuf::from("forge/recipes.json"),
-                    Some("forge".to_owned()),
-                ));
+                layers.push(layer(text, "forge/recipes.json", Some("forge"), &["forge"]));
             }
             load_layers(layers, &Default::default())
         };
@@ -567,20 +609,21 @@ mod tests {
             "class":"petramond:test_disabled_owner",
             "ingredient":"petramond:coal","result":"petramond:stick"
         }] }"#;
-        let layer = || {
-            vec![(
-                core_only.to_owned(),
-                std::path::PathBuf::from("wheel/recipes.json"),
-                Some("wheel".to_owned()),
+        let layers = || {
+            vec![layer(
+                core_only,
+                "wheel/recipes.json",
+                Some("wheel"),
+                &["wheel"],
             )]
         };
         assert_eq!(
-            load_layers(layer(), &Default::default())
+            load_layers(layers(), &Default::default())
                 .process("petramond:test_disabled_owner", ItemType::Coal),
             Some(ItemStack::new(ItemType::Stick, 1))
         );
         assert_eq!(
-            load_layers(layer(), &disabled)
+            load_layers(layers(), &disabled)
                 .process("petramond:test_disabled_owner", ItemType::Coal),
             None
         );

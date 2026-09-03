@@ -245,19 +245,36 @@ impl ServerGame {
         let attacker_id = self.sessions[s].id;
         let source = DamageSource::PlayerAttack(attacker_id);
         if self.damage_player(t, amount, source, Some(from), events) {
-            self.shove_player(t, from);
+            let scale = self.weapon_knockback(source);
+            self.shove_player(t, from, scale);
         }
     }
 
+    /// How hard the weapon behind `source` shoves: the attacking player's
+    /// HELD stack's tool knockback (an augment's override included), `1.0`
+    /// for a fist, a non-weapon, or a source that is no player at all. One
+    /// rule for the mob pipeline's knockback component and the PvP shove.
+    pub(super) fn weapon_knockback(&self, source: DamageSource) -> f32 {
+        let DamageSource::PlayerAttack(id) = source else {
+            return 1.0;
+        };
+        self.sessions
+            .iter()
+            .find(|sess| sess.id == id)
+            .and_then(|sess| sess.player.inventory.selected()?.tool())
+            .map_or(1.0, |t| t.knockback)
+    }
+
     /// The melee shove: push session `t` horizontally away from `from` with
-    /// the mob strike's upward pop ratio — what every applied player-on-
-    /// player hit does, the engine's own and a mod's landed on a player's
-    /// behalf alike.
-    pub(super) fn shove_player(&mut self, t: usize, from: Vec3) {
+    /// the mob strike's upward pop ratio, `scale`d by the weapon — what every
+    /// applied player-on-player hit does, the engine's own and a mod's
+    /// landed on a player's behalf alike.
+    pub(super) fn shove_player(&mut self, t: usize, from: Vec3, scale: f32) {
         let away = self.sessions[t].player.body_center() - from;
         let dir = Vec3::new(away.x, 0.0, away.z).normalize_or_zero();
-        let impulse = dir * PVP_ATTACK_KNOCKBACK
-            + Vec3::new(0.0, PVP_ATTACK_KNOCKBACK * MOB_ATTACK_UP_RATIO, 0.0);
+        let impulse = (dir * PVP_ATTACK_KNOCKBACK
+            + Vec3::new(0.0, PVP_ATTACK_KNOCKBACK * MOB_ATTACK_UP_RATIO, 0.0))
+            * scale;
         self.sessions[t].player.apply_knockback(impulse);
     }
 }

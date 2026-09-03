@@ -23,6 +23,8 @@ pub(super) struct Fit {
     pub(super) tier: u8,
     pub(super) speed_mult: f32,
     pub(super) damage_mult: f32,
+    /// Multiplier on the tool's knockback — how much harder its hits shove.
+    pub(super) knockback_mult: f32,
     /// How many of the material one application consumes.
     pub(super) cost: u8,
     /// The recorded augment identity, and the overlay ART fallback for any
@@ -96,6 +98,7 @@ pub(super) struct ToolStats {
     pub(super) tier: u8,
     pub(super) speed: f32,
     pub(super) damage: [f32; 2],
+    pub(super) knockback: f32,
 }
 
 /// Every augment MATERIAL and the fits its row lists.
@@ -111,6 +114,10 @@ pub(super) fn augment_fits() -> HashMap<String, Vec<Fit>> {
                     speed_mult: f.get("speed_mult").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
                     damage_mult: f.get("damage_mult").and_then(|v| v.as_f64()).unwrap_or(1.0)
                         as f32,
+                    knockback_mult: f
+                        .get("knockback_mult")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32,
                     cost: f.get("cost").and_then(|v| v.as_u8()).unwrap_or(1).max(1),
                     overlay: f.get("overlay")?.as_str()?.to_owned(),
                     overlays: f
@@ -225,6 +232,7 @@ pub(super) fn augmentable_tools() -> HashMap<String, (ToolSlots, ToolStats)> {
                         tier: tool.tier,
                         speed: tool.speed,
                         damage: tool.damage,
+                        knockback: tool.knockback,
                     },
                 ),
             ))

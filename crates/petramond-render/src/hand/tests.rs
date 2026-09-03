@@ -232,6 +232,15 @@ fn render_held_model_preview() {
     println!("wrote /tmp/held_model.png ({w}x{gh}, one row per item)");
 }
 
+/// A sprite sheet by its manifest `file`, resolved through the asset roots
+/// and the installed packs the way the atlas composer resolves it — so a
+/// pack's sprite previews from the pack, not from a repo-relative path.
+fn sprite_sheet(file: &str) -> image::RgbaImage {
+    let rel = format!("textures/{file}");
+    let (bytes, _) = petramond_world::assets::read_bytes(&rel).expect("texture");
+    image::load_from_memory(&bytes).expect("texture").to_rgba8()
+}
+
 /// CPU-rasterize one held SPRITE view (the extruded slab, texture-file
 /// sampled through its atlas rect) into cell `(col, row)` of a `cols`-wide
 /// grid — the sprite twin of [`raster_held_cell`], shared by the off-hand
@@ -255,12 +264,7 @@ fn raster_sprite_cell(
         crate::lighting::LightEnv::IDENTITY,
         &mut verts,
     );
-    // Repo-root texture dir (this crate moved under crates/ in the split).
-    let src = format!(
-        "{}/../../assets/textures/{texture}",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let img = image::open(&src).expect("texture").to_rgba8();
+    let img = sprite_sheet(texture);
     let (tw, th) = img.dimensions();
     let [au0, av0, au1, av1] = tile_uv(tile);
     let mut zbuf = vec![f32::INFINITY; w * h];
@@ -689,13 +693,7 @@ fn render_held_item_preview() {
             crate::lighting::LightEnv::IDENTITY,
             &mut verts,
         );
-        // Repo-root texture dir (this crate moved under crates/ in the split).
-        let src = format!(
-            "{}/../../assets/textures/{}",
-            env!("CARGO_MANIFEST_DIR"),
-            file
-        );
-        let img = image::open(&src).expect("texture").to_rgba8();
+        let img = sprite_sheet(file);
         let (tw, th) = img.dimensions();
         let [au0, av0, au1, av1] = tile_uv(tile);
 
@@ -1119,7 +1117,7 @@ fn render_held_pose_preview() {
         // The SPRITE chain: the item's own extrusion, textured from its own
         // sheet, at the held anchor and the fist transforms the game uses.
         if let ItemRenderKind::Sprite(tile) = item.render_kind() {
-            let texture = format!("{}.png", tile.name());
+            let texture = petramond_world::tile::cells()[tile.index()].file.clone();
             for (col, mvp) in [
                 held_sprite(&view, aspect).expect("sprite item").1,
                 held_sprite_off(&view, aspect).expect("sprite item").1,

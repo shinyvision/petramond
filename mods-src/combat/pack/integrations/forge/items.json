@@ -1,0 +1,56 @@
+{
+  "items": [
+    {
+      "item": "combat:clay_sword_blade_mould",
+      "key": "combat:clay_sword_blade_mould",
+      "name": "Unfired Sword Blade Mould",
+      "info": "Heat this in a furnace to start crafting advanced tools",
+      "max_stack_size": 16,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "combat:clay_sword_blade_mould",
+      "tags": [
+        "smeltable"
+      ]
+    },
+    {
+      "item": "combat:sword_blade_mould",
+      "key": "combat:sword_blade_mould",
+      "name": "Sword Blade Mould",
+      "max_stack_size": 16,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "combat:sword_blade_mould",
+      "tags": [],
+      "data": {
+        "forge:mould": {
+          "class": "combat:cast_sword_blade"
+        }
+      }
+    },
+    {
+      "item": "combat:iron_sword_blade",
+      "key": "combat:iron_sword_blade",
+      "name": "Iron Sword Blade",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "combat:iron_sword_blade",
+      "tags": [],
+      "data": {
+        "forge:metal": {
+          "melts_to": "petramond:raw_iron"
+        }
+      }
+    }
+  ]
+}
