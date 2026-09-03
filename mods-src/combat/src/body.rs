@@ -344,8 +344,12 @@ impl Bodies {
             // engine's own cooldown returns.
             let cooldown = if claimed { 0.0 } else { 1.0 };
             set_player_attribute(player, PlayerAttribute::AttackCooldown, cooldown);
+            // A tool that LANDS its own hits keeps the press flowing instead:
+            // the clock hears a mid-arc click and queues it (the engine's
+            // melee is already stood down by the attack-attempt claim), so
+            // the denial is only for a paced tool the engine still hits for.
             let mut denied = guard.denied();
-            if arc_bars_attack {
+            if arc_bars_attack && !self.lands(state.held) {
                 denied.push(BodyAction::Attack);
             }
             set_player_denied_actions(player, denied);

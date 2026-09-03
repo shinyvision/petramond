@@ -339,6 +339,10 @@ pub struct Clock {
     attacking: bool,
     /// The in-flight play's combo step (see [`Play::combo`]).
     combo: usize,
+    /// An attack pressed while the arc still barred it, held for the arc's
+    /// recovery: ONE deep, so a hack-and-slash mash never has to land on
+    /// the cancel boundary. Dies with the claim like everything else here.
+    queued: bool,
     /// How many quick consecutive attacks deep the chain is. Only Attack
     /// edges advance or reset it; the mining loop in between neither
     /// extends nor breaks a chain — the WINDOW does.
@@ -393,15 +397,26 @@ impl Clock {
             edge => edge,
         };
         // An attack's arc is protected THROUGH its impact and hold: a
-        // mid-arc attack click is SPENT (no restart, no chained step, the
-        // chain window untouched) so a mash never clips the impact out of
-        // its own animation. The RECOVERY past the hold is cancellable —
-        // the next chained attack starts there. [`Clock::bars_attack`] is
-        // this same predicate; the pack's server half publishes it as an
-        // Attack DENIAL, which is what makes the animation the authoritative
-        // attack pace rather than a picture of one.
+        // mid-arc attack click never restarts or chains NOW, so a mash
+        // never clips the impact out of its own animation — it is QUEUED
+        // (one deep) for the recovery instead. The RECOVERY past the hold
+        // is cancellable — the next chained attack starts there.
+        // [`Clock::bars_attack`] is this same predicate.
         let edge = match edge {
-            Some(SwingKind::Attack) if self.bars_attack() => None,
+            Some(SwingKind::Attack) if self.bars_attack() => {
+                self.queued = true;
+                None
+            }
+            edge => edge,
+        };
+        // …and a QUEUED press fires the moment the recovery opens (or the
+        // arc rests), exactly as a perfectly timed click would have: the
+        // chain window is measured from the last edge, so it chains.
+        let edge = match edge {
+            None if self.queued && !self.bars_attack() => {
+                self.queued = false;
+                Some(SwingKind::Attack)
+            }
             edge => edge,
         };
 
@@ -483,8 +498,10 @@ impl Clock {
     /// Whether the in-flight play bars the NEXT attack: an attack's arc is
     /// protected through its impact and hold, and only its recovery may be
     /// cancelled by the follow-up. ONE predicate, two enforcers — the clock
-    /// spends mid-arc attack edges with it (both mirrors), and the server
-    /// half publishes it as an Attack denial. With the engine's attack
+    /// queues mid-arc attack edges behind it (both mirrors), and the server
+    /// half publishes it as an Attack denial for a paced tool the engine
+    /// still hits for (a tool landing its own hits keeps the press flowing
+    /// so the queue can hear it). With the engine's attack
     /// cooldown negated while the pack paces a tool, this predicate IS the
     /// attack pace: damage can land exactly as often as the animation
     /// reaches its recovery.
@@ -795,12 +812,12 @@ mod tests {
     }
 
     /// An attack's arc is protected THROUGH its impact and hold: a mid-arc
-    /// attack click is SPENT — no restart, no chained step, the chain window
-    /// untouched — while a click in the RECOVERY cancels only the tail and
-    /// chains. `bars_attack` is that boundary, and the server half publishes
-    /// it as the Attack denial, so this clock IS the attack pace.
+    /// attack click neither restarts nor chains right away — it is QUEUED,
+    /// one deep, and fires the moment the recovery opens, so a mash chains
+    /// without having to land on the cancel boundary. A click in the
+    /// RECOVERY chains at once. A claim change drops the queue.
     #[test]
-    fn a_mid_arc_attack_is_spent_until_the_recovery_cancels() {
+    fn a_mid_arc_attack_queues_until_the_recovery_opens() {
         let mut hand = Clock::default();
         let attack = |hand: &mut Clock| {
             hand.step(
@@ -811,28 +828,64 @@ mod tests {
                 Pace::default(),
             )
         };
+        let idle = |hand: &mut Clock| {
+            hand.step(Some(Style::Axe), None, false, dt(), Pace::default())
+        };
         let first = attack(&mut hand).expect("the opening swing plays");
         assert_eq!(first.combo, 0);
         assert!(hand.bars_attack(), "the fresh arc bars the next attack");
 
-        // Mashed mid-arc: the play advances instead of restarting, and no
-        // chained step begins.
+        // Mashed mid-arc: the play advances instead of restarting, no
+        // chained step begins yet…
         let mashed = attack(&mut hand).expect("the arc keeps playing");
         assert_eq!(mashed.act, first.act);
         assert_eq!(mashed.combo, 0, "no chained step mid-swing");
         assert!(mashed.phase > first.phase, "the arc was not restarted");
+        assert!(hand.queued, "…but the press is held");
+        attack(&mut hand);
+        assert!(hand.queued, "a second mid-arc press is not a second queue entry");
 
-        // Step into the recovery: the hold has fully played, the arc stops
-        // barring…
+        // …and the instant the hold has fully played, the queued press
+        // fires as the chained step — no further click needed.
         while hand.bars_attack() {
-            hand.step(Some(Style::Axe), None, false, dt(), Pace::default())
-                .unwrap();
+            idle(&mut hand).unwrap();
+        }
+        let chained = idle(&mut hand).expect("the queued attack starts");
+        assert_eq!(chained.combo, 1, "the queued press chains");
+        assert!(chained.phase < 0.1, "a fresh arc");
+        assert!(!hand.queued, "the queue is spent");
+        assert!(hand.bars_attack(), "the chained arc bars in turn");
+
+        // Nothing queued: the recovery plays out to rest on its own.
+        while hand.bars_attack() {
+            idle(&mut hand).unwrap();
         }
         assert!(hand.act.is_some(), "still mid-arc — only the tail remains");
-        // …and the next click chains there, cancelling only the tail.
-        let chained = attack(&mut hand).expect("the recovery cancels");
-        assert_eq!(chained.combo, 1, "the recovery chain still advances");
-        assert!(chained.phase < 0.1, "a fresh arc");
+        let mut at_rest = None;
+        for _ in 0..200 {
+            at_rest = idle(&mut hand);
+            if at_rest.is_none() {
+                break;
+            }
+        }
+        assert!(at_rest.is_none(), "the tail rests without a queued press");
+
+        // A queued press dies with the claim: switching off the weapon
+        // mid-arc leaves nothing to fire.
+        let mut swapped = Clock::default();
+        attack(&mut swapped).unwrap();
+        attack(&mut swapped);
+        assert!(swapped.queued);
+        assert_eq!(
+            swapped.step(None, None, false, dt(), Pace::default()),
+            None
+        );
+        assert!(!swapped.queued, "the swap drops the queue");
+        assert_eq!(
+            swapped.step(Some(Style::Axe), None, false, dt(), Pace::default()),
+            None,
+            "the tool comes back to an idle hand, not a stale swing"
+        );
 
         // A mining press's echoed attack edge is the LOOP, not a heavy first
         // swing: with the level up it plays at the dig cadence from the
