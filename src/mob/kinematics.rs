@@ -5,7 +5,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use petramond_math::math::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{voxel_at, IVec3, Tilt, Vec3};
 
 use super::instance::Instance;
 use super::MobDef;
@@ -69,7 +69,62 @@ pub(super) struct DriveIntent {
     pub while_walking: bool,
 }
 
+/// One tick's mod-authored pose (see [`Instance::set_kinematic`] and the
+/// `MobKinematic` ABI doc): the body is written here, and none of the engine's
+/// own motion runs for it that tick.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(super) struct KinematicPose {
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub tilt: Tilt,
+}
+
+/// How fast a body the engine moves itself returns to level (rad/s): a cart
+/// that left its rails mid-slope settles flat over a few frames instead of
+/// lying tilted wherever it lands.
+const BODY_LEVEL_RATE: f32 = 4.0;
+
 impl Instance {
+    /// Latch a mod's pose for this tick (see [`KinematicPose`] and the
+    /// consumption in `Instance::tick`). Refused on a dead mob.
+    pub(super) fn set_kinematic(&mut self, pose: KinematicPose) -> bool {
+        if self.death.is_dead() {
+            return false;
+        }
+        self.kinematic = Some(pose);
+        true
+    }
+
+    /// Write a mod-authored pose in place of this tick's locomotion step.
+    ///
+    /// The velocity the placement implies is kept, so a body the mod stops
+    /// placing continues ballistically from its last pose — and it is left
+    /// AIRBORNE so the engine's next integration carries that velocity into
+    /// a flight instead of zeroing it as a standing body's. Fall bookkeeping
+    /// re-anchors on the placement: a later drop only ever measures from
+    /// here. Knockback is discarded — a shove on a constrained body is the
+    /// constraining mod's rule to apply (it sees the hit's origin).
+    pub(super) fn place_kinematic(&mut self, dt: f32, pose: KinematicPose) {
+        self.vel = (pose.pos - self.pos) / dt.max(1e-6);
+        self.pos = pose.pos;
+        self.yaw = pose.yaw;
+        self.tilt = pose.tilt;
+        self.on_ground = false;
+        self.fall_peak_y = pose.pos.y;
+        self.moving = false;
+        self.air_walk = false;
+        self.walk_launch = false;
+        self.knockback = Vec3::ZERO;
+        self.stagger_timer = 0.0;
+        self.push = Vec3::ZERO;
+    }
+
+    /// A body the engine moves itself is level; one released from a
+    /// kinematic placement eases back there.
+    pub(super) fn level_body(&mut self, dt: f32) {
+        self.tilt = self.tilt.toward_level(BODY_LEVEL_RATE * dt);
+    }
+
     pub(super) fn take_fall_distance(&mut self) -> Option<f32> {
         let distance = std::mem::replace(&mut self.fall_distance, 0.0);
         (distance > 0.0).then_some(distance)
@@ -91,11 +146,13 @@ impl Instance {
         true
     }
 
-    /// Discard an unconsumed per-tick drive intent. Frozen/skipped mobs call
-    /// this explicitly because they never reach locomotion integration.
+    /// Discard this tick's unconsumed mod intents (drive and kinematic pose).
+    /// Frozen/skipped mobs call this explicitly because they never reach the
+    /// locomotion step that normally consumes them.
     #[inline]
     pub(super) fn clear_drive(&mut self) {
         self.drive = None;
+        self.kinematic = None;
     }
 
     #[cfg(test)]

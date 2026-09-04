@@ -98,9 +98,34 @@ pub fn outline_bounds(kind: BlockModelKind) -> ([f32; 3], [f32; 3]) {
 pub fn ray_vs_model(eye: Vec3, dir: Vec3, kind: BlockModelKind) -> Option<f32> {
     let inst = instance(kind);
     let at = atlas();
+    let d = super::def(kind);
     ray_vs_model_cubes(eye, dir, &inst.cubes, |cube, face, mn, mx, hit| {
-        face_texel_opaque(cube, face, mn, mx, hit, at)
+        pick_face_solid(
+            |name| d.part_role(name).picks_by_bounds(),
+            cube,
+            face,
+            mn,
+            mx,
+            hit,
+            |c, f, a, b, h| face_texel_opaque(c, f, a, b, h, at),
+        )
     })
+}
+
+/// The pick alpha test with the row's part roles folded in: a cube whose
+/// role `picks_by_bounds` (a hitbox) is picked by any face crossing, every
+/// other cube by `texel_opaque` under the crossing. One rule for both pick
+/// entry points.
+pub(super) fn pick_face_solid(
+    picks_by_bounds: impl Fn(&str) -> bool,
+    cube: &ModelCube,
+    face: Face,
+    mn: Vec3,
+    mx: Vec3,
+    hit: Vec3,
+    texel_opaque: impl Fn(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
+) -> bool {
+    picks_by_bounds(&cube.name) || texel_opaque(cube, face, mn, mx, hit)
 }
 
 /// [`ray_vs_model`] restricted to crossings inside the FOOTPRINT-space box
@@ -116,16 +141,32 @@ pub fn ray_vs_model_within(
 ) -> Option<f32> {
     let inst = instance(kind);
     let at = atlas();
+    let d = super::def(kind);
     ray_vs_model_cubes_within(
         eye,
         dir,
         &inst.cubes,
         Some((wmn, wmx)),
-        |cube, face, mn, mx, hit| face_texel_opaque(cube, face, mn, mx, hit, at),
+        |cube, face, mn, mx, hit| {
+            pick_face_solid(
+                |name| d.part_role(name).picks_by_bounds(),
+                cube,
+                face,
+                mn,
+                mx,
+                hit,
+                |c, f, a, b, h| face_texel_opaque(c, f, a, b, h, at),
+            )
+        },
     )
 }
 
-fn ray_vs_model_cubes<F>(eye: Vec3, dir: Vec3, cubes: &[ModelCube], face_opaque: F) -> Option<f32>
+pub(super) fn ray_vs_model_cubes<F>(
+    eye: Vec3,
+    dir: Vec3,
+    cubes: &[ModelCube],
+    face_opaque: F,
+) -> Option<f32>
 where
     F: FnMut(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
 {

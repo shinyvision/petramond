@@ -66,15 +66,6 @@ pub(super) type NodeFactory = fn(
     &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String>;
 
-#[derive(Deserialize)]
-struct RawFile {
-    mobs: Vec<RawMobDef>,
-    /// Collected during the same parse the catalog frame runs — no extra
-    /// per-layer parse pass.
-    #[serde(default)]
-    brain_extensions: Vec<RawBrainExtension>,
-}
-
 /// One species row as written in `mobs.json`: a mirror of [`MobDef`] with owned
 /// strings/Vecs. Biome and companion references ride as name strings (resolved
 /// against this catalog's own tables); block/item references use their registry
@@ -273,11 +264,14 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
     let catalog = petramond_world::registry::load_catalog(
         &texts,
         |text| {
-            let file = serde_json::from_str::<RawFile>(text)?;
+            let file: serde_json::Value = serde_json::from_str(text)?;
             let li = parse_li;
             parse_li += 1;
-            extensions.extend(file.brain_extensions.into_iter().map(|e| (li, e)));
-            Ok(file.mobs)
+            if let Some(ext) = file.get("brain_extensions") {
+                let ext: Vec<RawBrainExtension> = serde_json::from_value(ext.clone())?;
+                extensions.extend(ext.into_iter().map(|e| (li, e)));
+            }
+            petramond_world::registry::parse_rows_of::<RawMobDef>(&file, "mobs", "mob")
         },
         |r| &r.mob,
         ENGINE_MOB_NAMES,

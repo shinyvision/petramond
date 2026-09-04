@@ -128,11 +128,12 @@ pub fn build_mob_instances(
             pose
         };
 
-        // Place the posed model: scale to metres, yaw to facing, translate so model
-        // `y=0` (the feet) sits at the instance position. For a ragdoll, `pos`/`yaw` are
+        // Place the posed model: scale to metres, into the body frame (yaw to
+        // facing, the tilt inside it), translate so model `y=0` (the feet)
+        // sits at the instance position. For a ragdoll, `pos`/`yaw` are
         // frozen at death — only the bones move (within this `global`).
         let global = Mat4::from_translation(inst.pos)
-            * Mat4::from_rotation_y(inst.yaw)
+            * inst.tilt.body_frame(inst.yaw)
             * Mat4::from_scale(Vec3::splat(scale));
         // Two-channel RGB light folds into the tint (shade keeps the directional
         // term), so a mob standing in torch light stays lit at night.
@@ -246,6 +247,7 @@ mod tests {
             kind: Mob::Owl,
             pos: Vec3::new(10.0, 64.0, -5.0),
             yaw: 0.0,
+            tilt: petramond_math::math::Tilt::LEVEL,
             anim_time,
             moving,
             idle_anim: None,

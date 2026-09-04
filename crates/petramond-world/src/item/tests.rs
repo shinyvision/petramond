@@ -304,9 +304,22 @@ fn render_kind_matches_shape_family() {
                     "{block:?} must declare its own item sprite"
                 );
             }
+            // A declared sprite wins over the model, as it does everywhere
+            // (a rail's item is its flat tile, not the placed plane).
             ShapeFamily::Model => {
                 let kind = block.model_kind().expect("model family");
-                assert_eq!(item.render_kind(), ItemRenderKind::Model(kind), "{block:?}");
+                match item.declared_sprite() {
+                    Some(sprite) => {
+                        assert_eq!(
+                            item.render_kind(),
+                            ItemRenderKind::Sprite(sprite),
+                            "{block:?}"
+                        )
+                    }
+                    None => {
+                        assert_eq!(item.render_kind(), ItemRenderKind::Model(kind), "{block:?}")
+                    }
+                }
             }
             // The thin / flat-art shapes render as a flat sprite (their row art).
             ShapeFamily::Door | ShapeFamily::Pane | ShapeFamily::Ladder => {

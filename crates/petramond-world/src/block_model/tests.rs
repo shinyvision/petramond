@@ -258,7 +258,7 @@ fn collision_is_the_multi_box_model_shape_not_one_coarse_box() {
 }
 
 #[test]
-fn collision_hidden_parts_keep_visuals_but_remove_collision() {
+fn a_pass_through_part_keeps_its_visuals_but_loses_its_collision() {
     // A solid cube plus a decorative "water" cube that should render and
     // contribute to bounds/selection but not to player collision.
     let solid = ModelCube {
@@ -296,7 +296,11 @@ fn collision_hidden_parts_keep_visuals_but_remove_collision() {
     assert_eq!(model.collision.len(), 2, "both cubes collide before hiding");
     let bounds_before = model.bounds;
 
-    model.hide_collision_parts(&["water"], &[], "test:trough_filled");
+    model.apply_part_roles(
+        &[("water", PartRole::PassThrough)],
+        PartRole::Visible,
+        "test:trough_filled",
+    );
     assert_eq!(
         model.collision.len(),
         1,
@@ -521,5 +525,48 @@ fn compiled_block_model_layout_change_requires_a_format_version_bump() {
          together. A layout change WITHOUT the bump lets stale caches mis-decode into \
          garbage models (the invisible-hushjaw class of bug).",
         BlockModel::FORMAT_VERSION,
+    );
+}
+
+/// A hitbox cube is picked by its bounds — a ray meeting it counts whatever
+/// the texel under the crossing says — while an ordinary cube with the same
+/// geometry defers to the texel test, exactly as the renderer draws only
+/// opaque texels.
+#[test]
+fn a_hitbox_part_picks_by_bounds_where_bare_geometry_defers_to_its_texels() {
+    let cube = |name: &str| ModelCube {
+        name: name.into(),
+        from: Vec3::new(0.0, 0.0, 0.0),
+        to: Vec3::new(1.0, 0.125, 1.0),
+        origin: Vec3::ZERO,
+        rotation: Vec3::ZERO,
+        faces: [None; 6],
+        cull: [None; 6],
+    };
+    let roles: &[(&str, PartRole)] = &[("hit", PartRole::Hitbox)];
+    let pick = |c: ModelCube| {
+        super::query::ray_vs_model_cubes(
+            Vec3::new(0.5, 2.0, 0.5),
+            Vec3::new(0.0, -1.0, 0.0),
+            std::slice::from_ref(&c),
+            |cube, face, mn, mx, hit| {
+                // Every texel transparent: nothing but a hitbox can be hit.
+                super::query::pick_face_solid(
+                    |name| part_role(roles, PartRole::Visible, name).picks_by_bounds(),
+                    cube,
+                    face,
+                    mn,
+                    mx,
+                    hit,
+                    |_, _, _, _, _| false,
+                )
+            },
+        )
+    };
+    let t = pick(cube("hit")).expect("a hitbox is aimed at by its bounds");
+    assert!((t - 1.875).abs() < 1e-4, "first crossing at its top: {t}");
+    assert!(
+        pick(cube("art")).is_none(),
+        "a cube whose texels are all transparent is not a pick target"
     );
 }

@@ -1841,6 +1841,44 @@ pub enum HostCall {
     PlayerInventory {
         player: PlayerId,
     },
+    /// AUTHOR the live mob `mob_id`'s transform for THIS tick — the
+    /// constrained sibling of [`MobDrive`]: where a drive hands the engine a
+    /// velocity and lets its physics land the body, a kinematic placement
+    /// hands it the RESULT. `pos` (feet), `yaw` (mob convention: `0` faces
+    /// `-Z`), `pitch` (radians about the lateral axis inside the yaw,
+    /// positive = nose up) and `roll` (radians about the facing axis inside
+    /// both, positive = right side up) are written as given; for that tick
+    /// the engine runs none of its own motion — no gravity, no buoyancy, no
+    /// terrain sweep, no knockback stagger, no brain locomotion — and the
+    /// body still blocks players, pushes soft mobs and seats its riders from
+    /// the pose it was given. This is the seam for a body whose path is a
+    /// CONSTRAINT the engine cannot know — a cart on a rail, a car on a
+    /// track, a lift on a cable, a hull on a swell: the mod integrates along
+    /// the constraint, the engine presents.
+    ///
+    /// An intent, never a state: re-issue it every tick. A mod that stops
+    /// calling leaves the body AIRBORNE at its last pose carrying the
+    /// velocity the placements implied, so it flies, falls and lands by the
+    /// engine's own physics — a cart running off the end of its track
+    /// arcs into the air instead of freezing where the rail ended, and a
+    /// disabled mod's vehicle simply drops onto whatever it was on — and its
+    /// tilt eases back to level over a few ticks. Fall bookkeeping
+    /// re-anchors on every placement, so a released body only ever pays for
+    /// the drop it actually makes afterwards.
+    ///
+    /// The host refuses non-finite values, a placement farther than the
+    /// 16-block sweep bound from the body's current position, a pitch
+    /// outside `±π/2` and a roll outside `±π`. `false` = unknown or dead
+    /// mob. → [`HostRet::Bool`].
+    ///
+    /// [`MobDrive`]: Self::MobDrive
+    MobKinematic {
+        mob_id: u64,
+        pos: [f32; 3],
+        yaw: f32,
+        pitch: f32,
+        roll: f32,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].

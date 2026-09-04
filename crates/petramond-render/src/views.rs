@@ -11,6 +11,7 @@ use crate::RemotePlayerRender;
 use petramond::mob::Mob;
 use petramond::world::PlacedEmitter;
 use petramond_math::facing::Facing;
+use petramond_math::math::Tilt;
 use petramond_world::block_model::BlockModelKind;
 use petramond_world::door::DoorState;
 use petramond_world::item::ItemType;
@@ -132,6 +133,10 @@ pub struct MobPresentation {
     pub pos: Vec3,
     pub prev_yaw: f32,
     pub yaw: f32,
+    /// Body tilt inside the yaw, previous and current tick, blended like the
+    /// position.
+    pub prev_tilt: Tilt,
+    pub tilt: Tilt,
     pub prev_anim_time: f32,
     pub anim_time: f32,
     pub moving: bool,
@@ -177,6 +182,9 @@ pub struct PlayerPresentation {
     /// pinned at a pose anchor whose pose is `sitting`. Anchor poses outside
     /// the known vocabulary render the rest pose (see `mount_renders_seated`).
     pub seated: bool,
+    /// The mount's body tilt a seated body leans with about its hips; level
+    /// when unmounted.
+    pub seat_tilt: Tilt,
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle).
     pub walk_weight: f32,
     /// Sneak-stance blend weight (`0` upright … `1` fully crouched).

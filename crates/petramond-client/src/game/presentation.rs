@@ -9,6 +9,7 @@ use glam::{IVec3, Vec3};
 use petramond::mob::Mob;
 use petramond::world::PlacedEmitter;
 use petramond_math::facing::Facing;
+use petramond_math::math::Tilt;
 use petramond_render::camera::ViewVolume;
 use petramond_render::{PlayerRenderInstance, RemotePlayerRender};
 use petramond_world::block::Block;
@@ -283,6 +284,8 @@ impl GamePresentationScratch {
                 pos: curr.pos,
                 prev_yaw: prev.yaw,
                 yaw: curr.yaw,
+                prev_tilt: prev.tilt,
+                tilt: curr.tilt,
                 prev_anim_time: prev.anim_time,
                 anim_time: curr.anim_time,
                 moving: curr.moving,
@@ -456,27 +459,20 @@ impl GamePresentationScratch {
             let mut head_yaw = yaw - body_yaw;
             // A mounted body GLUES to the interpolated mount: position at the
             // seat offset instead of the row lerp (a turning mount rotates
-            // the seat along an arc the lerp would cut across), and the BODY
-            // sits square in the seat — its yaw is the mount's facing, only
-            // the clamped head follows the look. If the referenced mount row
-            // is not available yet, keep the rider row's own interpolation.
-            if let Some((seat_pos, mount_yaw)) = p.curr.mount.and_then(|mount| {
-                // Mob yaw is mount convention (0 faces `-Z`), π from player
-                // body yaw; a pose anchor already carries player-convention
-                // yaw.
-                let (seat_pos, body_yaw) = match mount {
-                    petramond::net::protocol::PlayerMount::Mob { id, seat } => {
-                        let (seat_pos, mob_yaw) = game
-                            .replicated_mobs
-                            .interpolated_seat_pose(id, seat, tick_alpha)?;
-                        (seat_pos, mob_yaw + std::f32::consts::PI)
-                    }
-                    petramond::net::protocol::PlayerMount::Anchor { pos, yaw, .. } => (pos, yaw),
-                };
-                Some((seat_pos, petramond_math::math::wrap_angle(body_yaw)))
-            }) {
-                pos = seat_pos;
-                body_yaw = mount_yaw;
+            // the seat along an arc the lerp would cut across), the BODY
+            // sits square in the seat and leans with it — its yaw is the
+            // mount's facing, only the clamped head follows the look. If the
+            // referenced mount row is not available yet, keep the rider
+            // row's own interpolation.
+            let mut seat_tilt = Tilt::LEVEL;
+            if let Some(mount) = p
+                .curr
+                .mount
+                .and_then(|mount| game.replicated_mobs.mount_pose(mount, tick_alpha))
+            {
+                pos = mount.seat;
+                body_yaw = mount.body_yaw;
+                seat_tilt = mount.tilt;
                 head_yaw = petramond_math::math::wrap_angle(yaw - body_yaw)
                     .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT);
             }
@@ -503,6 +499,7 @@ impl GamePresentationScratch {
                     sneak_weight: p.pose.sneak_weight,
                     sleeping,
                     seated: p.curr.mount.is_some_and(mount_renders_seated),
+                    seat_tilt,
                     hurt: p.hurt_flash01(),
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
                     blocklight: petramond_world::light::BlockLight6::from_x2(
@@ -698,14 +695,16 @@ fn collect_player(
         pos.x -= head_yaw.sin() * 0.925;
         pos.z -= head_yaw.cos() * 0.925;
     }
-    // Seated: the body sits SQUARE in the seat — its yaw is the mount's
-    // facing, never the look-follow (which would spin the whole body, legs
-    // through the hull); only the head follows the look, clamped.
+    // Seated: the body sits SQUARE in the seat and leans with it — its yaw
+    // is the mount's facing, never the look-follow (which would spin the
+    // whole body, legs through the hull); only the head follows the look,
+    // clamped.
     let seated = game.self_mount.is_some_and(mount_renders_seated);
-    let (body_yaw, head_yaw) = match game.mount_body_yaw() {
-        Some(mount_yaw) => (
-            mount_yaw,
-            petramond_math::math::wrap_angle(game.player.yaw - mount_yaw)
+    let mount = game.self_mount_pose();
+    let (body_yaw, head_yaw) = match mount {
+        Some(mount) => (
+            mount.body_yaw,
+            petramond_math::math::wrap_angle(game.player.yaw - mount.body_yaw)
                 .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT),
         ),
         None => (
@@ -720,6 +719,7 @@ fn collect_player(
         head_pitch: game.player.pitch,
         anim_time: game.third_person.pose.anim_time,
         seated,
+        seat_tilt: mount.map_or(Tilt::LEVEL, |m| m.tilt),
         walk_weight: game.third_person.pose.walk_weight,
         sneak_weight: game.third_person.pose.sneak_weight,
         sleeping,

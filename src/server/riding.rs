@@ -228,7 +228,7 @@ impl ServerGame {
                 let Some(&seat) = d.seats.get(m.seat as usize) else {
                     return;
                 };
-                seat_world_pos(mob.pos, mob.yaw, seat)
+                seat_world_pos(mob.pos, mob.yaw, mob.tilt, seat)
             }
             MountTarget::Anchor(a) => a.pos,
         };

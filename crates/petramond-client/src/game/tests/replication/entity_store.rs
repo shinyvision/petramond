@@ -17,6 +17,7 @@ fn mob_row(id: u64, pos: Vec3, hurt_timer: f32) -> MobStateRow {
         kind_id: Mob::Owl.0,
         pos,
         yaw: 0.0,
+        tilt: petramond_math::math::Tilt::LEVEL,
         anim_time: 0.0,
         moving: false,
         idle_anim: None,

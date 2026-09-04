@@ -1,5 +1,6 @@
 use super::Mobs;
 use crate::mob::MobTagValue;
+use petramond_math::math::{Tilt, Vec3};
 
 impl Mobs {
     /// Toggle the particle-emitter bundle registered under `key` (a
@@ -74,6 +75,29 @@ impl Mobs {
                 while_walking,
             })
         })
+    }
+
+    /// Author a live mob's pose for THIS tick (see `Instance::set_kinematic`):
+    /// feet position, facing yaw and body tilt, written in place of the
+    /// engine's own motion. `Err(distance)` when the placement is farther
+    /// from the current position than the external sweep bound allows —
+    /// the same envelope a drive's velocity is held to — `Ok(false)` for a
+    /// bad index or a dead mob.
+    pub fn set_mob_kinematic(
+        &mut self,
+        index: usize,
+        pos: Vec3,
+        yaw: f32,
+        tilt: Tilt,
+    ) -> Result<bool, f32> {
+        let Some(m) = self.mob_mut(index) else {
+            return Ok(false);
+        };
+        let distance = (pos - m.pos).length();
+        if distance > petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE {
+            return Err(distance);
+        }
+        Ok(m.set_kinematic(super::super::kinematics::KinematicPose { pos, yaw, tilt }))
     }
 
     /// A live mob's tag value.

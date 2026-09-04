@@ -21,11 +21,11 @@ use petramond_world::gui_state::ContainerView;
 
 use petramond::net::protocol::{
     ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, PlayerActionKind,
-    PlayerStateRow, SelfState, SpatialSoundMsg, TickUpdate, WorldEventMsg,
+    PlayerMount, PlayerStateRow, SelfState, SpatialSoundMsg, TickUpdate, WorldEventMsg,
 };
 use petramond::player::PlayerId;
 use petramond::player::{Player, PlayerMode};
-use petramond_math::math::IVec3;
+use petramond_math::math::{IVec3, Tilt};
 use petramond_world::gui_state::GuiStateMap;
 use petramond_world::inventory::{Hand, Inventory};
 use petramond_world::item::{ItemStack, ItemType};
@@ -85,6 +85,23 @@ impl ReplicatedMob {
             petramond_math::math::lerp_angle(self.prev.yaw, self.curr.yaw, alpha),
         )
     }
+
+    /// The body tilt this row presents at `alpha`, blended like the pose.
+    pub fn interpolated_tilt(&self, alpha: f32) -> Tilt {
+        self.prev.tilt.lerp(self.curr.tilt, alpha)
+    }
+}
+
+/// A rider's frame on its mount this frame: where the seat is, the BODY yaw
+/// the rider sits square to (PLAYER convention: `0` faces `+Z`), and the tilt
+/// the seated body leans with. Local slaving and remote presentation share
+/// this one lookup, so row pairing, yaw convention, seat projection and lean
+/// cannot drift apart between the two.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct MountPose {
+    pub seat: Vec3,
+    pub body_yaw: f32,
+    pub tilt: Tilt,
 }
 
 /// The client's replicated mob set. `BTreeMap` so presentation iterates in a
@@ -167,18 +184,33 @@ impl ReplicatedMobs {
         self.rows.get(&id)
     }
 
-    /// Interpolate one declared seat on a replicated mount. Local slaving and
-    /// remote presentation share this lookup so row pairing, yaw interpolation,
-    /// and seat projection cannot drift apart.
-    pub fn interpolated_seat_pose(&self, mob_id: u64, seat: u8, alpha: f32) -> Option<(Vec3, f32)> {
-        let entry = self.get(mob_id)?;
-        let def = petramond::mob::def(petramond::mob::Mob(entry.curr.kind_id));
-        let offset = *def.seats.get(seat as usize)?;
-        let (pos, yaw) = entry.interpolated_pose(alpha);
-        Some((
-            petramond::mob::riding::seat_world_pos(pos, yaw, offset),
-            yaw,
-        ))
+    /// The rider's frame on `mount` at `alpha`, or `None` while a mob mount's
+    /// rows are not available yet — the caller keeps its current transform
+    /// and waits for the rows to agree. A pose anchor is static world state:
+    /// the wire pos IS the seat, its yaw is already player convention, and it
+    /// is level.
+    pub fn mount_pose(&self, mount: PlayerMount, alpha: f32) -> Option<MountPose> {
+        match mount {
+            PlayerMount::Mob { id, seat } => {
+                let entry = self.get(id)?;
+                let def = petramond::mob::def(petramond::mob::Mob(entry.curr.kind_id));
+                let offset = *def.seats.get(seat as usize)?;
+                let (pos, yaw) = entry.interpolated_pose(alpha);
+                let tilt = entry.interpolated_tilt(alpha);
+                Some(MountPose {
+                    seat: petramond::mob::riding::seat_world_pos(pos, yaw, tilt, offset),
+                    // Mob yaw is mount convention (`0` faces `-Z`), π from
+                    // player body yaw.
+                    body_yaw: petramond_math::math::wrap_angle(yaw + std::f32::consts::PI),
+                    tilt,
+                })
+            }
+            PlayerMount::Anchor { pos, yaw, .. } => Some(MountPose {
+                seat: pos,
+                body_yaw: yaw,
+                tilt: Tilt::LEVEL,
+            }),
+        }
     }
 
     #[cfg(test)]

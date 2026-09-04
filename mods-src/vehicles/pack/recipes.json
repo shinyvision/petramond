@@ -14,6 +14,63 @@
         "item": "vehicles:boat",
         "count": 1
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "vehicles:rail",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 6
+        },
+        {
+          "item": "petramond:stick",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "vehicles:rail",
+        "count": 16
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "vehicles:booster_rail",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:gold_ingot",
+          "count": 6
+        },
+        {
+          "item": "petramond:stick",
+          "count": 1
+        },
+        {
+          "item": "petramond:coal",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "vehicles:booster_rail",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "vehicles:minecart",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 5
+        }
+      ],
+      "result": {
+        "item": "vehicles:minecart",
+        "count": 1
+      }
     }
   ]
 }

@@ -256,6 +256,21 @@ impl SceneCapture {
         self.renderer.render_offscreen();
     }
 
+    /// Hand the renderer mob rows to draw, the way the game's presentation
+    /// does — so a tool can photograph a mob model at an exact pose (a
+    /// vehicle on its track, a tilted body) without a live simulation. The
+    /// rows persist across captures until replaced.
+    pub fn set_mobs(&mut self, mobs: &[petramond_render::MobRenderInstance]) {
+        self.renderer.set_mobs(mobs);
+    }
+
+    /// Hand the renderer the LOCAL third-person body to draw (`None` for
+    /// none), as the game's presentation does — so a tool can photograph a
+    /// seated rider on a mount at an exact pose.
+    pub fn set_player(&mut self, player: Option<petramond_render::PlayerRenderInstance>) {
+        self.renderer.set_player(player);
+    }
+
     /// The renderer behind the camera, for reading its per-frame profile.
     pub fn renderer(&mut self) -> &mut petramond_render::Renderer {
         &mut self.renderer

@@ -1,0 +1,96 @@
+{
+  "blocks": [
+    {
+      "block": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_ns" },
+      "flags": ["solid"],
+      "tags": ["fragile", "vehicles:rail"],
+      "roots_face": "solid_face",
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["vehicles:rail", "vehicles:rail", "vehicles:rail"],
+      "material": "stone",
+      "hardness": 0.7,
+      "drops": [{ "item": "vehicles:rail", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "vehicles:rail_ew",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_ew" }
+    },
+    {
+      "block": "vehicles:rail_curve_ne",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_curve_ne" }
+    },
+    {
+      "block": "vehicles:rail_curve_se",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_curve_se" }
+    },
+    {
+      "block": "vehicles:rail_curve_sw",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_curve_sw" }
+    },
+    {
+      "block": "vehicles:rail_curve_nw",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_curve_nw" }
+    },
+    {
+      "block": "vehicles:rail_slope_n",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_slope_n" }
+    },
+    {
+      "block": "vehicles:rail_slope_e",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_slope_e" }
+    },
+    {
+      "block": "vehicles:rail_slope_s",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_slope_s" }
+    },
+    {
+      "block": "vehicles:rail_slope_w",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:rail_slope_w" }
+    },
+    {
+      "block": "vehicles:booster_rail_ns",
+      "extends": "vehicles:rail_ns",
+      "shape": { "model": "vehicles:booster_rail_ns" },
+      "tiles": ["vehicles:booster_rail", "vehicles:booster_rail", "vehicles:booster_rail"],
+      "drops": [{ "item": "vehicles:booster_rail", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "vehicles:booster_rail_ew",
+      "extends": "vehicles:booster_rail_ns",
+      "shape": { "model": "vehicles:booster_rail_ew" }
+    },
+    {
+      "block": "vehicles:booster_rail_slope_n",
+      "extends": "vehicles:booster_rail_ns",
+      "shape": { "model": "vehicles:booster_rail_slope_n" }
+    },
+    {
+      "block": "vehicles:booster_rail_slope_e",
+      "extends": "vehicles:booster_rail_ns",
+      "shape": { "model": "vehicles:booster_rail_slope_e" }
+    },
+    {
+      "block": "vehicles:booster_rail_slope_s",
+      "extends": "vehicles:booster_rail_ns",
+      "shape": { "model": "vehicles:booster_rail_slope_s" }
+    },
+    {
+      "block": "vehicles:booster_rail_slope_w",
+      "extends": "vehicles:booster_rail_ns",
+      "shape": { "model": "vehicles:booster_rail_slope_w" }
+    }
+  ]
+}

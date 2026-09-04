@@ -13,6 +13,37 @@
       "sprite": "vehicles:boat",
       "tags": [],
       "use_ray": "water"
+    },
+    {
+      "item": "vehicles:rail",
+      "key": "vehicles:rail",
+      "name": "Rail",
+      "max_stack_size": 64,
+      "sprite": "vehicles:rail",
+      "tags": [],
+      "block": "vehicles:rail_ns"
+    },
+    {
+      "item": "vehicles:booster_rail",
+      "key": "vehicles:booster_rail",
+      "name": "Booster Rail",
+      "max_stack_size": 64,
+      "sprite": "vehicles:booster_rail",
+      "tags": [],
+      "block": "vehicles:booster_rail_ns"
+    },
+    {
+      "item": "vehicles:minecart",
+      "key": "vehicles:minecart",
+      "name": "Minecart",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -0.6,
+        "roll": 0
+      },
+      "sprite": "vehicles:minecart",
+      "tags": []
     }
   ]
 }

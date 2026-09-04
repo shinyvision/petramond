@@ -1,5 +1,24 @@
 {
   "tiles": [
-    { "name": "vehicles:boat", "file": "boat.png" }
+    {
+      "name": "vehicles:boat",
+      "file": "boat.png"
+    },
+    {
+      "name": "vehicles:rail",
+      "file": "rail.png"
+    },
+    {
+      "name": "vehicles:rail_curve",
+      "file": "rail_curve.png"
+    },
+    {
+      "name": "vehicles:booster_rail",
+      "file": "booster_rail.png"
+    },
+    {
+      "name": "vehicles:minecart",
+      "file": "minecart_item.png"
+    }
   ]
 }

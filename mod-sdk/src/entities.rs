@@ -192,6 +192,22 @@ host_fn! {
 }
 
 host_fn! {
+    /// AUTHOR a live mob's (STABLE id) transform for THIS tick: `pos` is the
+    /// feet position, `yaw` the facing (mob convention — see
+    /// [`mob_facing_xz`]), `pitch` the body's nose-up tilt and `roll` its
+    /// right-side-up tilt (radians, both inside the yaw). The engine runs
+    /// none of its own motion for the body that tick (no gravity, buoyancy,
+    /// terrain sweep or knockback) and presents the pose as given — the seam
+    /// for a body whose path is a constraint only the mod knows (a cart on a
+    /// rail, a hull on a swell). An INTENT like [`mob_drive`]: re-issue every
+    /// tick; a body left unplaced is airborne with the velocity its
+    /// placements implied, falls by the engine's own physics and eases back
+    /// to level. `false` = unknown or dead mob.
+    pub fn mob_kinematic(mob_id: u64, pos: [f32; 3], yaw: f32, pitch: f32, roll: f32) -> bool
+        => MobKinematic { mob_id, pos, yaw, pitch, roll } => Bool
+}
+
+host_fn! {
     /// Set a live mob's VERTICAL velocity (m/s) for THIS tick, leaving the
     /// brain's own walking untouched — gravity resumes next tick, water
     /// buoyancy stays engine-owned, and an upward value from the ground is a

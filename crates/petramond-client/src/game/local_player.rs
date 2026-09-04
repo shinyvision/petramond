@@ -6,6 +6,7 @@
 use petramond::player::{self, Input, Player};
 use petramond_math::math::Vec3;
 
+use super::replicated::MountPose;
 use super::{Game, GameInput};
 
 const STEP_CAMERA_SETTLE_SPEED: f32 = 12.0;
@@ -144,7 +145,7 @@ impl Game {
         // remotes, so rider and mount can never visibly separate. The intent
         // stashed above still rides `PlayerUpdate` (that IS the steering
         // input the driving mod reads server-side).
-        if let Some(seat_pos) = self.self_mount.and_then(|m| self.mount_seat_pos(m)) {
+        if let Some(seat_pos) = self.self_mount_pose().map(|m| m.seat) {
             self.player.pos = seat_pos;
             self.player.vel = Vec3::ZERO;
             self.player.on_ground = true;
@@ -198,37 +199,14 @@ impl Game {
         out
     }
 
-    /// The world-space seat position of a mount this frame, or `None` when the
-    /// mount isn't available yet — the caller keeps its current transform and
-    /// waits for the rows to agree.
-    fn mount_seat_pos(&self, mount: petramond::net::protocol::PlayerMount) -> Option<Vec3> {
-        match mount {
-            petramond::net::protocol::PlayerMount::Mob { id, seat } => self
-                .replicated_mobs
-                .interpolated_seat_pose(id, seat, self.tick_alpha())
-                .map(|(pos, _)| pos),
-            // A pose anchor is static world state: the wire pos IS the seat.
-            petramond::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos),
-        }
-    }
-
-    /// The BODY yaw a seated local player renders with: the mount's facing in
-    /// player-yaw space (mob yaw 0 faces `-Z`, player body yaw 0 faces `+Z`
-    /// — π apart; a pose anchor already carries player-convention yaw). A
-    /// rider sits square in its seat; only the head follows the look (see
-    /// `collect_player`).
-    pub(super) fn mount_body_yaw(&self) -> Option<f32> {
-        let mount = self.self_mount?;
-        let yaw = match mount {
-            petramond::net::protocol::PlayerMount::Mob { id, seat } => {
-                self.replicated_mobs
-                    .interpolated_seat_pose(id, seat, self.tick_alpha())?
-                    .1
-                    + std::f32::consts::PI
-            }
-            petramond::net::protocol::PlayerMount::Anchor { yaw, .. } => yaw,
-        };
-        Some(petramond_math::math::wrap_angle(yaw))
+    /// The local player's frame on its mount this frame: `None` when
+    /// unmounted, or while a mob mount's rows are not available yet — the
+    /// caller keeps its current transform and waits for the rows to agree.
+    /// A rider sits square in its seat and leans with it; only the head
+    /// follows the look (see `collect_player`).
+    pub(super) fn self_mount_pose(&self) -> Option<MountPose> {
+        self.replicated_mobs
+            .mount_pose(self.self_mount?, self.tick_alpha())
     }
 
     /// Per-frame push of the player out of overlapping soft bodies (mobs +
@@ -279,7 +257,9 @@ impl Game {
         let target = self.player.eye();
         let eye_dy = target.y - self.last_player_eye_y;
         let grounded_still = self.player.on_ground && self.player.vel.y.abs() <= STEP_CAMERA_EPS;
-        if self.player.is_spectator() {
+        // A mount carries the body: a seat rising up a slope is not a step,
+        // and gliding it would draw the rider (and the eye) under the seat.
+        if self.player.is_spectator() || self.self_mount.is_some() {
             self.camera_step_y_offset = 0.0;
         } else if grounded_still
             && eye_dy > STEP_CAMERA_EPS

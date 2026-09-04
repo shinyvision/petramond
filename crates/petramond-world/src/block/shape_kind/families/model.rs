@@ -88,6 +88,14 @@ impl ShapePlacement for ModelFamily {
         } else {
             p
         };
+        // The row's own substrate/support declaration (`support`, `roots_on`,
+        // `roots_face`) gates a model exactly as it gates a single cell — at
+        // the anchor, the cell the row's support direction is read from. A
+        // rail declaring `roots_face: solid_face` must refuse open air here,
+        // or the fragile update shatters it a tick later and eats the item.
+        if !w.placement_support_ok(block, base) {
+            return PlacementOutcome::Refused;
+        }
         if !w.model_footprint_clear_facing(base, kind, facing) {
             return PlacementOutcome::Refused;
         }

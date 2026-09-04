@@ -2340,6 +2340,7 @@ name = "petramond-math"
 version = "0.4.0"
 dependencies = [
  "glam",
+ "serde",
 ]
 
 [[package]]

@@ -261,7 +261,14 @@ pub(super) fn parse_layers(
     let patches = std::cell::RefCell::new(Vec::new());
     let defs = crate::registry::resolve_catalog(
         texts,
-        |text| crate::registry::parse_rows_with_patches(text, "items", &mut patches.borrow_mut()),
+        |text| {
+            crate::registry::parse_rows_with_patches(
+                text,
+                "items",
+                "item",
+                &mut patches.borrow_mut(),
+            )
+        },
         |r: &RawItemDef| &r.item,
         &names.items,
         "item",

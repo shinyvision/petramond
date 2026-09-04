@@ -260,6 +260,7 @@ fn tick_updates_roundtrip() {
             kind_id: 1,
             pos: Vec3::new(4.5, 71.0, -2.25),
             yaw: 0.75,
+            tilt: petramond_math::math::Tilt::LEVEL,
             anim_time: 12.5,
             moving: true,
             idle_anim: Some(1),

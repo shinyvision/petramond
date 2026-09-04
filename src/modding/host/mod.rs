@@ -474,6 +474,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobAnimSeek { .. }
         | HostCall::MobAnimState { .. }
         | HostCall::MobDrive { .. }
+        | HostCall::MobKinematic { .. }
         | HostCall::MobMount { .. }
         | HostCall::PlayerPoseSet { .. }
         | HostCall::MobDismount { .. }

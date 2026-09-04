@@ -216,8 +216,97 @@ pub struct RawDataPatch {
     pub data: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Expand the `"extends"` rows of one layer's row array in place. A row
+/// naming an EARLIER row of the same layer (by `key_field`) starts as a copy
+/// of that row, and every field it states replaces the base's whole field —
+/// no deep merge, so a list or map the extending row writes is exactly what
+/// it gets. The row keeps its own key; `extends` itself is dropped before
+/// serde sees the row. Chains resolve in order (a base may itself have
+/// extended another). A base that is not an earlier row of the layer is an
+/// error: a template is a within-layer authoring convenience (sixteen rail
+/// forms as one full row and fifteen deltas), never a dependency on another
+/// layer's rows.
+fn expand_extends(
+    rows: &mut [serde_json::Value],
+    key_field: &str,
+) -> Result<(), serde_json::Error> {
+    use serde::de::Error;
+    for i in 0..rows.len() {
+        let Some(base_key) = rows[i].get("extends").cloned() else {
+            continue;
+        };
+        let Some(base_key) = base_key.as_str() else {
+            return Err(Error::custom(format!(
+                "row #{i}: `extends` must name a row of this layer"
+            )));
+        };
+        let base = rows[..i]
+            .iter()
+            .find(|r| r.get(key_field).and_then(|k| k.as_str()) == Some(base_key))
+            .and_then(|r| r.as_object().cloned())
+            .ok_or_else(|| {
+                Error::custom(format!(
+                    "row #{i} extends '{base_key}', which is not an earlier row of this layer"
+                ))
+            })?;
+        let Some(row) = rows[i].as_object() else {
+            return Err(Error::custom(format!("row #{i} is not an object")));
+        };
+        let mut merged = base;
+        merged.extend(
+            row.iter()
+                .filter(|(k, _)| *k != "extends")
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        rows[i] = serde_json::Value::Object(merged);
+    }
+    Ok(())
+}
+
+/// One layer's `array_key` rows as raw values, templates expanded.
+fn layer_rows(
+    file: &serde_json::Value,
+    array_key: &str,
+    key_field: &str,
+) -> Result<Vec<serde_json::Value>, serde_json::Error> {
+    use serde::de::Error;
+    let mut rows = file
+        .get(array_key)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| serde_json::Error::custom(format!("missing '{array_key}' array")))?
+        .clone();
+    expand_extends(&mut rows, key_field)?;
+    Ok(rows)
+}
+
+/// The typed rows of one catalog layer's `array_key` array, keyed by
+/// `key_field`, with row templates expanded (see `expand_extends`) — the
+/// parse every content catalog's layer goes through, so `extends` means the
+/// same thing in each.
+pub fn parse_rows<R: serde::de::DeserializeOwned>(
+    text: &str,
+    array_key: &str,
+    key_field: &str,
+) -> Result<Vec<R>, serde_json::Error> {
+    parse_rows_of(&serde_json::from_str(text)?, array_key, key_field)
+}
+
+/// [`parse_rows`] over an already-parsed layer, for a catalog that reads a
+/// side channel out of the same file (mobs.json `brain_extensions`).
+pub fn parse_rows_of<R: serde::de::DeserializeOwned>(
+    file: &serde_json::Value,
+    array_key: &str,
+    key_field: &str,
+) -> Result<Vec<R>, serde_json::Error> {
+    layer_rows(file, array_key, key_field)?
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect()
+}
+
 /// Split one catalog layer's row array (`{"<array_key>": [...]}`) into full
-/// rows and data patches: an element carrying a `"patch"` field parses as
+/// rows and data patches (templates expanded first, see [`parse_rows`]): an
+/// element carrying a `"patch"` field parses as
 /// [`RawDataPatch`] (pushed onto `patches`, layer order preserved), anything
 /// else as a full `R` row. Branching on the field FIRST keeps error messages
 /// precise (an untagged enum would collapse both failure modes into "no
@@ -225,20 +314,16 @@ pub struct RawDataPatch {
 pub fn parse_rows_with_patches<R: serde::de::DeserializeOwned>(
     text: &str,
     array_key: &str,
+    key_field: &str,
     patches: &mut Vec<RawDataPatch>,
 ) -> Result<Vec<R>, serde_json::Error> {
-    use serde::de::Error;
-    let file: serde_json::Value = serde_json::from_str(text)?;
-    let rows = file
-        .get(array_key)
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| serde_json::Error::custom(format!("missing '{array_key}' array")))?;
+    let rows = layer_rows(&serde_json::from_str(text)?, array_key, key_field)?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         if row.get("patch").is_some() {
-            patches.push(serde_json::from_value(row.clone())?);
+            patches.push(serde_json::from_value(row)?);
         } else {
-            out.push(serde_json::from_value(row.clone())?);
+            out.push(serde_json::from_value(row)?);
         }
     }
     Ok(out)
@@ -629,6 +714,9 @@ pub fn names() -> &'static ContentNames {
 
 /// Everything this module's relocated tests (in the engine crate) exercise.
 /// Test-support builds only; never a public api surface.
+#[cfg(test)]
+mod tests;
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_exports {
     #[allow(unused_imports)]

@@ -135,7 +135,7 @@ impl Instance {
             }
             self.knockback = Vec3::ZERO;
             self.stagger_timer = 0.0;
-            self.drive = None;
+            self.clear_drive();
             self.moving = false;
             self.idle_anim = None;
             return true;

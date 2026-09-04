@@ -7,3 +7,4 @@ description = "Foundation math and wire-format primitives: vectors, facings, sin
 
 [dependencies]
 glam = { version = "0.29", features = ["bytemuck", "serde"] }
+serde = { version = "1", features = ["derive"] }

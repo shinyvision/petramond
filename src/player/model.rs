@@ -15,6 +15,16 @@ const PLAYER_MODEL_PATH: &str = "models/entities/player.bbmodel";
 /// collision box, matching how the reference model overhangs its hitbox.
 pub const PLAYER_MODEL_SCALE: f32 = super::EYE / 28.0;
 
+/// The authored hip pivot of the player body (the `leftLeg`/`rightLeg` bone
+/// origins), in model pixels above the feet.
+pub const PLAYER_HIP_PX: f32 = 12.0;
+
+/// The hip pivot in blocks: the point of a rider that actually rests on a
+/// seat, and the point a seated body leans about. Both the seat projection
+/// (`mob::riding::seat_world_pos`) and the renderer's seated lean read THIS,
+/// so the seat and the body can never disagree about where the hips are.
+pub const PLAYER_HIP_HEIGHT: f32 = PLAYER_HIP_PX * PLAYER_MODEL_SCALE;
+
 static PLAYER_MODEL: LazyLock<Model> = LazyLock::new(|| {
     let Some((src, _)) = petramond_world::assets::read_bytes(PLAYER_MODEL_PATH) else {
         log::error!("player model '{PLAYER_MODEL_PATH}' not found in the asset roots");

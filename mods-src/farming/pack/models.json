@@ -5,7 +5,9 @@
       "model_file": "models/composter.bbmodel",
       "cells": [1, 1, 1],
       "orientation": "left_to_right",
-      "hidden_parts": ["compost_surface"]
+      "part_roles": {
+        "compost_surface": "hidden"
+      }
     },
     {
       "key": "farming:compost_1",
@@ -38,23 +40,30 @@
       "model_file": "models/trough.bbmodel",
       "cells": [2, 1, 1],
       "orientation": "left_to_right",
-      "hidden_parts": ["water", "wheat"]
+      "part_roles": {
+        "water": "hidden",
+        "wheat": "hidden"
+      }
     },
     {
       "key": "farming:trough_filled",
       "model_file": "models/trough.bbmodel",
       "cells": [2, 1, 1],
       "orientation": "left_to_right",
-      "hidden_parts": ["wheat"],
-      "collision_hidden_parts": ["water"]
+      "part_roles": {
+        "water": "pass_through",
+        "wheat": "hidden"
+      }
     },
     {
       "key": "farming:trough_wheat",
       "model_file": "models/trough.bbmodel",
       "cells": [2, 1, 1],
       "orientation": "left_to_right",
-      "hidden_parts": ["water"],
-      "collision_hidden_parts": ["wheat"]
+      "part_roles": {
+        "water": "hidden",
+        "wheat": "pass_through"
+      }
     }
   ]
 }

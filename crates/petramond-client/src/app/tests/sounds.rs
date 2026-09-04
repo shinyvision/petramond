@@ -134,6 +134,8 @@ fn mob_presentation(id: u64) -> MobPresentation {
         pos: Vec3::ZERO,
         prev_yaw: 0.0,
         yaw: 0.0,
+        prev_tilt: petramond_math::math::Tilt::LEVEL,
+        tilt: petramond_math::math::Tilt::LEVEL,
         prev_anim_time: 0.0,
         anim_time: 0.0,
         moving: false,

@@ -8,6 +8,7 @@ use crate::asset_cache::CompiledAsset;
 use crate::bbmodel::{euler_quat, Model};
 use crate::block::Aabb;
 
+use super::defs::{part_role, PartRole};
 use super::{all, def, posed_cube_bounds, BlockDisplay};
 
 /// One cube of a model: an axis-aligned box with a pivot + static rotation and a
@@ -17,8 +18,8 @@ use super::{all, def, posed_cube_bounds, BlockDisplay};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ModelCube {
     /// The authored Blockbench element name — preserved because names carry
-    /// per-ROW meaning: a `models.json` row may list `hidden_parts` by name
-    /// (the unlit oven hides its `fire` cube; see `BlockModel::hide_parts`).
+    /// per-ROW meaning: a `models.json` row gives cubes roles by name (the
+    /// unlit oven hides its `fire` cube; see `BlockModel::apply_part_roles`).
     pub name: String,
     pub from: Vec3,
     pub to: Vec3,
@@ -203,59 +204,41 @@ impl BlockModel {
         self.bounds = bounds;
     }
 
-    /// Re-bake collision from cubes matching `include_in_collision`, while
-    /// keeping the bounds over ALL cubes so selection/outlines still hug the
-    /// full visible model.
-    fn rebake_with_collision_filter(&mut self, include_in_collision: impl Fn(&ModelCube) -> bool) {
-        let (collision, _) = bake_collision_bounds(&self.cubes, include_in_collision);
-        self.collision = collision;
-    }
-
-    /// Drop the cubes named in `hidden` and re-bake collision + bounds from
-    /// what remains — the per-ROW `hidden_parts` filter, applied AFTER the
-    /// cache load (two `models.json` rows may share one authored file, e.g. a
-    /// machine's lit/unlit variants toggling a `fire` cube; the compiled
-    /// `.llblock` always holds the full model). A name matching no cube warns:
-    /// a typo must not silently show the part.
-    fn hide_parts(&mut self, hidden: &[&str], row_key: &str) {
-        for h in hidden {
-            if !self.cubes.iter().any(|c| c.name == *h) {
-                log::warn!("block model '{row_key}': hidden part '{h}' matches no cube");
-            }
-        }
-        self.cubes.retain(|c| !hidden.contains(&c.name.as_str()));
-        self.rebake();
-    }
-
-    /// Exclude the cubes named in `hidden` from collision while keeping them
-    /// visible and selectable — the per-ROW `collision_hidden_parts` filter,
-    /// applied after the cache load. A name matching no visible cube warns,
-    /// unless it was already removed by `hidden_parts`.
-    pub(in crate::block_model) fn hide_collision_parts(
+    /// Apply a row's per-cube roles on top of the cache's FULL model and bake
+    /// what the row ends up with: hidden cubes are dropped, collision comes
+    /// from the cubes that collide, and the bounds hug every cube still
+    /// drawn or aimed at, so the selection outlines the whole piece. Two
+    /// `models.json` rows may share one authored file (a machine's lit and
+    /// unlit twins toggling a `fire` cube, a rail's sixteen forms); the
+    /// compiled `.llblock` always holds the full model. A named cube
+    /// matching nothing warns: a typo must not silently show, collide with,
+    /// or un-aim a part.
+    pub(in crate::block_model) fn apply_part_roles(
         &mut self,
-        hidden: &[&str],
-        already_hidden: &[&str],
+        roles: &[(&str, PartRole)],
+        other: PartRole,
         row_key: &str,
     ) {
-        for h in hidden {
-            if !already_hidden.contains(h) && !self.cubes.iter().any(|c| c.name == *h) {
-                log::warn!("block model '{row_key}': collision-hidden part '{h}' matches no cube");
+        for (name, _) in roles {
+            if !self.cubes.iter().any(|c| c.name == *name) {
+                log::warn!("block model '{row_key}': part '{name}' matches no cube");
             }
         }
-        self.rebake_with_collision_filter(|c| !hidden.contains(&c.name.as_str()));
+        let role = |name: &str| part_role(roles, other, name);
+        self.cubes.retain(|c| role(&c.name) != PartRole::Hidden);
+        let (collision, bounds) = bake_collision_bounds(&self.cubes, |c| role(&c.name).collides());
+        self.collision = collision;
+        self.bounds = bounds;
     }
 
-    /// Translate the cubes named in `offsets` (authored pixels) and re-bake
-    /// collision + bounds — the per-ROW `part_offsets` posing, applied after
-    /// the cache load like [`hide_parts`](Self::hide_parts): rows sharing one
-    /// authored file place a part differently per variant (the composter's
-    /// fill surface rising with its stages). `origin` moves with the box so a
+    /// Translate the cubes named in `offsets` (authored pixels) — the
+    /// per-ROW `part_offsets` posing, applied after the cache load and
+    /// before the part roles bake the result: rows sharing one authored
+    /// file place a part differently per variant (the composter's fill
+    /// surface rising with its stages). `origin` moves with the box so a
     /// rotated part keeps rotating about its own pivot. A name matching no
-    /// cube warns (a typo must not silently leave the part unposed) — unless
-    /// the same row's `hidden` filter already removed it: hide runs first and
-    /// already validated the name, so offsetting a hidden part is a no-op,
-    /// not a typo.
-    fn offset_parts(&mut self, offsets: &[(&str, [f32; 3])], hidden: &[&str], row_key: &str) {
+    /// cube warns: a typo must not silently leave the part unposed.
+    fn offset_parts(&mut self, offsets: &[(&str, [f32; 3])], row_key: &str) {
         for (name, off) in offsets {
             let off = Vec3::from_array(*off);
             let mut hit = false;
@@ -265,11 +248,10 @@ impl BlockModel {
                 c.origin += off;
                 hit = true;
             }
-            if !hit && !hidden.contains(name) {
+            if !hit {
                 log::warn!("block model '{row_key}': offset part '{name}' matches no cube");
             }
         }
-        self.rebake();
     }
 }
 
@@ -288,7 +270,14 @@ fn bake_collision_bounds(
         let (mn, mx) = posed_cube_bounds(c);
         bmn = bmn.min(mn);
         bmx = bmx.max(mx);
-        if include_in_collision(c) && (mx - mn).min_element() > 1e-4 {
+        // An authored zero-thickness plane is decoration whatever its pose: a
+        // tilted one still has a solid-looking posed AABB (a sloped rail's
+        // plane spanned its whole cell), so the skip reads the authored
+        // extent, not the posed one.
+        if include_in_collision(c)
+            && !super::geometry::cube_is_flat_plane(c)
+            && (mx - mn).min_element() > 1e-4
+        {
             collision.push(Aabb {
                 min: mn.to_array(),
                 max: mx.to_array(),
@@ -319,8 +308,8 @@ impl CompiledAsset for BlockModel {
     /// collision/bounds; v2 no display; v3 predates the multi-texture sheet; v4 the
     /// display pivots; v5 dropped group rest poses; each bump rebuilds stale caches.)
     /// v7: the shared loader bakes element `inflate` into the cube box.
-    /// v8: cubes carry their authored element NAME (per-row `hidden_parts`
-    /// filtering needs it).
+    /// v8: cubes carry their authored element NAME (per-row part roles
+    /// need it).
     /// v9: cubes carry their per-face `cullface` directions.
     const FORMAT_VERSION: u32 = 12;
     const SUBDIR: &'static str = "models";
@@ -377,16 +366,14 @@ pub(super) static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
                     log::error!("block model precache failed for {k:?}: {e}");
                     BlockModel::empty()
                 });
-            // The cache always holds the FULL model; the row's part filter,
-            // collision filter, and part poses are applied on top so rows
-            // sharing one file stay one cache entry each (the cache is keyed by
-            // row key) with independent visibility/collision/pose.
-            if !d.hidden_parts.is_empty() {
-                model.hide_parts(d.hidden_parts, d.key);
+            // The cache always holds the FULL model; the row's part poses and
+            // part roles are applied on top so rows sharing one file stay one
+            // cache entry each (the cache is keyed by row key) with
+            // independent pose, visibility, collision and aim.
+            if !d.part_offsets.is_empty() {
+                model.offset_parts(d.part_offsets, d.key);
             }
-            if !d.collision_hidden_parts.is_empty() {
-                model.hide_collision_parts(d.collision_hidden_parts, d.hidden_parts, d.key);
-            }
+            model.apply_part_roles(d.part_roles, d.other_parts, d.key);
             // `parts` and `tint_parts` resolve by NAME at template-bake time,
             // where a name matching no cube produces an empty run and the bit
             // silently draws nothing. They carry a cross-file bit contract, so
@@ -397,9 +384,6 @@ pub(super) static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
                         log::warn!("block model '{}': {what} '{name}' matches no cube", d.key);
                     }
                 }
-            }
-            if !d.part_offsets.is_empty() {
-                model.offset_parts(d.part_offsets, d.hidden_parts, d.key);
             }
             model
         })

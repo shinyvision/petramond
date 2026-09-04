@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::player::PlayerId;
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Tilt, Vec3};
 
 use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 
@@ -66,6 +66,8 @@ pub struct MobStateRow {
     pub kind_id: u8,
     pub pos: Vec3,
     pub yaw: f32,
+    /// Body tilt inside the yaw; level for every body the engine moves itself.
+    pub tilt: Tilt,
     pub anim_time: f32,
     pub moving: bool,
     pub idle_anim: Option<u8>,

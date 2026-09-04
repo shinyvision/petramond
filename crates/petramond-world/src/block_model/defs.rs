@@ -89,9 +89,10 @@ pub enum CollisionSpec {
 /// How a placed model orients its authored X axis relative to the placing player
 /// (multi-cell models and `DIRECTIONAL_VIEW` blocks orient on placement — see
 /// `game::placement`).
-#[derive(Copy, Clone, Deserialize)]
+#[derive(Copy, Clone, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlacementOrientation {
+    #[default]
     /// Authored X spans LEFT-TO-RIGHT across the player's view; the authored front
     /// (−Z) faces the player. Furniture you stand in front of (the workbench).
     LeftToRight,
@@ -127,6 +128,55 @@ impl PlacementOrientation {
     }
 }
 
+/// What a row does with one authored cube of its `.bbmodel`. Rows sharing one
+/// file give its cubes different roles (a machine's lit and unlit twins, the
+/// sixteen forms of a rail) — the per-ROW filter over the cache's FULL model.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PartRole {
+    /// Drawn, collided with, picked by its opaque texels — the default.
+    #[default]
+    Visible,
+    /// Absent: not drawn, not collided with, not picked.
+    Hidden,
+    /// Drawn and picked, never collided with — detail a body passes through
+    /// (water in a trough, a flame, a curtain).
+    PassThrough,
+    /// Exists only to be AIMED at: never drawn, never collided with, casting
+    /// no self-AO and no contact shadow, but picked by its BOUNDS whatever
+    /// texel the ray would have met. The targeting box a piece whose art is
+    /// a cutout needs (a rail's plane is mostly the ground showing through
+    /// it; a chain's link is thinner than a crosshair): without it a player
+    /// aiming at the piece breaks the block behind the gaps. Author it as a
+    /// plain cube over the piece's silhouette.
+    Hitbox,
+}
+
+impl PartRole {
+    /// Whether the cube emits faces, casts self-AO and stamps contact shadow.
+    pub fn draws(self) -> bool {
+        matches!(self, PartRole::Visible | PartRole::PassThrough)
+    }
+
+    /// Whether the cube's posed box is a collision box.
+    pub fn collides(self) -> bool {
+        self == PartRole::Visible
+    }
+
+    /// Whether a ray crossing the cube's box picks it regardless of texels.
+    pub fn picks_by_bounds(self) -> bool {
+        self == PartRole::Hitbox
+    }
+}
+
+/// The role of the cube `name` under a row's name-sorted `roles` and its
+/// `other` role for every cube not named.
+pub fn part_role(roles: &[(&str, PartRole)], other: PartRole, name: &str) -> PartRole {
+    roles
+        .binary_search_by(|(n, _)| (*n).cmp(name))
+        .map_or(other, |i| roles[i].1)
+}
+
 /// The data row for one bbmodel block: its cache key, source file, cell footprint,
 /// and collision policy. The geometry/texture come from `model_file` (read through
 /// the asset roots, so a mod pack can override the art); this row carries only what
@@ -147,20 +197,20 @@ pub struct BlockModelDef {
     pub orientation: PlacementOrientation,
     /// How the authored geometry maps onto the footprint (see [`FitMode`]).
     pub fit: FitMode,
-    /// Authored cube NAMES this row hides (applied after the cache load, so
-    /// several rows can share one `.bbmodel` with different parts visible —
-    /// the lit/unlit machine pattern). Empty for most rows.
-    pub hidden_parts: &'static [&'static str],
-    /// Authored cube NAMES that stay VISIBLE but are excluded from collision.
-    /// Useful for decorative/detail cubes (water surface, glass pane, flame)
-    /// that should render and be selectable but not block movement. Applied
-    /// after the cache load like `hidden_parts`. Empty for most rows.
-    pub collision_hidden_parts: &'static [&'static str],
+    /// This row's [`PartRole`] per authored cube NAME (name-sorted), applied
+    /// after the cache load so rows sharing one `.bbmodel` show, collide with
+    /// and aim at different parts of it. Empty for most rows.
+    pub part_roles: &'static [(&'static str, PartRole)],
+    /// The role of every cube `part_roles` does not name: `visible` for an
+    /// ordinary row, `hidden` for a row that picks ONE piece out of a file
+    /// holding many (a rail form names its own cube and its hitbox, the
+    /// other fourteen pieces fall away).
+    pub other_parts: PartRole,
     /// Per-row translations of named cubes, in AUTHORED PIXELS (applied after
-    /// the cache load like `hidden_parts`) — how rows sharing one `.bbmodel`
-    /// pose a part differently per variant: a fill surface rising with the
-    /// composter's stages, a fluid level, a gauge needle. Name-sorted for
-    /// deterministic application; empty for most rows.
+    /// the cache load, before the part roles) — how rows sharing one
+    /// `.bbmodel` pose a part differently per variant: a fill surface rising
+    /// with the composter's stages, a fluid level, a gauge needle.
+    /// Name-sorted for deterministic application; empty for most rows.
     pub part_offsets: &'static [(&'static str, [f32; 3])],
     /// Authored cube NAMES that are OPTIONAL per placed instance, in a fixed
     /// order: bit `i` of a cell's parts mask shows `parts[i]`. Hidden unless
@@ -178,6 +228,13 @@ pub struct BlockModelDef {
     /// Authored cube NAMES the cell's `petramond:tint` multiplies. Empty (the
     /// usual case) means the row ignores cell tint entirely.
     pub tint_parts: &'static [&'static str],
+}
+
+impl BlockModelDef {
+    /// The role this row gives the authored cube `name`.
+    pub fn part_role(&self, name: &str) -> PartRole {
+        part_role(self.part_roles, self.other_parts, name)
+    }
 }
 
 /// How a model's authored geometry maps onto its footprint cell box.
@@ -214,14 +271,18 @@ struct RawModelDef {
     key: String,
     model_file: String,
     cells: [u8; 3],
+    /// Unread for a row without `directional_view` (such a block never
+    /// turns), so it defaults.
+    #[serde(default)]
     orientation: PlacementOrientation,
     #[serde(default)]
     fit: FitMode,
+    /// `{"cube_name": "<role>"}` (BTreeMap: the leaked slice stays
+    /// name-ordered for the binary search).
     #[serde(default)]
-    hidden_parts: Vec<String>,
-    /// Authored cube names excluded from collision while remaining visible.
+    part_roles: std::collections::BTreeMap<String, PartRole>,
     #[serde(default)]
-    collision_hidden_parts: Vec<String>,
+    other_parts: PartRole,
     /// `{"cube_name": [dx, dy, dz]}` in authored pixels (BTreeMap: the
     /// leaked slice stays name-ordered, deterministic).
     #[serde(default)]
@@ -232,11 +293,6 @@ struct RawModelDef {
     parts: Vec<String>,
     #[serde(default)]
     tint_parts: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct RawModelFile {
-    models: Vec<RawModelDef>,
 }
 
 /// The loaded, id-ordered model def table. Loads exactly once; a missing or
@@ -280,20 +336,15 @@ fn check_shared_part_lists(rows: &[BlockModelDef]) -> Result<(), String> {
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef>, String> {
     crate::registry::load_catalog(
         texts,
-        |text| serde_json::from_str::<RawModelFile>(text).map(|f| f.models),
+        |text| crate::registry::parse_rows::<RawModelDef>(text, "models", "key"),
         |r| &r.key,
         ENGINE_MODEL_KEYS,
         "block model",
         |r, id, names| {
-            let hidden_parts: Vec<&'static str> = r
-                .hidden_parts
+            let part_roles: Vec<(&'static str, PartRole)> = r
+                .part_roles
                 .into_iter()
-                .map(|p| &*Box::leak(p.into_boxed_str()))
-                .collect();
-            let collision_hidden_parts: Vec<&'static str> = r
-                .collision_hidden_parts
-                .into_iter()
-                .map(|p| &*Box::leak(p.into_boxed_str()))
+                .map(|(name, role)| (&*Box::leak(name.into_boxed_str()), role))
                 .collect();
             let part_offsets: Vec<(&'static str, [f32; 3])> = r
                 .part_offsets
@@ -340,8 +391,8 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 collision: CollisionSpec::FromModel,
                 orientation: r.orientation,
                 fit: r.fit,
-                hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
-                collision_hidden_parts: Box::leak(collision_hidden_parts.into_boxed_slice()),
+                part_roles: Box::leak(part_roles.into_boxed_slice()),
+                other_parts: r.other_parts,
                 part_offsets: Box::leak(part_offsets.into_boxed_slice()),
                 parts: Box::leak(parts.into_boxed_slice()),
                 tint_parts: Box::leak(tint_parts.into_boxed_slice()),

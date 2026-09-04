@@ -17,17 +17,17 @@
 //! and the per-tick orchestration.
 
 use crate::world::World;
-use petramond_math::math::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{voxel_at, IVec3, Tilt, Vec3};
 
 use super::anim::AnimKind;
 // Re-exported so `mob::instance::AnimLayer` consumers (the manager's
 // anim-state readback) keep their path while the type lives with the
 // animation impl.
 pub use super::anim::AnimLayer;
-use super::brain::{AiCtx, AttackIntent, Brain, TickInputs};
+use super::brain::{AiCtx, AttackIntent, BehaviorOutput, Brain, TickInputs};
 use super::confined;
 use super::damage::DeathState;
-use super::kinematics::{route_steering_supported, DriveIntent};
+use super::kinematics::{route_steering_supported, DriveIntent, KinematicPose};
 use super::model_meta::{IdleAnimMeta, Skeleton};
 use super::nav::Navigator;
 use super::path;
@@ -63,6 +63,10 @@ pub struct Instance {
     pub kind: Mob,
     pub pos: Vec3,
     pub yaw: f32,
+    /// Body tilt inside the yaw. Level for every body the engine moves
+    /// itself: only a kinematic placement (`set_kinematic`) tilts a body,
+    /// and one the engine takes back eases level again (`level_body`).
+    pub tilt: Tilt,
     /// Seconds into the currently-playing animation (walk or idle_*; free-running, the
     /// renderer wraps it). Reset to 0 when the active animation changes.
     pub anim_time: f32,
@@ -80,6 +84,7 @@ pub struct Instance {
     /// Previous-tick pose, for render interpolation.
     pub prev_pos: Vec3,
     pub prev_yaw: f32,
+    pub prev_tilt: Tilt,
     pub prev_anim_time: f32,
     pub prev_head_yaw: f32,
     pub prev_head_pitch: f32,
@@ -183,6 +188,11 @@ pub struct Instance {
     /// wish it must be re-set every tick — a disabled mod's vehicle simply
     /// stops. Never persisted.
     pub(super) drive: Option<DriveIntent>,
+    /// This tick's mod-authored pose (`set_kinematic`): while present the
+    /// whole locomotion step — brain, navigation, integration, collision —
+    /// is replaced by writing the pose as given. Like `drive` it is an
+    /// intent consumed by the tick, never a state.
+    pub(super) kinematic: Option<KinematicPose>,
     /// Once the mob has died it runs no AI and takes no further damage. The default
     /// death presentation is a ragdoll, but a custom feedback bundle may omit it.
     pub(super) death: DeathState,
@@ -224,6 +234,7 @@ impl Instance {
             kind,
             pos,
             yaw,
+            tilt: Tilt::LEVEL,
             anim_time: 0.0,
             moving: false,
             idle_anim: None,
@@ -233,6 +244,7 @@ impl Instance {
             blocklight: petramond_world::light::BlockLight6::DARK,
             prev_pos: pos,
             prev_yaw: yaw,
+            prev_tilt: Tilt::LEVEL,
             prev_anim_time: 0.0,
             prev_head_yaw: 0.0,
             prev_head_pitch: 0.0,
@@ -259,6 +271,7 @@ impl Instance {
             walk_launch: false,
             air_walk: false,
             drive: None,
+            kinematic: None,
             death: DeathState::Alive,
             anim_kind: AnimKind::Rest,
             attack: None,
@@ -451,6 +464,7 @@ impl Instance {
         let player_pos = anchor.pos;
         self.prev_pos = self.pos;
         self.prev_yaw = self.yaw;
+        self.prev_tilt = self.tilt;
         self.prev_anim_time = self.anim_time;
         self.prev_head_yaw = self.head_yaw;
         self.prev_head_pitch = self.head_pitch;
@@ -465,7 +479,7 @@ impl Instance {
         // advance only the physics ragdoll. No brain, no locomotion. The kill's red flash
         // still fades out over these first ticks.
         if self.death.is_dead() {
-            self.drive = None;
+            self.clear_drive();
             self.hurt_timer = (self.hurt_timer - dt).max(0.0);
             self.stagger_timer = (self.stagger_timer - dt).max(0.0);
             if matches!(self.death, DeathState::Ragdoll(_)) {
@@ -517,6 +531,21 @@ impl Instance {
         } else {
             self.distance_despawned = false;
         }
+
+        // A mod-authored pose replaces the whole locomotion step: no
+        // navigation, no brain locomotion, no integration — the body is
+        // written where the mod put it. Expression (named animation layers)
+        // still advances, so a driven vehicle's wheels keep turning. Returns
+        // no motion proposal: the solid-peer solve then sees a stationary
+        // body at its new pose, and fall bookkeeping is re-anchored inside
+        // the placement itself.
+        if let Some(pose) = self.kinematic.take() {
+            self.drive = None;
+            self.place_kinematic(dt, pose);
+            self.apply_expression(dt, d, named_anims, &BehaviorOutput::default());
+            return None;
+        }
+        self.level_body(dt);
 
         // Navigation's cell probes share one collision-derived classification:
         // `solid` = cells whose boxes fill the whole cell, `support` = cells

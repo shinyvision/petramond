@@ -659,6 +659,7 @@ mod tests {
             kind_id,
             pos: petramond_math::math::Vec3::ZERO,
             yaw: 0.0,
+            tilt: petramond_math::math::Tilt::LEVEL,
             anim_time: 0.0,
             moving: false,
             idle_anim: None,

@@ -247,6 +247,7 @@ mod tests {
             harvest_tier: 1,
             preferred_tool: preferred.map(|s| s.to_owned()),
             item: item.map(ItemId),
+            collision: vec![([0.0; 3], [1.0; 3])],
         }
     }
 

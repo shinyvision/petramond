@@ -472,6 +472,8 @@ mod tests {
             health: 4.0,
             id: 1,
             yaw: std::f32::consts::FRAC_PI_2, // facing -X
+            pitch: 0.0,
+            roll: 0.0,
             vel: [0.0; 3],
             on_ground: true,
             moving: false,

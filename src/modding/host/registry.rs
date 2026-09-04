@@ -158,6 +158,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                                 (item != petramond_world::item::ItemType::Air)
                                     .then_some(mod_api::ItemId(item.id()))
                             },
+                            collision: b.collision_boxes().iter().map(|a| (a.min, a.max)).collect(),
                         })
                     }),
             )

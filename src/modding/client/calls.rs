@@ -195,6 +195,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobAnimSeek { .. }
         | HostCall::MobAnimState { .. }
         | HostCall::MobDrive { .. }
+        | HostCall::MobKinematic { .. }
         | HostCall::MobMount { .. }
         | HostCall::PlayerPoseSet { .. }
         | HostCall::MobDismount { .. }

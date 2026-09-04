@@ -19,7 +19,8 @@
 use std::collections::BTreeMap;
 
 use crate::player;
-use petramond_math::math::Vec3;
+use crate::player::model::PLAYER_HIP_HEIGHT;
+use petramond_math::math::{Tilt, Vec3};
 
 const DISMOUNT_CLEARANCE: f32 = 0.45;
 
@@ -54,13 +55,18 @@ pub struct Mount {
 }
 
 /// Rotate a mount-local seat offset (`x` right, `y` up, `z` facing) into world
-/// space. Both authoritative slaving and client presentation use this exact
-/// transform for mob seats.
-pub fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, seat: [f32; 3]) -> Vec3 {
-    let (sy, cy) = mob_yaw.sin_cos();
-    let facing = Vec3::new(-sy, 0.0, -cy);
-    let right = Vec3::new(cy, 0.0, -sy);
-    mob_pos + right * seat[0] + Vec3::new(0.0, seat[1], 0.0) + facing * seat[2]
+/// space through the mount's whole body frame (yaw, then the tilt inside it —
+/// the same frame the model renders with, so a seat stays in the cart when
+/// the cart noses up a slope). A seat offset is declared as the rider's
+/// ANCHOR (its feet), but the point that rests on a seat is the rider's HIP
+/// (`PLAYER_HIP_HEIGHT` above the anchor): the hip is what the tilted frame
+/// carries, and the anchor hangs straight below it — rotating the anchor
+/// itself would swing the upright body's hips toward the nose. Both
+/// authoritative slaving and client presentation use this exact transform.
+pub fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, mob_tilt: Tilt, seat: [f32; 3]) -> Vec3 {
+    // The seat's `z` runs along the facing, which is the body frame's -Z.
+    let hip = Vec3::new(seat[0], seat[1] + PLAYER_HIP_HEIGHT, -seat[2]);
+    mob_pos + mob_tilt.body_frame(mob_yaw).transform_vector3(hip) - Vec3::Y * PLAYER_HIP_HEIGHT
 }
 
 /// Pick the first collision-free dismount candidate beside `base` (right,
@@ -267,20 +273,67 @@ mod tests {
     #[test]
     fn seat_offsets_rotate_with_the_mob_facing() {
         let pos = Vec3::new(10.0, 5.0, 10.0);
-        let bow = seat_world_pos(pos, 0.0, [0.0, 0.25, 1.0]);
+        let bow = seat_world_pos(pos, 0.0, Tilt::LEVEL, [0.0, 0.25, 1.0]);
         assert!(
             (bow - Vec3::new(10.0, 5.25, 9.0)).length() < 1e-5,
             "{bow:?}"
         );
-        let bow = seat_world_pos(pos, std::f32::consts::PI, [0.0, 0.25, 1.0]);
+        let bow = seat_world_pos(pos, std::f32::consts::PI, Tilt::LEVEL, [0.0, 0.25, 1.0]);
         assert!(
             (bow - Vec3::new(10.0, 5.25, 11.0)).length() < 1e-4,
             "{bow:?}"
         );
-        let side = seat_world_pos(pos, std::f32::consts::FRAC_PI_2, [1.0, 0.0, 0.0]);
+        let side = seat_world_pos(
+            pos,
+            std::f32::consts::FRAC_PI_2,
+            Tilt::LEVEL,
+            [1.0, 0.0, 0.0],
+        );
         assert!(
             (side - Vec3::new(10.0, 5.0, 9.0)).length() < 1e-4,
             "{side:?}"
+        );
+    }
+
+    /// A tilted body carries its seats with it AT THE HIPS: nose up by a
+    /// right angle, a rider whose hips sat ahead of the origin now has them
+    /// straight above it, hips that sat above the origin have swung back
+    /// behind it, and the anchor hangs one hip height below either. Rolled
+    /// right side up by a right angle, hips out to the right are straight
+    /// above the origin.
+    #[test]
+    fn seat_offsets_follow_the_body_tilt_at_the_hips() {
+        let pos = Vec3::new(10.0, 5.0, 10.0);
+        let nose_up = Tilt::new(std::f32::consts::FRAC_PI_2, 0.0);
+        let hips = |tilt: Tilt, seat: [f32; 3]| {
+            seat_world_pos(pos, 0.0, tilt, seat) + Vec3::Y * PLAYER_HIP_HEIGHT
+        };
+        let ahead = hips(nose_up, [0.0, -PLAYER_HIP_HEIGHT, 1.0]);
+        assert!(
+            (ahead - Vec3::new(10.0, 6.0, 10.0)).length() < 1e-4,
+            "{ahead:?}"
+        );
+        let above = hips(nose_up, [0.0, 1.0 - PLAYER_HIP_HEIGHT, 0.0]);
+        assert!(
+            (above - Vec3::new(10.0, 5.0, 11.0)).length() < 1e-4,
+            "{above:?}"
+        );
+        let side = hips(nose_up, [1.0, -PLAYER_HIP_HEIGHT, 0.0]);
+        assert!(
+            (side - Vec3::new(11.0, 5.0, 10.0)).length() < 1e-4,
+            "{side:?}"
+        );
+        let right_up = Tilt::new(0.0, std::f32::consts::FRAC_PI_2);
+        let rolled = hips(right_up, [1.0, -PLAYER_HIP_HEIGHT, 0.0]);
+        assert!(
+            (rolled - Vec3::new(10.0, 6.0, 10.0)).length() < 1e-4,
+            "{rolled:?}"
+        );
+        // Level, the hip correction cancels: the seat IS the anchor.
+        let level = seat_world_pos(pos, 0.0, Tilt::LEVEL, [0.0, -0.35, 0.0]);
+        assert!(
+            (level - Vec3::new(10.0, 4.65, 10.0)).length() < 1e-5,
+            "{level:?}"
         );
     }
 

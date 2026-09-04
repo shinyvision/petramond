@@ -44,7 +44,7 @@ impl MachineSpec for MillerSpec {
     const KIND_KEY: &'static str = "kitchen:miller";
     const BLOCK_KEY: &'static str = "kitchen:miller";
     /// The output-holding variant: same authored model with the `flour` cube
-    /// visible (the empty row lists it in `hidden_parts`).
+    /// visible (the empty row's `part_roles` hides it).
     const VARIANT_KEYS: &'static [&'static str] = &["kitchen:miller_full"];
     const ANCHORS_KEY: &'static str = "kitchen:millers";
     const STATE_KEY: &'static str = STATE_KEY;

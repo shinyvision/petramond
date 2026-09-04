@@ -374,9 +374,14 @@ impl ModelInstance {
         // the production alpha test (a cutout texel does not cast). Facing-
         // independent — occlusion is intrinsic to the geometry — so one bake
         // serves all four oriented templates plus the item/icon bakes.
+        // A cube whose role does not draw (a hitbox) is transparent to every
+        // occlusion and draw question: it casts no self-AO, stamps no contact
+        // shadow, and emits no face.
+        let draws = |cube: &ModelCube| d.part_role(&cube.name).draws();
         let face_ao = bake_face_ao(&cubes, |cube, face, mn, mx, hit| {
-            face_texel_opaque(cube, face, mn, mx, hit, at)
+            draws(cube) && face_texel_opaque(cube, face, mn, mx, hit, at)
         });
+        let contact_casters: Vec<ModelCube> = cubes.iter().filter(|c| draws(c)).cloned().collect();
         // Per-face alpha classification of the atlas rect: `face_blend` picks the
         // stream route (any partial-alpha texel 1..=254 → alpha-blended instead of
         // opaque-cutout); `face_draw` drops faces whose rect is FULLY transparent —
@@ -392,7 +397,7 @@ impl ModelInstance {
             for (slot, f) in c.faces.iter().enumerate() {
                 if let Some(uv) = f {
                     let (visible, b) = at.rect_alpha_class(uv.uv);
-                    draw[slot] = visible;
+                    draw[slot] = visible && draws(c);
                     blend[slot] = b;
                 }
             }
@@ -424,7 +429,7 @@ impl ModelInstance {
         for &bi in &bottoms {
             let o = cells[bi].offset;
             let cell = [o[0] as i32, o[2] as i32];
-            if let Some(field) = bake_contact_field(&cubes, cell[0], cell[1]) {
+            if let Some(field) = bake_contact_field(&contact_casters, cell[0], cell[1]) {
                 authored_contact.push(AuthoredContact {
                     owner: bi,
                     cell,
@@ -440,7 +445,7 @@ impl ModelInstance {
                 if inside {
                     continue;
                 }
-                let Some(field) = bake_contact_field(&cubes, cx, cz) else {
+                let Some(field) = bake_contact_field(&contact_casters, cx, cz) else {
                     continue;
                 };
                 let owner = bottoms

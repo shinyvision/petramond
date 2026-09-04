@@ -956,3 +956,92 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         "an ungated launch from standstill still applies"
     );
 }
+
+#[test]
+fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
+    // A mod-authored pose replaces the tick's motion wholesale: the body is
+    // exactly where it was put, tilted as it was told, and the placement's
+    // implied velocity survives it — so a body the mod stops placing keeps
+    // that velocity into the engine's own integration instead of being
+    // zeroed as a standing body's would be.
+    let mut cart = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let dt = 1.0 / 20.0;
+    assert!(cart.set_kinematic(KinematicPose {
+        pos: Vec3::new(0.9, 0.0, 0.5),
+        yaw: 1.0,
+        tilt: Tilt::new(0.4, -0.5),
+    }));
+    let pose = cart.kinematic.take().expect("latched");
+    cart.place_kinematic(dt, pose);
+    assert_eq!(cart.pos, Vec3::new(0.9, 0.0, 0.5));
+    assert_eq!((cart.yaw, cart.tilt), (1.0, Tilt::new(0.4, -0.5)));
+    assert!(
+        (cart.vel.x - 0.4 / dt).abs() < 1e-3,
+        "implied velocity: {}",
+        cart.vel
+    );
+    assert!(!cart.moving, "authored motion is not a walk");
+    assert!(
+        cart.take_fall_distance().is_none(),
+        "re-anchored: no fall latched"
+    );
+
+    // Released: the next ordinary integration — steering gated exactly as
+    // the tick gates it, off the airborne flag the placement left — carries
+    // the implied velocity instead of parking the body like a standing one.
+    let x = cart.pos.x;
+    let can_steer = route_steering_supported(cart.on_ground, false, cart.vel.y);
+    assert!(!can_steer, "a placed body is left airborne");
+    let dry = |_: IVec3| false;
+    cart.integrate_with_flow(
+        dt,
+        owl_def(),
+        Vec3::ZERO,
+        false,
+        can_steer,
+        &boxes_of(&floor_at_zero),
+        &[],
+        &[],
+        &floor_at_zero,
+        &dry,
+        &|_| None,
+        &|_| Vec3::ZERO,
+    );
+    assert!(cart.pos.x > x + 0.3, "the body flew on: {}", cart.pos.x);
+    assert!(
+        cart.kinematic.is_none(),
+        "a pose is consumed by the tick it was issued for"
+    );
+    // Back in the engine's hands the body settles level over a few ticks —
+    // eased, never snapped, and never left lying tilted where it landed.
+    let before = cart.tilt;
+    cart.level_body(dt);
+    assert!(
+        cart.tilt.pitch < before.pitch && cart.tilt.pitch > 0.0,
+        "eases: {:?}",
+        cart.tilt
+    );
+    assert!(cart.tilt.roll > before.roll && cart.tilt.roll < 0.0);
+    for _ in 0..20 {
+        cart.level_body(dt);
+    }
+    assert!(cart.tilt.is_level(), "settles: {:?}", cart.tilt);
+}
+
+#[test]
+fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
+    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    assert!(owl.set_kinematic(KinematicPose {
+        pos: Vec3::ZERO,
+        yaw: 0.0,
+        tilt: Tilt::LEVEL
+    }));
+    owl.clear_drive();
+    assert!(owl.kinematic.is_none(), "a frozen tick discards the pose");
+    owl.damage(100.0, None, true, None, &default_feedback());
+    assert!(!owl.set_kinematic(KinematicPose {
+        pos: Vec3::ZERO,
+        yaw: 0.0,
+        tilt: Tilt::LEVEL
+    }));
+}

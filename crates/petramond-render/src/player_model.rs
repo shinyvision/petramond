@@ -25,7 +25,7 @@ use super::lighting::{fold_tint, DynLight, LightEnv};
 use super::mob_model::{bake_model_cubes, hurt_tint};
 use super::vanilla_swing::vanilla_swing;
 use super::PlayerRenderInstance;
-use petramond::player::model::PLAYER_MODEL_SCALE;
+use petramond::player::model::{PLAYER_HIP_HEIGHT, PLAYER_MODEL_SCALE};
 use petramond_world::bbmodel::Model;
 
 /// The grip point in model pixels, in the visual-right arm's rest frame: centred
@@ -265,9 +265,20 @@ pub(super) fn build_player_body(
         }
     }
 
-    // Authored front is −Z; engine yaw 0 faces +Z — hence the π.
+    // Authored front is −Z; engine yaw 0 faces +Z — hence the π. A seated
+    // body leans with its mount: the whole rig tilts about the HIP pivot
+    // (the point the seat carries — see `mob::riding::seat_world_pos`), so
+    // the legs keep their authored place in the cart's own frame on a slope
+    // instead of an upright body's knees driving through the tilted floor.
+    let lean = if inst.seated && !inst.seat_tilt.is_level() {
+        let hip = Vec3::new(0.0, PLAYER_HIP_HEIGHT, 0.0);
+        Mat4::from_translation(hip) * inst.seat_tilt.rotation() * Mat4::from_translation(-hip)
+    } else {
+        Mat4::IDENTITY
+    };
     let global = Mat4::from_translation(inst.pos)
         * Mat4::from_rotation_y(inst.body_yaw + std::f32::consts::PI)
+        * lean
         * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
     bake_cubes(model, &pose, global, inst, env, verts, indices)
 }
@@ -535,6 +546,7 @@ mod tests {
             sneak_weight: 0.0,
             sleeping: false,
             seated: false,
+            seat_tilt: petramond_math::math::Tilt::LEVEL,
             hurt: 0.0,
             skylight: 63,
             blocklight: petramond_world::light::BlockLight6::DARK,

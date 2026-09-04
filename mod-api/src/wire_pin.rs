@@ -416,6 +416,9 @@ fn samples() -> Samples {
         player: PlayerId(3), main: Some("m:i".into()), off: None,
     });
     s.pin("HostCall::PlayerInventory", &HostCall::PlayerInventory { player: PlayerId(3) });
+    s.pin("HostCall::MobKinematic", &HostCall::MobKinematic {
+        mob_id: 7, pos: [1.0, 2.0, 3.0], yaw: 0.5, pitch: -0.25, roll: 0.125,
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -427,7 +430,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Light", &HostRet::Light(Some(LightData { combined: 1, sky: 2, block: 3, block_rgb: [3, 2, 1] })));
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
-        yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
+        yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
         half_width: 0.4, height: 1.2, half_length: 0.4,
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
@@ -517,7 +520,7 @@ fn samples() -> Samples {
     s.pin("HostRet::FoundBlocks", &HostRet::FoundBlocks(Some(vec![[1, -2, 3]])));
     s.pin("HostRet::Mob", &HostRet::Mob(Some(MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
-        yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
+        yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
         half_width: 0.4, height: 1.2, half_length: 0.4,
     })));
     s.pin("HostRet::ItemEntity", &HostRet::ItemEntity(Some(ItemEntityData {
@@ -539,6 +542,7 @@ fn samples() -> Samples {
     s.pin("HostRet::BlockInfo", &HostRet::BlockInfo(Some(Box::new(BlockInfoData {
         material: "stone".into(), hardness: 1.5, harvest_tier: 1,
         preferred_tool: Some("pickaxe".into()), item: Some(ItemId(300)),
+        collision: vec![([0.0, 0.0, 0.0], [1.0, 0.5, 1.0])],
     }))));
     s.pin("HostRet::HeldStack", &HostRet::HeldStack(Some(ItemStackData {
         item: "m:i".into(), count: 1, data: vec![("m:k".into(), vec![7])],
@@ -1024,6 +1028,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::TakeItem", "980102036d3a69030101036d3a6b0107"),
     ("HostCall::SetPlayerHeldDisplay", "99010301036d3a6900"),
     ("HostCall::PlayerInventory", "9a0103"),
+    ("HostCall::MobKinematic", "9b01070000803f00000040000040400000003f000080be0000003e"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -1031,7 +1036,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203030201"),
-    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f0000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
+    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
     ("HostRet::Player", "0801010000803f00000040000040400000000000000000000000000000003f0000803e28010001010200000003010000c03f00000040000060c0010100009a99993e6666e63f295ccf3f"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
@@ -1063,7 +1068,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTags", "240101036d3a6b0001"),
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
-    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f0000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
+    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
     ("HostRet::ItemEntity", "280109036d3a690101036d3a6b01070100000000803f00000040000040400000000000000000000080c001"),
     ("HostRet::BytesMany", "29020102010200"),
     ("HostRet::ItemDataRows", "2a0103027b7d"),
@@ -1074,7 +1079,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Points", "2f01010000c03f0000204000006040"),
     ("HostRet::Bools", "30020100"),
     ("HostRet::GuiViewers", "310102036d3a6701020406"),
-    ("HostRet::BlockInfo", "32010573746f6e650000c03f0101077069636b61786501ac02"),
+    ("HostRet::BlockInfo", "32010573746f6e650000c03f0101077069636b61786501ac02010000000000000000000000000000803f0000003f0000803f"),
     ("HostRet::HeldStack", "3301036d3a690101036d3a6b0107"),
     ("HostRet::Raycast", "340102040600020000002040"),
     ("GuestCall::TickSystem", "0001"),

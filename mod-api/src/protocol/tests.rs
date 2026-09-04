@@ -497,6 +497,8 @@ fn abi_roundtrip_host_and_guest_calls() {
         health: 4.0,
         id: 123,
         yaw: 0.5,
+        pitch: 0.0,
+        roll: 0.0,
         vel: [1.0, 0.0, -2.0],
         on_ground: true,
         moving: false,

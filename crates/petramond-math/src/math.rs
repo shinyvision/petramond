@@ -2,6 +2,65 @@
 
 pub use glam::{IVec3, Mat4, Vec3, Vec4};
 
+/// A body's tilt off level, applied INSIDE its yaw: `pitch` about the
+/// lateral axis (radians, positive = nose up) and `roll` about the facing
+/// axis (radians, positive = right side up). A body's frame is
+/// `Ry(yaw) · Rx(pitch) · Rz(roll)` everywhere it is rendered, seated on, or
+/// replicated. Every body the engine moves itself is [`LEVEL`](Self::LEVEL);
+/// a constrained body (a cart on a slope, a boat on a swell) is given one by
+/// whoever constrains it.
+#[derive(Copy, Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Tilt {
+    pub pitch: f32,
+    pub roll: f32,
+}
+
+impl Tilt {
+    pub const LEVEL: Tilt = Tilt {
+        pitch: 0.0,
+        roll: 0.0,
+    };
+
+    pub const fn new(pitch: f32, roll: f32) -> Tilt {
+        Tilt { pitch, roll }
+    }
+
+    pub fn is_level(self) -> bool {
+        self == Tilt::LEVEL
+    }
+
+    pub fn is_finite(self) -> bool {
+        self.pitch.is_finite() && self.roll.is_finite()
+    }
+
+    /// Straight interpolation: tilts are small, bounded angles, never wrapped.
+    pub fn lerp(self, to: Tilt, t: f32) -> Tilt {
+        Tilt {
+            pitch: self.pitch + (to.pitch - self.pitch) * t,
+            roll: self.roll + (to.roll - self.roll) * t,
+        }
+    }
+
+    /// Ease toward level by at most `max_step` radians on each axis.
+    pub fn toward_level(self, max_step: f32) -> Tilt {
+        Tilt {
+            pitch: self.pitch - self.pitch.clamp(-max_step, max_step),
+            roll: self.roll - self.roll.clamp(-max_step, max_step),
+        }
+    }
+
+    /// The rotation inside the yaw: `Rx(pitch) · Rz(roll)`.
+    pub fn rotation(self) -> Mat4 {
+        Mat4::from_rotation_x(self.pitch) * Mat4::from_rotation_z(self.roll)
+    }
+
+    /// The whole body frame for a mob-convention `yaw` (`0` faces `-Z`):
+    /// `Ry(yaw) · Rx(pitch) · Rz(roll)`.
+    pub fn body_frame(self, yaw: f32) -> Mat4 {
+        Mat4::from_rotation_y(yaw) * self.rotation()
+    }
+}
+
 /// The six axis-aligned face-neighbour offsets in canonical face order
 /// (`+X, -X, +Y, -Y, +Z, -Z`) — the one shared cardinal-direction table.
 /// `mesh::Face::ALL` lists faces in this same order and `Face::dir` indexes

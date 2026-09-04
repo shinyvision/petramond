@@ -9,9 +9,9 @@
         2
       ],
       "orientation": "left_to_right",
-      "hidden_parts": [
-        "fire"
-      ]
+      "part_roles": {
+        "fire": "hidden"
+      }
     },
     {
       "key": "kitchen:oven_lit",
@@ -32,9 +32,9 @@
         1
       ],
       "orientation": "left_to_right",
-      "hidden_parts": [
-        "flour"
-      ],
+      "part_roles": {
+        "flour": "hidden"
+      },
       "fit": "native"
     },
     {

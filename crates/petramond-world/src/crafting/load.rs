@@ -222,7 +222,7 @@ fn parse_for(
     // parse, exactly like items/blocks; they register nothing and are exempt
     // from the owner gate (cross-namespace attach is the point).
     let rows: Vec<RawRecipe> =
-        match crate::registry::parse_rows_with_patches(text, "recipes", patches) {
+        match crate::registry::parse_rows_with_patches(text, "recipes", "recipe", patches) {
             Ok(rows) => rows,
             Err(error) => {
                 log::error!("recipes.json is not valid JSON: {error}");

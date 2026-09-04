@@ -95,6 +95,16 @@ pub struct MobSnapshot {
     ///
     /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
     pub yaw: f32,
+    /// Body pitch, radians about the lateral axis inside the yaw, positive =
+    /// nose up. `0` for every body the engine moves itself; a body a mod
+    /// authors through [`HostCall::MobKinematic`] reads back what it was
+    /// given, and a released body eases back to level.
+    ///
+    /// [`HostCall::MobKinematic`]: crate::HostCall::MobKinematic
+    pub pitch: f32,
+    /// Body roll, radians about the facing axis inside the yaw and pitch,
+    /// positive = right side up. Level and authored exactly like `pitch`.
+    pub roll: f32,
     /// Current velocity (m/s). Read-only; steer through
     /// [`HostCall::MobDrive`].
     ///
@@ -873,6 +883,13 @@ pub struct BlockInfoData {
     /// [`ItemInfoData::block`]; lowest item id wins when several link), or
     /// `None` when no item places it. Resolve a name via `ItemNames`.
     pub item: Option<ItemId>,
+    /// The row's default form's collision boxes as cell-local `(min, max)`
+    /// corners in `0..1` — what a body walks into: empty for air, plants,
+    /// torches, rails and anything else walked through; one full box for a
+    /// cube; the real shape for a slab, a stair, a machine. The registry-time
+    /// answer to "what in that cell is a wall", so a rule can sweep its own
+    /// body against it without a world read.
+    pub collision: Vec<([f32; 3], [f32; 3])>,
 }
 
 /// An item's edible row data (see [`ItemInfoData::food`]).

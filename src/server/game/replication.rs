@@ -24,6 +24,7 @@ impl ServerGame {
                 kind_id: m.kind.0,
                 pos: m.pos,
                 yaw: m.yaw,
+                tilt: m.tilt,
                 anim_time: m.anim_time,
                 moving: m.moving,
                 idle_anim: m.idle_anim,

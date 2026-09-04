@@ -51,6 +51,7 @@ pub use scene::Scene;
 pub use item_cube::SOLID_COLOR_FLAG;
 
 use glam::{Quat, Vec3};
+use petramond_math::math::Tilt;
 use petramond_world::block_state::HeldBlockState;
 use petramond_world::item::ItemType;
 use std::sync::Arc;
@@ -370,6 +371,9 @@ pub struct MobRenderInstance {
     pub pos: Vec3,
     /// Facing yaw in radians (rotation about Y).
     pub yaw: f32,
+    /// Body tilt applied inside the yaw; level for every body the engine
+    /// moves itself.
+    pub tilt: Tilt,
     /// Seconds into the active animation (walk or idle_*); used unless idle+resting.
     pub anim_time: f32,
     /// Whether the mob is walking this frame: plays the walk animation if so.
@@ -481,6 +485,10 @@ pub struct PlayerRenderInstance {
     /// from the knees, anchored at `pos` (the seat), walk/sneak layers rest;
     /// head-look and the arm swing stay live so a rider can look and punch.
     pub seated: bool,
+    /// The mount's body tilt: a seated body leans with its mount about the
+    /// hips, so a rider sits IN a cart on a slope instead of upright through
+    /// its front. Ignored unless `seated`.
+    pub seat_tilt: Tilt,
     /// Hurt-flash intensity `[0, 1]` — tints the body red like a hurt mob.
     pub hurt: f32,
     /// 6-bit two-channel light sampled at the player.

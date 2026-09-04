@@ -8,7 +8,8 @@ use mod_api::{
 
 use crate::entity::DroppedItem;
 use crate::events::{DamageSource, DeferredAction, PostEvent, SimCtx};
-use petramond_math::math::Vec3;
+use petramond_math::math::{Tilt, Vec3};
+use petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE;
 use petramond_world::item::{ItemStack, ItemType};
 
 use super::guards::{finite3, item_by_name, live_mob, sim_mutate, sim_mutating_query, sim_query};
@@ -16,8 +17,7 @@ use super::intern_mod_id;
 
 /// Maximum horizontal speed accepted from `MobDrive`, derived from the
 /// collision resolver's bounded external sweep and the fixed simulation tick.
-const MAX_MOB_DRIVE_SPEED: f32 =
-    petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::events::tick::TICK_DT;
+const MAX_MOB_DRIVE_SPEED: f32 = MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::events::tick::TICK_DT;
 
 fn anim_name_guard(call: &str, anim: &str) -> Result<(), HostRet> {
     if anim.len() <= MAX_MOB_ANIM_NAME_BYTES {
@@ -51,6 +51,8 @@ pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapsho
         health: m.health(),
         id: m.id(),
         yaw: m.yaw,
+        pitch: m.tilt.pitch,
+        roll: m.tilt.roll,
         vel: m.vel().to_array(),
         on_ground: m.on_ground(),
         moving: m.moving,
@@ -127,7 +129,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         } => match finite3(pos, "SpawnMob.pos") {
             Err(e) => e,
             Ok(_) if !yaw.is_finite() => HostRet::Error("SpawnMob.yaw must be finite".into()),
-            Ok(pos) => sim_query(|ctx| {
+            Ok(pos) => sim_mutating_query(|ctx| {
                 let Some(kind) = crate::mob::by_key(&key) else {
                     log::warn!("[mod {mod_id}] SpawnMob: unknown species '{key}'");
                     return HostRet::SpawnedMob(None);
@@ -212,7 +214,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
-        HostCall::DespawnMob { mob_id } => sim_query(|ctx| {
+        HostCall::DespawnMob { mob_id } => sim_mutating_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Bool(false);
             };
@@ -224,7 +226,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             mob_id,
             key,
             active,
-        } => sim_query(|ctx| {
+        } => sim_mutating_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Bool(false);
             };
@@ -237,7 +239,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             active,
         } => match anim_name_guard("MobAnimSet", &anim) {
             Err(e) => e,
-            Ok(()) => sim_query(|ctx| {
+            Ok(()) => sim_mutating_query(|ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -253,7 +255,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             {
                 return e;
             }
-            sim_query(move |ctx| {
+            sim_mutating_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -279,7 +281,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             {
                 return e;
             }
-            sim_query(move |ctx| {
+            sim_mutating_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -322,7 +324,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     "MobDrive: vertical speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
                 ));
             }
-            sim_query(move |ctx| {
+            sim_mutating_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -335,11 +337,50 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
+        // Kinematic placement for this tick (see `Instance::set_kinematic`):
+        // the mod authored the pose, the engine presents it.
+        HostCall::MobKinematic {
+            mob_id,
+            pos,
+            yaw,
+            pitch,
+            roll,
+        } => {
+            let tilt = Tilt::new(pitch, roll);
+            if !pos.iter().all(|c| c.is_finite()) || !yaw.is_finite() || !tilt.is_finite() {
+                return HostRet::Error("MobKinematic: non-finite pose".into());
+            }
+            if pitch.abs() > std::f32::consts::FRAC_PI_2 {
+                return HostRet::Error("MobKinematic: pitch outside ±π/2".into());
+            }
+            if roll.abs() > std::f32::consts::PI {
+                return HostRet::Error("MobKinematic: roll outside ±π".into());
+            }
+            sim_mutating_query(move |ctx| {
+                let Some(index) = live_mob(ctx, mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                let pos = Vec3::from(pos);
+                match ctx
+                    .world
+                    .mobs_mut()
+                    .set_mob_kinematic(index, pos, yaw, tilt)
+                {
+                    Ok(placed) => HostRet::Bool(placed),
+                    Err(distance) => HostRet::Error(format!(
+                        "MobKinematic: placement {distance} blocks away exceeds the \
+                         {MAX_SAFE_EXTERNAL_SWEEP_DISTANCE}-block sweep bound"
+                    )),
+                }
+            })
+        }
         HostCall::MobMount {
             mob_id,
             player_id,
             seat,
-        } => sim_query(|ctx| HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))),
+        } => sim_mutating_query(|ctx| {
+            HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))
+        }),
         HostCall::PlayerPoseSet {
             player_id,
             anchor,
@@ -356,7 +397,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             if pose == 0 {
                 return HostRet::Bool(false); // reserved "no pose" value
             }
-            sim_query(move |ctx| {
+            sim_mutating_query(move |ctx| {
                 HostRet::Bool(ctx.world.try_mount_anchor(
                     player_id.0,
                     crate::mob::riding::PoseAnchor {
@@ -367,9 +408,9 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
-        HostCall::MobDismount { player_id } => {
-            sim_query(|ctx| HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some()))
-        }
+        HostCall::MobDismount { player_id } => sim_mutating_query(|ctx| {
+            HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some())
+        }),
         HostCall::MobRiders { mob_id } => sim_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Riders(None);
