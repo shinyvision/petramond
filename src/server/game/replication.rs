@@ -59,6 +59,7 @@ impl ServerGame {
                 data: petramond_world::item::variant::blob(it.stack.variant).map(|b| (*b).clone()),
                 pos: it.pos,
                 spin: it.spin,
+                flight: it.heading().map(|h| [h.yaw, h.pitch, it.vel.length()]),
             })
             .collect();
         // Player rows: EVERY session, to every recipient (the client skips
@@ -112,6 +113,10 @@ impl ServerGame {
                     // guard visible on somebody ELSE's body.
                     held_pose_main: sess.player.claims.held_pose(Hand::Main),
                     held_pose_off: sess.player.claims.held_pose(Hand::Off),
+                    held_display: [
+                        sess.player.claims.held_display(Hand::Main).map(|i| i.0),
+                        sess.player.claims.held_display(Hand::Off).map(|i| i.0),
+                    ],
                     bone_poses: sess.player.claims.bone_poses().collect(),
                     motion_claims: [
                         sess.player.claims.hand_motions(Hand::Main),
@@ -419,6 +424,10 @@ impl ServerGame {
                 .collect(),
             held_pose_main: player.claims.held_pose(Hand::Main),
             held_pose_off: player.claims.held_pose(Hand::Off),
+            held_display: [
+                player.claims.held_display(Hand::Main).map(|i| i.0),
+                player.claims.held_display(Hand::Off).map(|i| i.0),
+            ],
             bone_poses: player.claims.bone_poses().collect(),
             motion_claims: [
                 player.claims.hand_motions(Hand::Main),

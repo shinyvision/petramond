@@ -1,15 +1,18 @@
 //! The whole shield law, and every tuned number behind it.
 //!
-//! [`guard_of`] is a pure function of the actor snapshot plus one scalar — how
-//! far through the post-hit recoil the body is — and answers everything:
-//! whether the hit is absorbed, how fast the body walks, where the shield sits
-//! in each view, how the arm holding it is bent. The server tick, the client
-//! frame and the damage handler all call it, which makes a prediction that
-//! disagrees with the authority impossible rather than merely unlikely.
+//! [`guard_of`] is a pure function of the actor snapshot, whether the use
+//! press is the guard's, and one scalar — how far through the post-hit
+//! recoil the body is — and answers everything: whether the hit is
+//! absorbed, how fast the body walks, where the shield sits in each view,
+//! how the arm holding it is bent. The server tick, the client frame and
+//! the damage handler all call it, which makes a prediction that disagrees
+//! with the authority impossible rather than merely unlikely.
 //!
 //! The engine knows nothing about a shield. Nothing outside this module may
 //! mirror these values.
 
+use crate::body::BodyClocks;
+use crate::claims::{Body, Claims, Cover, Rule};
 use mod_sdk::*;
 
 /// The shield's registry name (`items.json` row).
@@ -24,20 +27,16 @@ const GUARD_SPEED_SCALE: f32 = 0.5;
 /// Ticks the shield stays INACTIVE after absorbing a hit — knocked aside, and
 /// it has to be brought back. A second attacker inside that window gets
 /// through, so a pack is still a real threat to somebody hiding behind one.
-pub const IMPACT_TICKS: u64 = 10;
-
-/// The same window in seconds, for the CLIENT's clock: a client instance has
-/// no tick to read, and an animation wants elapsed time anyway. (20 TPS.)
-pub const IMPACT_SECONDS: f32 = IMPACT_TICKS as f32 / 20.0;
+pub const IMPACT_TICKS: u32 = 10;
 
 /// Fraction of the window the recoil takes to reach full deflection. Fast in,
 /// slow out: the impact is a shove, the rest is the arm recovering.
 const IMPACT_ATTACK: f32 = 0.25;
 
-/// Cosine of the widest angle off the look direction the shield still covers:
-/// 60° each way. A hit from the SIDE is not one the shield is in front of, and
-/// a hit from behind never was.
-const GUARD_ARC_COS: f32 = 0.5;
+/// The guard's cover: 60° each way off the look direction. A hit from the
+/// SIDE is not one the shield is in front of, and a hit from behind never
+/// was.
+const GUARD_COVER: Cover = Cover { arc_cos: 0.5 };
 
 /// FIRST PERSON, shield DOWN. The authored `firstperson_righthand` hold IS the
 /// guard, so IDLE is the override: drop it below the sight line and push it
@@ -127,32 +126,40 @@ fn deflection(progress: f32) -> f32 {
     }
 }
 
-/// Is a hit from `origin` one the guard is in front of?
-///
-/// HORIZONTAL only: pitch is where the player is LOOKING, not where the shield
-/// is, so gating on it would drop the guard every time somebody glanced down.
-///
-/// No origin means no direction to judge, so the guard holds — refusing on
-/// missing spatial context would quietly break the shield for any future
-/// damage source that omits it.
-pub fn covers(state: &PlayerSnapshot, origin: Option<[f32; 3]>) -> bool {
-    let Some(origin) = origin else {
-        return true;
-    };
-    let (dx, dz) = (origin[0] - state.pos[0], origin[2] - state.pos[2]);
-    let distance = (dx * dx + dz * dz).sqrt();
-    // Standing exactly inside the attacker names no direction either.
-    if distance < 1e-4 {
-        return true;
+/// One body's recoil clock: ticks since its shield took a hit, running
+/// only through the window. Both sides run one — whole ticks on the
+/// server, frame seconds over the tick length on the client — and only the
+/// meaning has to agree, which is why it answers a FRACTION.
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct Recoil {
+    elapsed: Option<f32>,
+}
+
+impl Recoil {
+    /// The shield just took a hit.
+    pub fn start(&mut self) {
+        self.elapsed = Some(0.0);
     }
-    // Player yaw convention: forward is (sin yaw, cos yaw).
-    (state.yaw.sin() * dx + state.yaw.cos() * dz) / distance >= GUARD_ARC_COS
+
+    /// Advance by `dt_ticks`; the clock releases itself when the window is
+    /// out.
+    pub fn step(&mut self, dt_ticks: f32) {
+        if let Some(elapsed) = self.elapsed {
+            let elapsed = elapsed + dt_ticks.max(0.0);
+            self.elapsed = (elapsed < IMPACT_TICKS as f32).then_some(elapsed);
+        }
+    }
+
+    /// How far through the window the body is, `0..1`; `None` settled.
+    pub fn progress(&self) -> Option<f32> {
+        self.elapsed.map(|elapsed| elapsed / IMPACT_TICKS as f32)
+    }
 }
 
 /// What the shield is doing for one actor.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Guard {
-    /// This body's interact press belongs to the shield. Still true while it is
+    /// This body's use press belongs to the shield. Still true while it is
     /// reeling: the player never let go, it just is not stopping anything.
     pub raised: bool,
     /// Which hands hold the shield — only a shielding hand is ever posed, so
@@ -186,7 +193,7 @@ impl Guard {
     ///
     /// A reeling shield still denies both, for the same reason it still slows
     /// you: it is up, it is just not stopping anything.
-    pub fn denied(&self) -> Vec<BodyAction> {
+    fn denied(&self) -> Vec<BodyAction> {
         if self.raised {
             vec![BodyAction::Attack, BodyAction::Mine]
         } else {
@@ -213,7 +220,7 @@ impl Guard {
     ///
     /// The off hand gets the MIRROR (negate the y and z rotations): the rig is
     /// mirror-symmetric, so one authored arm is both arms.
-    pub fn arms(&self) -> Vec<BonePoseData> {
+    fn arms(&self) -> Vec<BonePoseData> {
         if !self.raised {
             return Vec::new();
         }
@@ -243,7 +250,7 @@ impl Guard {
     /// Down lowers in first person only; up raises in third person only —
     /// for this model each authored hold is already correct in one of the two
     /// states, so each view overrides only the other.
-    pub fn pose(&self, holds: bool) -> Option<HeldPose> {
+    fn pose(&self, holds: bool) -> Option<HeldPose> {
         let deflection = self.deflection();
         let pose = if self.raised {
             HeldPose {
@@ -258,37 +265,84 @@ impl Guard {
         };
         holds.then_some(pose)
     }
+
+    /// Everything the guard claims about the body this tick, for the
+    /// publisher to merge: the lowered carry still poses a shielding hand,
+    /// everything else releases with the guard.
+    pub fn claims(&self) -> Claims {
+        Claims {
+            holds_press: self.raised,
+            speed: self.speed_scale(),
+            denied: self.denied(),
+            main: self.pose(self.main_holds),
+            off: self.pose(self.off_holds),
+            bones: self.arms(),
+            cover: self.absorbs().then_some(GUARD_COVER),
+            ..Default::default()
+        }
+    }
 }
 
-/// The entire shield law, as a pure function of the actor snapshot and the
-/// recoil clock — free of `self` and of the host, so the tests below pin it
-/// directly and all three call sites share it verbatim.
+/// The entire shield law, as a pure function of the actor snapshot, the
+/// press and the recoil clock — free of `self` and of the host, so the
+/// tests below pin it directly and all three call sites share it verbatim.
 ///
-/// `impact` is `Some(progress)` — `0..1` through [`IMPACT_TICKS`] — while the
-/// shield is still reeling. It arrives as a FRACTION rather than a count
-/// because each side measures it off a different clock (ticks on the server,
-/// frame seconds on the client) and only the meaning has to agree.
-/// `shield` is `None` when the registry carries no shield row — no hand can
-/// hold one, so the guard resolves released; the caller's other rules (the
-/// tools' swings) run regardless.
-pub fn guard_of(shield: Option<ItemId>, state: &PlayerSnapshot, impact: Option<f32>) -> Guard {
+/// `press` is whether the use press is the guard's — the composition's
+/// answer, never the raw button: the press only becomes a guard once
+/// nothing else took it, so opening a door with a shield in hand opens the
+/// door and leaves the shield down, and a bow drawing over an off-hand
+/// shield keeps it lowered. `impact` is `Some(progress)` — `0..1` through
+/// [`IMPACT_TICKS`] — while the shield is still reeling.
+pub fn guard_of(shield: ItemId, state: &PlayerSnapshot, press: bool, impact: Option<f32>) -> Guard {
     // Deciding a spectator HERE rather than by skipping the publish is what
     // RELEASES the claim: skipping would leave half speed and a raised shield
     // latched on a body no rule is evaluating any more.
-    let holds = |slot: Option<ItemId>| {
-        !state.spectator && shield.is_some_and(|shield| slot == Some(shield))
-    };
+    let holds = |slot: Option<ItemId>| !state.spectator && slot == Some(shield);
     let main_holds = holds(state.held);
     let off_holds = holds(state.off_held);
-    // `holds_use`, never the raw button: the press only becomes a guard once
-    // nothing else took it, so opening a door with a shield in hand opens the
-    // door and leaves the shield down.
-    let raised = state.holds_use && (main_holds || off_holds);
+    let raised = press && (main_holds || off_holds);
     Guard {
         raised,
         main_holds,
         off_holds,
         impact: raised.then_some(impact).flatten(),
+    }
+}
+
+/// The shield as one of the pack's rules: a shield in EITHER hand takes a
+/// free press and holds it as the guard until the button comes up.
+pub struct ShieldRule {
+    shield: ItemId,
+}
+
+impl ShieldRule {
+    /// Resolve the shield row; `None` (a build without it) leaves the guard
+    /// out of the list.
+    pub fn resolve() -> Option<ShieldRule> {
+        let shield = resolve_item(SHIELD_ITEM);
+        if shield.is_none() {
+            log("[combat] 'combat:shield' did not resolve — the guard stays inert");
+        }
+        Some(ShieldRule { shield: shield? })
+    }
+}
+
+impl Rule for ShieldRule {
+    fn takes_press(&self, state: &PlayerSnapshot) -> bool {
+        let holds = |slot| !state.spectator && slot == Some(self.shield);
+        holds(state.held) || holds(state.off_held)
+    }
+
+    fn step(&self, _: &mut BodyClocks, _: PlayerId, _: &PlayerSnapshot, _: bool, _: f32, _: bool) {}
+
+    fn claims(&self, body: &Body) -> Claims {
+        guard_of(
+            self.shield,
+            body.state,
+            body.press,
+            body.clocks.recoil.progress(),
+        )
+        .claims()
     }
 }
 
@@ -323,17 +377,27 @@ mod tests {
         }
     }
 
+    /// The law under the press the composition hands it: the snapshot's
+    /// own `holds_use` (nothing earlier in the list took it).
+    fn guard(state: &PlayerSnapshot, impact: Option<f32>) -> Guard {
+        guard_of(SHIELD, state, state.holds_use, impact)
+    }
+
     fn guarding() -> PlayerSnapshot {
         actor(Some(SHIELD), None, true)
     }
 
     #[test]
     fn a_guard_needs_the_press_and_a_shield_in_either_hand() {
-        assert!(guard_of(Some(SHIELD), &guarding(), None).raised);
-        assert!(guard_of(Some(SHIELD), &actor(None, Some(SHIELD), true), None).raised);
-        assert!(!guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None).raised);
-        assert!(!guard_of(Some(SHIELD), &actor(Some(OTHER), None, true), None).raised);
-        assert!(!guard_of(Some(SHIELD), &actor(None, None, true), None).raised);
+        assert!(guard(&guarding(), None).raised);
+        assert!(guard(&actor(None, Some(SHIELD), true), None).raised);
+        assert!(!guard(&actor(Some(SHIELD), None, false), None).raised);
+        assert!(!guard(&actor(Some(OTHER), None, true), None).raised);
+        assert!(!guard(&actor(None, None, true), None).raised);
+        assert!(
+            !guard_of(SHIELD, &guarding(), false, None).raised,
+            "a press an earlier rule holds is not the guard's"
+        );
     }
 
     /// A shield that just took a hit is still UP but stops nothing until it
@@ -341,13 +405,15 @@ mod tests {
     /// not a shield that blinks away.
     #[test]
     fn a_reeling_shield_stays_raised_and_stops_absorbing() {
-        let settled = guard_of(Some(SHIELD), &guarding(), None);
+        let settled = guard(&guarding(), None);
         assert!(settled.raised && settled.absorbs());
+        assert!(settled.claims().cover.is_some());
 
         for progress in [0.0, 0.5, 0.99] {
-            let hit = guard_of(Some(SHIELD), &guarding(), Some(progress));
+            let hit = guard(&guarding(), Some(progress));
             assert!(hit.raised, "the button is still held");
             assert!(!hit.absorbs(), "the shield is out of the way at {progress}");
+            assert!(hit.claims().cover.is_none());
             assert_eq!(hit.speed_scale(), settled.speed_scale(), "still heavy");
         }
     }
@@ -356,41 +422,56 @@ mod tests {
     /// the shield parked somewhere the settled rule would never put it.
     #[test]
     fn the_recoil_returns_to_the_settled_guard_at_both_ends() {
-        let settled = guard_of(Some(SHIELD), &guarding(), None);
+        let settled = guard(&guarding(), None);
         for progress in [0.0, 1.0] {
-            let hit = guard_of(Some(SHIELD), &guarding(), Some(progress));
+            let hit = guard(&guarding(), Some(progress));
             assert_eq!(hit.pose(true), settled.pose(true), "at {progress}");
             assert_eq!(hit.arms(), settled.arms(), "at {progress}");
         }
-        let peak = guard_of(Some(SHIELD), &guarding(), Some(IMPACT_ATTACK));
+        let peak = guard(&guarding(), Some(IMPACT_ATTACK));
         assert_ne!(peak.pose(true), settled.pose(true), "and moves in between");
         assert_ne!(peak.arms(), settled.arms());
     }
 
-    /// A shield covers what the player is FACING. Getting the yaw convention
-    /// backwards blocks exactly the hits it should let through, and no other
-    /// test would notice.
+    /// Whole ticks, open at the far end: a hit at T leaves the shield down
+    /// for T..T+IMPACT_TICKS on either clock. An off-by-one is a shield
+    /// either free for one tick or vulnerable for one too many, and a
+    /// window that never expires is a shield stuck in its impact pose for
+    /// the rest of the session.
     #[test]
-    fn the_guard_covers_the_front_arc_only() {
-        let mut state = guarding();
-        // Yaw 0 faces +Z.
-        assert!(covers(&state, Some([0.0, 0.0, 4.0])), "dead ahead");
-        assert!(covers(&state, Some([1.0, 0.0, 4.0])), "just off centre");
-        assert!(!covers(&state, Some([4.0, 0.0, 0.0])), "side");
-        assert!(!covers(&state, Some([-4.0, 0.0, 0.0])), "other side");
-        assert!(!covers(&state, Some([0.0, 0.0, -4.0])), "behind");
+    fn the_recoil_window_is_exactly_impact_ticks_long_and_then_releases() {
+        let mut recoil = Recoil::default();
+        recoil.step(1.0);
+        assert_eq!(recoil.progress(), None, "nothing to advance");
 
-        // The arc turns with the player, not with the world.
-        state.yaw = std::f32::consts::FRAC_PI_2;
-        assert!(covers(&state, Some([4.0, 0.0, 0.0])));
-        assert!(!covers(&state, Some([0.0, 0.0, 4.0])));
+        recoil.start();
+        assert_eq!(recoil.progress(), Some(0.0));
+        for _ in 0..(IMPACT_TICKS - 1) {
+            recoil.step(1.0);
+        }
+        assert!(recoil.progress().is_some_and(|p| p > 0.0 && p < 1.0));
+        recoil.step(1.0);
+        assert_eq!(
+            recoil.progress(),
+            None,
+            "released on the tick the window ends"
+        );
 
-        // Height is not part of it: a hit from directly above is still frontal
-        // if the attacker is in front, and an attacker sharing the column has
-        // no direction at all.
-        assert!(covers(&state, Some([4.0, 9.0, 0.0])));
-        assert!(covers(&state, Some(state.pos)));
-        assert!(covers(&state, None), "no origin, no direction to refuse on");
+        // The client's fractional steps cover the same window.
+        recoil.start();
+        let mut seen = Vec::new();
+        for _ in 0..(IMPACT_TICKS * 4 + 2) {
+            recoil.step(0.25);
+            seen.push(recoil.progress());
+        }
+        assert!(seen[0].is_some_and(|p| p > 0.0), "starts moving at once");
+        assert!(
+            seen.iter()
+                .take(IMPACT_TICKS as usize * 4 - 1)
+                .all(Option::is_some),
+            "runs the whole window: {seen:?}"
+        );
+        assert_eq!(seen.last(), Some(&None), "and releases: {seen:?}");
     }
 
     /// Pinned in the terms the asset is authored in: this model's first-person
@@ -400,7 +481,7 @@ mod tests {
     /// renderer bug rather than a mod one.
     #[test]
     fn each_view_overrides_only_the_state_its_authored_hold_is_wrong_for() {
-        let raised = guard_of(Some(SHIELD), &guarding(), None);
+        let raised = guard(&guarding(), None);
         let up = raised.pose(raised.main_holds).expect("shielding hand");
         assert!(
             up.first_person.is_identity(),
@@ -408,7 +489,7 @@ mod tests {
         );
         assert!(!up.third_person.is_identity(), "raising moves the body");
 
-        let idle = guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None);
+        let idle = guard(&actor(Some(SHIELD), None, false), None);
         let down = idle.pose(idle.main_holds).expect("shielding hand");
         assert!(!down.first_person.is_identity(), "idle lowers the screen");
         assert!(
@@ -427,17 +508,17 @@ mod tests {
     /// the elbow swinging with the stride.
     #[test]
     fn only_a_shielding_arm_is_held_and_each_hand_holds_its_own_joints() {
-        let idle = guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None);
+        let idle = guard(&actor(Some(SHIELD), None, false), None);
         assert!(idle.arms().is_empty(), "an idle arm hangs normally");
 
         let names = |g: Guard| -> Vec<String> { g.arms().into_iter().map(|b| b.bone).collect() };
-        let main = guard_of(Some(SHIELD), &actor(Some(SHIELD), Some(OTHER), true), None);
+        let main = guard(&actor(Some(SHIELD), Some(OTHER), true), None);
         assert_eq!(names(main), [bone::MAIN_SHOULDER, bone::MAIN_ELBOW]);
 
-        let off = guard_of(Some(SHIELD), &actor(Some(OTHER), Some(SHIELD), true), None);
+        let off = guard(&actor(Some(OTHER), Some(SHIELD), true), None);
         assert_eq!(names(off), [bone::OFF_SHOULDER, bone::OFF_ELBOW]);
 
-        let both = guard_of(Some(SHIELD), &actor(Some(SHIELD), Some(SHIELD), true), None);
+        let both = guard(&actor(Some(SHIELD), Some(SHIELD), true), None);
         assert_eq!(both.arms().len(), 4, "a whole arm per shielding hand");
         let mirrored: Vec<[f32; 3]> = both.arms().iter().map(|b| b.rotation).collect();
         assert!(
@@ -450,19 +531,11 @@ mod tests {
     #[test]
     fn only_the_shielding_hand_is_posed() {
         for holds_use in [false, true] {
-            let g = guard_of(
-                Some(SHIELD),
-                &actor(Some(SHIELD), Some(OTHER), holds_use),
-                None,
-            );
+            let g = guard(&actor(Some(SHIELD), Some(OTHER), holds_use), None);
             assert!(g.pose(g.main_holds).is_some());
             assert!(g.pose(g.off_holds).is_none());
 
-            let g = guard_of(
-                Some(SHIELD),
-                &actor(Some(OTHER), Some(SHIELD), holds_use),
-                None,
-            );
+            let g = guard(&actor(Some(OTHER), Some(SHIELD), holds_use), None);
             assert!(g.pose(g.main_holds).is_none());
             assert!(g.pose(g.off_holds).is_some());
         }
@@ -476,13 +549,13 @@ mod tests {
     fn a_spectator_is_not_guarding_and_so_releases_every_claim() {
         let mut watching = actor(Some(SHIELD), Some(SHIELD), true);
         watching.spectator = true;
-        let guard = guard_of(Some(SHIELD), &watching, Some(0.3));
-        assert!(!guard.raised);
-        assert!(!guard.absorbs());
-        assert_eq!(guard.speed_scale(), 1.0, "the speed claim is released");
-        assert!(guard.arms().is_empty());
-        assert!(guard.pose(guard.main_holds).is_none());
-        assert!(guard.pose(guard.off_holds).is_none());
+        let g = guard(&watching, Some(0.3));
+        assert!(!g.raised);
+        assert!(!g.absorbs());
+        assert_eq!(g.speed_scale(), 1.0, "the speed claim is released");
+        assert!(g.arms().is_empty());
+        assert!(g.pose(g.main_holds).is_none());
+        assert!(g.pose(g.off_holds).is_none());
     }
 
     /// A released guard claims the NEUTRAL speed and bars nothing, which is
@@ -490,11 +563,11 @@ mod tests {
     /// with its hands tied.
     #[test]
     fn releasing_the_guard_releases_every_claim() {
-        let up = guard_of(Some(SHIELD), &guarding(), None);
+        let up = guard(&guarding(), None);
         assert_eq!(up.speed_scale(), GUARD_SPEED_SCALE);
         assert_eq!(up.denied(), [BodyAction::Attack, BodyAction::Mine]);
 
-        let down = guard_of(Some(SHIELD), &actor(Some(SHIELD), None, false), None);
+        let down = guard(&actor(Some(SHIELD), None, false), None);
         assert_eq!(down.speed_scale(), 1.0);
         assert!(down.denied().is_empty());
     }
@@ -504,7 +577,7 @@ mod tests {
     /// make taking a hit the best moment to attack.
     #[test]
     fn a_reeling_shield_still_denies_the_hands() {
-        let hit = guard_of(Some(SHIELD), &guarding(), Some(0.5));
+        let hit = guard(&guarding(), Some(0.5));
         assert!(!hit.absorbs());
         assert_eq!(hit.denied(), [BodyAction::Attack, BodyAction::Mine]);
     }

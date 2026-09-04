@@ -37,7 +37,8 @@ impl Game {
             ..std::mem::take(&mut self.swing_events)
         };
         let actor = self.client_actor_snapshot(self.predicted_input.sneak, swing);
-        self.client_mods.frame(&self.replica, &actor, frame);
+        self.client_mods
+            .frame(&self.replica, &actor, &self.self_view.inventory, frame);
     }
 
     /// Deliver the mod cues this batch carried for us (`EmitEventTo`) into
@@ -57,8 +58,13 @@ impl Game {
         }
         let actor = self.client_actor_snapshot(self.predicted_input.sneak, Default::default());
         for ev in events {
-            self.client_mods
-                .mod_event(&self.replica, &actor, &ev.key, &ev.data);
+            self.client_mods.mod_event(
+                &self.replica,
+                &actor,
+                &self.self_view.inventory,
+                &ev.key,
+                &ev.data,
+            );
         }
     }
 

@@ -127,6 +127,42 @@ pub struct MobSnapshot {
     pub half_length: f32,
 }
 
+/// One item entity's snapshot ([`HostCall::ItemEntity`]): a stack loose in
+/// the world, in flight, or lodged in a block.
+///
+/// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ItemEntityData {
+    /// Stable session id — THE item-entity address (event payloads, calls).
+    pub id: u64,
+    /// What it is: item, count, instance data.
+    pub stack: ItemStackData,
+    /// Who launched it ([`HostCall::LaunchItem`]), while it is in flight;
+    /// `None` for a drop, or once it has come to rest.
+    ///
+    /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
+    pub owner: Option<EntityRef>,
+    /// Centre, world space.
+    pub pos: [f32; 3],
+    /// Velocity, m/s (zero once lodged).
+    pub vel: [f32; 3],
+    pub motion: ItemMotion,
+}
+
+/// How an item entity is moving ([`ItemEntityData::motion`]).
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ItemMotion {
+    /// An ordinary drop: falling, settling, drifting to a reaching player.
+    Loose,
+    /// Launched and flying ([`HostCall::LaunchItem`]): pointed along its
+    /// velocity, striking what it meets.
+    ///
+    /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
+    Flight,
+    /// Lodged in `cell`, heading kept, until that block goes.
+    Stuck { cell: [i32; 3] },
+}
+
 /// A living thing a call can name as the ACTOR behind something — the
 /// attacker a damage request is landed on behalf of
 /// ([`HostCall::DamageMob`], [`HostCall::DamagePlayer`]). Players by

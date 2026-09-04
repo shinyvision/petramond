@@ -384,24 +384,20 @@ fn tick_ages_and_culls_dead() {
 }
 
 #[test]
-fn respects_fixed_capacity() {
+fn the_pool_keeps_every_live_particle() {
     let mut sys = ParticleSystem::new();
-    // Spawn far more than capacity; the pool must never exceed PARTICLE_CAPACITY.
+    let mut expected = 0;
     for _ in 0..1000 {
+        let before = sys.len();
         sys.spawn_break_burst(IVec3::ZERO, Block::Stone);
-        assert!(
-            sys.len() <= PARTICLE_CAPACITY,
-            "exceeded capacity: {}",
-            sys.len()
+        expected += sys.len() - before;
+        assert_eq!(
+            sys.len(),
+            expected,
+            "no spawn recycles a particle still alive"
         );
     }
-    assert_eq!(
-        sys.len(),
-        PARTICLE_CAPACITY,
-        "pool should saturate at capacity"
-    );
-    // The backing Vec never grew past its reserved capacity (no realloc churn).
-    assert_eq!(sys.particles.capacity(), PARTICLE_CAPACITY);
+    assert!(sys.len() > 4096, "far past the old pool size");
 }
 
 #[test]

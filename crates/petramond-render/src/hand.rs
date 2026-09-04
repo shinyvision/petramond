@@ -234,8 +234,9 @@ pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
         return None;
     };
     // First-person hold of a sprite item. The extruded sprite is a unit, origin-
-    // centred slab built upright; the item's own [`held_pose`](petramond_world::item::ItemType::held_pose)
-    // (item data) tilts it before it's seated in the hand:
+    // centred slab built upright; the held STACK's own authored hold
+    // (`view.hold`, item data — never a display stand-in's) tilts it before
+    // it's seated in the hand:
     // * roll (Z), applied FIRST in the sprite's own plane, lays the long axis
     // diagonally for a swung tool (pickaxes); it's 0 for upright items;
     // * yaw (Y) then swings the slab past head-on to a steep, near-side-on angle
@@ -244,7 +245,7 @@ pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
     // `nudge` lifts/shifts it within the shared held anchor so it sits at the
     // screen's lower-right (sprite-only; the anchor is unchanged for held blocks).
     // `s` sizes the slab like a held item.
-    let pose = item.held_pose();
+    let pose = view.hold;
     let s = 1.0;
     let nudge = Vec3::new(0.10, 0.10, 0.0);
     let base_model = Mat4::from_scale(Vec3::splat(s))

@@ -11,6 +11,26 @@
         {
             "name": "combat:sword_fang",
             "file": "sword_fang.png"
+        },
+        {
+            "name": "combat:bow",
+            "file": "bow.png"
+        },
+        {
+            "name": "combat:bow_pull_1",
+            "file": "bow_pull_1.png"
+        },
+        {
+            "name": "combat:bow_pull_2",
+            "file": "bow_pull_2.png"
+        },
+        {
+            "name": "combat:bow_pull_3",
+            "file": "bow_pull_3.png"
+        },
+        {
+            "name": "combat:arrow",
+            "file": "arrow.png"
         }
     ]
 }

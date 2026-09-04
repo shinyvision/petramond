@@ -94,6 +94,27 @@ pub struct AttackAttempt {
     pub player: crate::player::PlayerId,
 }
 
+/// `projectile_hit` — a flying item entity struck a body or a block. `fate`
+/// is the mutable consequence (the engine's default arrives, the handlers'
+/// edit is applied); the verdict only ends the dispatch (`Cancel`, an
+/// exclusive claim) or lets later handlers see the same hit. The engine
+/// deals no damage of its own here.
+#[derive(Clone, Debug)]
+pub struct ProjectileHit {
+    /// The striking entity's stable id — the entity is live for the whole
+    /// dispatch, so what is flying is a store lookup away.
+    pub entity: u64,
+    /// Who launched it: whose session the dispatch acts as.
+    pub owner: Option<crate::mob::EntityRef>,
+    pub target: crate::world::ImpactTarget,
+    /// The impact point.
+    pub pos: Vec3,
+    /// The velocity it arrived with.
+    pub vel: Vec3,
+    /// MUTABLE — what becomes of the entity after the dispatch.
+    pub fate: crate::entity::Fate,
+}
+
 /// `item_use_pre` — cancel = the click was consumed (the engine's own use is
 /// skipped, but the item still reports as used).
 #[derive(Copy, Clone, Debug)]

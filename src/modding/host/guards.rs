@@ -117,6 +117,20 @@ pub(super) fn sim_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
         .unwrap_or_else(|| HostRet::Error("no simulation context is active".into()))
 }
 
+/// [`sim_query`] for a MUTATION that computes its own reply (a spawn
+/// answering an id, a spend answering the taken stack): the same read-only
+/// dispatch gate as [`sim_call`], the reply shape of [`sim_query`].
+pub(super) fn sim_mutating_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
+    if scope::read_only_active() {
+        return HostRet::Error(
+            "this host call mutates the world, which is not allowed during a read-only dispatch \
+             (e.g. a shape placement plan)"
+                .into(),
+        );
+    }
+    sim_query(f)
+}
+
 /// Resolve a stable mob id to its live-list index — the ONE dead-mob policy
 /// for every id-addressed mob call arm: a dead (ragdolling) mob is GONE to
 /// the ABI, exactly as `MobsInRadius` never lists it, so `None` covers
@@ -183,7 +197,9 @@ pub(super) fn item_name(item: ItemType) -> &'static str {
 }
 
 /// An engine stack as its ABI crossing (registry name + count + data).
-pub(super) fn item_stack_data(stack: petramond_world::item::ItemStack) -> mod_api::ItemStackData {
+pub(in crate::modding) fn item_stack_data(
+    stack: petramond_world::item::ItemStack,
+) -> mod_api::ItemStackData {
     let data = petramond_world::item::variant::get(stack.variant)
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         .unwrap_or_default();
@@ -209,6 +225,23 @@ pub(super) fn intern_abi_data(
     if data.is_empty() {
         return Ok(variant::VariantId::NONE);
     }
+    let map = abi_data_map(what, data)?;
+    Ok(variant::intern(&map).unwrap_or_else(|| {
+        log::warn!("{what}: variant table full — stack degrades to plain");
+        variant::VariantId::NONE
+    }))
+}
+
+/// An ABI instance-data list as a validated [`VariantMap`] — the COMPARE
+/// half of the data surface: a map a call matches against what is carried
+/// must never be interned (the table never evicts), so it stops here.
+///
+/// [`VariantMap`]: petramond_world::item::variant::VariantMap
+pub(super) fn abi_data_map(
+    what: &str,
+    data: &[(String, Vec<u8>)],
+) -> Result<petramond_world::item::variant::VariantMap, mod_api::HostRet> {
+    use petramond_world::item::variant;
     let mut map = variant::VariantMap::new();
     for (k, v) in data {
         if map.insert(k.clone(), v.clone()).is_some() {
@@ -222,8 +255,5 @@ pub(super) fn intern_abi_data(
             "{what}: invalid instance data (bare key or over-cap map/value)"
         )));
     }
-    Ok(variant::intern(&map).unwrap_or_else(|| {
-        log::warn!("{what}: variant table full — stack degrades to plain");
-        variant::VariantId::NONE
-    }))
+    Ok(map)
 }

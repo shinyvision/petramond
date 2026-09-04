@@ -20,8 +20,8 @@
 //! far-to-near before vertex emission, and back-face culled by the render pipeline
 //! so tiny transparent flames do not reveal all six faces at once.
 //!
-//! Geometry is capped to a fixed vertex budget so the dynamic buffer never grows;
-//! excess particles in a frame are dropped (transient dust, visually harmless).
+//! Geometry is unbounded: every live particle bakes, and the dynamic buffer
+//! behind it grows to fit (`DynamicVertexDraw`).
 
 use super::lighting::{self, DynLight, LightEnv};
 use super::{ParticleEmitterInstance, ParticleInstance};
@@ -47,20 +47,26 @@ pub const VERTS_PER_CUBE: usize = 24;
 /// Indices per particle cube (6 faces * 2 triangles * 3).
 pub const INDICES_PER_CUBE: usize = 36;
 
-/// Max particle cubes baked per frame: the simulated pool PLUS equal headroom
-/// for the derived ambient volumes (precipitation) that join the same bake at
-/// full particle settings. Deliberately on the high end — geometry budgets
-/// have bitten before and tiny cubes are cheap; the dynamic vbufs grow on
-/// demand up to this, so idle scenes never pay for it.
-/// The particle system's live-particle cap. Owned by the renderer (its cube
-/// buffers size from it); the client's `ParticleSystem` honors it.
-pub const PARTICLE_CAPACITY: usize = 4096;
+/// The relative index pattern of one cube: six faces, two CCW triangles each
+/// (0,1,2, 0,2,3 per face), over [`VERTS_PER_CUBE`] consecutive vertices.
+pub const CUBE_INDEX_PATTERN: [u32; INDICES_PER_CUBE] = cube_index_pattern();
 
-pub const MAX_PARTICLE_CUBES: usize = PARTICLE_CAPACITY * 2;
-/// Vertices in the reusable particle vbuf (24 per cube).
-pub const MAX_PARTICLE_VERTICES: usize = MAX_PARTICLE_CUBES * VERTS_PER_CUBE;
-/// Indices in the reusable particle ibuf (36 per cube).
-pub const MAX_PARTICLE_INDICES: usize = MAX_PARTICLE_CUBES * INDICES_PER_CUBE;
+const fn cube_index_pattern() -> [u32; INDICES_PER_CUBE] {
+    let mut out = [0u32; INDICES_PER_CUBE];
+    let mut face = 0;
+    while face < 6 {
+        let b = face as u32 * 4;
+        let at = face * 6;
+        out[at] = b;
+        out[at + 1] = b + 1;
+        out[at + 2] = b + 2;
+        out[at + 3] = b;
+        out[at + 4] = b + 2;
+        out[at + 5] = b + 3;
+        face += 1;
+    }
+    out
+}
 
 /// Per-face data: the in-plane basis (`right`/`up`) and the directional shade.
 /// Faces are ordered +X, -X, +Y, -Y, +Z, -Z. The face plane is offset outward
@@ -119,7 +125,7 @@ const FACES: [Face; 6] = [
 
 /// Build tiny 3D cubes for `instances` into `verts` (cleared, capacity reused).
 /// Returns the **vertex** count written (24 per cube). Caps at
-/// [`MAX_PARTICLE_VERTICES`]; further particles are dropped. Indices are static
+/// every instance. Indices are the static cube pattern
 /// (see [`particle_indices`]) so only the vbuf is rewritten each frame.
 ///
 /// Each cube is centred at `inst.pos` with side `inst.size`; the renderer shrinks
@@ -132,9 +138,6 @@ const FACES: [Face; 6] = [
 pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleVertex>) -> u32 {
     verts.clear();
     for inst in instances {
-        if verts.len() + VERTS_PER_CUBE > MAX_PARTICLE_VERTICES {
-            break;
-        }
         if inst.alpha <= 0.0 {
             continue;
         }
@@ -144,7 +147,7 @@ pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleV
 }
 
 /// Build BLOCK-atlas cubes then MODEL-atlas cubes into ONE vbuf (cleared, capacity
-/// reused, total capped at [`MAX_PARTICLE_VERTICES`]). Returns `(total_verts,
+/// reused). Returns `(total_verts,
 /// block_verts)` — the renderer draws `[0..block_verts)` with the block atlas bound and
 /// `[block_verts..total)` with the model atlas bound, so bbmodel-block flecks sample
 /// their own texture in the same pass. Block cubes come first so the split is a single
@@ -157,9 +160,6 @@ pub fn build_particles_split(
 ) -> (u32, u32) {
     verts.clear();
     for inst in block {
-        if verts.len() + VERTS_PER_CUBE > MAX_PARTICLE_VERTICES {
-            break;
-        }
         if inst.alpha <= 0.0 {
             continue;
         }
@@ -167,9 +167,6 @@ pub fn build_particles_split(
     }
     let block_verts = verts.len() as u32;
     for inst in model {
-        if verts.len() + VERTS_PER_CUBE > MAX_PARTICLE_VERTICES {
-            break;
-        }
         if inst.alpha <= 0.0 {
             continue;
         }
@@ -189,13 +186,6 @@ pub struct TransparentParticleCube {
     stretch: f32,
     dist_sq: f32,
 }
-
-/// Max active translucent particles one emitter row may contribute in a frame.
-/// The row's rate/lifetime control the normal count; this clamp prevents a malformed
-/// or intentionally huge mod row from consuming the whole fixed vertex buffer
-/// (a sliver of [`MAX_PARTICLE_CUBES`]; dense fire columns need more than the
-/// original 32).
-const MAX_ACTIVE_PER_EMITTER: usize = 48;
 
 #[derive(Copy, Clone)]
 struct EmitterSchedule {
@@ -226,9 +216,6 @@ pub fn build_transparent_emitter_particles(
     verts.clear();
     scratch.clear();
     for s in solids {
-        if scratch.len() >= MAX_PARTICLE_CUBES {
-            break;
-        }
         if s.alpha <= 0.001 || s.size <= 0.001 {
             continue;
         }
@@ -243,15 +230,9 @@ pub fn build_transparent_emitter_particles(
     }
     for inst in emitters {
         append_emitter_particles(inst, time, cam_pos, env, density, scratch);
-        if scratch.len() >= MAX_PARTICLE_CUBES {
-            break;
-        }
     }
     scratch.sort_by(|a, b| b.dist_sq.total_cmp(&a.dist_sq));
     for p in scratch.iter() {
-        if verts.len() + VERTS_PER_CUBE > MAX_PARTICLE_VERTICES {
-            break;
-        }
         push_colored_particle_cube(p, verts);
     }
     verts.len() as u32
@@ -273,16 +254,12 @@ fn append_emitter_particles(
     let active = (((schedule.max_rate * max_lifetime).ceil() as usize + 6) as f32
         * density.clamp(0.0, 1.0))
     .round() as usize;
-    let active = active.min(MAX_ACTIVE_PER_EMITTER);
     let latest = ((time - schedule.phase) / schedule.base_gap).floor() as i64 + 2;
     let light = lighting::fold_self_lit(
         lighting::light_rgb(DynLight::new(inst.skylight, inst.blocklight), env),
         e.self_lit,
     );
     for back in 0..active {
-        if out.len() >= MAX_PARTICLE_CUBES {
-            break;
-        }
         let seq = latest - back as i64;
         let birth = emitter_birth_time(inst.seed, schedule, seq);
         let age = time - birth;
@@ -499,21 +476,6 @@ fn rand01(seed: u64) -> f32 {
 #[inline]
 fn rand_signed(seed: u64) -> f32 {
     petramond::entity::hash_signed(seed)
-}
-
-/// The static index buffer for [`MAX_PARTICLE_CUBES`] cubes (six faces, two
-/// triangles each, CCW: 0,1,2, 0,2,3 per face). Built once and uploaded at
-/// startup; draws use the slice matching the live cube count.
-pub fn particle_indices() -> Vec<u32> {
-    let mut idx = Vec::with_capacity(MAX_PARTICLE_INDICES);
-    for cube in 0..MAX_PARTICLE_CUBES as u32 {
-        let cube_base = cube * VERTS_PER_CUBE as u32;
-        for face in 0..6u32 {
-            let b = cube_base + face * 4;
-            idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
-        }
-    }
-    idx
 }
 
 #[cfg(test)]

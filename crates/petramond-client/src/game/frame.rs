@@ -27,6 +27,9 @@ pub struct ClientFrame<'a> {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ClientHeldItem {
     pub item: Option<ItemType>,
+    /// What the hand DRAWS in place of `item`'s own art, when a mod claims
+    /// one (predicted locally, replicated otherwise); `None` = `item`.
+    pub display: Option<ItemType>,
     pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
     pub mining: bool,
@@ -122,6 +125,7 @@ impl Game {
             .client_mods
             .local_held_poses((view.held_pose_main, view.held_pose_off));
         let [motions_main, motions_off] = self.client_mods.local_motion_claims(view.motion_claims);
+        let [display_main, display_off] = self.client_mods.local_held_displays(view.held_display);
         ClientFrame {
             // The third-person boom camera when active; the first-person eye
             // otherwise. Sim consumers keep reading `self.cam` directly.
@@ -130,6 +134,7 @@ impl Game {
             selection: self.look.map(|h| h.outline),
             held_item: ClientHeldItem {
                 item: view.inventory.selected().map(|s| s.item),
+                display: display_main,
                 variant: view
                     .inventory
                     .selected()
@@ -145,6 +150,7 @@ impl Game {
             },
             off_hand_item: ClientHeldItem {
                 item: view.inventory.off_hand().map(|s| s.item),
+                display: display_off,
                 variant: view
                     .inventory
                     .off_hand()

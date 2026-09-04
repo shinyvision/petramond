@@ -793,3 +793,82 @@ fn hand_motion_claims_latch_on_the_first_owned_write_and_survive_a_release() {
         );
     });
 }
+
+/// `PlayerInventory` on a client instance answers only the LOCAL player,
+/// only while a dispatch has published the replicated inventory — and in
+/// the one carried layout the server's read shares (grid, then off hand).
+#[test]
+fn client_player_inventory_is_local_only_and_needs_a_published_inventory() {
+    use crate::modding::client::scope;
+    use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
+    use petramond_world::item::{ItemStack, ItemType};
+
+    let mut data = client_data("inventory-gate");
+    let me = mod_api::PlayerId(7);
+    let query = |player| HostCall::PlayerInventory { player };
+    let actor = |id| mod_api::PlayerSnapshot {
+        id: Some(id),
+        ..blank_snapshot()
+    };
+
+    assert!(
+        matches!(handle_host_call(&mut data, query(me)), HostRet::Error(_)),
+        "no dispatch published an actor"
+    );
+    let mut inventory = Inventory::new();
+    *inventory.slot_mut(0).unwrap() = Some(ItemStack::new(ItemType::Stone, 3));
+    *inventory.off_hand_mut() = Some(ItemStack::new(ItemType::Dirt, 1));
+
+    scope::enter_actor(actor(me), || {
+        assert!(
+            matches!(handle_host_call(&mut data, query(me)), HostRet::Error(_)),
+            "an actor without a published inventory is an error, not an empty read"
+        );
+        scope::enter_inventory(&inventory, || {
+            assert!(
+                matches!(
+                    handle_host_call(&mut data, query(mod_api::PlayerId(8))),
+                    HostRet::Error(_)
+                ),
+                "somebody else's inventory is not a client read"
+            );
+            let HostRet::ContainerSlots(Some(slots)) = handle_host_call(&mut data, query(me))
+            else {
+                panic!("the local inventory reads as carried slots");
+            };
+            assert_eq!(slots.len(), TOTAL_SLOTS + 1);
+            assert_eq!(slots[0].as_ref().map(|s| s.count), Some(3));
+            assert_eq!(
+                slots[TOTAL_SLOTS].as_ref().map(|s| s.item.as_str()),
+                Some("petramond:dirt"),
+                "the off hand is the LAST carried entry"
+            );
+        });
+    });
+}
+
+/// A snapshot with nothing in it — the fixture an actor-gated call test
+/// stamps an id onto.
+fn blank_snapshot() -> mod_api::PlayerSnapshot {
+    mod_api::PlayerSnapshot {
+        id: None,
+        pos: [0.0; 3],
+        vel: [0.0; 3],
+        yaw: 0.0,
+        pitch: 0.0,
+        health: 20,
+        on_ground: true,
+        spectator: false,
+        sneak: false,
+        use_held: false,
+        holds_use: false,
+        held: None,
+        off_held: None,
+        held_count: 0,
+        pose_anchor: None,
+        swing: Default::default(),
+        half_width: 0.3,
+        height: 1.8,
+        eye_height: 1.62,
+    }
+}

@@ -1,14 +1,21 @@
-//! A dropped item-stack bobbing in the world after a block breaks.
+//! A dropped item-stack bobbing in the world after a block breaks — or, once
+//! LAUNCHED, flying along its own heading and lodging in what it hits.
 //!
 //! Physics is intentionally tiny: constant gravity plus axis-resolved collision
 //! against solid blocks (so items rest on the ground and slide off into open
 //! cells without tunnelling). Spin and age advance for the renderer/pickup; the
 //! `entity` module never draws — `App` reads `pos`/`spin`/`stack` directly.
+//!
+//! [`Motion`] is the one axis the three lives of an item entity differ on:
+//! a LOOSE stack falls, settles, spins and merges; a FLIGHT keeps its
+//! velocity's heading and sweeps for what it strikes (the impact itself is
+//! the world store's to find and the server's to resolve); a STUCK item is
+//! frozen where it lodged, posed along its arrival, until its anchor block
+//! goes. Everything else — pickup, lifetime, replication, persistence — is
+//! shared.
 
 use crate::world::World;
-#[cfg(test)]
-use petramond_math::math::IVec3;
-use petramond_math::math::Vec3;
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::item::ItemStack;
 
 use super::{hash01, hash_signed};
@@ -52,6 +59,119 @@ const THROW_SPEED: f32 = 4.0;
 /// player instead of dropping straight at their feet.
 const THROW_UP: f32 = 1.5;
 
+/// Which way a flying or lodged item points: yaw about +Y (the player
+/// convention — forward is `(sin yaw, cos yaw)`), pitch up from level.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Heading {
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl Heading {
+    /// The heading a velocity points along, or `None` for a body at rest.
+    pub fn of(vel: Vec3) -> Option<Heading> {
+        let horizontal = (vel.x * vel.x + vel.z * vel.z).sqrt();
+        if horizontal < 1e-6 && vel.y.abs() < 1e-6 {
+            return None;
+        }
+        Some(Heading {
+            yaw: vel.x.atan2(vel.z),
+            pitch: vel.y.atan2(horizontal),
+        })
+    }
+
+    /// The unit vector this heading points along.
+    pub fn dir(self) -> Vec3 {
+        let (sp, cp) = self.pitch.sin_cos();
+        let (sy, cy) = self.yaw.sin_cos();
+        Vec3::new(sy * cp, sp, cy * cp)
+    }
+}
+
+/// A launched item's flight.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Flight {
+    /// Who launched it — named on the impact. Transient: a reload forgets.
+    pub owner: Option<crate::mob::EntityRef>,
+    /// Whether one whole tick of the item's motion has been clear of the
+    /// launcher's body since it launched. It starts inside (or beside) that
+    /// body and a body walking into its own slow shot keeps meeting it, so
+    /// until then the launcher is not a body it can strike; after, it is a
+    /// body like any other — a launch lobbed straight up comes back down on
+    /// the launcher. Derived from the bodies each tick, never from a tick
+    /// count that would encode a body size or a walking speed. Transient:
+    /// `true` on reload, whose owner is forgotten.
+    pub left_owner: bool,
+    /// The way the item points: its velocity's heading, held through the
+    /// instant at the top of an arc where the velocity says nothing.
+    pub heading: Heading,
+}
+
+/// An item lodged in a block.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Stuck {
+    /// The way it arrived, which is the way it stays.
+    pub heading: Heading,
+    /// The cell it is lodged in: while that cell holds collision the item
+    /// stays; the moment it goes, the item drops loose.
+    pub anchor: IVec3,
+    /// Whether the anchor has been probed against LIVE collision: set by a
+    /// lodge, cleared by a reload (the block may have gone while the section
+    /// was out), so a restored item re-verifies its anchor on its first
+    /// ticked step. Transient.
+    pub verified: bool,
+}
+
+/// The three lives of an item entity — see the module doc.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Motion {
+    Loose,
+    Flight(Flight),
+    Stuck(Stuck),
+}
+
+impl Motion {
+    /// In flight along `vel` for `owner` — or loose, for a zero velocity
+    /// that has no heading to fly along.
+    pub fn flying(vel: Vec3, owner: Option<crate::mob::EntityRef>) -> Motion {
+        match Heading::of(vel) {
+            Some(heading) => Motion::Flight(Flight {
+                owner,
+                left_owner: owner.is_none(),
+                heading,
+            }),
+            None => Motion::Loose,
+        }
+    }
+}
+
+/// What becomes of a flying item once its impact is resolved: the
+/// consequence the `projectile_hit` dispatch settles on, applied by the
+/// server. The engine's own default is [`Fate::of_impact`]; a handler may
+/// rewrite it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Fate {
+    /// Removed — spent in what it struck.
+    Consume,
+    /// Lodged in the block it struck, heading kept, until that block goes.
+    /// Only a block can hold an item; on a body this is a [`Fate::Drop`].
+    Lodge,
+    /// Loose at the impact, an ordinary drop.
+    Drop,
+}
+
+impl Fate {
+    /// The engine's default for an item whose row `sticks` (or not) striking
+    /// a block (`true`) or a body (`false`).
+    pub fn of_impact(sticks: bool, struck_block: bool) -> Fate {
+        if sticks && struck_block {
+            Fate::Lodge
+        } else {
+            Fate::Drop
+        }
+    }
+}
+
 /// A free-floating stack of items in the world.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DroppedItem {
@@ -83,6 +203,8 @@ pub struct DroppedItem {
     pub pickup_requested: Option<crate::player::PlayerId>,
     /// Accumulated Y-rotation in radians for the idle spin.
     pub spin: f32,
+    /// Loose, in flight, or lodged — see [`Motion`].
+    pub motion: Motion,
     /// Previous-tick `pos`/`spin`, snapshotted at the top of each physics tick so the
     /// renderer can interpolate between ticks (physics now runs on the fixed game tick,
     /// like mobs). Transient — never saved; reconstructed equal to `pos`/`spin`.
@@ -91,6 +213,27 @@ pub struct DroppedItem {
 }
 
 impl DroppedItem {
+    /// The one constructor the spawn kinds compose over: at rest in every
+    /// transient (fresh id, no spin, no reservation, previous pose = pose).
+    /// Light starts at full sky as a first guess; the first cell crossing
+    /// samples the real value.
+    pub(crate) fn with_motion(pos: Vec3, stack: ItemStack, vel: Vec3, motion: Motion) -> Self {
+        DroppedItem {
+            id: 0,
+            pos,
+            vel,
+            stack,
+            skylight: 63,
+            blocklight: petramond_world::light::BlockLight6::DARK,
+            ticks_lived: 0,
+            pickup_requested: None,
+            spin: 0.0,
+            motion,
+            prev_pos: pos,
+            prev_spin: 0.0,
+        }
+    }
+
     /// Spawn a stack at `pos` with a small deterministic upward+outward "pop".
     ///
     /// `seed` varies the pop direction per spawn (use an incrementing counter or
@@ -104,21 +247,11 @@ impl DroppedItem {
         let speed = 1.0 + hash01(s ^ 0x5151) * 1.5; // 1.0..2.5 m/s
         let up = 2.5 + hash01(s ^ 0xA2A2) * 1.5; // 2.5..4.0 m/s upward pop
         let vel = Vec3::new(ang.cos() * speed, up, ang.sin() * speed);
+        let mut item = Self::with_motion(pos, stack, vel, Motion::Loose);
         // Stagger the starting spin so a pile of drops isn't phase-locked.
-        let spin = hash_signed(s ^ 0x3C3C) * std::f32::consts::PI;
-        DroppedItem {
-            id: 0,
-            pos,
-            vel,
-            stack,
-            skylight: 63,
-            blocklight: petramond_world::light::BlockLight6::DARK,
-            ticks_lived: 0,
-            pickup_requested: None,
-            spin,
-            prev_pos: pos,
-            prev_spin: spin,
-        }
+        item.spin = hash_signed(s ^ 0x3C3C) * std::f32::consts::PI;
+        item.prev_spin = item.spin;
+        item
     }
 
     /// Spawn a stack thrown out of the inventory at `pos`, flying along `dir`
@@ -134,19 +267,56 @@ impl DroppedItem {
             d.y * THROW_SPEED + THROW_UP,
             d.z * THROW_SPEED,
         );
-        DroppedItem {
-            id: 0,
-            pos,
-            vel,
-            stack,
-            skylight: 63,
-            blocklight: petramond_world::light::BlockLight6::DARK,
-            ticks_lived: 0,
-            pickup_requested: None,
-            spin: 0.0,
-            prev_pos: pos,
-            prev_spin: 0.0,
+        Self::with_motion(pos, stack, vel, Motion::Loose)
+    }
+
+    /// Spawn ONE item launched from `pos` at `vel`, in flight for `owner`
+    /// (`HostCall::LaunchItem`). A zero velocity has no heading to fly along,
+    /// so it is a loose drop from rest instead. `ticks_lived` starts at 0:
+    /// the pickup delay keeps the launcher from vacuuming it straight back.
+    pub fn launched(
+        pos: Vec3,
+        stack: ItemStack,
+        vel: Vec3,
+        owner: Option<crate::mob::EntityRef>,
+    ) -> Self {
+        Self::with_motion(pos, stack, vel, Motion::flying(vel, owner))
+    }
+
+    /// The way this item points, for a flying or lodged item; `None` for a
+    /// loose stack, which spins instead.
+    pub fn heading(&self) -> Option<Heading> {
+        match self.motion {
+            Motion::Loose => None,
+            Motion::Flight(f) => Some(f.heading),
+            Motion::Stuck(s) => Some(s.heading),
         }
+    }
+
+    /// Whether this item can be vacuumed up: a stack on the ground or an
+    /// item lodged in a wall, never one still in the air.
+    pub fn collectable(&self) -> bool {
+        !matches!(self.motion, Motion::Flight(_))
+    }
+
+    /// Lodge this item where it is, pointing the way it arrived, against the
+    /// live collision it just struck.
+    pub fn lodge(&mut self, anchor: IVec3) {
+        if let Some(heading) = self.heading() {
+            self.motion = Motion::Stuck(Stuck {
+                heading,
+                anchor,
+                verified: true,
+            });
+        } else {
+            self.motion = Motion::Loose;
+        }
+        self.vel = Vec3::ZERO;
+    }
+
+    /// Drop this item loose where it is, keeping `vel`.
+    pub fn release(&mut self) {
+        self.motion = Motion::Loose;
     }
 
     /// Reserve this drop for player `by`'s pickup. The world pickup planner
@@ -160,17 +330,18 @@ impl DroppedItem {
         self.pickup_requested = None;
     }
 
-    /// Advance physics by `dt`: gravity, axis-resolved block collision, and spin.
-    /// Items rest on solid ground and have horizontal velocity damped while
-    /// grounded. The lifetime counter (`ticks_lived`) is advanced separately by
-    /// the per-tick world step, not here.
+    /// The LOOSE step: advance physics by `dt` — gravity, axis-resolved block
+    /// collision, and spin. Items rest on solid ground and have horizontal
+    /// velocity damped while grounded. The lifetime counter (`ticks_lived`)
+    /// is advanced separately by the per-tick world step, not here.
     ///
     /// `magnet_target` is the player chest (body-centre) the item is sucked into:
     /// once the item is within `ATTRACT_RADIUS` of it the normal physics are
     /// bypassed and the item flies straight at the target with an accelerating
     /// pull, ignoring gravity/collision so the vacuum reads cleanly. Pass `None`
     /// (or a far target) to disable magnetism.
-    pub fn tick(&mut self, dt: f32, world: &World, magnet_target: Option<Vec3>) {
+    pub fn step_loose(&mut self, dt: f32, world: &World, magnet_target: Option<Vec3>) {
+        debug_assert!(matches!(self.motion, Motion::Loose));
         // The shared, model-aware box source — the item collides with a bbmodel block's
         // real legs/top, exactly like the player/mob bodies (all via `collision_boxes_at`).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
@@ -178,7 +349,27 @@ impl DroppedItem {
         self.integrate_with_flow(dt, magnet_target, &boxes, &flow_at);
     }
 
-    /// Pure integration behind [`tick`](Self::tick). `solid_at` reports whether a
+    /// Advance a FLIGHT's velocity by `dt` without moving it: gravity and
+    /// drag, the heading refreshed from the result. Answers the motion this
+    /// tick wants (`vel · dt`), which the world store sweeps for an impact
+    /// before applying — the sweep needs the bodies, which the entity never
+    /// sees. A loose or lodged item answers `None`.
+    pub fn advance_flight(&mut self, dt: f32) -> Option<Vec3> {
+        let Motion::Flight(flight) = &mut self.motion else {
+            return None;
+        };
+        self.prev_pos = self.pos;
+        self.prev_spin = self.spin;
+        let params = self.stack.item.projectile();
+        self.vel.y -= params.gravity * dt;
+        self.vel *= params.drag_factor(dt);
+        if let Some(heading) = Heading::of(self.vel) {
+            flight.heading = heading;
+        }
+        Some(self.vel * dt)
+    }
+
+    /// Pure integration behind [`step_loose`](Self::step_loose). `solid_at` reports whether a
     /// block cell is solid; bridged here to the shared collision box source so tests can
     /// drive the full physics against a stub world (a real `World` spins up a worker pool).
     #[cfg(test)]

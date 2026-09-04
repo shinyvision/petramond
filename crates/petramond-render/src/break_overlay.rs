@@ -363,16 +363,6 @@ mod tests {
         // One textured box (24 verts / 36 indices) per cracked (structural) cube surface.
         assert_eq!(v.len(), cracked * 24);
         assert_eq!(n as usize, cracked * 36);
-        // The whole-model crack geometry MUST fit the break-overlay GPU buffer, or the bake
-        // overflows and the crack silently vanishes (the "not visible in-game" bug). Pins
-        // the buffer is sized for a multi-cube model, not one cube.
-        assert!(
-            v.len() as u64 <= super::super::pipeline::MAX_BREAK_VERTICES,
-            "model crack geometry ({} verts) overflows the break buffer ({})",
-            v.len(),
-            super::super::pipeline::MAX_BREAK_VERTICES
-        );
-        assert!(n as u64 <= super::super::pipeline::MAX_BREAK_INDICES);
 
         // Every crack vertex lies within the model's world-space outline box — i.e. on
         // the model, never out in the air.

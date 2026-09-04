@@ -37,7 +37,7 @@ mod core;
 mod entities;
 mod gui;
 mod kv;
-mod player;
+pub(in crate::modding) mod player;
 mod registry;
 mod sounds;
 pub(in crate::modding) mod tags;
@@ -422,8 +422,10 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
             call,
             HostCall::SetPlayerHeldPose { .. }
                 | HostCall::SetPlayerBonePose { .. }
+                | HostCall::SetPlayerHeldDisplay { .. }
                 | HostCall::SetPlayerHandMotions { .. }
                 | HostCall::HoldUse { .. }
+                | HostCall::PlayerInventory { .. }
         )
     {
         return super::client::handle_client_call(data, call);
@@ -477,7 +479,9 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobDismount { .. }
         | HostCall::MobRiders { .. }
         | HostCall::BlockModelGroup { .. }
-        | HostCall::SpawnItem { .. } => entities::handle_entity_call(&data.mod_id, call),
+        | HostCall::SpawnItem { .. }
+        | HostCall::LaunchItem { .. }
+        | HostCall::ItemEntity { .. } => entities::handle_entity_call(&data.mod_id, call),
         HostCall::PlayerState
         | HostCall::DamagePlayer { .. }
         | HostCall::ApplyKnockback { .. }
@@ -501,6 +505,9 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::SetPlayerHandMotions { .. }
         | HostCall::SetPlayerDeniedActions { .. }
         | HostCall::HoldUse { .. }
+        | HostCall::TakeItem { .. }
+        | HostCall::SetPlayerHeldDisplay { .. }
+        | HostCall::PlayerInventory { .. }
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }

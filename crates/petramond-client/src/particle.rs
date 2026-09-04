@@ -55,10 +55,6 @@ fn tile_tint(tile: Tile) -> [f32; 3] {
     }
 }
 
-/// Fixed particle pool size. Oldest particles are overwritten once full, which
-/// is fine for transient dust — bursts at most spend a few dozen slots.
-pub use petramond_render::particles::PARTICLE_CAPACITY;
-
 /// Downward acceleration on particles, m/s². Lighter than item gravity so dust
 /// hangs a touch longer.
 const PARTICLE_GRAVITY: f32 = -12.0;
@@ -187,12 +183,11 @@ impl Particle {
     }
 }
 
-/// Fixed-capacity particle pool. Spawns write into a ring; ticks integrate and
-/// cull in place. No allocation after construction.
+/// The live particle pool: spawns append, ticks integrate and cull in place.
+/// Bounded only by spawn rate × lifetime, never by a cap that recycles a
+/// particle still in the air.
 pub struct ParticleSystem {
     particles: Vec<Particle>,
-    /// Next write index (ring cursor) once the pool is full.
-    head: usize,
     /// Monotonic counter feeding the deterministic hash for spawn variety.
     seed: u64,
     /// Spawn-count multiplier from the particles graphics option (`0` = off,
@@ -201,11 +196,14 @@ pub struct ParticleSystem {
     count_scale: f32,
 }
 
+/// The pool's warm starting capacity — a first burst never reallocates its
+/// way up from empty. A warm start, not a cap: the pool grows past it freely.
+const POOL_WARM_CAPACITY: usize = 4096;
+
 impl ParticleSystem {
     pub fn new() -> Self {
         ParticleSystem {
-            particles: Vec::with_capacity(PARTICLE_CAPACITY),
-            head: 0,
+            particles: Vec::with_capacity(POOL_WARM_CAPACITY),
             seed: 0,
             count_scale: 1.0,
         }
@@ -306,22 +304,11 @@ impl ParticleSystem {
                 i += 1;
             }
         }
-        // The ring cursor only matters while at capacity; once we've culled below
-        // capacity, push() resumes appending, so reset it to avoid stale writes.
-        if self.particles.len() < PARTICLE_CAPACITY {
-            self.head = 0;
-        }
     }
 
-    /// Push a particle, recycling the oldest slot when the pool is full.
     #[inline]
     fn push(&mut self, p: Particle) {
-        if self.particles.len() < PARTICLE_CAPACITY {
-            self.particles.push(p);
-        } else {
-            self.particles[self.head] = p;
-            self.head = (self.head + 1) % PARTICLE_CAPACITY;
-        }
+        self.particles.push(p);
     }
 
     /// Next deterministic hash value in `[0, 1)`, advancing the internal counter.

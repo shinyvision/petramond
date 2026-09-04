@@ -399,6 +399,7 @@ fn render_off_hand_preview() {
         let row = model_items.len() + i;
         let view = HeldItemView {
             item: Some(*item),
+            hold: item.held_pose(),
             variant: petramond_world::item::VariantId::NONE,
             ..Default::default()
         };
@@ -675,6 +676,7 @@ fn render_held_item_preview() {
     for (item, file, eat, eat_bob, eat_near) in targets {
         let view = HeldItemView {
             item: Some(item),
+            hold: item.held_pose(),
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             bob: [0.0, 0.0],
@@ -1056,6 +1058,7 @@ fn render_held_pose_preview() {
     for (row, (label, pose, bones)) in states.iter().enumerate() {
         let view = HeldItemView {
             item: Some(item),
+            hold: item.held_pose(),
             pose: *pose,
             ..Default::default()
         };

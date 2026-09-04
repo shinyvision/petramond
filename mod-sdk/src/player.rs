@@ -41,6 +41,52 @@ host_fn! {
 }
 
 host_fn! {
+    /// Every stack `player` carries — the grid in slot order (hotbar first),
+    /// then the off hand LAST; `None` = empty slot, `None` overall = no such
+    /// reachable session. Legal on the CLIENT for the LOCAL player, off the
+    /// replicated inventory, so a rule gating on it predicts what the server
+    /// decides. The one layout [`take_item`] spends in.
+    pub fn player_inventory(player: PlayerId) -> Option<Vec<Option<mod_api::ItemStackData>>>
+        => PlayerInventory { player } => ContainerSlots
+}
+
+/// How many of `item` (by registry NAME, any instance data) `player`
+/// carries — [`player_inventory`] summed, the read a rule makes BEFORE
+/// committing to a gesture. `0` for no such reachable session.
+pub fn player_item_count(player: PlayerId, item: &str) -> u32 {
+    player_inventory(player)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|stack| stack.item == item)
+        .map(|stack| u32::from(stack.count))
+        .sum()
+}
+
+host_fn! {
+    /// Remove `count` of `item` (by registry NAME) from `player`'s
+    /// inventory, whole or nothing, in [`player_inventory`]'s slot order.
+    /// `data` picks the variant: `None` = the first matching stack's
+    /// instance data (one variant leaves, never a blend), `Some(map)` = only
+    /// stacks carrying exactly `map`. Answers the taken stack (`None` =
+    /// short, unknown item, or no such connected session). The spend half
+    /// of a launch that leaves from somewhere other than the hand doing the
+    /// launching — an arrow out of the pack.
+    pub fn take_item(
+        player: PlayerId,
+        item: &str,
+        count: u8,
+        data: Option<&[(&str, &[u8])]>,
+    ) -> Option<mod_api::ItemStackData>
+        => TakeItem {
+            player,
+            item: item.into(),
+            count,
+            data: data.map(|d| d.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect()),
+        } => ItemStack
+}
+
+host_fn! {
     /// Consume `count` units of the ACTING player's held stack, atomically, only
     /// when it holds `item` with at least `count` — the spend primitive for item
     /// uses that place no block (spawning an entity from an `item_use_pre`
@@ -271,6 +317,24 @@ host_fn! {
         main: Option<HeldPose>,
         off: Option<HeldPose>,
     ) -> bool => SetPlayerHeldPose { player, main, off } => Bool
+}
+
+host_fn! {
+    /// Claim what each of `player`'s hands DISPLAYS — an item (by registry
+    /// NAME) whose art draws in place of the held stack's own (both views,
+    /// every observer), `None` releasing a hand. Presentation only: the
+    /// stack, the hotbar and every simulation read stay the real item, and
+    /// a display changing under a hand never restarts its eased pose. Last
+    /// claim in mod-id order wins a hand; transient, re-state it every tick.
+    ///
+    /// Legal on the CLIENT for the LOCAL player, the same predicted path as
+    /// [`set_player_held_pose`].
+    pub fn set_player_held_display(player: PlayerId, main: Option<&str>, off: Option<&str>) -> bool
+        => SetPlayerHeldDisplay {
+            player,
+            main: main.map(str::to_owned),
+            off: off.map(str::to_owned),
+        } => Bool
 }
 
 host_fn! {

@@ -27,6 +27,12 @@ pub struct HeldPose {
     pub roll: f32,
 }
 
+/// The sprite axis of a row that states none (degrees): the convention every
+/// tool and weapon sprite is drawn to — the working end at the tile's
+/// top-right, the grip at bottom-left — so a sprite drawn like a tool flies
+/// point-first without its row saying so.
+pub const DEFAULT_SPRITE_AXIS_DEGREES: f32 = 45.0;
+
 impl HeldPose {
     /// Upright hold for an ordinary sprite item (flowers, raw drops): no roll, so
     /// it stands straight up in the hand. The shared default carried by every

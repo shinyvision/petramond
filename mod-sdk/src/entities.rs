@@ -335,6 +335,41 @@ host_fn! {
 }
 
 host_fn! {
+    /// Launch ONE `item` (by registry NAME, `data` as its instance data) as
+    /// an item entity IN FLIGHT from `pos` at `vel` (m/s) for `owner`. It
+    /// flies per the row's `petramond:projectile` data and STRIKES what it
+    /// meets — a mob, a player, a collidable block — raising
+    /// [`EventKind::ProjectileHit`](mod_api::EventKind::ProjectileHit) for
+    /// the launcher's handler to act on; the engine itself only lodges (a
+    /// `sticks` row) or drops the item. `owner` is named as the attacker
+    /// on the hit and spared its own shot for a few ticks. Answers the
+    /// entity's stable id (`0` = unknown item).
+    pub fn launch_item(
+        item: &str,
+        pos: [f32; 3],
+        vel: [f32; 3],
+        owner: Option<mod_api::EntityRef>,
+        data: &[(&str, &[u8])],
+    ) -> u64
+        => LaunchItem {
+            item: item.into(),
+            pos,
+            vel,
+            owner,
+            data: data.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
+        } => U64
+}
+
+host_fn! {
+    /// Snapshot ONE item entity by its stable id — what a `projectile_hit`
+    /// handler reads to learn what struck (the stack, its data, who launched
+    /// it), or any rule tracking a drop it spawned. `None` = no such live
+    /// entity.
+    pub fn item_entity(entity: u64) -> Option<mod_api::ItemEntityData>
+        => ItemEntity { entity } => ItemEntity
+}
+
+host_fn! {
     /// [`spawn_item`] carrying per-stack instance data (same rules as
     /// `give_item_data`).
     pub fn spawn_item_data(item: &str, count: u8, pos: [f32; 3], data: &[(&str, &[u8])]) -> bool

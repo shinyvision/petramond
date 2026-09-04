@@ -34,7 +34,16 @@ pub(super) struct RawItemDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<String>,
     pub max_stack_size: u8,
-    pub held_pose: RawPose,
+    /// First-person hold orientation of the sprite; absent = the upright
+    /// default every ordinary item carries ([`HeldPose::DEFAULT`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_pose: Option<RawPose>,
+    /// Which way the item's SPRITE art points, in degrees anticlockwise
+    /// from the tile's +X — the direction a flying or lodged item lays along
+    /// its heading (see [`ItemType::sprite_axis_roll`](super::ItemType::sprite_axis_roll)).
+    /// Absent = the tool diagonal every tool and weapon sprite is drawn to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprite_axis: Option<f32>,
     /// Atlas tile name of the flat billboard sprite, for the items drawn as one
     /// (tools, raw drops, door/torch icons). Absent for items whose icon comes
     /// from their block or bbmodel.
@@ -185,6 +194,19 @@ pub(super) struct RawTool {
     /// Knockback multiplier over the victim's own. Defaults to `1.0`.
     #[serde(default)]
     pub knockback: Option<f32>,
+}
+
+/// The `petramond:projectile` data entry — see [`super::Projectile`]; every
+/// field optional over that type's defaults.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawProjectile {
+    #[serde(default)]
+    pub gravity: Option<f32>,
+    #[serde(default)]
+    pub drag: Option<f32>,
+    #[serde(default)]
+    pub sticks: Option<bool>,
 }
 
 /// The `petramond:fuel` data entry: game ticks one of this item burns as
@@ -401,6 +423,37 @@ fn convert(
         }
         None => None,
     };
+    let projectile =
+        match crate::registry::engine_data::<RawProjectile>(data, super::PROJECTILE_DATA_KEY)? {
+            Some(p) => {
+                let base = super::Projectile::default();
+                let gravity = match p.gravity {
+                    None => base.gravity,
+                    Some(g) if g.is_finite() && g >= 0.0 => g,
+                    Some(g) => {
+                        return Err(format!(
+                            "projectile gravity {g} must be finite and non-negative"
+                        ))
+                    }
+                };
+                let drag = match p.drag {
+                    None => base.drag,
+                    Some(d) if (0.0..=1.0).contains(&d) => d,
+                    Some(d) => return Err(format!("projectile drag {d} must lie in [0, 1]")),
+                };
+                Some(super::Projectile {
+                    gravity,
+                    drag,
+                    sticks: p.sticks.unwrap_or(base.sticks),
+                })
+            }
+            None => None,
+        };
+    let sprite_axis_degrees = match r.sprite_axis {
+        None => super::DEFAULT_SPRITE_AXIS_DEGREES,
+        Some(a) if a.is_finite() => a,
+        Some(a) => return Err(format!("sprite_axis {a} must be finite")),
+    };
     let dropped_reaction = match &r.dropped_reaction {
         Some(dr) => {
             let result =
@@ -443,11 +496,12 @@ fn convert(
         name: Box::leak(r.name.into_boxed_str()),
         info: r.info.map(|info| &*Box::leak(info.into_boxed_str())),
         max_stack_size: r.max_stack_size,
-        held_pose: HeldPose {
-            pitch: r.held_pose.pitch as f32,
-            yaw: r.held_pose.yaw as f32,
-            roll: r.held_pose.roll as f32,
-        },
+        held_pose: r.held_pose.map_or(HeldPose::DEFAULT, |p| HeldPose {
+            pitch: p.pitch as f32,
+            yaw: p.yaw as f32,
+            roll: p.roll as f32,
+        }),
+        sprite_axis_degrees,
         sprite,
         model: r.model,
         tags: Box::leak(tags.into_boxed_slice()),
@@ -458,6 +512,7 @@ fn convert(
         tool,
         food,
         dropped_reaction,
+        projectile,
         data,
     })
 }

@@ -1,6 +1,5 @@
 use crate::events::tick::{TickEvents, TICK_DT};
 use crate::events::{Attach, PostEvent, SessionPlayerRef, SimCtx, Stage};
-use crate::player::PlayerId;
 use crate::server::player::ConnectedPlayer;
 
 use super::{ServerGame, MAX_TICKS_PER_FRAME};
@@ -205,15 +204,14 @@ impl ServerGame {
         self.end_stage(Stage::Mobs, events);
 
         self.begin_stage(Stage::ItemPhysics, events);
-        // The magnet pulls each requested drop toward ITS requester, so the
-        // anchors carry ids alongside the body centres.
-        let magnet_anchors: Vec<(PlayerId, petramond_math::math::Vec3)> =
-            anchors.iter().map(|a| (a.id, a.pos)).collect();
+        // The same anchors: the magnet pulls each requested drop toward ITS
+        // requester, and a flight sweeps the anchors' bodies for a strike.
+        let step = self.world.tick_item_physics(TICK_DT, &anchors);
         // Row-declared dropped-item reactions (flour landing in water) return
         // their presentation batch: one burst + sound per transformed ENTITY,
         // routed onto the replicated world-event channels like any other
         // positional one-shot.
-        for fx in self.world.tick_item_physics(TICK_DT, &magnet_anchors) {
+        for fx in step.fx {
             if let Some(bundle) = fx.burst {
                 events.world.emitter_bursts.push((bundle, fx.pos, 1.0));
             }
@@ -224,6 +222,10 @@ impl ServerGame {
                 });
             }
         }
+        // A flight's strike is dispatched the tick it lands, before anything
+        // downstream (spawning, the mobs' next move) can read a lodged or
+        // consumed projectile as still flying.
+        self.resolve_item_impacts(step.impacts, events);
         self.end_stage(Stage::ItemPhysics, events);
 
         self.begin_stage(Stage::Spawning, events);

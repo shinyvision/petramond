@@ -188,8 +188,14 @@ impl IdRemap {
                 for p in &mut t.players {
                     p.held_item = p.held_item.and_then(|id| self.item(id));
                     p.off_hand_item = p.off_hand_item.and_then(|id| self.item(id));
+                    for shown in &mut p.held_display {
+                        *shown = shown.and_then(|id| self.item(id));
+                    }
                 }
                 if let Some(s) = &mut t.self_state {
+                    for shown in &mut s.held_display {
+                        *shown = shown.and_then(|id| self.item(id));
+                    }
                     s.effects.retain_mut(|(id, _)| match self.effect(*id) {
                         Some(local) => {
                             *id = local;
@@ -672,6 +678,7 @@ mod tests {
             data: None,
             pos: petramond_math::math::Vec3::ZERO,
             spin: 0.0,
+            flight: None,
         };
         let player_row = |held_item: Option<u16>| crate::net::protocol::PlayerStateRow {
             id: crate::player::PlayerId(1),
@@ -698,6 +705,7 @@ mod tests {
             eating_off_hand: false,
             held_pose_main: None,
             held_pose_off: None,
+            held_display: [None; 2],
             bone_poses: Vec::new(),
             motion_claims: [Default::default(); 2],
             hurt_recent: false,
@@ -731,6 +739,7 @@ mod tests {
                 move_scale: 1.0,
                 held_pose_main: None,
                 held_pose_off: None,
+                held_display: [Some(2), Some(unknown_item)],
                 bone_poses: Vec::new(),
                 motion_claims: [Default::default(); 2],
                 sleeping: None,
@@ -754,6 +763,11 @@ mod tests {
             "an unknown held item reads as an empty hand"
         );
         let s = t.self_state.as_ref().expect("self state kept");
+        assert_eq!(
+            s.held_display,
+            [Some(2), None],
+            "the self row's display items remap like the player rows'"
+        );
         assert_eq!(s.effects, vec![(0, 100)], "the unknown effect is dropped");
         let slots = s.inventory.as_ref().expect("inventory kept");
         assert_eq!(slots[0].as_ref().map(|w| w.item_id), Some(2));

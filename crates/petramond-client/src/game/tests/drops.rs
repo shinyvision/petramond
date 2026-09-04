@@ -215,7 +215,14 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
         Some(p0)
     );
     let pp = game.server.sessions[0].player.body_center();
-    game.server.world.tick_item_physics(TICK_DT, &[(p0, pp)]);
+    game.server.world.tick_item_physics(
+        TICK_DT,
+        &[petramond::mob::PlayerAnchor {
+            id: p0,
+            pos: pp,
+            ..Default::default()
+        }],
+    );
     if !game.server.world.item_entities().is_empty() {
         let d1 = (game.server.world.item_entities()[0].pos - chest).length();
         assert!(d1 < d0);
@@ -229,7 +236,14 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
         game.server.world.tick_item_lifetime();
         game.server.item_pickup_tick(0);
         let pp = game.server.sessions[0].player.body_center();
-        game.server.world.tick_item_physics(TICK_DT, &[(p0, pp)]);
+        game.server.world.tick_item_physics(
+            TICK_DT,
+            &[petramond::mob::PlayerAnchor {
+                id: p0,
+                pos: pp,
+                ..Default::default()
+            }],
+        );
     }
     assert!(game.server.world.item_entities().is_empty());
     assert_eq!(
@@ -286,7 +300,14 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
     for _ in 0..60 {
         let pp = game.server.sessions[0].player.body_center();
         let p0 = game.server.sessions[0].id;
-        game.server.world.tick_item_physics(TICK_DT, &[(p0, pp)]);
+        game.server.world.tick_item_physics(
+            TICK_DT,
+            &[petramond::mob::PlayerAnchor {
+                id: p0,
+                pos: pp,
+                ..Default::default()
+            }],
+        );
         game.server.world.tick_item_lifetime();
         game.server.item_pickup_tick(0);
     }

@@ -20,25 +20,16 @@ mod sky;
 mod terrain;
 mod ui_icons;
 
-pub(super) use self::entity_models::{
-    MAX_CHEST_INDICES, MAX_CHEST_VERTICES, MAX_DOOR_INDICES, MAX_DOOR_VERTICES,
-    MAX_ITEM_ENTITY_INDICES, MAX_ITEM_ENTITY_VERTICES, MAX_MOB_INDICES, MAX_MOB_VERTICES,
-};
 pub(super) use self::environment::{
     create_env_comp_bind, create_env_down_bind, create_environment_bind, EnvPassResources,
     EnvScaler,
 };
 pub(super) use self::grade::create_grade_bind;
-pub(super) use self::model3d::{MAX_ITEM3D_VERTICES, MAX_MODEL3D_INDICES, MAX_MODEL3D_VERTICES};
-pub(super) use self::overlays::{MAX_BREAK_INDICES, MAX_BREAK_VERTICES};
-pub(super) use self::ui_icons::MAX_UI_VERTICES;
 
 use self::builders::{
     buffer_bind_group, pipeline_layout, shader_module, texture_sampler_bgl_bind, uniform_entry,
 };
-use self::entity_models::{
-    create_entity_model_buffers, create_mob_pipeline, create_world_model_pipeline,
-};
+use self::entity_models::{create_mob_pipeline, create_world_model_pipeline};
 use self::environment::{create_env_scaler, create_environment_pipelines};
 use self::grade::create_grade_pipeline;
 use self::model3d::{create_item3d_pipeline, create_model3d_pipelines};
@@ -157,26 +148,6 @@ pub(super) struct PipelineResources {
     /// Entity blob-shadow pipeline: one horizontal MULTIPLY-blended quad per
     /// entity, same depth/cull rules as the contact pass, drawn right after it.
     pub entity_shadow_pipe: wgpu::RenderPipeline,
-    /// Reusable dynamic vbuf for the entity shadow quads (rewritten per frame).
-    pub entity_shadow_vbuf: wgpu::Buffer,
-    /// Static ibuf for the entity shadow quads, uploaded once.
-    pub entity_shadow_ibuf: wgpu::Buffer,
-    /// Reusable dynamic vbuf for the break overlay (one block-sized cube).
-    pub break_vbuf: wgpu::Buffer,
-    /// Reusable dynamic ibuf for the break overlay (one cube).
-    pub break_ibuf: wgpu::Buffer,
-    /// Reusable dynamic vbuf for item-entity geometry (drawn by the opaque pipe).
-    pub item_entity_vbuf: wgpu::Buffer,
-    /// Reusable dynamic ibuf for item-entity geometry.
-    pub item_entity_ibuf: wgpu::Buffer,
-    /// Reusable dynamic vbuf for chest models (body + hinged lid, opaque pipe).
-    pub chest_vbuf: wgpu::Buffer,
-    /// Reusable dynamic ibuf for chest models.
-    pub chest_ibuf: wgpu::Buffer,
-    /// Reusable dynamic vbuf for door models (2-tall hinged slab, opaque pipe).
-    pub door_vbuf: wgpu::Buffer,
-    /// Reusable dynamic ibuf for door models.
-    pub door_ibuf: wgpu::Buffer,
     /// Cutout terrain-particle cube pipeline. Reuses the block `uniform_bind`
     /// + `atlas_bind`, depth-tests, and depth-writes.
     pub particle_pipe: wgpu::RenderPipeline,
@@ -184,17 +155,12 @@ pub(super) struct PipelineResources {
     /// blended, depth-tested without writes, and back-face culled so transparency never
     /// exposes all six cube faces at once.
     pub emitter_particle_pipe: wgpu::RenderPipeline,
-    /// Reusable dynamic vbuf for cutout particle cubes (rewritten in place per frame).
-    pub particle_vbuf: wgpu::Buffer,
-    /// Reusable dynamic vbuf for translucent block-emitter particles.
-    pub emitter_particle_vbuf: wgpu::Buffer,
-    /// Static ibuf for particle cubes, uploaded once.
-    pub particle_ibuf: wgpu::Buffer,
     /// UI pipeline: 2D HUD / inventory quads (NDC pos + uv + color). Alpha-blended,
     /// NO depth, drawn last; group(0) binds whatever texture each quad samples — a
     /// baked GUI texture or the icon atlas (solid quads ignore the sampler).
     pub ui_pipe: wgpu::RenderPipeline,
-    /// Reusable dynamic vbuf for the UI's solid quads (dim backdrop + digits).
+    /// Reusable dynamic vbuf for the UI's solid quads (dim backdrop + digits);
+    /// grown by the renderer to fit.
     pub ui_vbuf: wgpu::Buffer,
     /// model-icon pipeline: bbmodel-block icons. The icon MVP is baked into the
     /// `ItemVertex` positions CPU-side and the faces self-sort by depth (the model is
@@ -424,12 +390,11 @@ pub(super) fn create_pipeline_resources(
         &mob_shader,
         true,
     );
-    let (break_pipe, break_vbuf, break_ibuf) =
+    let break_pipe =
         create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
     let contact_pipe = create_contact_pipeline(device, format, sample_count, &shared.uniform_bgl);
-    let (entity_shadow_pipe, entity_shadow_vbuf, entity_shadow_ibuf) =
+    let entity_shadow_pipe =
         create_entity_shadow_pipeline(device, format, sample_count, &shared.uniform_bgl);
-    let entity_bufs = create_entity_model_buffers(device);
     let particles = create_particle_pipeline(device, format, sample_count, &shared.layout);
     let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format, sample_count);
     let model_icon_pipe =
@@ -477,21 +442,8 @@ pub(super) fn create_pipeline_resources(
         break_pipe,
         contact_pipe,
         entity_shadow_pipe,
-        entity_shadow_vbuf,
-        entity_shadow_ibuf,
-        break_vbuf,
-        break_ibuf,
-        item_entity_vbuf: entity_bufs.item_entity_vbuf,
-        item_entity_ibuf: entity_bufs.item_entity_ibuf,
-        chest_vbuf: entity_bufs.chest_vbuf,
-        chest_ibuf: entity_bufs.chest_ibuf,
-        door_vbuf: entity_bufs.door_vbuf,
-        door_ibuf: entity_bufs.door_ibuf,
         particle_pipe: particles.pipe,
         emitter_particle_pipe: particles.emitter_pipe,
-        particle_vbuf: particles.vbuf,
-        emitter_particle_vbuf: particles.emitter_vbuf,
-        particle_ibuf: particles.ibuf,
         ui_pipe,
         ui_vbuf,
         model_icon_pipe,

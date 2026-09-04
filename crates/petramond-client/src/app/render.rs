@@ -166,6 +166,7 @@ impl App {
             let hand = std::mem::take(&mut self.hand);
             renderer.set_held_item(HeldItemFrame {
                 item: frame.held_item.item,
+                display: frame.held_item.display,
                 variant: frame.held_item.variant,
                 block_state: frame.held_item.block_state,
                 mining: frame.held_item.mining,
@@ -186,6 +187,7 @@ impl App {
             // and attack swings are main-hand actions by definition.
             renderer.set_off_hand_item(HeldItemFrame {
                 item: frame.off_hand_item.item,
+                display: frame.off_hand_item.display,
                 variant: frame.off_hand_item.variant,
                 block_state: frame.off_hand_item.block_state,
                 mining: false,

@@ -25,27 +25,6 @@ use super::item_cube::{push_block_item_cube_lit, push_cell_local_face};
 use super::item_model::ItemVertex;
 use super::lighting::{DynLight, LightEnv};
 
-/// The room a draw-set builder may take in a stream it SHARES with the dropped
-/// item entities.
-///
-/// Those streams are fixed buffers whose bake is all-or-nothing: one vertex
-/// past the cap and the whole stream draws nothing — every dropped item in the
-/// world, not just the machine that overflowed it. So a set is appended and
-/// then kept only if it still fits, and the first one that does not ends the
-/// run. Enough machines in view stop drawing their liquid; a floor of dropped
-/// items does not vanish because someone built a workshop.
-#[derive(Clone, Copy)]
-pub struct StreamBudget {
-    pub verts: usize,
-    pub indices: usize,
-}
-
-impl StreamBudget {
-    fn fits<V>(&self, verts: &[V], indices: &[u32]) -> bool {
-        verts.len() <= self.verts && indices.len() <= self.indices
-    }
-}
-
 /// The instances a frame draws: the published list plus the INDICES this
 /// frame's camera kept. Indices rather than a filtered copy of the rows —
 /// re-culling used to clone every visible instance (an `Arc` refcount pair and
@@ -61,12 +40,6 @@ impl<'a> VisibleDraws<'a> {
         let all = self.all;
         self.visible.iter().map(move |&i| &all[i as usize])
     }
-}
-
-/// Roll one instance's geometry back off both scratch buffers.
-fn rewind<V>(verts: &mut Vec<V>, indices: &mut Vec<u32>, mark: (usize, usize)) {
-    verts.truncate(mark.0);
-    indices.truncate(mark.1);
 }
 
 /// The light one prim draws under: an `emissive` prim ignores the cell's own,
@@ -92,14 +65,8 @@ fn at(inst: &BlockDrawInstance, p: [f32; 3]) -> Vec3 {
 /// prims (both are packed `Vertex` on the block atlas). Sprite- and
 /// model-kind items ride their own explicit-UV streams — see
 /// [`build_block_draw_sprites`] and [`build_block_draw_models`].
-pub fn build_block_draws(
-    draws: VisibleDraws<'_>,
-    budget: StreamBudget,
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-) {
+pub fn build_block_draws(draws: VisibleDraws<'_>, verts: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
     for inst in draws.iter() {
-        let mark = (verts.len(), indices.len());
         for prim in &inst.set.resolved {
             match prim {
                 BlockDrawPrim::Cuboid {
@@ -179,10 +146,6 @@ pub fn build_block_draws(
                 }
             }
         }
-        if !budget.fits(verts, indices) {
-            rewind(verts, indices, mark);
-            break;
-        }
     }
 }
 
@@ -195,13 +158,11 @@ pub fn build_block_draws(
 pub fn build_block_draw_sprites(
     draws: VisibleDraws<'_>,
     env: LightEnv,
-    budget: StreamBudget,
     scratch: &mut Vec<ItemVertex>,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) {
     for inst in draws.iter() {
-        let mark = (verts.len(), indices.len());
         for prim in &inst.set.resolved {
             let BlockDrawPrim::Item {
                 at: local,
@@ -243,10 +204,6 @@ pub fn build_block_draw_sprites(
             }
             indices.extend(base..base + count);
         }
-        if !budget.fits(verts, indices) {
-            rewind(verts, indices, mark);
-            break;
-        }
     }
 }
 
@@ -254,12 +211,10 @@ pub fn build_block_draw_sprites(
 pub fn build_block_draw_models(
     draws: VisibleDraws<'_>,
     env: LightEnv,
-    budget: StreamBudget,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) {
     for inst in draws.iter() {
-        let mark = (verts.len(), indices.len());
         for prim in &inst.set.resolved {
             let BlockDrawPrim::Item {
                 at: local,
@@ -294,10 +249,6 @@ pub fn build_block_draw_models(
             for v in verts[start..].iter_mut() {
                 v.tint = [v.tint[0] * t[0], v.tint[1] * t[1], v.tint[2] * t[2]];
             }
-        }
-        if !budget.fits(verts, indices) {
-            rewind(verts, indices, mark);
-            break;
         }
     }
 }

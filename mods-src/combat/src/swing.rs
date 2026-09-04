@@ -828,9 +828,8 @@ mod tests {
                 Pace::default(),
             )
         };
-        let idle = |hand: &mut Clock| {
-            hand.step(Some(Style::Axe), None, false, dt(), Pace::default())
-        };
+        let idle =
+            |hand: &mut Clock| hand.step(Some(Style::Axe), None, false, dt(), Pace::default());
         let first = attack(&mut hand).expect("the opening swing plays");
         assert_eq!(first.combo, 0);
         assert!(hand.bars_attack(), "the fresh arc bars the next attack");
@@ -843,7 +842,10 @@ mod tests {
         assert!(mashed.phase > first.phase, "the arc was not restarted");
         assert!(hand.queued, "…but the press is held");
         attack(&mut hand);
-        assert!(hand.queued, "a second mid-arc press is not a second queue entry");
+        assert!(
+            hand.queued,
+            "a second mid-arc press is not a second queue entry"
+        );
 
         // …and the instant the hold has fully played, the queued press
         // fires as the chained step — no further click needed.
@@ -876,10 +878,7 @@ mod tests {
         attack(&mut swapped).unwrap();
         attack(&mut swapped);
         assert!(swapped.queued);
-        assert_eq!(
-            swapped.step(None, None, false, dt(), Pace::default()),
-            None
-        );
+        assert_eq!(swapped.step(None, None, false, dt(), Pace::default()), None);
         assert!(!swapped.queued, "the swap drops the queue");
         assert_eq!(
             swapped.step(Some(Style::Axe), None, false, dt(), Pace::default()),

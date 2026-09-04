@@ -1,5 +1,5 @@
 //! Fixed-timestep simulation STATE: the tick counter, block-update queue,
-//! scheduled ticks, random-tick RNG, and nav-change feed. The tick DRIVER
+//! scheduled ticks, random-tick RNG, and the announced-change feed. The tick DRIVER
 //! (dispatching updates against the world) lives in the engine crate.
 
 use std::cmp::Reverse;
@@ -41,20 +41,86 @@ pub struct TickState {
     /// cells). The phases run strictly in sequence, so one buffer serves all
     /// three without a fresh allocation every tick.
     pub batch_scratch: Vec<IVec3>,
-    /// Block positions announced changed since the last mob tick — the feed
-    /// for confinement-cache invalidation (`mob::confined::RegionCache`),
-    /// drained by `tick_mobs`. Bounded: past [`NAV_CHANGE_CAP`] the overflow
-    /// flag stands in for the exact positions (invalidate everything), so a
-    /// world that never drains (a pure client) cannot grow it unbounded.
-    pub nav_changes: Vec<IVec3>,
-    pub nav_changes_overflow: bool,
+    /// Block positions announced changed since each consumer last looked —
+    /// see [`ChangeFeed`].
+    pub changes: ChangeFeed,
     /// Bumped by every announced nav-relevant change (see
     /// `World::nav_revision`).
     pub nav_revision: u64,
 }
 
-/// Cap on the per-tick nav-change buffer (see [`TickState::nav_changes`]).
-pub const NAV_CHANGE_CAP: usize = 256;
+/// Cap on the announced-change buffer (see [`ChangeFeed`]).
+pub const CHANGE_FEED_CAP: usize = 256;
+
+/// Who reads the announced block changes. Each reader keeps its own cursor
+/// into the ONE buffer, so the two can never disagree about what was
+/// announced between their drains.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ChangeReader {
+    /// Confinement-cache invalidation (`mob::confined::RegionCache`),
+    /// drained by `tick_mobs`.
+    Mobs = 0,
+    /// The item store: a lodged item watches its anchor block through it,
+    /// so a wall of lodged items costs nothing until a wall block goes.
+    /// Drained by `tick_item_physics`.
+    Items = 1,
+}
+
+const CHANGE_READERS: usize = 2;
+
+/// Block positions announced changed, buffered once for every
+/// [`ChangeReader`]: a sliding window of the last [`CHANGE_FEED_CAP`]
+/// announcements, numbered from the first ever pushed, with one sequence
+/// cursor per reader. A reader whose cursor is still inside the window gets
+/// exactly the positions it has not seen; one that fell behind the window
+/// is told "everything may have changed" instead, once. So the buffer is
+/// bounded whoever drains (a pure client never does), and a reader that
+/// lags never costs a current one its positions.
+#[derive(Default)]
+pub struct ChangeFeed {
+    window: VecDeque<IVec3>,
+    /// Sequence number of the window's front entry.
+    base: u64,
+    /// Per reader: the sequence number of the next entry it has not seen.
+    cursors: [u64; CHANGE_READERS],
+}
+
+impl ChangeFeed {
+    /// Record one announced position.
+    pub fn push(&mut self, pos: IVec3) {
+        if self.window.len() >= CHANGE_FEED_CAP {
+            self.window.pop_front();
+            self.base += 1;
+        }
+        self.window.push_back(pos);
+    }
+
+    /// Everything announced since `reader` last drained, plus whether the
+    /// window slid past unseen positions in between (the reader must then
+    /// treat every cell as possibly changed). Entries every reader has seen
+    /// are released.
+    pub fn drain(&mut self, reader: ChangeReader) -> (Vec<IVec3>, bool) {
+        let end = self.base + self.window.len() as u64;
+        let cursor = self.cursors[reader as usize];
+        let overflow = cursor < self.base;
+        let start = if overflow {
+            0
+        } else {
+            (cursor - self.base) as usize
+        };
+        let out = self.window.range(start..).copied().collect();
+        self.cursors[reader as usize] = end;
+        let seen = self.cursors.iter().copied().min().unwrap_or(end);
+        let release = (seen.saturating_sub(self.base) as usize).min(self.window.len());
+        self.window.drain(..release);
+        self.base += release as u64;
+        (out, overflow)
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
 impl TickState {
     /// Seed the per-world tick state. Only `rng` needs a non-default value
     /// (xorshift64 is stuck at 0); the world seed is mixed in purely to

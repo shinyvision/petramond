@@ -13,7 +13,7 @@ use mod_api::{
     ClientFrameData, ClientUiEvent, EventKind, EventPayload, GuestCall, GuestRet, HeldPose,
     Outcome, PlayerSnapshot, RuntimeSide,
 };
-use petramond_world::inventory::Hand;
+use petramond_world::inventory::{Hand, Inventory};
 
 use crate::player::BonePose;
 
@@ -291,6 +291,18 @@ impl ClientModRuntime {
         &mut self,
         world: &World,
         actor: &PlayerSnapshot,
+        inventory: &Inventory,
+        payload: &EventPayload,
+    ) -> bool {
+        super::scope::enter_inventory(inventory, || {
+            self.predict_claim_inner(world, actor, payload)
+        })
+    }
+
+    fn predict_claim_inner(
+        &mut self,
+        world: &World,
+        actor: &PlayerSnapshot,
         payload: &EventPayload,
     ) -> bool {
         let kind = payload.kind();
@@ -335,7 +347,18 @@ impl ClientModRuntime {
     /// so the handler reads `player_state()` exactly as the frame hook does;
     /// a cue about the local player that could not name them would be useless
     /// for the pose calls it exists to drive.
-    pub fn mod_event(&mut self, world: &World, actor: &PlayerSnapshot, key: &str, data: &[u8]) {
+    pub fn mod_event(
+        &mut self,
+        world: &World,
+        actor: &PlayerSnapshot,
+        inventory: &Inventory,
+        key: &str,
+        data: &[u8],
+    ) {
+        super::scope::enter_inventory(inventory, || self.mod_event_inner(world, actor, key, data))
+    }
+
+    fn mod_event_inner(&mut self, world: &World, actor: &PlayerSnapshot, key: &str, data: &[u8]) {
         let Some(mod_index) = self.owner_index(key) else {
             return;
         };
@@ -590,17 +613,25 @@ impl ClientModRuntime {
     /// reads identically wherever it runs. This is what lets a rule derived
     /// from local input (a raised guard) present on the frame the button goes
     /// down instead of a round trip later.
-    pub fn frame(&mut self, world: &World, actor: &PlayerSnapshot, frame: ClientFrameData) {
+    pub fn frame(
+        &mut self,
+        world: &World,
+        actor: &PlayerSnapshot,
+        inventory: &Inventory,
+        frame: ClientFrameData,
+    ) {
         let call = GuestCall::ClientFrame { frame };
-        for loaded in &mut self.mods {
-            // Each mod sees ITS OWN answer to "is this press mine", the same
-            // way the server resolves the field per caller.
-            let mut mine = actor.clone();
-            mine.holds_use = loaded.instance.client_data().is_some_and(|d| d.holds_use);
-            super::scope::enter_actor(mine, || {
-                dispatch_unit(&mut loaded.instance, world, &call, "client frame");
-            });
-        }
+        super::scope::enter_inventory(inventory, || {
+            for loaded in &mut self.mods {
+                // Each mod sees ITS OWN answer to "is this press mine", the
+                // same way the server resolves the field per caller.
+                let mut mine = actor.clone();
+                mine.holds_use = loaded.instance.client_data().is_some_and(|d| d.holds_use);
+                super::scope::enter_actor(mine, || {
+                    dispatch_unit(&mut loaded.instance, world, &call, "client frame");
+                });
+            }
+        });
     }
 
     /// The mod holding the local player's use gesture, if any.
@@ -662,6 +693,36 @@ impl ClientModRuntime {
         }
         let pick = |h: usize, replicated| if claimed[h] { predicted[h] } else { replicated };
         (pick(0, replicated.0), pick(1, replicated.1))
+    }
+
+    /// The local player's hand DISPLAYS — what each hand draws in place of
+    /// its stack — by exactly [`local_held_poses`](Self::local_held_poses)'s
+    /// rule: predicted for a hand a client mod has ever dressed, `replicated`
+    /// for the rest.
+    pub fn local_held_displays(
+        &self,
+        replicated: [Option<petramond_world::item::ItemType>; 2],
+    ) -> [Option<petramond_world::item::ItemType>; 2] {
+        let mut claimed = [false; 2];
+        let mut predicted = [None; 2];
+        for data in self.claim_stores() {
+            for (h, hand) in [Hand::Main, Hand::Off].into_iter().enumerate() {
+                claimed[h] |= data.displays_hands[h];
+                predicted[h] = data.body.held_display(hand).or(predicted[h]);
+            }
+        }
+        [
+            if claimed[0] {
+                predicted[0]
+            } else {
+                replicated[0]
+            },
+            if claimed[1] {
+                predicted[1]
+            } else {
+                replicated[1]
+            },
+        ]
     }
 
     /// The local player's rig-bone offsets: this client's own PREDICTION for

@@ -43,10 +43,6 @@ const SPRINT_FOOTSTEP_SPEED: f32 = 4.95;
 /// so this is a hysteresis-free threshold on an already-smoothed signal.
 const MIN_FOOTSTEP_WALK_WEIGHT: f32 = 0.35;
 
-/// Break overlays drawn per frame (own + remotes), nearest-to-camera first
-/// under contention — a bound so a crowd of miners can't grow the bake.
-const MAX_BREAK_OVERLAYS: usize = 8;
-
 // Entity blob-shadow tuning. The gather owns all of it: the renderer just
 // stamps quads.
 /// How many cells below an entity's feet the ground probe searches before
@@ -169,6 +165,8 @@ impl GamePresentationScratch {
                     count: entry.curr.count,
                     prev_spin: entry.prev.spin,
                     spin: entry.curr.spin,
+                    prev_flight: entry.prev.flight,
+                    flight: entry.curr.flight,
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
                     blocklight: petramond_world::light::BlockLight6::from_x2(
                         world.blocklight_rgb_at_world(c.x, c.y, c.z),
@@ -538,20 +536,6 @@ impl GamePresentationScratch {
                     .push(break_overlay_at(game, block, stage));
             }
         }
-        if self.break_overlays.len() > MAX_BREAK_OVERLAYS {
-            let cam = game.render_camera().pos;
-            let dist = |v: &BreakOverlayView| {
-                (Vec3::new(
-                    v.block.x as f32 + 0.5,
-                    v.block.y as f32 + 0.5,
-                    v.block.z as f32 + 0.5,
-                ) - cam)
-                    .length_squared()
-            };
-            self.break_overlays
-                .sort_by(|a, b| dist(a).total_cmp(&dist(b)));
-            self.break_overlays.truncate(MAX_BREAK_OVERLAYS);
-        }
     }
 
     /// One blob-shadow row per shadowed entity this frame: every mob, dropped
@@ -598,6 +582,11 @@ impl GamePresentationScratch {
             );
         }
         for d in &self.item_entities {
+            // An item in flight or lodged in a wall casts nothing: a blob
+            // under a sliver reads as a second object, not a shadow.
+            if d.flight.is_some() {
+                continue;
+            }
             let pos = d.prev_pos.lerp(d.pos, tick_alpha);
             if !visible(pos) {
                 continue;

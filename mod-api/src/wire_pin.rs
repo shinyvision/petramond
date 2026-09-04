@@ -404,6 +404,18 @@ fn samples() -> Samples {
     s.pin("HostCall::Raycast", &HostCall::Raycast {
         from: [1.0, 2.0, 3.0], dir: [0.0, -1.0, 0.0], max: 8.0, filter: RayFilter::Collidable,
     });
+    s.pin("HostCall::LaunchItem", &HostCall::LaunchItem {
+        item: "m:i".into(), pos: [1.0, 2.0, 3.0], vel: [0.0, 4.0, 0.0],
+        owner: Some(EntityRef::Player(PlayerId(1))), data: vec![],
+    });
+    s.pin("HostCall::ItemEntity", &HostCall::ItemEntity { entity: 9 });
+    s.pin("HostCall::TakeItem", &HostCall::TakeItem {
+        player: PlayerId(2), item: "m:i".into(), count: 3, data: Some(vec![("m:k".into(), vec![7])]),
+    });
+    s.pin("HostCall::SetPlayerHeldDisplay", &HostCall::SetPlayerHeldDisplay {
+        player: PlayerId(3), main: Some("m:i".into()), off: None,
+    });
+    s.pin("HostCall::PlayerInventory", &HostCall::PlayerInventory { player: PlayerId(3) });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -507,6 +519,11 @@ fn samples() -> Samples {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
         half_width: 0.4, height: 1.2, half_length: 0.4,
+    })));
+    s.pin("HostRet::ItemEntity", &HostRet::ItemEntity(Some(ItemEntityData {
+        id: 9, stack: ItemStackData { item: "m:i".into(), count: 1, data: vec![("m:k".into(), vec![7])] },
+        owner: Some(EntityRef::Player(PlayerId(0))), pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, -4.0],
+        motion: ItemMotion::Flight,
     })));
     s.pin("HostRet::BytesMany", &HostRet::BytesMany(vec![Some(vec![1, 2]), None]));
     s.pin("HostRet::ItemDataRows", &HostRet::ItemDataRows(vec![(ItemId(3), "{}".into())]));
@@ -668,6 +685,20 @@ fn samples() -> Samples {
     s.pin("EventPayload::AttackAttempt", &EventPayload::AttackAttempt {
         block: None, face: None, mob: Some(7), target: Some(PlayerId(2)), player: PlayerId(0),
     });
+    s.pin("EventPayload::ProjectileHit", &EventPayload::ProjectileHit {
+        entity: 9, target: ProjectileTarget::Mob(7),
+        pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, -4.0], fate: ProjectileFate::Drop,
+    });
+    s.pin("ProjectileTarget::*", &vec![
+        ProjectileTarget::Mob(7), ProjectileTarget::Player(PlayerId(2)),
+        ProjectileTarget::Block { pos: [1, 2, 3], face: [0, 1, 0] },
+    ]);
+    s.pin("ProjectileFate::*", &vec![
+        ProjectileFate::Consume, ProjectileFate::Lodge, ProjectileFate::Drop,
+    ]);
+    s.pin("ItemMotion::*", &vec![
+        ItemMotion::Loose, ItemMotion::Flight, ItemMotion::Stuck { cell: [1, 2, 3] },
+    ]);
     s.pin("EventPayload::ItemUsePre", &EventPayload::ItemUsePre {
         item: ItemId(1), target: Some([1, 2, 3]),
     });
@@ -767,7 +798,7 @@ fn samples() -> Samples {
         EventKind::PlayerDismounted, EventKind::MobTagAdded, EventKind::MobTagRemoved,
         EventKind::ItemPickedUp, EventKind::ItemObtained, EventKind::MobDamaged,
         EventKind::Interacted, EventKind::ModEvent,
-            EventKind::UseUnclaimed, EventKind::AttackAttempt,
+            EventKind::UseUnclaimed, EventKind::AttackAttempt, EventKind::ProjectileHit,
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
@@ -988,6 +1019,11 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::HoldUse", "930108"),
     ("HostCall::SetPlayerHandMotions", "94010902000100"),
     ("HostCall::Raycast", "95010000803f000000400000404000000000000080bf000000000000004101"),
+    ("HostCall::LaunchItem", "9601036d3a690000803f000000400000404000000000000080400000000001000100"),
+    ("HostCall::ItemEntity", "970109"),
+    ("HostCall::TakeItem", "980102036d3a69030101036d3a6b0107"),
+    ("HostCall::SetPlayerHeldDisplay", "99010301036d3a6900"),
+    ("HostCall::PlayerInventory", "9a0103"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -1028,18 +1064,19 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
     ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f0000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
-    ("HostRet::BytesMany", "28020102010200"),
-    ("HostRet::ItemDataRows", "290103027b7d"),
-    ("HostRet::BlockDataRows", "2a0104027b7d"),
-    ("HostRet::UndergroundBiomes", "2b020002"),
-    ("HostRet::TerrainSolid", "2c020100"),
-    ("HostRet::SurfaceBiomes", "2d020306"),
-    ("HostRet::Points", "2e01010000c03f0000204000006040"),
-    ("HostRet::Bools", "2f020100"),
-    ("HostRet::GuiViewers", "300102036d3a6701020406"),
-    ("HostRet::BlockInfo", "31010573746f6e650000c03f0101077069636b61786501ac02"),
-    ("HostRet::HeldStack", "3201036d3a690101036d3a6b0107"),
-    ("HostRet::Raycast", "330102040600020000002040"),
+    ("HostRet::ItemEntity", "280109036d3a690101036d3a6b01070100000000803f00000040000040400000000000000000000080c001"),
+    ("HostRet::BytesMany", "29020102010200"),
+    ("HostRet::ItemDataRows", "2a0103027b7d"),
+    ("HostRet::BlockDataRows", "2b0104027b7d"),
+    ("HostRet::UndergroundBiomes", "2c020002"),
+    ("HostRet::TerrainSolid", "2d020100"),
+    ("HostRet::SurfaceBiomes", "2e020306"),
+    ("HostRet::Points", "2f01010000c03f0000204000006040"),
+    ("HostRet::Bools", "30020100"),
+    ("HostRet::GuiViewers", "310102036d3a6701020406"),
+    ("HostRet::BlockInfo", "32010573746f6e650000c03f0101077069636b61786501ac02"),
+    ("HostRet::HeldStack", "3301036d3a690101036d3a6b0107"),
+    ("HostRet::Raycast", "340102040600020000002040"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -1077,6 +1114,10 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::InteractAttempt", "020102040601000200010700"),
     ("EventPayload::UseUnclaimed", "190102040601000200010700"),
     ("EventPayload::AttackAttempt", "1a00000107010200"),
+    ("EventPayload::ProjectileHit", "1b0900070000803f00000040000040400000000000000000000080c002"),
+    ("ProjectileTarget::*", "030007010202020406000200"),
+    ("ProjectileFate::*", "03000102"),
+    ("ItemMotion::*", "03000102020406"),
     ("EventPayload::ItemUsePre", "030101020406"),
     ("EventPayload::MobDamagePre", "0407020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
     ("EventPayload::PlayerDamagePre", "0502010100"),
@@ -1105,7 +1146,7 @@ const PINS: &[(&str, &str)] = &[
     ("Stage::*", "0c000102030405060708090a0b"),
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
-    ("EventKind::*", "1b000102030405060708090a0b0c0d0e0f101112131415161718191a"),
+    ("EventKind::*", "1c000102030405060708090a0b0c0d0e0f101112131415161718191a1b"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "031370657472616d6f6e643a696e76656e746f72790f70657472616d6f6e643a6368657374036d3a67"),
     ("Facing::*", "0400010203"),

@@ -105,6 +105,9 @@ pub(in crate::modding) struct ClientStoreData {
     /// that publishes "nothing" every frame from claiming hands it never
     /// touches, so another pack's server-side pose still lands there.
     pub poses_hands: [bool; 2],
+    /// Which hands this mod has ever DRESSED (`[main, off]`), latched like
+    /// [`poses_hands`](Self::poses_hands) and for the same reason.
+    pub displays_hands: [bool; 2],
     /// Which rig BONES this mod has ever offset, latched like
     /// [`poses_hands`](Self::poses_hands) and for the same reason: a mod that
     /// bends an arm owns it locally, so straightening it again presents on
@@ -141,6 +144,7 @@ impl ClientStoreData {
             mood: [0.0, 0.0],
             body: Default::default(),
             poses_hands: [false; 2],
+            displays_hands: [false; 2],
             poses_bones: BTreeSet::new(),
             owns_motions: [false; 2],
             holds_use: false,

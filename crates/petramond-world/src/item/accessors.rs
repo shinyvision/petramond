@@ -3,7 +3,7 @@ use crate::tile::Tile;
 
 use super::{
     data, definition, DroppedReaction, FoodDef, HeldPose, ItemRenderKind, ItemTag, ItemType,
-    ItemUse, Tool, UseRay,
+    ItemUse, Projectile, Tool, UseRay,
 };
 
 impl ItemType {
@@ -120,6 +120,13 @@ impl ItemType {
         self.def().dropped_reaction
     }
 
+    /// How this item flies once launched ([`Projectile`]): the row's
+    /// `petramond:projectile` entry, else the plain toss every item gets.
+    #[inline]
+    pub fn projectile(self) -> Projectile {
+        self.def().projectile.unwrap_or_default()
+    }
+
     /// Whether this item belongs to `tag`. Membership is item data — each item's
     /// `ItemDef` lists its tags — so recipes can require a
     /// group (e.g. any `petramond:planks`) without naming every member, and a new
@@ -229,6 +236,16 @@ impl ItemType {
     #[inline]
     pub fn held_pose(self) -> HeldPose {
         self.def().held_pose
+    }
+
+    /// The roll (radians) that lays this item's sprite art along +X: the
+    /// row's `sprite_axis` (degrees anticlockwise from the tile's +X,
+    /// default the tool diagonal) undone, so a flying or lodged sprite can
+    /// be laid along its heading point-first. Presentation only; cube and
+    /// model items have no sprite axis and ignore it.
+    #[inline]
+    pub fn sprite_axis_roll(self) -> f32 {
+        -self.def().sprite_axis_degrees.to_radians()
     }
 
     /// The flat atlas sprite for an item drawn as a billboard — item-only items

@@ -4,8 +4,8 @@ use super::builders::{
     color_target, cull_back, pipeline_layout, shader_module, uniform_entry, world_pipeline,
     DepthPreset,
 };
+use crate::renderer::dynamic_draw::new_buffer;
 use crate::uniforms::{Uniforms, UV_RECTS_LEN};
-use petramond_mesh::Vertex;
 
 /// Size of one MVP slot in the model3d dynamic-offset uniform buffer. A `mat4`
 /// is 64 bytes but dynamic offsets must be a multiple of the device's
@@ -16,17 +16,6 @@ pub(super) const MODEL3D_MVP_SLOT_SIZE: u64 = 256;
 /// slot 0; the isometric inventory icons (Layer 4 UI) cycle through the rest, so
 /// 64 slots covers the open inventory's 36 visible cube icons with headroom.
 pub(super) const MODEL3D_MVP_SLOTS: u64 = 64;
-/// Max vertices in the reusable model3d dynamic vertex buffer. A textured cube is
-/// 24 verts; this covers both hands plus a batch of icon cubes drawn in one buffer.
-pub(crate) const MAX_MODEL3D_VERTICES: u64 = 4096;
-/// Max indices in the reusable model3d dynamic index buffer (36 per cube).
-pub(crate) const MAX_MODEL3D_INDICES: u64 = 8192;
-/// Max vertices in the reusable item3d dynamic vertex buffer (the extruded held
-/// items — MAIN hand then OFF hand, two appended streams). A 16×16 sprite
-/// extrudes to front+back + boundary walls; a dense flower silhouette is well
-/// under half of this (non-indexed triangle list, 6 verts/quad).
-pub(crate) const MAX_ITEM3D_VERTICES: u64 = 8192;
-
 /// The dynamic-offset per-draw MVP uniform entry: one mat4 (64 bytes) per
 /// draw, selected by a 256-aligned dynamic offset (see
 /// [`MODEL3D_MVP_SLOT_SIZE`]).
@@ -161,18 +150,8 @@ pub(super) fn create_model3d_pipelines(
         Some(DepthPreset::WriteLess),
         sample_count,
     );
-    let model3d_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("model3d vbuf"),
-        size: MAX_MODEL3D_VERTICES * std::mem::size_of::<Vertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let model3d_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("model3d ibuf"),
-        size: MAX_MODEL3D_INDICES * 4,
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let model3d_vbuf = new_buffer(device, wgpu::BufferUsages::VERTEX, "model3d vbuf");
+    let model3d_ibuf = new_buffer(device, wgpu::BufferUsages::INDEX, "model3d ibuf");
 
     Model3dResources {
         pipe: model3d_pipe,
@@ -242,11 +221,6 @@ pub(super) fn create_item3d_pipeline(
         Some(DepthPreset::WriteLess),
         sample_count,
     );
-    let item3d_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("item3d vbuf"),
-        size: MAX_ITEM3D_VERTICES * std::mem::size_of::<super::item_model::ItemVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let item3d_vbuf = new_buffer(device, wgpu::BufferUsages::VERTEX, "item3d vbuf");
     (item3d_pipe, item3d_mvp_bind, item3d_vbuf)
 }

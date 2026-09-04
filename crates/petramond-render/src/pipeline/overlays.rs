@@ -3,21 +3,8 @@ use super::builders::{
     world_pipeline, DepthPreset,
 };
 use crate::crosshair::MAX_CROSSHAIR_VERTICES;
-use crate::entity_shadow::{MAX_ENTITY_SHADOWS, VERTS_PER_SHADOW};
-use crate::selection::MAX_OUTLINE_VERTICES;
 use crate::uniforms::Uniforms;
-use petramond_mesh::{ContactShadowVertex, Vertex};
-use wgpu::util::DeviceExt;
-
-/// Boxes the break-overlay buffers must hold: a legacy block cracks over ONE cube, but a
-/// bbmodel block cracks over EVERY cube of its model (the workbench is ~36), so size for a
-/// comfortably complex model — otherwise the multi-box bake overflows and the whole crack
-/// silently vanishes (the bug this fixes).
-pub(super) const MAX_BREAK_BOXES: u64 = 256;
-/// Vertices in the break-overlay dynamic vbuf (24 per box).
-pub(crate) const MAX_BREAK_VERTICES: u64 = MAX_BREAK_BOXES * 24;
-/// Indices in the break-overlay dynamic ibuf (36 per box).
-pub(crate) const MAX_BREAK_INDICES: u64 = MAX_BREAK_BOXES * 36;
+use petramond_mesh::ContactShadowVertex;
 
 /// Selection-outline pipeline.
 /// Its own minimal bind-group layout (Uniforms at binding 0 only) so it
@@ -77,13 +64,13 @@ pub(super) fn create_selection_pipeline(
         Some(DepthPreset::ReadLessEqual),
         sample_count,
     );
-    // Selection outline vertices x vec3<f32>.
-    let outline_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("outline vbuf"),
-        size: (MAX_OUTLINE_VERTICES * 12) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    // Selection outline vertices x vec3<f32>; grown by the renderer to fit
+    // whatever outline a target resolves to.
+    let outline_vbuf = crate::renderer::dynamic_draw::new_buffer(
+        device,
+        wgpu::BufferUsages::VERTEX,
+        "outline vbuf",
+    );
     (outline_pipe, outline_bind, outline_vbuf)
 }
 
@@ -157,7 +144,7 @@ pub(super) fn create_break_overlay_pipeline(
     sample_count: u32,
     layout: &wgpu::PipelineLayout,
     vbuf_layout: &wgpu::VertexBufferLayout,
-) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
+) -> wgpu::RenderPipeline {
     let break_shader = shader_module(
         device,
         "break overlay shader",
@@ -208,19 +195,7 @@ pub(super) fn create_break_overlay_pipeline(
         Some(DepthPreset::ReadLessEqualBiased),
         sample_count,
     );
-    let break_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("break vbuf"),
-        size: MAX_BREAK_VERTICES * std::mem::size_of::<Vertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let break_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("break ibuf"),
-        size: MAX_BREAK_INDICES * 4,
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    (break_pipe, break_vbuf, break_ibuf)
+    break_pipe
 }
 
 /// Model→terrain contact-shadow pipeline: the chunk `ContactShadowVertex`
@@ -308,7 +283,7 @@ pub(super) fn create_entity_shadow_pipeline(
     format: wgpu::TextureFormat,
     sample_count: u32,
     uniform_bgl: &wgpu::BindGroupLayout,
-) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
+) -> wgpu::RenderPipeline {
     let shadow_shader = shader_module(
         device,
         "entity shadow shader",
@@ -367,23 +342,5 @@ pub(super) fn create_entity_shadow_pipeline(
         Some(DepthPreset::ReadLessEqualContactBiased),
         sample_count,
     );
-    let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("entity shadow vbuf"),
-        size: ((MAX_ENTITY_SHADOWS * VERTS_PER_SHADOW as usize)
-            * std::mem::size_of::<crate::entity_shadow::ShadowVertex>()) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    // Static quad indices per cap slot: q*4 + {0,1,2, 0,2,3}.
-    let mut indices = Vec::with_capacity(MAX_ENTITY_SHADOWS * 6);
-    for q in 0..MAX_ENTITY_SHADOWS as u32 {
-        let base = q * VERTS_PER_SHADOW;
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-    let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("entity shadow ibuf"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-    (pipe, vbuf, ibuf)
+    pipe
 }

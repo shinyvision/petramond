@@ -20,6 +20,7 @@ pub use bus::{with_sessions_scope, EventBus, OpenGui, Outcome, SessionPlayerRef,
 pub use payload::{
     AttackAttempt, BlockBreakPre, BlockPlacePre, DamageSource, DeferredAction, InteractAttempt,
     ItemUseEvent, ItemUsePre, MobDamagePre, PlayerDamagePre, PostEvent, PostEventKind,
+    ProjectileHit,
 };
 pub use stages::{Attach, Stage, TickSystems};
 pub use tick::ClientEvent;

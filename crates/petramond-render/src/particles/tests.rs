@@ -532,26 +532,27 @@ fn faces_are_offset_to_the_cube_surface_not_the_centre() {
 }
 
 #[test]
-fn caps_at_capacity_and_reuses_buffer() {
+fn every_cube_bakes_and_the_buffer_is_reused() {
     let mut v = Vec::new();
-    let many = vec![inst(1.0); MAX_PARTICLE_CUBES + 100];
+    let many = vec![inst(1.0); 10_000];
     let n = build_particles(&many, &mut v);
     assert_eq!(
-        n as usize, MAX_PARTICLE_VERTICES,
-        "capped at the vertex budget"
+        n as usize,
+        many.len() * VERTS_PER_CUBE,
+        "nothing is dropped"
     );
     let cap = v.capacity();
-    // Same input -> identical (capped) vert count, so the cleared+refilled
-    // buffer keeps its capacity: rebuilding to the same size never reallocs.
+    // Same input -> identical vert count, so the cleared+refilled buffer keeps
+    // its capacity: rebuilding to the same size never reallocs.
     let n = build_particles(&many, &mut v);
-    assert_eq!(n as usize, MAX_PARTICLE_VERTICES);
+    assert_eq!(n as usize, many.len() * VERTS_PER_CUBE);
     assert_eq!(v.capacity(), cap, "vert buffer reused");
 }
 
 #[test]
-fn index_buffer_is_thirtysix_per_cube() {
-    let idx = particle_indices();
-    assert_eq!(idx.len(), MAX_PARTICLE_INDICES);
+fn the_cube_pattern_is_thirtysix_per_cube() {
+    let idx = crate::renderer::prim_index_list(&CUBE_INDEX_PATTERN, VERTS_PER_CUBE as u32, 2);
+    assert_eq!(idx.len(), 2 * INDICES_PER_CUBE);
     // First face of first cube: 0,1,2, 0,2,3.
     assert_eq!(&idx[..6], &[0, 1, 2, 0, 2, 3]);
     // Second face starts at vertex 4.

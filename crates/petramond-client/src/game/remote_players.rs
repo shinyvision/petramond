@@ -232,6 +232,7 @@ impl RemotePlayers {
             p.view = p.animator.update(HeldItemFrame {
                 bob: [0.0, 0.0],
                 item: p.curr.held_item.map(petramond_world::item::ItemType),
+                display: p.curr.held_display[0].map(petramond_world::item::ItemType),
                 variant: p
                     .curr
                     .held_data
@@ -258,6 +259,7 @@ impl RemotePlayers {
             p.off_view = p.off_animator.update(HeldItemFrame {
                 bob: [0.0, 0.0],
                 item: p.curr.off_hand_item.map(petramond_world::item::ItemType),
+                display: p.curr.held_display[1].map(petramond_world::item::ItemType),
                 variant: p
                     .curr
                     .off_hand_data
@@ -352,6 +354,7 @@ mod tests {
             eating_off_hand: false,
             held_pose_main: None,
             held_pose_off: None,
+            held_display: [None; 2],
             bone_poses: Vec::new(),
             motion_claims: [Default::default(); 2],
             hurt_recent: false,

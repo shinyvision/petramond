@@ -28,7 +28,7 @@ use petramond::player::{Player, PlayerMode};
 use petramond_math::math::IVec3;
 use petramond_world::gui_state::GuiStateMap;
 use petramond_world::inventory::{Hand, Inventory};
-use petramond_world::item::ItemStack;
+use petramond_world::item::{ItemStack, ItemType};
 
 use super::tick::WorldEvent;
 use super::Game;
@@ -269,6 +269,10 @@ pub struct SelfView {
     /// overrides locally (see `ClientModRuntime::local_held_poses`).
     pub held_pose_main: Option<mod_api::HeldPose>,
     pub held_pose_off: Option<mod_api::HeldPose>,
+    /// What each hand displays in place of its stack (`[main, off]`) — the
+    /// authoritative answer, overridden locally by a client mod dressing the
+    /// same hand (see `ClientModRuntime::local_held_displays`).
+    pub held_display: [Option<ItemType>; 2],
     /// claimed rig-bone offsets — the authoritative
     /// answer, overridden locally by a client mod predicting the same rule.
     pub bone_poses: Vec<petramond::player::BonePose>,
@@ -304,6 +308,10 @@ impl SelfView {
             denied_actions: player.claims.replicated_denied_actions(),
             held_pose_main: player.claims.held_pose(Hand::Main),
             held_pose_off: player.claims.held_pose(Hand::Off),
+            held_display: [
+                player.claims.held_display(Hand::Main),
+                player.claims.held_display(Hand::Off),
+            ],
             bone_poses: player.claims.bone_poses().collect(),
             motion_claims: [
                 player.claims.hand_motions(Hand::Main),
@@ -346,6 +354,7 @@ impl SelfView {
         self.denied_actions = state.denied_actions;
         self.held_pose_main = state.held_pose_main;
         self.held_pose_off = state.held_pose_off;
+        self.held_display = state.held_display.map(|id| id.map(ItemType));
         self.bone_poses.clone_from(&state.bone_poses);
         self.motion_claims = state.motion_claims;
     }

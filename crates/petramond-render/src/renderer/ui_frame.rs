@@ -51,46 +51,47 @@ impl Renderer {
         self.ui.drag_icon_quad_vertex_count = 0;
 
         build_ui(content, screen, scale, slots, hooks, &mut self.ui.build);
-        let cap = crate::pipeline::MAX_UI_VERTICES as usize;
-        let vsize = std::mem::size_of::<UiVertex>();
 
         // Solid quads packed into one buffer in draw order: normal stack
         // counts, the tooltip's counts (after the overlay chrome), then the
-        // cursor-held count (drawn after the cursor icon).
+        // cursor-held count (drawn after the cursor icon). One upload, the
+        // buffer grown to fit.
         let counts = &self.ui.build.counts;
         let overlay_counts = &self.ui.build.overlay_counts;
         let drag_counts = &self.ui.build.drag_counts;
-        if !counts.is_empty() && counts.len() <= cap {
-            self.queue
-                .write_buffer(&self.ui.solid_vbuf, 0, bytemuck::cast_slice(counts));
+        let mut solid = std::mem::take(&mut self.ui.solid_verts);
+        solid.clear();
+        solid.extend_from_slice(counts);
+        solid.extend_from_slice(overlay_counts);
+        solid.extend_from_slice(drag_counts);
+        if !solid.is_empty() {
+            super::dynamic_draw::upload(
+                &self.device,
+                &self.queue,
+                &mut self.ui.solid_vbuf,
+                &solid,
+                wgpu::BufferUsages::VERTEX,
+                "ui solid vbuf",
+            );
             self.ui.count_vertex_count = counts.len() as u32;
-        }
-        let mut off = self.ui.count_vertex_count as usize;
-        if !overlay_counts.is_empty() && off + overlay_counts.len() <= cap {
-            self.queue.write_buffer(
-                &self.ui.solid_vbuf,
-                (off * vsize) as u64,
-                bytemuck::cast_slice(overlay_counts),
-            );
             self.ui.overlay_count_vertex_count = overlay_counts.len() as u32;
-            off += overlay_counts.len();
-        }
-        if !drag_counts.is_empty() && off + drag_counts.len() <= cap {
-            self.queue.write_buffer(
-                &self.ui.solid_vbuf,
-                (off * vsize) as u64,
-                bytemuck::cast_slice(drag_counts),
-            );
             self.ui.drag_count_vertex_count = drag_counts.len() as u32;
         }
+        self.ui.solid_verts = solid;
 
         // HUD chrome layers: each layer's UiBuild vec to its own buffer.
         for layer in &mut self.ui.hud_layers {
             layer.vertex_count = 0;
             let verts = (layer.source)(&self.ui.build);
-            if !verts.is_empty() && verts.len() <= cap {
-                self.queue
-                    .write_buffer(&layer.vbuf, 0, bytemuck::cast_slice(verts));
+            if !verts.is_empty() {
+                super::dynamic_draw::upload(
+                    &self.device,
+                    &self.queue,
+                    &mut layer.vbuf,
+                    verts,
+                    wgpu::BufferUsages::VERTEX,
+                    "hud layer vbuf",
+                );
                 layer.vertex_count = verts.len() as u32;
             }
         }
@@ -170,21 +171,14 @@ impl Renderer {
                 - self.ui.overlay_icon_quad_vertex_count;
         }
         if !verts.is_empty() {
-            // Icon-quad geometry is bounded by the visible slots but GROW the buffer to
-            // fit rather than capping — a fixed cap that drops the batch when exceeded
-            // would blank EVERY icon at once. Grow to the next power of two so it
-            // doesn't reallocate every frame.
-            let bytes = bytemuck::cast_slice::<_, u8>(verts.as_slice()).len() as u64;
-            if bytes > self.ui.icon_quad_vbuf.size() {
-                self.ui.icon_quad_vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("icon quad vbuf"),
-                    size: bytes.next_power_of_two(),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-            }
-            self.queue
-                .write_buffer(&self.ui.icon_quad_vbuf, 0, bytemuck::cast_slice(&verts));
+            super::dynamic_draw::upload(
+                &self.device,
+                &self.queue,
+                &mut self.ui.icon_quad_vbuf,
+                &verts,
+                wgpu::BufferUsages::VERTEX,
+                "icon quad vbuf",
+            );
         }
         self.ui.icon_quad_verts = verts;
     }

@@ -248,17 +248,23 @@ struct Candidate {
     hit: Hit,
 }
 
+/// One hit's damage: a uniform roll in `range` off a host random word —
+/// the pack's one derivation, shared by every strike that rolls.
+pub fn roll(range: [f32; 2], word: u64) -> f32 {
+    let u = (word >> 11) as f32 / (1u64 << 53) as f32;
+    range[0] + (range[1] - range[0]) * u
+}
+
 /// The weapon's damage roll for this strike: the HELD stack's tool range —
 /// resolved as the stack carries it, so an augment's override counts
 /// exactly as it does for the engine's own hit — rolled off the pack's
 /// seeded stream. A hand with no tool row punches for one.
 fn roll_damage(me: PlayerId) -> f32 {
-    let [lo, hi] = player_held(me)
+    let range = player_held(me)
         .and_then(|stack| stack_info(&stack))
         .and_then(|info| info.tool.map(|t| t.damage))
         .unwrap_or([1.0, 1.0]);
-    let frac = (rng_u64("strike") % 1000) as f32 / 1000.0;
-    lo + frac * (hi - lo)
+    roll(range, rng_u64("strike"))
 }
 
 /// SERVER: land `me`'s swing of a `style` tool — its impact just played —
@@ -489,5 +495,13 @@ mod tests {
             ..hull
         });
         assert_eq!(square.len(), 1);
+    }
+
+    #[test]
+    fn a_roll_stays_inside_its_range() {
+        for word in [0, u64::MAX, 0x9E37_79B9_7F4A_7C15] {
+            let d = roll([2.0, 5.0], word);
+            assert!((2.0..=5.0).contains(&d), "{d}");
+        }
     }
 }

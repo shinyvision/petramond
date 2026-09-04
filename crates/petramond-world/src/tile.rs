@@ -151,6 +151,9 @@ pub struct EngineTiles {
     pub chest_latch: Tile,
     /// Break-progress crack overlays, stage 0 (first crack) to 9 (shattering).
     pub destroy_stages: [Tile; 10],
+    /// The flat white the streak behind a fast-flying item samples (the
+    /// renderer's `item_entity` trail) — light and taper are the geometry's.
+    pub item_trail: Tile,
 }
 
 /// The engine-referenced tiles, resolved once at registry load.
@@ -348,6 +351,7 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
         chest_inside: need("chest_inside")?,
         chest_latch: need("chest_latch")?,
         destroy_stages,
+        item_trail: need("item_trail")?,
     };
 
     Ok(TileData {

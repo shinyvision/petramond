@@ -26,6 +26,11 @@ pub(super) struct ItemDef {
     /// [`ItemType::held_pose`](super::ItemType::held_pose)). Most items carry
     /// [`HeldPose::DEFAULT`]; tools override it.
     pub held_pose: HeldPose,
+    /// Which way the sprite art points, degrees anticlockwise from the
+    /// tile's +X (`"sprite_axis"` in `items.json`, default
+    /// [`super::DEFAULT_SPRITE_AXIS_DEGREES`]) — see
+    /// [`ItemType::sprite_axis_roll`](super::ItemType::sprite_axis_roll).
+    pub sprite_axis_degrees: f32,
     /// The flat atlas sprite this item draws as a billboard (slots / in-hand /
     /// dropped) — carried by the item-only items (tools, raw drops) and the
     /// block-items whose in-world model has no usable icon face (doors, the
@@ -63,6 +68,10 @@ pub(super) struct ItemDef {
     /// Dropped-entity environmental reaction (`"dropped_reaction"` in
     /// `items.json`), or `None` — see [`super::DroppedReaction`].
     pub dropped_reaction: Option<super::DroppedReaction>,
+    /// How this item flies once launched — compiled from the row's
+    /// `petramond:projectile` data entry; `None` = the plain toss
+    /// ([`super::Projectile::default`]).
+    pub projectile: Option<super::Projectile>,
     /// The row's namespaced consumer-data entries (`"data"` in `items.json`
     /// plus every layer's `{"patch", "data"}` rows), sorted by key; each
     /// value is the entry's canonical raw JSON text. The item interop

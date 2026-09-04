@@ -7,9 +7,9 @@ use crate::client::{
 };
 use crate::data::{
     BlockInfoData, CollisionShape, EffectStateData, EntityRef, GuiValue, GuiViewerData, HandMotion,
-    ItemInfoData, ItemStackData, LightData, MobAnimStateData, MobRidersData, MobSnapshot,
-    MobTagLookup, MobTagValue, PlayerAttribute, PlayerInputData, PlayerListEntry, PlayerSnapshot,
-    RayFilter, RaycastHitData, RuntimeSide,
+    ItemEntityData, ItemInfoData, ItemStackData, LightData, MobAnimStateData, MobRidersData,
+    MobSnapshot, MobTagLookup, MobTagValue, PlayerAttribute, PlayerInputData, PlayerListEntry,
+    PlayerSnapshot, RayFilter, RaycastHitData, RuntimeSide,
 };
 use crate::events::EventKind;
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
@@ -1752,6 +1752,95 @@ pub enum HostCall {
         max: f32,
         filter: RayFilter,
     },
+    /// Spawn ONE `item` (by registry NAME, `data` as its instance data) as
+    /// an item entity IN FLIGHT: launched from `pos` at velocity `vel`
+    /// (m/s), heading along its motion, falling and slowing per the row's
+    /// `petramond:projectile` data, and STRIKING what it flies into — the
+    /// first live body or collidable block along each tick's motion raises
+    /// [`EventKind::ProjectileHit`]. `owner` is who launched it: reported on
+    /// the entity ([`ItemEntity`](Self::ItemEntity)), and not a target until
+    /// the item has once left the launcher's body — it starts inside it, so
+    /// the body it leaves through is not a hit, while a launch that comes
+    /// back around strikes its launcher like anyone else. An arrow leaves a
+    /// bow through this, and so would a thrown spear or a snowball: the
+    /// engine owns flight, impact detection, lodging, replication,
+    /// persistence and pickup; what an impact DOES is the launcher's policy
+    /// in its handler. → [`HostRet::U64`], the entity's stable session id,
+    /// `0` = unknown item; a malformed `data` map or non-finite vector is
+    /// [`HostRet::Error`].
+    ///
+    /// [`EventKind::ProjectileHit`]: crate::EventKind::ProjectileHit
+    LaunchItem {
+        item: String,
+        pos: [f32; 3],
+        vel: [f32; 3],
+        owner: Option<EntityRef>,
+        data: Vec<(String, Vec<u8>)>,
+    },
+    /// Snapshot ONE item entity by its stable id — the read a
+    /// [`EventKind::ProjectileHit`] handler makes to learn what struck (the
+    /// stack, its instance data, who launched it), or any rule tracking a
+    /// drop it spawned. → [`HostRet::ItemEntity`], `None` = no such live
+    /// entity.
+    ///
+    /// [`EventKind::ProjectileHit`]: crate::EventKind::ProjectileHit
+    ItemEntity {
+        entity: u64,
+    },
+    /// Remove `count` units of `item` (by registry NAME) from `player`'s
+    /// inventory, atomically, in the one carried-slot layout
+    /// [`PlayerInventory`](Self::PlayerInventory) publishes: the grid in slot
+    /// order, then the off hand. `data` picks the variant: `None` takes from
+    /// stacks sharing the FIRST matching stack's instance data (one variant
+    /// leaves, never a blend); `Some(map)` takes only from stacks whose data
+    /// is exactly `map` (empty = plain stacks). Nothing is removed unless
+    /// the whole count is there. The spend half of a launch — an arrow
+    /// leaving a quiver that is not the hand holding the bow. →
+    /// [`HostRet::ItemStack`]: the taken stack (`count` units, the variant
+    /// they carried), `None` = not enough, unknown item, or no such
+    /// connected session; a malformed `data` map is [`HostRet::Error`].
+    TakeItem {
+        player: PlayerId,
+        item: String,
+        count: u8,
+        data: Option<Vec<(String, Vec<u8>)>>,
+    },
+    /// Claim what each of `player`'s hands DISPLAYS — an item (by registry
+    /// NAME) whose art (sprite or model, both views, every observer) draws
+    /// in place of the held stack's own, or `None` to release a hand.
+    /// Presentation only: the inventory, the hotbar and every simulation
+    /// read keep the real stack, so this is the seam for an item whose LOOK
+    /// follows a rule of the mod's — a bow drawn through its pull frames, a
+    /// torch that lights, a book that opens. Resolves like
+    /// [`SetPlayerHeldPose`] (the LAST claim in mod-id order wins a hand;
+    /// releasing uncovers another's), and a display changing under a hand
+    /// never resets the hand's eased pose — the STACK did not change.
+    /// TRANSIENT — re-state it every tick. → [`HostRet::Bool`] (`false` = no
+    /// such reachable session); an unknown item name is [`HostRet::Error`].
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, the same predicted
+    /// path as [`SetPlayerHeldPose`].
+    ///
+    /// [`SetPlayerHeldPose`]: Self::SetPlayerHeldPose
+    SetPlayerHeldDisplay {
+        player: PlayerId,
+        main: Option<String>,
+        off: Option<String>,
+    },
+    /// Every stack `player` CARRIES, in the one layout every inventory read
+    /// and spend on this surface shares: the grid in slot order (the hotbar
+    /// first, then the main grid), then the off hand as the LAST entry.
+    /// `None` slots are empty. The read a rule makes BEFORE it commits to a
+    /// gesture — a bow with no arrow to loose has no draw to show — and the
+    /// snapshot any counting, sorting or variant-picking rule derives from.
+    /// → [`HostRet::ContainerSlots`] (`None` for no such reachable session).
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, answered from the
+    /// replicated inventory — so a rule that gates on it predicts the same
+    /// answer the server reaches.
+    PlayerInventory {
+        player: PlayerId,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1856,6 +1945,9 @@ pub enum HostRet {
     FoundBlocks(Option<Vec<[i32; 3]>>),
     /// [`HostCall::MobInfo`]: the mob's snapshot; `None` = no such live mob.
     Mob(Option<MobSnapshot>),
+    /// [`HostCall::ItemEntity`]: the item entity's snapshot; `None` = no
+    /// such live entity.
+    ItemEntity(Option<ItemEntityData>),
     /// [`HostCall::ClientCellKvAt`]: one value per requested cell, parallel
     /// to the request (`None` = absent / cell unknown).
     BytesMany(Vec<Option<Vec<u8>>>),

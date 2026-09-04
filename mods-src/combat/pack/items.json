@@ -77,6 +77,91 @@
         "roll": 0
       },
       "tags": []
+    },
+    {
+      "item": "combat:bow",
+      "key": "combat:bow",
+      "name": "Bow",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "combat:bow",
+      "tags": [],
+      "data": {
+        "combat:bow": {
+          "draw_ticks": 20,
+          "strain_ticks": 20,
+          "draw_speed_scale": 0.6,
+          "launch_speed": [
+            8.0,
+            82.0
+          ],
+          "pull": [
+            "combat:bow_pull_1",
+            "combat:bow_pull_2",
+            "combat:bow_pull_3"
+          ]
+        }
+      }
+    },
+    {
+      "item": "combat:bow_pull_1",
+      "key": "combat:bow_pull_1",
+      "name": "Bow (drawing)",
+      "max_stack_size": 1,
+      "sprite": "combat:bow_pull_1",
+      "tags": []
+    },
+    {
+      "item": "combat:bow_pull_2",
+      "key": "combat:bow_pull_2",
+      "name": "Bow (drawn)",
+      "max_stack_size": 1,
+      "sprite": "combat:bow_pull_2",
+      "tags": []
+    },
+    {
+      "item": "combat:bow_pull_3",
+      "key": "combat:bow_pull_3",
+      "name": "Bow (fully drawn)",
+      "max_stack_size": 1,
+      "sprite": "combat:bow_pull_3",
+      "tags": []
+    },
+    {
+      "item": "combat:arrow",
+      "key": "combat:arrow",
+      "name": "Arrow",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "combat:arrow",
+      "tags": [],
+      "data": {
+        "petramond:projectile": {
+          "gravity": 20.0,
+          "drag": 0.2,
+          "sticks": true
+        },
+        "combat:arrow": {
+          "damage_weak": [
+            1.0,
+            2.5
+          ],
+          "damage_full": [
+            10.0,
+            15.0
+          ],
+          "speed_weak": 8.0,
+          "speed_full": 82.0
+        }
+      }
     }
   ]
 }

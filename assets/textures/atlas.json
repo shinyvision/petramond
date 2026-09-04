@@ -86,6 +86,7 @@
     {"name": "dead_bush", "file": "dead_bush.png"},
     {"name": "brown_mushroom", "file": "brown_mushroom.png"},
     {"name": "red_mushroom", "file": "red_mushroom.png"},
+    {"name": "item_trail", "file": "item_trail.png"},
     {"name": "destroy_stage_0", "file": "destroy_stage_0.png"},
     {"name": "destroy_stage_1", "file": "destroy_stage_1.png"},
     {"name": "destroy_stage_2", "file": "destroy_stage_2.png"},

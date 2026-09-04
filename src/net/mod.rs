@@ -42,7 +42,7 @@ pub mod remap;
 //     the player rows and `SelfState` — while a motion is claimed, every
 //     mirror's vanilla copy of it stands down for that hand because the
 //     claimant animates it through the pose seams.
-pub const PROTOCOL_VERSION: u16 = 33;
+pub const PROTOCOL_VERSION: u16 = 34;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

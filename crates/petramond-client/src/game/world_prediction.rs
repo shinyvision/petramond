@@ -78,14 +78,14 @@ impl Game {
     /// half of prediction parity: a mod consumer is exactly as predictable
     /// as an engine one, through the same event vocabulary the server
     /// dispatches, evaluated against the replica.
-    fn predict_mod_claim(&mut self, sneak: bool, payload: mod_api::EventPayload) -> bool {
+    pub(super) fn predict_mod_claim(
+        &mut self,
+        sneak: bool,
+        payload: mod_api::EventPayload,
+    ) -> bool {
         let actor = self.client_actor_snapshot(sneak, Default::default());
-        let Self {
-            client_mods,
-            replica,
-            ..
-        } = self;
-        client_mods.predict_claim(replica, &actor, &payload)
+        self.client_mods
+            .predict_claim(&self.replica, &actor, &self.self_view.inventory, &payload)
     }
 
     /// The ONE per-click dispatch of the predicted `interact_attempt` to the

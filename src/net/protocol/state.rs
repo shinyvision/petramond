@@ -110,6 +110,10 @@ pub struct ItemStateRow {
     pub data: Option<Vec<u8>>,
     pub pos: Vec3,
     pub spin: f32,
+    /// `[yaw, pitch, speed]` of an item in flight or lodged in a block —
+    /// drawn pointing that way (a fast one trailing its path), no spin, no
+    /// bob; speed is 0 once lodged. `None` for a loose stack.
+    pub flight: Option<[f32; 3]>,
 }
 
 /// One connected player's replicated state as of the batch's tick — EVERY
@@ -157,6 +161,10 @@ pub struct PlayerStateRow {
     /// every recipient, so an observer sees the same guard the wielder does.
     pub held_pose_main: Option<mod_api::HeldPose>,
     pub held_pose_off: Option<mod_api::HeldPose>,
+    /// What each hand DISPLAYS in place of its stack's art (`[main, off]`,
+    /// wire item ids) — a bow drawn through its pull frames on somebody
+    /// else's body. `None` = the stack's own.
+    pub held_display: [Option<u16>; 2],
     /// The resolved rig-bone offsets — what makes a raised arm visible on
     /// somebody else's body. Empty on ordinary rows.
     ///
@@ -297,6 +305,9 @@ pub struct SelfState {
     /// client running the same rule overrides locally until it arrives.
     pub held_pose_main: Option<mod_api::HeldPose>,
     pub held_pose_off: Option<mod_api::HeldPose>,
+    /// The AUTHORITATIVE hand displays (`[main, off]`, wire item ids), which
+    /// a client running the same rule overrides locally.
+    pub held_display: [Option<u16>; 2],
     /// The AUTHORITATIVE rig-bone offsets for this body, as rig IDS, which a
     /// client running the same rule overrides per bone locally.
     pub bone_poses: Vec<crate::player::BonePose>,

@@ -224,17 +224,31 @@ fn hostile_guest_with_id(id: &str, body: &str) -> ModInstance {
 /// there, and they must not overwrite a later call's bytes).
 const CALL_STAGE_ADDR: u32 = 1024;
 
-/// The shared guest template: `mod_init` issues one registration host-call,
-/// `mod_dispatch` runs `body`, and `extra_data` adds whatever data segments
-/// the body reads from.
+/// The shared guest template: `mod_init` issues one tick-system
+/// registration host-call, `mod_dispatch` runs `body`, and `extra_data` adds
+/// whatever data segments the body reads from.
 fn guest_with_data(id: &str, extra_data: &str, body: &str) -> ModInstance {
-    let registration = mod_api::encode(&HostCall::RegisterTickSystem {
-        stage: ApiStage::Mining,
-        attach: AttachSide::Before,
-        priority: 0,
-        system_id: 7,
-    })
-    .unwrap();
+    guest_registering(
+        id,
+        &HostCall::RegisterTickSystem {
+            stage: ApiStage::Mining,
+            attach: AttachSide::Before,
+            priority: 0,
+            system_id: 7,
+        },
+        extra_data,
+        body,
+    )
+}
+
+/// [`guest_with_data`] under a caller-chosen `mod_init` registration.
+fn guest_registering(
+    id: &str,
+    registration: &HostCall,
+    extra_data: &str,
+    body: &str,
+) -> ModInstance {
+    let registration = mod_api::encode(registration).unwrap();
     let reg_bytes = wat_bytes(&registration);
     let reg_len = registration.len();
     let wat = format!(
@@ -257,6 +271,28 @@ fn guest_with_data(id: &str, extra_data: &str, body: &str) -> ModInstance {
 
 fn wat_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("\\{b:02x}")).collect()
+}
+
+/// A guest registering one event handler whose every dispatch answers the
+/// baked `reply` — the fixture for the ECHO half of the event ABI, where the
+/// engine reads a payload's mutable fields back out of the guest's answer.
+fn echoing_guest(id: &str, event: mod_api::EventKind, reply: &mod_api::GuestRet) -> ModInstance {
+    let bytes = mod_api::encode(reply).expect("encode the baked reply");
+    let data = format!(
+        "  (data (i32.const {CALL_STAGE_ADDR}) \"{}\")\n",
+        wat_bytes(&bytes)
+    );
+    let packed = (u64::from(CALL_STAGE_ADDR) << 32) | bytes.len() as u64;
+    guest_registering(
+        id,
+        &HostCall::RegisterEventHandler {
+            event,
+            priority: 0,
+            handler_id: 1,
+        },
+        &data,
+        &format!("(i64.const {packed})"),
+    )
 }
 
 /// A guest whose every dispatch ISSUES `calls`, in order, and then answers
@@ -661,4 +697,51 @@ fn run_isolated(test_path: &str) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
+}
+
+/// The one MUTABLE field of `projectile_hit` crosses the ABI and comes back:
+/// a handler's echoed `fate` replaces the engine's default on the engine
+/// event, whichever verdict rides with it.
+#[test]
+fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
+    use crate::entity::Fate;
+    use crate::events::ProjectileHit;
+    use crate::world::ImpactTarget;
+    use mod_api::{EventKind, EventPayload, GuestRet, Outcome, ProjectileFate, ProjectileTarget};
+
+    let reply = GuestRet::Event {
+        outcome: Outcome::Cancel,
+        payload: EventPayload::ProjectileHit {
+            entity: 9,
+            target: ProjectileTarget::Mob(7),
+            pos: [0.0; 3],
+            vel: [0.0; 3],
+            fate: ProjectileFate::Consume,
+        },
+    };
+    let mut sim = Sim::new();
+    let mut host = ModHost::from_instances(vec![echoing_guest(
+        "echo",
+        EventKind::ProjectileHit,
+        &reply,
+    )]);
+    sim.init(&mut host);
+
+    let mut ev = ProjectileHit {
+        entity: 9,
+        owner: None,
+        target: ImpactTarget::Mob(7),
+        pos: Vec3::ZERO,
+        vel: Vec3::ZERO,
+        fate: Fate::Lodge,
+    };
+    let outcome = sim.bus.projectile_hit(
+        &mut sim.world,
+        &mut sim.player,
+        &mut sim.gui_state,
+        &mut sim.feed,
+        &mut ev,
+    );
+    assert_eq!(outcome, crate::events::Outcome::Cancel);
+    assert_eq!(ev.fate, Fate::Consume, "the echoed fate is the applied one");
 }

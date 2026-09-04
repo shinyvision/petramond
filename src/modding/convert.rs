@@ -9,7 +9,7 @@
 use crate::events::{
     self, AttackAttempt, BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre,
     MobDamageFeedbackComponent, MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent,
-    PostEventKind,
+    PostEventKind, ProjectileHit,
 };
 use mod_api as api;
 use petramond_math::facing::Facing;
@@ -26,6 +26,23 @@ fn ivec(v: IVec3) -> [i32; 3] {
 #[inline]
 fn vec(v: Vec3) -> [f32; 3] {
     v.to_array()
+}
+
+/// Engine → ABI entity reference.
+pub(super) fn entity_ref(e: crate::mob::EntityRef) -> api::EntityRef {
+    match e {
+        crate::mob::EntityRef::Player(id) => api::EntityRef::Player(api::PlayerId(id.0)),
+        crate::mob::EntityRef::Mob(id) => api::EntityRef::Mob(id),
+    }
+}
+
+/// ABI → engine entity reference (the one exception to "out only": an
+/// entity a call NAMES, carried onto the entity it creates).
+pub(super) fn entity_ref_in(e: api::EntityRef) -> crate::mob::EntityRef {
+    match e {
+        api::EntityRef::Player(id) => crate::mob::EntityRef::Player(crate::player::PlayerId(id.0)),
+        api::EntityRef::Mob(id) => crate::mob::EntityRef::Mob(id),
+    }
 }
 
 #[inline]
@@ -72,7 +89,8 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         | K::AttackAttempt
         | K::ItemUsePre
         | K::MobDamagePre
-        | K::PlayerDamagePre => return None,
+        | K::PlayerDamagePre
+        | K::ProjectileHit => return None,
         K::BlockPlaced => PostEventKind::BlockPlaced,
         K::BlockBroken => PostEventKind::BlockBroken,
         K::ItemUsed => PostEventKind::ItemUsed,
@@ -238,6 +256,42 @@ pub(super) fn attack_attempt(ev: &AttackAttempt) -> api::EventPayload {
         mob: ev.mob,
         target: ev.target.map(|p| api::PlayerId(p.0)),
         player: api::PlayerId(ev.player.0),
+    }
+}
+
+pub(super) fn projectile_hit(ev: &ProjectileHit) -> api::EventPayload {
+    use crate::world::ImpactTarget;
+    api::EventPayload::ProjectileHit {
+        entity: ev.entity,
+        target: match ev.target {
+            ImpactTarget::Mob(id) => api::ProjectileTarget::Mob(id),
+            ImpactTarget::Player(id) => api::ProjectileTarget::Player(api::PlayerId(id.0)),
+            ImpactTarget::Block { cell, face } => api::ProjectileTarget::Block {
+                pos: ivec(cell),
+                face: ivec(face),
+            },
+        },
+        pos: vec(ev.pos),
+        vel: vec(ev.vel),
+        fate: fate_out(ev.fate),
+    }
+}
+
+fn fate_out(fate: crate::entity::Fate) -> api::ProjectileFate {
+    use crate::entity::Fate;
+    match fate {
+        Fate::Consume => api::ProjectileFate::Consume,
+        Fate::Lodge => api::ProjectileFate::Lodge,
+        Fate::Drop => api::ProjectileFate::Drop,
+    }
+}
+
+pub(super) fn fate_in(fate: api::ProjectileFate) -> crate::entity::Fate {
+    use crate::entity::Fate;
+    match fate {
+        api::ProjectileFate::Consume => Fate::Consume,
+        api::ProjectileFate::Lodge => Fate::Lodge,
+        api::ProjectileFate::Drop => Fate::Drop,
     }
 }
 

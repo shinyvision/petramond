@@ -80,6 +80,56 @@ pub enum EventKind {
     /// [`HostCall::DamageMob`]: crate::HostCall::DamageMob
     /// [`HostCall::DamagePlayer`]: crate::HostCall::DamagePlayer
     AttackAttempt,
+    /// PRE — an item entity in FLIGHT ([`HostCall::LaunchItem`]) struck
+    /// something: the first live body (a mob, a player) or collidable block
+    /// along this tick's motion. The payload names the ENTITY and the HIT —
+    /// what was struck, where, how fast; what is flying, its instance data
+    /// and who launched it are the entity's own facts, read through
+    /// [`HostCall::ItemEntity`] (the entity is still live for the whole
+    /// dispatch, whatever fate it is headed for). The payload's `fate` is
+    /// what becomes of the entity once the dispatch ends — the engine's
+    /// default (LODGED in the block it struck when the row's
+    /// `petramond:projectile` data says `sticks`, else DROPPED loose at the
+    /// impact) — and any handler may rewrite it: `Consume` for an arrow spent
+    /// in the wound, `Drop` for one that should glance off. The verdict
+    /// shapes only the DISPATCH: `Continue` lets later handlers see the same
+    /// hit (a poison pack adding its effect after the bow's damage), `Cancel`
+    /// ends it — an exclusive claim. The engine deals no damage itself: what
+    /// an arrow does is the bow's law, landed through the ordinary calls
+    /// naming the launcher as the attacker.
+    ///
+    /// The dispatch acts as the launcher's session when the launcher is a
+    /// connected player, else as the host session — so a handler addresses
+    /// bodies by the ids it is handed, never by `PlayerState` alone.
+    ///
+    /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
+    /// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity
+    ProjectileHit,
+}
+
+/// What becomes of a flying item once its [`EventKind::ProjectileHit`]
+/// dispatch ends — the MUTABLE field of that payload.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ProjectileFate {
+    /// The entity is removed: spent in what it struck.
+    Consume,
+    /// The entity lodges where it struck, heading kept, until that block
+    /// goes. Only a BLOCK can hold an item; on a body this drops instead.
+    Lodge,
+    /// The entity comes to rest loose at the impact, an ordinary drop.
+    Drop,
+}
+
+/// What a flying item struck ([`EventPayload::ProjectileHit`]).
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub enum ProjectileTarget {
+    /// A live mob, by stable id.
+    Mob(u64),
+    /// A connected player (never the launcher within its grace ticks).
+    Player(PlayerId),
+    /// A collidable block: the cell and the crossed face's normal (back
+    /// toward the flight, zero when the flight began inside the cell).
+    Block { pos: [i32; 3], face: [i32; 3] },
 }
 
 /// Why an entity is taking damage.
@@ -518,6 +568,25 @@ pub enum EventPayload {
         /// The pressing session.
         player: PlayerId,
     },
+    /// PRE — a flying item struck something ([`EventKind::ProjectileHit`]);
+    /// `fate` is the mutable consequence, the verdict only ends or continues
+    /// the dispatch — see the kind. The entity itself (its stack, its
+    /// launcher) is one [`HostCall::ItemEntity`] away.
+    ///
+    /// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity
+    ProjectileHit {
+        /// The item entity's stable session id.
+        entity: u64,
+        target: ProjectileTarget,
+        /// Where the impact is, in world space.
+        pos: [f32; 3],
+        /// The velocity it arrived with (m/s) — how hard it hit, and which
+        /// way it was going.
+        vel: [f32; 3],
+        /// MUTABLE — what becomes of the entity after the dispatch. Arrives
+        /// as the engine's default; the echoed value is applied.
+        fate: ProjectileFate,
+    },
 }
 
 impl EventPayload {
@@ -550,6 +619,7 @@ impl EventPayload {
             EventPayload::MobDamaged { .. } => EventKind::MobDamaged,
             EventPayload::Interacted { .. } => EventKind::Interacted,
             EventPayload::ModEvent { .. } => EventKind::ModEvent,
+            EventPayload::ProjectileHit { .. } => EventKind::ProjectileHit,
         }
     }
 }

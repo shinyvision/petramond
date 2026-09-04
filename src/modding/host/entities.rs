@@ -11,7 +11,7 @@ use crate::events::{DamageSource, DeferredAction, PostEvent, SimCtx};
 use petramond_math::math::Vec3;
 use petramond_world::item::{ItemStack, ItemType};
 
-use super::guards::{finite3, item_by_name, live_mob, sim_mutate, sim_query};
+use super::guards::{finite3, item_by_name, live_mob, sim_mutate, sim_mutating_query, sim_query};
 use super::intern_mod_id;
 
 /// Maximum horizontal speed accepted from `MobDrive`, derived from the
@@ -91,6 +91,29 @@ pub(super) fn attack_source(
             None => DamageSource::Mod(mod_id),
         },
     })
+}
+
+/// One item entity as the ABI snapshots it.
+fn item_entity_data(it: &DroppedItem) -> mod_api::ItemEntityData {
+    use crate::entity::Motion;
+    let (owner, motion) = match it.motion {
+        Motion::Loose => (None, mod_api::ItemMotion::Loose),
+        Motion::Flight(f) => (f.owner, mod_api::ItemMotion::Flight),
+        Motion::Stuck(s) => (
+            None,
+            mod_api::ItemMotion::Stuck {
+                cell: s.anchor.to_array(),
+            },
+        ),
+    };
+    mod_api::ItemEntityData {
+        id: it.id,
+        stack: super::guards::item_stack_data(it.stack),
+        owner: owner.map(crate::modding::convert::entity_ref),
+        pos: it.pos.to_array(),
+        vel: it.vel.to_array(),
+        motion,
+    }
 }
 
 /// Entity calls (mob spawn/query/hurt/despawn, item drops).
@@ -408,7 +431,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     Ok(v) => v,
                     Err(e) => return e,
                 };
-                sim_query(|ctx| {
+                sim_mutating_query(|ctx| {
                     let Some(item) = item_by_name(&item) else {
                         log::warn!("[mod {mod_id}] SpawnItem: unknown item '{item}'");
                         return HostRet::Bool(false);
@@ -421,6 +444,40 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
+        HostCall::LaunchItem {
+            item,
+            pos,
+            vel,
+            owner,
+            data,
+        } => match (
+            finite3(pos, "LaunchItem.pos"),
+            finite3(vel, "LaunchItem.vel"),
+        ) {
+            (Err(e), _) | (_, Err(e)) => e,
+            (Ok(pos), Ok(vel)) => {
+                let variant = match super::guards::intern_abi_data("LaunchItem", &data) {
+                    Ok(v) => v,
+                    Err(e) => return e,
+                };
+                sim_mutating_query(|ctx| {
+                    let Some(item) = item_by_name(&item) else {
+                        log::warn!("[mod {mod_id}] LaunchItem: unknown item '{item}'");
+                        return HostRet::U64(0);
+                    };
+                    let owner = owner.map(crate::modding::convert::entity_ref_in);
+                    let stack = petramond_world::item::ItemStack::with_variant(item, 1, variant);
+                    let mut entity = crate::entity::DroppedItem::launched(pos, stack, vel, owner);
+                    let (sky, block) = crate::server::entities::light_at_pos(ctx.world, pos);
+                    entity.skylight = sky;
+                    entity.blocklight = block;
+                    HostRet::U64(ctx.world.spawn_item(entity))
+                })
+            }
+        },
+        HostCall::ItemEntity { entity } => sim_query(|ctx| {
+            HostRet::ItemEntity(ctx.world.dropped_items().get(entity).map(item_entity_data))
+        }),
         other => HostRet::Error(format!(
             "non-entity call {other:?} mis-routed to handle_entity_call (host bug)"
         )),

@@ -39,7 +39,7 @@ use petramond_world::crafting::Recipes;
 
 use super::sim_guard::{SimReadiness, SIM_RETRY_DELAY};
 use super::store::World;
-use petramond_world::world::tick_state::NAV_CHANGE_CAP;
+use petramond_world::world::tick_state::ChangeReader;
 
 /// Random-tick draws per loaded 16³ section per tick.
 const RANDOM_TICK_SPEED: u32 = 3;
@@ -261,31 +261,27 @@ impl World {
         }
     }
 
-    /// Record one changed position for the confinement-invalidation feed
-    /// (see [`TickState::nav_changes`]). Also the direct entry for mutation
-    /// funnels that never pass the announce choke point — the door toggle
-    /// flips collision through the door map with no block write.
+    /// Record one changed position on the announced-change feed (see
+    /// `TickState::changes`). Also the direct entry for mutation funnels
+    /// that never pass the announce choke point — the door toggle flips
+    /// collision through the door map with no block write.
     pub(super) fn push_nav_change(&mut self, pos: IVec3) {
         // Monotonic witness that SOMETHING navigationally relevant changed —
         // the coarse half of the confinement re-check gate (see
-        // `mob::confined`). Bumped even when the buffer has overflowed: the
+        // `mob::confined`). Bumped even when the feed has overflowed: the
         // positions are lost, the fact is not.
-        self.sim.nav_revision = self.sim.nav_revision.wrapping_add(1);
-        if self.sim.nav_changes_overflow {
-            return;
-        }
-        if self.sim.nav_changes.len() >= NAV_CHANGE_CAP {
-            self.sim.nav_changes.clear();
-            self.sim.nav_changes_overflow = true;
-        } else {
-            self.sim.nav_changes.push(pos);
-        }
+        let sim = &mut self.sim;
+        sim.nav_revision = sim.nav_revision.wrapping_add(1);
+        sim.changes.push(pos);
     }
 
-    /// Drain the changed-block buffer feeding confinement-cache invalidation
-    /// (see `TickState::nav_changes`): every position announced since the
-    /// last drain, plus whether the buffer overflowed (positions unknown —
-    /// the consumer must invalidate everything).
+    /// Drain the announced-change feed for the item store: the positions
+    /// announced since its last drain and whether the feed overflowed in
+    /// between (positions lost — treat every anchor as possibly changed).
+    pub(super) fn take_collision_changes(&mut self) -> (Vec<IVec3>, bool) {
+        self.sim.changes.drain(ChangeReader::Items)
+    }
+
     /// A counter that moves whenever anything a mob could walk on or through
     /// changed. Cheap staleness witness for verdicts derived from terrain.
     #[inline]
@@ -293,10 +289,12 @@ impl World {
         self.sim.nav_revision
     }
 
+    /// Drain the announced-change feed for confinement-cache invalidation:
+    /// every position announced since its last drain, plus whether the feed
+    /// overflowed in between (positions unknown — the consumer must
+    /// invalidate everything).
     pub(super) fn take_nav_changes(&mut self) -> (Vec<IVec3>, bool) {
-        let overflow = self.sim.nav_changes_overflow;
-        self.sim.nav_changes_overflow = false;
-        (std::mem::take(&mut self.sim.nav_changes), overflow)
+        self.sim.changes.drain(ChangeReader::Mobs)
     }
 
     pub(super) fn queue_block_update(&mut self, pos: IVec3) -> bool {

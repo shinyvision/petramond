@@ -30,6 +30,7 @@ pub mod permissions;
 pub mod placement;
 pub mod player;
 pub mod progression;
+pub mod projectiles;
 pub mod remote;
 pub mod riding;
 pub mod session_build;

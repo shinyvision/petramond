@@ -134,6 +134,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 data: None,
                 pos: Vec3::new(x, 69.0, 0.0),
                 spin: 0.0,
+                flight: None,
             }],
             players: vec![PlayerStateRow {
                 id: remote_id,
@@ -158,6 +159,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 eating_off_hand: false,
                 held_pose_main: None,
                 held_pose_off: None,
+                held_display: [None; 2],
                 bone_poses: Vec::new(),
                 motion_claims: [Default::default(); 2],
                 hurt_recent: false,

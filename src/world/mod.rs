@@ -55,7 +55,7 @@ mod visibility;
 pub mod water;
 
 pub use cursor::SectionCursor;
-pub use entities::ITEM_MERGE_INTERVAL_TICKS;
+pub use entities::{ImpactTarget, ItemImpact, ItemStep, ITEM_MERGE_INTERVAL_TICKS};
 #[cfg(any(test, feature = "test-support"))]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 pub use petramond_world::world::custom_bake::CustomBakeCell;

@@ -12,7 +12,7 @@ mod client_overlay;
 mod construct;
 mod doc_ui;
 mod dynamic_bake;
-mod dynamic_draw;
+pub(crate) mod dynamic_draw;
 mod frame_state;
 mod icon_atlas;
 mod lod;
@@ -23,6 +23,8 @@ mod ui_frame;
 #[cfg(test)]
 pub(crate) use construct::instance_descriptor;
 pub use construct::new_renderer_from_target;
+#[cfg(test)]
+pub(crate) use dynamic_draw::prim_index_list;
 use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
 use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
@@ -184,7 +186,7 @@ struct EnvPass {
 /// over, and the reusable CPU staging both bakes fill.
 struct ParticlePass {
     /// Particle billboard draw: the particle pipeline + a per-frame vbuf and a
-    /// STATIC quad ibuf, as one [`DynamicVertexDraw`].
+    /// patterned cube ibuf, as one [`DynamicVertexDraw`].
     draw: DynamicVertexDraw,
     /// Translucent block-emitter particles: same cube vertex format as mining dust,
     /// but a separate alpha-blended pipeline/vbuf so cutout dust remains unchanged.
@@ -503,6 +505,15 @@ struct HandPass {
     /// `build_hand`, capacity retained — no per-frame allocation).
     verts: Vec<petramond_mesh::Vertex>,
     indices: Vec<u32>,
+    /// The off hand's own model3d staging (`build_off_hand_lit` clears its
+    /// buffers, so it cannot append into `verts`/`indices` directly) and the
+    /// held-bbmodel / off-sprite scratch every item3d expansion bakes
+    /// through: all retained, cleared + refilled per frame.
+    off_verts: Vec<petramond_mesh::Vertex>,
+    off_indices: Vec<u32>,
+    model_scratch_verts: Vec<super::item_model::ItemVertex>,
+    model_scratch_indices: Vec<u32>,
+    off_item3d_scratch: Vec<super::item_model::ItemVertex>,
     /// Break-overlay (destroy crack): its own pipeline + dynamic vbuf/ibuf + the
     /// index count baked this frame (0 = no overlay), as one [`DynamicDraw`].
     break_draw: DynamicDraw,
@@ -564,6 +575,8 @@ struct UiPass {
     /// counts. Drawn with the icon-atlas bind (the solid sentinel skips the
     /// sampler anyway).
     solid_vbuf: wgpu::Buffer,
+    /// CPU staging for `solid_vbuf` (cleared + refilled, capacity retained).
+    solid_verts: Vec<UiVertex>,
     count_vertex_count: u32,
     overlay_count_vertex_count: u32,
     drag_count_vertex_count: u32,
@@ -577,8 +590,7 @@ struct UiPass {
     /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.
     icon_atlas: IconAtlas,
     /// Reusable dynamic vbuf for the per-frame icon QUADS (two triangles per filled
-    /// slot, sampling the icon atlas). Grown to fit if a frame ever exceeds it (never
-    /// a hard cap that would drop the whole batch).
+    /// slot, sampling the icon atlas), grown to fit.
     icon_quad_vbuf: wgpu::Buffer,
     /// Reusable CPU staging for the per-frame icon-quad vertices (cleared + refilled,
     /// capacity retained — no per-frame allocation).

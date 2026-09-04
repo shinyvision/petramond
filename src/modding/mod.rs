@@ -774,6 +774,19 @@ fn wire_event_handler(
                 None => Outcome::Continue,
             }
         }),
+        EventKind::ProjectileHit => {
+            bus.on_projectile_hit(priority, move |ctx, ev| {
+                match call_event(&inst, ctx, handler_id, convert::projectile_hit(ev)) {
+                    Some((outcome, echoed)) => {
+                        if let EventPayload::ProjectileHit { fate, .. } = echoed {
+                            ev.fate = convert::fate_in(fate);
+                        }
+                        convert::outcome(outcome)
+                    }
+                    None => Outcome::Continue,
+                }
+            })
+        }
         EventKind::MobDamagePre => {
             bus.on_mob_damage_pre(priority, move |ctx, ev| {
                 match call_event(&inst, ctx, handler_id, convert::mob_damage_pre(ev)) {

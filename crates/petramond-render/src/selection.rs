@@ -1,11 +1,14 @@
 use petramond_math::math::{IVec3, Mat4, SelectionBoxes, SelectionShape, Vec3};
 use petramond_world::torch::{POLE_HALF, POLE_HEIGHT};
 
-pub(super) const MAX_OUTLINE_VERTICES: usize = 96;
-
 pub(super) struct OutlineVertices {
-    pub vertices: [[f32; 3]; MAX_OUTLINE_VERTICES],
-    pub count: u32,
+    pub vertices: Vec<[f32; 3]>,
+}
+
+impl OutlineVertices {
+    pub fn count(&self) -> u32 {
+        self.vertices.len() as u32
+    }
 }
 
 /// The line-segment endpoints for a selection outline, in world space.
@@ -23,8 +26,7 @@ pub(super) fn outline_vertices(shape: SelectionShape) -> OutlineVertices {
 /// remain occluded by the block itself.
 fn box_outline_vertices(min: Vec3, max: Vec3) -> OutlineVertices {
     let mut out = OutlineVertices {
-        vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
-        count: 0,
+        vertices: Vec::new(),
     };
     push_box_edges(&mut out, min, max);
     out
@@ -32,8 +34,7 @@ fn box_outline_vertices(min: Vec3, max: Vec3) -> OutlineVertices {
 
 fn box_list_outline_vertices(boxes: SelectionBoxes) -> OutlineVertices {
     let mut out = OutlineVertices {
-        vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
-        count: 0,
+        vertices: Vec::new(),
     };
 
     let mut xs = Vec::with_capacity(4);
@@ -299,8 +300,7 @@ fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
     let c011 = c(false, true, true);
     let c111 = c(true, true, true);
     let mut out = OutlineVertices {
-        vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
-        count: 0,
+        vertices: Vec::new(),
     };
     for (a, b) in [
         (c000, c100),
@@ -322,11 +322,8 @@ fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
 }
 
 fn push_line(out: &mut OutlineVertices, a: [f32; 3], b: [f32; 3]) {
-    let i = out.count as usize;
-    debug_assert!(i + 2 <= MAX_OUTLINE_VERTICES);
-    out.vertices[i] = a;
-    out.vertices[i + 1] = b;
-    out.count += 2;
+    out.vertices.push(a);
+    out.vertices.push(b);
 }
 
 #[cfg(test)]
@@ -376,7 +373,8 @@ mod tests {
     }
 
     fn segments(outline: &OutlineVertices) -> Vec<([f32; 3], [f32; 3])> {
-        outline.vertices[..outline.count as usize]
+        outline
+            .vertices
             .chunks_exact(2)
             .map(|pair| (pair[0], pair[1]))
             .collect()

@@ -249,7 +249,21 @@ fn bake_item_entities(
         item: d.item,
         variant: d.variant,
         count: d.count,
-        spin: lerp_angle(d.prev_spin, d.spin, alpha),
+        pose: match (d.prev_flight, d.flight) {
+            // A heading that just appeared (launched this tick) has no
+            // previous turn to blend from, so it snaps to where it points —
+            // intentional: flight is replicated, never predicted, and a
+            // blend from the loose spin would turn a fresh launch mid-air.
+            (prev, Some([yaw, pitch, speed])) => {
+                let [py, pp, ps] = prev.unwrap_or([yaw, pitch, speed]);
+                crate::ItemEntityPose::Aimed {
+                    yaw: lerp_angle(py, yaw, alpha),
+                    pitch: lerp_angle(pp, pitch, alpha),
+                    speed: ps + (speed - ps) * alpha,
+                }
+            }
+            (_, None) => crate::ItemEntityPose::Spin(lerp_angle(d.prev_spin, d.spin, alpha)),
+        },
         skylight: d.skylight,
         blocklight: d.blocklight,
     }));
@@ -316,6 +330,8 @@ mod tests {
             count: 1,
             prev_spin: 0.0,
             spin: 0.0,
+            prev_flight: None,
+            flight: None,
             skylight: 0,
             blocklight: petramond_world::light::BlockLight6::DARK,
         }

@@ -8,6 +8,7 @@ mod validate;
 use std::sync::Arc;
 
 use mod_api::{HostCall, HostRet, RuntimeSide};
+use petramond_world::item::ItemType;
 
 use crate::modding::host::guards::{key_owned_by_namespace, KV_MAX_KEY_BYTES};
 use crate::modding::host::{ModStoreData, Phase};
@@ -99,6 +100,10 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // uses, addressed at the local player.
         | HostCall::SetPlayerHeldPose { .. }
         | HostCall::SetPlayerBonePose { .. }
+        | HostCall::SetPlayerHeldDisplay { .. }
+        // A read of what the local player carries, off the replicated
+        // inventory — what lets a gesture rule predict the same refusal.
+        | HostCall::PlayerInventory { .. }
         // ...and the swing claim beside them — the same presentation-only
         // shape (silencing the local motions the mod animates).
         | HostCall::SetPlayerHandMotions { .. }
@@ -131,6 +136,9 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
         | HostCall::SpawnItem { .. }
+        | HostCall::LaunchItem { .. }
+        | HostCall::ItemEntity { .. }
+        | HostCall::TakeItem { .. }
         | HostCall::DamagePlayer { .. }
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }
@@ -450,6 +458,43 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     "SetPlayerHeldPose: non-finite rotation/translation component".into(),
                 )
             }
+        }
+        HostCall::PlayerInventory { player } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "PlayerInventory: a client instance may read only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            match super::scope::with_inventory(super::super::host::player::carried_slots) {
+                Some(slots) => HostRet::ContainerSlots(Some(slots)),
+                None => HostRet::Error("PlayerInventory: no inventory is published".into()),
+            }
+        }
+        // What the hand displays: the same predicted path, the same latch.
+        HostCall::SetPlayerHeldDisplay { player, main, off } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "SetPlayerHeldDisplay: a client instance may dress only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let item = |name: &Option<String>| match name {
+                None => Ok(None),
+                Some(name) => ItemType::by_name(name).map(Some).ok_or_else(|| {
+                    HostRet::Error(format!("SetPlayerHeldDisplay: unknown item '{name}'"))
+                }),
+            };
+            let (main, off) = match (item(&main), item(&off)) {
+                (Ok(main), Ok(off)) => (main, off),
+                (Err(e), _) | (_, Err(e)) => return e,
+            };
+            client.displays_hands[0] |= main.is_some();
+            client.displays_hands[1] |= off.is_some();
+            client.body.set_held_display(&mod_id, main, off);
+            HostRet::Bool(true)
         }
         // The body counterpart, same predicted path and same local-only rule.
         HostCall::SetPlayerBonePose { player, bones } => {

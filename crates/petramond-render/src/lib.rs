@@ -168,7 +168,13 @@ mod ui_frame_coherence_tests {
 /// these visual animation phases.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemView {
+    /// The item whose ART draws: the held stack, or a mod's display stand-in
+    /// for it (`HeldItemFrame::display`).
     pub item: Option<ItemType>,
+    /// The authored hold of the REAL held stack — always the stack's, never
+    /// the display item's, so a stand-in's art sits exactly where the hand
+    /// holds what it actually holds.
+    pub hold: petramond_world::item::HeldPose,
     /// The held stack's instance-data variant (tint resolution at draw).
     pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
@@ -247,6 +253,7 @@ impl Default for HeldItemView {
     fn default() -> Self {
         HeldItemView {
             item: None,
+            hold: petramond_world::item::HeldPose::DEFAULT,
             variant: petramond_world::item::VariantId::NONE,
             block_state: HeldBlockState::None,
             bob: [0.0, 0.0],
@@ -265,6 +272,13 @@ impl Default for HeldItemView {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemFrame {
     pub item: Option<ItemType>,
+    /// The item whose ART draws in place of `item`'s (a mod's held-display
+    /// claim — a launcher through its draw frames); `None` = `item`'s own.
+    /// Only the look: the hand's authored hold and every reset keyed on the
+    /// held item come from `item`, so a display changing under a hand never
+    /// restarts its eased pose, and a display-only row needs no hold of its
+    /// own.
+    pub display: Option<ItemType>,
     /// The held stack's instance-data variant (tint resolution at draw).
     pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
@@ -304,9 +318,24 @@ pub struct HeldItemFrame {
     pub dt: f32,
 }
 
+/// How a dropped item entity is turned this frame. The contract holds for
+/// every render kind — cube, extruded sprite and bbmodel alike answer a pose
+/// the same way (`item_entity::Placement`).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ItemEntityPose {
+    /// A loose stack: spun about Y by this many radians, hovering and
+    /// bobbing above its `pos`, drawn as a layered pile per `count`.
+    Spin(f32),
+    /// An item in flight or lodged in a block: yawed about Y and PITCHED up
+    /// from level about the entity's own centre (no hover, no bob), still,
+    /// as one piece whatever the count; `speed` (m/s, 0 once lodged) draws a
+    /// fast one trailing its path.
+    Aimed { yaw: f32, pitch: f32, speed: f32 },
+}
+
 /// A dropped item-entity to draw in the world this frame: a small spinning +
-/// bobbing cube (or extruded 3D slab for sprite-kind items) at `pos`, rotated by
-/// `spin` radians about Y. The App fills a slice of these from its `DroppedItem`s.
+/// bobbing cube (or extruded 3D slab for sprite-kind items) at `pos`, turned
+/// per `pose`. The App fills a slice of these from its `DroppedItem`s.
 /// A stack draws as several offset, layered copies (capped at 5) per `count`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ItemEntityInstance {
@@ -316,8 +345,7 @@ pub struct ItemEntityInstance {
     pub variant: petramond_world::item::VariantId,
     /// Stack size. Drives how many layered geometries the pile draws (1..=5).
     pub count: u8,
-    /// Y-axis spin in radians.
-    pub spin: f32,
+    pub pose: ItemEntityPose,
     /// 6-bit skylight sampled from the world at the dropped item's position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.

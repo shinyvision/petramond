@@ -255,18 +255,6 @@ pub(super) fn new_renderer_inner(
                     },
                 ],
             });
-            let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("mob vbuf"),
-                size: crate::pipeline::MAX_MOB_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("mob ibuf"),
-                size: crate::pipeline::MAX_MOB_INDICES * 4,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
             // Cull volume from the rest-posed model bounds × render scale. The
             // horizontal radius takes the farthest posed corner (yaw can point
             // it in any direction); MOB_CULL_SLACK absorbs what the rest pose
@@ -282,13 +270,7 @@ pub(super) fn new_renderer_inner(
                 model,
                 scale: d.scale,
                 bind,
-                draw: DynamicDraw::new(
-                    pipelines.mob_pipe.clone(),
-                    vbuf,
-                    ibuf,
-                    crate::pipeline::MAX_MOB_VERTICES,
-                    crate::pipeline::MAX_MOB_INDICES,
-                ),
+                draw: DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "mob"),
                 cull_r: r * d.scale + MOB_CULL_SLACK,
                 cull_y0: bmin.y * d.scale - MOB_CULL_SLACK,
                 cull_y1: bmax.y * d.scale + MOB_CULL_SLACK,
@@ -304,11 +286,8 @@ pub(super) fn new_renderer_inner(
     // the shared mob pipeline), plus three held-item draws attached to the
     // posed hands: an extruded-sprite stream (2D atlas), a bbmodel-item stream
     // (model atlas), and a packed block-vertex stream (held mini-cube on the
-    // opaque pipeline). EVERY connected player's body appends
-    // into the one stream, so the caps cover a full LAN party of bodies
-    // (~300 verts each), not just the local one.
-    const PLAYER_ITEM_VERTICES: u64 = 16384;
-    const PLAYER_ITEM_INDICES: u64 = 24576;
+    // opaque pipeline). EVERY connected player's body appends into the one
+    // stream, which grows to fit the party.
     let player_gpu = {
         let model = petramond::player::model::player_model();
         let (_texture, view, sampler) = create_model_texture(
@@ -332,77 +311,21 @@ pub(super) fn new_renderer_inner(
                 },
             ],
         });
-        let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("player vbuf"),
-            size: PLAYER_ITEM_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("player ibuf"),
-            size: PLAYER_ITEM_INDICES * 4,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         PlayerGpu {
             model,
             bind,
-            draw: DynamicDraw::new(
-                pipelines.mob_pipe.clone(),
-                vbuf,
-                ibuf,
-                PLAYER_ITEM_VERTICES,
-                PLAYER_ITEM_INDICES,
-            ),
+            draw: DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player"),
             verts: Vec::new(),
             indices: Vec::new(),
         }
     };
-    let player_dyn_buffers = |label: &str, vert_size: u64| {
-        let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: PLAYER_ITEM_VERTICES * vert_size,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: PLAYER_ITEM_INDICES * 4,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        (vbuf, ibuf)
-    };
-    let (player_item_vbuf, player_item_ibuf) =
-        player_dyn_buffers("player item", std::mem::size_of::<ItemVertex>() as u64);
-    let (player_model_item_vbuf, player_model_item_ibuf) = player_dyn_buffers(
-        "player model item",
-        std::mem::size_of::<ItemVertex>() as u64,
-    );
-    let (player_block_item_vbuf, player_block_item_ibuf) = player_dyn_buffers(
-        "player block item",
-        std::mem::size_of::<petramond_mesh::Vertex>() as u64,
-    );
-    let player_item_draw = DynamicDraw::new(
-        pipelines.mob_pipe.clone(),
-        player_item_vbuf,
-        player_item_ibuf,
-        PLAYER_ITEM_VERTICES,
-        PLAYER_ITEM_INDICES,
-    );
-    let player_model_item_draw = DynamicDraw::new(
-        pipelines.mob_pipe.clone(),
-        player_model_item_vbuf,
-        player_model_item_ibuf,
-        PLAYER_ITEM_VERTICES,
-        PLAYER_ITEM_INDICES,
-    );
+    let player_item_draw = DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player item");
+    let player_model_item_draw =
+        DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player model item");
     let player_block_item_draw = DynamicDraw::new(
+        &device,
         pipelines.dynamic_opaque_pipe.clone(),
-        player_block_item_vbuf,
-        player_block_item_ibuf,
-        PLAYER_ITEM_VERTICES,
-        PLAYER_ITEM_INDICES,
+        "player block item",
     );
 
     // bbmodel-block ("model") render resources: the combined model atlas (all kinds'
@@ -433,37 +356,6 @@ pub(super) fn new_renderer_inner(
     let world_model_pipe = pipelines.world_model_pipe.clone();
     let world_model_blend_pipe = pipelines.world_model_blend_pipe.clone();
     let contact_pipe = pipelines.contact_pipe.clone();
-    // Dropped bbmodel item-entities ride the model pipeline (world-space ItemVertex,
-    // model atlas) in their OWN buffers, sized like the packed item-entity buffers.
-    let item_model_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("item model entity vbuf"),
-        size: crate::pipeline::MAX_MOB_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let item_model_entity_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("item model entity ibuf"),
-        size: crate::pipeline::MAX_MOB_INDICES * 4,
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    // Dropped SPRITE item-entities extruded into pixel-perfect 3D slabs ride the
-    // same mob-layout pipeline over the 2D BLOCK atlas (their side walls sample
-    // single boundary texels) in their own buffers, sized like the packed
-    // item-entity buffers.
-    let item_sprite_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("item sprite entity vbuf"),
-        size: crate::pipeline::MAX_ITEM_ENTITY_VERTICES * std::mem::size_of::<ItemVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let item_sprite_entity_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("item sprite entity ibuf"),
-        size: crate::pipeline::MAX_ITEM_ENTITY_INDICES * 4,
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
     // A custom-shape block's inventory icon is its baked ITEM geometry (a chair,
     // not a plank cube), which comes from the pack's WASM — bake all installed
     // custom item shapes into the item cache NOW, before the icon atlas reads it.
@@ -489,14 +381,9 @@ pub(super) fn new_renderer_inner(
         &uniform_buf,
     );
     // Reusable dynamic vbuf for the per-frame icon quads (6 UiVertex per filled
-    // slot). Sized for the open inventory + craft/chest slots with headroom; grown
-    // to fit if ever exceeded (never a hard cap that drops the batch).
-    let icon_quad_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("icon quad vbuf"),
-        size: crate::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    // slot), grown to fit.
+    let icon_quad_vbuf =
+        super::dynamic_draw::new_buffer(&device, wgpu::BufferUsages::VERTEX, "icon quad vbuf");
 
     // HUD heart atlas (empty | half | full, side by side). One texture for the whole
     // health bar; the UI pass selects a cell per heart by UV. Resolved through the
@@ -530,12 +417,7 @@ pub(super) fn new_renderer_inner(
             source,
             texture,
             under_chrome,
-            vbuf: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: crate::pipeline::MAX_UI_VERTICES * std::mem::size_of::<UiVertex>() as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            vbuf: super::dynamic_draw::new_buffer(&device, wgpu::BufferUsages::VERTEX, label),
             vertex_count: 0,
         }
     };
@@ -588,6 +470,37 @@ pub(super) fn new_renderer_inner(
     let column_origins = super::super::resources::ColumnOrigins::new(&device);
     let quad_index = super::super::resources::QuadIndexBuffer::new(&device, &queue);
 
+    // Every dynamic draw owns growing buffers; built here, before the
+    // renderer takes the device.
+    let item_entity_draw = DynamicDraw::new(&device, item_entity_pipe, "item entity");
+    let item_model_entity_draw = DynamicDraw::new(&device, model_pipe.clone(), "item model entity");
+    let item_sprite_entity_draw =
+        DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "item sprite entity");
+    let chest_draw = DynamicDraw::new(&device, chest_pipe, "chest");
+    let door_draw = DynamicDraw::new(&device, door_pipe, "door");
+    let break_draw = DynamicDraw::new(&device, pipelines.break_pipe, "break overlay");
+    let emitter_particle_draw = DynamicVertexDraw::new(
+        &device,
+        pipelines.emitter_particle_pipe,
+        "emitter particle",
+        crate::particles::VERTS_PER_CUBE as u32,
+        &crate::particles::CUBE_INDEX_PATTERN,
+    );
+    let particle_draw = DynamicVertexDraw::new(
+        &device,
+        pipelines.particle_pipe,
+        "particle",
+        crate::particles::VERTS_PER_CUBE as u32,
+        &crate::particles::CUBE_INDEX_PATTERN,
+    );
+    let entity_shadow_draw = DynamicVertexDraw::new(
+        &device,
+        pipelines.entity_shadow_pipe,
+        "entity shadow",
+        crate::entity_shadow::VERTS_PER_SHADOW,
+        &crate::entity_shadow::QUAD_INDEX_PATTERN,
+    );
+
     Renderer {
         surface,
         device,
@@ -605,7 +518,7 @@ pub(super) fn new_renderer_inner(
         uniform_bind: pipelines.uniform_bind,
         atlas_bind: pipelines.atlas_bind,
         atlas_array_bind: pipelines.atlas_array_bind,
-        model_pipe: model_pipe.clone(),
+        model_pipe,
         world_model_pipe,
         world_model_blend_pipe,
         contact_pipe,
@@ -613,29 +526,16 @@ pub(super) fn new_renderer_inner(
         item_entity: ItemEntityPass {
             block_draws: Vec::new(),
             block_draws_visible: Vec::new(),
-            draw: DynamicDraw::new(
-                item_entity_pipe,
-                pipelines.item_entity_vbuf,
-                pipelines.item_entity_ibuf,
-                crate::pipeline::MAX_ITEM_ENTITY_VERTICES,
-                crate::pipeline::MAX_ITEM_ENTITY_INDICES,
-            ),
-            model_draw: DynamicDraw::new(
-                model_pipe,
-                item_model_entity_vbuf,
-                item_model_entity_ibuf,
-                crate::pipeline::MAX_MOB_VERTICES,
-                crate::pipeline::MAX_MOB_INDICES,
-            ),
+            draw: item_entity_draw,
+            // Dropped bbmodel items ride the model pipeline (world-space
+            // ItemVertex, model atlas) in their own stream.
+            model_draw: item_model_entity_draw,
             model_verts: Vec::new(),
             model_indices: Vec::new(),
-            sprite_draw: DynamicDraw::new(
-                pipelines.mob_pipe.clone(),
-                item_sprite_entity_vbuf,
-                item_sprite_entity_ibuf,
-                crate::pipeline::MAX_ITEM_ENTITY_VERTICES,
-                crate::pipeline::MAX_ITEM_ENTITY_INDICES,
-            ),
+            // Dropped SPRITE items extruded into pixel-perfect 3D slabs ride
+            // the same mob-layout pipeline over the 2D BLOCK atlas (their side
+            // walls sample single boundary texels) in their own stream.
+            sprite_draw: item_sprite_entity_draw,
             sprite_verts: Vec::new(),
             sprite_indices: Vec::new(),
             sprite_scratch: Vec::new(),
@@ -664,20 +564,8 @@ pub(super) fn new_renderer_inner(
             mobs: Vec::new(),
         },
         block_entity: BlockEntityPass {
-            chest_draw: DynamicDraw::new(
-                chest_pipe,
-                pipelines.chest_vbuf,
-                pipelines.chest_ibuf,
-                crate::pipeline::MAX_CHEST_VERTICES,
-                crate::pipeline::MAX_CHEST_INDICES,
-            ),
-            door_draw: DynamicDraw::new(
-                door_pipe,
-                pipelines.door_vbuf,
-                pipelines.door_ibuf,
-                crate::pipeline::MAX_DOOR_VERTICES,
-                crate::pipeline::MAX_DOOR_INDICES,
-            ),
+            chest_draw,
+            door_draw,
             chests: Vec::new(),
             chest_visible: Vec::new(),
             doors: Vec::new(),
@@ -698,13 +586,12 @@ pub(super) fn new_renderer_inner(
             index_count: 0,
             verts: Vec::new(),
             indices: Vec::new(),
-            break_draw: DynamicDraw::new(
-                pipelines.break_pipe,
-                pipelines.break_vbuf,
-                pipelines.break_ibuf,
-                crate::pipeline::MAX_BREAK_VERTICES,
-                crate::pipeline::MAX_BREAK_INDICES,
-            ),
+            off_verts: Vec::new(),
+            off_indices: Vec::new(),
+            model_scratch_verts: Vec::new(),
+            model_scratch_indices: Vec::new(),
+            off_item3d_scratch: Vec::new(),
+            break_draw,
             break_overlays: Vec::new(),
             held_item: HeldItemView::default(),
             visible: false,
@@ -728,6 +615,7 @@ pub(super) fn new_renderer_inner(
             doc_ui: super::doc_ui::DocUi::default(),
             client_overlays: super::client_overlay::ClientOverlays::default(),
             solid_vbuf: pipelines.ui_vbuf,
+            solid_verts: Vec::new(),
             count_vertex_count: 0,
             overlay_count_vertex_count: 0,
             drag_count_vertex_count: 0,
@@ -815,18 +703,8 @@ pub(super) fn new_renderer_inner(
             far_leaf_lod_state: HashMap::new(),
         },
         particle: ParticlePass {
-            emitter_draw: DynamicVertexDraw::new(
-                pipelines.emitter_particle_pipe,
-                pipelines.emitter_particle_vbuf,
-                pipelines.particle_ibuf.clone(),
-                crate::particles::MAX_PARTICLE_VERTICES as u64,
-            ),
-            draw: DynamicVertexDraw::new(
-                pipelines.particle_pipe,
-                pipelines.particle_vbuf,
-                pipelines.particle_ibuf,
-                crate::particles::MAX_PARTICLE_VERTICES as u64,
-            ),
+            emitter_draw: emitter_particle_draw,
+            draw: particle_draw,
             instances: Vec::new(),
             model_instances: Vec::new(),
             solid_instances: Vec::new(),
@@ -838,13 +716,7 @@ pub(super) fn new_renderer_inner(
             emitter_scratch: Vec::new(),
         },
         shadow: ShadowPass {
-            draw: DynamicVertexDraw::new(
-                pipelines.entity_shadow_pipe,
-                pipelines.entity_shadow_vbuf,
-                pipelines.entity_shadow_ibuf,
-                (crate::entity_shadow::MAX_ENTITY_SHADOWS
-                    * crate::entity_shadow::VERTS_PER_SHADOW as usize) as u64,
-            ),
+            draw: entity_shadow_draw,
             verts: Vec::new(),
             instances: Vec::new(),
         },

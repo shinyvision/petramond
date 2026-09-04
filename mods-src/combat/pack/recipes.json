@@ -60,6 +60,44 @@
         "item": "combat:iron_sword",
         "count": 1
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "combat:bow",
+      "station": "combat:weapons_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:stick",
+          "count": 3
+        },
+        {
+          "item": "petramond:rope",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "combat:bow",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "combat:arrow",
+      "station": "combat:weapons_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:stick",
+          "count": 1
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "combat:arrow",
+        "count": 16
+      }
     }
   ]
 }

@@ -6,10 +6,12 @@ use mod_api::{HostCall, HostRet, PlayerSnapshot};
 
 use crate::events::DeferredAction;
 use petramond_world::item::variant::{self, VariantMap};
-use petramond_world::item::ItemStack;
+use petramond_world::item::{ItemStack, ItemType};
 
 use super::entities::{give_item, give_item_to};
-use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_mutate, sim_query};
+use super::guards::{
+    batch_guard, finite3, item_by_name, sim_call, sim_mutate, sim_mutating_query, sim_query,
+};
 use super::intern_mod_id;
 
 /// The pose anchor a player is pinned at, read LIVE from the riding registry
@@ -252,7 +254,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // Atomic: only an acting-hand stack holding at least `count` of `item`
         // consumes — the held stack IS the validation, so no registry check.
         // During the ladder's off-hand pass this spends the off-hand.
-        HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {
+        HostCall::ConsumeHeld { item, count } => sim_mutating_query(|ctx| {
             let hand = ctx.player.acting_hand;
             let holds = count > 0
                 && ctx
@@ -267,7 +269,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             }
             HostRet::Bool(true)
         }),
-        HostCall::ReplaceHeldOne { item, replacement } => sim_query(|ctx| {
+        HostCall::ReplaceHeldOne { item, replacement } => sim_mutating_query(|ctx| {
             let hand = ctx.player.acting_hand;
             let holds = ctx
                 .player
@@ -379,6 +381,58 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(wrote.is_some())
             })
         }
+        // What a hand DISPLAYS: the pose seam's shape (a per-mod claim on
+        // the addressed body, last claim wins). Names resolve to ids HERE,
+        // once, so the claim, the wire row and the render frame all carry a
+        // plain id.
+        HostCall::SetPlayerHeldDisplay { player, main, off } => {
+            let mod_id = mod_id.to_owned();
+            let (main, off) = match (display_item(&main), display_item(&off)) {
+                (Ok(main), Ok(off)) => (main, off),
+                (Err(e), _) | (_, Err(e)) => return e,
+            };
+            sim_query(move |ctx| {
+                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_held_display(&mod_id, main, off);
+                });
+                HostRet::Bool(wrote.is_some())
+            })
+        }
+        HostCall::PlayerInventory { player } => sim_query(move |ctx| {
+            HostRet::ContainerSlots(ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                carried_slots(&p.inventory)
+            }))
+        }),
+        // The spend half of a launch: `count` of `item` out of the named
+        // session's inventory, whole or nothing, ONE variant. The variant
+        // filter is COMPARED against the carried stacks, never interned: a
+        // spend that finds nothing must not mint a permanent row.
+        HostCall::TakeItem {
+            player,
+            item,
+            count,
+            data,
+        } => {
+            let data = match data {
+                None => None,
+                Some(data) => match super::guards::abi_data_map("TakeItem", &data) {
+                    Ok(map) => Some(map),
+                    Err(e) => return e,
+                },
+            };
+            sim_mutating_query(move |ctx| {
+                let Some(item_ty) = item_by_name(&item) else {
+                    log::warn!("[mod {mod_id}] TakeItem: unknown item '{item}'");
+                    return HostRet::ItemStack(None);
+                };
+                let taken = ctx
+                    .with_player(crate::player::PlayerId(player.0), |p| {
+                        p.inventory.take(item_ty, count, data.as_ref())
+                    })
+                    .flatten();
+                HostRet::ItemStack(taken.map(super::guards::item_stack_data))
+            })
+        }
         HostCall::SetPlayerDeniedActions { player, actions } => {
             let mod_id = mod_id.to_owned();
             let denied = crate::player::DeniedActions::of(actions);
@@ -484,6 +538,27 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
     }
 }
 
+/// A hand-display claim's item name resolved to its id: `None` releases,
+/// an unknown name is a mod bug.
+fn display_item(name: &Option<String>) -> Result<Option<ItemType>, HostRet> {
+    match name {
+        None => Ok(None),
+        Some(name) => item_by_name(name)
+            .map(Some)
+            .ok_or_else(|| HostRet::Error(format!("SetPlayerHeldDisplay: unknown item '{name}'"))),
+    }
+}
+
+/// An inventory as the ABI's carried-slot layout (`Inventory::carried`).
+pub(in crate::modding) fn carried_slots(
+    inventory: &petramond_world::inventory::Inventory,
+) -> Vec<Option<mod_api::ItemStackData>> {
+    inventory
+        .carried()
+        .map(|slot| slot.copied().map(super::guards::item_stack_data))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use mod_api::{HostCall, HostRet};
@@ -554,6 +629,74 @@ mod tests {
         });
         let after = acting.inventory.selected().expect("the stack survives");
         assert_eq!(*variant::get(after.variant).expect("data"), stamp(1));
+    }
+
+    /// `TakeItem` spends ONE variant in the carried layout, and its data
+    /// filter is compared against what is carried, never interned: a filter
+    /// nothing matches takes nothing and mints no variant row.
+    #[test]
+    fn take_item_spends_one_variant_and_interns_nothing() {
+        use petramond_world::item::{variant, ItemStack, ItemType};
+
+        let stamp = |n: u8| variant::VariantMap::from([("m:cond".to_owned(), vec![n])]);
+        let abi = |m: &variant::VariantMap| -> Vec<(String, Vec<u8>)> {
+            m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        let take = |data: &mut ModStoreData, count: u8, filter: Option<&variant::VariantMap>| {
+            handle_host_call(
+                data,
+                HostCall::TakeItem {
+                    player: mod_api::PlayerId(0),
+                    item: "petramond:stick".into(),
+                    count,
+                    data: filter.map(abi),
+                },
+            )
+        };
+
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        let mut acting = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let tinted = variant::intern(&stamp(2)).expect("the fixture map interns");
+        *acting.inventory.slot_mut(0).expect("slot") = Some(ItemStack::new(ItemType::Stick, 2));
+        *acting.inventory.slot_mut(1).expect("slot") =
+            Some(ItemStack::with_variant(ItemType::Stick, 3, tinted));
+        // The table's top before the calls: anything minted after shows up
+        // as the next id.
+        let top = variant::intern(&stamp(200)).expect("sentinel interns");
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
+
+        crate::events::with_sessions_scope(crate::player::PlayerId(0), None, Vec::new(), || {
+            let mut ctx = SimCtx {
+                world: &mut world,
+                player: &mut acting,
+                gui_state: &mut gui,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            scope::enter(&mut ctx, || {
+                assert_eq!(
+                    take(&mut data, 1, Some(&stamp(9))),
+                    HostRet::ItemStack(None),
+                    "a filter nothing carries takes nothing"
+                );
+                assert!(
+                    variant::get(petramond_world::item::VariantId(top.0 + 1)).is_none(),
+                    "the losing filter minted a variant row"
+                );
+                let HostRet::ItemStack(Some(took)) = take(&mut data, 3, Some(&stamp(2))) else {
+                    panic!("three tinted sticks are carried");
+                };
+                assert_eq!((took.count, took.data), (3, abi(&stamp(2))));
+                let HostRet::ItemStack(Some(took)) = take(&mut data, 2, None) else {
+                    panic!("two plain sticks remain");
+                };
+                assert!(took.data.is_empty(), "no filter takes the first variant");
+                assert_eq!(take(&mut data, 1, None), HostRet::ItemStack(None));
+            });
+        });
     }
 
     /// The progression arms: unlocking is per-player, idempotent (`true` only

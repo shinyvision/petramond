@@ -279,6 +279,7 @@ fn tick_updates_roundtrip() {
             data: None,
             pos: Vec3::new(0.5, 65.0, 0.5),
             spin: 1.25,
+            flight: None,
         }],
         players: vec![PlayerStateRow {
             id: PlayerId(1),
@@ -303,6 +304,7 @@ fn tick_updates_roundtrip() {
             eating_off_hand: false,
             held_pose_main: None,
             held_pose_off: None,
+            held_display: [None; 2],
             // Non-empty on the ROW, because this is the field that ships for
             // every player every tick — an encoding that silently drops it
             // would look exactly like nobody posing anything.
@@ -349,6 +351,7 @@ fn tick_updates_roundtrip() {
                 third_person: mod_api::HeldPoseData::IDENTITY,
             }),
             held_pose_off: None,
+            held_display: [None; 2],
             bone_poses: vec![crate::player::BonePose {
                 bone: 7,
                 rotation: [8.0, -2.0, -29.0],

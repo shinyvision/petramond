@@ -1,4 +1,5 @@
-use crate::item::ItemStack;
+use crate::item::variant::{self, VariantMap};
+use crate::item::{ItemStack, ItemType};
 
 mod slots;
 #[cfg(test)]
@@ -630,6 +631,69 @@ impl Inventory {
         true
     }
 
+    /// Every carried slot in the ONE layout the mod surface publishes and
+    /// spends in: the grid in slot order (hotbar first), then the off hand
+    /// last. The cursor is not carried — it is a click in progress.
+    pub fn carried(&self) -> impl Iterator<Item = Option<&ItemStack>> {
+        self.slots
+            .iter()
+            .chain(std::iter::once(&self.off_hand))
+            .map(Option::as_ref)
+    }
+
+    /// Remove `count` of `item` in [`carried`](Self::carried) order and
+    /// answer the taken stack. `data` picks which stacks may give: `None` =
+    /// those sharing the FIRST matching stack's instance data, so exactly
+    /// one variant leaves; `Some(map)` = only stacks carrying exactly `map`
+    /// (empty = plain stacks). The map is COMPARED against what is carried,
+    /// never interned — a spend that finds nothing must not mint a variant
+    /// row. Whole or nothing: short by even one, nothing moves and `None`
+    /// answers.
+    pub fn take(
+        &mut self,
+        item: ItemType,
+        count: u8,
+        data: Option<&VariantMap>,
+    ) -> Option<ItemStack> {
+        if count == 0 {
+            return None;
+        }
+        let variant = self
+            .carried()
+            .flatten()
+            .find(|stack| {
+                stack.item == item && data.is_none_or(|map| variant::matches(stack.variant, map))
+            })
+            .map(|stack| stack.variant)?;
+        let same = |stack: &ItemStack| stack.item == item && stack.variant == variant;
+        let available: u32 = self
+            .carried()
+            .flatten()
+            .filter(|stack| same(stack))
+            .map(|stack| u32::from(stack.count))
+            .sum();
+        if available < u32::from(count) {
+            return None;
+        }
+        let mut left = count;
+        for slot in self
+            .slots
+            .iter_mut()
+            .chain(std::iter::once(&mut self.off_hand))
+        {
+            if left == 0 {
+                break;
+            }
+            if let Some(stack) = slot.filter(same) {
+                let take = stack.count.min(left);
+                left -= take;
+                *slot = (stack.count > take).then(|| stack.restack(stack.count - take));
+            }
+        }
+        self.bump_revision();
+        Some(ItemStack::with_variant(item, count, variant))
+    }
+
     /// Move the off-hand stack into the ordinary grid (the shift-click on the
     /// off-hand cell). Whatever does not fit stays in the off-hand.
     pub fn shift_move_off_hand(&mut self) {
@@ -653,6 +717,95 @@ impl Inventory {
             active: active.min(HOTBAR_LEN as u8 - 1),
             revision: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod take_tests {
+    use super::*;
+    use crate::item::{variant, VariantId};
+
+    fn tinted() -> VariantId {
+        let mut m = VariantMap::new();
+        m.insert("t:k".into(), vec![1]);
+        variant::intern(&m).unwrap()
+    }
+
+    /// `take` is whole-or-nothing across stacks and never blends variants:
+    /// a partial take would strand a spend that already committed, and a
+    /// blended one would hand one variant's data to a stack of another.
+    #[test]
+    fn take_is_whole_or_nothing_and_drains_one_variant_across_stacks() {
+        let tinted = tinted();
+        let mut inv = Inventory::new();
+        *inv.slot_mut(0).unwrap() = Some(ItemStack::new(ItemType::Dirt, 2));
+        *inv.slot_mut(1).unwrap() = Some(ItemStack::with_variant(ItemType::Dirt, 5, tinted));
+        *inv.off_hand_mut() = Some(ItemStack::new(ItemType::Dirt, 1));
+
+        assert!(
+            inv.take(ItemType::Dirt, 4, None).is_none(),
+            "three plain, five tinted: no four of one"
+        );
+        assert_eq!(inv.slot(0).map(|s| s.count), Some(2), "nothing moved");
+
+        let took = inv
+            .take(ItemType::Dirt, 3, None)
+            .expect("three plain across the grid and the off hand");
+        assert_eq!(
+            (took.item, took.count, took.variant),
+            (ItemType::Dirt, 3, VariantId::NONE)
+        );
+        assert!(inv.slot(0).is_none() && inv.off_hand().is_none());
+        assert_eq!(
+            inv.slot(1).map(|s| s.count),
+            Some(5),
+            "the other variant untouched"
+        );
+        assert!(inv.take(ItemType::Stone, 1, None).is_none());
+    }
+
+    /// A named variant takes only its own stacks, even when a plain stack
+    /// sits earlier in the layout.
+    #[test]
+    fn take_by_data_skips_every_other_variant() {
+        let tinted = tinted();
+        let tint_map = variant::get(tinted).unwrap();
+        let mut inv = Inventory::new();
+        *inv.slot_mut(0).unwrap() = Some(ItemStack::new(ItemType::Dirt, 4));
+        *inv.slot_mut(3).unwrap() = Some(ItemStack::with_variant(ItemType::Dirt, 2, tinted));
+
+        assert!(inv.take(ItemType::Dirt, 3, Some(&tint_map)).is_none());
+        let took = inv
+            .take(ItemType::Dirt, 2, Some(&tint_map))
+            .expect("both tinted");
+        assert_eq!(took.variant, tinted);
+        assert!(inv.slot(3).is_none());
+        assert_eq!(
+            inv.slot(0).map(|s| s.count),
+            Some(4),
+            "the plain stack untouched"
+        );
+        let plain = VariantMap::new();
+        assert!(inv.take(ItemType::Dirt, 1, Some(&plain)).is_some());
+        let mut unknown = VariantMap::new();
+        unknown.insert("t:nobody".into(), vec![9]);
+        assert!(
+            inv.take(ItemType::Dirt, 1, Some(&unknown)).is_none(),
+            "a map nobody carries takes nothing and mints nothing"
+        );
+    }
+
+    /// The layout is one fact the read and the spend share: the grid, then
+    /// the off hand last.
+    #[test]
+    fn carried_lists_the_grid_then_the_off_hand() {
+        let mut inv = Inventory::new();
+        *inv.slot_mut(0).unwrap() = Some(ItemStack::new(ItemType::Stone, 1));
+        *inv.off_hand_mut() = Some(ItemStack::new(ItemType::Dirt, 1));
+        let carried: Vec<Option<ItemType>> = inv.carried().map(|s| s.map(|s| s.item)).collect();
+        assert_eq!(carried.len(), TOTAL_SLOTS + 1);
+        assert_eq!(carried[0], Some(ItemType::Stone));
+        assert_eq!(carried[TOTAL_SLOTS], Some(ItemType::Dirt));
     }
 }
 

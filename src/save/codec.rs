@@ -87,9 +87,16 @@ use super::palette;
 /// unified cell-state record's header also splits into `[len][id_mask]` and
 /// its id-masked entries are two bytes each. Clean break; dev worlds
 /// regenerate.
-const SECTION_REC_VERSION: u8 = 15;
+/// v16 (2026-09-03): item entities carry their MOTION (loose / in flight /
+/// lodged in a block, with the heading and anchor of a lodged one) after
+/// the spin. Clean break; dev worlds regenerate.
+/// v17 (2026-09-04): a flight persists its velocity only — its heading is
+/// derived from that on the first step — and the motion tag is a declared
+/// wire enum (`save::entities::MotionKind`). Clean break; dev worlds
+/// regenerate.
+const SECTION_REC_VERSION: u8 = 17;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 15;
+const SECTION_REC_MIN_VERSION: u8 = 17;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;

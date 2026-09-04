@@ -629,7 +629,6 @@ impl Game {
         // NOTHING claimed it: offer the gesture, exactly as the server does
         // once its own chain has passed. This is the frame a guard goes up on.
         if !jabbed {
-            let actor = self.client_actor_snapshot(input.movement.sneak, Default::default());
             let payload = mod_api::EventPayload::UseUnclaimed {
                 block: self.look.map(|h| h.block.to_array()),
                 face: self.look.map(|h| h.normal.to_array()),
@@ -639,8 +638,10 @@ impl Game {
             // The verdict is NOT a jab: nothing happened to the world, and
             // whoever took the gesture poses the body itself. Predicting a
             // swing here would punch the air every time a guard went up.
-            self.client_mods
-                .predict_claim(&self.replica, &actor, &payload);
+            // Through the scoped dispatch: a rule that gates on what the
+            // pack holds (a launcher with nothing to launch) reads the
+            // replicated inventory.
+            self.predict_mod_claim(input.movement.sneak, payload);
         }
         // Mirror whoever took it onto the body, so the predicted player answers
         // "is this press spoken for" the way the authority will.

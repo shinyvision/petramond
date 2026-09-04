@@ -214,7 +214,11 @@ impl HeldItemAnimator {
         // offset is already smoothed by its chase.
         let e = self.eat_blend * self.eat_blend * (3.0 - 2.0 * self.eat_blend);
         HeldItemView {
-            item: frame.item,
+            item: frame.display.or(frame.item),
+            hold: frame
+                .item
+                .map(|item| item.held_pose())
+                .unwrap_or(petramond_world::item::HeldPose::DEFAULT),
             variant: frame.variant,
             block_state: frame.block_state,
             bob: [self.bob[0] * HAND_BOB_SWAY, self.bob[1] * HAND_BOB_RISE],
@@ -261,6 +265,7 @@ mod tests {
         guard.third_person.rotation = [-40.0, 0.0, 0.0];
         let frame = |target: Option<HeldPose>| HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -315,6 +320,7 @@ mod tests {
         lowered.first_person.translation = [0.0, -6.0, 0.0];
         let frame = |item, target| HeldItemFrame {
             item,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -357,6 +363,7 @@ mod tests {
         };
         let view = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -377,6 +384,7 @@ mod tests {
 
         let settled = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -399,6 +407,7 @@ mod tests {
 
         let started = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -419,6 +428,7 @@ mod tests {
 
         let moving = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -439,6 +449,7 @@ mod tests {
 
         let settled = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -460,6 +471,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let started = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -482,6 +494,7 @@ mod tests {
         // It carries through and settles like any one-shot swing.
         let settled = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -503,6 +516,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let placed = anim.update(HeldItemFrame {
             item: Some(ItemType::Dirt),
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -525,6 +539,7 @@ mod tests {
         // ...which completes and returns to rest within one swing period.
         let settled = anim.update(HeldItemFrame {
             item: Some(ItemType::Dirt),
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -548,6 +563,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let view = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -577,6 +593,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let eat_frame = |dt: f32, progress: f32| HeldItemFrame {
             item: Some(ItemType::Stone),
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
@@ -646,6 +663,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let view = anim.update(HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: true,
@@ -676,6 +694,7 @@ mod tests {
         guard.first_person.translation = [0.0, -4.0, 0.0];
         let frame = |claim: bool, placed: bool, pose: Option<HeldPose>| HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: true,
@@ -726,6 +745,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let frame = |placed: bool, mining: bool| HeldItemFrame {
             item: None,
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining,
@@ -759,6 +779,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         let frame = |bob: [f32; 2]| HeldItemFrame {
             item: Some(ItemType::Stone),
+            display: None,
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,

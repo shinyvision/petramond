@@ -12,15 +12,11 @@
 
 use super::views::EntityShadow;
 
-/// Most shadow quads one frame may draw. Entities visible in any ordinary view
-/// number in the dozens; this cap is generous headroom, and the bake simply
-/// stops at it (nearest shadows aren't specially picked — overflow is a scene
-/// far outside anything the culling lets through).
-pub const MAX_ENTITY_SHADOWS: usize = 512;
-
-/// Vertices per shadow quad (a non-shared static index buffer pairs them into
-/// two triangles).
+/// Vertices per shadow quad (the index pattern pairs them into two triangles).
 pub const VERTS_PER_SHADOW: u32 = 4;
+
+/// The relative index pattern of one quad: two CCW triangles.
+pub const QUAD_INDEX_PATTERN: [u32; 6] = [0, 1, 2, 0, 2, 3];
 
 /// One shadow-quad corner: world-space position, the corner's signed unit
 /// offset from the centre (the fragment shader derives the radial falloff
@@ -34,12 +30,11 @@ pub struct ShadowVertex {
 }
 
 /// Build one horizontal quad per shadow row into `verts` (cleared + refilled,
-/// capacity reused), stopping at [`MAX_ENTITY_SHADOWS`]. Returns the vertex
-/// count emitted; the pass draws `(count / VERTS_PER_SHADOW) * 6` indices from
-/// the static quad ibuf.
+/// capacity reused). Returns the vertex count emitted; the pass draws
+/// `(count / VERTS_PER_SHADOW) * 6` indices from the quad pattern.
 pub fn build_entity_shadows(shadows: &[EntityShadow], verts: &mut Vec<ShadowVertex>) -> u32 {
     verts.clear();
-    for shadow in shadows.iter().take(MAX_ENTITY_SHADOWS) {
+    for shadow in shadows {
         let c = shadow.center;
         let r = shadow.radius;
         // Corner order matches the static quad indices (0,1,2 / 0,2,3):
@@ -89,14 +84,11 @@ mod tests {
         assert_eq!(out[1].pos[0], 1.5, "centre.x + radius");
         assert_eq!(out[2].pos[2], 2.5, "centre.z + radius");
 
-        // More rows than the cap → the bake stops at the cap instead of growing
-        // past the fixed GPU buffers.
-        let many: Vec<_> = (0..MAX_ENTITY_SHADOWS + 16)
-            .map(|i| shadow(i as f32))
-            .collect();
+        // Every row bakes: a crowd of shadows grows the buffer, never blanks.
+        let many: Vec<_> = (0..2000).map(|i| shadow(i as f32)).collect();
         assert_eq!(
             build_entity_shadows(&many, &mut out),
-            (MAX_ENTITY_SHADOWS as u32) * VERTS_PER_SHADOW
+            2000 * VERTS_PER_SHADOW
         );
     }
 }

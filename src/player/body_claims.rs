@@ -17,6 +17,7 @@ use mod_api::{BodyAction, HandMotion, HeldPose, PlayerAttribute};
 use serde::{Deserialize, Serialize};
 
 use petramond_world::inventory::Hand;
+use petramond_world::item::ItemType;
 
 /// One resolved bone offset on a body, with the bone RESOLVED to a rig id
 /// ([`crate::player::model::bone_id`]) and no name anywhere.
@@ -185,6 +186,9 @@ struct Claim {
     attributes: AttributeScales,
     main: Option<HeldPose>,
     off: Option<HeldPose>,
+    /// What each hand DISPLAYS in place of its stack's own art (`[main,
+    /// off]`); `None` = the stack's own.
+    display: [Option<ItemType>; 2],
     bones: Vec<BonePose>,
     denied: DeniedActions,
     /// Which of each hand's engine motions this claimant owns (`[main,
@@ -201,6 +205,7 @@ impl Claim {
         self.attributes == ATTRIBUTES_RELEASED
             && self.main.is_none()
             && self.off.is_none()
+            && self.display == [None; 2]
             && self.bones.is_empty()
             && self.denied.is_empty()
             && self.motions[0].is_empty()
@@ -254,6 +259,7 @@ impl BodyClaims {
                         attributes: ATTRIBUTES_RELEASED,
                         main: None,
                         off: None,
+                        display: [None; 2],
                         bones: Vec::new(),
                         denied: DeniedActions::NONE,
                         motions: [HandMotions::NONE; 2],
@@ -322,6 +328,23 @@ impl BodyClaims {
         self.by_claimant[at].off = off;
         self.prune(at);
         true
+    }
+
+    /// Set what `claimant` has each hand display in place of the held
+    /// stack's own art (`None` releases a hand). Infallible: an item id is
+    /// resolved at the ABI, so there is nothing malformed to refuse.
+    pub fn set_held_display(
+        &mut self,
+        claimant: &str,
+        main: Option<ItemType>,
+        off: Option<ItemType>,
+    ) {
+        if main.is_none() && off.is_none() && !self.holds(claimant) {
+            return;
+        }
+        let at = self.slot(claimant);
+        self.by_claimant[at].display = [main, off];
+        self.prune(at);
     }
 
     /// Set `claimant`'s rig-bone offsets (an empty list releases them).
@@ -450,6 +473,17 @@ impl BodyClaims {
             Hand::Main => c.main,
             Hand::Off => c.off,
         })
+    }
+
+    /// The resolved DISPLAY for one hand — the item whose art draws in place
+    /// of the held stack's — by the pose rule: the LAST claim in claimant
+    /// order, since a hand shows one thing.
+    pub fn held_display(&self, hand: Hand) -> Option<ItemType> {
+        let hand = match hand {
+            Hand::Main => 0,
+            Hand::Off => 1,
+        };
+        self.by_claimant.iter().rev().find_map(|c| c.display[hand])
     }
 
     /// The resolved motion ownership for one hand: a UNION across

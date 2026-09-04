@@ -90,6 +90,10 @@ pub struct DroppedItemPresentation {
     pub count: u8,
     pub prev_spin: f32,
     pub spin: f32,
+    /// `[yaw, pitch, speed]` of a flying or lodged item, previous and
+    /// current tick; `None` for a loose stack, which spins.
+    pub prev_flight: Option<[f32; 3]>,
+    pub flight: Option<[f32; 3]>,
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
 }

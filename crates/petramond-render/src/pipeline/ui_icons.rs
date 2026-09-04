@@ -2,11 +2,6 @@ use super::builders::{
     color_target, pipeline_layout, shader_module, texture_sampler_bgl, world_pipeline, DepthPreset,
 };
 
-/// Max vertices in each reusable UI dynamic vbuf (gui quads, stack-count digits,
-/// icon quads, and text quads). Shell labels are drawn from runtime text atlases,
-/// so this no longer needs to cover one solid quad per text bitmap cell.
-pub(crate) const MAX_UI_VERTICES: u64 = 16384;
-
 /// UI pipeline (2D HUD / inventory).
 /// group(0) is the SEPARATE gui sprite atlas (texture + sampler) — NOT the
 /// block atlas. Vertices are NDC pos (vec2) + uv (vec2) + color (vec4); the
@@ -63,12 +58,8 @@ pub(super) fn create_ui_pipeline(
         None,
         sample_count,
     );
-    let ui_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui vbuf"),
-        size: MAX_UI_VERTICES * std::mem::size_of::<super::ui::UiVertex>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let ui_vbuf =
+        crate::renderer::dynamic_draw::new_buffer(device, wgpu::BufferUsages::VERTEX, "ui vbuf");
     (ui_pipe, ui_vbuf)
 }
 

@@ -48,12 +48,15 @@ impl Renderer {
             self.chrome.outline_vertex_count = 0;
             if let Some(shape) = self.chrome.selection {
                 let outline = outline_vertices(shape);
-                self.chrome.outline_vertex_count = outline.count;
-                if outline.count > 0 {
-                    self.queue.write_buffer(
-                        &self.chrome.outline_vbuf,
-                        0,
-                        bytemuck::cast_slice(&outline.vertices[..outline.count as usize]),
+                self.chrome.outline_vertex_count = outline.count();
+                if outline.count() > 0 {
+                    super::dynamic_draw::upload(
+                        &self.device,
+                        &self.queue,
+                        &mut self.chrome.outline_vbuf,
+                        &outline.vertices,
+                        wgpu::BufferUsages::VERTEX,
+                        "outline vbuf",
                     );
                 }
             }
@@ -70,257 +73,193 @@ impl Renderer {
     }
 
     /// Build + upload this frame's first-person hand geometry and the extruded /
-    /// bbmodel held-item geometry (mutually exclusive). Extracted from `render`.
+    /// bbmodel held-item geometry (mutually exclusive per hand). Both hands
+    /// build into ONE CPU stream per render kind — the off hand appended after
+    /// the main — and each stream uploads once, growing its buffer to fit.
     pub(super) fn prepare_held_item(&mut self) {
-        if !self.hand.visible {
-            self.hand.index_count = 0;
-            self.hand.vertex_count = 0;
-            self.hand.item3d_vertex_count = 0;
-            self.hand.off_index_count = 0;
-            self.hand.off_item3d_count = 0;
-            return;
-        }
-
-        // Build + upload the first-person hand geometry for this frame. The hand
-        // uses its own fixed perspective (it is drawn over the world, no depth),
-        // so the MVP is computed entirely here from the framebuffer aspect and the
-        // App-supplied swing/place phases, then written to MVP slot 0. The dynamic
-        // vbuf/ibuf are rewritten in place (no per-frame allocation).
         self.hand.index_count = 0;
         self.hand.vertex_count = 0;
-        {
-            let aspect = if self.config.height > 0 {
-                self.config.width as f32 / self.config.height as f32
-            } else {
-                1.0
-            };
-            // Take the reusable hand staging out so `build_hand` can borrow them
-            // mutably alongside the immutable `held_item` borrow, then restore.
-            let mut hv = std::mem::take(&mut self.hand.verts);
-            let mut hi = std::mem::take(&mut self.hand.indices);
-            let mvp = self.hand_shake_mat()
-                * build_hand_lit(
-                    &self.hand.held_item,
-                    aspect,
-                    self.held_item_light(),
-                    &mut hv,
-                    &mut hi,
-                );
-            if !hi.is_empty() {
-                self.queue
-                    .write_buffer(&self.hand.model3d_vbuf, 0, bytemuck::cast_slice(&hv));
-                self.queue
-                    .write_buffer(&self.hand.model3d_ibuf, 0, bytemuck::cast_slice(&hi));
-                // MVP slot 0: a 64-byte mat4 at offset 0 of the 256-aligned buffer.
-                self.queue.write_buffer(
-                    &self.hand.model3d_mvp_buf,
-                    0,
-                    bytemuck::cast_slice(&mvp.to_cols_array()),
-                );
-                self.hand.index_count = hi.len() as u32;
-                self.hand.vertex_count = hv.len() as u32;
-            }
-            self.hand.verts = hv;
-            self.hand.indices = hi;
-        }
-
-        // Build + upload the EXTRUDED held item (sprite-kind: flowers / future
-        // tools), drawn by the dedicated item3d pipeline in the hand pass. Mutually
-        // exclusive with the model3d hand geometry (a sprite emits none above), so
-        // its MVP reuses slot 0 of `model3d_mvp_buf`. The item3d vbuf is rewritten
-        // in place (no per-frame allocation beyond capacity).
         self.hand.item3d_vertex_count = 0;
         self.hand.held_is_model = false;
-        {
-            let aspect = if self.config.height > 0 {
-                self.config.width as f32 / self.config.height as f32
-            } else {
-                1.0
-            };
-            if let Some((kind, mvp)) = crate::hand::held_model(&self.hand.held_item, aspect)
-                .map(|(kind, mvp)| (kind, self.hand_shake_mat() * mvp))
-            {
-                // A held bbmodel block: bake its real model (model atlas) into the item3d
-                // vbuf and draw it through the item3d pipeline bound to the MODEL atlas.
-                // item3d is non-indexed, so expand the baked indexed mesh to a triangle
-                // list. Mutually exclusive with a held sprite (one render kind).
-                let mut iv = std::mem::take(&mut self.hand.item3d_verts);
-                iv.clear();
-                let (mut tv, mut ti) = (Vec::new(), Vec::new());
-                crate::item_model::build_block_model_item(
-                    kind,
-                    glam::Mat4::IDENTITY,
-                    self.held_item_light(),
-                    self.light_env(),
-                    None,
-                    &mut tv,
-                    &mut ti,
-                );
-                for &idx in &ti {
-                    iv.push(tv[idx as usize]);
-                }
-                let cap = crate::pipeline::MAX_ITEM3D_VERTICES as usize;
-                if !iv.is_empty() && iv.len() <= cap {
-                    self.queue
-                        .write_buffer(&self.hand.item3d_vbuf, 0, bytemuck::cast_slice(&iv));
-                    self.queue.write_buffer(
-                        &self.hand.model3d_mvp_buf,
-                        0,
-                        bytemuck::cast_slice(&mvp.to_cols_array()),
-                    );
-                    self.hand.item3d_vertex_count = iv.len() as u32;
-                    self.hand.held_is_model = true;
-                }
-                self.hand.item3d_verts = iv;
-            } else if let Some((tile, mvp)) = crate::hand::held_sprite(&self.hand.held_item, aspect)
-                .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
-            {
-                let mut iv = std::mem::take(&mut self.hand.item3d_verts);
-                let count = crate::item_model::build_extruded_stack_lit(
-                    tile,
-                    self.hand.held_item.variant,
-                    self.held_item_light(),
-                    self.light_env(),
-                    &mut iv,
-                );
-                let cap = crate::pipeline::MAX_ITEM3D_VERTICES as usize;
-                if count > 0 && iv.len() <= cap {
-                    self.queue
-                        .write_buffer(&self.hand.item3d_vbuf, 0, bytemuck::cast_slice(&iv));
-                    // MVP slot 0 (the model3d hand slot is free for a held sprite).
-                    self.queue.write_buffer(
-                        &self.hand.model3d_mvp_buf,
-                        0,
-                        bytemuck::cast_slice(&mvp.to_cols_array()),
-                    );
-                    self.hand.item3d_vertex_count = count;
-                }
-                self.hand.item3d_verts = iv;
+        self.hand.off_index_count = 0;
+        self.hand.off_item3d_start = 0;
+        self.hand.off_item3d_count = 0;
+        self.hand.off_is_model = false;
+        if !self.hand.visible {
+            return;
+        }
+        let aspect = if self.config.height > 0 {
+            self.config.width as f32 / self.config.height as f32
+        } else {
+            1.0
+        };
+        let shake = self.hand_shake_mat();
+        let light = self.held_item_light();
+        let env = self.light_env();
+
+        // The hand uses its own fixed perspective (drawn over the world), so
+        // each MVP is computed here from the framebuffer aspect and the
+        // App-supplied swing/place phases: slot 0 is the main hand, slot 1
+        // (byte offset 256) the off hand.
+        let mut hv = std::mem::take(&mut self.hand.verts);
+        let mut hi = std::mem::take(&mut self.hand.indices);
+        let mut iv = std::mem::take(&mut self.hand.item3d_verts);
+        let mut tv = std::mem::take(&mut self.hand.model_scratch_verts);
+        let mut ti = std::mem::take(&mut self.hand.model_scratch_indices);
+        iv.clear();
+        let mut main_mvp = None;
+        let mut off_mvp = None;
+
+        // MAIN hand: the block cube (model3d) or, mutually exclusively, the
+        // extruded sprite / bbmodel (item3d).
+        let mvp = shake * build_hand_lit(&self.hand.held_item, aspect, light, &mut hv, &mut hi);
+        if !hi.is_empty() {
+            self.hand.index_count = hi.len() as u32;
+            self.hand.vertex_count = hv.len() as u32;
+            main_mvp = Some(mvp);
+        }
+        if let Some((kind, mvp)) = crate::hand::held_model(&self.hand.held_item, aspect) {
+            tv.clear();
+            ti.clear();
+            crate::item_model::build_block_model_item(
+                kind,
+                glam::Mat4::IDENTITY,
+                light,
+                env,
+                None,
+                &mut tv,
+                &mut ti,
+            );
+            // item3d is non-indexed: expand the baked mesh to a triangle list.
+            iv.extend(ti.iter().map(|&idx| tv[idx as usize]));
+            if !iv.is_empty() {
+                self.hand.item3d_vertex_count = iv.len() as u32;
+                self.hand.held_is_model = true;
+                main_mvp = Some(shake * mvp);
+            }
+        } else if let Some((tile, mvp)) = crate::hand::held_sprite(&self.hand.held_item, aspect) {
+            let count = crate::item_model::build_extruded_stack_lit(
+                tile,
+                self.hand.held_item.variant,
+                light,
+                env,
+                &mut iv,
+            );
+            if count > 0 {
+                self.hand.item3d_vertex_count = count;
+                main_mvp = Some(shake * mvp);
             }
         }
 
-        // The OFF (left) hand: same three render-kind paths, mirrored
-        // placements (`hand::mirror_x`), geometry APPENDED after the main
-        // hand's in the shared buffers, MVP slot 1 (byte offset 256). Empty
-        // off-hand = nothing drawn — there is no bare left arm.
-        self.hand.off_index_count = 0;
+        // OFF (left) hand: the same three render-kind paths, mirrored
+        // placements (`hand::mirror_x`), appended after the main hand's
+        // geometry. Empty off-hand = nothing drawn — there is no bare left
+        // arm. Model3d indices stay off-stream-relative and draw with
+        // `base_vertex = vertex_count`.
         self.hand.off_item3d_start = self.hand.item3d_vertex_count;
-        self.hand.off_item3d_count = 0;
-        self.hand.off_is_model = false;
         if self.hand.off_item.item.is_some() {
-            let aspect = if self.config.height > 0 {
-                self.config.width as f32 / self.config.height as f32
-            } else {
-                1.0
-            };
-            let vert_size = std::mem::size_of::<petramond_mesh::Vertex>() as u64;
-            let item_vert_size = std::mem::size_of::<crate::item_model::ItemVertex>() as u64;
-            // Held block cube (model3d), appended after the main hand's
-            // geometry; indices stay off-stream-relative and draw with
-            // `base_vertex = vertex_count`.
-            {
-                let mut hv = std::mem::take(&mut self.hand.verts);
-                let mut hi = std::mem::take(&mut self.hand.indices);
-                let mvp = self.hand_shake_mat()
-                    * crate::hand::build_off_hand_lit(
-                        &self.hand.off_item,
-                        aspect,
-                        self.held_item_light(),
-                        &mut hv,
-                        &mut hi,
-                    );
-                let fits = (self.hand.vertex_count as u64 + hv.len() as u64)
-                    <= crate::pipeline::MAX_MODEL3D_VERTICES
-                    && (self.hand.index_count as u64 + hi.len() as u64)
-                        <= crate::pipeline::MAX_MODEL3D_INDICES;
-                if !hi.is_empty() && fits {
-                    self.queue.write_buffer(
-                        &self.hand.model3d_vbuf,
-                        u64::from(self.hand.vertex_count) * vert_size,
-                        bytemuck::cast_slice(&hv),
-                    );
-                    self.queue.write_buffer(
-                        &self.hand.model3d_ibuf,
-                        u64::from(self.hand.index_count) * 4,
-                        bytemuck::cast_slice(&hi),
-                    );
-                    self.queue.write_buffer(
-                        &self.hand.model3d_mvp_buf,
-                        256,
-                        bytemuck::cast_slice(&mvp.to_cols_array()),
-                    );
-                    self.hand.off_index_count = hi.len() as u32;
-                }
-                self.hand.verts = hv;
-                self.hand.indices = hi;
+            let mut ov = std::mem::take(&mut self.hand.off_verts);
+            let mut oi = std::mem::take(&mut self.hand.off_indices);
+            let mvp = shake
+                * crate::hand::build_off_hand_lit(
+                    &self.hand.off_item,
+                    aspect,
+                    light,
+                    &mut ov,
+                    &mut oi,
+                );
+            if !oi.is_empty() {
+                hv.extend_from_slice(&ov);
+                hi.extend_from_slice(&oi);
+                self.hand.off_index_count = oi.len() as u32;
+                off_mvp = Some(mvp);
             }
-            // Extruded sprite / bbmodel (item3d), appended after the main
-            // hand's stream. Mutually exclusive with the model3d geometry
-            // above (one render kind per item), so MVP slot 1 is shared.
-            if let Some((kind, mvp)) = crate::hand::held_model_off(&self.hand.off_item, aspect)
-                .map(|(kind, mvp)| (kind, self.hand_shake_mat() * mvp))
-            {
-                let mut iv = std::mem::take(&mut self.hand.item3d_verts);
-                iv.clear();
-                let (mut tv, mut ti) = (Vec::new(), Vec::new());
+            self.hand.off_verts = ov;
+            self.hand.off_indices = oi;
+            if let Some((kind, mvp)) = crate::hand::held_model_off(&self.hand.off_item, aspect) {
+                tv.clear();
+                ti.clear();
                 crate::item_model::build_block_model_item(
                     kind,
                     glam::Mat4::IDENTITY,
-                    self.held_item_light(),
-                    self.light_env(),
+                    light,
+                    env,
                     None,
                     &mut tv,
                     &mut ti,
                 );
-                for &idx in &ti {
-                    iv.push(tv[idx as usize]);
-                }
-                let start = u64::from(self.hand.off_item3d_start);
-                if !iv.is_empty() && start + iv.len() as u64 <= crate::pipeline::MAX_ITEM3D_VERTICES
-                {
-                    self.queue.write_buffer(
-                        &self.hand.item3d_vbuf,
-                        start * item_vert_size,
-                        bytemuck::cast_slice(&iv),
-                    );
-                    self.queue.write_buffer(
-                        &self.hand.model3d_mvp_buf,
-                        256,
-                        bytemuck::cast_slice(&mvp.to_cols_array()),
-                    );
-                    self.hand.off_item3d_count = iv.len() as u32;
+                let start = iv.len();
+                iv.extend(ti.iter().map(|&idx| tv[idx as usize]));
+                if iv.len() > start {
+                    self.hand.off_item3d_count = (iv.len() - start) as u32;
                     self.hand.off_is_model = true;
+                    off_mvp = Some(shake * mvp);
                 }
-                self.hand.item3d_verts = iv;
             } else if let Some((tile, mvp)) =
                 crate::hand::held_sprite_off(&self.hand.off_item, aspect)
-                    .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
             {
-                let mut iv = std::mem::take(&mut self.hand.item3d_verts);
+                // The extrusion clears its buffer, so it bakes into a scratch
+                // and appends.
+                let mut sv = std::mem::take(&mut self.hand.off_item3d_scratch);
                 let count = crate::item_model::build_extruded_stack_lit(
                     tile,
                     self.hand.off_item.variant,
-                    self.held_item_light(),
-                    self.light_env(),
-                    &mut iv,
+                    light,
+                    env,
+                    &mut sv,
                 );
-                let start = u64::from(self.hand.off_item3d_start);
-                if count > 0 && start + iv.len() as u64 <= crate::pipeline::MAX_ITEM3D_VERTICES {
-                    self.queue.write_buffer(
-                        &self.hand.item3d_vbuf,
-                        start * item_vert_size,
-                        bytemuck::cast_slice(&iv),
-                    );
-                    self.queue.write_buffer(
-                        &self.hand.model3d_mvp_buf,
-                        256,
-                        bytemuck::cast_slice(&mvp.to_cols_array()),
-                    );
+                if count > 0 {
+                    iv.extend_from_slice(&sv);
                     self.hand.off_item3d_count = count;
+                    off_mvp = Some(shake * mvp);
                 }
-                self.hand.item3d_verts = iv;
+                self.hand.off_item3d_scratch = sv;
             }
         }
+
+        // One upload per stream, each buffer grown to fit.
+        if !hi.is_empty() {
+            super::dynamic_draw::upload(
+                &self.device,
+                &self.queue,
+                &mut self.hand.model3d_vbuf,
+                &hv,
+                wgpu::BufferUsages::VERTEX,
+                "model3d vbuf",
+            );
+            super::dynamic_draw::upload(
+                &self.device,
+                &self.queue,
+                &mut self.hand.model3d_ibuf,
+                &hi,
+                wgpu::BufferUsages::INDEX,
+                "model3d ibuf",
+            );
+        }
+        if !iv.is_empty() {
+            super::dynamic_draw::upload(
+                &self.device,
+                &self.queue,
+                &mut self.hand.item3d_vbuf,
+                &iv,
+                wgpu::BufferUsages::VERTEX,
+                "item3d vbuf",
+            );
+        }
+        for (slot, mvp) in [(0u64, main_mvp), (256u64, off_mvp)] {
+            if let Some(mvp) = mvp {
+                self.queue.write_buffer(
+                    &self.hand.model3d_mvp_buf,
+                    slot,
+                    bytemuck::cast_slice(&mvp.to_cols_array()),
+                );
+            }
+        }
+        self.hand.verts = hv;
+        self.hand.indices = hi;
+        self.hand.item3d_verts = iv;
+        self.hand.model_scratch_verts = tv;
+        self.hand.model_scratch_indices = ti;
     }
 
     /// Bake every dynamic world subsystem (item-entity, item-model-entity, chest,
@@ -336,10 +275,8 @@ impl Renderer {
         // Bake the dynamic world subsystems. Item-entity, chest, and break-overlay
         // each clear-and-refill the SAME shared CPU scratch (`item_entity_verts` /
         // `item_entity_indices`) in this exact order — `bake` (clear count → build
-        // → bounds-check → upload to that subsystem's OWN fixed buffers → store
-        // count) runs sequentially, never aliasing two GPU buffers at once. Each
-        // subsystem keeps its OWN buffer caps (item-entity vs chest sized apart so
-        // a wall of chests can't make dropped items vanish).
+        // → grow → upload to that subsystem's OWN buffers → store count) runs
+        // sequentially, never aliasing two GPU buffers at once.
 
         // Item entities (spinning cubes / extruded sprite slabs), frustum-culled
         // so off-screen drops cost nothing. Cubes ride the EXISTING opaque
@@ -356,9 +293,7 @@ impl Renderer {
         }
         // Re-cull against THIS frame's camera, like the item entities above.
         // The gather already culled, but against the camera the game thread
-        // published; these sets share the item-entity vertex budget, so a set
-        // that turned off-screen since must not eat a dropped item's slot.
-        // Recorded as INDICES into the published list, not as a filtered copy
+        // published. Recorded as INDICES into the published list, not as a filtered copy
         // of it: the published list is state (narrowing it in place would make
         // the next frame's contents depend on where this frame's camera
         // pointed), but saying WHICH rows survived costs a `u32`, where
@@ -389,20 +324,8 @@ impl Renderer {
             visible: &visible_draws,
         };
         let visible = &self.item_entity.visible;
-        // Each stream's remaining room, read before the bake borrows it. The
-        // sets go in SECOND and stop at the cap, because the bake is
-        // all-or-nothing: without a bound, enough machines in view would take
-        // every dropped item in the world down with them.
-        let budget = |d: &super::DynamicDraw| crate::block_draw::StreamBudget {
-            verts: d.vbuf_cap,
-            indices: d.ibuf_cap,
-        };
-        let (opaque, models, sprites) = (
-            budget(&self.item_entity.draw),
-            budget(&self.item_entity.model_draw),
-            budget(&self.item_entity.sprite_draw),
-        );
         self.item_entity.draw.bake(
+            &self.device,
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
@@ -413,7 +336,7 @@ impl Renderer {
                 // BUFFER's length, not the first builder's return — the
                 // builders each report only their own share.
                 build_item_entities(visible, verts, indices);
-                crate::block_draw::build_block_draws(draws, opaque, verts, indices);
+                crate::block_draw::build_block_draws(draws, verts, indices);
                 indices.len() as u32
             },
         );
@@ -421,13 +344,14 @@ impl Renderer {
         let visible = &self.item_entity.visible;
         let env = self.light_env();
         self.item_entity.model_draw.bake(
+            &self.device,
             &self.queue,
             &mut self.item_entity.model_verts,
             &mut self.item_entity.model_indices,
             |verts, indices| {
                 // Two producers: the count is the buffer's (see above).
                 crate::item_entity::build_item_model_entities(visible, env, verts, indices);
-                crate::block_draw::build_block_draw_models(draws, env, models, verts, indices);
+                crate::block_draw::build_block_draw_models(draws, env, verts, indices);
                 indices.len() as u32
             },
         );
@@ -436,6 +360,7 @@ impl Renderer {
         let visible = &self.item_entity.visible;
         let mut sprite_scratch = std::mem::take(&mut self.item_entity.sprite_scratch);
         self.item_entity.sprite_draw.bake(
+            &self.device,
             &self.queue,
             &mut self.item_entity.sprite_verts,
             &mut self.item_entity.sprite_indices,
@@ -451,7 +376,6 @@ impl Renderer {
                 crate::block_draw::build_block_draw_sprites(
                     draws,
                     env,
-                    sprites,
                     &mut sprite_scratch,
                     verts,
                     indices,
@@ -475,6 +399,7 @@ impl Renderer {
         }
         let chest_visible = &self.block_entity.chest_visible;
         self.block_entity.chest_draw.bake(
+            &self.device,
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
@@ -494,6 +419,7 @@ impl Renderer {
         }
         let door_visible = &self.block_entity.door_visible;
         self.block_entity.door_draw.bake(
+            &self.device,
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
@@ -529,32 +455,18 @@ impl Renderer {
                     .push(inst.clone());
             }
         }
-        let queue = &self.queue;
-        let cam_pos = self.view.cam_pos;
+        let (device, queue) = (&self.device, &self.queue);
         for g in &mut self.actor.mob_gpu {
-            // Whole-instance budget: the worst-case per-instance cost from the
-            // cube count (a face can bake fewer verts, never more). When more
-            // instances are visible than fit the species' fixed buffers, keep
-            // the CLOSEST — dropping the farthest is invisible, while letting
-            // the bake overflow would blank the whole species for the frame.
-            let verts_per = (g.model.cubes.len() * 24).max(1);
-            let indices_per = (g.model.cubes.len() * 36).max(1);
-            let max_fit = (g.draw.vbuf_cap / verts_per).min(g.draw.ibuf_cap / indices_per);
-            if g.visible.len() > max_fit {
-                g.visible.sort_by(|a, b| {
-                    let da = (a.pos - cam_pos).length_squared();
-                    let db = (b.pos - cam_pos).length_squared();
-                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                g.visible.truncate(max_fit);
-            }
             let model = g.model;
             let scale = g.scale;
             let visible = &g.visible;
-            g.draw
-                .bake(queue, &mut g.verts, &mut g.indices, |verts, indices| {
-                    build_mob_instances(model, scale, env, visible, verts, indices)
-                });
+            g.draw.bake(
+                device,
+                queue,
+                &mut g.verts,
+                &mut g.indices,
+                |verts, indices| build_mob_instances(model, scale, env, visible, verts, indices),
+            );
         }
 
         // Player bodies + their held items: the LOCAL third-person body (when
@@ -715,25 +627,31 @@ impl Renderer {
             }
         }
         // Upload the four combined streams (a stream that stayed empty draws
-        // nothing; over-cap frames drop that stream, per DynamicDraw).
+        // nothing).
         let prebuilt = |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32;
-        self.actor
-            .player_gpu
-            .draw
-            .bake(&self.queue, &mut body_verts, &mut body_indices, prebuilt);
+        self.actor.player_gpu.draw.bake(
+            &self.device,
+            &self.queue,
+            &mut body_verts,
+            &mut body_indices,
+            prebuilt,
+        );
         self.actor.item_draw.bake(
+            &self.device,
             &self.queue,
             &mut sprite_verts,
             &mut sprite_indices,
             prebuilt,
         );
         self.actor.model_item_draw.bake(
+            &self.device,
             &self.queue,
             &mut model_verts,
             &mut model_indices,
             prebuilt,
         );
         self.actor.block_item_draw.bake(
+            &self.device,
             &self.queue,
             &mut block_verts,
             &mut block_indices,
@@ -752,10 +670,11 @@ impl Renderer {
         self.actor.sprite_verts = sprite_scratch;
 
         // Break-overlay (destroy crack) geometry: ONE combined stream over
-        // every active overlay (the local miner's own + the capped remotes),
+        // every active overlay (the local miner's own + every remote's),
         // each baked exactly like the single overlay always was.
         let break_overlays = std::mem::take(&mut self.hand.break_overlays);
         self.hand.break_draw.bake(
+            &self.device,
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
@@ -819,8 +738,7 @@ impl Renderer {
         );
 
         // Entity blob shadows: the rows arrive ground-resolved + view-culled
-        // from the gather, so this is just the quad bake. The static ibuf is
-        // sized for the same cap the builder stops at.
+        // from the gather, so this is just the quad bake.
         let shadows = std::mem::take(&mut self.shadow.instances);
         self.shadow
             .draw

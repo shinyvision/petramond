@@ -1,13 +1,8 @@
-use wgpu::util::DeviceExt;
-
 use super::builders::{color_target, cull_back, shader_module, world_pipeline, DepthPreset};
 
 pub(super) struct ParticlePipelineResources {
     pub(super) pipe: wgpu::RenderPipeline,
     pub(super) emitter_pipe: wgpu::RenderPipeline,
-    pub(super) vbuf: wgpu::Buffer,
-    pub(super) emitter_vbuf: wgpu::Buffer,
-    pub(super) ibuf: wgpu::Buffer,
 }
 
 /// Particle pipelines (tiny 3D cubes). Mining/break particles use alpha cutout and
@@ -95,32 +90,8 @@ pub(super) fn create_particle_pipeline(
         Some(DepthPreset::ReadLess),
         sample_count,
     );
-    // Deliberately tiny: DynamicVertexDraw::bake grows the buffer on demand up
-    // to MAX_PARTICLE_VERTICES (the two worst-case buffers were ~8 MB of VRAM,
-    // parked mostly empty).
-    let particle_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("particle vbuf"),
-        size: 4096,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let emitter_particle_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("emitter particle vbuf"),
-        size: 4096,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    // Static quad indices, uploaded once (only the vbuf is rewritten per frame).
-    let particle_ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("particle ibuf"),
-        contents: bytemuck::cast_slice(&super::particles::particle_indices()),
-        usage: wgpu::BufferUsages::INDEX,
-    });
     ParticlePipelineResources {
         pipe: particle_pipe,
         emitter_pipe,
-        vbuf: particle_vbuf,
-        emitter_vbuf: emitter_particle_vbuf,
-        ibuf: particle_ibuf,
     }
 }
