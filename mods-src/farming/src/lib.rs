@@ -7,6 +7,8 @@
 //! - [`content`] — the pack's registry names resolved to session ids once.
 //! - [`attract`] — a planted stand drawing its pest out of the wild (the
 //!   carrot patch that brings rabbits), rolled on the crop's own random tick.
+//! - [`rest`] — the hour an area sits out attraction after it has produced
+//!   a visitor, kept in world KV per 16×16 column.
 //! - [`worldgen`] — wild wheat/carrot/potato patches after the Trees stage.
 //! - [`tilling`] — the iron hoe turning grass/dirt into farmland.
 //! - [`farmland`] — the shared hydration probe (ground water OR overhead
@@ -49,6 +51,7 @@ mod hop;
 mod husbandry;
 mod kv_counter;
 mod predict;
+mod rest;
 mod spread;
 mod tilling;
 mod trough;

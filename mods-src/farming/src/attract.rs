@@ -13,9 +13,12 @@
 //! and costs nothing on a world with no farms. Only rows whose [`CropDef`]
 //! names an `attracts` species roll at all.
 //!
-//! Three gates stand between the roll and a mob, and each exists because
+//! Four gates stand between the roll and a mob, and each exists because
 //! skipping it produces a specific bad spawn:
 //!
+//! - the AREA REST ([`rest`]) — once a field has drawn one in, its whole
+//!   neighbourhood sits out attraction for an hour; without it the field is
+//!   a faucet the player runs by leaving and coming back.
 //! - the PLAYER BAND ([`MIN_PLAYER_DIST`]) — an animal must never pop into
 //!   existence in view; this mirrors the engine's own natural-spawn band.
 //! - [`site_open`] — footing plus confinement, so nothing is dropped into a
@@ -27,6 +30,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::rest;
 
 /// One in this many random ticks on an attracting crop rolls an attempt.
 /// A random tick reaches one given cell about every 70 s, so a modest field
@@ -59,6 +63,9 @@ pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
         return;
     };
     if !rng_u64(&def.attract_key).is_multiple_of(ATTRACT_CHANCE_IN) {
+        return;
+    }
+    if rest::resting(pos) {
         return;
     }
     let field = [pos[0] as f32 + 0.5, pos[1] as f32, pos[2] as f32 + 0.5];
@@ -101,6 +108,9 @@ pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
         }
         let yaw = (rng_u64(&def.attract_key) % 628) as f32 / 100.0;
         if spawn_mob_checked(species, at, yaw).is_some() {
+            // The rest covers the same neighbourhood the headcount judges,
+            // so a field straddling a column line is one area, not two.
+            rest::begin(pos, NEAR_RADIUS as i32);
             return;
         }
     }
