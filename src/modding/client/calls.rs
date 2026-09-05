@@ -176,6 +176,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ChatSend { .. }
         | HostCall::SoundPlayAt { .. }
         | HostCall::SoundPlayOnMob { .. }
+        | HostCall::SoundSet { .. }
         | HostCall::SoundStop { .. }
         | HostCall::CollisionShapeAt { .. }
         | HostCall::ShaderSetParam { .. }

@@ -513,6 +513,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }
         | HostCall::SoundPlayOnMob { .. }
+        | HostCall::SoundSet { .. }
         | HostCall::SoundStop { .. }
         | HostCall::EmitterBurst { .. } => sounds::handle_sound_call(&data.mod_id, call),
         HostCall::WorldKvGet { .. }

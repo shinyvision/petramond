@@ -25,6 +25,7 @@ mod fixed_tick;
 mod pump;
 mod replication;
 mod session_lifecycle;
+mod spatial_loops;
 mod stream_events;
 #[cfg(test)]
 mod tests;
@@ -138,6 +139,10 @@ pub struct ServerGame {
     /// session's menu close, e.g. its chest 1→0 transition), shipped with the
     /// next executed tick's batch so no observer misses them.
     pub pending_wire_events: Vec<WorldEventMsg>,
+    /// Every spatial LOOP still playing (a `loop` row started and not yet
+    /// stopped), by handle — replayed to a joining session, ended with its
+    /// mob. See [`spatial_loops`].
+    pub live_spatial_loops: spatial_loops::LiveSpatialLoops,
     /// Chat lines accepted since the last pump. Drained to currently connected
     /// sessions only (per [`crate::server::chat::ChatTargets`]); this is
     /// intentionally not history.

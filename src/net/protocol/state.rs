@@ -406,6 +406,12 @@ pub enum SpatialSoundMsg {
     Stop {
         handle: u64,
     },
+    /// Retune a live handle in place (`SoundSet`).
+    Set {
+        handle: u64,
+        volume: f32,
+        pitch: f32,
+    },
 }
 
 /// Which screen the server opened for the recipient this tick (the menu

@@ -53,6 +53,10 @@ impl Audio {
     ) {
     }
 
+    pub fn set_spatial(&mut self, _handle: u64, _volume: f32, _pitch: f32) {}
+
+    pub fn set_spatial_paused(&mut self, _paused: bool) {}
+
     pub fn stop_spatial(&mut self, _handle: u64) {}
 
     pub fn clear_spatial(&mut self) {}

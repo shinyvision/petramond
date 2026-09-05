@@ -118,6 +118,27 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             );
             HostRet::U64(handle)
         }),
+        HostCall::SoundSet {
+            handle,
+            volume,
+            pitch,
+        } => sim_call(|ctx| {
+            if handle == 0 {
+                return;
+            }
+            if !spatial_sound_scalar_params_ok(volume, pitch) {
+                log::warn!("[mod {mod_id}] SoundSet: rejected non-finite or negative parameter");
+                return;
+            }
+            ctx.feed
+                .world
+                .spatial_sounds
+                .push(crate::events::tick::SpatialSoundCommand::Set {
+                    handle,
+                    volume,
+                    pitch,
+                });
+        }),
         HostCall::SoundStop { handle } => sim_call(|ctx| {
             if handle != 0 {
                 ctx.feed

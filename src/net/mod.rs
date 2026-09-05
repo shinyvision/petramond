@@ -42,7 +42,10 @@ pub mod remap;
 //     the player rows and `SelfState` — while a motion is claimed, every
 //     mirror's vanilla copy of it stands down for that hand because the
 //     claimant animates it through the pose seams.
-pub const PROTOCOL_VERSION: u16 = 34;
+// 35: `SpatialSoundMsg::Set` (a live spatial sound retuned in place —
+//     the loop rows' volume follows what the mod integrates, e.g. a cart's
+//     speed) appended after `Stop`.
+pub const PROTOCOL_VERSION: u16 = 35;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

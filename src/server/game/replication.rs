@@ -268,10 +268,14 @@ impl ServerGame {
             std::mem::take(&mut self.sessions[s].presented_breaks)
                 .into_iter()
                 .collect();
-        let events_for_recipient: Vec<WorldEventMsg> =
-            if presented_places.is_empty() && presented_breaks.is_empty() {
-                world_events.to_vec()
-            } else {
+        // The recipient's own catch-up events lead, so a replayed loop's
+        // start precedes any retune or stop the shared window carries.
+        let mut events_for_recipient: Vec<WorldEventMsg> =
+            std::mem::take(&mut self.sessions[s].pending_world_events);
+        if presented_places.is_empty() && presented_breaks.is_empty() {
+            events_for_recipient.extend_from_slice(world_events);
+        } else {
+            events_for_recipient.extend(
                 world_events
                     .iter()
                     .filter(|ev| match ev {
@@ -279,9 +283,9 @@ impl ServerGame {
                         WorldEventMsg::BlockBroken { pos, .. } => !presented_breaks.contains(pos),
                         _ => true,
                     })
-                    .cloned()
-                    .collect()
-            };
+                    .cloned(),
+            );
+        }
         TickUpdate {
             block_draws,
             tick: shared.tick,
@@ -622,6 +626,15 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
                 volume,
                 pitch,
                 last_pos,
+            },
+            Cmd::Set {
+                handle,
+                volume,
+                pitch,
+            } => SpatialSoundMsg::Set {
+                handle,
+                volume,
+                pitch,
             },
             Cmd::Stop { handle } => SpatialSoundMsg::Stop { handle },
         }));

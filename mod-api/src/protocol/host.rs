@@ -1879,6 +1879,23 @@ pub enum HostCall {
         pitch: f32,
         roll: f32,
     },
+    /// Retune a live spatial sound started by [`SoundPlayAt`] or
+    /// [`SoundPlayOnMob`]: `volume` (linear multiplier) and `pitch`
+    /// (playback speed) replace the values the play was started with; the
+    /// sound keeps its source and its place in the clip. The seam for a
+    /// sound whose loudness FOLLOWS a quantity the mod integrates — a cart
+    /// rolling faster, a furnace roaring up — on a row that `loop`s, so one
+    /// play carries the whole ride and nothing restarts. Unknown or finished
+    /// handles are a no-op; non-finite or negative values are refused.
+    /// → [`HostRet::Unit`].
+    ///
+    /// [`SoundPlayAt`]: Self::SoundPlayAt
+    /// [`SoundPlayOnMob`]: Self::SoundPlayOnMob
+    SoundSet {
+        handle: u64,
+        volume: f32,
+        pitch: f32,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].

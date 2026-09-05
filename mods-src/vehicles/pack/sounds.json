@@ -1,0 +1,13 @@
+{
+  "sounds": [
+    {
+      "sound": "vehicles:minecart_roll",
+      "variants": ["sounds/minecart.ogg"],
+      "gain": 1.0,
+      "pitch_variation": 0.0,
+      "attenuation_distance": 28.0,
+      "category": "mob",
+      "loop": true
+    }
+  ]
+}

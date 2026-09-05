@@ -218,6 +218,12 @@ pub struct SoundDef {
     /// Distance in blocks where positional playback fades to silence.
     pub attenuation_distance: f32,
     pub category: SoundCategory,
+    /// A handle-addressed spatial play of this row repeats its clip
+    /// seamlessly until `SoundStop` (a cart's roll, a machine's hum): the row
+    /// owns "this is a loop", so a mod starts it once and retunes it. The
+    /// clip is expected to be authored to loop (variant 0; loop rows are
+    /// single-variant). One-shot plays (`EmitSound`) ignore it.
+    pub looped: bool,
 }
 
 /// One sound row as written in `sounds.json`.
@@ -233,6 +239,8 @@ struct RawSoundDef {
     #[serde(default = "default_attenuation_distance")]
     attenuation_distance: f64,
     category: SoundCategory,
+    #[serde(default, rename = "loop")]
+    looped: bool,
 }
 
 fn default_pitch() -> f64 {
@@ -297,6 +305,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<SoundDef>, St
                 pitch: r.pitch as f32,
                 attenuation_distance: r.attenuation_distance as f32,
                 category: r.category,
+                looped: r.looped,
             })
         },
     )

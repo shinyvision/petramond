@@ -126,6 +126,7 @@ impl ServerGame {
             // ticks), the coalesced delta log, and the entity/chest rows.
             let mut world_events = std::mem::take(&mut self.pending_wire_events);
             world_events.extend(wire_world_events(&mut events.world));
+            self.track_spatial_loops(&mut world_events);
             let deltas = self.world.take_block_deltas();
             let kv_deltas = self.world.take_cell_kv_deltas();
             let draw_deltas = self.world.take_block_draw_deltas();

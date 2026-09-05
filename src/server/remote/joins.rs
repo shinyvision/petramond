@@ -54,6 +54,7 @@ impl ServerGame {
         // game.rs): a static param map would otherwise never reach them.
         self.last_shipped_env = None;
         self.sessions.push(session);
+        self.replay_spatial_loops_to(self.sessions.len() - 1);
         (data, name)
     }
 

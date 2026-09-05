@@ -419,6 +419,7 @@ fn samples() -> Samples {
     s.pin("HostCall::MobKinematic", &HostCall::MobKinematic {
         mob_id: 7, pos: [1.0, 2.0, 3.0], yaw: 0.5, pitch: -0.25, roll: 0.125,
     });
+    s.pin("HostCall::SoundSet", &HostCall::SoundSet { handle: 1, volume: 0.5, pitch: 1.0 });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -1029,6 +1030,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::SetPlayerHeldDisplay", "99010301036d3a6900"),
     ("HostCall::PlayerInventory", "9a0103"),
     ("HostCall::MobKinematic", "9b01070000803f00000040000040400000003f000080be0000003e"),
+    ("HostCall::SoundSet", "9c01010000003f0000803f"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),

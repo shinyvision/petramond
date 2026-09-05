@@ -199,6 +199,11 @@ fn abi_roundtrip_host_and_guest_calls() {
         pitch: 1.05,
     });
     roundtrip(HostCall::SoundStop { handle: 99 });
+    roundtrip(HostCall::SoundSet {
+        handle: 99,
+        volume: 0.4,
+        pitch: 1.2,
+    });
     roundtrip(HostCall::CollisionShapeAt { pos: [8, 63, 8] });
     roundtrip(HostRet::CollisionShape(Some(CollisionShape::Partial)));
     roundtrip(HostRet::CollisionShape(None));

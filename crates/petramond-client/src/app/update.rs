@@ -66,6 +66,14 @@ impl App {
         // only hands the built draw list over. The legacy click routers must
         // not also fire on their invisible layouts.
         let pause_runs_sim = self.multiplayer_pause_runs_sim();
+        // The world's sounds freeze exactly when the world does: on the two
+        // early returns below that skip `Game::tick` (a shell screen over a
+        // live game whose pause is effective). A multiplayer pause menu runs
+        // the sim on, so the cart that passes behind it stays audible.
+        let world_frozen = self.game.is_some()
+            && !pause_runs_sim
+            && (self.doc_shell_kind().is_some() || self.screen.shell_open());
+        self.audio.set_spatial_paused(world_frozen);
         if let Some(kind) = self.doc_shell_kind() {
             self.audio.set_loop(None, now);
             self.pointer.clear_edges();

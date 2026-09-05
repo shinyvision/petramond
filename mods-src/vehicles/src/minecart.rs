@@ -18,6 +18,13 @@
 //!   end with the speed it left at, lands by gravity, skids to a halt under
 //!   `mob_drive`, and snaps back onto the first rail its feet come to rest
 //!   on. A rider can push a derailed cart along the ground back to a rail.
+//! - **The rolling sound** is one looping spatial play per moving cart,
+//!   pinned to the mob (`sound_play_on_mob` on the pack's `loop` row) and
+//!   retuned every tick its speed moves (`sound_set`): louder the faster it
+//!   rolls, silent when parked, and it travels with the cart past whoever
+//!   is standing by the track. The engine replays a live loop to a player
+//!   who joins mid-ride and ends it with the mob; the pack only starts,
+//!   retunes and stops.
 //! - **Placing** is an `interact_attempt` on a rail while holding the cart
 //!   item; **boarding** an `interact_attempt` on the cart; a **punch**
 //!   (`mob_damage_pre`) shoves the cart away from the puncher along its rail
@@ -46,6 +53,10 @@ const WHEEL_DIAMETER: f32 = 4.0 / 16.0;
 const RAIL_REACH: i32 = 2;
 /// Speed changes smaller than this are not written back to the tag.
 const SPEED_EPS: f32 = 1e-3;
+/// The rolling loop's `sounds.json` row, and how far its volume must move
+/// before the live play is retuned.
+const ROLL_SOUND: &str = "vehicles:minecart_roll";
+const ROLL_VOLUME_EPS: f32 = 0.02;
 
 /// One batched read of the rail rows in a box, answering the pure rules.
 struct RailBox<'a> {
@@ -105,6 +116,10 @@ pub struct Minecarts {
     /// Carts whose wheel clip has been activated, and the rate it plays at.
     /// Transient: a reloaded cart's wheels start again on its first tick.
     rolling: BTreeMap<u64, f32>,
+    /// Carts whose rolling loop is playing: the session sound handle and
+    /// the volume it was last set to. Transient like `rolling`; a cart that
+    /// leaves the live list (broken, unloaded) has its loop stopped.
+    humming: BTreeMap<u64, (u64, f32)>,
     /// A block id's cell-local collision boxes — the registry's answer,
     /// cached per id, so the wall test costs no host call once a block has
     /// been seen. Empty for anything a body passes through (air, plants, a
@@ -279,13 +294,13 @@ impl Minecarts {
                     if (next.speed - start.speed).abs() > SPEED_EPS {
                         write_speed(m.id, next.speed);
                     }
-                    self.roll(m.id, next.speed);
+                    self.present(m.id, next.speed);
                 }
                 Step::Off => {
                     // The engine's body: airborne it flies; on the ground it
                     // skids out under its wheels, or a rider walks it along.
                     if !m.on_ground {
-                        self.roll(m.id, 0.0);
+                        self.present(m.id, 0.0);
                         continue;
                     }
                     let mut v =
@@ -300,11 +315,49 @@ impl Minecarts {
                     if (v - start.speed).abs() > SPEED_EPS {
                         write_speed(m.id, v);
                     }
-                    self.roll(m.id, v);
+                    self.present(m.id, v);
                 }
             }
         }
         self.rolling.retain(|id, _| seen.contains(id));
+        self.humming.retain(|id, &mut (handle, _)| {
+            let live = seen.contains(id);
+            if !live {
+                sound_stop(handle);
+            }
+            live
+        });
+    }
+
+    /// What a cart at `speed` looks and sounds like this tick: the wheels
+    /// turn at it, and the rolling loop follows it.
+    fn present(&mut self, id: u64, speed: f32) {
+        self.roll(id, speed);
+        self.hum(id, speed);
+    }
+
+    /// Keep the rolling loop at the cart's speed: start it when the cart
+    /// gets going, retune it as the speed moves, stop it when the cart
+    /// parks.
+    fn hum(&mut self, id: u64, speed: f32) {
+        let volume = cart::roll_volume(speed);
+        match self.humming.get(&id).copied() {
+            None if volume > 0.0 => {
+                let handle = sound_play_on_mob(id, ROLL_SOUND, volume, 1.0);
+                if handle != 0 {
+                    self.humming.insert(id, (handle, volume));
+                }
+            }
+            Some((handle, _)) if volume <= 0.0 => {
+                sound_stop(handle);
+                self.humming.remove(&id);
+            }
+            Some((handle, current)) if (current - volume).abs() > ROLL_VOLUME_EPS => {
+                sound_set(handle, volume, 1.0);
+                self.humming.insert(id, (handle, volume));
+            }
+            _ => {}
+        }
     }
 
     /// Keep the wheels turning at the cart's speed: activate the clip once,

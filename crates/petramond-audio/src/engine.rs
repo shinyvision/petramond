@@ -94,6 +94,9 @@ pub struct Audio {
     loop_sound: Option<Sound>,
     loop_next: f64,
     spatial: HashMap<u64, ActiveSpatialSound>,
+    /// The world is frozen (singleplayer pause): every active spatial sound
+    /// holds its place, and one started meanwhile starts held.
+    spatial_paused: bool,
     /// Gain-controlled continuous loops driven by client mods
     /// (`ClientLoopSet`): resolved sound → its infinite sink + eased gain.
     gain_loops: HashMap<Sound, ActiveGainLoop>,
@@ -164,6 +167,7 @@ impl Audio {
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),
+            spatial_paused: false,
             gain_loops: HashMap::new(),
         }
     }
@@ -343,12 +347,18 @@ impl Audio {
                 * sound.distance_gain((initial_position - listener.pos).length()),
         );
         player.set_speed(pitch);
-        player.append(SamplesBuffer::new(
-            buf.channels,
-            buf.sample_rate,
-            buf.samples.clone(),
-        ));
-        self.spatial.insert(
+        let samples = SamplesBuffer::new(buf.channels, buf.sample_rate, buf.samples.clone());
+        if def.looped {
+            // A loop row plays until `stop_spatial`; `update_spatial`'s
+            // finished-sink sweep never sees it empty.
+            player.append(samples.repeat_infinite());
+        } else {
+            player.append(samples);
+        }
+        if self.spatial_paused {
+            player.pause();
+        }
+        if let Some(replaced) = self.spatial.insert(
             handle,
             ActiveSpatialSound {
                 sink: player,
@@ -358,7 +368,22 @@ impl Audio {
                 pitch,
                 last_position: initial_position,
             },
-        );
+        ) {
+            replaced.sink.stop();
+        }
+    }
+
+    /// Retune a live spatial sound's own gain and pitch in place (`SoundSet`);
+    /// the next per-frame update applies them with the mixer and distance
+    /// terms. Unknown or finished handles are inert.
+    pub fn set_spatial(&mut self, handle: u64, volume: f32, pitch: f32) {
+        if !(volume.is_finite() && volume >= 0.0 && pitch.is_finite() && pitch > 0.0) {
+            return;
+        }
+        if let Some(active) = self.spatial.get_mut(&handle) {
+            active.local_gain = active.sound.def().gain * volume;
+            active.pitch = pitch;
+        }
     }
 
     /// Start a presentation-owned one-shot spatial sound using the row's own
@@ -384,6 +409,24 @@ impl Audio {
             listener,
             initial_position,
         );
+    }
+
+    /// Hold every active spatial sound where it is (`true`) or let it run
+    /// on (`false`): the world's sounds freeze with a frozen world — a
+    /// singleplayer pause — and resume from the same place. Call every
+    /// frame; only a change touches the sinks.
+    pub fn set_spatial_paused(&mut self, paused: bool) {
+        if self.spatial_paused == paused {
+            return;
+        }
+        self.spatial_paused = paused;
+        for active in self.spatial.values() {
+            if paused {
+                active.sink.pause();
+            } else {
+                active.sink.play();
+            }
+        }
     }
 
     /// Stop a spatial sound. Unknown handles are intentionally inert.
@@ -562,6 +605,7 @@ mod tests {
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),
+            spatial_paused: false,
             gain_loops: HashMap::new(),
         }
     }

@@ -205,6 +205,7 @@ pub fn build_server_with_pool(
         // honorable (the same permanent gate Open-to-LAN sets on a host).
         lan_ever_opened: !has_local_session,
         pending_wire_events: Vec::new(),
+        live_spatial_loops: Default::default(),
         pending_chat: Vec::new(),
         next_chat_seq: 0,
         autosave_t: 0.0,

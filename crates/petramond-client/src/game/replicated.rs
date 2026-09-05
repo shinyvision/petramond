@@ -1083,6 +1083,15 @@ impl Game {
                     pitch,
                     last_pos,
                 },
+                SpatialSoundMsg::Set {
+                    handle,
+                    volume,
+                    pitch,
+                } => SpatialSoundCommand::Set {
+                    handle,
+                    volume,
+                    pitch,
+                },
                 SpatialSoundMsg::Stop { handle } => SpatialSoundCommand::Stop { handle },
             }),
         }

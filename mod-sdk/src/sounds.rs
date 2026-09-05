@@ -35,3 +35,12 @@ host_fn! {
     /// Stop a spatial sound handle. Unknown handles are ignored.
     pub fn sound_stop(handle: u64) => SoundStop { handle }
 }
+
+host_fn! {
+    /// Retune a live spatial sound: a new `volume` and `pitch` for the play
+    /// behind `handle`, in place — the way to make a `loop` row follow a
+    /// quantity (a cart's speed) without restarting it. Unknown handles are
+    /// ignored.
+    pub fn sound_set(handle: u64, volume: f32, pitch: f32)
+        => SoundSet { handle, volume, pitch }
+}

@@ -301,7 +301,7 @@ impl IdRemap {
                 // Stops carry no registry id and must reach the client so a
                 // dropped-play's handle stays inert (stop of an unknown
                 // handle is already a no-op).
-                SpatialSoundMsg::Stop { .. } => true,
+                SpatialSoundMsg::Set { .. } | SpatialSoundMsg::Stop { .. } => true,
             },
         }
     }

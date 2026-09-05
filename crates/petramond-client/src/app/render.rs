@@ -272,6 +272,11 @@ impl App {
                             initial,
                         );
                     }
+                    crate::game::SpatialSoundCommand::Set {
+                        handle,
+                        volume,
+                        pitch,
+                    } => self.audio.set_spatial(handle, volume, pitch),
                     crate::game::SpatialSoundCommand::Stop { handle } => {
                         self.audio.stop_spatial(handle);
                     }

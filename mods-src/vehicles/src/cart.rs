@@ -73,6 +73,12 @@ pub const NUDGE_ACCEL: f32 = 12.0;
 pub const PUNCH_SPEED: f32 = 2.5;
 /// Ground friction per tick for a derailed cart skidding on its wheels.
 pub const SKID_RETENTION: f32 = 0.85;
+/// The rolling sound: silent below `ROLL_SOUND_START` (a parked cart being
+/// nudged makes no noise), full volume at `MAX_SPEED`, and the curve
+/// between — below 1 so a rider's own creep along the flat is clearly
+/// audible while a booster run still rises above it.
+pub const ROLL_SOUND_START: f32 = 0.15;
+pub const ROLL_SOUND_CURVE: f32 = 0.7;
 /// Furthest a single tick may carry a cart along the rails, in cells: a
 /// bound on the cell chain, well above what `MAX_SPEED` needs.
 const MAX_CELLS_PER_TICK: usize = 6;
@@ -400,6 +406,17 @@ pub fn punch(cart: &Cart, origin: [f32; 3]) -> f32 {
 /// clip) for a speed, given the authored wheel diameter in blocks.
 pub fn wheel_roll_rate(speed: f32, wheel_diameter: f32) -> f32 {
     speed / (std::f32::consts::PI * wheel_diameter)
+}
+
+/// Volume of the rolling loop for a speed: `0` = silent (stop the loop),
+/// rising monotonically to `1` at top speed.
+pub fn roll_volume(speed: f32) -> f32 {
+    let t = (speed.abs() - ROLL_SOUND_START) / (MAX_SPEED - ROLL_SOUND_START);
+    if t <= 0.0 {
+        0.0
+    } else {
+        t.min(1.0).powf(ROLL_SOUND_CURVE)
+    }
 }
 
 #[cfg(test)]

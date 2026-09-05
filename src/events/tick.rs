@@ -59,6 +59,12 @@ pub enum SpatialSoundCommand {
     Stop {
         handle: u64,
     },
+    /// Retune a live handle in place (`SoundSet`).
+    Set {
+        handle: u64,
+        volume: f32,
+        pitch: f32,
+    },
 }
 
 /// The per-PLAYER slice of what the tick did: the lossy latched one-shots that

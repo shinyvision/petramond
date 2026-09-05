@@ -299,6 +299,10 @@ pub struct ConnectedPlayer {
     pub pending_menu_actions: Vec<PendingMenuAction>,
     /// Outcomes queued this tick window for the next `TickUpdate`.
     pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
+    /// World events addressed to THIS recipient only, shipped ahead of the
+    /// shared list in its next tick batch — the join catch-up for stateful
+    /// world presentation (the spatial loops still playing).
+    pub pending_world_events: Vec<crate::net::protocol::WorldEventMsg>,
     /// Latched `BreakFinished` requests, applied by the mining stage in
     /// arrival order. A queue, not a single slot: instabreak blocks can
     /// legitimately finish two cells in one tick window, so each finish must
@@ -438,6 +442,7 @@ impl ConnectedPlayer {
             drop_queue: DropQueue::default(),
             pending_menu_actions: Vec::new(),
             pending_action_outcomes: Vec::new(),
+            pending_world_events: Vec::new(),
             pending_break_finished: Vec::new(),
             deferred_break_finished: None,
             pending_break_ack: Default::default(),

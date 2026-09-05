@@ -24,6 +24,7 @@ impl ServerGame {
         ));
         let s = self.sessions.len() - 1;
         self.unlock_all_recipes_for_test(s);
+        self.replay_spatial_loops_to(s);
         s
     }
 
