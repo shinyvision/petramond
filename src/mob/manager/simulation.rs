@@ -239,7 +239,7 @@ impl Mobs {
             id: m.id(),
             kind: m.kind,
             pos: m.pos,
-            active: !m.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, m)),
+            active: !m.is_dead() && (!freeze_unloaded || terrain_under_mob_is_final(world, m)),
             tags: m.tags_shared(),
         }));
         // Solid-collision bodies as of the start of this tick. Soft mobs use
@@ -272,7 +272,7 @@ impl Mobs {
         // obstacles. A rigid body sees only an exact support during ordinary
         // Y-first integration; all other peer motion is resolved together.
         for (i, mob) in self.list.iter_mut().enumerate() {
-            if freeze_unloaded && !chunk_loaded_at(world, mob) {
+            if freeze_unloaded && !terrain_under_mob_is_final(world, mob) {
                 // Drive is a this-tick intent. A frozen mob never reaches the
                 // integration site that normally consumes it, so discard it
                 // here rather than letting it wake up on a stale command.
@@ -657,16 +657,25 @@ impl Mobs {
     }
 }
 
-/// Whether the chunk `mob` stands over is loaded — the freeze gate shared by the tick
-/// loop and the push pass, so a mob over not-yet-generated terrain is skipped by both.
-fn chunk_loaded_at(world: &World, mob: &Instance) -> bool {
+/// Whether the terrain `mob` stands on has ARRIVED — the freeze gate shared
+/// by the tick loop and the push pass, so a mob over not-yet-generated
+/// terrain is skipped by both. Its feet cell and the cell under it must read
+/// final (a loaded section, or an absent one whose generated summary proves
+/// it uniform), and it must be above the world floor. A loaded COLUMN is not
+/// enough: the world is cubic, so a deep section can be out of the vertical
+/// window while the sections above it are loaded, and a body simulated
+/// against that absent floor reads air and falls out of the world (the same
+/// rule as `world::entities::terrain_under_drop_is_final`).
+fn terrain_under_mob_is_final(world: &World, mob: &Instance) -> bool {
     let c = voxel_at(mob.pos);
-    world.chunk_loaded(c.x >> 4, c.z >> 4)
+    c.y >= petramond_world::chunk::WORLD_MIN_Y
+        && world.physics_cell_final_at(c.x, c.y, c.z)
+        && world.physics_cell_final_at(c.x, c.y - 1, c.z)
 }
 
 /// Whether `mob` takes part in soft pushing this tick: it must be alive (a corpse
 /// ragdolls in place — its `pos` is the ragdoll origin, so shoving it would warp the
 /// corpse) and actually simulating (not frozen over an unloaded chunk).
 fn is_pushable(mob: &Instance, world: &World, freeze_unloaded: bool) -> bool {
-    !mob.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, mob))
+    !mob.is_dead() && (!freeze_unloaded || terrain_under_mob_is_final(world, mob))
 }

@@ -606,6 +606,48 @@ fn stale_requests_release_when_the_requester_is_gone() {
     );
 }
 
+/// A drop over a floor section that has NOT arrived holds still, and falls
+/// the moment it has. The column IS loaded (the drop's own section is), so a
+/// column-level freeze would let it fall through the absent section and out
+/// of the world.
+#[test]
+fn a_drop_waits_for_the_section_under_it_to_arrive() {
+    use petramond_world::chunk::ChunkPos;
+    let dir = std::env::temp_dir().join(format!("petramond-drop-freeze-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut w = World::new(0, 0);
+    let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
+    w.attach_save(opened.save, opened.saved);
+    let column = ChunkPos::new(0, 0);
+    w.ensure_column(column);
+    w.insert_empty_column_for_test(column);
+    // The drop's own section (cy 4) is loaded; the one under it (cy 3) is
+    // still in flight.
+    let floor = SectionPos::new(0, 3, 0);
+    w.gen.awaited_overlays.insert(floor);
+    w.note_stream_nonfinal(floor);
+    let start = drop_at(2.5, 2.5).pos; // y = 64.5, the first row of cy 4
+    w.spawn_item(drop_at(2.5, 2.5));
+    for _ in 0..40 {
+        w.tick_item_physics(0.05, &[]);
+    }
+    assert_eq!(
+        w.item_entities()[0].pos,
+        start,
+        "held still over terrain that has not arrived"
+    );
+    w.gen.awaited_overlays.remove(&floor);
+    w.settle_stream_nonfinal(floor);
+    for _ in 0..10 {
+        w.tick_item_physics(0.05, &[]);
+    }
+    assert!(
+        w.item_entities()[0].pos.y < start.y,
+        "simulates again once the floor section is final"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn unloading_a_section_harvests_only_its_items() {
     // take_items_in_section is what an unload uses to bundle a section's drops

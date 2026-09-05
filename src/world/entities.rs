@@ -175,8 +175,9 @@ impl DroppedItems {
     /// names its anchor cell; the tick that cell loses its collision, it
     /// drops loose.
     ///
-    /// When `freeze_unloaded` is set (a save is attached), a drop sitting
-    /// over a not-yet-loaded chunk is frozen so it can't fall through
+    /// When `freeze_unloaded` is set (a save is attached), a drop whose own
+    /// cell or the cell under it has not ARRIVED (see
+    /// [`terrain_under_drop_is_final`]) is frozen so it can't fall through
     /// missing terrain (in-memory worlds with no save always simulate,
     /// matching the test setups).
     ///
@@ -204,11 +205,8 @@ impl DroppedItems {
             bodies: any_flight.then(|| SweepBodies::gather(world)),
         };
         for it in &mut self.items {
-            if freeze_unloaded {
-                let (cx, cz) = chunk_xz(it.pos);
-                if !world.chunk_loaded(cx, cz) {
-                    continue;
-                }
+            if freeze_unloaded && !terrain_under_drop_is_final(world, it.pos) {
+                continue;
             }
             let before = voxel_at(it.pos);
             if let Some(impact) = it.step(&ctx) {
@@ -644,6 +642,23 @@ impl World {
 #[inline]
 fn chunk_xz(pos: Vec3) -> (i32, i32) {
     ((pos.x.floor() as i32) >> 4, (pos.z.floor() as i32) >> 4)
+}
+
+/// Whether the terrain a drop at `pos` rests on or falls through has ARRIVED:
+/// its own cell and the cell under it read final (a loaded section, or an
+/// absent one whose generated summary proves it uniform), and it is above the
+/// world floor. Otherwise the drop holds still this tick.
+///
+/// A loaded COLUMN is not enough: the world is cubic, so a deep section can
+/// be out of the vertical window while the sections above it are loaded. A
+/// drop simulated against that absent floor reads air, falls through it and
+/// is out of the world a second later — a corpse pile spilled where a player
+/// died on floor the server had not regenerated yet.
+fn terrain_under_drop_is_final(world: &World, pos: Vec3) -> bool {
+    let c = voxel_at(pos);
+    c.y >= petramond_world::chunk::WORLD_MIN_Y
+        && world.physics_cell_final_at(c.x, c.y, c.z)
+        && world.physics_cell_final_at(c.x, c.y - 1, c.z)
 }
 
 /// The 16³ section owning world position `pos` (`None` if outside the world's
