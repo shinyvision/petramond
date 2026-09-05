@@ -58,6 +58,25 @@ impl WorldData {
             .collision_boxes(&k.params, self, IVec3::new(wx, wy, wz), block)
     }
 
+    /// Position-aware AIMABLE geometry: the boxes a targeting ray tests and
+    /// the outline traces for a family that picks by boxes — the family's own
+    /// [`ShapeSim::target_boxes`](crate::block::ShapeSim::target_boxes)
+    /// answer, resolved from the same per-cell state as its collision.
+    /// Appends to `out`.
+    #[inline]
+    pub fn target_boxes_at(
+        &self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        out: &mut Vec<crate::block::PosedBox>,
+    ) {
+        let block = self.physics_block(wx, wy, wz);
+        let k = block.shape_kind_def();
+        k.sim
+            .target_boxes(&k.params, self, IVec3::new(wx, wy, wz), block, out)
+    }
+
     /// Position-aware selection/TARGET box: a bbmodel block resolves its PER-CELL box
     /// (the geometry overlapping that cell, so the raycast targets where the model
     /// actually is); every other block uses its default ([`Block::visual_aabb`]). Drives

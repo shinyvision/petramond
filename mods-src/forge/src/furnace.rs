@@ -251,7 +251,7 @@ impl MachineSpec for ForgingFurnaceSpec {
             ctx.block
         };
         if ctx.current != want_row {
-            swap_model_block(ctx.pos, want_row);
+            swap_block(ctx.pos, want_row);
         }
         // Submitted UNCONDITIONALLY, like the draw set below and for the same
         // reason: comparing against the mod's own previous state is a

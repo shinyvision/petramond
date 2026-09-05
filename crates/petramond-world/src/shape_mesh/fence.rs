@@ -99,6 +99,7 @@ pub fn push_mesh_boxes(
                 swap_uv: false,
                 uv_turns: 0,
                 tint,
+                uv_rect: None,
             })
         };
         let mut faces = [style(tiles[2]); 6];

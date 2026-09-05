@@ -188,27 +188,27 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
-        HostCall::SwapModelBlock { pos, block } => match checked_block(block) {
+        HostCall::SwapBlock { pos, block } => match checked_block(block) {
             Err(e) => e,
             Ok(b) => {
-                // BOTH sides must be the caller's own: this is a machine
-                // flipping ITS placed variant, never a tool for rewriting
-                // someone else's content. The destination is checked here
-                // because it needs no world read.
+                // BOTH sides must be the caller's own: this is a placed thing
+                // flipping ITS row, never a tool for rewriting someone else's
+                // content. The destination is checked here because it needs
+                // no world read.
                 let new_name = petramond_world::registry::names()
                     .blocks
                     .name(b.id())
                     .unwrap_or("?");
                 if !key_owned_by_namespace(mod_id, new_name) {
                     return HostRet::Error(format!(
-                        "SwapModelBlock: block '{new_name}' is not owned by mod '{mod_id}'"
+                        "SwapBlock: block '{new_name}' is not owned by mod '{mod_id}'"
                     ));
                 }
                 let mod_id = mod_id.to_owned();
                 sim_query(
-                    move |ctx| match owned_block_at(ctx, &mod_id, pos, "SwapModelBlock") {
+                    move |ctx| match owned_block_at(ctx, &mod_id, pos, "SwapBlock") {
                         Err(e) => e,
-                        Ok(_) => HostRet::Bool(ctx.world.swap_model_block(IVec3::from(pos), b)),
+                        Ok(_) => HostRet::Bool(ctx.world.swap_block(IVec3::from(pos), b)),
                     },
                 )
             }
@@ -787,7 +787,7 @@ mod tests {
                 parts: 0,
                 tint: None,
             },
-            HostCall::SwapModelBlock {
+            HostCall::SwapBlock {
                 pos: [0, 0, 0],
                 block: mod_api::BlockId(1),
             },

@@ -61,12 +61,19 @@ fn resolve_box_set(
         ));
     }
     let boxes: Vec<BoxDef> = raw.iter().map(RawBox::resolve).collect::<Result<_, _>>()?;
+    if corners && boxes.iter().any(|b| b.pose.is_some()) {
+        // A corner form is the INTERSECTION of the shape with its quarter
+        // turn, and the intersection of two posed boxes is not a box.
+        return Err("'corners' cannot compose a shape with rotated boxes".into());
+    }
     let key = format!(
         "#boxes/{}",
         boxes
             .iter()
             .map(|b| {
-                let t = |v: f32| (v * 16.0).round() as u8;
+                // Texel-exact geometry in the key (fractional texels print as
+                // such), so two rows that differ at all never share a kind.
+                let t = |v: f32| format!("{}", (v * 16.0 * 1000.0).round() / 1000.0);
                 let faces: String = b.faces.iter().map(|&f| if f { '1' } else { '0' }).collect();
                 // Tiles are part of the shape's identity: two rows whose boxes
                 // agree but whose face art does not are different kinds.
@@ -75,8 +82,28 @@ fn resolve_box_set(
                     .iter()
                     .map(|t| t.map_or(String::new(), |t| format!(".{}", t.index())))
                     .collect();
+                let uv: String =
+                    b.uv.iter()
+                        .zip(b.uv_turns)
+                        .map(|(r, turns)| {
+                            format!(
+                                ".{}{}",
+                                r.map_or(String::new(), |r| format!("{r:?}")),
+                                if turns != 0 {
+                                    format!("r{turns}")
+                                } else {
+                                    String::new()
+                                }
+                            )
+                        })
+                        .collect();
+                let pose = b.pose.map_or(String::new(), |p| {
+                    let q = p.rotation.to_array().map(t);
+                    let o = p.origin.to_array().map(t);
+                    format!("@{}|{}", q.join(","), o.join(","))
+                });
                 format!(
-                    "{},{},{}-{},{},{}:{faces}{}{}{}{tiles}",
+                    "{},{},{}-{},{},{}:{faces}{}{}{}{tiles}{uv}{pose}",
                     t(b.aabb.min[0]),
                     t(b.aabb.min[1]),
                     t(b.aabb.min[2]),
@@ -126,6 +153,7 @@ fn resolve_box_set(
     // twenty identical ones.
     let mut forms: [[&'static [BoxDef]; 5]; 4] = [[&[]; 5]; 4];
     let mut collision: [[&'static [Aabb]; 5]; 4] = [[&[]; 5]; 4];
+    let mut targets: [[&'static [crate::block::PosedBox]; 5]; 4] = [[&[]; 5]; 4];
     // Every slot is written below; this is only the array's initial value.
     let mut bounds = [[Aabb {
         min: [0.0; 3],
@@ -133,9 +161,10 @@ fn resolve_box_set(
     }; 5]; 4];
     for f in 0..if corners { 5 } else { 1 } {
         let mut set: &'static [BoxDef] = authored_forms[f];
-        for (t, ((forms, collision), bounds)) in forms
+        for (t, (((forms, collision), targets), bounds)) in forms
             .iter_mut()
             .zip(collision.iter_mut())
+            .zip(targets.iter_mut())
             .zip(bounds.iter_mut())
             .enumerate()
         {
@@ -143,8 +172,10 @@ fn resolve_box_set(
                 set = Box::leak(turned_list(set, 1).into_boxed_slice());
             }
             forms[f] = set;
-            let c: Vec<Aabb> = set.iter().filter(|b| b.collides).map(|b| b.aabb).collect();
+            let c: Vec<Aabb> = set.iter().filter_map(BoxDef::collision_volume).collect();
             collision[f] = Box::leak(c.into_boxed_slice());
+            let g: Vec<crate::block::PosedBox> = set.iter().map(BoxDef::target).collect();
+            targets[f] = Box::leak(g.into_boxed_slice());
             bounds[f] = union_bounds(set);
         }
     }
@@ -152,12 +183,14 @@ fn resolve_box_set(
         for t in 0..4 {
             forms[t] = [forms[t][0]; 5];
             collision[t] = [collision[t][0]; 5];
+            targets[t] = [targets[t][0]; 5];
             bounds[t] = [bounds[t][0]; 5];
         }
     }
     let params: &'static BoxSetParams = Box::leak(Box::new(BoxSetParams {
         forms,
         collision,
+        targets,
         bounds,
         corner_joins: corners,
     }));
@@ -178,10 +211,32 @@ pub fn family_resolves_to_boxes(family: ShapeFamily) -> bool {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawBox {
+    /// Texels, fractional allowed, and a box may reach PAST its cell (up to
+    /// one cell either side): the overhang is drawn but reserves nothing.
+    /// `from == to` on one axis is a flat plane (decoration: two faces, no
+    /// collision whatever its pose).
     #[serde(default)]
-    pub from: Option<[u8; 3]>,
+    pub from: Option<[f32; 3]>,
     #[serde(default)]
-    pub to: Option<[u8; 3]>,
+    pub to: Option<[f32; 3]>,
+    /// Rotation in DEGREES about `origin`, composed X first, then Y, then Z
+    /// — the same convention a Blockbench cube's `rotation` uses, so a cube
+    /// transcribes verbatim. Absent or all zero = axis-aligned.
+    #[serde(default)]
+    pub rotation: Option<[f32; 3]>,
+    /// The pivot of `rotation`, in texels (default: the box's centre).
+    #[serde(default)]
+    pub origin: Option<[f32; 3]>,
+    /// Per-face tile rectangle `[u0, v0, u1, v1]` in tile texels, stretched
+    /// over the whole face, keyed like `faces`. Absent = the cell-local
+    /// carve; a box longer than its cell keeps its whole tile only this way.
+    #[serde(default)]
+    pub uv: Option<std::collections::BTreeMap<String, [u8; 4]>>,
+    /// Per-face UV rotation in degrees (`0`, `90`, `180`, `270`, clockwise
+    /// on the face), keyed like `faces` — how one curve tile serves every
+    /// corner row.
+    #[serde(default)]
+    pub uv_rotation: Option<std::collections::BTreeMap<String, u16>>,
     /// Which faces this box draws: any of `up`, `down`, `sides`, `all`, or the
     /// individual `+x`/`-x`/`+y`/`-y`/`+z`/`-z`. Absent = all six.
     #[serde(default)]
@@ -230,29 +285,67 @@ fn face_group(name: &str) -> Result<&'static [usize], String> {
     })
 }
 
+/// How far past its cell a box may reach, in texels — one cell either side,
+/// the same room a model block's overhang has.
+const OVERHANG_TEXELS: f32 = 16.0;
+
 impl RawBox {
     /// Resolve to the engine form, validating extents and face names.
     fn resolve(&self) -> Result<BoxDef, String> {
-        let texel = |v: u8, name: &str| -> Result<f32, String> {
-            if v > 16 {
-                return Err(format!("box {name} {v} out of range (0..=16 texels)"));
+        let texel = |v: f32, name: &str| -> Result<f32, String> {
+            if !v.is_finite() || !(-OVERHANG_TEXELS..=16.0 + OVERHANG_TEXELS).contains(&v) {
+                return Err(format!(
+                    "box {name} {v} out of range ({}..={} texels)",
+                    -OVERHANG_TEXELS,
+                    16.0 + OVERHANG_TEXELS
+                ));
             }
-            Ok(v as f32 / 16.0)
+            Ok(v / 16.0)
         };
-        let from = self.from.unwrap_or([0, 0, 0]);
-        let to = self.to.unwrap_or([16, 16, 16]);
+        let from = self.from.unwrap_or([0.0, 0.0, 0.0]);
+        let to = self.to.unwrap_or([16.0, 16.0, 16.0]);
         let mut min = [0.0f32; 3];
         let mut max = [0.0f32; 3];
+        let mut flat_axes = 0;
         for a in 0..3 {
             min[a] = texel(from[a], "from")?;
             max[a] = texel(to[a], "to")?;
-            if from[a] >= to[a] {
+            if from[a] > to[a] {
                 return Err(format!(
-                    "box axis {a} is empty ({} .. {}) — 'from' must be below 'to'",
+                    "box axis {a} is inverted ({} .. {}) — 'from' must not exceed 'to'",
                     from[a], to[a]
                 ));
             }
+            if from[a] == to[a] {
+                flat_axes += 1;
+            }
         }
+        if flat_axes > 1 {
+            return Err("a box may be flat on at most one axis (a plane, never a line)".into());
+        }
+        let pose = match self.rotation {
+            Some(deg) if deg != [0.0; 3] => {
+                if deg.iter().any(|d| !d.is_finite()) {
+                    return Err("box rotation must be finite degrees".into());
+                }
+                let origin = match self.origin {
+                    Some(o) => {
+                        if o.iter().any(|v| !v.is_finite()) {
+                            return Err("box origin must be finite texels".into());
+                        }
+                        o.map(|v| v / 16.0)
+                    }
+                    None => std::array::from_fn(|a| (min[a] + max[a]) * 0.5),
+                };
+                Some(crate::block::BoxPose::from_euler_degrees(deg, origin))
+            }
+            _ => {
+                if self.origin.is_some() {
+                    return Err("box 'origin' needs a 'rotation'".into());
+                }
+                None
+            }
+        };
         // Canonical face order: +X, -X, +Y, -Y, +Z, -Z.
         let mut faces = [self.faces.is_none(); 6];
         for name in self.faces.iter().flatten() {
@@ -273,6 +366,38 @@ impl RawBox {
                 tiles[i] = Some(resolved);
             }
         }
+        let mut uv = [None; 6];
+        for (name, rect) in self.uv.iter().flatten() {
+            if rect.iter().any(|&t| t > 16) {
+                return Err(format!(
+                    "box face uv '{name}' {rect:?} out of range (0..=16 texels)"
+                ));
+            }
+            for &i in face_group(name)? {
+                if !faces[i] {
+                    return Err(format!(
+                        "box face uv '{name}' names a face the box does not draw"
+                    ));
+                }
+                uv[i] = Some(*rect);
+            }
+        }
+        let mut uv_turns = [0u8; 6];
+        for (name, deg) in self.uv_rotation.iter().flatten() {
+            if deg % 90 != 0 || *deg >= 360 {
+                return Err(format!(
+                    "box face uv_rotation '{name}' {deg} must be 0, 90, 180 or 270"
+                ));
+            }
+            for &i in face_group(name)? {
+                if !faces[i] {
+                    return Err(format!(
+                        "box face uv_rotation '{name}' names a face the box does not draw"
+                    ));
+                }
+                uv_turns[i] = (deg / 90) as u8;
+            }
+        }
         Ok(BoxDef {
             aabb: Aabb { min, max },
             faces,
@@ -283,6 +408,9 @@ impl RawBox {
             // Authored geometry: every face's art is in the shape's own frame.
             // Only a corner form's inherited faces ever offset this.
             art_turns: [0; 6],
+            uv,
+            uv_turns,
+            pose,
         })
     }
 }
@@ -611,5 +739,75 @@ impl RawCustomShape {
             self.family
         );
         Ok((family, ShapeParams::Connection(params), key))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw(text: &str) -> RawBox {
+        serde_json::from_str(text).expect("box parses")
+    }
+
+    /// A rotated box resolves to a pose about its authored pivot, and what it
+    /// RESERVES is its posed bounds clipped to the cell: a 45° plane longer
+    /// than the cell targets the whole cell and collides nowhere (a flat
+    /// plane is decoration whatever its pose), while a tilted SLAB collides
+    /// as the clipped extent it spans.
+    #[test]
+    fn a_rotated_box_reserves_its_clipped_posed_bounds() {
+        let plane = raw(
+            r#"{"from":[0,8,-3.3137],"to":[16,8,19.3137],"rotation":[45,0,0],"origin":[8,8,8],"faces":["up"]}"#,
+        )
+        .resolve()
+        .expect("resolves");
+        assert!(plane.pose.is_some());
+        assert!(plane.is_flat_plane());
+        assert_eq!(
+            plane.collision_volume(),
+            None,
+            "a flat plane never collides"
+        );
+        let b = plane.posed_bounds().clipped_to_cell().expect("in the cell");
+        assert!(
+            b.min[1] < 0.01 && b.max[1] > 0.99,
+            "the slope spans the cell: {b:?}"
+        );
+
+        let slab = raw(r#"{"from":[0,7,0],"to":[16,9,16],"rotation":[0,0,90]}"#)
+            .resolve()
+            .expect("resolves");
+        let c = slab.collision_volume().expect("a solid box collides");
+        // Turned on its side about the box centre: a vertical slab two
+        // texels wide through the cell's middle.
+        assert!((c.min[0] - 7.0 / 16.0).abs() < 1e-4 && (c.max[0] - 9.0 / 16.0).abs() < 1e-4);
+        assert!(
+            c.min[1] < 1e-4 && c.max[1] > 1.0 - 1e-4,
+            "clipped to the cell: {c:?}"
+        );
+    }
+
+    /// The authoring vocabulary refuses what the geometry cannot honour:
+    /// corner composition of a posed box, a UV rotation off the quarter
+    /// grid, a pivot with nothing to pivot, and a box flat on two axes.
+    #[test]
+    fn rotated_box_authoring_errors_are_load_errors() {
+        let posed = raw(r#"{"to":[16,8,16],"rotation":[0,45,0]}"#);
+        assert!(
+            resolve_box_set(&[posed], true).is_err(),
+            "corners over a posed box"
+        );
+        assert!(raw(r#"{"uv_rotation":{"up":45}}"#).resolve().is_err());
+        assert!(raw(r#"{"origin":[8,8,8]}"#).resolve().is_err());
+        assert!(raw(r#"{"from":[0,8,8],"to":[16,8,8]}"#).resolve().is_err());
+        assert!(
+            raw(r#"{"from":[0,8,0],"to":[16,8,16]}"#).resolve().is_ok(),
+            "one flat axis"
+        );
+        assert!(
+            raw(r#"{"from":[0,0,-40]}"#).resolve().is_err(),
+            "past the overhang room"
+        );
     }
 }

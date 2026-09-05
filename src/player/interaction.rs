@@ -109,7 +109,14 @@ impl Player {
             // question, not a family one: past the outline array's width (a
             // chair is 7 boxes) the union hugs the whole extent instead. The
             // hit test above stays per-box precise either way.
-            let boxes = world.collision_boxes_at(hit.block.x, hit.block.y, hit.block.z);
+            let mut targets = Vec::new();
+            world.target_boxes_at(hit.block.x, hit.block.y, hit.block.z, &mut targets);
+            // A posed box outlines its bounds, clipped to the cell it owns.
+            let boxes: Vec<petramond_world::block::Aabb> = targets
+                .iter()
+                .filter_map(|b| b.bounds().clipped_to_cell())
+                .collect();
+            let boxes = &boxes[..];
             let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
             if boxes.is_empty() {
                 // Nothing resolved (an unbaked custom-shape cell, a connection row
@@ -484,19 +491,33 @@ fn precise_shape_hit(
         return ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
     }
     // Every family whose real form is a BOX SET is picked against its resolved
-    // boxes: a stair's corner steps, a slab's layers, a pane's / fence's
-    // neighbour-derived post + arm runs, a WASM shape bake's legs and seat. All of
-    // them resolve through the shape's own collision facet, so the aimed boxes
-    // ARE the collided boxes and aiming through a gap misses by construction.
-    // (A cache miss on a WASM shape bake reads the row's static fallback, so a
-    // custom shape is always aimable somewhere.)
+    // TARGET boxes: a stair's corner steps, a slab's layers, a pane's / fence's
+    // neighbour-derived post + arm runs, a WASM shape bake's legs and seat, a
+    // static box set's every drawn box — posed or not. All of them resolve
+    // through the shape's own sim facet from the same state as its collision,
+    // so the aimed boxes are the resolved boxes and aiming through a gap
+    // misses by construction. (A cache miss on a WASM shape bake reads the
+    // row's static fallback, so a custom shape is always aimable somewhere.)
     if block.picks_by_boxes() {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return world
-            .collision_boxes_at(pos.x, pos.y, pos.z)
+        let mut targets = Vec::new();
+        world.target_boxes_at(pos.x, pos.y, pos.z, &mut targets);
+        return targets
             .iter()
-            .filter_map(|b| {
-                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
+            .filter_map(|b| match b.pose {
+                None => ray_vs_aabb_hit(
+                    eye,
+                    dir,
+                    base + Vec3::from(b.aabb.min),
+                    base + Vec3::from(b.aabb.max),
+                ),
+                // A posed box is tested in its own frame; the crossed face's
+                // normal comes back rotated and is snapped to the axis it
+                // leans most toward, which is what placement against a
+                // tilted plate wants.
+                Some(pose) => pose
+                    .ray_hit(eye - base, dir, b.aabb.min, b.aabb.max)
+                    .map(|(t, n)| ShapeHit::with_normal(t, dominant_axis(n))),
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
@@ -506,6 +527,18 @@ fn precise_shape_hit(
     let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
     let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
     ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx))
+}
+
+/// The unit axis a world direction leans most toward.
+fn dominant_axis(n: Vec3) -> IVec3 {
+    let a = n.abs();
+    if a.y >= a.x && a.y >= a.z {
+        IVec3::new(0, if n.y >= 0.0 { 1 } else { -1 }, 0)
+    } else if a.x >= a.z {
+        IVec3::new(if n.x >= 0.0 { 1 } else { -1 }, 0, 0)
+    } else {
+        IVec3::new(0, 0, if n.z >= 0.0 { 1 } else { -1 })
+    }
 }
 
 /// First-crossing distance of the ray through the torch's pole box. The pole is a

@@ -37,7 +37,7 @@ host_fn! {
     /// Write a per-cell KV entry (own-namespace key required). `false` = the
     /// owning section is unloaded (nothing stored). Cell KV is per-BLOCK state:
     /// it dies with the block when the cell is broken/replaced (a
-    /// `swap_model_block` flip carries it across) — never rely on it outliving
+    /// `swap_block` flip carries it across) — never rely on it outliving
     /// your placed block.
     pub fn section_kv_set(pos: [i32; 3], key: &str, value: Vec<u8>) -> bool
         => SectionKvSet { pos, key: key.into(), value } => Bool

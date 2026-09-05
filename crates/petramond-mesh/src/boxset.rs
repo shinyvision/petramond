@@ -55,7 +55,7 @@ use petramond_world::block_state::SlabState;
 
 use super::builder::{boundary_plane, cube_face_lighting, face_axes};
 use super::face::{quad_ao, should_flip, Face, FACES};
-use super::plane::{cell_uv, PlaneLight};
+use super::plane::{cell_uv, face_fraction, PlaneLight};
 use super::vertex::{pack_cell_uv, pack_normal_code, pack_vertex, Vertex, UV_MODE_CELL_LOCAL};
 use super::UV_MODE_SHIFT;
 
@@ -175,6 +175,22 @@ pub(super) fn emit_box_set<B, S, L, K>(
 
         for (i, b) in boxes.iter().enumerate() {
             let Some(style) = b.faces[fi] else { continue };
+            if let Some(pose) = b.pose {
+                emit_posed_face(
+                    vbuf,
+                    (wx, wy, wz),
+                    b,
+                    &pose,
+                    face,
+                    &style,
+                    block_at,
+                    slab_at,
+                    neighbour_light,
+                    neighbour_blocklight,
+                    matter,
+                );
+                continue;
+            }
             let d = if positive {
                 b.aabb.max[axis]
             } else {
@@ -207,7 +223,9 @@ pub(super) fn emit_box_set<B, S, L, K>(
             // Everything covering the space just in front of this face.
             scratch.occ.clear();
             for (j, o) in boxes.iter().enumerate() {
-                if j != i {
+                // A posed sibling lies on no axis plane: it can neither seal
+                // this face nor tie with it.
+                if j != i && o.pose.is_none() {
                     push_occluder(
                         &mut scratch.occ,
                         o.aabb.min,
@@ -342,13 +360,9 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     quad_ao[ci] = ao;
                     sky[ci] = sky6;
                     light[ci] = block;
-                    let (mut uu, mut vv) = (u, v);
-                    if style.swap_uv {
-                        std::mem::swap(&mut uu, &mut vv);
-                    }
-                    (uu, vv) = ShapeFace::turn_uv(style.uv_turns, uu, vv);
-                    let quant = |x: f32| ((x * 16.0).round() as i32).clamp(0, 16) as u32;
-                    uvs[ci] = (quant(uu), quant(vv));
+                    let (uu, vv) =
+                        style.texel_uv((u, v), face_fraction(face, b.aabb.min, b.aabb.max, (u, v)));
+                    uvs[ci] = (quant_uv(uu), quant_uv(vv));
                 }
                 let start = vbuf.len() as u32;
                 let rot = usize::from(should_flip(quad_ao));
@@ -382,6 +396,150 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 }
             }
         }
+    }
+}
+
+/// A cell-local UV quantized to the vertex's 1/16 lanes.
+#[inline]
+fn quant_uv(x: f32) -> u32 {
+    ((x * 16.0).round() as i32).clamp(0, 16) as u32
+}
+
+/// One face of a POSED box: its four authored corners carried through the
+/// pose, drawn whole. No subtraction (it lies on no axis plane, so nothing
+/// can be flush against it), and its art is carved in the box's OWN frame so
+/// it turns with the box. A flat plane's two faces are coplanar with opposite
+/// windings, so back-face culling shows exactly one from any side.
+///
+/// Lit as an interior plane of the cell in the direction its posed normal
+/// leans most: the plane light is gathered at the face centre's height along
+/// that axis and sampled bilinearly at each corner's projection, so a tilted
+/// plate shades like the axis face it most resembles and blends toward the
+/// cell's light at its edges. The sub-cell corner probes are axis-aligned by
+/// construction and are skipped; the plane's own ring AO still applies.
+#[allow(clippy::too_many_arguments)]
+fn emit_posed_face<B, S, L, K>(
+    vbuf: &mut Vec<Vertex>,
+    (wx, wy, wz): (i32, i32, i32),
+    b: &ShapeBox,
+    pose: &petramond_world::block::BoxPose,
+    face: Face,
+    style: &ShapeFace,
+    block_at: &B,
+    slab_at: &S,
+    neighbour_light: &L,
+    neighbour_blocklight: &K,
+    matter: &MatterFn,
+) where
+    B: Fn(i32, i32, i32) -> Block,
+    S: Fn(i32, i32, i32) -> Option<SlabState>,
+    L: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
+{
+    let (_, ua, va) = face_axes(face);
+    // The edge faces of a flat plane have no area.
+    if b.aabb.max[ua] - b.aabb.min[ua] <= 0.0 || b.aabb.max[va] - b.aabb.min[va] <= 0.0 {
+        return;
+    }
+    let local = face.quad_box(b.aabb.min, b.aabb.max);
+    let posed: [[f32; 3]; 4] = local.map(|p| pose.apply(glam::Vec3::from(p)).to_array());
+    let (dx, dy, dz) = face.dir();
+    let lit = dominant_face(pose.rotate(glam::Vec3::new(dx as f32, dy as f32, dz as f32)));
+    let (laxis, _, _) = face_axes(lit);
+    let centre = posed
+        .iter()
+        .fold(0.0f32, |acc, p| acc + p[laxis] * 0.25)
+        .clamp(0.0, 1.0);
+    let (ao, sky6, block6) = cube_face_lighting(
+        lit,
+        wx,
+        wy,
+        wz,
+        [wx, wy, wz][laxis] as f32 + centre,
+        neighbour_light(wx, wy, wz) as u32,
+        neighbour_blocklight(wx, wy, wz),
+        lit != Face::NegY,
+        block_at,
+        slab_at,
+        neighbour_light,
+        neighbour_blocklight,
+        &matter,
+    );
+    let pl = PlaneLight {
+        ao,
+        sky: sky6,
+        block: block6,
+    };
+
+    let mut quad_ao = [3u32; 4];
+    let mut sky = [0u32; 4];
+    let mut light = [petramond_world::light::BlockLight6::DARK; 4];
+    let mut uvs = [(0u32, 0u32); 4];
+    for ci in 0..4 {
+        // Light: the posed corner projected onto the lit plane.
+        let proj = posed[ci].map(|c| c.clamp(0.0, 1.0));
+        let [pu, pv] = cell_uv(lit, proj);
+        let (mut ao, sky6, block) = pl.sample(pu, pv);
+        if b.ao_strength < 1.0 {
+            let dark = (3 - ao) as f32 * b.ao_strength.max(0.0);
+            ao = 3 - (dark.round() as u32).min(3);
+        }
+        quad_ao[ci] = ao;
+        sky[ci] = sky6;
+        light[ci] = block;
+        // Art: carved in the box's own frame.
+        let [u, v] = cell_uv(face, local[ci]);
+        let (uu, vv) = style.texel_uv((u, v), face_fraction(face, b.aabb.min, b.aabb.max, (u, v)));
+        uvs[ci] = (quant_uv(uu), quant_uv(vv));
+    }
+    let start = vbuf.len() as u32;
+    let rot = usize::from(should_flip(quad_ao));
+    for k in 0..4usize {
+        let ci = (k + rot) & 3;
+        let p = posed[ci];
+        vbuf.push(Vertex {
+            pos: [wx as f32 + p[0], wy as f32 + p[1], wz as f32 + p[2]],
+            tint: light[ci].tint_word(style.tint),
+            packed: pack_vertex(
+                style.tile.index() as u32,
+                ci as u32,
+                lit.shade_idx(),
+                false,
+                quad_ao[ci],
+                sky[ci],
+            ) | light[ci].packed_bits()
+                | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
+            packed2: light[ci].packed2_bits()
+                | pack_cell_uv(uvs[ci].0, uvs[ci].1)
+                | pack_normal_code(lit.normal_code())
+                | if b.dyed { super::vertex::DYED_FLAG2 } else { 0 },
+        });
+    }
+    if b.double_sided {
+        super::vertex::push_back_face(vbuf, start);
+    }
+}
+
+/// The axis face a world normal leans most toward — how a posed face picks
+/// its directional shade and the light plane it samples.
+fn dominant_face(n: glam::Vec3) -> Face {
+    let a = n.abs();
+    if a.y >= a.x && a.y >= a.z {
+        if n.y >= 0.0 {
+            Face::PosY
+        } else {
+            Face::NegY
+        }
+    } else if a.x >= a.z {
+        if n.x >= 0.0 {
+            Face::PosX
+        } else {
+            Face::NegX
+        }
+    } else if n.z >= 0.0 {
+        Face::PosZ
+    } else {
+        Face::NegZ
     }
 }
 
@@ -504,7 +662,7 @@ fn covers_boundary(boxes: &[ShapeBox], face: Face, scratch: &mut BoxSetScratch) 
     let (axis, ua, va) = face_axes(face);
     let positive = matches!(face, Face::PosX | Face::PosY | Face::PosZ);
     scratch.occ.clear();
-    for b in boxes.iter().filter(|b| b.occludes) {
+    for b in boxes.iter().filter(|b| b.occludes && b.pose.is_none()) {
         // A box only seals if it OWNS the boundary plane; a face the family
         // never emits still seals (the matter is there either way).
         let d = if positive {
@@ -743,7 +901,7 @@ fn probe_ao(
         if boxes
             .iter()
             .filter(|b| b.occludes)
-            .any(|b| (0..3).all(|a| plo[a] < b.aabb.max[a] && phi[a] > b.aabb.min[a]))
+            .any(|b| b.overlaps_pocket(plo, phi))
         {
             return true;
         }
@@ -983,5 +1141,84 @@ mod tests {
             &|_, _, _| false,
         );
         assert_eq!(seam, 3, "coplanar continuation must not self-shadow");
+    }
+    /// A posed plane is emitted where its pose puts it — the authored corners
+    /// carried through the rotation — with the back winding when
+    /// double-sided, and it takes no part in the axis-aligned rules: a posed
+    /// box that would span a boundary if it were flat seals nothing, and a
+    /// posed sibling hides no axis face.
+    #[test]
+    fn a_posed_plane_lands_on_its_rotated_corners_and_seals_nothing() {
+        let t = petramond_world::tile::Tile::named("stone");
+        let pose = petramond_world::block::BoxPose::from_euler_degrees([45.0, 0.0, 0.0], [0.5; 3]);
+        let mut slope = ShapeBox::uniform(
+            petramond_world::block::Aabb {
+                min: [0.0, 0.5, -0.2],
+                max: [1.0, 0.5, 1.2],
+            },
+            [t, t, t],
+            |_| [1.0; 3],
+        )
+        .double_sided()
+        .as_face_carrier();
+        slope.pose = Some(pose);
+        for (i, f) in slope.faces.iter_mut().enumerate() {
+            if i != 2 {
+                *f = None;
+            }
+        }
+        let boxes = [slope, plain([0.0, 0.0, 0.0], [1.0, 0.25, 1.0])];
+
+        let mut vbuf = Vec::new();
+        let mut scratch = BoxSetScratch::default();
+        emit_box_set(
+            &mut vbuf,
+            0,
+            0,
+            0,
+            &boxes,
+            &mut scratch,
+            &|_| false,
+            &|_, _| {},
+            &|_, _, _| false,
+            &|_, _, _| petramond_world::block::Block::Air,
+            &|_, _, _| None,
+            &|_, _, _| 63,
+            &|_, _, _| petramond_world::light::LightRgb::ZERO,
+        );
+        // The slope's +Y face: front + back windings, 8 vertices, every
+        // corner on the tilted plane (y = 1 - z).
+        let slope_verts: Vec<&Vertex> = vbuf
+            .iter()
+            .filter(|v| v.pos[1] > 0.001 && (v.pos[1] - (1.0 - v.pos[2])).abs() < 1e-3)
+            .collect();
+        assert_eq!(
+            slope_verts.len(),
+            8,
+            "front + back of one posed quad: {vbuf:?}"
+        );
+        assert!(slope_verts
+            .iter()
+            .any(|v| v.pos[1] > 0.99 && v.pos[2] < 0.01));
+        assert!(slope_verts
+            .iter()
+            .any(|v| v.pos[1] < 0.01 && v.pos[2] > 0.99));
+        // The flat box below keeps its whole top face: the posed plane
+        // crossing it is not an axis-aligned occluder.
+        let top = vbuf
+            .chunks_exact(4)
+            .filter(|q| q.iter().all(|v| (v.pos[1] - 0.25).abs() < 1e-4))
+            .count();
+        assert_eq!(top, 1, "the flat box's top is drawn whole");
+
+        // And a posed full-cell box seals no boundary.
+        let mut posed_cube = plain([0.0; 3], [1.0; 3]);
+        posed_cube.pose = Some(pose);
+        assert!(!covers_boundary(&[posed_cube], Face::NegY, &mut scratch));
+        assert!(covers_boundary(
+            &[plain([0.0; 3], [1.0; 3])],
+            Face::NegY,
+            &mut scratch
+        ));
     }
 }

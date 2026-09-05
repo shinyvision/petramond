@@ -230,7 +230,7 @@ impl Section {
     }
 
     /// Detach one cell's whole mod-KV map — the state-preserving half of a
-    /// model-block swap (see `World::swap_model_block`).
+    /// model-block swap (see `World::swap_block`).
     pub fn cell_kv_take(
         &mut self,
         x: usize,

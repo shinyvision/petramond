@@ -126,7 +126,7 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
                 if !b.faces[fi] {
                     continue;
                 }
-                super::item_cube::push_cell_local_face(
+                super::item_cube::push_cell_local_face_styled(
                     verts,
                     indices,
                     tile,
@@ -136,6 +136,10 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
                     b.max,
                     face,
                     super::lighting::DynLight::FULL,
+                    super::item_cube::FaceArt {
+                        pose: b.pose,
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -239,9 +243,15 @@ mod tests {
             min: [0.0; 3],
             max: [0.0; 3],
             faces: [false; 6],
+            pose: None,
         }; MAX_CRACK_BOXES];
         for (dst, &(min, max, faces)) in arr.iter_mut().zip(boxes) {
-            *dst = CrackBox { min, max, faces };
+            *dst = CrackBox {
+                min,
+                max,
+                faces,
+                pose: None,
+            };
         }
         BreakOverlayView {
             block,

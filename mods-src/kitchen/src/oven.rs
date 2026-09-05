@@ -61,7 +61,7 @@ impl MachineSpec for OvenSpec {
     /// The lit variant: the same authored model with the `fire` cube visible,
     /// block-light emission, and the underside fire particle emitter — all
     /// pack data on its rows. The spec's only visual job is swapping the
-    /// placed block between the two on burn transitions (`swap_model_block`
+    /// placed block between the two on burn transitions (`swap_block`
     /// keeps container + state).
     const VARIANT_KEYS: &'static [&'static str] = &["kitchen:oven_lit"];
     const ANCHORS_KEY: &'static str = "kitchen:ovens";
@@ -141,7 +141,7 @@ impl MachineSpec for OvenSpec {
         let now_lit = state.burn_remaining > 0;
         if was_lit != now_lit {
             if let Some(lit) = ctx.variant(0) {
-                swap_model_block(ctx.pos, if now_lit { lit } else { ctx.block });
+                swap_block(ctx.pos, if now_lit { lit } else { ctx.block });
             }
         }
         // What the oven shows: the item cooking in its chamber and the

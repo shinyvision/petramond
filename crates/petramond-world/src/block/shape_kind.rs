@@ -334,6 +334,68 @@ pub struct BoxDef {
     /// Permuted by [`turned`](BoxDef::turned) like every other per-face
     /// attribute; the VALUE is a relative offset, so turning never changes it.
     pub art_turns: [u8; 6],
+    /// Per face: the authored tile rectangle stretched over the face, or
+    /// `None` for the cell-local carve (see `ShapeFace::uv_rect`).
+    pub uv: [Option<[u8; 4]>; 6],
+    /// Per face: authored extra UV quarter turns (`0..4`), applied on top of
+    /// whatever the shape's own turn prescribes — how one curve tile serves
+    /// four corner rows, or a rail tile lies along either axis.
+    pub uv_turns: [u8; 6],
+    /// The box's rotation off the axis grid, if any. `aabb` and every
+    /// per-face array are then the box in its OWN frame; turning the shape
+    /// composes onto the pose instead of permuting the faces (see
+    /// [`turned`](BoxDef::turned)).
+    pub pose: Option<crate::block::BoxPose>,
+}
+
+impl BoxDef {
+    /// The frame this face's art lives in, as quarter turns ahead of the
+    /// CELL frame, for a shape turned `shape_turns`: what decides which face
+    /// carries the row's `front` tile and how far a `±Y` tile is
+    /// counter-rotated. A posed box's faces live in the box's own frame and
+    /// the pose carries the turn, so they answer `0` — nothing about them is
+    /// pinned to world north.
+    #[inline]
+    pub fn face_frame_turns(&self, shape_turns: u8, face: usize) -> u8 {
+        if self.pose.is_some() {
+            0
+        } else {
+            (shape_turns + self.art_turns[face]) & 3
+        }
+    }
+
+    /// The axis-aligned extent the box occupies once posed.
+    pub fn posed_bounds(&self) -> Aabb {
+        crate::block::posed_bounds(self.aabb, self.pose)
+    }
+
+    /// The box as aimable geometry.
+    pub fn target(&self) -> crate::block::PosedBox {
+        crate::block::PosedBox {
+            aabb: self.aabb,
+            pose: self.pose,
+        }
+    }
+
+    /// The box's collision volume: an axis-aligned box collides as authored;
+    /// a posed one as its posed BOUNDS — the physics sweeps axis-aligned
+    /// boxes, so a tilted plank obstructs as the slab it spans, exactly like
+    /// a model block's posed cube. Either way clipped to the cell (the
+    /// overhang reserves nothing), and `None` for a box that does not
+    /// collide, lies wholly outside the cell, or is an authored flat plane
+    /// (decoration, whatever its pose: a tilted zero-thickness plane has a
+    /// solid-looking bounding box).
+    pub fn collision_volume(&self) -> Option<Aabb> {
+        if !self.collides || self.is_flat_plane() {
+            return None;
+        }
+        self.posed_bounds().clipped_to_cell()
+    }
+
+    /// Whether the box has zero thickness on some axis.
+    pub fn is_flat_plane(&self) -> bool {
+        (0..3).any(|a| self.aabb.max[a] - self.aabb.min[a] <= 1e-6)
+    }
 }
 
 /// The resolved parameters of a static box-set kind: the authored boxes, the
@@ -351,6 +413,7 @@ pub struct BoxDef {
 pub struct BoxSetParams {
     forms: [[&'static [BoxDef]; 5]; 4],
     collision: [[&'static [Aabb]; 5]; 4],
+    targets: [[&'static [crate::block::PosedBox]; 5]; 4],
     bounds: [[Aabb; 5]; 4],
     /// Whether this kind resolves CORNER forms from its perpendicular
     /// same-kind neighbours (the row's `"corners": true`) — the stair rule
@@ -392,7 +455,15 @@ impl BoxSetParams {
         self.collision[(turns & 3) as usize][Self::form_idx(form)]
     }
 
-    /// The union of every DRAWN box — the selection outline and target box.
+    /// Every drawn box as aimable geometry, matter or not — a walk-through
+    /// cover is still what the player sees and points at.
+    #[inline]
+    pub fn targets(&self, turns: u8, form: CornerForm) -> &'static [crate::block::PosedBox] {
+        self.targets[(turns & 3) as usize][Self::form_idx(form)]
+    }
+
+    /// The union of every DRAWN box, posed and clipped to the cell — the
+    /// selection outline and target box.
     #[inline]
     pub fn bounds(&self, turns: u8, form: CornerForm) -> Aabb {
         self.bounds[(turns & 3) as usize][Self::form_idx(form)]

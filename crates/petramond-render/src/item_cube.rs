@@ -500,7 +500,17 @@ pub(super) fn push_block_item_cube_lit_with_state(
     let mut boxes = Vec::new();
     k.render.item_boxes(&k.params, block, state, &mut boxes);
     if !boxes.is_empty() {
-        for b in icon_painter_order(&boxes, |b| &b.aabb, sort_for_icon) {
+        let bounds: Vec<petramond_world::block::Aabb> =
+            boxes.iter().map(|b| b.posed_bounds()).collect();
+        let order = icon_painter_order(&bounds, |b| b, sort_for_icon)
+            .into_iter()
+            .map(|b| {
+                bounds
+                    .iter()
+                    .position(|x| std::ptr::eq(x, b))
+                    .expect("own element")
+            });
+        for b in order.map(|i| &boxes[i]) {
             // A box may draw in another material than the item's own block —
             // a stacked two-tone slab shows both layers.
             let box_faces = match b.material {
@@ -511,7 +521,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
                 if !b.faces[i] {
                     continue;
                 }
-                push_cell_local_face_turned(
+                push_cell_local_face_styled(
                     verts,
                     indices,
                     b.tiles[i].unwrap_or(box_faces[i]),
@@ -521,7 +531,11 @@ pub(super) fn push_block_item_cube_lit_with_state(
                     b.aabb.max,
                     face,
                     light,
-                    b.uv_turns[i],
+                    FaceArt {
+                        uv_turns: b.uv_turns[i],
+                        uv_rect: b.uv_rects[i],
+                        pose: b.pose,
+                    },
                 );
             }
         }
@@ -587,15 +601,39 @@ pub(super) fn push_cell_local_face(
     face: Face,
     light: DynLight,
 ) {
-    push_cell_local_face_turned(verts, indices, tile, origin, size, min, max, face, light, 0);
+    push_cell_local_face_styled(
+        verts,
+        indices,
+        tile,
+        origin,
+        size,
+        min,
+        max,
+        face,
+        light,
+        FaceArt::default(),
+    );
 }
 
-/// [`push_cell_local_face`] with the cell-local UV turned `uv_turns` quarter
-/// turns — the item-side twin of the chunk mesher's
-/// [`ShapeFace::uv_turns`](petramond_world::block::ShapeFace::uv_turns), so a turned box
-/// set's top and bottom art reads the same in the icon as in the world.
+/// How one box face is posed and mapped — what a static box set authors per
+/// face, carried to the item-side pusher so the hand, the icon and the crack
+/// draw exactly the chunk mesher's face.
+#[derive(Copy, Clone, Default)]
+pub(super) struct FaceArt {
+    /// Extra cell-local UV quarter turns (`ShapeFace::uv_turns`).
+    pub uv_turns: u8,
+    /// An authored tile rect stretched over the face (`ShapeFace::uv_rect`).
+    pub uv_rect: Option<[u8; 4]>,
+    /// The box's rotation off the axis grid (`ShapeBox::pose`).
+    pub pose: Option<petramond_world::block::BoxPose>,
+}
+
+/// [`push_cell_local_face`] with the face's authored art — UV turned, an
+/// authored tile rect, the box's pose — the item-side twin of the chunk
+/// mesher's [`ShapeFace`](petramond_world::block::ShapeFace) mapping, so a
+/// turned or posed box set reads the same in the icon as in the world.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn push_cell_local_face_turned(
+pub(super) fn push_cell_local_face_styled(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     tile: Tile,
@@ -605,18 +643,40 @@ pub(super) fn push_cell_local_face_turned(
     max: [f32; 3],
     face: Face,
     light: DynLight,
-    uv_turns: u8,
+    art: FaceArt,
 ) {
-    let mn = origin + Vec3::new(min[0], min[1], min[2]) * size;
-    let mx = origin + Vec3::new(max[0], max[1], max[2]) * size;
+    let normal_axis = match face {
+        Face::PosX | Face::NegX => 0,
+        Face::PosY | Face::NegY => 1,
+        Face::PosZ | Face::NegZ => 2,
+    };
+    if (0..3).any(|a| a != normal_axis && max[a] - min[a] <= 0.0) {
+        // The edge faces of a flat plane have no area.
+        return;
+    }
     let mat = foliage_tint::face_material(tile);
     let bits = face_bits_textured_lit(mat, face, light) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
     let word2 = light.block.packed2_bits() | face_bits2(mat);
-    let corners = face.quad_box(mn.to_array(), mx.to_array());
     let local = face.quad_box(min, max);
+    // The authored corners through the pose, then scaled into place.
+    let corners = local.map(|p| {
+        let p = Vec3::from(p);
+        let p = art.pose.map_or(p, |pose| pose.apply(p));
+        (origin + p * size).to_array()
+    });
+    let style = petramond_world::block::ShapeFace {
+        tile,
+        swap_uv: false,
+        uv_turns: art.uv_turns,
+        tint: [1.0; 3],
+        uv_rect: art.uv_rect,
+    };
     push_quad_with(verts, indices, corners, |corner, pos| {
         let [u, v] = petramond_mesh::plane::cell_uv(face, local[corner]);
-        let (u, v) = petramond_world::block::ShapeFace::turn_uv(uv_turns, u, v);
+        let (u, v) = style.texel_uv(
+            (u, v),
+            petramond_mesh::plane::face_fraction(face, min, max, (u, v)),
+        );
         // Cell-local UV is 0..=1 by definition; a caller whose box reaches past
         // its cell (a mod draw prim spanning a multi-cell footprint) would
         // otherwise pack a lane it cannot hold and sample past its own tile.

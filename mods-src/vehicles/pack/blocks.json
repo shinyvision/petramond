@@ -2,7 +2,9 @@
   "blocks": [
     {
       "block": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_ns" },
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false}
+      ] },
       "flags": ["solid"],
       "tags": ["fragile", "vehicles:rail"],
       "roots_face": "solid_face",
@@ -13,84 +15,114 @@
       "tiles": ["vehicles:rail", "vehicles:rail", "vehicles:rail"],
       "material": "stone",
       "hardness": 0.7,
-      "drops": [{ "item": "vehicles:rail", "min": 1, "max": 1, "chance": 1.0 }]
+      "drops": [{"item": "vehicles:rail", "min": 1, "max": 1, "chance": 1.0}]
     },
     {
       "block": "vehicles:rail_ew",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_ew" }
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "uv_rotation": {"up": 90}}
+      ] }
     },
     {
       "block": "vehicles:rail_curve_ne",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_curve_ne" }
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}, "uv_rotation": {"up": 270}}
+      ] }
     },
     {
       "block": "vehicles:rail_curve_se",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_curve_se" }
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}}
+      ] }
     },
     {
       "block": "vehicles:rail_curve_sw",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_curve_sw" }
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}, "uv_rotation": {"up": 90}}
+      ] }
     },
     {
       "block": "vehicles:rail_curve_nw",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_curve_nw" }
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}, "uv_rotation": {"up": 180}}
+      ] }
     },
     {
       "block": "vehicles:rail_slope_n",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_slope_n" }
+      "shape": { "boxes": [
+        {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
+      ] }
     },
     {
       "block": "vehicles:rail_slope_e",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_slope_e" }
+      "shape": { "boxes": [
+        {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, 45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
+      ] }
     },
     {
       "block": "vehicles:rail_slope_s",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_slope_s" }
+      "shape": { "boxes": [
+        {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [-45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
+      ] }
     },
     {
       "block": "vehicles:rail_slope_w",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:rail_slope_w" }
+      "shape": { "boxes": [
+        {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, -45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
+      ] }
     },
     {
       "block": "vehicles:booster_rail_ns",
       "extends": "vehicles:rail_ns",
-      "shape": { "model": "vehicles:booster_rail_ns" },
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false}
+      ] },
       "tiles": ["vehicles:booster_rail", "vehicles:booster_rail", "vehicles:booster_rail"],
-      "drops": [{ "item": "vehicles:booster_rail", "min": 1, "max": 1, "chance": 1.0 }]
+      "drops": [{"item": "vehicles:booster_rail", "min": 1, "max": 1, "chance": 1.0}]
     },
     {
       "block": "vehicles:booster_rail_ew",
       "extends": "vehicles:booster_rail_ns",
-      "shape": { "model": "vehicles:booster_rail_ew" }
+      "shape": { "boxes": [
+        {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "uv_rotation": {"up": 90}}
+      ] }
     },
     {
       "block": "vehicles:booster_rail_slope_n",
       "extends": "vehicles:booster_rail_ns",
-      "shape": { "model": "vehicles:booster_rail_slope_n" }
+      "shape": { "boxes": [
+        {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
+      ] }
     },
     {
       "block": "vehicles:booster_rail_slope_e",
       "extends": "vehicles:booster_rail_ns",
-      "shape": { "model": "vehicles:booster_rail_slope_e" }
+      "shape": { "boxes": [
+        {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, 45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
+      ] }
     },
     {
       "block": "vehicles:booster_rail_slope_s",
       "extends": "vehicles:booster_rail_ns",
-      "shape": { "model": "vehicles:booster_rail_slope_s" }
+      "shape": { "boxes": [
+        {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [-45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
+      ] }
     },
     {
       "block": "vehicles:booster_rail_slope_w",
       "extends": "vehicles:booster_rail_ns",
-      "shape": { "model": "vehicles:booster_rail_slope_w" }
+      "shape": { "boxes": [
+        {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, -45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
+      ] }
     }
   ]
 }

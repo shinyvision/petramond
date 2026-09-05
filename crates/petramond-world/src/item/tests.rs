@@ -262,17 +262,19 @@ fn render_kind_matches_shape_family() {
         }
         match block.shape_family() {
             // Cube-drawn families (the plain cube, the true-geometry stair/slab/
-            // fence, and the lowered cube) render as a block cube in the slot.
+            // fence, and the lowered cube) render as a block cube in the slot —
+            // unless the item row declares a sprite, which wins everywhere (a
+            // rail's item is its flat tile, not the placed plane).
             ShapeFamily::Cube
             | ShapeFamily::BoxSet
             | ShapeFamily::Stair
             | ShapeFamily::Slab
             | ShapeFamily::Fence => {
-                assert_eq!(
-                    item.render_kind(),
-                    ItemRenderKind::BlockCube(block),
-                    "{block:?}"
-                );
+                let expected = match item.declared_sprite() {
+                    Some(sprite) => ItemRenderKind::Sprite(sprite),
+                    None => ItemRenderKind::BlockCube(block),
+                };
+                assert_eq!(item.render_kind(), expected, "{block:?}");
             }
             // Both plant families: the ITEM is always a flat sprite, never a
             // cube. It shows the block's own art UNLESS the item row declares a

@@ -454,7 +454,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::BiomeAt { .. }
         | HostCall::SurfaceYAt { .. }
         | HostCall::FindBlocks { .. }
-        | HostCall::SwapModelBlock { .. }
+        | HostCall::SwapBlock { .. }
         | HostCall::SetModelParts { .. }
         | HostCall::SetBlockDraw { .. }
         | HostCall::SetBlockDraws { .. }

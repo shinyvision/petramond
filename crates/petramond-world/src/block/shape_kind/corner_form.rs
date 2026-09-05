@@ -41,7 +41,19 @@ pub fn face_uv_turns(face: usize, turns: u8) -> u8 {
 
 impl BoxDef {
     /// This box turned one quarter about the cell's Y centre.
+    ///
+    /// An axis-aligned box turns its extent and permutes its per-face
+    /// attributes. A POSED box keeps its own frame — extent and faces as
+    /// authored — and the turn composes onto its pose, which lands it exactly
+    /// where turning its posed corners would; its faces stay authored-frame
+    /// faces, so nothing about their art needs a counter-rotation.
     pub fn turned(&self) -> BoxDef {
+        if let Some(pose) = self.pose {
+            return BoxDef {
+                pose: Some(pose.turned()),
+                ..*self
+            };
+        }
         let (min, max) = (self.aabb.min, self.aabb.max);
         BoxDef {
             aabb: Aabb {
@@ -54,6 +66,9 @@ impl BoxDef {
             collides: self.collides,
             double_sided: self.double_sided,
             art_turns: std::array::from_fn(|i| self.art_turns[FACE_BEFORE_TURN[i]]),
+            uv: std::array::from_fn(|i| self.uv[FACE_BEFORE_TURN[i]]),
+            uv_turns: std::array::from_fn(|i| self.uv_turns[FACE_BEFORE_TURN[i]]),
+            pose: None,
         }
     }
 
@@ -163,11 +178,67 @@ pub(super) fn union_bounds(set: &[BoxDef]) -> Aabb {
         min: [f32::INFINITY; 3],
         max: [f32::NEG_INFINITY; 3],
     };
-    for b in set {
+    // Posed, and clipped to the cell: a box reaching past its cell outlines
+    // and targets only what it owns.
+    for b in set
+        .iter()
+        .filter_map(|b| b.posed_bounds().clipped_to_cell())
+    {
         for a in 0..3 {
-            bounds.min[a] = bounds.min[a].min(b.aabb.min[a]);
-            bounds.max[a] = bounds.max[a].max(b.aabb.max[a]);
+            bounds.min[a] = bounds.min[a].min(b.min[a]);
+            bounds.max[a] = bounds.max[a].max(b.max[a]);
         }
     }
+    if bounds.min[0] > bounds.max[0] {
+        // Every box lies wholly outside the cell: nothing to aim at.
+        return Aabb {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        };
+    }
     bounds
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Turning a posed box composes the turn onto its pose and leaves its
+    /// authored frame alone: the faces stay where they were authored (no
+    /// permutation) and every posed corner lands exactly where turning the
+    /// unturned posed corner would.
+    #[test]
+    fn a_posed_box_turns_by_its_pose_not_by_permuting_its_faces() {
+        let mut faces = [false; 6];
+        faces[2] = true; // +Y only
+        let b = BoxDef {
+            aabb: Aabb {
+                min: [0.0, 0.5, -0.2],
+                max: [1.0, 0.5, 1.2],
+            },
+            faces,
+            tiles: [None; 6],
+            occludes: false,
+            collides: false,
+            double_sided: true,
+            art_turns: [0; 6],
+            uv: [None; 6],
+            uv_turns: [0; 6],
+            pose: Some(crate::block::BoxPose::from_euler_degrees(
+                [45.0, 0.0, 0.0],
+                [0.5; 3],
+            )),
+        };
+        let t = b.turned();
+        assert_eq!(t.faces, b.faces, "a posed box keeps its authored faces");
+        assert_eq!(t.aabb, b.aabb, "a posed box keeps its authored extent");
+        let (p0, p1) = (b.pose.unwrap(), t.pose.unwrap());
+        let turn = |p: glam::Vec3| glam::Vec3::new(1.0 - p.z, p.y, p.x);
+        for c in [[0.0, 0.5, -0.2], [1.0, 0.5, 1.2], [0.3, 0.5, 0.4]] {
+            let c = glam::Vec3::from(c);
+            assert!((p1.apply(c) - turn(p0.apply(c))).length() < 1e-4);
+        }
+        // And its face frame never counter-rotates: the pose owns the turn.
+        assert_eq!(t.face_frame_turns(1, 2), 0);
+    }
 }

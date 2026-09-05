@@ -208,10 +208,11 @@ pub(super) fn section_geometry(
             },
             &mut boxes,
         );
+        // A posed box lies on no axis plane, so it can seal nothing flush.
         out.extend(
             boxes
                 .iter()
-                .filter(|b| b.occludes)
+                .filter(|b| b.occludes && b.pose.is_none())
                 .map(|b| (b.aabb.min, b.aabb.max)),
         );
     };

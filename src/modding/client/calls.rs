@@ -188,7 +188,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::RecipeResult { .. }
         | HostCall::EffectApply { .. }
         | HostCall::EffectsActive
-        | HostCall::SwapModelBlock { .. }
+        | HostCall::SwapBlock { .. }
         | HostCall::ContainerGetMany { .. }
         | HostCall::MobEmitterSet { .. }
         | HostCall::MobAnimSet { .. }

@@ -44,14 +44,17 @@ host_fn! {
 }
 
 host_fn! {
-    /// Swap the placed multi-cell MODEL block group at `pos` (any of its cells) to
-    /// `block` — another model block sharing the exact same oriented footprint
-    /// (e.g. a machine's lit/unlit variants). Its container, facing, and section
-    /// cell KV survive; the region relights (emission differences glow). Both
-    /// blocks must be this mod's own. `false` = no model group there, footprint
-    /// mismatch, or unloaded.
-    pub fn swap_model_block(pos: [i32; 3], block: BlockId) -> bool
-        => SwapModelBlock { pos, block } => Bool
+    /// Swap the placed block at `pos` to the row `block` IN PLACE — the same
+    /// placed thing changing costume (a machine's lit/unlit variants, a rail
+    /// turning to meet a neighbour). Its container, per-cell state, facing
+    /// and section cell KV survive; a multi-cell MODEL group (any of its
+    /// cells) keeps its placed footprint, which the new row must share
+    /// exactly. The region relights (emission differences glow); no
+    /// placement event fires. Both blocks must be this mod's own. `false` =
+    /// unloaded, a model group swapped to a non-model row, or a footprint
+    /// mismatch.
+    pub fn swap_block(pos: [i32; 3], block: BlockId) -> bool
+        => SwapBlock { pos, block } => Bool
 }
 
 host_fn! {

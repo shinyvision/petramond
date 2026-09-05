@@ -1,12 +1,13 @@
 //! Minecarts and rails: the pack's policy over three engine seams.
 //!
-//! - **Rails are model-block rows** — one row per form (`vehicles:rail_ns`,
-//!   `rail_curve_ne`, `rail_slope_w`, …, and the booster twins) sharing one
-//!   authored model. A placed rail arrives as the item's straight row; the
-//!   `block_placed` handler runs the connection rule ([`crate::rail`]) over
-//!   the neighbourhood and swaps the placed cell — and any neighbour that
-//!   turns to meet it — to the resolved rows (`swap_model_block`). Breaking
-//!   a rail changes nothing around it.
+//! - **Rails are box-shaped block rows** — one row per form
+//!   (`vehicles:rail_ns`, `rail_curve_ne`, `rail_slope_w`, …, and the booster
+//!   twins), each a single authored plane: flat at one texel for the level
+//!   forms, tilted 45° about the cell centre for the slopes. A placed rail
+//!   arrives as the item's straight row; the `block_placed` handler runs the
+//!   connection rule ([`crate::rail`]) over the neighbourhood and swaps the
+//!   placed cell — and any neighbour that turns to meet it — to the resolved
+//!   rows (`swap_block`). Breaking a rail changes nothing around it.
 //! - **The cart is a mob** with an empty brain, a single seat and a spawn
 //!   tag that lets the tick enumerate every live cart (`mobs_with_tag`).
 //!   Its whole state is on the mob: pose from the snapshot, signed speed in
@@ -171,7 +172,7 @@ impl Minecarts {
         }
         for (cell, form, booster) in swaps {
             if let Some(row) = self.row(form, booster) {
-                swap_model_block(cell, row);
+                swap_block(cell, row);
             }
         }
     }

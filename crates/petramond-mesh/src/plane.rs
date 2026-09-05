@@ -21,6 +21,31 @@ pub fn cell_uv(face: Face, p: [f32; 3]) -> [f32; 2] {
     }
 }
 
+/// Where the carve UV `(u, v)` of a point on `face` of the cell-local box
+/// `[min, max]` falls as a FRACTION `(s, t)` of the box's whole face — what
+/// an authored tile rect (`ShapeFace::uv_rect`) is stretched by. Shared by
+/// the chunk mesher and the item cube, so a subtraction remainder in the
+/// world and the whole face in the hand map the same part of the rect.
+pub fn face_fraction(face: Face, min: [f32; 3], max: [f32; 3], (u, v): (f32, f32)) -> (f32, f32) {
+    let (mut u0, mut v0) = (f32::INFINITY, f32::INFINITY);
+    let (mut u1, mut v1) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for c in face.quad_box(min, max) {
+        let [cu, cv] = cell_uv(face, c);
+        u0 = u0.min(cu);
+        v0 = v0.min(cv);
+        u1 = u1.max(cu);
+        v1 = v1.max(cv);
+    }
+    let frac = |x: f32, lo: f32, hi: f32| {
+        if hi - lo <= 1e-6 {
+            0.0
+        } else {
+            ((x - lo) / (hi - lo)).clamp(0.0, 1.0)
+        }
+    };
+    (frac(u, u0, u1), frac(v, v0, v1))
+}
+
 /// One plane's four face-corner lighting samples, in `Face::quad_box` corner
 /// order (so corner `i` sits at UV `corner_local(i)`), bilinearly sampled at
 /// sub-quad corners. Interpolated integer channels round half-up; coincident

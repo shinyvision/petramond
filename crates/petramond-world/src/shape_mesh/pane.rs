@@ -152,6 +152,7 @@ pub fn push_mesh_boxes(
                 swap_uv,
                 uv_turns: 0,
                 tint,
+                uv_rect: None,
             })
         });
         out.push(ShapeBox {

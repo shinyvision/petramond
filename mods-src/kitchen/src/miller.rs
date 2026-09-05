@@ -12,7 +12,7 @@
 //! resetting to zero whenever there is no valid job (nothing millable, or a
 //! blocked output) — a mill holds no heat to lose. The `flour` cube in the
 //! authored model shows exactly while the OUTPUT slot holds anything: the
-//! full/empty visual is a same-footprint `swap_model_block` flip between the
+//! full/empty visual is a same-footprint `swap_block` flip between the
 //! `kitchen:miller` row (hides the cube) and `kitchen:miller_full`, compared
 //! against the anchor's CURRENT block each tick so the visual self-heals
 //! instead of tracking transitions.
@@ -104,7 +104,7 @@ impl MachineSpec for MillerSpec {
                 ctx.block
             };
             if ctx.current != want {
-                swap_model_block(ctx.pos, want);
+                swap_block(ctx.pos, want);
             }
         }
         if ctx.gui_open() {

@@ -363,13 +363,15 @@ mod shape_kind {
         // Only the colliding box is collision; the outline is the drawn union.
         assert_eq!(set.collision(0, 0).len(), 1);
         assert_eq!(set.bounds(0, 0).max, [1.0, 1.0, 1.0]);
-        // Empty lists, inverted extents, out-of-range texels, unknown face
-        // names and a tile on an undrawn face are load errors, not silently
-        // dropped values.
+        // Empty lists, inverted extents, a box flat on two axes, texels past
+        // the overhang room, unknown face names and a tile on an undrawn face
+        // are load errors, not silently dropped values. (Flat on ONE axis is
+        // a plane, and a box may reach one cell past its own.)
         for bad in [
             r#"{"boxes":[]}"#,
-            r#"{"boxes":[{"from":[8,0,0],"to":[8,16,16]}]}"#,
-            r#"{"boxes":[{"to":[17,16,16]}]}"#,
+            r#"{"boxes":[{"from":[9,0,0],"to":[8,16,16]}]}"#,
+            r#"{"boxes":[{"from":[8,0,8],"to":[8,16,8]}]}"#,
+            r#"{"boxes":[{"to":[33,16,16]}]}"#,
             r#"{"boxes":[{"faces":["sideways"]}]}"#,
             r#"{"boxes":[{"tiles":{"up":"petramond:no_such_tile"}}]}"#,
             r#"{"boxes":[{"faces":["up"],"tiles":{"down":"stone"}}]}"#,

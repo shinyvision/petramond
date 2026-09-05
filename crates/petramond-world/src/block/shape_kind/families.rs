@@ -244,6 +244,7 @@ pub fn box_set_box(
     tint_for: &dyn Fn(crate::tile::Tile) -> [f32; 3],
 ) -> ShapeBox {
     let mut b = ShapeBox::uniform(d.aabb, block.tiles(), tint_for);
+    b.pose = d.pose;
     if !d.occludes {
         b = b.as_face_carrier();
     }
@@ -257,19 +258,22 @@ pub fn box_set_box(
             continue;
         }
         let Some(style) = face else { continue };
-        // This face's art lives in a frame `d.art_turns[i]` quarter turns
-        // ahead of the shape's own, so both frame-dependent decisions read the
-        // TOTAL turn: which face carries the row's `front` (a corner form's
-        // wrapped face is a different number of turns from the authored one
-        // than its siblings, which is why a single turn-index lookup could not
-        // express it) and how far a `±Y` tile must be counter-rotated.
-        let art_turns = (turns + d.art_turns[i]) & 3;
+        // This face's art lives in a frame some quarter turns ahead of the
+        // CELL's (the shape's turn plus the face's own `art_turns`; none at
+        // all for a posed box, whose pose carries the turn), so both
+        // frame-dependent decisions read that TOTAL turn: which face carries
+        // the row's `front` (a corner form's wrapped face is a different
+        // number of turns from the authored one than its siblings, which is
+        // why a single turn-index lookup could not express it) and how far a
+        // `±Y` tile must be counter-rotated.
+        let art_turns = d.face_frame_turns(turns, i);
         let front = front.filter(|_| i == super::FRONT_AFTER_TURN[art_turns as usize]);
         if let Some(tile) = d.tiles[i].or(front) {
             style.tile = tile;
             style.tint = tint_for(tile);
         }
-        style.uv_turns = super::face_uv_turns(i, art_turns);
+        style.uv_turns = (super::face_uv_turns(i, art_turns) + d.uv_turns[i]) & 3;
+        style.uv_rect = d.uv[i];
     }
     b
 }

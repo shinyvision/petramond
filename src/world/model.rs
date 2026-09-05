@@ -73,6 +73,25 @@ impl World {
         ))
     }
 
+    /// Swap the placed block at `pos` to the row `new_block` in place — the
+    /// ONE seam for "the same placed thing changing costume", whatever its
+    /// shape: a model group swaps as a group (below), any other row through
+    /// the cube skin swap ([`swap_block_skin`](Self::swap_block_skin)), which
+    /// carries the cell's state and KV across the same way. Neither fires a
+    /// placement event, so a mod's placement handler can swap rows without
+    /// recursing. A model row cannot be swapped INTO a non-model cell — that
+    /// is a placement, not a costume change.
+    pub fn swap_block(&mut self, pos: IVec3, new_block: Block) -> bool {
+        let current = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        if current.model_kind().is_some() {
+            self.swap_model_block(pos, new_block)
+        } else if new_block.model_kind().is_some() {
+            false
+        } else {
+            self.swap_block_skin(pos, new_block)
+        }
+    }
+
     /// Swap the whole multi-block group at `pos` to `new_block` — another model
     /// block whose ORIENTED FOOTPRINT matches the current group's exactly (the
     /// lit/unlit machine pair sharing one authored model). Block ids are

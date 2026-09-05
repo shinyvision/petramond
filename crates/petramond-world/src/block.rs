@@ -30,7 +30,8 @@ pub use interaction::BlockInteraction;
 pub use load::validate_particle_emitter;
 pub use shape::BlockLightShape;
 pub use shape::{
-    Aabb, CellPart, ItemBox, ShapeBox, ShapeFace, ShapeRenderBox, CROP_PLANE_DROP, CROP_PLANE_INSET,
+    posed_bounds, Aabb, BoxPose, CellPart, ItemBox, PosedBox, ShapeBox, ShapeFace, ShapeRenderBox,
+    CROP_PLANE_DROP, CROP_PLANE_INSET,
 };
 pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;

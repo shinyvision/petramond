@@ -53,6 +53,9 @@ pub struct CrackBox {
     pub max: [f32; 3],
     /// Canonical face order (`+X, -X, +Y, -Y, +Z, -Z`) — `mesh::face::Face::ALL`.
     pub faces: [bool; 6],
+    /// The box's rotation off the axis grid, so the crack hugs a tilted
+    /// plate where it is drawn.
+    pub pose: Option<petramond_world::block::BoxPose>,
 }
 
 /// A bounded, `Copy` snapshot of a cell's resolved boxes for its break crack

@@ -767,6 +767,7 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
             min: [0.0; 3],
             max: [0.0; 3],
             faces: [false; 6],
+            pose: None,
         }; MAX_CRACK_BOXES];
         let len = resolved.len().min(MAX_CRACK_BOXES);
         for (dst, b) in boxes.iter_mut().zip(resolved.iter()).take(len) {
@@ -774,6 +775,7 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
                 min: b.aabb.min,
                 max: b.aabb.max,
                 faces: std::array::from_fn(|fi| b.faces[fi].is_some()),
+                pose: b.pose,
             };
         }
         CrackBoxes {

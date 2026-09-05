@@ -739,7 +739,7 @@ fn finish_drink(content: &Content, a: &mut Animal, cell: [i32; 3], tick: u64) {
     if sips >= TROUGH_SIPS {
         // The swap carries cell KV across, so the spent counter is scrubbed
         // explicitly — a refill must start on fresh water.
-        swap_model_block(cell, content.trough);
+        swap_block(cell, content.trough);
         clear_sips(content, cell);
     } else {
         for member in trough_members(content, cell) {
@@ -757,7 +757,7 @@ fn finish_drink(content: &Content, a: &mut Animal, cell: [i32; 3], tick: u64) {
 fn finish_feed(content: &Content, def: &HusbandryDef, a: &mut Animal, cell: [i32; 3]) {
     let meals = crate::kv_counter::kv_counter_bump(cell, MEALS_KEY);
     if meals >= TROUGH_MEALS {
-        swap_model_block(cell, content.trough);
+        swap_block(cell, content.trough);
         clear_meals(content, cell);
     } else {
         for member in trough_members(content, cell) {

@@ -305,6 +305,28 @@ pub trait ShapeSim: Send + Sync + 'static {
         block.row_collision()
     }
 
+    /// The cell's AIMABLE geometry — what a targeting ray tests and the
+    /// selection outline traces, for a family that picks by boxes
+    /// (`ShapeRender::picks_by_boxes`). Pure geometry, deterministic, so the
+    /// server's mob aim and the client's crosshair agree. The default is the
+    /// collision boxes — for most families what you can stand on is what you
+    /// point at; a family whose drawn form has more than its collision
+    /// (a walk-through cover, a tilted plane) answers its drawn geometry.
+    fn target_boxes(
+        &self,
+        params: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        block: Block,
+        out: &mut Vec<crate::block::PosedBox>,
+    ) {
+        out.extend(
+            self.collision_boxes(params, nb, pos, block)
+                .iter()
+                .map(|&aabb| crate::block::PosedBox { aabb, pose: None }),
+        );
+    }
+
     /// The cell this shape GRIPS and the outward normal of the face it grips,
     /// for a family whose support comes from its PLACEMENT rather than the
     /// row's declarative `support_dir`. `None` (the default) = the
@@ -526,13 +548,15 @@ pub trait ShapeRender: Send + Sync + 'static {
         false
     }
 
-    /// Whether a targeting ray picks this shape against its RESOLVED COLLISION
-    /// BOXES rather than stopping on a single box. True for every family whose
-    /// real form is a box set (stair, slab, pane, fence, a WASM shape bake): the
-    /// aimed geometry is then the collided geometry by construction, so aiming
-    /// through a gap misses and aiming at a part hits, with no per-family ray
-    /// code. A family whose form is not a box set keeps this `false` — a full
-    /// cube stops the ray on cell entry, and the torch / bbmodel families run
+    /// Whether a targeting ray picks this shape against its resolved TARGET
+    /// BOXES ([`ShapeSim::target_boxes`] — the collision boxes unless the
+    /// family says otherwise) rather than stopping on a single box. True for
+    /// every family whose real form is a box set (stair, slab, pane, fence, a
+    /// static box set, a WASM shape bake): the aimed geometry is then the
+    /// resolved geometry by construction, so aiming through a gap misses and
+    /// aiming at a part (posed or not) hits, with no per-family ray code. A
+    /// family whose form is not a box set keeps this `false` — a full cube
+    /// stops the ray on cell entry, and the torch / bbmodel families run
     /// their own precise tests (a tilted pole, an alpha-tested surface).
     fn picks_by_boxes(&self, _params: &ShapeParams) -> bool {
         false

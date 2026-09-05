@@ -43,6 +43,7 @@ pub fn push_mesh_box(
         swap_uv: false,
         uv_turns: 0,
         tint,
+        uv_rect: None,
     }); 6];
     faces[buried_face(facing) as usize] = None;
     out.push(ShapeBox {

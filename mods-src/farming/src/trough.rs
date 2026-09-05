@@ -28,7 +28,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
         if !replace_held_one(content.water_bucket, "petramond:wooden_bucket") {
             return Outcome::Continue;
         }
-        swap_model_block(pos, content.trough_filled);
+        swap_block(pos, content.trough_filled);
         // Fresh water holds fresh sips (cell KV rides the swap).
         crate::husbandry::clear_sips(content, pos);
         emit_sound("petramond:water_splash_small", Some(center(pos)));
@@ -39,7 +39,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
         if !replace_held_one(content.wooden_bucket, "petramond:water_bucket") {
             return Outcome::Continue;
         }
-        swap_model_block(pos, content.trough);
+        swap_block(pos, content.trough);
         // Collected water can't leave a stale sip count behind.
         crate::husbandry::clear_sips(content, pos);
         emit_sound("petramond:water_splash_small", Some(center(pos)));
@@ -54,7 +54,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
         if !consume_held(content.wheat_item, FILL_WHEAT) {
             return Outcome::Continue;
         }
-        swap_model_block(pos, content.trough_wheat);
+        swap_block(pos, content.trough_wheat);
         emit_sound("farming:harvest", Some(center(pos)));
         return Outcome::Cancel;
     }
@@ -82,7 +82,7 @@ pub fn on_interact(
     if back > 0 {
         give_item("farming:wheat", back);
     }
-    swap_model_block(pos, content.trough);
+    swap_block(pos, content.trough);
     // The swap carries cell KV across — an emptied trough must not bank a
     // stale meal count (the sip pattern).
     crate::husbandry::clear_meals(content, pos);

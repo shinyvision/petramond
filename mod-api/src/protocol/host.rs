@@ -330,7 +330,7 @@ pub enum HostCall {
     },
     /// `false` = the section is unloaded (nothing stored). Cell KV is
     /// per-BLOCK state: breaking/replacing the cell's block clears it (a
-    /// `SwapModelBlock` flip carries it across). → [`HostRet::Bool`].
+    /// `SwapBlock` flip carries it across). → [`HostRet::Bool`].
     SectionKvSet {
         pos: [i32; 3],
         key: String,
@@ -584,16 +584,19 @@ pub enum HostCall {
     /// [`HostRet::Effects`].
     EffectsActive,
 
-    // --- Model-block state swap (landed 2026-07-07) --------------------------
-    /// Swap the placed multi-cell MODEL block group at `pos` (any of its
-    /// cells) to `block` — another model block sharing the exact same oriented
-    /// footprint, e.g. the lit/unlit variants of a machine. Ids are rewritten
-    /// in place: the engine-backed container, facing, and section cell KV all
-    /// survive, and the region relights (an emission difference glows like a
-    /// furnace lighting). BOTH blocks must be registered to THIS mod's
-    /// namespace. → [`HostRet::Bool`] (`false` = not a model group there,
-    /// footprint mismatch, or unloaded).
-    SwapModelBlock {
+    // --- Placed-block row swap (landed 2026-07-07 for model groups; any row
+    // since 2026-09-05) ------------------------------------------------------
+    /// Swap the placed block at `pos` to the row `block` IN PLACE — the same
+    /// placed thing changing costume (a machine's lit/unlit variants, a rail
+    /// turning to meet a neighbour). Everything the cell owns survives: the
+    /// engine-backed container, per-cell state and facing, section cell KV,
+    /// and for a multi-cell MODEL group (any of its cells) the whole placed
+    /// footprint, which the new row must share exactly. The region relights
+    /// (an emission difference glows like a furnace lighting); no placement
+    /// event fires — this is not a placement. BOTH blocks must be registered
+    /// to THIS mod's namespace. → [`HostRet::Bool`] (`false` = unloaded,
+    /// a model group swapped to a non-model row or a footprint mismatch).
+    SwapBlock {
         pos: [i32; 3],
         block: BlockId,
     },
@@ -1349,7 +1352,7 @@ pub enum HostCall {
     /// footprint cell is unloaded).
     ///
     /// This is the fine-grained sibling of
-    /// [`SwapModelBlock`](Self::SwapModelBlock), and it exists because
+    /// [`SwapBlock`](Self::SwapBlock), and it exists because
     /// enumerating rows does not scale past ONE varying thing. A machine with
     /// several INDEPENDENT visual states — the forge's basin holds any of five
     /// moulds, with or without metal in it, while its fire is lit or not — is

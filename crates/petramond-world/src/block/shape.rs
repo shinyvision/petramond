@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub use petramond_math::pose::BoxPose;
+
 use crate::tile::Tile;
 
 /// How far a crop plane ([`ShapeFamily::Crop`](super::ShapeFamily::Crop)) sits
@@ -90,9 +92,37 @@ pub struct ShapeFace {
     /// instead of four times.
     pub uv_turns: u8,
     pub tint: [f32; 3],
+    /// An authored tile rectangle `[u0, v0, u1, v1]` in tile texels
+    /// (`0..=16`) stretched over the WHOLE face, in place of the cell-local
+    /// carve. `None` = carve: the face samples the part of the tile its
+    /// position in the cell covers, so a box authored past its cell (a posed
+    /// box that needs to be longer than the cell to span it) would clip its
+    /// art — an explicit rect is how such a face keeps the whole tile.
+    pub uv_rect: Option<[u8; 4]>,
 }
 
 impl ShapeFace {
+    /// A face's texel UV for a corner: the cell-local carve `(u, v)` in
+    /// `0..=1`, or where that corner's fraction `(s, t)` of the whole face
+    /// falls in an authored [`uv_rect`](Self::uv_rect). Both then take the
+    /// same swap and turn, so every consumer maps a face identically.
+    #[inline]
+    pub fn texel_uv(&self, carve: (f32, f32), fraction: (f32, f32)) -> (f32, f32) {
+        let (mut u, mut v) = match self.uv_rect {
+            Some([u0, v0, u1, v1]) => {
+                let lerp = |a: u8, b: u8, f: f32| {
+                    (f32::from(a) + (f32::from(b) - f32::from(a)) * f) / 16.0
+                };
+                (lerp(u0, u1, fraction.0), lerp(v0, v1, fraction.1))
+            }
+            None => carve,
+        };
+        if self.swap_uv {
+            std::mem::swap(&mut u, &mut v);
+        }
+        Self::turn_uv(self.uv_turns, u, v)
+    }
+
     /// Turn a cell-local UV by `turns` quarter turns — the transform
     /// [`uv_turns`](Self::uv_turns) names, shared by every consumer that
     /// samples a face (chunk mesh, item cube) so they cannot disagree.
@@ -129,6 +159,10 @@ pub struct ItemBox {
     pub tiles: [Option<crate::tile::Tile>; 6],
     /// Per-face extra UV quarter-turns (a static box set's `uv_turns`).
     pub uv_turns: [u8; 6],
+    /// Per-face authored tile rectangles (see [`ShapeFace::uv_rect`]).
+    pub uv_rects: [Option<[u8; 4]>; 6],
+    /// The box's rotation off the axis grid, if any (see [`ShapeBox::pose`]).
+    pub pose: Option<BoxPose>,
 }
 
 impl ItemBox {
@@ -141,7 +175,61 @@ impl ItemBox {
             material: None,
             tiles: [None; 6],
             uv_turns: [0; 6],
+            uv_rects: [None; 6],
+            pose: None,
         }
+    }
+
+    /// The axis-aligned extent the box occupies once posed.
+    pub fn posed_bounds(&self) -> Aabb {
+        posed_bounds(self.aabb, self.pose)
+    }
+}
+
+/// One cuboid of a shape's AIMABLE form: the geometry a targeting ray tests
+/// and the outline traces, with no presentation. Every family answers these
+/// from its sim facet ([`super::ShapeSim::target_boxes`]), so the server's
+/// mob aim and the client's crosshair agree by construction.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PosedBox {
+    pub aabb: Aabb,
+    pub pose: Option<BoxPose>,
+}
+
+impl PosedBox {
+    /// The axis-aligned extent the box occupies once posed.
+    pub fn bounds(&self) -> Aabb {
+        posed_bounds(self.aabb, self.pose)
+    }
+}
+
+/// `aabb` posed by `pose`, as its axis-aligned bounds (`aabb` itself when
+/// there is no pose).
+pub fn posed_bounds(aabb: Aabb, pose: Option<BoxPose>) -> Aabb {
+    match pose {
+        Some(p) => {
+            let (min, max) = p.bounds(aabb.min, aabb.max);
+            Aabb { min, max }
+        }
+        None => aabb,
+    }
+}
+
+impl Aabb {
+    /// This box clipped to the unit cell, or `None` when nothing of it lies
+    /// inside. What a box reaching past its cell RESERVES: its overhang is
+    /// drawn, but neither collides, outlines nor is aimed outside the cell
+    /// that owns it — the same rule a model block's overhang follows.
+    pub fn clipped_to_cell(&self) -> Option<Aabb> {
+        let mut out = *self;
+        for a in 0..3 {
+            out.min[a] = out.min[a].max(0.0);
+            out.max[a] = out.max[a].min(1.0);
+            if out.min[a] > out.max[a] {
+                return None;
+            }
+        }
+        Some(out)
     }
 }
 
@@ -197,6 +285,14 @@ pub struct ShapeBox {
     /// the far face's spines instead of the sky. Single-sided, half the spines
     /// vanish the moment you strafe past.
     pub double_sided: bool,
+    /// The box's rotation off the axis grid: `aabb` is then the box in its
+    /// OWN frame, and every consumer poses it through this before use. A
+    /// posed box keeps its authored faces and art (they turn with it) but
+    /// takes no part in the axis-aligned rules — it never seals a boundary,
+    /// hides a sibling's face, or is hidden by one; its matter still shadows
+    /// and blocks light through the real posed geometry. `None` = the
+    /// ordinary axis-aligned box.
+    pub pose: Option<BoxPose>,
 }
 
 impl ShapeBox {
@@ -214,7 +310,23 @@ impl ShapeBox {
         part: 0,
         occludes: true,
         double_sided: false,
+        pose: None,
     };
+
+    /// The axis-aligned extent the box occupies once posed.
+    pub fn posed_bounds(&self) -> Aabb {
+        posed_bounds(self.aabb, self.pose)
+    }
+
+    /// Whether this box's MATTER overlaps the cell-local pocket `[lo, hi]`
+    /// with positive volume — through the pose when it has one, so a tilted
+    /// plane shadows where it actually is rather than across its bounds.
+    pub fn overlaps_pocket(&self, lo: [f32; 3], hi: [f32; 3]) -> bool {
+        match self.pose {
+            Some(p) => p.overlaps_aabb(self.aabb.min, self.aabb.max, lo, hi),
+            None => (0..3).all(|a| lo[a] < self.aabb.max[a] && hi[a] > self.aabb.min[a]),
+        }
+    }
 
     /// A box textured like a cube: `[top, bottom, side]` tiles, one tint per
     /// tile, plain UVs on every face, full AO, undyed.
@@ -225,6 +337,7 @@ impl ShapeBox {
                 swap_uv: false,
                 uv_turns: 0,
                 tint: tint_for(tile),
+                uv_rect: None,
             })
         };
         // Canonical face order: +X, -X, +Y, -Y, +Z, -Z.
@@ -239,6 +352,7 @@ impl ShapeBox {
             part: 0,
             occludes: true,
             double_sided: false,
+            pose: None,
         }
     }
 

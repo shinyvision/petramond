@@ -34,6 +34,21 @@ impl ShapeSim for BoxSetFamily {
         box_set(p).collision(0, 0)
     }
 
+    fn target_boxes(
+        &self,
+        p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        block: Block,
+        out: &mut Vec<crate::block::PosedBox>,
+    ) {
+        // Every DRAWN box, colliding or not: a walk-through cover and a
+        // tilted plane are what the player sees and points at.
+        out.extend_from_slice(
+            box_set(p).targets(box_set_turns(nb, pos, block), box_set_form(p, nb, pos)),
+        );
+    }
+
     fn occupies_pocket(
         &self,
         p: &ShapeParams,
@@ -50,7 +65,10 @@ impl ShapeSim for BoxSetFamily {
             .boxes(box_set_turns(nb, pos, b), box_set_form(p, nb, pos))
             .iter()
             .filter(|d| d.occludes)
-            .any(|d| overlaps(lo, hi, d.aabb.min, d.aabb.max))
+            .any(|d| match d.pose {
+                Some(pose) => pose.overlaps_aabb(d.aabb.min, d.aabb.max, lo, hi),
+                None => overlaps(lo, hi, d.aabb.min, d.aabb.max),
+            })
     }
 
     fn light_shape(&self, _p: &ShapeParams, _b: Block) -> crate::block::BlockLightShape {
@@ -142,8 +160,12 @@ impl ShapeRender for BoxSetFamily {
                 material: None,
                 tiles: box_def.tiles,
                 uv_turns: std::array::from_fn(|i| {
-                    crate::block::face_uv_turns(i, (turns + box_def.art_turns[i]) & 3)
+                    (crate::block::face_uv_turns(i, box_def.face_frame_turns(turns, i))
+                        + box_def.uv_turns[i])
+                        & 3
                 }),
+                uv_rects: box_def.uv,
+                pose: box_def.pose,
             });
         }
     }

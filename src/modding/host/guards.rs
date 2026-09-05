@@ -144,7 +144,7 @@ pub(super) fn live_mob(ctx: &SimCtx<'_>, mob_id: u64) -> Option<usize> {
     (!ctx.world.mobs().instances()[index].is_dead()).then_some(index)
 }
 
-/// Stream-final gate for WRITE-through-a-cell arms (`SwapModelBlock`,
+/// Stream-final gate for WRITE-through-a-cell arms (`SwapBlock`,
 /// `ContainerSet`): the cell's block, or `Err(Bool(false))` while its section
 /// is unloaded or its streamed content is not yet final. During that window a
 /// plain read LIES — the generated base shows where the player's saved

@@ -154,7 +154,7 @@ fn samples() -> Samples {
     });
     s.pin("HostCall::EffectApply", &HostCall::EffectApply { key: "m:e".into(), ticks: 5 });
     s.pin("HostCall::EffectsActive", &HostCall::EffectsActive);
-    s.pin("HostCall::SwapModelBlock", &HostCall::SwapModelBlock {
+    s.pin("HostCall::SwapBlock", &HostCall::SwapBlock {
         pos: [1, 2, 3], block: BlockId(6),
     });
     s.pin("HostCall::ContainerGetMany", &HostCall::ContainerGetMany {
@@ -929,7 +929,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::RecipeResult", "34036d3a63036d3a69"),
     ("HostCall::EffectApply", "35036d3a6505"),
     ("HostCall::EffectsActive", "36"),
-    ("HostCall::SwapModelBlock", "3702040606"),
+    ("HostCall::SwapBlock", "3702040606"),
     ("HostCall::ContainerGetMany", "3801020406"),
     ("HostCall::MobEmitterSet", "3907036d3a6501"),
     ("HostCall::EmitterBurst", "3a036d3a650000803f000000400000404000000040"),

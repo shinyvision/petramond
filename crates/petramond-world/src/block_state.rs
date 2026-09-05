@@ -408,7 +408,7 @@ impl BlockStates {
         // machine's burn state must die with the block — air holds no data.
         // (A block-row swap that must KEEP its per-cell state carries it
         // across explicitly — see `World::swap_block_skin` /
-        // `World::swap_model_block`. A disabled mod's KV is untouched by
+        // `World::swap_block`. A disabled mod's KV is untouched by
         // this: its sections load their KV wholesale, not through per-cell
         // block writes.)
         s.cell_kv.remove(&key);

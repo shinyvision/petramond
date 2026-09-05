@@ -7,7 +7,7 @@
 //! four stages are `models.json` rows over ONE composter `.bbmodel`, the
 //! empty row hiding the `compost_surface` cube and each fill posing it
 //! higher via `part_offsets`. Stage flips are same-footprint
-//! `swap_model_block`s (the kitchen lit-machine mechanism), never plain
+//! `swap_block`s (the kitchen lit-machine mechanism), never plain
 //! block writes. COLLECT rides `block_interact`: any click on a FULL barrel
 //! pops one fertilizer and resets it to empty — the same pop-and-reset
 //! ergonomics as a mature crop harvest, working with an empty hand or any
@@ -40,7 +40,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
     if !consume_held(item, 1) {
         return Outcome::Continue;
     }
-    swap_model_block(pos, content.compost[stage as usize + 1]);
+    swap_block(pos, content.compost[stage as usize + 1]);
     let center = barrel_top(pos);
     emit_sound("farming:till", Some(center));
     emitter_burst("farming:compost_fill", center, 1.0);
@@ -56,7 +56,7 @@ pub fn on_interact(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome 
     }
     let center = barrel_top(pos);
     spawn_item("farming:fertilizer", 1, center);
-    swap_model_block(pos, content.compost[0]);
+    swap_block(pos, content.compost[0]);
     emit_sound("farming:harvest", Some(center));
     emitter_burst("farming:compost_fill", center, 1.0);
     Outcome::Cancel
