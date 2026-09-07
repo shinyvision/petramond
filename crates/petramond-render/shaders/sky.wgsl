@@ -59,7 +59,7 @@ fn fs_sky(in: VsOut) -> @location(0) vec4<f32> {
     // Warmed toward the sun with the terrain haze's glow so the fog seam at the
     // terrain limit stays invisible looking sunward.
     let horizon = atmosphere_haze_color(ray, u.fog_color.rgb, u.sun_dir.xyz, u.sun_dir.w);
-    let zenith = vec3<f32>(0.14, 0.42, 1.0) * u.fog_color.w * u.sky_color.rgb;
+    let zenith = vec3<f32>(0.055, 0.16, 0.38) * u.fog_color.w * u.sky_color.rgb;
     let up = clamp(ray.y, 0.0, 1.0);
     let t = smoothstep(0.0, 0.85, pow(up, 0.72));
     let color = mix(horizon, zenith, t);

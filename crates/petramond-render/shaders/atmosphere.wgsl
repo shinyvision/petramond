@@ -25,10 +25,10 @@ const ATMOS_LUMA_W: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 // to 1.0 on top of it). The quartic onset keeps the midrange crisp; the far
 // cap is generous so distant shadow masses LIGHTEN into the air instead of
 // looming as dark walls.
-const ATMOS_AERIAL_MAX: f32 = 0.42;
+const ATMOS_AERIAL_MAX: f32 = 0.20;
 // Quartic-depth exponential of the aerial haze across [0, fog_end]: flat for
 // the first ~half of the range, rising late (Complementary-style border curve).
-const ATMOS_AERIAL_CURVE: f32 = 3.5;
+const ATMOS_AERIAL_CURVE: f32 = 2.8;
 // Haze is densest near sea level and thins with altitude: blocks above sea
 // level over which it falls by e×. Uses the fragment/camera midpoint height so
 // valleys sit in haze while nearby peaks (and views from peaks) rise out of
@@ -63,11 +63,11 @@ const ATMOS_SUN_GLOW_MAX: f32 = 0.70;
 // Down-faces get a warmer, earthier ambient (ground bounce) so overhangs and
 // canopies separate from blue side-shadow. The lit ramp is cel-banded
 // (cel.wgsl): faces quantize into shadow / half-lit / lit stages, splitting the
-// six cube faces into a confident poster-flat toon statement. At night
+// six cube faces into broad, softly connected colour planes. At night
 // everything relaxes to a flat diffuse level so moonlit terrain stays readable.
-const SUN_LIT_COLOR: vec3<f32> = vec3<f32>(1.08, 1.03, 0.92);
-const SUN_SHADOW_COLOR: vec3<f32> = vec3<f32>(0.76, 0.82, 0.97);
-const SUN_GROUND_COLOR: vec3<f32> = vec3<f32>(0.66, 0.63, 0.58);
+const SUN_LIT_COLOR: vec3<f32> = vec3<f32>(1.12, 1.04, 0.90);
+const SUN_SHADOW_COLOR: vec3<f32> = vec3<f32>(0.57, 0.66, 0.83);
+const SUN_GROUND_COLOR: vec3<f32> = vec3<f32>(0.65, 0.61, 0.58);
 const SUN_NIGHT_FLAT: f32 = 0.90;
 
 // Unit normal for a face code 1..=6 (Face::normal_code order: +X −X +Y −Y +Z
@@ -90,9 +90,7 @@ fn face_normal(code: u32) -> vec3<f32> {
 // daylight, and applying it underground paints sunless caves warm/cool.
 fn sun_face_shade(n: vec3<f32>, sun_dir: vec3<f32>, daylight: f32) -> vec3<f32> {
     let lambert = max(dot(n, sun_dir), 0.0);
-    // Cel-banded ramp (cel.wgsl CEL_SUN): shadow -> half-lit -> lit in discrete
-    // stages, so faces step through a mid tone as the sun sweeps instead of
-    // fading smoothly.
+    // Broad tone plateaus connected continuously as the sun moves.
     let lit = cel_band(CEL_SUN, lambert);
     let ground = clamp(-n.y, 0.0, 1.0);
     let ambient = mix(SUN_SHADOW_COLOR, SUN_GROUND_COLOR, ground);

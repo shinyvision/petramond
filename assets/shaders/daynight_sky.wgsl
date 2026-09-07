@@ -134,9 +134,9 @@ fn fs_sky(in: VsOut) -> @location(0) vec4<f32> {
     // Three-stop gradient: horizon → a lighter airy belt just above it → the
     // deep zenith. The belt is what keeps the sky luminous instead of a flat
     // two-colour ramp.
-    let day_zenith = vec3<f32>(0.14, 0.42, 1.0);
+    let day_zenith = vec3<f32>(0.055, 0.16, 0.38);
     let night_zenith = vec3<f32>(0.006, 0.010, 0.032);
-    let day_belt = vec3<f32>(0.38, 0.64, 1.0);
+    let day_belt = vec3<f32>(0.12, 0.30, 0.55);
     let night_belt = vec3<f32>(0.012, 0.018, 0.052);
     let day_light = sky_scale * u.sky_color.rgb;
     let zenith = mix(night_zenith, day_zenith * day_light, daylight);
