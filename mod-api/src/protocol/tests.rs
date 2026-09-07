@@ -161,6 +161,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(HostCall::RegisterWorldgenFeature {
         feature_id: 3,
         stage: WorldgenStage::Trees,
+        filter: Default::default(),
     });
     roundtrip(HostCall::RegisterStageReplacement {
         stage: WorldgenStage::Terrain,
@@ -430,6 +431,8 @@ fn abi_roundtrip_host_and_guest_calls() {
             player_pos: [8.0, 65.0, 8.0],
             nav_idle: true,
             in_water: false,
+            target: Some(EntityRef::Mob(9)),
+            attacker: Some((EntityRef::Player(PlayerId(1)), 12)),
             player_held: Some(ItemId(3)),
             player_foothold: Some([8, 64, 8]),
             tags: vec![
@@ -441,8 +444,13 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(GuestRet::AiDecision(Some(AiNodeDecision {
         goal: Some([3, 64, 2]),
         head_look: None,
+        facing: Some(1.5),
+        speed_scale: Some(2.0),
         idle_anim: Some(1),
         attack: Some([2.0, 6.0]),
+        animation: Some("swipe".into()),
+        target: Some(EntityRef::Player(PlayerId(1))),
+        claims: ChannelClaims::of(&[DecisionChannel::Goal, DecisionChannel::Attack]),
         tags: vec![
             MobTagWrite {
                 key: "farming:sulk_until".into(),

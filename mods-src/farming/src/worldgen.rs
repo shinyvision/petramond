@@ -54,6 +54,10 @@ const POTATO_PATCH: (i32, i32) = (3, 6);
 /// Max |offset| of a patch cell from its anchor; also the anchor scan reach.
 const PATCH_REACH: i32 = 2;
 
+/// The feature's write bounds for host-side admission: every patch cell is
+/// the plant cell directly above its column's surface, nothing else.
+pub(crate) const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::surface_band(1, 1);
+
 /// One wild crop's placement row. The slice ORDER is the priority order —
 /// the first spec that hits a column owns it.
 struct WildCropSpec {

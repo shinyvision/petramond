@@ -58,7 +58,7 @@ impl Mod for Exploration {
 
         // After Trees — the end of the pipeline. The cavern decorates carved
         // cave volume, so it must see final terrain.
-        register_worldgen_feature(WorldgenStage::Trees, GEN_CAVERN);
+        register_worldgen_feature(WorldgenStage::Trees, GEN_CAVERN, cavern::GEN_FILTER);
     }
 
     fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> Vec<GenWrite> {

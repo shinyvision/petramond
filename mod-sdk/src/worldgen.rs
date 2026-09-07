@@ -16,9 +16,12 @@ host_fn! {
     /// [`WorldgenStage::Trees`] — the end of the pipeline — unless the feature
     /// must see pre-vegetation ground). Only legal during [`Mod::init`];
     /// `Climate` is not a valid attach point. `feature_id` is echoed to
-    /// [`Mod::gen_feature`].
-    pub fn register_worldgen_feature(stage: WorldgenStage, feature_id: u32)
-        => RegisterWorldgenFeature { feature_id, stage }
+    /// [`Mod::gen_feature`]. `filter` declares the feature's conservative
+    /// write bounds — the host skips every section they exclude without a
+    /// dispatch, so declare them next to the constants that bound the writes
+    /// (`GenFeatureFilter::y_band` / `surface_band`; `ANY` admits all).
+    pub fn register_worldgen_feature(stage: WorldgenStage, feature_id: u32, filter: mod_api::GenFeatureFilter)
+        => RegisterWorldgenFeature { feature_id, stage, filter }
 }
 
 host_fn! {
@@ -244,12 +247,23 @@ impl GenCtx {
         &self.biomes
     }
 
+    /// Whether this call carries the 4096-cell block snapshot. Every
+    /// [`Mod::gen_feature`] attach point is after `Terrain`, so a feature
+    /// dispatch without one means the feature registered a
+    /// [`GenFeatureFilter`](mod_api::GenFeatureFilter) with `needs_blocks:
+    /// false`; a stage replacement lacks it only for `Climate`/`Terrain`,
+    /// where no blocks exist yet.
+    pub fn has_block_snapshot(&self) -> bool {
+        self.blocks.len() == 4096
+    }
+
     /// The block currently at world `p`, or `None` when `p` is outside this
-    /// section (or the call carries no snapshot: `Climate`/`Terrain` stages).
-    /// Use it for per-cell occupancy predicates ("only place over air") on the
-    /// cells you emit — each section checks exactly the cells it owns.
+    /// section or the call carries no snapshot (see
+    /// [`has_block_snapshot`](Self::has_block_snapshot)). Use it for per-cell
+    /// occupancy predicates ("only place over air") on the cells you emit —
+    /// each section checks exactly the cells it owns.
     pub fn block(&self, p: [i32; 3]) -> Option<BlockId> {
-        if self.blocks.len() != 4096 {
+        if !self.has_block_snapshot() {
             return None;
         }
         let o = self.origin_world();

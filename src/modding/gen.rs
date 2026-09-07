@@ -84,6 +84,7 @@ struct FeatureHook {
     mod_idx: usize,
     feature_id: u32,
     stage_idx: usize,
+    filter: mod_api::GenFeatureFilter,
 }
 
 struct StageHook {
@@ -131,11 +132,20 @@ impl GenHooks {
     /// (instance disabled with a logged error) and is skipped.
     pub fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> Option<Vec<([i32; 3], u16)>> {
         let hook = &self.features[idx];
+        if !hook
+            .filter
+            .intersects(inputs.section_pos[1], inputs.surface_heights)
+        {
+            return None;
+        }
         let call = GuestCall::GenFeature {
             feature_id: hook.feature_id,
             section_pos: inputs.section_pos,
             seed: inputs.seed,
-            blocks: inputs.blocks.map_or_else(Vec::new, |c| c.iter().collect()),
+            blocks: inputs
+                .blocks
+                .filter(|_| hook.filter.needs_blocks)
+                .map_or_else(Vec::new, |c| c.iter().collect()),
             surface_heights: inputs.surface_heights.to_vec(),
             biomes: inputs.biomes.to_vec(),
             sea_level: SEA_LEVEL,
@@ -401,9 +411,11 @@ impl GenHooksBuilder {
     /// Fold one main-load registration in (no-op for non-gen registrations).
     pub(super) fn add_registration(&mut self, mod_id: &str, module: &Module, reg: &Registration) {
         match *reg {
-            Registration::WorldgenFeature { stage, feature_id } => {
-                self.add_feature(mod_id, module, stage, feature_id)
-            }
+            Registration::WorldgenFeature {
+                stage,
+                feature_id,
+                filter,
+            } => self.add_feature(mod_id, module, stage, feature_id, filter),
             Registration::StageReplacement { stage, callback_id } => {
                 self.add_stage_replacement(mod_id, module, stage, callback_id)
             }
@@ -424,12 +436,14 @@ impl GenHooksBuilder {
         module: &Module,
         stage: WorldgenStage,
         feature_id: u32,
+        filter: mod_api::GenFeatureFilter,
     ) {
         let mod_idx = self.mod_index(mod_id, module);
         self.features.push(FeatureHook {
             mod_idx,
             feature_id,
             stage_idx: stage_index(stage),
+            filter,
         });
     }
 
@@ -545,78 +559,4 @@ pub fn installed_epoch() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use petramond_world::chunk::SectionPos;
-    use petramond_worldgen::driver::ChunkGenerator;
-
-    /// A minimal guest whose init succeeds and whose every dispatch traps —
-    /// the "runaway/broken gen mod" for the fallback contract.
-    fn trapping_module() -> Module {
-        let wat = r#"(module
-  (import "env" "host_dispatch" (func $hd (param i32 i32) (result i64)))
-  (memory (export "memory") 1)
-  (func (export "mod_init"))
-  (func (export "mod_alloc") (param i32) (result i32) (i32.const 4096))
-  (func (export "mod_free") (param i32 i32))
-  (func (export "mod_dispatch") (param i32 i32) (result i64) unreachable))"#;
-        Module::new(super::super::host::engine(), wat.as_bytes()).expect("assemble trap guest")
-    }
-
-    /// Conflict contract: two mods replacing the same stage → LAST in load
-    /// order wins; `RegisterGenerator` claims every stage and later
-    /// stage-specific replacements override it per stage.
-    #[test]
-    fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
-        let module = trapping_module();
-        let mut b = GenHooksBuilder::new(1);
-        b.add_generator("alpha", &module, 7);
-        b.add_stage_replacement("beta", &module, WorldgenStage::Terrain, 9);
-        let hooks = b.build().expect("hooks registered");
-
-        for stage in ALL_STAGES {
-            assert!(hooks.replaces(stage), "{stage:?} is replaced");
-        }
-        let terrain = hooks.replacements[stage_index(WorldgenStage::Terrain)]
-            .as_ref()
-            .unwrap();
-        assert_eq!(hooks.mods[terrain.mod_idx].id, "beta", "later mod wins");
-        assert_eq!(terrain.callback_id, 9);
-        let climate = hooks.replacements[stage_index(WorldgenStage::Climate)]
-            .as_ref()
-            .unwrap();
-        assert_eq!(hooks.mods[climate.mod_idx].id, "alpha");
-
-        // Nothing registered = no config = the empty fast path.
-        assert!(GenHooksBuilder::new(1).build().is_none());
-    }
-
-    /// Failure contract: a trapping replacement falls back to the ENGINE
-    /// stage and a trapping feature is skipped — the generated section is
-    /// byte-identical to a hookless generator's.
-    #[test]
-    fn trapping_gen_mod_falls_back_to_the_engine_stage() {
-        let module = trapping_module();
-        let mut b = GenHooksBuilder::new(0x312);
-        b.add_stage_replacement("hostile", &module, WorldgenStage::Terrain, 1);
-        b.add_stage_replacement("hostile", &module, WorldgenStage::Vegetation, 2);
-        b.add_feature("hostile", &module, WorldgenStage::Trees, 3);
-        let hooks = b.build().expect("hooks registered");
-
-        let seed = 0x312;
-        let hooked = ChunkGenerator::with_hooks(seed, Some(hooks));
-        let engine = ChunkGenerator::with_hooks(seed, None);
-        for &(cx, cy, cz) in &[(0, 3, 0), (1, 4, -1), (-2, 2, 5)] {
-            let col_hooked = hooked.generate_column_gen(cx, cz);
-            let col_engine = engine.generate_column_gen(cx, cz);
-            let sp = SectionPos::new(cx, cy, cz);
-            let a = hooked.generate_section(sp, &col_hooked);
-            let b = engine.generate_section(sp, &col_engine);
-            assert_eq!(
-                a.blocks_iter().collect::<Vec<_>>(),
-                b.blocks_iter().collect::<Vec<_>>(),
-                "engine fallback must be byte-identical at ({cx},{cy},{cz})"
-            );
-        }
-    }
-}
+mod tests;

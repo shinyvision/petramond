@@ -157,7 +157,10 @@ pub trait Mod: Default {
     /// carries the tick without a host call. Facts beyond the baseline reach
     /// `ctx` only when the brain row declares them (`"inputs"` — see
     /// [`AiNodeCtx`]). Return `None` (or default fields) for "no opinion";
-    /// the engine merges by the brain row's priority.
+    /// the engine settles every [`DecisionChannel`] by the brain row's
+    /// priority — a scripted node fills and holds exactly the channels an
+    /// engine node can ([`AiNodeDecision::claims`] holds a channel EMPTY
+    /// against lower nodes, e.g. `Attack` while fleeing).
     fn ai_node(&mut self, _callback_id: u32, _ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         None
     }

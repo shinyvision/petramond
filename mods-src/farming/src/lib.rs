@@ -143,7 +143,7 @@ impl Mod for Farming {
         register_block_behavior("farming:crop", HOOK_CROP);
         register_block_behavior("farming:farmland", HOOK_FARMLAND);
         register_block_behavior("farming:grass_fertilized", HOOK_SPREAD);
-        register_worldgen_feature(WorldgenStage::Trees, GEN_WILD_PATCHES);
+        register_worldgen_feature(WorldgenStage::Trees, GEN_WILD_PATCHES, worldgen::GEN_FILTER);
         register_ai_node("farming:follow_wheat", AI_FOLLOW_WHEAT);
         register_ai_node("farming:husbandry_goal", AI_HUSBANDRY_GOAL);
         // Right after the mobs move, so the sweep measures this tick's

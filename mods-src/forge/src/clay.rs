@@ -49,6 +49,11 @@ const PROBES: [(i32, i32); 4] = [
 const DEPTH_MIN: i32 = 1;
 const DEPTH_MAX: i32 = 3;
 
+/// The feature's write bounds for host-side admission: a deposit occupies
+/// `surf - DEPTH_MAX + 1 ..= surf`, so only sections that band can touch are
+/// dispatched. Declared beside the depth it is derived from.
+pub(crate) const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::surface_band(1 - DEPTH_MAX, 0);
+
 /// A riverbed or bank sits at the waterline; a column far above it is not one,
 /// whatever its neighbours are.
 const BANK_MAX_RISE: i32 = 6;

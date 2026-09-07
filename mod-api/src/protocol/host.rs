@@ -383,6 +383,7 @@ pub enum HostCall {
     RegisterWorldgenFeature {
         feature_id: u32,
         stage: WorldgenStage,
+        filter: crate::GenFeatureFilter,
     },
     /// REPLACE one engine worldgen stage. Legal ONLY during `mod_init`. The
     /// engine dispatches [`GuestCall::GenStage`] instead of running its own

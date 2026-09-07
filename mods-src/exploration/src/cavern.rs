@@ -132,11 +132,13 @@ const ANCHOR_LATTICE: i32 = 8;
 const PROBE_PER_CANDIDATE: usize = ANCHOR_LATTICE as usize + 1;
 
 /// Highest world Y this feature can write anything at: a giant anchored at the
-/// very top of the biome's declared depth band, at full rise. The engine
-/// dispatches every registered feature for EVERY section it generates, so
-/// bounding the pack's own altitude is the pack's job — without this the whole
-/// gather runs, provably fruitlessly, for every section from bedrock to sky.
+/// very top of the biome's declared depth band, at full rise.
 const TOP_CONTENT_Y: i32 = crate::BIOME_TOP_Y + MAX_RISE;
+
+/// The feature's write bounds for host-side admission: everything from the
+/// world floor up to [`TOP_CONTENT_Y`]. The host skips every section above it
+/// without a dispatch, so the whole gather never runs for the sky.
+pub(crate) const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::y_band(i32::MIN, TOP_CONTENT_Y);
 
 /// A rolled giant, and the vertical window its root may be found in.
 ///
@@ -223,10 +225,12 @@ struct MarginCol {
 }
 
 pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
-    let origin = ctx.origin_world();
-    if origin[1] > TOP_CONTENT_Y {
+    // The host already skips sections above the filter; a direct call (a unit
+    // test) gets the same answer from the same bounds.
+    if !GEN_FILTER.intersects(ctx.section_pos()[1], &[]) {
         return Vec::new();
     }
+    let origin = ctx.origin_world();
     let Some(ours) = biome_id() else {
         return Vec::new();
     };

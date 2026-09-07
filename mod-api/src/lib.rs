@@ -29,6 +29,7 @@ mod protocol;
 mod sched;
 mod shape;
 mod wire;
+mod worldgen;
 
 #[cfg(test)]
 mod wire_pin;
@@ -46,3 +47,4 @@ pub use sched::*;
 pub use serde_bytes::ByteBuf;
 pub use shape::*;
 pub use wire::*;
+pub use worldgen::*;

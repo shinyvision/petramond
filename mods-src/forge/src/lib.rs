@@ -66,9 +66,9 @@ impl Mod for Forge {
         // clay feature resolves its own block there, so it must come first and
         // must not depend on anything sim-side.
         self.clay.init();
-        register_worldgen_feature(WorldgenStage::Underground, GEN_CLAY);
+        register_worldgen_feature(WorldgenStage::Underground, GEN_CLAY, clay::GEN_FILTER);
         self.ore.init();
-        register_worldgen_feature(WorldgenStage::Underground, GEN_ORE);
+        register_worldgen_feature(WorldgenStage::Underground, GEN_ORE, ore::GEN_FILTER);
 
         // Everything below reaches the SIMULATION — the anchor registry lives
         // in world KV. Worldgen instances run `mod_init` detached, with no

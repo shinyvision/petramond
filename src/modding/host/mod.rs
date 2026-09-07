@@ -154,6 +154,7 @@ pub(in crate::modding) enum Registration {
     WorldgenFeature {
         stage: mod_api::WorldgenStage,
         feature_id: u32,
+        filter: mod_api::GenFeatureFilter,
     },
     StageReplacement {
         stage: mod_api::WorldgenStage,
@@ -291,14 +292,20 @@ impl ModStoreData {
 
     pub(super) fn register(&mut self, reg: Registration) -> HostRet {
         if self.phase != Phase::Init {
-            self.stats.rejected_registrations += 1;
-            return HostRet::Error(
-                "mod registrations may only be registered during mod_init".into(),
-            );
+            return self
+                .refuse_registration("mod registrations may only be registered during mod_init");
         }
         self.stats.registered += 1;
         self.pending.push(reg);
         HostRet::Unit
+    }
+
+    /// Refuse a registration (out of window, or a shape the host cannot
+    /// honour), counting it so the per-mod stats show a pack whose init is
+    /// misfiring.
+    pub(super) fn refuse_registration(&mut self, why: impl Into<String>) -> HostRet {
+        self.stats.rejected_registrations += 1;
+        HostRet::Error(why.into())
     }
 
     pub(super) fn rng_next(&mut self, stream_key: &str) -> u64 {

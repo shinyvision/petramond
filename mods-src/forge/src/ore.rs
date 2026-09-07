@@ -24,6 +24,12 @@ const SALT_VEIN: u64 = 0xF012_04E0_0000_0001;
 const Y_MIN: i32 = -64;
 const Y_MAX: i32 = -40;
 
+/// The feature's write bounds for host-side admission. A vein's cluster
+/// reaches ONE block past the band its origin rolled in (see [`CLUSTER`]),
+/// so the declared roof is one higher than `Y_MAX` — declared here, beside
+/// the geometry that makes it so.
+pub(crate) const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::y_band(Y_MIN, Y_MAX + 1);
+
 /// Vein candidates rolled per 16×16 chunk column. Tuned against `orecensus`
 /// for Rachel's target: petramond ≈ 2× rarer than diamond by total cells
 /// (diamond's mass is spread over −64..16; petramond packs its half into
@@ -68,12 +74,12 @@ impl Ore {
         let (Some(ore), Some(stone)) = (self.ore, self.stone) else {
             return Vec::new();
         };
-        let origin = ctx.origin_world();
-        // The cheap altitude reject, before anything rolls: a vein reaches
-        // one block past its band.
-        if origin[1] > Y_MAX + 1 || origin[1] + 16 <= Y_MIN {
+        // The host already skips sections outside `GEN_FILTER`; a direct call
+        // (a unit test) gets the same answer from the same bounds.
+        if !GEN_FILTER.intersects(ctx.section_pos()[1], &[]) {
             return Vec::new();
         }
+        let origin = ctx.origin_world();
         let seed = ctx.seed();
         let (cx, cz) = (origin[0] >> 4, origin[2] >> 4);
 
