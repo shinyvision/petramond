@@ -45,7 +45,13 @@ pub mod remap;
 // 35: `SpatialSoundMsg::Set` (a live spatial sound retuned in place —
 //     the loop rows' volume follows what the mod integrates, e.g. a cart's
 //     speed) appended after `Stop`.
-pub const PROTOCOL_VERSION: u16 = 35;
+// 36: `ClientToServer::TerrainBacklog { mesh_sections, upload_columns }` —
+//     the client's raw presentation backlog, reported every 100 ms
+//     independently of batch acks, so the server's terrain admission backs
+//     off while the client is still MESHING what it already received (an ack
+//     only says it was applied). Counts only; the pressure policy is the
+//     server's (`TerrainSync::apply_presentation_backlog`).
+pub const PROTOCOL_VERSION: u16 = 36;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

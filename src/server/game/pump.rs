@@ -263,6 +263,12 @@ impl ServerGame {
             } => self.sessions[s]
                 .terrain
                 .apply_batch_ack(messages_per_second),
+            ClientToServer::TerrainBacklog {
+                mesh_sections,
+                upload_columns,
+            } => self.sessions[s]
+                .terrain
+                .apply_presentation_backlog(mesh_sections, upload_columns),
             ClientToServer::SectionCacheMiss { pos } => {
                 self.sessions[s].terrain.handle_cache_miss(pos)
             }

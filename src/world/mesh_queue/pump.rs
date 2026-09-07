@@ -117,6 +117,10 @@ impl World {
                 }
                 continue;
             }
+            if self.stream_mesh_waiting(pos) {
+                self.terrain.dirty_meshes.push(pos);
+                continue;
+            }
             if let Some(job) = self.build_mesh_job(pos) {
                 let key = target.map_or(0, |t| t.section_priority_key(pos));
                 let cancel = self.terrain.mesh_pool.submit(key, job);

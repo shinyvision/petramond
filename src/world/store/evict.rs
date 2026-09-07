@@ -35,6 +35,7 @@ impl World {
                 .insert(pos.chunk_pos());
         }
         self.terrain.dirty_meshes.remove(pos);
+        self.terrain.mesh_settle.remove(&pos);
         self.terrain.light_blocked_meshes.remove(&pos);
         self.light_deferred.remove(&pos);
         self.deferred_rechecks.remove(&pos);
@@ -69,6 +70,7 @@ impl World {
             }
             self.terrain.repack_forced.remove(&sp);
             self.terrain.dirty_meshes.remove(sp);
+            self.terrain.mesh_settle.remove(&sp);
             self.terrain.light_blocked_meshes.remove(&sp);
             self.light_deferred.remove(&sp);
             self.deferred_rechecks.remove(&sp);
@@ -137,6 +139,7 @@ impl World {
             job.cancel();
         }
         self.terrain.mesh_job_cancels.clear();
+        self.terrain.mesh_settle.clear();
         self.terrain.mesh_columns.clear();
         self.terrain.mesh_column_cys.clear();
         self.data.section_column_cys.clear();

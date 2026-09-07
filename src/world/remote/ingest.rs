@@ -200,6 +200,7 @@ impl World {
         }
         for pos in affected {
             self.queue_dirty_mesh(pos);
+            self.defer_stream_mesh(pos);
         }
         self.terrain.vis_dirty = true;
     }

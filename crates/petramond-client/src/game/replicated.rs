@@ -610,7 +610,12 @@ impl Game {
                 ServerToClient::StreamBatchStart => {
                     self.stream_batch_started = Some(std::time::Instant::now());
                 }
-                ServerToClient::StreamBatchEnd { count } => self.ack_stream_batch(count),
+                ServerToClient::StreamBatchEnd { count } => {
+                    self.replica
+                        .finish_remote_install_batch(&self.remote_section_installs);
+                    self.remote_section_installs.clear();
+                    self.ack_stream_batch(count);
+                }
                 ServerToClient::KeepAlive => {}
                 ServerToClient::ServerClosing => {
                     self.note_connection_lost_because("the server closed");

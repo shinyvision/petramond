@@ -1,6 +1,21 @@
 use super::store::World;
 
 impl World {
+    /// Work still needed before installed terrain is presentable; parked hidden
+    /// sections do not consume meshing admission and are deliberately excluded.
+    pub fn terrain_presentation_backlog(&self) -> (u32, u32) {
+        let mesh = self.terrain.dirty_meshes.len()
+            + self.terrain.mesh_jobs_in_flight
+            + self.terrain.light_blocked_meshes.len();
+        (
+            mesh.min(u32::MAX as usize) as u32,
+            self.terrain
+                .mesh_upload_dirty_columns
+                .len()
+                .min(u32::MAX as usize) as u32,
+        )
+    }
+
     /// Is any terrain CPU light/mesh work still queued or in flight? Tooling uses this
     /// to detect when the background pipeline has settled; renderer upload dirtiness is
     /// tracked separately because headless profilers have no renderer to clear it.

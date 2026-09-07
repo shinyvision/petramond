@@ -146,6 +146,7 @@ impl Game {
             staged_rows: Default::default(),
             stream_batch_started: None,
             stream_rate_ema: None,
+            stream_feedback_at: None,
             incoming: Vec::new(),
             remote_section_installs: Vec::new(),
             pending_chat_lines: Vec::new(),

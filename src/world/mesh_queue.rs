@@ -12,6 +12,7 @@ mod mesh_jobs;
 mod prediction;
 mod pump;
 mod sealing;
+pub(in crate::world) mod settle;
 
 #[cfg(test)]
 mod tests;

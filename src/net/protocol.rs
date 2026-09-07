@@ -163,6 +163,11 @@ pub enum ClientToServer {
     StreamBatchAck {
         messages_per_second: f32,
     },
+    /// Presentation pressure, refreshed independently of receipt acknowledgements.
+    TerrainBacklog {
+        mesh_sections: u32,
+        upload_columns: u32,
+    },
     /// The server sent [`ServerToClient::SectionCached`] for a section this
     /// client no longer holds (cap eviction, declined cache, hash drift). The
     /// server forgets its belief and re-streams the full payload — the

@@ -256,5 +256,21 @@ impl Game {
         // admission-limited RD32 flight meshing while the workers sat idle.
         const MESH_BUDGET: usize = 256;
         self.replica.tick_mesh_budget(MESH_BUDGET);
+        if self
+            .stream_feedback_at
+            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(100))
+        {
+            let (mesh_sections, upload_columns) = self.replica.terrain_presentation_backlog();
+            if self
+                .handle
+                .send(petramond::net::protocol::ClientToServer::TerrainBacklog {
+                    mesh_sections,
+                    upload_columns,
+                })
+                .is_ok()
+            {
+                self.stream_feedback_at = Some(std::time::Instant::now());
+            }
+        }
     }
 }

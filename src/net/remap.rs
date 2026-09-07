@@ -351,6 +351,7 @@ impl IdRemap {
             | ClientToServer::CraftRecipe { .. }
             | ClientToServer::ChatSend { .. }
             | ClientToServer::StreamBatchAck { .. }
+            | ClientToServer::TerrainBacklog { .. }
             | ClientToServer::SectionCacheMiss { .. }
             | ClientToServer::Pause(_)
             | ClientToServer::KeepAlive

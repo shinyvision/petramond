@@ -85,6 +85,7 @@ pub(in crate::world) struct TerrainRenderState {
     pub(in crate::world) repack_forced: FxHashSet<SectionPos>,
     /// Monotonic mesh-pump frame counter (drives `mesh_release_after`).
     pub(in crate::world) mesh_pump_frame: u64,
+    pub(in crate::world) mesh_settle: FxHashMap<SectionPos, super::mesh_queue::settle::MeshSettle>,
     /// Ordinary off-thread section meshing: dirty sections are submitted as owned
     /// snapshots and finished meshes drained back. Local prediction deliberately
     /// invokes the same builder synchronously.
@@ -371,6 +372,7 @@ impl World {
                 mesh_release_after: FxHashMap::default(),
                 repack_forced: FxHashSet::default(),
                 mesh_pump_frame: 0,
+                mesh_settle: FxHashMap::default(),
                 prediction_terrain: super::prediction_render::PredictionTerrainQueue::new(
                     jobs.clone(),
                 ),
