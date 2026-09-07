@@ -676,6 +676,14 @@ mod tests {
         );
     }
 
+    /// Half-width of the flat stone stage the boat fixture builds around the
+    /// spawn: the pool sits five cells out with a four-cell ring, plus a
+    /// margin the hull nudge search may explore.
+    const STAGE_REACH: i32 = 12;
+    /// Air cells cleared above the stage: the player, the aim ray and the
+    /// checked hull spawn sweep all fit inside.
+    const STAGE_HEADROOM: i32 = 4;
+
     /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
     /// pointing at the staged vehicles pack before first registry touch).
     #[test]
@@ -688,33 +696,48 @@ mod tests {
             server.pump_tagged(0.06, &mut Vec::new(), &[]);
         }
 
-        // A contained one-cell pool two cells ahead of the player (+x):
-        // stone floor and ring so the source cannot spread, air above.
+        // The fixture owns its terrain. Spawn is drawn from OS entropy onto
+        // whatever the generator put there, so a natural slope, tuft, canopy
+        // or cave mouth under the player would move the aim ray; a flat stone
+        // stage with clear air above it makes the geometry below a constant.
         let feet = server.sessions[0].player.pos;
         let (bx, by, bz) = (
             feet.x.floor() as i32,
             feet.y.floor() as i32,
             feet.z.floor() as i32,
         );
+        for dx in -STAGE_REACH..=STAGE_REACH {
+            for dz in -STAGE_REACH..=STAGE_REACH {
+                server
+                    .world
+                    .set_block_world(bx + dx, by - 1, bz + dz, Block::Stone);
+                for dy in 0..=STAGE_HEADROOM {
+                    server
+                        .world
+                        .set_block_world(bx + dx, by + dy, bz + dz, Block::Air);
+                }
+            }
+        }
+        {
+            let sess = &mut server.sessions[0];
+            let standing = Vec3::new(bx as f32 + 0.5, by as f32, bz as f32 + 0.5);
+            sess.player.pos = standing;
+            sess.player.vel = Vec3::ZERO;
+            sess.claim_pos = standing;
+        }
+
+        // A contained one-cell pool two cells ahead of the player (+x):
+        // stone floor and ring so the source cannot spread, air above.
         let (wx, wy, wz) = (bx + 5, by, bz);
         for dx in -4..=4 {
             for dz in -4..=4 {
                 let edge = dx == -4 || dx == 4 || dz == -4 || dz == 4;
-                server
-                    .world
-                    .set_block_world(wx + dx, wy - 1, wz + dz, Block::Stone);
                 server.world.set_block_world(
                     wx + dx,
                     wy,
                     wz + dz,
                     if edge { Block::Stone } else { Block::Water },
                 );
-                // The checked spawn sweeps the whole hull: clear headroom.
-                for dy in 1..=3 {
-                    server
-                        .world
-                        .set_block_world(wx + dx, wy + dy, wz + dz, Block::Air);
-                }
             }
         }
 

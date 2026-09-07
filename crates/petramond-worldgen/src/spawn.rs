@@ -13,11 +13,14 @@
 //! core `find_spawn_rng` takes an explicit `rng_seed` so tests stay
 //! reproducible; [`find_spawn`] feeds it real entropy.
 //!
-//! **The dry-land predicate.** A column's `surf` is its top *solid* surface
-//! height from the live surface-density region. The chunk filler floods every
-//! density-air cell at or below `SEA_LEVEL` to water, so `surf >= SEA_LEVEL`
-//! means the top solid block has no sea water above it. This excludes oceans and
-//! lakes while accepting beaches (`surf == SEA_LEVEL`), plains, and mountains.
+//! **The standing-ground predicate.** A column's `surf` is its top *solid*
+//! surface height from the live surface-density region. The chunk filler floods
+//! every density-air cell at or below `SEA_LEVEL` to water, so `surf >=
+//! SEA_LEVEL` means the top solid block has no sea water above it. This excludes
+//! oceans and lakes while accepting beaches (`surf == SEA_LEVEL`), plains, and
+//! mountains. The surface voxel must also survive the cave carve: a column whose
+//! surface is a cave mouth has no floor at `surf`, and a player stood there
+//! drops into the cave.
 //!
 //! **Choosing the centre.** We first find the nearest dry-land column to the
 //! origin (an outward chunk-ring walk). If it lies within [`SEARCH_RADIUS`] the
@@ -101,11 +104,12 @@ impl SpawnWorld {
         }
     }
 
-    /// RAW (pre-cave) 16×16 surfaces for a chunk, via the process-wide feature
-    /// tile memo — same bytes as `surface.region`, but warms tiles the join
-    /// gen path reuses immediately after.
-    fn raw_chunk_surfaces(&self, cx: i32, cz: i32) -> Vec<i32> {
-        let (_region, raw) = cached_feature_region(
+    /// The 16×16 standing heights of a chunk: the top solid block of every
+    /// column that is dry land with an uncarved surface, `None` elsewhere. Read
+    /// through the process-wide feature tile memo, which warms the tiles the
+    /// join gen path reuses immediately after.
+    fn standing_heights(&self, cx: i32, cz: i32) -> Vec<Option<i32>> {
+        let (region, raw) = cached_feature_region(
             &self.surface,
             &self.caves,
             self.seed,
@@ -114,12 +118,17 @@ impl SpawnWorld {
             16,
             16,
         );
-        raw
+        // The cave-adjusted surface equals the raw one exactly when the
+        // surface voxel was not carved.
+        raw.iter()
+            .zip(&region.surf)
+            .map(|(&raw, &adjusted)| (raw >= SEA_LEVEL && adjusted == raw).then_some(raw))
+            .collect()
     }
 }
 
 /// Try up to [`MAX_ATTEMPTS`] uniformly random columns inside the disk of radius
-/// [`SEARCH_RADIUS`] around `centre`, returning the first that is dry land.
+/// [`SEARCH_RADIUS`] around `centre`, returning the first with standing ground.
 fn sample_dry_land(world: &SpawnWorld, (cx, cz): (i32, i32), rng: &mut Rng) -> Option<IVec3> {
     let r = SEARCH_RADIUS as f32;
     let r_sq = (SEARCH_RADIUS as i64) * (SEARCH_RADIUS as i64);
@@ -134,8 +143,7 @@ fn sample_dry_land(world: &SpawnWorld, (cx, cz): (i32, i32), rng: &mut Rng) -> O
         if dx * dx + dz * dz > r_sq {
             continue; // rounding nudged it just outside the radius — retry.
         }
-        let surf = column_surface(world, wx, wz);
-        if surf >= SEA_LEVEL {
+        if let Some(surf) = standing_height(world, wx, wz) {
             return Some(IVec3::new(wx, surf, wz));
         }
     }
@@ -173,20 +181,15 @@ fn nearest_dry_land(world: &SpawnWorld) -> Option<IVec3> {
     best.map(|(_, p)| p)
 }
 
-/// Scan one chunk's 16x16 columns, updating `best` with any dry-land column
-/// closer to the origin than the current best.
-///
+/// Scan one chunk's 16x16 columns, updating `best` with any standing-ground
+/// column closer to the origin than the current best.
 fn scan_chunk(world: &SpawnWorld, cx: i32, cz: i32, best: &mut Option<(i64, IVec3)>) {
-    let surf = world.raw_chunk_surfaces(cx, cz);
-    if !surf.iter().any(|&s| s >= SEA_LEVEL) {
-        return; // all ocean/lake floor, or no solid column.
-    }
+    let heights = world.standing_heights(cx, cz);
     for z in 0..16i32 {
         for x in 0..16i32 {
-            let s = surf[(z * 16 + x) as usize];
-            if s < SEA_LEVEL {
-                continue; // ocean / lake / river channel — surface is water.
-            }
+            let Some(s) = heights[(z * 16 + x) as usize] else {
+                continue;
+            };
             let wx = cx * CHUNK + x;
             let wz = cz * CHUNK + z;
             let d = (wx as i64) * (wx as i64) + (wz as i64) * (wz as i64);
@@ -197,16 +200,16 @@ fn scan_chunk(world: &SpawnWorld, cx: i32, cz: i32, best: &mut Option<(i64, IVec
     }
 }
 
-/// Density top-solid surface height for a single world column. Matches the
-/// per-chunk batch [`scan_chunk`] reads because density lattice sampling is
-/// world-anchored (and both go through the same tile memo).
-fn column_surface(world: &SpawnWorld, wx: i32, wz: i32) -> i32 {
+/// Standing height of a single world column, or `None` where a player cannot
+/// stand. Matches the per-chunk batch [`scan_chunk`] reads because density
+/// lattice sampling is world-anchored (and both go through the same tile memo).
+fn standing_height(world: &SpawnWorld, wx: i32, wz: i32) -> Option<i32> {
     let tcx = wx.div_euclid(CHUNK);
     let tcz = wz.div_euclid(CHUNK);
-    let surf = world.raw_chunk_surfaces(tcx, tcz);
+    let heights = world.standing_heights(tcx, tcz);
     let lx = (wx - tcx * CHUNK) as usize;
     let lz = (wz - tcz * CHUNK) as usize;
-    surf[lz * 16 + lx]
+    heights[lz * 16 + lx]
 }
 
 /// Chunk coordinates on the square ring at Chebyshev distance `r` from `(0, 0)`.
@@ -265,10 +268,6 @@ mod tests {
 
     const SEEDS: [u32; 5] = [0x1234_5678, 1, 7, 0xDEAD_BEEF, 42];
 
-    fn dist_sq(p: IVec3) -> i64 {
-        (p.x as i64) * (p.x as i64) + (p.z as i64) * (p.z as i64)
-    }
-
     #[test]
     fn find_spawn_rng_is_deterministic() {
         for &seed in &SEEDS {
@@ -283,25 +282,25 @@ mod tests {
         }
     }
 
+    /// A spawn must stand on ground: dry land whose surface voxel the cave
+    /// carve left in place. A cave mouth reads as a solid surface to the raw
+    /// density field, and a player dropped onto one falls into the cave.
     #[test]
-    #[ignore = "diagnostic: prints spawn placement, distance and timing per seed"]
-    fn diag_spawn_report() {
-        for seed in 0u32..16 {
+    fn spawns_stand_on_uncarved_dry_land() {
+        for &seed in &SEEDS {
             let world = SpawnWorld::new(seed);
-            let origin = column_surface(&world, 0, 0);
-            let t0 = std::time::Instant::now();
-            let p = find_spawn_rng(&world, 0xC0FFEE);
-            let dt = t0.elapsed();
-            let dist = (dist_sq(p) as f64).sqrt();
-            let surf = column_surface(&world, p.x, p.z);
-            eprintln!(
-                "seed {seed:>2}: origin_surf {origin:>3} ({}) -> spawn ({:>5},{:>3},{:>5}) surf {surf:>3} dist {dist:>7.1}  in {:?}",
-                if origin >= SEA_LEVEL { "LAND " } else { "OCEAN" },
-                p.x,
-                p.y,
-                p.z,
-                dt,
-            );
+            for rng_seed in [0u64, 1, 99, 1_000_000] {
+                let p = find_spawn_rng(&world, rng_seed);
+                assert!(
+                    p.y >= SEA_LEVEL,
+                    "seed {seed:#x} rng {rng_seed}: spawned over water"
+                );
+                assert_eq!(
+                    world.caves.feature_surface_after_caves(p.x, p.z, p.y),
+                    p.y,
+                    "seed {seed:#x} rng {rng_seed}: spawned over a cave mouth"
+                );
+            }
         }
     }
 }
