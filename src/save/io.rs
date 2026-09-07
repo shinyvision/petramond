@@ -135,6 +135,8 @@ pub(super) fn read_thread(
     colgen_tx: Sender<LoadedColumnGen>,
     completed: Arc<(Mutex<u64>, Condvar)>,
 ) {
+    crate::worker::lower_current_thread_priority();
+    let mut decoders = super::decode::Decoders::new(load_tx, colgen_tx);
     let region_dir = dir.join("region");
     let explored_dir = dir.join("explored");
     let colgen_dir = dir.join("colgen");
@@ -183,28 +185,14 @@ pub(super) fn read_thread(
                     SectionStore::ExploredCache => &explored_dir,
                 };
                 let path = region::region_path(source_dir, rx_, rz_);
-                let decoded = region_cache
-                    .read_record(&path, region::local_index(pos), barrier)
-                    .and_then(|blob| codec::decode_section(pos, &blob));
-                let (section, entities, mobs) = match decoded {
-                    Some((section, entities, mobs)) => (Some(section), entities, mobs),
-                    None => (None, Vec::new(), Vec::new()),
-                };
-                let _ = load_tx.send(LoadedSection {
-                    pos,
-                    store,
-                    section,
-                    entities,
-                    mobs,
-                });
+                let bytes = region_cache.read_record(&path, region::local_index(pos), barrier);
+                decoders.submit(super::decode::DecodeJob::Section { pos, store, bytes });
             }
             ReadMsg::ColumnGen { pos, seed, barrier } => {
                 let (rx_, rz_) = colgen::region_of(pos);
                 let path = colgen::cache_path(&colgen_dir, rx_, rz_);
-                let record = colgen_cache
-                    .read_record(&path, colgen::local_index(pos), barrier)
-                    .and_then(|blob| colgen::decode_record(pos, seed, &blob));
-                let _ = colgen_tx.send(LoadedColumnGen { pos, record });
+                let bytes = colgen_cache.read_record(&path, colgen::local_index(pos), barrier);
+                decoders.submit(super::decode::DecodeJob::Column { pos, seed, bytes });
             }
             ReadMsg::Shutdown => unreachable!("shutdown is handled at the queue head"),
         }

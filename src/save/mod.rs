@@ -13,6 +13,7 @@ pub mod client;
 mod codec;
 pub use petramond_worldgen::colgen;
 mod container;
+mod decode;
 pub mod entities;
 mod furnace;
 mod io;
