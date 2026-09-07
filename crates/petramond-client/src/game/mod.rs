@@ -39,6 +39,7 @@ pub use petramond::menu as container;
 mod bone_ease;
 pub mod environment;
 mod frame;
+mod hand_motion;
 mod local_player;
 mod menu_prediction;
 pub mod prediction;
@@ -174,6 +175,7 @@ pub struct Game {
     /// `StreamBatchAck` reports so the server sizes future batches to this
     /// client's real throughput.
     stream_rate_ema: Option<f32>,
+    stream_feedback_at: Option<std::time::Instant>,
     /// Per-frame scratch for drained server messages (capacity reused).
     incoming: Vec<petramond::net::protocol::ServerToClient>,
     /// Replica sections installed during the current message drain. Their
@@ -254,6 +256,7 @@ pub struct Game {
     /// First-person walking sway — a presentation offset on the camera, and
     /// the signal the hand follows (lagged) so the two are not in lockstep.
     view_bob: view_bob::ViewBob,
+    hand_motion: hand_motion::HandMotion,
     /// Speed-coupled FOV — the camera widens with the body's WISHED land
     /// speed (`Player::wish_speed`), a presentation retarget of `cam.fov_y`.
     speed_fov: speed_fov::SpeedFov,

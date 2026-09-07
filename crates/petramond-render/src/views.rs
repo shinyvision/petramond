@@ -167,6 +167,30 @@ pub struct MobPresentation {
     pub ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
 }
 
+/// Water movement shares a stroke clock across treading and directional styles.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SwimBlend {
+    pub grounded: f32,
+    pub weight: f32,
+    pub phase: f32,
+    pub moving: f32,
+    pub backward: f32,
+    pub rising: f32,
+}
+
+/// Presentation weights for the authored locomotion styles. No simulation state.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct LocomotionBlend {
+    pub swim: SwimBlend,
+    pub run: f32,
+    pub backward: f32,
+    pub airborne: f32,
+    pub falling: f32,
+    pub landing: f32,
+    /// Signed lateral balance, positive toward the body's right.
+    pub strafe: f32,
+}
+
 /// The local player's third-person body for this frame, or absent in first person.
 /// Player movement/look are per-frame (already smooth), so unlike mobs there are
 /// no prev/current pairs to interpolate.
@@ -179,7 +203,7 @@ pub struct PlayerPresentation {
     /// Head yaw relative to the body (radians) and look pitch.
     pub head_yaw: f32,
     pub head_pitch: f32,
-    /// Seconds into the walk animation.
+    /// Normalized stride phase; each clip supplies its own duration.
     pub anim_time: f32,
     /// The body renders seated (legs forward): mounted on a mob seat, or
     /// pinned at a pose anchor whose pose is `sitting`. Anchor poses outside
@@ -192,6 +216,7 @@ pub struct PlayerPresentation {
     pub walk_weight: f32,
     /// Sneak-stance blend weight (`0` upright … `1` fully crouched).
     pub sneak_weight: f32,
+    pub locomotion: crate::views::LocomotionBlend,
     /// Asleep in a bed: the body renders lying on its back, feet at `pos`,
     /// head toward `body_yaw`.
     pub sleeping: bool,

@@ -313,6 +313,20 @@ impl Game {
             // mid-stride then eases the sway in instead of snapping the camera
             // to wherever the phase had run to.
             && !self.third_person_enabled();
+        self.hand_motion.advance(
+            dt,
+            super::hand_motion::MotionSample {
+                position: self.player.pos,
+                velocity: self.player.vel,
+                yaw: self.player.yaw,
+                pitch: self.player.pitch,
+            },
+            !self.player.is_spectator()
+                && self.self_mount.is_none()
+                && self.self_view.sleeping.is_none()
+                && !self.third_person_enabled()
+                && super::body_pose::land_motion(&self.replica, self.player.pos),
+        );
         self.view_bob.advance(dt, hspeed, striding);
         let [bob_side, bob_up] = self.view_bob.offset();
 

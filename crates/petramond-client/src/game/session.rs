@@ -170,6 +170,7 @@ impl Game {
             local_bone_target: Vec::new(),
             intent_use_held: false,
             view_bob: Default::default(),
+            hand_motion: Default::default(),
             speed_fov,
             local_hand_jab: false,
             local_hand_jab_off: false,

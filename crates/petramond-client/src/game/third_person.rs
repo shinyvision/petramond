@@ -102,16 +102,17 @@ impl Game {
             return;
         }
 
-        let vel = self.player.vel;
-        let hspeed = Vec3::new(vel.x, 0.0, vel.z).length();
-        // Sneak state = what the local physics consumed this frame, so the
-        // stance and the slowdown always agree.
         self.third_person.pose.advance(
             dt,
-            hspeed,
-            self.player.yaw,
-            !self.player.is_spectator(),
-            self.predicted_input.sneak,
+            super::body_pose::MotionFrame {
+                position: self.player.pos,
+                velocity: self.player.vel,
+                yaw: self.player.yaw,
+                grounded: self.player.on_ground,
+                medium: super::body_pose::movement_medium(&self.replica, self.player.pos),
+                enabled: !self.player.is_spectator() && self.self_mount.is_none(),
+                sneaking: self.predicted_input.sneak,
+            },
         );
 
         // Boom camera: retreat from the eye opposite the look direction, stopped

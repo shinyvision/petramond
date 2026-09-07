@@ -183,6 +183,11 @@ pub struct HeldItemView {
     /// the arm trails the body instead of moving with it (see
     /// `HeldItemAnimator`). View-space offset, already scaled.
     pub bob: [f32; 2],
+    /// The hand's inertial view-space translation, added to `bob` at
+    /// placement. Already in THIS hand's frame: the client pre-negates x for
+    /// the off hand so the placement mirror lands both hands on the same
+    /// screen direction. Damped while eating.
+    pub motion_offset: [f32; 3],
     /// 0..1 punch phase (sawtooth while mining, one-shot for a break/place).
     pub swing: f32,
     /// Amplitude of the current swing: `1.0` for a mining/break punch, less for
@@ -258,6 +263,7 @@ impl Default for HeldItemView {
             variant: petramond_world::item::VariantId::NONE,
             block_state: HeldBlockState::None,
             bob: [0.0, 0.0],
+            motion_offset: [0.0; 3],
             swing: 0.0,
             swing_scale: 1.0,
             eat: 0.0,
@@ -316,6 +322,10 @@ pub struct HeldItemFrame {
     /// `game::view_bob`). The hand does NOT wear it directly: the animator
     /// lags it, which is what stops the item riding the screen rigidly.
     pub bob: [f32; 2],
+    /// This hand's inertial view-space translation from the client
+    /// (`ClientHeldItem::motion_offset`, off-hand x already negated); passed
+    /// through to the view, damped while eating.
+    pub motion_offset: [f32; 3],
     pub dt: f32,
 }
 
@@ -469,7 +479,7 @@ pub struct PlayerRenderInstance {
     /// Head yaw relative to the body, and look pitch (radians).
     pub head_yaw: f32,
     pub head_pitch: f32,
-    /// Seconds into the walk animation.
+    /// Normalized stride phase; each clip supplies its own duration.
     pub anim_time: f32,
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle), eased by the
     /// game so starts/stops transition instead of snapping.
@@ -478,6 +488,7 @@ pub struct PlayerRenderInstance {
     /// walk blend. Cross-fades the authored `sneak` clip in: frame 0 while
     /// standing, its own cycle (instead of `walk`) while moving.
     pub sneak_weight: f32,
+    pub locomotion: crate::views::LocomotionBlend,
     /// Asleep in a bed: render lying on the back, feet at `pos`, head toward
     /// `body_yaw`; head-look and the arm swing are suppressed.
     pub sleeping: bool,

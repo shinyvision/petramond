@@ -680,6 +680,7 @@ fn render_held_item_preview() {
             variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             bob: [0.0, 0.0],
+            motion_offset: [0.0; 3],
             swing: 0.0,
             swing_scale: 1.0,
             eat,
@@ -1080,6 +1081,7 @@ fn render_held_pose_preview() {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
             sneak_weight: 0.0,
+            locomotion: Default::default(),
             sleeping: false,
             seated: false,
             seat_tilt: petramond_math::math::Tilt::LEVEL,
@@ -1389,6 +1391,7 @@ fn an_off_hand_pose_is_the_mirror_of_the_main_hands() {
             anim_time: 0.0,
             walk_weight: 0.0,
             sneak_weight: 0.0,
+            locomotion: Default::default(),
             sleeping: false,
             seated: false,
             seat_tilt: petramond_math::math::Tilt::LEVEL,
@@ -1521,4 +1524,36 @@ fn pose_matrix_rotates_about_the_sampled_origin() {
         (carried.transform_point3(pivot) - (pivot + Vec3::new(0.5, 0.0, 0.0))).length() < 1e-5,
         "translation displaces the pivot verbatim"
     );
+}
+
+#[test]
+fn inertial_motion_translates_each_hand_seat_without_changing_its_action() {
+    let motion = Vec3::new(0.02, -0.03, 0.015);
+    let base = HeldItemView {
+        swing: 0.4,
+        ..Default::default()
+    };
+    let shifted = HeldItemView {
+        motion_offset: motion.to_array(),
+        ..base
+    };
+    for (a, b) in [
+        (
+            bare_arm_placement(&base, 16.0 / 9.0),
+            bare_arm_placement(&shifted, 16.0 / 9.0),
+        ),
+        (
+            held_item_placement(&base, 16.0 / 9.0),
+            held_item_placement(&shifted, 16.0 / 9.0),
+        ),
+        (
+            placement_at(&base, MODEL_HAND_ANCHOR, 1.0),
+            placement_at(&shifted, MODEL_HAND_ANCHOR, 1.0),
+        ),
+    ] {
+        assert!((b.w_axis.truncate() - a.w_axis.truncate()).distance(motion) < 1e-5);
+        assert_eq!(a.x_axis, b.x_axis);
+        assert_eq!(a.y_axis, b.y_axis);
+        assert_eq!(a.z_axis, b.z_axis);
+    }
 }

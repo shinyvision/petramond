@@ -203,7 +203,7 @@ impl GamePresentationScratch {
     }
 
     /// Sync ambient drive targets from the client-mod runtime, then append
-    /// this frame's derived precipitation rows to `particles` (they ride the
+    /// this frame's derived ambient rows to `particles` (cubes ride the
     /// same Solid-atlas path as burst droplets). The particles graphics
     /// option governs the derive like every other particle producer.
     fn collect_ambient(&mut self, game: &Game, now: f32) {
@@ -497,6 +497,7 @@ impl GamePresentationScratch {
                     anim_time: p.pose.anim_time,
                     walk_weight: p.pose.walk_weight,
                     sneak_weight: p.pose.sneak_weight,
+                    locomotion: p.pose.locomotion,
                     sleeping,
                     seated: p.curr.mount.is_some_and(mount_renders_seated),
                     seat_tilt,
@@ -722,6 +723,7 @@ fn collect_player(
         seat_tilt: mount.map_or(Tilt::LEVEL, |m| m.tilt),
         walk_weight: game.third_person.pose.walk_weight,
         sneak_weight: game.third_person.pose.sneak_weight,
+        locomotion: game.third_person.pose.locomotion,
         sleeping,
         skylight,
         blocklight,

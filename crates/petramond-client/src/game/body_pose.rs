@@ -22,6 +22,46 @@ const WALK_BLEND_RATE: f32 = 10.0;
 /// Exponential rate the stand↔sneak stance blend settles at — the same feel as
 /// the walk blend, so crouching down and rising ease identically.
 const SNEAK_BLEND_RATE: f32 = 10.0;
+/// Ground speed (blocks/s) above which the stride phase stops accelerating:
+/// past this the legs would blur rather than read as faster steps.
+const STRIDE_SPEED_CAP: f32 = 12.0;
+/// A frame longer than this (seconds) is clamped: an alt-tab hitch must not
+/// integrate a whole second of pose motion in one step.
+const MAX_FRAME_SECONDS: f32 = 0.1;
+/// A position jump longer than this (blocks) between two frames is a
+/// teleport — the pose snaps to rest instead of spinning across it.
+const TELEPORT_DISTANCE: f32 = 3.0;
+/// Exponential rate every locomotion weight (run, backward, lateral, air,
+/// falling) settles at — one shared feel for all the crossfades.
+const LOCOMOTION_BLEND_RATE: f32 = 12.0;
+/// Wading (swimming with the feet on the floor) slows the stride phase by this
+/// fraction at full swim weight — water drag on the legs.
+const WADE_STRIDE_DRAG: f32 = 0.3;
+/// Backpedal weight ramp: 0 when the velocity's backward component is
+/// `BACKWARD_DEAD_ZONE` (fraction of speed), 1 at `BACKWARD_DEAD_ZONE +
+/// BACKWARD_RAMP` — a slight rearward drift is still a forward walk.
+const BACKWARD_DEAD_ZONE: f32 = 0.15;
+const BACKWARD_RAMP: f32 = 0.65;
+/// Run weight ramps from 0 at walking speed to 1 this many blocks/s above it.
+const RUN_RAMP: f32 = 1.8;
+/// Falling weight ramps from 0 at `-FALL_START` blocks/s of descent to 1 over
+/// `FALL_RAMP` more: a small hop shows the rise pose, a drop shows the fall.
+const FALL_START: f32 = 0.5;
+const FALL_RAMP: f32 = 5.0;
+/// Landing strength: 0 for a touchdown at `LANDING_MIN_SPEED` blocks/s or
+/// slower (a step off a block), 1 at `LANDING_MIN_SPEED + LANDING_RAMP`
+/// (terminal-ish velocity).
+const LANDING_MIN_SPEED: f32 = 1.0;
+const LANDING_RAMP: f32 = 11.0;
+/// The landing envelope's total duration (seconds) and the fraction of it
+/// spent compressing — fast compression, longer recovery.
+const LANDING_SECONDS: f32 = 0.32;
+const LANDING_COMPRESS_FRACTION: f32 = 0.22;
+/// Horizontal speed (blocks/s) above which a swimmer's body follows the look.
+const SWIM_TURN_SPEED: f32 = 0.1;
+/// Speed floor (blocks/s) for the direction normalizations — avoids a divide
+/// by zero over planted feet without moving the weights.
+const SPEED_EPSILON: f32 = 0.001;
 
 /// A player body's presentation pose, advanced once per frame.
 #[derive(Copy, Clone, Debug, Default)]
@@ -29,7 +69,7 @@ pub struct BodyPose {
     /// The body's facing yaw (engine yaw space, like `Player::yaw`). Trails
     /// the head within `HEAD_YAW_LIMIT`; re-aligns while walking.
     pub body_yaw: f32,
-    /// Seconds into the walk animation while `moving`.
+    /// Normalized stride phase shared by every locomotion clip.
     pub anim_time: f32,
     pub moving: bool,
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle), eased
@@ -40,27 +80,144 @@ pub struct BodyPose {
     /// in by this: its FRAME 0 is the standing-still stance, and while moving
     /// the same clip's cycle replaces the walk cycle.
     pub sneak_weight: f32,
+    pub locomotion: petramond_render::views::LocomotionBlend,
+    was_grounded: Option<bool>,
+    previous_position: Option<glam::Vec3>,
+    fall_speed: f32,
+    landing_time: f32,
+    landing_strength: f32,
 }
 
+/// Movement facts sampled by either the predicted player or a remote replica.
+pub struct MotionFrame {
+    pub position: glam::Vec3,
+    pub velocity: glam::Vec3,
+    pub yaw: f32,
+    pub grounded: bool,
+    pub medium: MovementMedium,
+    pub enabled: bool,
+    pub sneaking: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MovementMedium {
+    Land,
+    Water,
+    Climbing,
+}
+
+pub(super) fn movement_medium(
+    world: &petramond_world::world::WorldData,
+    pos: glam::Vec3,
+) -> MovementMedium {
+    let x = pos.x.floor() as i32;
+    let z = pos.z.floor() as i32;
+    if world.water_cell_at(
+        x,
+        (pos.y + petramond::player::WATER_PROBE_Y).floor() as i32,
+        z,
+    ) {
+        MovementMedium::Water
+    } else if petramond_world::block::Block::from_id(world.chunk_block(x, pos.y.floor() as i32, z))
+        .is_climbable()
+    {
+        MovementMedium::Climbing
+    } else {
+        MovementMedium::Land
+    }
+}
+
+pub(super) fn land_motion(world: &petramond_world::world::WorldData, pos: glam::Vec3) -> bool {
+    movement_medium(world, pos) == MovementMedium::Land
+}
+
+mod swimming;
+
 impl BodyPose {
+    pub fn advance(&mut self, dt: f32, frame: MotionFrame) {
+        if !dt.is_finite() || dt <= 0.0 {
+            return;
+        }
+        if self.previous_position.is_some_and(|pos| {
+            pos.distance_squared(frame.position) > TELEPORT_DISTANCE * TELEPORT_DISTANCE
+        }) {
+            self.reset_facing(frame.yaw);
+        }
+        self.previous_position = Some(frame.position);
+        let dt = dt.min(MAX_FRAME_SECONDS);
+        let v = frame.velocity;
+        let speed = v.x.hypot(v.z);
+        let wading = self.locomotion.swim.grounded * self.locomotion.swim.weight;
+        self.advance_gait(
+            dt,
+            speed * (1.0 - WADE_STRIDE_DRAG * wading),
+            frame.yaw,
+            frame.enabled && frame.grounded && frame.medium != MovementMedium::Climbing,
+            frame.sneaking,
+        );
+        if !frame.enabled || frame.medium == MovementMedium::Climbing {
+            self.locomotion = Default::default();
+            self.was_grounded = None;
+            self.fall_speed = 0.0;
+            self.landing_strength = 0.0;
+            return;
+        }
+        self.advance_swimming(dt, &frame);
+        if frame.medium == MovementMedium::Water {
+            self.was_grounded = None;
+            self.fall_speed = 0.0;
+            self.landing_strength = 0.0;
+            self.locomotion.landing = 0.0;
+            self.locomotion.airborne *= (-LOCOMOTION_BLEND_RATE * dt).exp();
+            self.body_yaw = follow_body_yaw(self.body_yaw, frame.yaw, speed > SWIM_TURN_SPEED, dt);
+            return;
+        }
+        let speed_floor = speed.max(SPEED_EPSILON);
+        let forward = (v.x * self.body_yaw.sin() + v.z * self.body_yaw.cos()) / speed_floor;
+        let side = (-v.x * self.body_yaw.cos() + v.z * self.body_yaw.sin()) / speed_floor;
+        let ease = 1.0 - (-LOCOMOTION_BLEND_RATE * dt).exp();
+        let backward = ((-forward - BACKWARD_DEAD_ZONE) / BACKWARD_RAMP).clamp(0.0, 1.0);
+        let run = ((speed - petramond::player::WALK) / RUN_RAMP).clamp(0.0, 1.0) * (1.0 - backward);
+        self.locomotion.run += (run - self.locomotion.run) * ease;
+        self.locomotion.backward += (backward - self.locomotion.backward) * ease;
+        self.locomotion.strafe += (side * self.walk_weight - self.locomotion.strafe) * ease;
+        let air = if frame.grounded { 0.0 } else { 1.0 };
+        self.locomotion.airborne += (air - self.locomotion.airborne) * ease;
+        let fall = ((-v.y + FALL_START) / FALL_RAMP).clamp(0.0, 1.0);
+        self.locomotion.falling += (fall - self.locomotion.falling) * ease;
+        if !frame.grounded {
+            self.fall_speed = self.fall_speed.max(-v.y);
+        } else if self.was_grounded == Some(false) {
+            self.landing_strength =
+                ((self.fall_speed - LANDING_MIN_SPEED) / LANDING_RAMP).clamp(0.0, 1.0);
+            self.landing_time = 0.0;
+            self.fall_speed = 0.0;
+        }
+        self.was_grounded = Some(frame.grounded);
+        self.landing_time += dt;
+        // The envelope shapes only the TIMING; the compressed pose is the asset's.
+        let t = (self.landing_time / LANDING_SECONDS).clamp(0.0, 1.0);
+        let envelope = if t < LANDING_COMPRESS_FRACTION {
+            smooth(t / LANDING_COMPRESS_FRACTION)
+        } else {
+            1.0 - smooth((t - LANDING_COMPRESS_FRACTION) / (1.0 - LANDING_COMPRESS_FRACTION))
+        };
+        self.locomotion.landing = envelope * self.landing_strength * (1.0 - air);
+    }
+
     /// Snap the pose to face `yaw` at rest — entering third person, a remote
     /// player appearing, or a replicated teleport (`snap`), so the model never
     /// pops in mid-turn or spins across a jump.
     pub fn reset_facing(&mut self, yaw: f32) {
+        *self = Self::default();
         self.body_yaw = yaw;
-        self.anim_time = 0.0;
-        self.moving = false;
-        self.walk_weight = 0.0;
-        self.sneak_weight = 0.0;
     }
 
     /// Freeze into the lying pose: the body faces `body_yaw` (the bed's
     /// base→pillow yaw) with the walk cycle fully rested.
     pub fn lie(&mut self, body_yaw: f32) {
+        *self = Self::default();
         self.body_yaw = body_yaw;
-        self.moving = false;
-        self.walk_weight = 0.0;
-        self.sneak_weight = 0.0;
     }
 
     /// One frame of the pose: ease the walk blend toward the moving state,
@@ -69,8 +226,16 @@ impl BodyPose {
     /// (false for spectators — the local body never draws for one, but the
     /// gate keeps both drivers identical). `sneaking` eases the sneak-stance
     /// blend in/out.
-    pub fn advance(&mut self, dt: f32, hspeed: f32, head_yaw: f32, can_move: bool, sneaking: bool) {
+    fn advance_gait(
+        &mut self,
+        dt: f32,
+        hspeed: f32,
+        head_yaw: f32,
+        can_move: bool,
+        sneaking: bool,
+    ) {
         self.moving = hspeed * hspeed > MOVING_SPEED_SQ && can_move;
+        let starting = self.moving && self.walk_weight == 0.0;
         // Stand↔sneak blends like walk↔stand: eased, with a snap-to-rest floor
         // so the weight actually reaches 0/1.
         let sneak_target = if sneaking && can_move { 1.0 } else { 0.0 };
@@ -88,10 +253,12 @@ impl BodyPose {
         if self.moving {
             // Start each fresh stride at phase 0 (but never mid-blend, so a
             // quick stop-start doesn't pop the legs).
-            if self.walk_weight < 0.05 {
+            if starting {
                 self.anim_time = 0.0;
             }
-            self.anim_time += dt * hspeed * WALK_CYCLES_PER_BLOCK;
+            self.anim_time = (self.anim_time
+                + dt.max(0.0) * hspeed.min(STRIDE_SPEED_CAP) * WALK_CYCLES_PER_BLOCK)
+                .rem_euclid(1.0);
         } else if self.walk_weight < 0.01 {
             self.walk_weight = 0.0;
         }
@@ -116,91 +283,11 @@ pub fn follow_body_yaw(body_yaw: f32, head_yaw: f32, moving: bool, dt: f32) -> f
     head_yaw - clamped
 }
 
+fn smooth(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
 pub use petramond_math::math::{lerp_angle, wrap_angle};
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn small_look_turns_move_only_the_head() {
-        // Idle, head 30° off the body: under the 45° threshold the body stays put.
-        let body = follow_body_yaw(0.0, 30f32.to_radians(), false, 0.016);
-        assert!(
-            body.abs() < 1e-6,
-            "body untouched under the threshold: {body}"
-        );
-    }
-
-    #[test]
-    fn past_the_threshold_the_body_is_dragged_along() {
-        // Idle, head 80° off: the body is pulled so the head-body offset is
-        // exactly the 45° limit.
-        let head = 80f32.to_radians();
-        let body = follow_body_yaw(0.0, head, false, 0.016);
-        assert!(
-            (wrap_angle(head - body) - HEAD_YAW_LIMIT).abs() < 1e-5,
-            "offset clamps to the limit"
-        );
-        // Same on the other side.
-        let body = follow_body_yaw(0.0, -head, false, 0.016);
-        assert!((wrap_angle(-head - body) + HEAD_YAW_LIMIT).abs() < 1e-5);
-    }
-
-    #[test]
-    fn walking_realigns_the_body_to_the_look() {
-        // While moving the body converges to the head across frames, even when
-        // the offset never crosses the drag threshold.
-        let head = 30f32.to_radians();
-        let mut body = 0.0;
-        for _ in 0..120 {
-            body = follow_body_yaw(body, head, true, 1.0 / 60.0);
-        }
-        assert!(
-            wrap_angle(head - body).abs() < 0.01,
-            "body aligned while walking: {body}"
-        );
-    }
-
-    #[test]
-    fn follow_handles_the_yaw_wrap_seam() {
-        // Head just past +π, body just under -π: the true offset is tiny, so the
-        // body must not spin the long way round.
-        let head = std::f32::consts::PI - 0.05;
-        let body0 = -std::f32::consts::PI + 0.05;
-        let body = follow_body_yaw(body0, head, false, 0.016);
-        assert!(
-            wrap_angle(head - body).abs() <= HEAD_YAW_LIMIT + 1e-5,
-            "wrap seam does not over-rotate"
-        );
-    }
-
-    #[test]
-    fn pose_walk_weight_eases_in_and_back_to_rest() {
-        let mut pose = BodyPose::default();
-        pose.advance(1.0 / 60.0, 3.0, 0.0, true, false);
-        assert!(pose.moving);
-        assert!(
-            pose.walk_weight > 0.0 && pose.walk_weight < 1.0,
-            "the blend eases rather than snapping: {}",
-            pose.walk_weight
-        );
-        let mid_phase = pose.anim_time;
-        assert!(mid_phase > 0.0, "the phase advances while moving");
-        // Stop: the weight decays smoothly and eventually clamps to rest.
-        for _ in 0..120 {
-            pose.advance(1.0 / 60.0, 0.0, 0.0, true, false);
-        }
-        assert_eq!(pose.walk_weight, 0.0, "stopping settles back to rest");
-    }
-
-    #[test]
-    fn lerp_angle_crosses_the_wrap_seam_the_short_way() {
-        use std::f32::consts::PI;
-        let mid = lerp_angle(PI - 0.1, -PI + 0.1, 0.5);
-        assert!(
-            wrap_angle(mid - PI).abs() < 1e-5,
-            "midpoint sits on the seam, not the long way round: {mid}"
-        );
-    }
-}
+mod tests;

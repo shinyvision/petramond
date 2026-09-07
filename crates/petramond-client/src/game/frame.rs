@@ -49,6 +49,11 @@ pub struct ClientHeldItem {
     /// The camera's normalized walk sway this frame — the hand follows a
     /// LAGGED copy of it (see `game::view_bob` and `HeldItemAnimator`).
     pub bob: [f32; 2],
+    /// The hands' inertial translation (`game::hand_motion`) in view space.
+    /// The off hand's copy carries a NEGATED x: the renderer places the off
+    /// hand through a view-space mirror, and the pre-negation is what makes
+    /// both hands lurch the same way on screen.
+    pub motion_offset: [f32; 3],
 }
 
 /// Carry a claimed held pose across the ABI → RENDERER boundary.
@@ -117,6 +122,7 @@ impl Game {
             (eating, None)
         };
         let bob = self.view_bob.offset();
+        let motion_offset = self.hand_motion.offset();
         // A client mod running the same rule as its server half answers a
         // round trip sooner, so it owns the hands it poses; hands no client
         // mod poses keep the replicated answer. Motion ownership folds the
@@ -147,6 +153,7 @@ impl Game {
                 pose_target: pose_main,
                 motions: motions_main,
                 bob,
+                motion_offset,
             },
             off_hand_item: ClientHeldItem {
                 item: view.inventory.off_hand().map(|s| s.item),
@@ -164,6 +171,7 @@ impl Game {
                 pose_target: pose_off,
                 motions: motions_off,
                 bob,
+                motion_offset: [-motion_offset[0], motion_offset[1], motion_offset[2]],
             },
         }
     }

@@ -432,7 +432,7 @@ fn arm_punch(swing: f32, amp: f32) -> Mat4 {
 /// scaled by the animator; the `-y` is because view space grows upward while
 /// the bob's `up` channel is a rise.
 fn bob_offset(view: &HeldItemView) -> Vec3 {
-    Vec3::new(view.bob[0], view.bob[1], 0.0)
+    Vec3::new(view.bob[0], view.bob[1], 0.0) + Vec3::from(view.motion_offset)
 }
 
 fn bare_arm_placement(view: &HeldItemView, aspect: f32) -> Mat4 {

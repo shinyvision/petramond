@@ -390,7 +390,9 @@ impl Game {
         // held-item animator, hurt/eat ramps) advances right after the batches
         // applied, so this frame's latched one-shots jab this frame.
         let alpha = self.replica_clock.alpha();
-        self.remote_players.advance(dt, alpha);
+        self.remote_players.advance(dt, alpha, |pos| {
+            super::body_pose::movement_medium(&self.replica, pos)
+        });
         let events = std::mem::take(&mut self.pending_events);
         self.deliver_client_mod_events(&events.self_events.client_events);
         self.sync_sleep_camera_on_open(&events.self_events);
