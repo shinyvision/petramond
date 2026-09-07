@@ -242,6 +242,13 @@ impl Block {
         self.has_tag(BlockTag::LEAVES)
     }
 
+    /// Whether the mesher dresses this block as a soft foliage crown (see
+    /// [`BlockTag::CANOPY`]).
+    #[inline]
+    pub fn is_canopy(self) -> bool {
+        self.has_tag(BlockTag::CANOPY)
+    }
+
     /// Whether a face against ANOTHER CELL OF THIS SAME BLOCK is drawn at all.
     /// See [`BlockTag::MERGES_WITH_SELF`].
     #[inline]

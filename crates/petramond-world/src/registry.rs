@@ -460,6 +460,24 @@ pub fn engine_data<T: serde::de::DeserializeOwned>(
         .map_err(|e| format!("malformed '{key}' data: {e}"))
 }
 
+/// The data key a pack attaches to RETIRE a row it does not own:
+/// `{"patch": "<row>", "data": {"petramond:enabled": false}}`. Only catalogs
+/// with no id space (recipes, texture transitions) honour it — nothing
+/// addresses their rows by index and nothing persists one, so dropping a row
+/// is safe in a way dropping a block or item row could never be.
+pub const ENABLED_KEY: &str = "petramond:enabled";
+
+/// Read the `petramond:enabled` vocabulary off a row's compiled data: absent
+/// means enabled, `false` retires the row, anything non-boolean fails the row
+/// (the engine parses its own vocabulary strictly).
+pub fn row_enabled<K: AsRef<str>, V: AsRef<str>>(data: &[(K, V)]) -> Result<bool, String> {
+    match data.iter().find(|(k, _)| k.as_ref() == ENABLED_KEY) {
+        None => Ok(true),
+        Some((_, text)) => serde_json::from_str(text.as_ref())
+            .map_err(|e| format!("malformed '{ENABLED_KEY}' data: {e}")),
+    }
+}
+
 /// Validate an engine vocabulary entry that lists KV/instance-data keys
 /// (`petramond:carry`, `petramond:inherit`): every listed key must be
 /// namespaced. The one place the "no bare keys" rule for key-list entries

@@ -28,11 +28,26 @@ pub struct SectionMeshPad<'a> {
     /// The UNIFIED per-cell block state (opaque; decoded by the owning
     /// family's codec gated on the cell's block).
     pub cell_states: &'a [ShapeState],
+    /// Per-cell appearance exclusions (dye or snow), including neighbour cells.
+    pub transition_blocked: &'a [bool],
     pub loaded: &'a [bool],
     pub biome: &'a [u8],
 }
 
 impl SectionMeshPad<'_> {
+    pub(super) fn transition_blocked_world(
+        &self,
+        ox: i32,
+        oy: i32,
+        oz: i32,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> bool {
+        self.world_idx(ox, oy, oz, wx, wy, wz)
+            .is_none_or(|i| self.transition_blocked[i])
+    }
+
     #[inline]
     pub(crate) fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
         Block::from_id(self.blocks[mesh_pad_idx(px, py, pz)])

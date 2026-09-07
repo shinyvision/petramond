@@ -51,6 +51,7 @@ pub mod shape_mesh;
 pub mod slab;
 pub mod sound_registry;
 pub mod stair;
+pub mod texture_transition;
 pub mod tile;
 pub mod tile_alpha;
 pub mod torch;

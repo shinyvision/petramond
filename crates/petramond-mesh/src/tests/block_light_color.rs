@@ -17,6 +17,7 @@ fn mesh_lit_floor(block_light: impl Fn(i32, i32, i32) -> LightRgb) -> ChunkMesh 
     build_section_mesh(
         &section,
         SectionPos::new(0, 0, 0),
+        test_rules(),
         |wx, wy, wz| {
             if in_section(wx, wy, wz) {
                 section.block_raw(wx as usize, wy as usize, wz as usize)
@@ -30,6 +31,7 @@ fn mesh_lit_floor(block_light: impl Fn(i32, i32, i32) -> LightRgb) -> ChunkMesh 
         |_, _, _| 0,
         block_light,
         |_, _, _| true,
+        |_, _, _| false,
     )
 }
 

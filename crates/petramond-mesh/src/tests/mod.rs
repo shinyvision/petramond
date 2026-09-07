@@ -140,6 +140,24 @@ fn floor_section(block: Block) -> Section {
     section
 }
 
+/// The synthetic transition policy every mesh test runs under: dirt–grass
+/// and grass–sand transition, dirt–sand does not, and nothing else is a
+/// material. Pinning the mechanism here keeps the tests independent of the
+/// shipped catalog's tuning.
+fn test_rules() -> &'static petramond_world::texture_transition::Rules {
+    static RULES: std::sync::LazyLock<petramond_world::texture_transition::Rules> =
+        std::sync::LazyLock::new(|| {
+            petramond_world::texture_transition::Rules::from_layers(&[r#"{
+                "sets": [{"set": "test:organic", "mask": "organic_transition_mask", "width_texels": 6}],
+                "pairs": [
+                    {"pair": "test:dirt_grass", "set": "test:organic", "blocks": ["petramond:dirt", "petramond:grass"]},
+                    {"pair": "test:grass_sand", "set": "test:organic", "blocks": ["petramond:grass", "petramond:sand"]}
+                ]}"#])
+            .expect("synthetic transition policy")
+        });
+    &RULES
+}
+
 /// Mesh `section` standalone with overridable skylight and loadedness; all
 /// other lookups answer from the section itself.
 fn mesh_with(
@@ -150,9 +168,11 @@ fn mesh_with(
     // Standalone fixtures never ran the edit-time refine cascade: resolve
     // the stored shape states (fence masks, stair corners) before meshing.
     let section = &refined(section);
+    let dyed = section.cell_tint_map();
     build_section_mesh(
         section,
         SectionPos::new(0, 0, 0),
+        test_rules(),
         |wx, wy, wz| {
             if in_section(wx, wy, wz) {
                 section.block_raw(wx as usize, wy as usize, wz as usize)
@@ -178,6 +198,13 @@ fn mesh_with(
         sky,
         |_, _, _| petramond_world::light::LightRgb::ZERO,
         loaded,
+        |wx, wy, wz| {
+            in_section(wx, wy, wz)
+                && dyed.contains_key(
+                    &(petramond_world::chunk::section_idx(wx as usize, wy as usize, wz as usize)
+                        as u16),
+                )
+        },
     )
 }
 
@@ -202,6 +229,7 @@ fn mesh_in_scene(
     build_section_mesh(
         section,
         pos,
+        test_rules(),
         block,
         |_, _, _| petramond_world::block::ShapeState::NONE,
         |_, _, _| 0,
@@ -209,6 +237,7 @@ fn mesh_in_scene(
         sky,
         |_, _, _| petramond_world::light::LightRgb::ZERO,
         |_, _, _| true,
+        |_, _, _| false,
     )
 }
 
@@ -312,3 +341,5 @@ mod snow;
 mod stairs;
 mod tint;
 mod water;
+
+mod texture_transitions;

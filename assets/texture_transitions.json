@@ -1,0 +1,21 @@
+{
+  "sets": [
+    {"set": "petramond:organic", "mask": "organic_transition_mask", "width_texels": 6}
+  ],
+  "pairs": [
+    {"pair": "petramond:dirt_grass", "set": "petramond:organic", "blocks": ["petramond:dirt", "petramond:grass"]},
+    {"pair": "petramond:dirt_clay", "set": "petramond:organic", "blocks": ["petramond:dirt", "petramond:clay"]},
+    {"pair": "petramond:dirt_sand", "set": "petramond:organic", "blocks": ["petramond:dirt", "petramond:sand"]},
+    {"pair": "petramond:dirt_gravel", "set": "petramond:organic", "blocks": ["petramond:dirt", "petramond:gravel"]},
+    {"pair": "petramond:dirt_stone", "set": "petramond:organic", "blocks": ["petramond:dirt", "petramond:stone"]},
+    {"pair": "petramond:grass_clay", "set": "petramond:organic", "blocks": ["petramond:grass", "petramond:clay"]},
+    {"pair": "petramond:grass_sand", "set": "petramond:organic", "blocks": ["petramond:grass", "petramond:sand"]},
+    {"pair": "petramond:grass_gravel", "set": "petramond:organic", "blocks": ["petramond:grass", "petramond:gravel"]},
+    {"pair": "petramond:grass_stone", "set": "petramond:organic", "blocks": ["petramond:grass", "petramond:stone"]},
+    {"pair": "petramond:clay_gravel", "set": "petramond:organic", "blocks": ["petramond:clay", "petramond:gravel"]},
+    {"pair": "petramond:clay_stone", "set": "petramond:organic", "blocks": ["petramond:clay", "petramond:stone"]},
+    {"pair": "petramond:sand_gravel", "set": "petramond:organic", "blocks": ["petramond:sand", "petramond:gravel"]},
+    {"pair": "petramond:sand_stone", "set": "petramond:organic", "blocks": ["petramond:sand", "petramond:stone"]},
+    {"pair": "petramond:gravel_stone", "set": "petramond:organic", "blocks": ["petramond:gravel", "petramond:stone"]}
+  ]
+}

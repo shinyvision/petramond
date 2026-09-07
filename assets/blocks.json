@@ -336,6 +336,7 @@
       ],
       "tags": [
         "leaves",
+        "canopy",
         "no_grass_decay"
       ],
       "behavior": "leaves",
@@ -577,6 +578,7 @@
       ],
       "tags": [
         "leaves",
+        "canopy",
         "no_grass_decay"
       ],
       "behavior": "leaves",
@@ -622,6 +624,7 @@
       ],
       "tags": [
         "leaves",
+        "canopy",
         "no_grass_decay"
       ],
       "behavior": "leaves",
@@ -667,6 +670,7 @@
       ],
       "tags": [
         "leaves",
+        "canopy",
         "no_grass_decay"
       ],
       "behavior": "leaves",
@@ -712,6 +716,7 @@
       ],
       "tags": [
         "leaves",
+        "canopy",
         "no_grass_decay"
       ],
       "behavior": "leaves",
@@ -757,6 +762,7 @@
       ],
       "tags": [
         "leaves",
+        "canopy",
         "no_grass_decay"
       ],
       "behavior": "leaves",
@@ -3585,6 +3591,7 @@
       ],
       "tags": [
         "leaves",
+        "canopy",
         "no_grass_decay"
       ],
       "behavior": "leaves",

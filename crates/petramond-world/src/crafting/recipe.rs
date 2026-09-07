@@ -224,26 +224,14 @@ impl CraftingRecipe {
         &self.inherit
     }
 
-    /// The engine's `petramond:enabled` row vocabulary, read off compiled data
-    /// entries before the row joins the catalog: `false` drops it.
-    ///
-    /// This is how a pack RETIRES a recipe it does not own. A pack cannot
-    /// restate `petramond:iron_pickaxe` (namespace ownership) but it can attach
-    /// data to it with a patch row, so replacing a whole crafting route is
-    /// `{"patch": "<recipe>", "data": {"petramond:enabled": false}}` plus the
-    /// pack's own replacement rows. Recipes are the one pack-facing catalog
-    /// with no id space — nothing addresses a recipe by index and nothing
-    /// persists one — so dropping a row is safe in a way dropping a block or
-    /// item row could never be.
-    ///
-    /// Absent means enabled; a non-boolean value fails the row, like every
-    /// other engine data key.
+    /// Whether the row joins the catalog — the engine's `petramond:enabled`
+    /// vocabulary ([`crate::registry::row_enabled`]). This is how a pack
+    /// RETIRES a recipe it does not own: it cannot restate
+    /// `petramond:iron_pickaxe` (namespace ownership) but it can attach data
+    /// to it with a patch row, so replacing a whole crafting route is the
+    /// retirement patch plus the pack's own replacement rows.
     pub fn row_enabled(data: &[(String, String)]) -> Result<bool, String> {
-        match data.iter().find(|(k, _)| k == "petramond:enabled") {
-            None => Ok(true),
-            Some((_, text)) => serde_json::from_str(text)
-                .map_err(|e| format!("malformed 'petramond:enabled' data: {e}")),
-        }
+        crate::registry::row_enabled(data)
     }
 
     /// Attach the row's compiled data entries, parsing the engine's
@@ -523,95 +511,4 @@ fn public_tag_key(tag: ItemTag) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn joined_catalog_round_trips_namespaced_selectors_and_stable_keys() {
-        let recipe = CraftingRecipe::new(
-            "test:sticks".into(),
-            CraftingStation::Inventory,
-            vec![CraftingIngredient {
-                selector: IngredientSelector::Tag(ItemTag::PLANKS),
-                count: 2,
-                use_mode: IngredientUse::Consume,
-            }],
-            ItemStack::new(ItemType::Stick, 4),
-        );
-        let bench = CraftingStation::from_key("test:bench").expect("mod station registers");
-        let bench_recipe = CraftingRecipe::new(
-            "test:bench_sticks".into(),
-            bench,
-            vec![CraftingIngredient {
-                selector: IngredientSelector::Tag(ItemTag::PLANKS),
-                count: 2,
-                use_mode: IngredientUse::Consume,
-            }],
-            ItemStack::new(ItemType::Stick, 4),
-        );
-        let catalog = CraftingCatalog::new(vec![recipe, bench_recipe]);
-        let restored = CraftingCatalog::from_data(catalog.to_data());
-        let sticks = restored.get("test:sticks").expect("stable key lookup");
-        assert_eq!(sticks.station(), CraftingStation::Inventory);
-        assert_eq!(sticks.ingredients()[0].count, 2);
-        assert_eq!(
-            sticks.ingredients()[0].selector,
-            IngredientSelector::Tag(ItemTag::PLANKS)
-        );
-        // A pack station survives the joined round trip by key.
-        let bench_sticks = restored.get("test:bench_sticks").expect("mod station row");
-        assert_eq!(bench_sticks.station(), bench);
-    }
-
-    #[test]
-    fn joined_catalog_rejects_invalid_identity_capacity_and_empty_items() {
-        let data =
-            |recipe: &str, ingredient: CraftingIngredientData, result: &str| CraftingRecipeData {
-                data: Vec::new(),
-                recipe: recipe.into(),
-                station: CraftingStation::INVENTORY_KEY.into(),
-                ingredients: vec![ingredient],
-                result: CraftingStackData {
-                    item: result.into(),
-                    count: 1,
-                },
-            };
-        let coal = |count| CraftingIngredientData {
-            selector: CraftingSelectorData::Item(ItemType::Coal.key().into()),
-            count,
-            use_mode: IngredientUseData::Consume,
-        };
-
-        assert!(CraftingRecipe::from_data(data("bare", coal(1), ItemType::Stick.key())).is_err());
-        assert!(CraftingRecipe::from_data(data(
-            "test:too_large",
-            coal((MAX_INGREDIENT_UNITS + 1) as u16),
-            ItemType::Stick.key(),
-        ))
-        .is_err());
-        assert!(
-            CraftingRecipe::from_data(data("test:air_result", coal(1), ItemType::Air.key(),))
-                .is_err()
-        );
-        assert!(CraftingRecipe::from_data(data(
-            "test:air_ingredient",
-            CraftingIngredientData {
-                selector: CraftingSelectorData::Item(ItemType::Air.key().into()),
-                count: 1,
-                use_mode: IngredientUseData::Consume,
-            },
-            ItemType::Stick.key(),
-        ))
-        .is_err());
-        assert!(CraftingRecipe::from_data(data(
-            "test:air_remainder",
-            CraftingIngredientData {
-                selector: CraftingSelectorData::Item(ItemType::Coal.key().into()),
-                count: 1,
-                use_mode: IngredientUseData::Remainder(ItemType::Air.key().into()),
-            },
-            ItemType::Stick.key(),
-        ))
-        .is_err());
-    }
-}
+mod tests;

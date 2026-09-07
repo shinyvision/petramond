@@ -76,6 +76,25 @@ impl World {
                             skylight: s.skylight_arc(),
                             blocklight: s.blocklight_arc(),
                             cell_states: sparse_state_snapshot(s.cell_states()),
+                            transition_tints: s
+                                .cell_tint_map()
+                                .into_keys()
+                                .map(|key| (key, true))
+                                .collect(),
+                        })
+                        .or_else(|| {
+                            let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
+                            (self.stream_writable(n)
+                                && self.section_summary(n)
+                                    == petramond_world::section::SectionSummary::Empty)
+                                .then(|| NeighborSnap {
+                                    blocks: petramond_world::section::BlockCube::uniform(0),
+                                    water: None,
+                                    skylight: None,
+                                    blocklight: None,
+                                    cell_states: None,
+                                    transition_tints: Box::new([]),
+                                })
                         });
                 }
             }

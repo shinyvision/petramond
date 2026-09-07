@@ -37,6 +37,45 @@ pub enum TileTint {
     Water,
 }
 
+/// How terrain picks one of a tile row's static `variants` (see
+/// [`Tile::face_variation`] and the shader's `block_variant_layer`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VariationSelect {
+    /// Per exposed face, chosen by the mesher: each face of a cell may show a
+    /// different alternative. Right for cutout foliage, whose faces never
+    /// greedy-merge anyway.
+    Face,
+    /// Per world cell, chosen in the fragment shader from the texel's owning
+    /// cell: all six faces agree, and greedy merging is unaffected because the
+    /// mesh keeps the base tile id.
+    Cell,
+}
+
+/// Multiply-xor mixer constants of [`spatial_hash`]; the render pipeline
+/// emits the same function into WGSL from these, so both selectors are one
+/// algorithm with one definition.
+pub const SPATIAL_HASH_AXIS_MULTIPLIERS: [u32; 3] = [0x8da6_b343, 0xd816_3841, 0xcb1a_b31f];
+pub const SPATIAL_HASH_SALT_MULTIPLIER: u32 = 0x9e37_79b9;
+pub const SPATIAL_HASH_MIX_MULTIPLIERS: [u32; 2] = [0x7feb_352d, 0x846c_a68b];
+
+/// A stable pseudo-random word for a world cell (plus a small `salt`, e.g. a
+/// face's normal code), identical wherever the cell is meshed or drawn.
+#[inline]
+pub fn spatial_hash(cell: [i32; 3], salt: u32) -> u32 {
+    let [mx, my, mz] = SPATIAL_HASH_AXIS_MULTIPLIERS;
+    let [x, y, z] = cell.map(|v| v as u32);
+    let mut h = x.wrapping_mul(mx)
+        ^ y.wrapping_mul(my)
+        ^ z.wrapping_mul(mz)
+        ^ salt.wrapping_mul(SPATIAL_HASH_SALT_MULTIPLIER);
+    h ^= h >> 16;
+    h = h.wrapping_mul(SPATIAL_HASH_MIX_MULTIPLIERS[0]);
+    h ^= h >> 15;
+    h = h.wrapping_mul(SPATIAL_HASH_MIX_MULTIPLIERS[1]);
+    h ^ (h >> 16)
+}
+
 impl Tile {
     /// This tile's atlas index (also its texture-array layer).
     #[inline]
@@ -73,6 +112,43 @@ impl Tile {
     #[inline]
     pub fn anim_frames(self) -> u32 {
         data().cells[self.index()].anim_frames
+    }
+
+    /// How many consecutive static alternatives this tile heads, itself
+    /// included (1 = no variants; alternatives and animation frames answer 1).
+    #[inline]
+    pub fn variation_count(self) -> usize {
+        data().cells[self.index()].variation_count as usize
+    }
+
+    /// How terrain chooses among this tile's alternatives, from its manifest
+    /// row; `None` = consumers address alternatives explicitly.
+    #[inline]
+    pub fn variation_select(self) -> Option<VariationSelect> {
+        data().cells[self.index()].variation
+    }
+
+    /// The alternative `seed` selects, the base tile included. Alternatives
+    /// share the base's tint and mip policy; a tile without alternatives
+    /// answers itself.
+    #[inline]
+    pub fn variation(self, seed: u32) -> Tile {
+        Tile(self.0 + (seed % data().cells[self.index()].variation_count as u32) as u16)
+    }
+
+    /// The alternative a FACE-selecting tile shows on the face of world cell
+    /// `cell` that points along normal code `normal`; any other tile answers
+    /// itself. The CPU half of [`VariationSelect`] — the shader owns the
+    /// per-cell half over the same [`spatial_hash`].
+    #[inline]
+    pub fn face_variation(self, cell: [i32; 3], normal: u32) -> Tile {
+        let meta = &data().cells[self.index()];
+        match meta.variation {
+            Some(VariationSelect::Face) => {
+                Tile(self.0 + (spatial_hash(cell, normal) % meta.variation_count as u32) as u16)
+            }
+            _ => self,
+        }
     }
 
     /// This tile's IN-WORLD biome-tint class (what the chunk mesher applies),
@@ -172,6 +248,10 @@ pub struct CellMeta {
     pub frame: u32,
     /// On the BASE frame of an animated tile: total frames. 0 otherwise.
     pub anim_frames: u32,
+    /// Consecutive static alternatives, including this base. 1 on alternatives.
+    pub variation_count: u16,
+    /// How terrain selects among them; only the base cell of a row carries it.
+    pub variation: Option<VariationSelect>,
     pub world_tint: Option<TileTint>,
     pub icon_tint: Option<TileTint>,
     /// Alpha-expand while downsampling mips, so distant cutout gaps fill with
@@ -203,6 +283,12 @@ struct RawTile {
     icon_tint: Option<TileTint>,
     #[serde(default)]
     fill_cutout_mips: bool,
+    /// Consecutive static alternatives, relative to `textures/`.
+    #[serde(default)]
+    variants: Vec<String>,
+    /// How terrain chooses among `variants`; absent = addressed explicitly.
+    #[serde(default)]
+    variation: Option<VariationSelect>,
 }
 
 struct TileData {
@@ -226,6 +312,9 @@ static TILES: LazyLock<TileData> = LazyLock::new(|| {
     let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
     build(&texts).unwrap_or_else(|e| panic!("textures/atlas.json: {e}"))
 });
+
+#[cfg(test)]
+mod variation_tests;
 
 #[inline]
 fn data() -> &'static TileData {
@@ -267,16 +356,43 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
     // contribute one cell per frame).
     let mut cells: Vec<CellMeta> = Vec::new();
     for t in &rows {
+        if t.variation.is_some() && t.variants.is_empty() {
+            return Err(format!(
+                "tile '{}' declares a variation selector without variants",
+                t.name
+            ));
+        }
+        if t.anim && !t.variants.is_empty() {
+            return Err(format!(
+                "tile '{}' cannot combine animation and static variants",
+                t.name
+            ));
+        }
+        if t.variants.len() >= MAX_TILES {
+            return Err(format!("tile '{}' has too many variants", t.name));
+        }
         if !t.anim {
-            cells.push(CellMeta {
-                name: t.name.clone(),
-                file: t.file.clone(),
-                frame: 0,
-                anim_frames: 0,
-                world_tint: t.tint,
-                icon_tint: t.icon_tint,
-                fill_cutout_mips: t.fill_cutout_mips,
-            });
+            for (i, file) in std::iter::once(&t.file).chain(&t.variants).enumerate() {
+                cells.push(CellMeta {
+                    name: if i == 0 {
+                        t.name.clone()
+                    } else {
+                        format!("{}_variant_{i}", t.name)
+                    },
+                    file: file.clone(),
+                    frame: 0,
+                    anim_frames: 0,
+                    variation_count: if i == 0 {
+                        (t.variants.len() + 1) as u16
+                    } else {
+                        1
+                    },
+                    variation: t.variation.filter(|_| i == 0),
+                    world_tint: t.tint,
+                    icon_tint: t.icon_tint,
+                    fill_cutout_mips: t.fill_cutout_mips,
+                });
+            }
             continue;
         }
         let (sw, sh) = image_dimensions(&t.file)?;
@@ -297,6 +413,8 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
                 file: t.file.clone(),
                 frame: i,
                 anim_frames: if i == 0 { frames } else { 0 },
+                variation_count: 1,
+                variation: None,
                 world_tint: t.tint,
                 icon_tint: t.icon_tint,
                 fill_cutout_mips: t.fill_cutout_mips,

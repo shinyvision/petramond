@@ -13,7 +13,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::worker::JobPool;
-use petramond_mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
+use petramond_mesh::{ChunkMesh, SectionMeshPad};
 use petramond_world::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
 use petramond_world::section::Section;
 
@@ -66,6 +66,7 @@ pub(super) struct NeighborSnap {
     /// The section's unified per-cell state entries (opaque; the mesher's
     /// seam hands them to the owning family to decode).
     pub cell_states: Option<Box<[(u16, petramond_world::block::ShapeState)]>>,
+    pub transition_tints: Box<[(u16, bool)]>,
 }
 
 /// A self-contained meshing job: the 3×3×3 neighbourhood as cheap field-`Arc` snapshots
@@ -180,6 +181,16 @@ pub(super) fn build_inline(job: MeshJob) -> Option<ChunkMesh> {
     build(job, crate::worker::JobCancel::new()).mesh
 }
 
+impl crate::world::World {
+    /// Mesh one loaded section on the calling thread through the exact
+    /// snapshot + pad path the pool's workers run — for instruments that
+    /// time or inspect meshing without a pool.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mesh_section_inline(&self, pos: SectionPos) -> Option<ChunkMesh> {
+        build_inline(self.build_mesh_job(pos)?)
+    }
+}
+
 /// The assembled one-cell-padded neighbourhood buffers a section mesh reads (18³ each):
 /// block ids, water/light state, per-cell stair facing, and a loaded flag. Reads beyond
 /// the pad fall back exactly as the live world's accessors do (air / open sky / not-loaded).
@@ -190,6 +201,7 @@ struct Pad {
     blocklight: Box<[petramond_world::light::LightRgb]>,
     cell_states: Box<[petramond_world::block::ShapeState]>,
     loaded: Box<[bool]>,
+    transition_blocked: Box<[bool]>,
 }
 
 impl Pad {
@@ -201,6 +213,7 @@ impl Pad {
             blocklight: vec![petramond_world::light::LightRgb::ZERO; PAD_VOL].into_boxed_slice(),
             cell_states: vec![petramond_world::block::ShapeState::NONE; PAD_VOL].into_boxed_slice(),
             loaded: vec![false; PAD_VOL].into_boxed_slice(),
+            transition_blocked: vec![false; PAD_VOL].into_boxed_slice(),
         }
     }
 
@@ -214,6 +227,7 @@ impl Pad {
         self.cell_states
             .fill(petramond_world::block::ShapeState::NONE);
         self.loaded.fill(false);
+        self.transition_blocked.fill(false);
     }
 }
 
@@ -244,6 +258,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         blocklight,
         cell_states,
         loaded,
+        transition_blocked,
     } = pad;
 
     // Interior X run of every row: cells px=1..=16 all come from the centre-X neighbour
@@ -325,8 +340,67 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                 let Some(s) = nbhd[nbhd_idx27(dx, dy, dz)].as_ref() else {
                     continue;
                 };
+                scatter_border_states(&s.transition_tints, (dx, dy, dz), |i, _| {
+                    transition_blocked[i] = true
+                });
                 if let Some(states) = s.cell_states.as_ref() {
                     scatter_border_states(states, (dx, dy, dz), |i, state| cell_states[i] = state);
+                }
+            }
+        }
+    }
+    // Snow exclusions: a material cell neither gives nor takes transition
+    // material while the cell above it wears a blanket (its own, or one it
+    // is bedded in), or while that cell is unknown. Driven from the blankets
+    // and gaps, which are rare, rather than from the material cells, which
+    // are most of the pad: a snow-free pad costs one tag read per cell. The
+    // layer above the pad's top is sampled from the captured neighbour
+    // sections.
+    let rules = petramond_world::texture_transition::rules();
+    let section = glam::IVec3::splat(SECTION_SIZE as i32);
+    let pad_side = glam::IVec3::splat(PAD as i32);
+    let pad_index = |p: glam::IVec3| -> Option<usize> {
+        let q = p + glam::IVec3::ONE;
+        (q.cmpge(glam::IVec3::ZERO).all() && q.cmplt(pad_side).all())
+            .then(|| pad_idx(q.x as usize, q.y as usize, q.z as usize))
+    };
+    let block_at = |p: glam::IVec3| -> Option<petramond_world::block::Block> {
+        if let Some(i) = pad_index(p) {
+            return loaded[i].then(|| petramond_world::block::Block::from_id(blocks[i]));
+        }
+        let d = p.div_euclid(section);
+        let l = p.rem_euclid(section);
+        nbhd[nbhd_idx27(d.x, d.y, d.z)].as_ref().map(|s| {
+            petramond_world::block::Block::from_id(s.blocks.get(
+                petramond_world::chunk::section_idx(l.x as usize, l.y as usize, l.z as usize),
+            ))
+        })
+    };
+    let cover_step = glam::IVec3::new(0, petramond_world::block::SNOW_COVER_REACH, 0);
+    let mut exclude_below = |cover: glam::IVec3| {
+        if let Some(i) = pad_index(cover - cover_step) {
+            if rules.is_material(blocks[i]) {
+                transition_blocked[i] = true;
+            }
+        }
+    };
+    // Every cell that could be a blanket for the cell beneath it: the pad,
+    // then the layer just above it.
+    for py in 0..=PAD {
+        for pz in 0..PAD {
+            for px in 0..PAD {
+                let p = glam::IVec3::new(px as i32 - 1, py as i32 - 1, pz as i32 - 1);
+                let Some(block) = block_at(p) else {
+                    exclude_below(p);
+                    continue;
+                };
+                if (block.is_snow_cover() || block.is_snow_bedded())
+                    && petramond_world::block::snow_cover_at(p, |q| {
+                        block_at(q).unwrap_or(petramond_world::block::Block::Air)
+                    })
+                    .is_some()
+                {
+                    exclude_below(p);
                 }
             }
         }
@@ -380,7 +454,7 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
         if cancel.is_cancelled() {
             return None;
         }
-        Some(build_section_mesh_from_pad(
+        petramond_mesh::build_section_mesh_cancellable(
             &center,
             pos,
             SectionMeshPad {
@@ -390,9 +464,12 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
                 blocklight: &pad.blocklight,
                 cell_states: &pad.cell_states,
                 loaded: &pad.loaded,
+                transition_blocked: &pad.transition_blocked,
                 biome: &biome,
             },
-        ))
+            petramond_world::texture_transition::rules(),
+            &|| cancel.is_cancelled(),
+        )
     });
     MeshDone {
         pos,

@@ -28,10 +28,14 @@ mod water;
 
 #[cfg(test)]
 pub use builder::build_section_mesh;
-pub use builder::{build_section_mesh_from_pad, SectionMeshPad};
+pub use builder::{build_section_mesh_cancellable, build_section_mesh_from_pad, SectionMeshPad};
+pub use builder::{SamplingHalo, FOLIAGE_OVERHANG, SAMPLING_HALO};
 #[cfg(test)]
 pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors};
-pub use vertex::{pack_cell_uv, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V};
+pub use vertex::transition::UV_MODE_TRANSITION;
+pub use vertex::{
+    pack_cell_uv, UV_MODE_CELL_LOCAL, UV_MODE_NONE, UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V,
+};
 // The `Vertex::packed` bit layout, re-exported so the dynamic-geometry bakes
 // (`render::item_cube`, `render::lighting`) encode it through the SAME
 // constants the chunk mesher does instead of their own literals.

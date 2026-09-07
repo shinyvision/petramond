@@ -53,6 +53,10 @@ const SKY_GAMMA: f32 = 3.0;
 // Stair item cubes use it so their partial faces sample the matching
 // sub-rectangle of the tile instead of restarting it per quad.
 const UV_MODE_CELL_LOCAL: u32 = 3u;
+// Modes from here up are terrain texture-transition payloads. This pipeline
+// draws its own geometry (item cubes and bbmodels), which never emits them; any other mode reads
+// as a plain face.
+const UV_MODE_TRANSITION: u32 = 4u;
 
 @group(0) @binding(0) var<uniform> m: MvpUniform;
 // uv-rect table identical to block.wgsl: (u0,v0,u1,v1) per tile. SELECT only.

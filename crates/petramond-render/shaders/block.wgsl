@@ -1,5 +1,5 @@
 // Block vertex/fragment shader with atmosphere haze + directional face shading.
-// pipeline.rs prepends atmosphere.wgsl (the shared haze model) to this source.
+// Shared cel, atmosphere and water helpers are prepended by the pipeline.
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -37,17 +37,22 @@ const SKY_GAMMA: f32 = 3.0;
 // while submerged.
 const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 
-// Packed UV modes (bits 29..32):
+// Packed UV modes (bits 23..26; the UV_MODE_* constants are generated from
+// the mesher's definitions):
 // - dynamic thin geometry crops a 3/16-deep face to a matching strip instead of
 //   squishing a whole 16px tile across a door edge.
 // - CELL_LOCAL faces (stairs) carry an explicit tile-local UV in packed2 bits
 //   6..11 / 11..16 (1/16ths), so a partial face samples the sub-rectangle of its
 //   tile matching its position in the cell and the shape reads as a full block
 //   with a chunk cut out.
+// - modes from UV_MODE_TRANSITION up carry a texture-transition payload (see
+//   texture_transition.wgsl); the mode's low bits are part of the set id.
 const THIN_SLICE: f32 = 3.0 / 16.0;
-const UV_MODE_THIN_U: u32 = 1u;
-const UV_MODE_THIN_V: u32 = 2u;
-const UV_MODE_CELL_LOCAL: u32 = 3u;
+
+// How the fragment stage composes a face's albedo (VsOut.overlay).
+const FACE_PLAIN: u32 = 0u;
+const FACE_OVERLAY: u32 = 1u;
+const FACE_TRANSITION: u32 = 2u;
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // The terrain pipeline samples a tile texture ARRAY: layer = tile id, uv is tile-LOCAL
@@ -107,22 +112,17 @@ struct VsOut {
     // sim's day/night scale, the tint, and the smooth AO ride on `light`
     // untouched.
     @location(10) cel_drive: f32,
+    @location(11) sky_exposure: f32,
+    @location(12) @interpolate(flat) water: u32,
 };
 
-// Cel-banded fragment light (cel.wgsl): quantize the interpolated light by the
-// banded/raw ratio of the day-invariant drive (hue, night dimming, and AO
-// survive), faded to identity in the dark and applied at partial strength so
-// cave gradients stay gradual; then add the view-angle rim on faces that carry
-// a normal. `view_dir` is the caller's normalized in.view (shared with the
-// atmosphere so each fragment normalizes once).
+// Keep light hue and contact shading while softly grouping bright tones.
+// The caller shares its view direction between the rim and atmosphere.
 fn cel_shaded_light(in: VsOut, view_dir: vec3<f32>) -> vec3<f32> {
-    let banded = cel_band(CEL_LIGHT, in.cel_drive);
-    let f = smoothstep(CEL_LIGHT_FADE_LO, CEL_LIGHT_FADE_HI, in.cel_drive)
-        * CEL_LIGHT_STRENGTH;
-    let cel = mix(1.0, banded / max(in.cel_drive, 1e-4), f);
-    var light = max(vec3<f32>(FINAL_MIN), in.light * cel);
-    if (CEL_RIM_ENABLED && in.ncode != 0u) {
-        light += cel_rim(face_normal(in.ncode), view_dir, light);
+    var light = max(vec3<f32>(FINAL_MIN), in.light * cel_light_ratio(in.cel_drive));
+    if (in.ncode != 0u) {
+        light += cel_rim(face_normal(in.ncode), view_dir, light,
+            u.sun_dir.xyz, in.sky_exposure * u.sun_dir.w);
     }
     return light;
 }
@@ -167,17 +167,22 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
 
     let tile = packed & 0x7FFu;
     let corner = (packed >> 11u) & 0x3u;
-    let shade_idx = (packed >> 13u) & 0x3u;
     let overlay_tile = (packed2 >> 20u) & 0x7FFu;
     let ao = (packed >> 15u) & 0x3u;
     let sky6 = (packed >> 17u) & 0x3Fu;
     let uv_mode = (packed >> 23u) & 0x7u;
+    let ncode = (packed2 >> 16u) & 0x7u;
+    let transition = uv_mode >= UV_MODE_TRANSITION;
+    // A transition face spends its shade lane on the set id; a cube face's
+    // shade follows from its normal anyway.
+    var shade_idx = (packed >> 13u) & 0x3u;
+    if (transition) { shade_idx = face_shade_idx(ncode); }
 
     // Animate water: WaterStill / WaterFlow are the first of `frame_count`
     // consecutive flipbook tiles; advance base + frame over time.
     var atile = tile;
     let frames = u.atlas_anim.z;
-    if (frames > 0u && (tile == u.atlas_anim.x || tile == u.atlas_anim.y)) {
+    if (!transition && frames > 0u && (tile == u.atlas_anim.x || tile == u.atlas_anim.y)) {
         var fps = WATER_STILL_FPS;
         if (tile == u.atlas_anim.y) { fps = WATER_FLOW_FPS; }
         atile = tile + (u32(floor(u.fog.z * fps)) % frames);
@@ -188,7 +193,7 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
     // The flow tile carries shader-side data in `overlay_tile` (no grass overlay
     // on water): top faces rotate toward the flow heading; side faces crop to the
     // water height. Still-water tops/bottoms are not the flow tile, so untouched.
-    if (tile == u.atlas_anim.y) {
+    if (!transition && tile == u.atlas_anim.y) {
         if (shade_idx == 0u) {
             // TOP: rotate the tile about its centre by the flow heading so a cell
             // streaming into a corner points diagonally, not snapped to a cardinal.
@@ -231,7 +236,7 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
         // heading) and grass-side overlays reuse those bits for other data, so exclude
         // them (they are never greedy-merged by the mesher).
         let has_overlay = (packed >> 26u) & 0x1u;
-        if (has_overlay == 0u && tile != u.atlas_anim.x && tile != u.atlas_anim.y) {
+        if (!transition && has_overlay == 0u && tile != u.atlas_anim.x && tile != u.atlas_anim.y) {
             let gw = f32(((packed2 >> 20u) & 0xFu) + 1u);
             let gh = f32(((packed2 >> 24u) & 0xFu) + 1u);
             uv = corner_local(corner) * vec2<f32>(gw, gh);
@@ -246,11 +251,22 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
     // composite.
     let dyed_off = ((packed2 >> 19u) & 0x1u) * u.atlas_anim.w;
     out.layer = atile + dyed_off;
+    out.water = select(0u, 1u, tile == u.atlas_anim.x || tile == u.atlas_anim.y);
     // Overlay uv: only grass sides (full cube faces) composite an overlay, so the
     // plain corner uv is always correct here.
     out.uv2 = corner_local(corner);
-    out.overlay = (packed >> 26u) & 0x1u;
+    out.overlay = select(FACE_PLAIN, FACE_OVERLAY, ((packed >> 26u) & 0x1u) == 1u);
     out.overlay_layer = overlay_tile + dyed_off;
+    if (transition) {
+        // The material grid rides the two layer lanes; the set id sits above
+        // the ninth slot in the overlay lane.
+        let data = transition_words(packed, packed2);
+        out.layer = data.lo;
+        out.overlay_layer = data.hi | (data.set_id << 4u);
+        out.overlay = FACE_TRANSITION;
+        out.water = 0u;
+        out.uv = corner_local(corner);
+    }
 
     // Final vertex light = directional face shade * per-vertex AO *
     // max(sky term, block term), all smoothly interpolated so shadows and the
@@ -285,7 +301,6 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
     let sky_term = mix(SKY_MIN, 1.0, sky_curve * u.fog_color.w) * u.sky_color.rgb;
     // SKY_GAMMA is exactly 3: three multiplies, not three transcendental pows.
     let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
-    let ncode = (packed2 >> 16u) & 0x7u;
     var face_shade = vec3<f32>(shades[shade_idx]);
     if (ncode != 0u) {
         // Sun colours only where the sky actually reaches. The warm-lit /
@@ -296,9 +311,13 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
         let sun_shade = sun_face_shade(face_normal(ncode), u.sun_dir.xyz, u.sun_dir.w);
         face_shade = mix(face_shade, sun_shade, sky);
     }
+    // Sky bounce colours contact shadows without lifting the cave floor.
+    out.sky_exposure = sky;
+    let occlusion = vec3<f32>(ao_lut[ao])
+        + (1.0 - ao_lut[ao]) * vec3<f32>(0.04, 0.06, 0.09) * sky * u.sun_dir.w;
     out.light = max(
         vec3<f32>(FINAL_MIN),
-        face_shade * ao_lut[ao] * max(sky_term, block_term),
+        face_shade * occlusion * max(sky_term, block_term),
     );
     // Noon-equivalent light LEVEL (scale 1.0, white sky, no AO) for the cel
     // bands: the banding pattern must not slide around as the sim dims the sky
@@ -357,15 +376,22 @@ fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
     var du = vec3<f32>(0.0);
     var dv = vec3<f32>(0.0);
     switch ((packed2 >> 16u) & 0x7u) {
-        case 1u: { du = vec3<f32>(0.0, 0.0, -1.0); dv = vec3<f32>(0.0, -1.0, 0.0); } // +X
-        case 2u: { du = vec3<f32>(0.0, 0.0, 1.0);  dv = vec3<f32>(0.0, -1.0, 0.0); } // -X
-        case 3u: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, 0.0, 1.0); }  // +Y
-        case 4u: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, 0.0, -1.0); } // -Y
-        case 5u: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, -1.0, 0.0); } // +Z
-        case 6u: { du = vec3<f32>(-1.0, 0.0, 0.0); dv = vec3<f32>(0.0, -1.0, 0.0); } // -Z
+        case NORMAL_POS_X: { du = vec3<f32>(0.0, 0.0, -1.0); dv = vec3<f32>(0.0, -1.0, 0.0); }
+        case NORMAL_NEG_X: { du = vec3<f32>(0.0, 0.0, 1.0);  dv = vec3<f32>(0.0, -1.0, 0.0); }
+        case NORMAL_POS_Y: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, 0.0, 1.0); }
+        case NORMAL_NEG_Y: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, 0.0, -1.0); }
+        case NORMAL_POS_Z: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, -1.0, 0.0); }
+        case NORMAL_NEG_Z: { du = vec3<f32>(-1.0, 0.0, 0.0); dv = vec3<f32>(0.0, -1.0, 0.0); }
         default: {}
     }
     return (du * c.x + dv * c.y) * (1.0 / 1024.0);
+}
+
+fn terrain_variant_layer(in: VsOut, layer: u32, donor: vec2<i32>) -> u32 {
+    if (in.ncode == 0u || variation_count(layer, u.atlas_anim.w) <= 1u) { return layer; }
+    let cell = variation_cell(in.view + u.cam_pos.xyz, vec3<i32>(u.render_origin.xyz), face_normal(in.ncode))
+        + variation_donor_offset(donor, in.ncode);
+    return block_variant_layer(layer, cell, u.atlas_anim.w);
 }
 
 @fragment
@@ -374,25 +400,32 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
     // underwater murk, and the atmosphere.
     let dist = length(in.view);
     let vdir = in.view / max(dist, 1e-4);
-    let base = textureSample(atlas, samp, in.uv, i32(in.layer));
+    let grad_x = dpdx(in.uv);
+    let grad_y = dpdy(in.uv);
     var rgb: vec3<f32>;
-    if (in.overlay == 1u) {
-        // Grass side: untinted dirt base + biome-tinted grayscale grass overlay,
-        // composited by the overlay's alpha so the grass matches the tinted top.
-        // DYED faces (layer in the twin half, i.e. >= the tile count) tint the
-        // base too: the whole face is in the dye-base domain, so the one
-        // vertex tint (which folded the dye in at mesh time) applies uniformly.
-        let ov = textureSample(atlas, samp, in.uv2, i32(in.overlay_layer));
-        var b = base.rgb;
-        if (in.layer >= u.atlas_anim.w) { b = b * in.tint; }
-        rgb = mix(b, ov.rgb * in.tint, ov.a);
+    if (in.overlay == FACE_TRANSITION) {
+        rgb = transition_albedo(in, grad_x, grad_y);
     } else {
-        // Cutout: no asset authors texels in the 0.25..0.5 alpha band —
-        // leaf fringes sit below 0.25, opaque art at 1.0, and TRANSLUCENT
-        // art (ice, world-rendered in fs_transparent) at ~0.49, so item
-        // cubes riding this pass draw it solid instead of vanishing.
-        if (base.a < 0.25) { discard; }
-        rgb = base.rgb * in.tint;
+        let layer = terrain_variant_layer(in, in.layer, vec2<i32>(0));
+        let base = textureSampleGrad(atlas, samp, in.uv, i32(layer), grad_x, grad_y);
+        if (in.overlay == FACE_OVERLAY) {
+            // Grass side: untinted dirt base + biome-tinted grayscale grass overlay,
+            // composited by the overlay's alpha so the grass matches the tinted top.
+            // DYED faces (layer in the twin half, i.e. >= the tile count) tint the
+            // base too: the whole face is in the dye-base domain, so the one
+            // vertex tint (which folded the dye in at mesh time) applies uniformly.
+            let ov = textureSample(atlas, samp, in.uv2, i32(in.overlay_layer));
+            var b = base.rgb;
+            if (in.layer >= u.atlas_anim.w) { b = b * in.tint; }
+            rgb = mix(b, ov.rgb * in.tint, ov.a);
+        } else {
+            // Cutout: no asset authors texels in the 0.25..0.5 alpha band —
+            // leaf fringes sit below 0.25, opaque art at 1.0, and TRANSLUCENT
+            // art (ice, world-rendered in fs_transparent) at ~0.49, so item
+            // cubes riding this pass draw it solid instead of vanishing.
+            if (base.a < 0.25) { discard; }
+            rgb = base.rgb * in.tint;
+        }
     }
     var color = rgb * cel_shaded_light(in, vdir);
     // Underwater: blue darkening multiply + the tight linear murk fog.
@@ -421,20 +454,33 @@ fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     let dist = length(in.view);
     let vdir = in.view / max(dist, 1e-4);
     let tex = textureSample(atlas, samp, in.uv, i32(in.layer));
-    // Two tenants share this alpha-blended pass, split by authored alpha:
-    // water tiles are full-alpha and take the water constant below, while a
-    // TRANSLUCENT block tile (ice) is authored under the opaque pass's 0.5
-    // cutout and keeps its own texture alpha. Only near-zero texels discard.
+    // Water has its own surface response; ice and glass keep authored alpha.
     if (tex.a < 0.03) { discard; }
-    var color = tex.rgb * in.tint * cel_shaded_light(in, vdir);
+    var albedo = tex.rgb;
+    if (in.water != 0u) {
+        // Water carries painted body colour as well as the flipbook detail;
+        // multiplying two dark blues lets the brown lake bed dominate it.
+        albedo = mix(albedo, vec3<f32>(0.32), 0.60);
+    }
+    var color = albedo * in.tint * cel_shaded_light(in, vdir);
     // Water blue tint + slight transparency.
-    let alpha = select(tex.a, 0.78, tex.a >= 0.5);
+    var alpha = select(tex.a, 0.78, in.water != 0u);
     // Tint the water volume itself when submerged so the surface seen from below
     // blends into the murk rather than glowing.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
         let f = clamp((dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), alpha);
+    }
+    if (in.water != 0u && in.ncode == NORMAL_POS_Y) {
+        let surface = water_surface(
+            color, in.view + u.cam_pos.xyz, u.render_origin.xyz,
+            vdir, dist, u.fog.z, in.sky_exposure,
+            u.fog_color.w, u.sky_color.rgb, u.fog_color.rgb, in.tint,
+            u.sun_dir.xyz, u.sun_dir.w,
+        );
+        color = surface.color;
+        alpha = surface.alpha;
     }
     let out = atmosphere_apply_dir(
         color,

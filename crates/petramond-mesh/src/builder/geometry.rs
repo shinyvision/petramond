@@ -12,7 +12,7 @@ use super::super::face::{quad_for, Face, FACES};
 use super::super::face_emit::{cube_face_lighting_pad, fold_light, push_cube_face_with_cell_uvs};
 use super::super::greedy::{emit_greedy_quads, FlatFace, GreedyScratch, GREEDY};
 use super::super::tint;
-use super::super::vertex::{ChunkMesh, ModelVertex, UV_MODE_NONE};
+use super::super::vertex::{transition::Transition, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE};
 use super::super::water::{self, SideVsWater, WaterSurface};
 
 use super::super::boxset::{
@@ -27,6 +27,7 @@ use super::exposed_masks::{build_exposed_masks, mask_has, VISIT_ALL};
 use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
 use super::plant::emit_plant;
+use super::{foliage, transition};
 use super::{LeafMeshMode, MeshOptions};
 
 #[allow(clippy::too_many_arguments)]
@@ -39,9 +40,12 @@ pub(super) fn section_geometry(
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_blocklight: impl Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
     neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
+    neighbour_transition_blocked: &dyn Fn(i32, i32, i32) -> bool,
+    transition_rules: &petramond_world::texture_transition::Rules,
     tints: Option<&tint::BiomeTints>,
     options: MeshOptions,
     pad: Option<&SectionMeshPad<'_>>,
+    cancelled: &dyn Fn() -> bool,
 ) -> ChunkMesh {
     let mut opaque = vec![];
     let mut transparent = vec![];
@@ -273,7 +277,20 @@ pub(super) fn section_geometry(
         .filter(|_| options.leaf_mesh_mode == LeafMeshMode::Detailed)
         .map(|pad| build_exposed_masks(pad, (ox, oy, oz), &seals_floor));
 
+    let cube_face_covered = |p: IVec3, face: Face| {
+        let b = block_at(p.x, p.y, p.z);
+        b.is_opaque()
+            || (b.is_slab() && slab_full_at(p.x, p.y, p.z))
+            || (matches!(face, Face::PosY) && seals_floor(p))
+    };
     let classes = cell_classes();
+    let transition_context = transition::Context {
+        rules: transition_rules,
+        block: &block_at,
+        known: &neighbour_loaded,
+        blocked: neighbour_transition_blocked,
+        covered: &cube_face_covered,
+    };
     // Which cells in each `(ly, lz)` row have any work at all. With exposure
     // masks this excludes buried cubes outright, so a solid underground row
     // costs one word test instead of sixteen classified cells.
@@ -281,6 +298,9 @@ pub(super) fn section_geometry(
         .as_ref()
         .map_or(&VISIT_ALL, |m| m.visit_rows());
     for ly in 0..SECTION_SIZE {
+        if cancelled() {
+            return ChunkMesh::empty();
+        }
         for lz in 0..SECTION_SIZE {
             let mut row = visit[ly * SECTION_SIZE + lz];
             while row != 0 {
@@ -589,6 +609,32 @@ pub(super) fn section_geometry(
                 let base_x = wx as f32;
                 let base_z = wz as f32;
                 let base_y = wy as f32;
+                // Canopy dressing is decided once per cell; the crown's corner
+                // shape is resolved lazily by the first face that survives culling.
+                let canopy = block.is_canopy();
+                let crown = std::cell::OnceCell::new();
+                let crown = || {
+                    crown.get_or_init(|| {
+                        foliage::CrownCorners::new([wx, wy, wz], block_at, &neighbour_loaded)
+                    })
+                };
+                // A transition recolours the face; a set may add a biome tint.
+                let finish_face = |vbuf: &mut Vec<Vertex>,
+                                   start: u32,
+                                   face: Face,
+                                   transition: Option<Transition>,
+                                   faces_air: bool| {
+                    if let Some(plan) = transition {
+                        let set = &transition_rules.sets[plan.set as usize];
+                        plan.apply(
+                            &mut vbuf[start as usize..start as usize + 4],
+                            tint_tile(set.tint, ci),
+                        );
+                    }
+                    if canopy {
+                        foliage::dress_face(vbuf, start, face, [wx, wy, wz], faces_air, crown());
+                    }
+                };
 
                 // The cell's own `fills_cell` answer — cheap, and the ONLY
                 // thing the water-vs-water cull needs. The full surface
@@ -684,6 +730,8 @@ pub(super) fn section_geometry(
                                 }
                             };
                             let tint = kv_tint(cell, tint);
+                            let base_tile =
+                                base_tile.face_variation([wx, wy, wz], face.normal_code());
                             let (dx, dy, dz) = face.dir();
                             let (fxp, fyp, fzp) = (
                                 (lx as i32 + 1 + dx) as usize,
@@ -713,6 +761,8 @@ pub(super) fn section_geometry(
                                 true,
                                 &cell_matter,
                             );
+                            let transition =
+                                transition_context.plan(IVec3::new(wx, wy, wz), face, id);
                             let flat = ao[0] == ao[1]
                                 && ao[1] == ao[2]
                                 && ao[2] == ao[3]
@@ -722,7 +772,8 @@ pub(super) fn section_geometry(
                                 && block6[0] == block6[1]
                                 && block6[1] == block6[2]
                                 && block6[2] == block6[3];
-                            if overlay_tile.is_none()
+                            if transition.is_none()
+                                && overlay_tile.is_none()
                                 && (block.is_opaque() || slab_as_cube)
                                 && flat
                                 && !log_uvs_apply
@@ -746,7 +797,7 @@ pub(super) fn section_geometry(
                                     corners,
                                     [base_x, base_y, base_z],
                                 );
-                                push_cube_face_with_cell_uvs(
+                                let start = push_cube_face_with_cell_uvs(
                                     &mut opaque,
                                     corners,
                                     base_tile,
@@ -760,6 +811,13 @@ pub(super) fn section_geometry(
                                     light6,
                                     block6,
                                     cell_tinted(cell),
+                                );
+                                finish_face(
+                                    &mut opaque,
+                                    start,
+                                    face,
+                                    transition,
+                                    pad.blocks[fpi] == Block::Air.id() && pad.loaded[fpi],
                                 );
                             }
                         }
@@ -776,9 +834,7 @@ pub(super) fn section_geometry(
 
                     let is_water_top = is_water && matches!(face, Face::PosY);
                     let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
-                    let nb_solid = nb.is_opaque()
-                        || (nb.is_slab() && slab_full_at(nwx, nwy, nwz))
-                        || (matches!(face, Face::PosY) && seals_floor(IVec3::new(nwx, nwy, nwz)));
+                    let nb_solid = cube_face_covered(IVec3::new(nwx, nwy, nwz), face);
                     if nb_solid && !is_water_top {
                         continue;
                     }
@@ -843,6 +899,8 @@ pub(super) fn section_geometry(
                     };
                     let tint = kv_tint(section_idx(lx, ly, lz), tint);
 
+                    let base_tile = base_tile.face_variation([wx, wy, wz], face.normal_code());
+
                     let mut corners = quad_for(face, base_x, base_y, base_z);
                     if is_water {
                         water_surface().warp_quad(
@@ -891,6 +949,7 @@ pub(super) fn section_geometry(
                     // AO + every light channel) to the greedy merge — a run of them collapses into
                     // one tiled quad, pixel-identical. Water / grass-side (overlay) / leaves /
                     // cactus and any gradient (non-flat) face emit per-cell here, unchanged.
+                    let transition = transition_context.plan(IVec3::new(wx, wy, wz), face, id);
                     let flat = ao[0] == ao[1]
                         && ao[1] == ao[2]
                         && ao[2] == ao[3]
@@ -900,7 +959,8 @@ pub(super) fn section_geometry(
                         && block6[0] == block6[1]
                         && block6[1] == block6[2]
                         && block6[2] == block6[3];
-                    if !is_water
+                    if transition.is_none()
+                        && !is_water
                         && overlay_tile.is_none()
                         && (block.is_opaque() || slab_as_cube)
                         && flat
@@ -938,7 +998,7 @@ pub(super) fn section_geometry(
                         } else {
                             &mut opaque
                         };
-                        push_cube_face_with_cell_uvs(
+                        let start = push_cube_face_with_cell_uvs(
                             vbuf,
                             corners,
                             base_tile,
@@ -952,6 +1012,13 @@ pub(super) fn section_geometry(
                             light6,
                             block6,
                             cell_tinted(section_idx(lx, ly, lz)),
+                        );
+                        finish_face(
+                            vbuf,
+                            start,
+                            face,
+                            transition,
+                            nb == Block::Air && neighbour_loaded(nwx, nwy, nwz),
                         );
                     }
                 }

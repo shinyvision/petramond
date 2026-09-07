@@ -1,3 +1,4 @@
+pub mod transition;
 use petramond_world::light::BlockLight6;
 
 /// Per-face directional shade factors, mirrored in `block.wgsl`.
@@ -533,11 +534,8 @@ impl BlockLightVertexExt for BlockLight6 {
 }
 
 /// The Rust mirror of the shaders' block-light decode: reassemble the three
-/// channels from the three words they are split across. The engine itself never
-/// needs this (the GPU does the decode) — it exists so tests can prove an
-/// emitter's colour survives the split, which is the one thing a hand-mirrored
-/// WGSL decode cannot check for itself.
-#[cfg(any(test, feature = "test-support"))]
+/// channels from the three words they are split across. Foliage subdivision
+/// uses this to interpolate light without blending the encoded chroma bits.
 #[inline]
 pub fn decode_vertex_light(v: &Vertex) -> BlockLight6 {
     let chroma = ((v.tint >> TINT_ALPHA_SHIFT) & 0xFF)

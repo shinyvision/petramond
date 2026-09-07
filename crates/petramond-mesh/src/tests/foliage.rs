@@ -44,3 +44,89 @@ fn leaves_go_to_opaque_pass() {
     );
     assert!(!m.opaque.is_empty(), "leaves should fill the opaque buffer");
 }
+
+#[test]
+fn distant_canopy_keeps_exterior_sprays_and_materials() {
+    for leaf in [Block::OakLeaves, Block::SpruceLeaves] {
+        let mut section = Section::new(0, 0, 0);
+        for x in 6..10 {
+            for y in 6..10 {
+                for z in 6..10 {
+                    section.set_block(x, y, z, leaf);
+                }
+            }
+        }
+        let near = mesh(&section);
+        assert!(!near.far_opaque.is_empty());
+        let near_quads: std::collections::HashSet<Vec<u8>> = near
+            .opaque
+            .chunks_exact(4)
+            .map(|q| bytemuck::cast_slice::<Vertex, u8>(q).to_vec())
+            .collect();
+        for q in near.far_opaque.chunks_exact(4) {
+            assert!(
+                near_quads.contains(bytemuck::cast_slice::<Vertex, u8>(q)),
+                "distant foliage must preserve exterior shape, UVs and lighting"
+            );
+        }
+        let is_spray = |q: &[Vertex]| {
+            uv_mode(&q[0]) == crate::vertex::UV_MODE_NONE
+                && q.iter()
+                    .any(|v| v.pos.iter().any(|&p| !(6.0..=10.0).contains(&p)))
+        };
+        let sprays: Vec<_> = near
+            .opaque
+            .chunks_exact(4)
+            .filter(|q| is_spray(q))
+            .collect();
+        assert!(!sprays.is_empty());
+        let far_sprays: Vec<_> = near
+            .far_opaque
+            .chunks_exact(4)
+            .filter(|q| is_spray(q))
+            .collect();
+        assert_eq!(sprays.len(), far_sprays.len());
+        for (near, far) in sprays.iter().zip(far_sprays) {
+            assert_eq!(
+                bytemuck::cast_slice::<Vertex, u8>(near),
+                bytemuck::cast_slice::<Vertex, u8>(far)
+            );
+        }
+        for q in sprays {
+            assert!(
+                q.iter()
+                    .any(|v| v.pos.iter().any(|&p| !(6.0..=10.0).contains(&p))),
+                "sprays belong on the outside of the crown"
+            );
+        }
+    }
+}
+
+#[test]
+fn leaf_sprays_do_not_enter_occupied_or_unloaded_neighbors() {
+    let mut blocks = vec![((8, 8, 8), Block::OakLeaves)];
+    for (x, y, z) in [
+        (7, 8, 8),
+        (9, 8, 8),
+        (8, 7, 8),
+        (8, 9, 8),
+        (8, 8, 7),
+        (8, 8, 9),
+    ] {
+        blocks.push(((x, y, z), Block::Glass));
+    }
+    let surrounded = mesh(&section_with(&blocks));
+    assert!(surrounded
+        .opaque
+        .iter()
+        .all(|v| v.pos.iter().all(|p| p.fract() == 0.0)));
+    let unloaded = mesh_with(
+        &section_with(&[((8, 8, 8), Block::OakLeaves)]),
+        |_, _, _| SKY_FULL,
+        |_, _, _| false,
+    );
+    assert!(unloaded
+        .opaque
+        .iter()
+        .all(|v| v.pos.iter().all(|p| p.fract() == 0.0)));
+}

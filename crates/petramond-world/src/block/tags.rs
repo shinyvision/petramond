@@ -35,6 +35,7 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "merges_with_self",
     "snow_bedded",
     "rock",
+    "canopy",
 ]);
 
 impl BlockTag {
@@ -166,6 +167,11 @@ impl BlockTag {
     /// crafted stone (cobblestone, bricks, stairs): a player-built stone
     /// path or floor should not repel animals.
     pub const ROCK: BlockTag = BlockTag(20);
+    /// Reads as a soft foliage crown: the mesher insets a cell's convex
+    /// canopy corners and sprouts small leaf sprays from its air-facing
+    /// surfaces. Pure presentation — decay and support come from `leaves`;
+    /// a pack's vines or flowering canopy opts in (or out) by tagging its row.
+    pub const CANOPY: BlockTag = BlockTag(21);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub fn resolve(name: &str) -> Result<BlockTag, String> {

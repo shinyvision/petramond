@@ -233,17 +233,22 @@ impl World {
     }
 
     /// Queue a remesh of every section whose mesh samples world cell
-    /// `(wx, wy, wz)`: the owning section plus the bordering neighbours whose
-    /// one-cell 18³ pad (face culling, AO, smooth light) includes it — up to 8
-    /// sections for a corner cell, 1 for an interior cell. Sections whose
-    /// *light* the edit changes are requeued when their rebake lands (see
+    /// `(wx, wy, wz)`: the owning section plus every bordering neighbour whose
+    /// sampling halo (`petramond_mesh::SAMPLING_HALO`: the one-cell pad for
+    /// culling, AO and smooth light, plus the snow-cover and bedding lookups
+    /// transition donors make past it) includes the cell — up to 8 sections
+    /// for a corner cell, 1 for an interior cell. Sections whose *light* the
+    /// edit changes are requeued when their rebake lands (see
     /// `pump_light_bakes`), so they need no blanket pre-mark here.
     pub(super) fn queue_dirty_meshes_sampling_cell(&mut self, wx: i32, wy: i32, wz: i32) {
+        /// The neighbour offsets along one axis whose halo reaches `local`:
+        /// the low neighbour samples `below` cells up into this section, the
+        /// high neighbour samples `above` cells down into it.
         #[inline]
-        fn deltas(local: usize) -> &'static [i32] {
-            if local == 0 {
+        fn deltas(local: usize, below: usize, above: usize) -> &'static [i32] {
+            if local < above {
                 &[0, -1]
-            } else if local == SECTION_SIZE - 1 {
+            } else if local >= SECTION_SIZE - below {
                 &[0, 1]
             } else {
                 &[0]
@@ -252,9 +257,10 @@ impl World {
         let Some((center, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return;
         };
-        for &dy in deltas(ly) {
-            for &dz in deltas(lz) {
-                for &dx in deltas(lx) {
+        let halo = &petramond_mesh::SAMPLING_HALO;
+        for &dy in deltas(ly, halo.down, halo.up) {
+            for &dz in deltas(lz, halo.horizontal, halo.horizontal) {
+                for &dx in deltas(lx, halo.horizontal, halo.horizontal) {
                     self.queue_dirty_mesh(SectionPos::new(
                         center.cx + dx,
                         center.cy + dy,

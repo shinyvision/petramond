@@ -11,6 +11,7 @@ pub mod item_shape_bake;
 mod load;
 pub mod shape;
 mod shape_kind;
+mod snow;
 mod sounds;
 mod tags;
 #[cfg(test)]
@@ -56,6 +57,7 @@ pub const LIGHT_CELL_DIRECT_SKY: u32 = 1 << 30;
 // singletons through `ShapeKindDef` and name the params in `shape_kind`.
 #[allow(unused_imports)]
 pub use shape_kind::{DimensionParams, ShapeParams, ShapeRender, ShapeSim};
+pub use snow::{snow_cover_at, SNOW_BEDDING_REACH, SNOW_COVER_REACH};
 pub use sounds::BlockSoundAction;
 pub use tags::BlockTag;
 

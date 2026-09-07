@@ -1,3 +1,5 @@
+mod transitions;
+
 use std::sync::Arc;
 
 use crate::world::store::{LoadTarget, World, WorldRole};

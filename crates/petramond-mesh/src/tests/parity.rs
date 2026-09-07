@@ -144,6 +144,7 @@ mod parallel_parity_tests {
             build_section_mesh(
                 section,
                 *pos,
+                test_rules(),
                 nb,
                 |_, _, _| petramond_world::block::ShapeState::NONE,
                 |_, _, _| 0,
@@ -151,6 +152,7 @@ mod parallel_parity_tests {
                 nb_light,
                 |_, _, _| petramond_world::light::LightRgb::ZERO,
                 |_, _, _| true,
+                |_, _, _| false,
             )
         };
 
@@ -246,6 +248,16 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(2, 2, 2, Block::SnowLayer);
     section.set_block(12, 1, 4, Block::SnowLayer);
 
+    section.set_block(7, 1, 7, Block::Dirt);
+    section.set_block(8, 1, 7, Block::Grass);
+    section.set_block(8, 2, 7, Block::ShortGrass);
+    section.set_block(8, 1, 8, Block::Sand);
+    section.set_block(8, 2, 8, Block::PebblesSmall);
+    // Transitions across the section seam: a dyed neighbour cell excludes
+    // itself as a donor, an undyed one does not.
+    section.set_block(15, 1, 3, Block::Dirt);
+    section.set_block(15, 1, 5, Block::Dirt);
+
     // Resolve stored shape states (stair corners, pane masks) the way the
     // world's edit cascade would have — the fixture wrote raw cells.
     let section = super::refined(&section);
@@ -257,6 +269,9 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             && (-1..=SECTION_SIZE as i32).contains(&wz)
         {
             Block::Stone.id()
+        } else if wy == 1 && wx == SECTION_SIZE as i32 && (wz == 3 || wz == 5) {
+            // Grass donors in the east neighbour; the one at z = 3 is dyed.
+            Block::Grass.id()
         } else if wy == SECTION_SIZE as i32 && wx == 5 && wz == 2 {
             // Water column continuing above the section (pad top face).
             Block::Water.id()
@@ -298,10 +313,13 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     };
     let biome_at = |_: i32, _: i32| -> u8 { 0 };
     let loaded_at = |_: i32, _: i32, _: i32| -> bool { true };
+    let dyed_at =
+        |wx: i32, wy: i32, wz: i32| -> bool { (wx, wy, wz) == (SECTION_SIZE as i32, 1, 3) };
 
     let serial = build_section_mesh(
         &section,
         pos,
+        test_rules(),
         block_at,
         cell_state_at,
         water_at,
@@ -309,6 +327,27 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         sky_at,
         blocklight_at,
         loaded_at,
+        dyed_at,
+    );
+    let transitions_at = |mesh: &ChunkMesh, z: f32| {
+        mesh.opaque
+            .chunks_exact(4)
+            .filter(|q| {
+                q.iter().all(|v| {
+                    v.pos[1] == 2.0 && v.pos[0] >= 15.0 && v.pos[2] >= z && v.pos[2] <= z + 1.0
+                }) && crate::vertex::transition::Transition::decode(&q[0]).is_some()
+            })
+            .count()
+    };
+    assert_eq!(
+        transitions_at(&serial, 3.0),
+        0,
+        "a dyed cross-section donor is excluded"
+    );
+    assert_eq!(
+        transitions_at(&serial, 5.0),
+        1,
+        "an undyed cross-section donor bleeds"
     );
 
     let mut blocks = vec![0u16; PAD_VOL];
@@ -317,12 +356,18 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let mut blocklight = vec![petramond_world::light::LightRgb::ZERO; PAD_VOL];
     let mut cell_states = vec![petramond_world::block::ShapeState::NONE; PAD_VOL];
     let loaded = vec![true; PAD_VOL];
+    let mut transition_blocked = vec![false; PAD_VOL];
     for py in 0..PAD {
         for pz in 0..PAD {
             for px in 0..PAD {
                 let (wx, wy, wz) = (px as i32 - 1, py as i32 - 1, pz as i32 - 1);
                 let i = pidx(px, py, pz);
                 blocks[i] = block_at(wx, wy, wz);
+                transition_blocked[i] = dyed_at(wx, wy, wz)
+                    || petramond_world::block::snow_cover_at(IVec3::new(wx, wy + 1, wz), |p| {
+                        Block::from_id(block_at(p.x, p.y, p.z))
+                    })
+                    .is_some();
                 water[i] = water_at(wx, wy, wz);
                 skylight[i] = sky_at(wx, wy, wz);
                 blocklight[i] = blocklight_at(wx, wy, wz);
@@ -348,8 +393,10 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             blocklight: &blocklight,
             cell_states: &cell_states,
             loaded: &loaded,
+            transition_blocked: &transition_blocked,
             biome: &biome,
         },
+        test_rules(),
     );
 
     assert_eq!(
