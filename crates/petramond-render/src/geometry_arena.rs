@@ -100,6 +100,7 @@ pub struct GeometryArena {
     free: std::collections::HashMap<u64, Vec<(u32, u64)>>,
     recycle: Recycle,
     usage: wgpu::BufferUsages,
+    copy_scratch: Option<wgpu::Buffer>,
 }
 
 impl Default for GeometryArena {
@@ -114,15 +115,18 @@ impl GeometryArena {
             blocks: Vec::new(),
             free: std::collections::HashMap::new(),
             recycle: Recycle::default(),
+            copy_scratch: None,
             usage: wgpu::BufferUsages::VERTEX
                 | wgpu::BufferUsages::INDEX
-                | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
         }
     }
 
     /// Total bytes of GPU buffer the arena holds.
     pub fn reserved_bytes(&self) -> u64 {
-        self.blocks.iter().flatten().map(|b| b.size).sum()
+        self.blocks.iter().flatten().map(|b| b.size).sum::<u64>()
+            + self.copy_scratch.as_ref().map_or(0, |b| b.size())
     }
 
     pub fn block_count(&self) -> usize {
@@ -142,6 +146,35 @@ impl GeometryArena {
         b.buf.slice(alloc.offset..alloc.offset + len)
     }
 
+    #[cfg(test)]
+    pub(crate) fn readback(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        alloc: &LayerAlloc,
+        len: u64,
+    ) -> Vec<u8> {
+        let dst = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("terrain test readback"),
+            size: len,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.block(alloc.block).buf, alloc.offset, &dst, 0, len);
+        queue.submit([encoder.finish()]);
+        dst.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let bytes = dst.slice(..).get_mapped_range().to_vec();
+        dst.unmap();
+        bytes
+    }
+
     /// Write `bytes` at `offset` inside a live allocation. Returns false when
     /// the write would leave the allocation, which is the caller's cue that the
     /// GPU copy is stale and must be repacked.
@@ -158,6 +191,54 @@ impl GeometryArena {
         let b = self.block(alloc.block);
         queue.write_buffer(&b.buf, alloc.offset + offset, bytes);
         true
+    }
+
+    /// Copy live geometry between distinct allocations without a CPU readback.
+    pub(crate) fn copy(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &LayerAlloc,
+        src_offset: u64,
+        dst: &LayerAlloc,
+        dst_offset: u64,
+        len: u64,
+    ) {
+        assert!(src_offset + len <= src.capacity && dst_offset + len <= dst.capacity);
+        if src.block == dst.block {
+            // wgpu forbids even disjoint copies within one buffer.
+            if self.copy_scratch.as_ref().is_none_or(|b| b.size() < len) {
+                self.copy_scratch = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("terrain relocation scratch"),
+                    size: len.next_power_of_two().max(4),
+                    usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            }
+            let scratch = self.copy_scratch.as_ref().unwrap();
+            encoder.copy_buffer_to_buffer(
+                &self.block(src.block).buf,
+                src.offset + src_offset,
+                scratch,
+                0,
+                len,
+            );
+            encoder.copy_buffer_to_buffer(
+                scratch,
+                0,
+                &self.block(dst.block).buf,
+                dst.offset + dst_offset,
+                len,
+            );
+        } else {
+            encoder.copy_buffer_to_buffer(
+                &self.block(src.block).buf,
+                src.offset + src_offset,
+                &self.block(dst.block).buf,
+                dst.offset + dst_offset,
+                len,
+            );
+        }
     }
 
     /// Claim `len` bytes. Never fails: a request larger than a block gets a
@@ -284,30 +365,4 @@ impl GeometryArena {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The class function is the arena's whole memory policy: it must never
-    /// round DOWN (that would hand out an allocation the caller overruns) and
-    /// its waste must stay bounded, or terrain VRAM balloons silently.
-    #[test]
-    fn size_classes_cover_the_request_with_bounded_waste() {
-        for len in (1u64..1 << 22).step_by(97) {
-            let c = class_size(len);
-            assert!(c >= len, "class {c} smaller than {len}");
-            assert!(
-                c <= len + MIN_CLASS.max(len / 8),
-                "class {c} wastes too much on {len}"
-            );
-            assert_eq!(c % 4, 0, "class {c} breaks wgpu's 4-byte alignment");
-        }
-    }
-
-    /// Same-class frees must be reusable by any same-class request — that is
-    /// what keeps allocation O(1) with no fragmentation search.
-    #[test]
-    fn freed_allocations_are_reused_by_the_same_class() {
-        assert_eq!(class_size(5000), class_size(5100));
-        assert_ne!(class_size(5000), class_size(9000));
-    }
-}
+mod tests;

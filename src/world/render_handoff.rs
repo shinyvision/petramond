@@ -61,12 +61,8 @@ impl TerrainRenderHandoff<'_> {
         out
     }
 
-    /// A packed-column rebuild needs every section's CPU geometry, but a settled
-    /// column may have released it (`release_settled_column_meshes`). When any
-    /// section mesh in `pos` is released, queue a forced remesh for each and
-    /// return true: the caller must skip this column's upload (leaving it
-    /// upload-dirty) until the fresh meshes land. The installed GPU column keeps
-    /// drawing meanwhile, so the cost is latency on the repack, never a hole.
+    /// Recover released CPU geometry when the renderer has no reusable GPU copy.
+    /// Queue forced remeshes and keep the column upload-dirty until they finish.
     pub fn needs_repack_remeshes(&mut self, pos: ChunkPos) -> bool {
         let Some(&bits) = self.world.terrain.mesh_column_cys.get(&pos) else {
             return false;
@@ -127,10 +123,8 @@ mod tests {
     use petramond_world::section::Section;
     use std::time::{Duration, Instant};
 
-    /// The CPU-release contract: a settled column frees its mesh buffers, a later
-    /// repack refuses to upload from released meshes (no silent geometry loss) and
-    /// instead forces a remesh; the installed mesh entry is never removed while
-    /// the remesh is pending.
+    /// A renderer missing the GPU copy can recover released CPU geometry without
+    /// removing the installed mesh while the forced remesh is pending.
     #[test]
     fn released_meshes_gate_column_repack_and_force_a_remesh() {
         let mut world = World::new(0, 0);
@@ -160,8 +154,7 @@ mod tests {
             "emptiness must stay truthful after release"
         );
 
-        // A repack request against released meshes must gate the upload and force
-        // a remesh rather than packing without the section's geometry.
+        // Missing GPU copies must force recovery before a column is repacked.
         world.terrain.mesh_upload_dirty_columns.insert(column);
         let mut handoff = world.terrain_render_handoff();
         assert!(handoff.needs_repack_remeshes(column));
