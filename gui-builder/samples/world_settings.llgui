@@ -645,7 +645,7 @@
                                 },
                                 {
                                   "type": "label",
-                                  "text": "Your items stay with you when you die",
+                                  "text": "Keep your items when you die",
                                   "small": true,
                                   "style": "label.muted"
                                 }
@@ -735,7 +735,7 @@
                                 },
                                 {
                                   "type": "label",
-                                  "text": "Host on the local network automatically",
+                                  "text": "Host on your local network",
                                   "small": true,
                                   "style": "label.muted"
                                 }
@@ -865,7 +865,7 @@
                       },
                       "children": [
                         {
-                          "type": "row",
+                          "type": "column",
                           "layout": {
                             "w": "auto",
                             "h": "auto",
@@ -881,42 +881,15 @@
                               0,
                               0
                             ],
-                            "gap": 8,
+                            "gap": 2,
                             "dir": "column",
-                            "align": "center",
+                            "align": "stretch",
                             "justify": "start"
                           },
                           "style": "list.row",
                           "children": [
                             {
-                              "type": "image",
-                              "image": "",
-                              "layout": {
-                                "w": 16,
-                                "h": 16,
-                                "pad": [
-                                  0,
-                                  0,
-                                  0,
-                                  0
-                                ],
-                                "margin": [
-                                  0,
-                                  0,
-                                  0,
-                                  0
-                                ],
-                                "gap": 0,
-                                "dir": "column",
-                                "justify": "start"
-                              },
-                              "bind": {
-                                "visible": "has_icon",
-                                "image": "icon"
-                              }
-                            },
-                            {
-                              "type": "column",
+                              "type": "row",
                               "layout": {
                                 "w": "auto",
                                 "h": "auto",
@@ -932,15 +905,58 @@
                                   0,
                                   0
                                 ],
-                                "gap": 2,
+                                "gap": 5,
                                 "dir": "column",
+                                "align": "center",
                                 "justify": "start"
                               },
                               "children": [
                                 {
-                                  "type": "row",
+                                  "type": "image",
+                                  "image": "",
                                   "layout": {
-                                    "w": "auto",
+                                    "w": 16,
+                                    "h": 16,
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start"
+                                  },
+                                  "bind": {
+                                    "visible": "has_icon",
+                                    "image": "icon"
+                                  }
+                                },
+                                {
+                                  "type": "label",
+                                  "bind": {
+                                    "text": "name"
+                                  }
+                                },
+                                {
+                                  "type": "badge",
+                                  "bind": {
+                                    "text": "version",
+                                    "visible": "has_version"
+                                  }
+                                },
+                                {
+                                  "type": "spacer",
+                                  "layout": {
+                                    "w": {
+                                      "grow": 1
+                                    },
                                     "h": "auto",
                                     "pad": [
                                       0,
@@ -954,75 +970,36 @@
                                       0,
                                       0
                                     ],
-                                    "gap": 5,
+                                    "gap": 0,
                                     "dir": "column",
-                                    "align": "center",
                                     "justify": "start"
-                                  },
-                                  "children": [
-                                    {
-                                      "type": "label",
-                                      "bind": {
-                                        "text": "name"
-                                      }
-                                    },
-                                    {
-                                      "type": "badge",
-                                      "bind": {
-                                        "text": "version",
-                                        "visible": "has_version"
-                                      }
-                                    }
-                                  ]
+                                  }
                                 },
                                 {
-                                  "type": "label",
-                                  "small": true,
-                                  "style": "label.muted",
+                                  "id": "mod_on",
+                                  "type": "toggle",
                                   "bind": {
-                                    "text": "desc"
+                                    "value": "enabled",
+                                    "enabled": "toggleable",
+                                    "visible": "toggleable"
+                                  }
+                                },
+                                {
+                                  "type": "badge",
+                                  "text": "always on",
+                                  "bind": {
+                                    "visible": "content_only"
                                   }
                                 }
                               ]
                             },
                             {
-                              "type": "spacer",
-                              "layout": {
-                                "w": {
-                                  "grow": 1
-                                },
-                                "h": "auto",
-                                "pad": [
-                                  0,
-                                  0,
-                                  0,
-                                  0
-                                ],
-                                "margin": [
-                                  0,
-                                  0,
-                                  0,
-                                  0
-                                ],
-                                "gap": 0,
-                                "dir": "column",
-                                "justify": "start"
-                              }
-                            },
-                            {
-                              "id": "mod_on",
-                              "type": "toggle",
+                              "type": "label",
+                              "wrap": true,
+                              "small": true,
+                              "style": "label.muted",
                               "bind": {
-                                "value": "enabled",
-                                "enabled": "toggleable",
-                                "visible": "toggleable"
-                              }
-                            },
-                            {
-                              "type": "badge",
-                              "text": "always on",
-                              "bind": {
-                                "visible": "content_only"
+                                "text": "desc"
                               }
                             }
                           ]
@@ -1037,11 +1014,6 @@
                   "bind": {
                     "visible": "no_mods"
                   }
-                },
-                {
-                  "type": "alert",
-                  "level": "info",
-                  "text": "Changes to mods will apply the next time you load this world."
                 }
               ]
             },

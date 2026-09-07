@@ -69,7 +69,7 @@
         {
           "type": "column",
           "layout": {
-            "w": 240,
+            "w": 260,
             "h": "auto",
             "pad": [
               10,

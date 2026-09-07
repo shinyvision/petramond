@@ -215,6 +215,45 @@
       ]
      }
     ]
+   },
+   {
+    "type": "tooltip",
+    "style": "panel.inset",
+    "layout": {
+     "max_w": 200,
+     "abs": {
+      "x": 4,
+      "y": 4
+     },
+     "pad": [
+      3,
+      2,
+      3,
+      3
+     ],
+     "gap": 2,
+     "align": "stretch"
+    },
+    "bind": {
+     "visible": "show_binding_tip"
+    },
+    "children": [
+     {
+      "type": "label",
+      "wrap": true,
+      "small": true,
+      "bind": {
+       "text": "binding_tip_action"
+      }
+     },
+     {
+      "type": "label",
+      "wrap": true,
+      "bind": {
+       "text": "binding_tip_keys"
+      }
+     }
+    ]
    }
   ]
  }

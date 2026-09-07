@@ -333,7 +333,7 @@
                                                                 "type": "label",
                                                                 "style": "label.muted",
                                                                 "small": true,
-                                                                "text": "Your items stay with you when you die"
+                                                                "text": "Keep your items when you die"
                                                             }
                                                         ]
                                                     },
@@ -381,7 +381,7 @@
                                                                 "type": "label",
                                                                 "style": "label.muted",
                                                                 "small": true,
-                                                                "text": "Host on the local network automatically"
+                                                                "text": "Host on your local network"
                                                             }
                                                         ]
                                                     },
@@ -452,7 +452,7 @@
                                         },
                                         "children": [
                                             {
-                                                "type": "row",
+                                                "type": "column",
                                                 "layout": {
                                                     "pad": [
                                                         3,
@@ -460,84 +460,77 @@
                                                         3,
                                                         1
                                                     ],
-                                                    "gap": 8,
-                                                    "align": "center"
+                                                    "gap": 2,
+                                                    "align": "stretch"
                                                 },
                                                 "style": "list.row",
                                                 "children": [
                                                     {
-                                                        "type": "image",
-                                                        "image": "",
+                                                        "type": "row",
                                                         "layout": {
-                                                            "w": 16,
-                                                            "h": 16
-                                                        },
-                                                        "bind": {
-                                                            "visible": "has_icon",
-                                                            "image": "icon"
-                                                        }
-                                                    },
-                                                    {
-                                                        "type": "column",
-                                                        "layout": {
-                                                            "gap": 2
+                                                            "gap": 5,
+                                                            "align": "center"
                                                         },
                                                         "children": [
                                                             {
-                                                                "type": "row",
+                                                                "type": "image",
+                                                                "image": "",
                                                                 "layout": {
-                                                                    "gap": 5,
-                                                                    "align": "center"
+                                                                    "w": 16,
+                                                                    "h": 16
                                                                 },
-                                                                "children": [
-                                                                    {
-                                                                        "type": "label",
-                                                                        "bind": {
-                                                                            "text": "name"
-                                                                        }
-                                                                    },
-                                                                    {
-                                                                        "type": "badge",
-                                                                        "bind": {
-                                                                            "text": "version",
-                                                                            "visible": "has_version"
-                                                                        }
-                                                                    }
-                                                                ]
+                                                                "bind": {
+                                                                    "visible": "has_icon",
+                                                                    "image": "icon"
+                                                                }
                                                             },
                                                             {
                                                                 "type": "label",
-                                                                "style": "label.muted",
-                                                                "small": true,
                                                                 "bind": {
-                                                                    "text": "desc"
+                                                                    "text": "name"
+                                                                }
+                                                            },
+                                                            {
+                                                                "type": "badge",
+                                                                "bind": {
+                                                                    "text": "version",
+                                                                    "visible": "has_version"
+                                                                }
+                                                            },
+                                                            {
+                                                                "type": "spacer",
+                                                                "layout": {
+                                                                    "w": {
+                                                                        "grow": 1
+                                                                    }
+                                                                }
+                                                            },
+                                                            {
+                                                                "id": "mod_on",
+                                                                "type": "toggle",
+                                                                "bind": {
+                                                                    "value": "enabled",
+                                                                    "enabled": "toggleable",
+                                                                    "visible": "toggleable"
+                                                                }
+                                                            },
+                                                            {
+                                                                "type": "badge",
+                                                                "text": "always on",
+                                                                "bind": {
+                                                                    "visible": "content_only"
                                                                 }
                                                             }
                                                         ]
                                                     },
                                                     {
-                                                        "type": "spacer",
-                                                        "layout": {
-                                                            "w": {
-                                                                "grow": 1
-                                                            }
-                                                        }
-                                                    },
-                                                    {
-                                                        "id": "mod_on",
-                                                        "type": "toggle",
+                                                        "type": "label",
+                                                        "style": "label.muted",
+                                                        "small": true,
                                                         "bind": {
-                                                            "value": "enabled",
-                                                            "enabled": "toggleable",
-                                                            "visible": "toggleable"
-                                                        }
-                                                    },
-                                                    {
-                                                        "type": "badge",
-                                                        "text": "always on",
-                                                        "bind": {
-                                                            "visible": "content_only"
-                                                        }
+                                                            "text": "desc"
+                                                        },
+                                                        "wrap": true
                                                     }
                                                 ]
                                             }
@@ -551,11 +544,6 @@
                                 "bind": {
                                     "visible": "no_mods"
                                 }
-                            },
-                            {
-                                "type": "alert",
-                                "level": "info",
-                                "text": "Changes to mods will apply the next time you load this world."
                             }
                         ]
                     },

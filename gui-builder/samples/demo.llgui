@@ -7,7 +7,7 @@
     "root": {
       "type": "frame",
       "layout": {
-        "w": "auto",
+        "w": 300,
         "h": "auto",
         "pad": [
           4,
@@ -23,6 +23,7 @@
         ],
         "gap": 6,
         "dir": "column",
+        "align": "stretch",
         "justify": "start"
       },
       "style": "panel.large",
@@ -268,7 +269,9 @@
           "axis": "vertical",
           "layout": {
             "w": "auto",
-            "h": 62,
+            "h": {
+              "grow": 1
+            },
             "pad": [
               0,
               0,
@@ -283,7 +286,8 @@
             ],
             "gap": 0,
             "dir": "column",
-            "justify": "start"
+            "justify": "start",
+            "min_h": 28
           },
           "children": [
             {

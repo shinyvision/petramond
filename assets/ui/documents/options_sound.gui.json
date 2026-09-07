@@ -39,7 +39,7 @@
     "type": "column",
     "style": "panel.large",
     "layout": {
-     "w": 240,
+     "w": 260,
      "pad": [
       10,
       8,

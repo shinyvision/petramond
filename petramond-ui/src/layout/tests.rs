@@ -898,3 +898,46 @@ fn a_fixed_size_panel_never_gives_height_back() {
         "an authored height is kept, and overflows"
     );
 }
+
+#[test]
+fn scrollbar_reflows_wrapped_list_rows_and_updates_the_scroll_range() {
+    let doc = Document::from_json(
+        r#"{
+        "format": 1, "kind": "test:wrapped_rows", "class": "screen",
+        "root": { "type": "scroll", "id": "scroll", "layout": { "w": 60, "h": 15 },
+            "children": [{ "type": "list", "bind": { "items": "rows" },
+                "layout": { "align": "stretch" },
+                "children": [{ "type": "column", "layout": { "align": "stretch" },
+                    "children": [{ "type": "label", "wrap": true, "bind": { "text": "text" } }]
+                }]
+            }]
+        }
+    }"#,
+    )
+    .unwrap();
+    let mut state = UiState::new();
+    let row = [("text".into(), UiValue::Str("abcdefghij".into()))]
+        .into_iter()
+        .collect();
+    state.set("rows", UiValue::List(std::sync::Arc::new(vec![row; 3])));
+    let tree = InstTree::expand(&doc, &state);
+    let solved = solve(&tree, &MockEnv, (100, 100), &|_| 0);
+    let mut bottom = 0;
+    for i in 0..tree.len() {
+        let inst = tree.get(i as u32);
+        if !matches!(inst.node.kind, NodeKind::Label { .. }) {
+            continue;
+        }
+        let r = solved.rects[i];
+        let required = MockEnv
+            .leaf_size(inst.node, inst.text.as_deref(), None, Some(r.w))
+            .1;
+        assert!(r.h >= required, "wrapped ink must fit the row");
+        assert!(r.y >= bottom, "rows must not overlap after reflow");
+        bottom = r.y + r.h;
+    }
+    assert!(
+        solved.scroll_content[0].unwrap().1 >= bottom - solved.rects[0].y,
+        "last line remains reachable"
+    );
+}

@@ -56,7 +56,8 @@
                         "type": "label",
                         "bind": {
                             "text": "world_name"
-                        }
+                        },
+                        "wrap": true
                     },
                     {
                         "type": "label",

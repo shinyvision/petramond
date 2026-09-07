@@ -12,7 +12,9 @@
                 4,
                 4
             ],
-            "gap": 6
+            "gap": 6,
+            "w": 300,
+            "align": "stretch"
         },
         "children": [
             {
@@ -143,7 +145,10 @@
                 "type": "scroll",
                 "id": "list_scroll",
                 "layout": {
-                    "h": 62
+                    "h": {
+                        "grow": 1
+                    },
+                    "min_h": 28
                 },
                 "children": [
                     {

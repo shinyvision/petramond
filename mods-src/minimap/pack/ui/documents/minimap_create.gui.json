@@ -6,7 +6,7 @@
     "type": "frame",
     "style": "panel.large",
     "layout": {
-      "w": 220,
+      "w": 260,
       "pad": [10, 8, 10, 10],
       "gap": 8,
       "align": "stretch",

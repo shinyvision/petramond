@@ -199,8 +199,8 @@ fn cardinal_text_runs(
         let center_x = (HUD_CENTER + sx * 120.0).round() as i32;
         let center_y = (HUD_CENTER - up * 120.0).round() as i32;
         let position = [
-            center_x - text_width as i32 / 2,
-            center_y - text_height as i32 / 2,
+            inside_hud(center_x - text_width as i32 / 2, text_width),
+            inside_hud(center_y - text_height as i32 / 2, text_height),
         ];
         let text = letter.to_string();
         for offset in [
@@ -229,3 +229,14 @@ fn cardinal_text_runs(
     }
     runs
 }
+
+/// Clamp a glyph run's top-left so the run stays inside the HUD with a
+/// one-pixel border. Total: a run wider than the HUD pins to the border
+/// instead of inverting the range.
+fn inside_hud(top_left: i32, extent: u16) -> i32 {
+    let max = (HUD_SIZE as i32 - i32::from(extent) - 1).max(1);
+    top_left.clamp(1, max)
+}
+
+#[cfg(test)]
+mod tests;

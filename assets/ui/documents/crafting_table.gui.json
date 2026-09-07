@@ -41,12 +41,6 @@
         ]
       },
       {
-        "type": "label",
-        "text": "No matching recipes",
-        "style": "label.muted",
-        "bind": { "visible": "no_craft_results", "text": "craft_empty_hint" }
-      },
-      {
         "type": "scroll",
         "id": "craft_scroll",
         "axis": "vertical",
@@ -57,6 +51,12 @@
           "pad": [1, 1, 1, 1]
         },
         "children": [
+          {
+            "type": "label",
+            "text": "No matching recipes",
+            "style": "label.muted",
+            "bind": { "visible": "no_craft_results", "text": "craft_empty_hint" }
+          },
           {
             "type": "list",
             "id": "craft_recipes_list",
@@ -144,6 +144,8 @@
               {
                 "type": "label",
                 "small": true,
+                "wrap": true,
+                "layout": { "max_w": 160 },
                 "bind": { "text": "craft_tip_name" }
               }
             ]

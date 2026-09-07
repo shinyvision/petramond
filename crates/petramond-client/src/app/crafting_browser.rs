@@ -189,7 +189,7 @@ impl CraftingBrowser {
             "craft_empty_hint",
             UiValue::Str(
                 if unfiltered {
-                    "Gather materials to discover recipes"
+                    "Gather to find recipes"
                 } else {
                     "No matching recipes"
                 }

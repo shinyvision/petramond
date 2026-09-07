@@ -93,11 +93,16 @@
               "scale": 2
             },
             {
-              "type": "label",
-              "wrap": true,
+              "id": "message_scroll",
+              "type": "scroll",
+              "axis": "vertical",
               "layout": {
-                "w": 200,
-                "h": "auto",
+                "w": {
+                  "grow": 1
+                },
+                "h": {
+                  "grow": 1
+                },
                 "pad": [
                   0,
                   0,
@@ -112,12 +117,41 @@
                 ],
                 "gap": 0,
                 "dir": "column",
-                "justify": "start"
+                "justify": "start",
+                "min_h": 28,
+                "max_h": 126
               },
-              "style": "label.muted",
-              "bind": {
-                "text": "disconnect_message"
-              }
+              "children": [
+                {
+                  "type": "label",
+                  "wrap": true,
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "style": "label.muted",
+                  "bind": {
+                    "text": "disconnect_message"
+                  }
+                }
+              ]
             },
             {
               "type": "spacer",

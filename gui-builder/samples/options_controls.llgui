@@ -445,12 +445,67 @@
               ]
             }
           ]
+        },
+        {
+          "type": "tooltip",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 2,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "show_binding_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "binding_tip_action"
+              }
+            },
+            {
+              "type": "label",
+              "wrap": true,
+              "bind": {
+                "text": "binding_tip_keys"
+              }
+            }
+          ]
         }
       ]
     }
   },
   "editor": {
     "sample_state": {
+      "binding_tip_action": {
+        "str": "Sample text"
+      },
+      "binding_tip_keys": {
+        "str": "Sample text"
+      },
       "remap_hint": {
         "str": "Sample text"
       },
@@ -501,6 +556,9 @@
         ]
       },
       "show_backdrop": {
+        "bool": true
+      },
+      "show_binding_tip": {
         "bool": true
       }
     },

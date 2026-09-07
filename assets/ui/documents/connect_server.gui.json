@@ -36,7 +36,7 @@
                 "type": "frame",
                 "style": "panel.large",
                 "layout": {
-                    "w": 240,
+                    "w": 280,
                     "pad": [
                         4,
                         2,
@@ -87,13 +87,28 @@
                         }
                     },
                     {
-                        "type": "label",
-                        "wrap": true,
-                        "style": "label.danger",
+                        "type": "scroll",
+                        "id": "status_scroll",
+                        "layout": {
+                            "h": {
+                                "grow": 1
+                            },
+                            "min_h": 14,
+                            "max_h": 56
+                        },
                         "bind": {
-                            "text": "status_text",
                             "visible": "has_status"
-                        }
+                        },
+                        "children": [
+                            {
+                                "type": "label",
+                                "wrap": true,
+                                "style": "label.danger",
+                                "bind": {
+                                    "text": "status_text"
+                                }
+                            }
+                        ]
                     },
                     {
                         "type": "label",

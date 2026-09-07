@@ -177,7 +177,7 @@
                   },
                   "children": [
                     {
-                      "type": "row",
+                      "type": "column",
                       "layout": {
                         "w": "auto",
                         "h": "auto",
@@ -195,13 +195,14 @@
                         ],
                         "gap": 0,
                         "dir": "column",
-                        "align": "center",
+                        "align": "start",
                         "justify": "start"
                       },
                       "style": "list.row",
                       "children": [
                         {
                           "type": "label",
+                          "wrap": true,
                           "bind": {
                             "text": "name"
                           }

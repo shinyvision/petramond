@@ -659,8 +659,46 @@ fn options_opens_from_title_and_esc_walks_back_out() {
     app.drive_doc_ui(GuiKind::Options, screen, 0.3);
     assert_eq!(app.screen, crate::app::AppScreen::OptionsGraphics);
 
+    use petramond::save::client::AntiAliasing;
+    for (i, expected) in AntiAliasing::ALL.into_iter().enumerate() {
+        let now = 0.4 + i as f64 * 0.3;
+        app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now);
+        let previous = app.settings.anti_aliasing;
+        let r = app.ui.out().rect("anti_aliasing").expect("AA slider");
+        let fraction = i as f32 / (AntiAliasing::ALL.len() - 1) as f32;
+        let x = r.x as f32 + (fraction * r.w as f32).clamp(1.0, r.w as f32 - 1.0);
+        app.renderer_options_dirty = false;
+        app.set_cursor_position(x, (r.y + r.h / 2) as f32);
+        app.set_pointer_button(PointerButton::Primary, true);
+        app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now + 0.1);
+        assert_eq!(app.anti_aliasing_preview, Some(expected));
+        assert_eq!(
+            app.settings.anti_aliasing, previous,
+            "dragging must not change renderer settings"
+        );
+        assert!(!app.renderer_options_dirty);
+        app.set_pointer_button(PointerButton::Primary, false);
+        app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now + 0.2);
+        assert_eq!(app.settings.anti_aliasing, expected);
+        assert_eq!(app.anti_aliasing_preview, None);
+        assert!(
+            app.renderer_options_dirty,
+            "release must reach the renderer"
+        );
+    }
+
+    // Leaving during a drag discards its preview.
+    let r = app.ui.out().rect("anti_aliasing").unwrap();
+    app.set_cursor_position((r.x + 1) as f32, (r.y + r.h / 2) as f32);
+    app.set_pointer_button(PointerButton::Primary, true);
+    app.drive_doc_ui(GuiKind::OptionsGraphics, screen, 2.0);
+    let applied = app.settings.anti_aliasing;
+    assert!(app.anti_aliasing_preview.is_some());
+
     // ESC: category → root → title (the flow began there).
     app.handle_control(Control::CloseScreen, true);
+    assert_eq!(app.anti_aliasing_preview, None);
+    assert_eq!(app.settings.anti_aliasing, applied);
     assert_eq!(app.screen, crate::app::AppScreen::Options);
     app.handle_control(Control::CloseScreen, true);
     assert_eq!(app.screen, crate::app::AppScreen::Title);

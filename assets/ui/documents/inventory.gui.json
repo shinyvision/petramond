@@ -2,7 +2,7 @@
   "format": 1,
   "kind": "petramond:inventory",
   "class": "container",
-  "compact_below_w": 416,
+  "compact_below_w": 438,
   "root": {
     "type": "frame",
     "layout": {
@@ -28,11 +28,12 @@
           "align": "stretch"
         },
         "compact_layout": {
+          "w": 220,
           "h": {
             "grow": 1
           },
           "min_h": 113,
-          "pad": [4, 3, 4, 4],
+          "pad": [4, 0, 4, 0],
           "gap": 3,
           "align": "stretch"
         },
@@ -61,12 +62,6 @@
             ]
           },
           {
-            "type": "label",
-            "text": "No matching recipes",
-            "style": "label.muted",
-            "bind": { "visible": "no_craft_results", "text": "craft_empty_hint" }
-          },
-          {
             "type": "scroll",
             "id": "craft_scroll",
             "axis": "vertical",
@@ -84,6 +79,13 @@
               "pad": [1, 1, 1, 1]
             },
             "children": [
+              {
+                "type": "label",
+                "text": "No matching recipes",
+                "wrap": true,
+                "style": "label.muted",
+                "bind": { "visible": "no_craft_results", "text": "craft_empty_hint" }
+              },
               {
                 "type": "list",
                 "id": "craft_recipes_list",
@@ -201,6 +203,8 @@
               {
                 "type": "label",
                 "small": true,
+                "wrap": true,
+                "layout": { "max_w": 160 },
                 "bind": { "text": "craft_tip_name" }
               }
             ]

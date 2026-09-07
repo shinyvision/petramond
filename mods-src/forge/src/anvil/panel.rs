@@ -58,7 +58,7 @@ impl AnvilSpec {
         // The one state the player cannot see from the slots themselves: a
         // valid material that is short of its cost.
         let hint = if tool_stack.is_none() {
-            "Insert a tool".to_owned()
+            "Add a tool".to_owned()
         } else {
             match staged.iter().find(|(_, fit, have)| have < &fit.cost) {
                 Some((_, fit, _)) => format!("Needs {}", fit.cost),

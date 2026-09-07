@@ -555,6 +555,20 @@ impl Solver<'_, '_, '_> {
                 }
             }
         }
+        if matches!(scroll_axis, Some(ScrollAxis::Vertical))
+            && dir == Dir::Column
+            && avail.w < content.w
+        {
+            // The scrollbar narrows wrapped rows; their new heights must also
+            // drive sibling placement and the scroll range.
+            outer_sum = 0;
+            for (i, &c) in flow.iter().enumerate() {
+                let cl = tree.get(c).layout;
+                let (_, h) = self.measure(c, Some((avail.w - cl.margin[0] - cl.margin[2]).max(0)));
+                bases[i] = h;
+                outer_sum += h + cl.margin[1] + cl.margin[3];
+            }
+        }
         let content_main = main.of((avail.w, avail.h));
         let mut leftover = content_main - outer_sum - gaps;
 

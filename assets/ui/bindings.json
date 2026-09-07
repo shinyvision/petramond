@@ -325,6 +325,10 @@
     "item_tip_has_info": {
      "type": "bool",
      "doc": "the hovered item declares an info line"
+    },
+    "craft_empty_hint": {
+     "type": "str",
+     "doc": "Gather to find recipes before discovery; No matching recipes when filtering"
     }
    },
    "handles": {
@@ -392,6 +396,10 @@
     "item_tip_has_info": {
      "type": "bool",
      "doc": "the hovered item declares an info line"
+    },
+    "craft_empty_hint": {
+     "type": "str",
+     "doc": "Gather to find recipes before discovery; No matching recipes when filtering"
     }
    },
    "handles": {
@@ -675,6 +683,18 @@
       "is_action": "bool"
      },
      "doc": "category headers and action rows in display order: engine categories (Movement / Interacting / Other) then one category per client mod; an action row's binding label reads '> ??? <' while armed"
+    },
+    "show_binding_tip": {
+     "type": "bool",
+     "doc": "an action row is hovered; reveals its complete label and key chord"
+    },
+    "binding_tip_action": {
+     "type": "str",
+     "doc": "hovered action label, wrapped in the tooltip"
+    },
+    "binding_tip_keys": {
+     "type": "str",
+     "doc": "hovered binding, wrapped so long modifier chords remain readable"
     }
    },
    "handles": {
@@ -699,11 +719,20 @@
     "particles_label": {
      "type": "str",
      "doc": "the particles cycle button text (Particles: Full/Reduced/Off)"
+    },
+    "aa_label": {
+     "type": "str",
+     "doc": "selected anti-aliasing mode: Off/MSAA 4x/MSAA 8x/SSAA 4x/SSAA 16x"
+    },
+    "anti_aliasing": {
+     "type": "f32",
+     "doc": "anti-aliasing slider index: 0 Off, 1 MSAA 4x (default), 2 MSAA 8x, 3 SSAA 4x, 4 SSAA 16x"
     }
    },
    "handles": {
     "view_distance": "slider: view distance in chunks; the release commit applies it live (replica, streaming, fog) and persists",
     "particles": "click: cycle particles Full -> Reduced -> Off (applies live, persists)",
+    "anti_aliasing": "slider: preview Off/MSAA 4x/MSAA 8x/SSAA 4x/SSAA 16x; release applies and persists the mode",
     "back": "click: back to the Options root"
    }
   }

@@ -123,15 +123,6 @@
           ]
         },
         {
-          "type": "label",
-          "text": "No matching recipes",
-          "style": "label.muted",
-          "bind": {
-            "text": "craft_empty_hint",
-            "visible": "no_craft_results"
-          }
-        },
-        {
           "id": "craft_scroll",
           "type": "scroll",
           "axis": "vertical",
@@ -159,6 +150,15 @@
           },
           "style": "panel.inset",
           "children": [
+            {
+              "type": "label",
+              "text": "No matching recipes",
+              "style": "label.muted",
+              "bind": {
+                "text": "craft_empty_hint",
+                "visible": "no_craft_results"
+              }
+            },
             {
               "id": "craft_recipes_list",
               "type": "list",
@@ -444,7 +444,28 @@
                 },
                 {
                   "type": "label",
+                  "wrap": true,
                   "small": true,
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "max_w": 160
+                  },
                   "bind": {
                     "text": "craft_tip_name"
                   }
@@ -489,6 +510,9 @@
     "sample_state": {
       "can_craft": {
         "bool": true
+      },
+      "craft_empty_hint": {
+        "str": "Sample text"
       },
       "craft_filter_on": {
         "bool": true
