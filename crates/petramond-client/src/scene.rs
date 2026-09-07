@@ -72,7 +72,11 @@ impl SceneCapture {
             height,
             CAPTURE_FORMAT,
         ));
-        renderer.set_render_distance(render_distance);
+        // A capture is a client with default graphics at this streaming
+        // radius: the same single entry the options screen uses.
+        let mut graphics = petramond::save::client::ClientSettings::default().graphics();
+        graphics.render_dist = render_distance;
+        renderer.apply_graphics(&graphics);
         let aspect = width as f32 / height.max(1) as f32;
         // Every installed pack, since a capture has no server handshake to
         // narrow the set with — a headless shot wants exactly what the assets

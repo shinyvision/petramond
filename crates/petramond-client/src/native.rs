@@ -43,14 +43,7 @@ pub fn run() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(client.fps_cap);
-    let mut host = NativeHost::new(
-        seed,
-        rd,
-        fps,
-        client.menu_fps_cap.min(fps),
-        client.render_scale,
-        client.grade,
-    );
+    let mut host = NativeHost::new(seed, rd, fps, client.menu_fps_cap.min(fps));
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut host).unwrap();
@@ -68,10 +61,6 @@ struct NativeHost {
     app: Option<App>,
     seed: u32,
     render_dist: i32,
-    /// Internal world-resolution scale + grade toggle (client settings), applied
-    /// to the renderer at creation.
-    render_scale: f32,
-    grade: bool,
     /// Gameplay frame period (from the `fps_cap` client setting / `PETRAMOND_FPS`).
     frame: Duration,
     /// Frame period while a modal screen is up (cursor released): near-static
@@ -96,22 +85,13 @@ struct NativeHost {
 }
 
 impl NativeHost {
-    fn new(
-        seed: u32,
-        render_dist: i32,
-        fps_cap: u32,
-        menu_fps_cap: u32,
-        render_scale: f32,
-        grade: bool,
-    ) -> Self {
+    fn new(seed: u32, render_dist: i32, fps_cap: u32, menu_fps_cap: u32) -> Self {
         Self {
             window: None,
             renderer: None,
             app: None,
             seed,
             render_dist,
-            render_scale,
-            grade,
             frame: frame_period(fps_cap),
             menu_frame: frame_period(menu_fps_cap),
             next_update: Instant::now(),
@@ -197,14 +177,14 @@ impl ApplicationHandler for NativeHost {
         let mut renderer = pollster::block_on(async {
             new_renderer_from_target(window.clone(), size.width, size.height).await
         });
-        renderer.set_render_distance(self.render_dist);
-        renderer.set_render_scale(self.render_scale);
-        renderer.set_grade_enabled(self.grade);
         let cam = Camera::new(
             Vec3::new(8.0, 90.0, 8.0),
             size.width as f32 / size.height.max(1) as f32,
         );
         let mut app = App::new(cam, self.render_dist);
+        // Graphics settings reach the renderer through the same call every
+        // later options change uses; there is no creation-time path.
+        app.apply_graphics(&mut renderer);
         if let Ok(world_name) = std::env::var("PETRAMOND_WORLD") {
             if !world_name.is_empty() {
                 app.start_game(&world_name, self.seed);

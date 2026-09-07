@@ -4,7 +4,7 @@
 // silhouette edges — the depth-aware composite (env_composite.wgsl)
 // resolves those edges per full-res pixel.
 
-@group(0) @binding(0) var full_depth: texture_depth_2d;
+// Scene depth declarations are supplied for the current raster sample count.
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -27,7 +27,7 @@ fn fs_main(in: VsOut) -> @builtin(frag_depth) f32 {
     for (var oy = 0; oy < 2; oy++) {
         for (var ox = 0; ox < 2; ox++) {
             let p = min(base + vec2<i32>(ox, oy), dims - 1);
-            d = max(d, textureLoad(full_depth, p, 0));
+            d = max(d, scene_depth_max(p));
         }
     }
     return d;

@@ -10,7 +10,7 @@
 @group(0) @binding(0) var env_tex: texture_2d<f32>;
 @group(0) @binding(1) var env_samp: sampler;
 @group(0) @binding(2) var half_depth: texture_depth_2d;
-@group(0) @binding(3) var full_depth: texture_depth_2d;
+// Scene depth and the per-pixel/per-sample entry point are supplied by the pipeline.
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -25,9 +25,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let fd = textureLoad(full_depth, vec2<i32>(in.pos.xy), 0);
+fn composite(in: VsOut, fd: f32) -> vec4<f32> {
     let hdims = vec2<i32>(textureDimensions(half_depth));
     // This pixel's position in half-res texel space, and the 2x2 texel
     // neighbourhood bracketing it.

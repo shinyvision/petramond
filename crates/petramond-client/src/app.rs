@@ -129,6 +129,11 @@ pub struct App {
     /// Renderer-owned option values (fog/render distance, particle density)
     /// changed and must be pushed on the next render.
     renderer_options_dirty: bool,
+    /// Slider positions mid-drag, shown by the Graphics readouts but not yet
+    /// applied: applying per drag step would reallocate scene targets and
+    /// reshape streaming on every pixel of travel.
+    anti_aliasing_preview: Option<petramond::save::client::AntiAliasing>,
+    view_distance_preview: Option<i32>,
     /// `now_seconds` of the last [`render`](Self::render), so the held-item animation
     /// advances by draw time even when the platform coalesces or skips a redraw.
     last_render: f64,
@@ -270,6 +275,8 @@ impl App {
             remap_armed_mod: None,
             options_from_pause: false,
             renderer_options_dirty: true,
+            anti_aliasing_preview: None,
+            view_distance_preview: None,
             last_render: now_seconds(),
             hand: HandTriggers::default(),
             hurt_shake_t: 0.0,

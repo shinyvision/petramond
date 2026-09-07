@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::world::RENDER_DIST;
 
+mod graphics;
+pub use graphics::{AntiAliasing, GraphicsSettings};
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClientSettings {
@@ -30,11 +33,13 @@ pub struct ClientSettings {
     pub menu_fps_cap: u32,
     /// Internal world-resolution scale (`0.5..=1.0`). Below 1.0 the world
     /// renders smaller and the grade pass upscales; UI stays native-res.
-    /// The main fill-rate lever for weak GPUs.
+    /// Used with anti-aliasing Off; SSAA renders above native resolution.
     pub render_scale: f32,
-    /// The colour-grade post pass. Off (at scale 1.0) also skips the offscreen
-    /// scene round-trip; changes the game's look — a power knob of last resort.
+    /// The colour grade. Disabling both grade and AA at native resolution
+    /// skips the offscreen scene round-trip.
     pub grade: bool,
+    /// Scene supersampling (Options → Graphics); UI stays unfiltered.
+    pub anti_aliasing: AntiAliasing,
     /// The local player's name: multiplayer identity and the per-world save
     /// key (`players/<name>.dat`). `None` = unset; [`resolve_player_name`]
     /// falls back to the OS username.
@@ -77,14 +82,6 @@ impl ParticlesMode {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            ParticlesMode::Off => "Off",
-            ParticlesMode::Reduced => "Reduced",
-            ParticlesMode::Full => "Full",
-        }
-    }
-
     /// Spawn-count / active-count multiplier presentation applies.
     pub fn density(self) -> f32 {
         match self {
@@ -103,6 +100,7 @@ impl Default for ClientSettings {
             menu_fps_cap: 30,
             render_scale: 1.0,
             grade: true,
+            anti_aliasing: AntiAliasing::default(),
             player_name: None,
             last_server: None,
             master_volume: 1.0,
@@ -185,47 +183,4 @@ fn store_to(path: &Path, settings: &ClientSettings) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn identity_fields_roundtrip_and_default_to_none() {
-        let dir = std::env::temp_dir().join(format!(
-            "petramond-clienttest-{}-identity",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        let file = dir.join("client.json");
-
-        // New fields survive a store/load round-trip.
-        let settings = ClientSettings {
-            player_name: Some("Rachel".to_string()),
-            last_server: Some("host:7434".to_string()),
-            ..ClientSettings::default()
-        };
-        store_to(&file, &settings).expect("store");
-        assert_eq!(load_from(&file), settings);
-
-        // A file from before the fields existed (no such keys) loads as None
-        // and keeps its other values.
-        std::fs::write(&file, br#"{ "fps_cap": 90 }"#).expect("write old-style file");
-        let old = load_from(&file);
-        assert_eq!(old.player_name, None);
-        assert_eq!(old.last_server, None);
-        assert_eq!(old.fps_cap, 90);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn player_name_resolution_trims_and_falls_through_blanks() {
-        // Pure precedence check (the env layers feed the same chain — see
-        // `resolve_player_name`): blank/whitespace candidates fall through,
-        // the first real one wins trimmed, and nothing left means "Player".
-        assert_eq!(
-            first_nonempty([None, Some("  ".into()), Some(" Rachel ".into())]),
-            "Rachel"
-        );
-        assert_eq!(first_nonempty([None, Some(String::new())]), "Player");
-    }
-}
+mod tests;

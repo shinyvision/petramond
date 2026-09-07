@@ -324,6 +324,8 @@ impl App {
     /// controls screen always disarms any pending remap.
     pub(super) fn close_options_category(&mut self) {
         self.cancel_remap();
+        self.anti_aliasing_preview = None;
+        self.view_distance_preview = None;
         self.screen = AppScreen::Options;
         self.pointer.release_for_menu();
     }
@@ -337,13 +339,14 @@ impl App {
             return;
         }
         // Merge into the current file so knobs the GUI doesn't own (fps caps,
-        // render scale, identity) keep whatever the file says.
+        // render scale, grade, identity) keep whatever the file says.
         let mut on_disk = petramond::save::client::load();
         on_disk.render_dist = self.settings.render_dist;
         on_disk.master_volume = self.settings.master_volume;
         on_disk.sound_volume = self.settings.sound_volume;
         on_disk.music_volume = self.settings.music_volume;
         on_disk.particles = self.settings.particles;
+        on_disk.anti_aliasing = self.settings.anti_aliasing;
         on_disk.bindings = self.settings.bindings.clone();
         if let Err(e) = petramond::save::client::store(&on_disk) {
             log::warn!("could not write client.json: {e}");
@@ -368,11 +371,20 @@ impl App {
         self.renderer_options_dirty = true;
     }
 
+    pub(super) fn apply_anti_aliasing(&mut self, mode: petramond::save::client::AntiAliasing) {
+        self.anti_aliasing_preview = None;
+        if self.settings.anti_aliasing != mode {
+            self.settings.anti_aliasing = mode;
+            self.renderer_options_dirty = true;
+        }
+    }
+
     /// Apply a new view distance live: replica + server streaming through the
     /// game session, fog/cull on the next render, and the App field every
     /// future session start reads.
     pub(super) fn apply_view_distance(&mut self, chunks: i32) {
         let chunks = chunks.clamp(4, 64);
+        self.view_distance_preview = None;
         self.render_dist = chunks;
         self.settings.render_dist = chunks;
         if let Some(game) = self.game.as_mut() {
@@ -381,13 +393,22 @@ impl App {
         self.renderer_options_dirty = true;
     }
 
-    /// Push renderer-owned option values (called from `App::render` with the
-    /// renderer in hand).
-    pub(super) fn push_renderer_options(&mut self, renderer: &mut petramond_render::Renderer) {
-        if !std::mem::take(&mut self.renderer_options_dirty) {
+    /// Hand the renderer every graphics setting it owns, when one changed.
+    /// The host calls this once the window's renderer exists and `App::render`
+    /// calls it every frame with the renderer in hand — the same call, so a
+    /// setting cannot be applied at creation and then forgotten. The renderer
+    /// answers with the anti-aliasing mode it can actually run; a fallback is
+    /// written back and persisted so the options readout shows what runs.
+    pub(crate) fn apply_graphics(&mut self, renderer: &mut petramond_render::Renderer) {
+        if !std::mem::take(&mut self.renderer_options_dirty)
+            && self.settings.anti_aliasing == renderer.anti_aliasing()
+        {
             return;
         }
-        renderer.set_render_distance(self.render_dist);
-        renderer.set_particle_density(self.settings.particles.density());
+        let applied = renderer.apply_graphics(&self.settings.graphics());
+        if applied != self.settings.anti_aliasing {
+            self.settings.anti_aliasing = applied;
+            self.persist_settings();
+        }
     }
 }

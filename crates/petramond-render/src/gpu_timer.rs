@@ -159,7 +159,7 @@ impl GpuTimer {
         }
     }
 
-    /// Mean nanoseconds per measured frame, per pass, in first-seen order.
+    /// Accumulated nanoseconds and sample counts per pass, in first-seen order.
     pub(crate) fn report(&self) -> Vec<(&'static str, f64, u32)> {
         self.state.borrow().totals.clone()
     }

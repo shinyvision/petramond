@@ -1,8 +1,8 @@
 use super::builders::{color_target, cull_back, shader_module, world_pipeline, DepthPreset};
 
 pub(super) struct ParticlePipelineResources {
-    pub(super) pipe: wgpu::RenderPipeline,
-    pub(super) emitter_pipe: wgpu::RenderPipeline,
+    pub(super) pipe: crate::pipeline::SampledPipeline,
+    pub(super) emitter_pipe: crate::pipeline::SampledPipeline,
 }
 
 /// Particle pipelines (tiny 3D cubes). Mining/break particles use alpha cutout and
@@ -11,7 +11,7 @@ pub(super) struct ParticlePipelineResources {
 pub(super) fn create_particle_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     layout: &wgpu::PipelineLayout,
 ) -> ParticlePipelineResources {
     let particle_shader = shader_module(
@@ -70,7 +70,7 @@ pub(super) fn create_particle_pipeline(
         &particle_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     let emitter_targets = color_target(
         format,
@@ -88,7 +88,7 @@ pub(super) fn create_particle_pipeline(
         &emitter_targets,
         cull_back(),
         Some(DepthPreset::ReadLess),
-        sample_count,
+        max_samples,
     );
     ParticlePipelineResources {
         pipe: particle_pipe,

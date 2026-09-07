@@ -61,7 +61,7 @@ pub(super) fn create_shader_texture_bind(
 
 /// The values the sky pass hands back to [`PipelineResources`].
 pub(super) struct SkyResources {
-    pub(super) pipe: wgpu::RenderPipeline,
+    pub(super) pipe: crate::pipeline::SampledPipeline,
     pub(super) bind: wgpu::BindGroup,
     pub(super) texture_bind: wgpu::BindGroup,
     pub(super) shader_param_keys: Vec<String>,
@@ -76,7 +76,7 @@ pub(super) fn create_sky_pipeline(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     uniform_buf: &wgpu::Buffer,
     shader_params_buf: &wgpu::Buffer,
 ) -> SkyResources {
@@ -148,7 +148,7 @@ pub(super) fn create_sky_pipeline(
             // (vs_sky emits z = 1.0), so LessEqual shades only the pixels no
             // terrain covered — the expensive sky fs skips the overdrawn ~80–90%.
             Some(DepthPreset::ReadLessEqual),
-            sample_count,
+            max_samples,
         )
     };
     let sky_pipe = if let Some(spec) = sky_spec.as_ref() {

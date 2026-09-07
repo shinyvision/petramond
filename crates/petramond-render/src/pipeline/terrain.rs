@@ -6,15 +6,15 @@ use super::builders::{color_target, cull_back, world_pipeline, DepthPreset};
 pub(super) fn create_terrain_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     shader: &wgpu::ShaderModule,
     array_layout: &wgpu::PipelineLayout,
     vbuf_layouts: &[wgpu::VertexBufferLayout],
 ) -> (
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
+    crate::pipeline::SampledPipeline,
+    crate::pipeline::SampledPipeline,
+    crate::pipeline::SampledPipeline,
+    crate::pipeline::SampledPipeline,
 ) {
     let opaque_targets = color_target(
         format,
@@ -37,7 +37,7 @@ pub(super) fn create_terrain_pipelines(
         &opaque_targets,
         cull_back(),
         Some(DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     // Back-face cull water SIDE faces: otherwise a side face (e.g. an exposed
     // step over shallower water) shows its back as a dark sheet from the
@@ -56,7 +56,7 @@ pub(super) fn create_terrain_pipelines(
         &transparent_targets,
         cull_back(),
         Some(DepthPreset::ReadLess),
-        sample_count,
+        max_samples,
     );
     // Translucent BLOCKS (ice) blend like water but WRITE depth and draw
     // before it: a 3D sheet of translucent cubes must resolve its own face
@@ -75,7 +75,7 @@ pub(super) fn create_terrain_pipelines(
         &transparent_targets,
         cull_back(),
         Some(DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     // Water TOP faces: same blend/depth as the water pass, culling OFF so one
     // set of triangles is visible from above and from underneath.
@@ -90,7 +90,7 @@ pub(super) fn create_terrain_pipelines(
         &transparent_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::ReadLess),
-        sample_count,
+        max_samples,
     );
     (
         opaque_pipe,

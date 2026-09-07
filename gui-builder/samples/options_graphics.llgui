@@ -69,7 +69,7 @@
         {
           "type": "column",
           "layout": {
-            "w": 270,
+            "w": 300,
             "h": "auto",
             "pad": [
               10,
@@ -263,6 +263,111 @@
                   0,
                   0
                 ],
+                "gap": 4,
+                "dir": "column",
+                "align": "center",
+                "justify": "start"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "text": "Anti-Aliasing",
+                  "layout": {
+                    "w": 92,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                },
+                {
+                  "id": "anti_aliasing",
+                  "type": "slider",
+                  "min": 0.0,
+                  "max": 4.0,
+                  "step": 1.0,
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "min_w": 80
+                  },
+                  "bind": {
+                    "value": "anti_aliasing"
+                  }
+                },
+                {
+                  "type": "label",
+                  "layout": {
+                    "w": 66,
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "text": "aa_label"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
                 "gap": 0,
                 "dir": "column",
                 "justify": "center"
@@ -373,6 +478,12 @@
   },
   "editor": {
     "sample_state": {
+      "aa_label": {
+        "str": "Sample text"
+      },
+      "anti_aliasing": {
+        "f32": 0.5
+      },
       "particles_label": {
         "str": "Sample text"
       },

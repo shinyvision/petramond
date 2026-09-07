@@ -1,5 +1,5 @@
 use super::builders::{
-    color_target, pipeline_layout, shader_module, texture_sampler_bgl, world_pipeline, DepthPreset,
+    color_target, pipeline_layout, shader_module, single_pipeline, texture_sampler_bgl, DepthPreset,
 };
 
 /// UI pipeline (2D HUD / inventory).
@@ -11,7 +11,6 @@ use super::builders::{
 pub(super) fn create_ui_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
 ) -> (wgpu::RenderPipeline, wgpu::Buffer) {
     let ui_shader = shader_module(device, "ui shader", include_str!("../../shaders/ui.wgsl"));
     let ui_bgl = texture_sampler_bgl(device, "ui bgl", wgpu::TextureViewDimension::D2);
@@ -45,7 +44,7 @@ pub(super) fn create_ui_pipeline(
         Some(wgpu::BlendState::ALPHA_BLENDING),
         wgpu::ColorWrites::ALL,
     );
-    let ui_pipe = world_pipeline(
+    let ui_pipe = single_pipeline(
         device,
         "ui pipe",
         &ui_layout,
@@ -56,7 +55,6 @@ pub(super) fn create_ui_pipeline(
         &ui_targets,
         wgpu::PrimitiveState::default(),
         None,
-        sample_count,
     );
     let ui_vbuf =
         crate::renderer::dynamic_draw::new_buffer(device, wgpu::BufferUsages::VERTEX, "ui vbuf");
@@ -73,7 +71,6 @@ pub(super) fn create_ui_pipeline(
 pub(super) fn create_model_icon_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
     atlas_bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let model_icon_shader = shader_module(
@@ -117,7 +114,7 @@ pub(super) fn create_model_icon_pipeline(
     // Depth test + WRITE against the model-icon pass's OWN cleared depth buffer so the
     // (double-sided) model self-sorts — the panels/drawers can't be ordered by a painter
     // sort alone, exactly like the in-world block, which also leans on depth.
-    let model_icon_pipe = world_pipeline(
+    let model_icon_pipe = single_pipeline(
         device,
         "model icon pipe",
         &model_icon_layout,
@@ -128,7 +125,6 @@ pub(super) fn create_model_icon_pipeline(
         &model_icon_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::WriteLess),
-        sample_count,
     );
     model_icon_pipe
 }

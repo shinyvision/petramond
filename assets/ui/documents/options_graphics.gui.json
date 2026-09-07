@@ -39,7 +39,7 @@
     "type": "column",
     "style": "panel.large",
     "layout": {
-     "w": 270,
+     "w": 300,
      "pad": [
       10,
       8,
@@ -106,6 +106,47 @@
         },
         "bind": {
          "text": "vd_label"
+        }
+       }
+      ]
+     },
+     {
+      "type": "row",
+      "layout": {
+       "gap": 4,
+       "align": "center"
+      },
+      "children": [
+       {
+        "type": "label",
+        "text": "Anti-Aliasing",
+        "layout": {
+         "w": 92
+        }
+       },
+       {
+        "type": "slider",
+        "id": "anti_aliasing",
+        "min": 0,
+        "max": 4,
+        "step": 1,
+        "bind": {
+         "value": "anti_aliasing"
+        },
+        "layout": {
+         "w": {
+          "grow": 1
+         },
+         "min_w": 80
+        }
+       },
+       {
+        "type": "label",
+        "layout": {
+         "w": 66
+        },
+        "bind": {
+         "text": "aa_label"
         }
        }
       ]

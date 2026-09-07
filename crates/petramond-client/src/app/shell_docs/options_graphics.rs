@@ -1,19 +1,53 @@
 //! Options → Graphics controller: the view-distance slider (4..=48 chunks,
 //! applied live on release — replica, streaming request, and fog together)
-//! and the particles cycle button (Full → Reduced → Off).
+//! plus particles and anti-aliasing controls. Both sliders preview their
+//! readout while dragged and apply on release.
 
 use crate::app::App;
+use petramond::save::client::{AntiAliasing, ParticlesMode};
 use petramond_ui::{UiEvent, UiState, UiValue};
+
+/// The view-distance slider's range in chunks.
+const VIEW_DISTANCE_RANGE: std::ops::RangeInclusive<i32> = 4..=48;
+
+/// The readout for an anti-aliasing mode.
+pub(super) fn anti_aliasing_label(mode: AntiAliasing) -> &'static str {
+    match mode {
+        AntiAliasing::Off => "Off",
+        AntiAliasing::Msaa4x => "MSAA 4x",
+        AntiAliasing::Msaa8x => "MSAA 8x",
+        AntiAliasing::Ssaa4x => "SSAA 4x",
+        AntiAliasing::Ssaa16x => "SSAA 16x",
+    }
+}
+
+fn particles_label(mode: ParticlesMode) -> &'static str {
+    match mode {
+        ParticlesMode::Off => "Off",
+        ParticlesMode::Reduced => "Reduced",
+        ParticlesMode::Full => "Full",
+    }
+}
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
     super::populate_options_chrome(app, state);
-    let vd = app.settings.render_dist;
+    let vd = app
+        .view_distance_preview
+        .unwrap_or(app.settings.render_dist);
     state.set("view_distance", UiValue::F32(vd as f32));
     state.set("vd_label", UiValue::Str(format!("{vd} chunks")));
     state.set(
         "particles_label",
-        UiValue::Str(format!("Particles: {}", app.settings.particles.label())),
+        UiValue::Str(format!(
+            "Particles: {}",
+            particles_label(app.settings.particles)
+        )),
     );
+    let aa = app
+        .anti_aliasing_preview
+        .unwrap_or(app.settings.anti_aliasing);
+    state.set("anti_aliasing", UiValue::F32(aa.index() as f32));
+    state.set("aa_label", UiValue::Str(anti_aliasing_label(aa).into()));
 }
 
 pub(super) fn handle(app: &mut App, ev: UiEvent) {
@@ -21,6 +55,20 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         return;
     }
     match ev {
+        UiEvent::SliderChange {
+            id,
+            value,
+            committed,
+            ..
+        } if id == "anti_aliasing" => {
+            let mode = AntiAliasing::from_index(value.round().max(0.0) as usize);
+            if committed {
+                app.apply_anti_aliasing(mode);
+                app.persist_settings();
+            } else {
+                app.anti_aliasing_preview = Some(mode);
+            }
+        }
         UiEvent::Click { id, .. } if id == "particles" => {
             let next = app.settings.particles.next();
             app.settings.particles = next;
@@ -33,13 +81,13 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             committed,
             ..
         } if id == "view_distance" => {
-            let chunks = (value.round() as i32).clamp(4, 48);
-            // Drags only preview the label; the release applies the new
-            // radius (streaming/meshing re-shape once, not per drag step).
-            app.settings.render_dist = chunks;
+            let chunks = (value.round() as i32)
+                .clamp(*VIEW_DISTANCE_RANGE.start(), *VIEW_DISTANCE_RANGE.end());
             if committed {
                 app.apply_view_distance(chunks);
                 app.persist_settings();
+            } else {
+                app.view_distance_preview = Some(chunks);
             }
         }
         _ => {}
@@ -47,37 +95,4 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Same class as the volume readout: engine copy in a fixed column that no
-    /// document guard can see. The widest is the view-distance ceiling.
-    #[test]
-    fn the_widest_view_distance_readout_fits_its_column() {
-        use petramond_ui::{solve, InstTree, ThemeEnv};
-        let doc = petramond::gui::documents::doc_for(
-            petramond_world::gui_state::GuiKind::OptionsGraphics,
-        )
-        .expect("graphics document loads");
-        let theme = petramond::gui::doc_theme::theme();
-        let mut state = UiState::new();
-        state.set("vd_label", UiValue::Str(format!("{} chunks", 48)));
-        let tree = InstTree::expand(&doc.doc, &state);
-        let env = ThemeEnv {
-            theme: &theme,
-            gui_scale: 3,
-            image_size: &|_| None,
-        };
-        let solved = solve(&tree, &env, (320, 240), &|_| 0);
-        let i = (0..tree.len() as u32)
-            .find(|i| tree.get(*i).node.bind.text.as_deref() == Some("vd_label"))
-            .expect("the readout is in the document");
-        let text = tree.get(i).text.as_deref().unwrap_or("");
-        let ink = theme.ui_font().width(text);
-        assert!(
-            ink <= solved.rects[i as usize].w,
-            "{text:?} needs {ink}px, column is {}px",
-            solved.rects[i as usize].w
-        );
-    }
-}
+mod tests;

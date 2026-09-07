@@ -1,8 +1,8 @@
 use std::num::NonZeroU64;
 
 use super::builders::{
-    color_target, cull_back, pipeline_layout, shader_module, uniform_entry, world_pipeline,
-    DepthPreset,
+    color_target, cull_back, pipeline_layout, shader_module, single_pipeline, uniform_entry,
+    world_pipeline, DepthPreset,
 };
 use crate::renderer::dynamic_draw::new_buffer;
 use crate::uniforms::{Uniforms, UV_RECTS_LEN};
@@ -45,7 +45,7 @@ fn mvp_slot_binding(buf: &wgpu::Buffer) -> wgpu::BindingResource<'_> {
 /// The values the model3d pass hands back to [`PipelineResources`].
 pub(super) struct Model3dResources {
     pub(super) pipe: wgpu::RenderPipeline,
-    pub(super) hand_pipe: wgpu::RenderPipeline,
+    pub(super) hand_pipe: crate::pipeline::SampledPipeline,
     pub(super) mvp_buf: wgpu::Buffer,
     pub(super) mvp_bind: wgpu::BindGroup,
     pub(super) mvp_bgl: wgpu::BindGroupLayout,
@@ -64,7 +64,7 @@ pub(super) struct Model3dResources {
 pub(super) fn create_model3d_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     uniform_buf: &wgpu::Buffer,
     uv_rects_buf: &wgpu::Buffer,
     atlas_bgl: &wgpu::BindGroupLayout,
@@ -124,7 +124,7 @@ pub(super) fn create_model3d_pipelines(
     // depthless UI pass); `model3d_hand_pipe` adds depth Less + write so the
     // first-person held block self-sorts against the hand pass's cleared depth
     // buffer (a single pipeline cannot serve both passes).
-    let model3d_pipe = world_pipeline(
+    let model3d_pipe = single_pipeline(
         device,
         "model3d pipe",
         &model3d_layout,
@@ -135,7 +135,6 @@ pub(super) fn create_model3d_pipelines(
         &model3d_targets,
         cull_back(),
         None,
-        sample_count,
     );
     let model3d_hand_pipe = world_pipeline(
         device,
@@ -148,7 +147,7 @@ pub(super) fn create_model3d_pipelines(
         &model3d_targets,
         cull_back(),
         Some(DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     let model3d_vbuf = new_buffer(device, wgpu::BufferUsages::VERTEX, "model3d vbuf");
     let model3d_ibuf = new_buffer(device, wgpu::BufferUsages::INDEX, "model3d ibuf");
@@ -175,11 +174,15 @@ pub(super) fn create_model3d_pipelines(
 pub(super) fn create_item3d_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     atlas_bgl: &wgpu::BindGroupLayout,
     model3d_mvp_buf: &wgpu::Buffer,
     item3d_vbuf_layout: &wgpu::VertexBufferLayout,
-) -> (wgpu::RenderPipeline, wgpu::BindGroup, wgpu::Buffer) {
+) -> (
+    crate::pipeline::SampledPipeline,
+    wgpu::BindGroup,
+    wgpu::Buffer,
+) {
     let item3d_shader = shader_module(
         device,
         "item3d shader",
@@ -219,7 +222,7 @@ pub(super) fn create_item3d_pipeline(
         &item3d_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     let item3d_vbuf = new_buffer(device, wgpu::BufferUsages::VERTEX, "item3d vbuf");
     (item3d_pipe, item3d_mvp_bind, item3d_vbuf)

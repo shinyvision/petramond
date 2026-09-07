@@ -1,6 +1,8 @@
+use std::sync::OnceLock;
+
 use super::builders::{
-    color_target, pipeline_layout, shader_module, texture_sampler_layout_entries, uniform_entry,
-    world_pipeline, DEPTH_FORMAT,
+    color_target, pipeline_layout, shader_module, single_pipeline, texture_sampler_layout_entries,
+    uniform_entry, world_pipeline, DEPTH_FORMAT,
 };
 use super::sky::create_shader_texture_bind;
 use crate::uniforms::{ShaderParams, Uniforms};
@@ -10,6 +12,7 @@ use crate::uniforms::{ShaderParams, Uniforms};
 /// built by [`create_environment_bind`] at construction AND on every scene-
 /// target rebuild.
 pub(crate) struct EnvPassResources {
+    /// Half-res, so always one sample.
     pub pipe: wgpu::RenderPipeline,
     pub bgl: wgpu::BindGroupLayout,
     /// This pass's own 16-slot params buffer, filled per frame from its
@@ -60,38 +63,78 @@ pub(crate) fn create_environment_bind(
 pub(crate) struct EnvScaler {
     pub down_pipe: wgpu::RenderPipeline,
     pub down_bgl: wgpu::BindGroupLayout,
-    pub comp_pipe: wgpu::RenderPipeline,
+    pub comp_pipe: crate::pipeline::SampledPipeline,
     pub comp_bgl: wgpu::BindGroupLayout,
     pub samp: wgpu::Sampler,
 }
 
-fn depth_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+fn depth_texture_entry(binding: u32, multisampled: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Depth,
             view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
+            multisampled,
         },
         count: None,
+    }
+}
+
+/// The scaler in both depth flavours: the single-sample one every session
+/// needs, and the multisampled one (its depth binds are
+/// `texture_depth_multisampled_2d`) built the first time an MSAA scene
+/// draws, like the scene pipelines' own variants.
+pub(crate) struct EnvScalers {
+    device: wgpu::Device,
+    format: wgpu::TextureFormat,
+    max_samples: u32,
+    single: EnvScaler,
+    multisampled: OnceLock<EnvScaler>,
+}
+
+impl EnvScalers {
+    pub(crate) fn get(&self, samples: u32) -> &EnvScaler {
+        if samples == 1 {
+            return &self.single;
+        }
+        assert!(
+            samples <= self.max_samples,
+            "{samples}x environment scaler on a device capped at {}x",
+            self.max_samples
+        );
+        self.multisampled.get_or_init(|| {
+            create_env_scaler_variant(&self.device, self.format, self.max_samples, true)
+        })
     }
 }
 
 pub(super) fn create_env_scaler(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
+) -> EnvScalers {
+    EnvScalers {
+        device: device.clone(),
+        format,
+        max_samples,
+        single: create_env_scaler_variant(device, format, 1, false),
+        multisampled: OnceLock::new(),
+    }
+}
+
+fn create_env_scaler_variant(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    max_samples: u32,
+    multisampled: bool,
 ) -> EnvScaler {
+    let (down_source, comp_source) = scaler_sources(multisampled);
     let down_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("env downsample bgl"),
-        entries: &[depth_texture_entry(0)],
+        entries: &[depth_texture_entry(0, multisampled)],
     });
-    let down_module = shader_module(
-        device,
-        "env downsample",
-        include_str!("../../shaders/env_downsample.wgsl"),
-    );
+    let down_module = shader_module(device, "env downsample", down_source);
     let down_layout = pipeline_layout(device, "env downsample layout", &[&down_bgl]);
     let down_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("env downsample pipe"),
@@ -140,15 +183,11 @@ pub(super) fn create_env_scaler(
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
-            depth_texture_entry(2),
-            depth_texture_entry(3),
+            depth_texture_entry(2, false),
+            depth_texture_entry(3, multisampled),
         ],
     });
-    let comp_module = shader_module(
-        device,
-        "env composite",
-        include_str!("../../shaders/env_composite.wgsl"),
-    );
+    let comp_module = shader_module(device, "env composite", comp_source);
     let comp_layout = pipeline_layout(device, "env composite layout", &[&comp_bgl]);
     let targets = color_target(
         format,
@@ -166,7 +205,7 @@ pub(super) fn create_env_scaler(
         &targets,
         wgpu::PrimitiveState::default(),
         None,
-        sample_count,
+        max_samples,
     );
     let samp = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("env composite sampler"),
@@ -244,7 +283,6 @@ pub(super) fn create_environment_pipelines(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
-    sample_count: u32,
 ) -> Vec<EnvPassResources> {
     let specs = super::shader_pack::environment_shaders();
     if specs.is_empty() {
@@ -298,7 +336,7 @@ pub(super) fn create_environment_pipelines(
     for spec in specs {
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = shader_module(device, "pack environment shader", spec.source.clone());
-        let pipe = world_pipeline(
+        let pipe = single_pipeline(
             device,
             "environment pipe",
             &layout,
@@ -309,7 +347,6 @@ pub(super) fn create_environment_pipelines(
             &targets,
             wgpu::PrimitiveState::default(),
             None,
-            sample_count,
         );
         if let Some(err) = pollster::block_on(device.pop_error_scope()) {
             log::warn!(
@@ -336,4 +373,56 @@ pub(super) fn create_environment_pipelines(
         });
     }
     passes
+}
+
+fn scene_depth_source(multisampled: bool, binding: u32) -> String {
+    let ty = if multisampled {
+        "texture_depth_multisampled_2d"
+    } else {
+        "texture_depth_2d"
+    };
+    let header = format!("@group(0) @binding({binding}) var full_depth: {ty};\n");
+    header
+        + if multisampled {
+            r#"
+fn scene_depth_max(p: vec2<i32>) -> f32 {
+    var d = 0.0;
+    for (var s = 0u; s < textureNumSamples(full_depth); s++) {
+        d = max(d, textureLoad(full_depth, p, i32(s)));
+    }
+    return d;
+}
+"#
+        } else {
+            r#"
+fn scene_depth_max(p: vec2<i32>) -> f32 {
+    return textureLoad(full_depth, p, 0);
+}
+"#
+        }
+}
+
+pub(crate) fn scaler_sources(multisampled: bool) -> (String, String) {
+    // Match cloud occlusion to each coverage sample at terrain silhouettes.
+    let entry = if multisampled {
+        r#"
+@fragment
+fn fs_main(in: VsOut, @builtin(sample_index) sample: u32) -> @location(0) vec4<f32> {
+    return composite(in, textureLoad(full_depth, vec2<i32>(in.pos.xy), i32(sample)));
+}
+"#
+    } else {
+        r#"
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return composite(in, textureLoad(full_depth, vec2<i32>(in.pos.xy), 0));
+}
+"#
+    };
+    (
+        scene_depth_source(multisampled, 0) + include_str!("../../shaders/env_downsample.wgsl"),
+        scene_depth_source(multisampled, 3)
+            + include_str!("../../shaders/env_composite.wgsl")
+            + entry,
+    )
 }

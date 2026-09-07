@@ -84,7 +84,7 @@ fn buffer_labels(label: &str) -> (String, String) {
 /// bake sequentially, so the scratch lives on the renderer, not here, to
 /// preserve that exact reuse.
 pub(super) struct DynamicDraw {
-    pub pipeline: wgpu::RenderPipeline,
+    pub pipeline: crate::pipeline::SampledPipeline,
     pub vbuf: wgpu::Buffer,
     pub ibuf: wgpu::Buffer,
     vbuf_label: String,
@@ -96,7 +96,7 @@ pub(super) struct DynamicDraw {
 impl DynamicDraw {
     pub(super) fn new(
         device: &wgpu::Device,
-        pipeline: wgpu::RenderPipeline,
+        pipeline: crate::pipeline::SampledPipeline,
         label: &'static str,
     ) -> Self {
         let (vbuf_label, ibuf_label) = buffer_labels(label);
@@ -152,11 +152,11 @@ impl DynamicDraw {
     /// Bind this subsystem's pipeline + vbuf/ibuf and draw its baked index range.
     /// The caller sets any shared bind groups (uniform/atlas) first; this issues
     /// `set_pipeline` + buffers + one `draw_indexed`. No-op when nothing is baked.
-    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
+    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32) {
         if self.index_count == 0 {
             return;
         }
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(self.pipeline.get(samples));
         pass.set_vertex_buffer(0, self.vbuf.slice(..));
         pass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..self.index_count, 0, 0..1);
@@ -191,7 +191,7 @@ fn prims_to_index(vbuf_bytes: u64, prim_bytes: u64, prims: u32) -> u32 {
 /// only when the vertex buffer grows past what it covers. Stores the vertex
 /// count baked this frame; the index count is derived per draw.
 pub(super) struct DynamicVertexDraw {
-    pub pipeline: wgpu::RenderPipeline,
+    pub pipeline: crate::pipeline::SampledPipeline,
     pub vbuf: wgpu::Buffer,
     pub ibuf: wgpu::Buffer,
     vbuf_label: String,
@@ -207,7 +207,7 @@ pub(super) struct DynamicVertexDraw {
 impl DynamicVertexDraw {
     pub(super) fn new(
         device: &wgpu::Device,
-        pipeline: wgpu::RenderPipeline,
+        pipeline: crate::pipeline::SampledPipeline,
         label: &'static str,
         verts_per_prim: u32,
         pattern: &'static [u32],
@@ -271,11 +271,11 @@ impl DynamicVertexDraw {
     /// Bind this subsystem's pipeline + vbuf + ibuf and draw `index_count`
     /// indices (derived by the caller from `vertex_count`). The caller sets shared
     /// bind groups first. No-op when nothing is baked.
-    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, index_count: u32) {
+    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, index_count: u32, samples: u32) {
         if self.vertex_count == 0 {
             return;
         }
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(self.pipeline.get(samples));
         pass.set_vertex_buffer(0, self.vbuf.slice(..));
         pass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..index_count, 0, 0..1);
@@ -283,48 +283,4 @@ impl DynamicVertexDraw {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The pattern expands per primitive at the vertex stride — the invariant
-    /// every patterned draw (cubes, quads) relies on to index a grown buffer.
-    #[test]
-    fn a_pattern_repeats_at_the_vertex_stride() {
-        let quad = prim_index_list(&[0, 1, 2, 0, 2, 3], 4, 3);
-        assert_eq!(quad.len(), 18);
-        assert_eq!(&quad[..6], &[0, 1, 2, 0, 2, 3]);
-        assert_eq!(&quad[6..12], &[4, 5, 6, 4, 6, 7]);
-        assert_eq!(&quad[12..], &[8, 9, 10, 8, 10, 11]);
-        assert!(prim_index_list(&[0, 1, 2], 3, 0).is_empty());
-    }
-
-    /// After a vertex buffer GROWS, the regenerated index list covers every
-    /// primitive the grown buffer can hold — never fewer than were baked, and
-    /// exactly the buffer's capacity, so a later frame that fills the
-    /// headroom draws fully indexed without another regeneration.
-    #[test]
-    fn a_grown_vertex_buffer_is_indexed_to_its_capacity() {
-        // A 32-byte quad vertex, 4 per primitive.
-        let prim_bytes = 4 * 32;
-        for prims in [1u32, 33, 500, 4097] {
-            let needed = prims as u64 * prim_bytes;
-            let grown = grown_size(needed);
-            assert!(grown >= needed, "growth holds what was baked");
-            assert_eq!(grown % INITIAL_BYTES, 0, "growth is page-granular");
-            let indexed = prims_to_index(grown, prim_bytes, prims);
-            assert!(indexed >= prims, "every baked primitive is indexed");
-            assert_eq!(
-                indexed as u64,
-                grown / prim_bytes,
-                "the index list spans the whole grown buffer"
-            );
-            assert!(
-                (indexed as u64 + 1) * prim_bytes > grown,
-                "and not one primitive the buffer cannot hold"
-            );
-        }
-        // A buffer that already holds the baked count is not the growth
-        // case; the indexed count still never drops below the baked one.
-        assert_eq!(prims_to_index(INITIAL_BYTES, prim_bytes, 100), 100);
-    }
-}
+mod tests;

@@ -198,14 +198,17 @@ impl Renderer {
     /// weather moods breathe in and out instead of popping.
     pub fn set_mood(&mut self, target: [f32; 2], dt: f32) {
         const MOOD_EASE_SECONDS: f32 = 2.0;
+        let target = target.map(|v| v.clamp(0.0, 0.5));
+        if self.targets.mood == target {
+            return;
+        }
+        let previous = self.targets.mood;
         let ease = 1.0 - (-dt.clamp(0.0, 0.25) / MOOD_EASE_SECONDS).exp();
-        self.targets.mood[0] += (target[0].clamp(0.0, 0.5) - self.targets.mood[0]) * ease;
-        self.targets.mood[1] += (target[1].clamp(0.0, 0.5) - self.targets.mood[1]) * ease;
-        self.queue.write_buffer(
-            &self.targets.mood_buf,
-            0,
-            bytemuck::cast_slice(&[self.targets.mood[0], self.targets.mood[1], 0.0, 0.0]),
-        );
+        self.targets.mood[0] += (target[0] - self.targets.mood[0]) * ease;
+        self.targets.mood[1] += (target[1] - self.targets.mood[1]) * ease;
+        if self.targets.mood != previous {
+            self.upload_post_process();
+        }
     }
 
     /// Set (or clear) the target highlighted by the selection outline. Cheap: the
@@ -471,6 +474,7 @@ impl Renderer {
         let arena = &mut self.terrain.geometry;
         let quad_index = &mut self.terrain.quad_index;
         let start = std::time::Instant::now();
+        let mut upload_batch = crate::resources::TerrainUploadBatch::default();
         let mut uploaded_columns = 0usize;
         let mut attempts = 0usize;
         let mut heap_pops = 0usize;
@@ -508,9 +512,14 @@ impl Renderer {
                 }
                 continue;
             }
-            // Released CPU meshes: the repack must wait for their forced remesh.
-            // The column stays upload-dirty and its current GPU buffers keep drawing.
-            if terrain.needs_repack_remeshes(column) {
+            // A recreated renderer may lack the GPU copy of a released sibling.
+            // Keep drawing the old column while that exceptional remesh completes.
+            let reusable = columns.get(&column).is_some_and(|gpu| {
+                terrain.column_meshes(column).iter().all(|(sp, mesh)| {
+                    !mesh.is_released() || gpu.sections.iter().any(|(old, _)| old == sp)
+                })
+            });
+            if !reusable && terrain.needs_repack_remeshes(column) {
                 pending.quiet_after = upload_frame + MESH_UPLOAD_QUIET_FRAMES;
                 pending.deadline = upload_frame + MESH_UPLOAD_MAX_WAIT_FRAMES;
                 self.terrain.upload_pending.insert(column, pending);
@@ -537,6 +546,7 @@ impl Renderer {
                         origins,
                         arena,
                         quad_index,
+                        &mut upload_batch,
                     );
                     columns.insert(column, gpu);
                     true
@@ -548,6 +558,7 @@ impl Renderer {
                 self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
             }
         }
+        upload_batch.submit(queue);
         for (column, revision) in deferred {
             if self
                 .terrain

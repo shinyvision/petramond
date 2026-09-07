@@ -15,7 +15,7 @@ impl App {
         // idle gap before the first active frame can't jump a swing mid-flight.
         let dt = ((now - self.last_render) as f32).clamp(0.0, 0.1);
         self.last_render = now;
-        self.push_renderer_options(renderer);
+        self.apply_graphics(renderer);
         let viewport = renderer.ui_viewport();
         let screen_size = viewport.size;
         self.ui.set_viewport_generation(viewport.generation);
@@ -181,6 +181,7 @@ impl App {
                 swing_claim: frame.held_item.motions.contains(mod_api::HandMotion::Swing),
                 jab_claim: frame.held_item.motions.contains(mod_api::HandMotion::Jab),
                 bob: frame.held_item.bob,
+                motion_offset: frame.held_item.motion_offset,
                 dt,
             });
             // The OFF hand: its own item + jab/eat channels. Mining, breaks,
@@ -208,6 +209,7 @@ impl App {
                     .motions
                     .contains(mod_api::HandMotion::Jab),
                 bob: frame.off_hand_item.bob,
+                motion_offset: frame.off_hand_item.motion_offset,
                 dt,
             });
         }

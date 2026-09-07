@@ -1,6 +1,6 @@
 use super::builders::{
-    buffer_bind_group, color_target, cull_back, pipeline_layout, shader_module, uniform_entry,
-    world_pipeline, DepthPreset,
+    buffer_bind_group, color_target, cull_back, pipeline_layout, shader_module, single_pipeline,
+    uniform_entry, world_pipeline, DepthPreset,
 };
 use crate::crosshair::MAX_CROSSHAIR_VERTICES;
 use crate::uniforms::Uniforms;
@@ -13,9 +13,13 @@ use petramond_mesh::ContactShadowVertex;
 pub(super) fn create_selection_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     uniform_buf: &wgpu::Buffer,
-) -> (wgpu::RenderPipeline, wgpu::BindGroup, wgpu::Buffer) {
+) -> (
+    crate::pipeline::SampledPipeline,
+    wgpu::BindGroup,
+    wgpu::Buffer,
+) {
     let outline_shader = shader_module(
         device,
         "outline shader",
@@ -62,7 +66,7 @@ pub(super) fn create_selection_pipeline(
             ..Default::default()
         },
         Some(DepthPreset::ReadLessEqual),
-        sample_count,
+        max_samples,
     );
     // Selection outline vertices x vec3<f32>; grown by the renderer to fit
     // whatever outline a target resolves to.
@@ -81,7 +85,6 @@ pub(super) fn create_selection_pipeline(
 pub(super) fn create_crosshair_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
     crosshair_shader: &wgpu::ShaderModule,
 ) -> (wgpu::RenderPipeline, wgpu::Buffer) {
     let crosshair_layout = pipeline_layout(device, "crosshair layout", &[]);
@@ -109,7 +112,7 @@ pub(super) fn create_crosshair_pipeline(
     // write_mask = COLOR (not ALL): the invert blend must leave the alpha channel
     // untouched.
     let crosshair_targets = color_target(format, Some(invert_blend), wgpu::ColorWrites::COLOR);
-    let crosshair_pipe = world_pipeline(
+    let crosshair_pipe = single_pipeline(
         device,
         "crosshair pipe",
         &crosshair_layout,
@@ -120,7 +123,6 @@ pub(super) fn create_crosshair_pipeline(
         &crosshair_targets,
         wgpu::PrimitiveState::default(),
         None,
-        sample_count,
     );
     let crosshair_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("crosshair vbuf"),
@@ -141,10 +143,10 @@ pub(super) fn create_crosshair_pipeline(
 pub(super) fn create_break_overlay_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     layout: &wgpu::PipelineLayout,
     vbuf_layout: &wgpu::VertexBufferLayout,
-) -> wgpu::RenderPipeline {
+) -> crate::pipeline::SampledPipeline {
     let break_shader = shader_module(
         device,
         "break overlay shader",
@@ -193,7 +195,7 @@ pub(super) fn create_break_overlay_pipeline(
         &break_targets,
         cull_back(),
         Some(DepthPreset::ReadLessEqualBiased),
-        sample_count,
+        max_samples,
     );
     break_pipe
 }
@@ -212,9 +214,9 @@ pub(super) fn create_break_overlay_pipeline(
 pub(super) fn create_contact_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     uniform_bgl: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
+) -> crate::pipeline::SampledPipeline {
     let contact_shader = shader_module(
         device,
         "contact shadow shader",
@@ -266,7 +268,7 @@ pub(super) fn create_contact_pipeline(
         &contact_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::ReadLessEqualContactBiased),
-        sample_count,
+        max_samples,
     )
 }
 
@@ -281,9 +283,9 @@ pub(super) fn create_contact_pipeline(
 pub(super) fn create_entity_shadow_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     uniform_bgl: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
+) -> crate::pipeline::SampledPipeline {
     let shadow_shader = shader_module(
         device,
         "entity shadow shader",
@@ -340,7 +342,7 @@ pub(super) fn create_entity_shadow_pipeline(
         &shadow_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::ReadLessEqualContactBiased),
-        sample_count,
+        max_samples,
     );
     pipe
 }

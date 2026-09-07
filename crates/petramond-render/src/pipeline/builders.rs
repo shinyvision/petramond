@@ -267,16 +267,15 @@ pub(super) fn texture_sampler_bgl_bind(
     (bgl, bind)
 }
 
-/// Build a render pipeline, filling the fields that are constant across every
-/// pass in this module (`compilation_options`, the shared `sample_count`
-/// multisample state, `multiview: None`, `cache: None`) exactly once. Callers
-/// supply only what actually varies per pass: label, layout, shader + entry
-/// points, vertex buffer layouts, the color targets, the primitive state, and an
-/// optional [`DepthPreset`] (`None` = no depth attachment).
+/// A scene pipeline: compiled per sample count on first draw (see
+/// [`super::SampledPipeline`]). Shared descriptor defaults are filled here
+/// once; callers supply only what actually varies per pass: label, layout,
+/// shader + entry points, vertex buffer layouts, the color targets, the
+/// primitive state, and an optional [`DepthPreset`] (`None` = no depth
+/// attachment). `max_samples` is the device ceiling the scene mode is clamped to.
 ///
 /// Vertex and fragment stages share one `shader` module — every pass in this
-/// file does. The depth-less UI / icon passes pass `depth: None`; that is the
-/// ONLY difference between e.g. `model3d_pipe` and `model3d_hand_pipe`.
+/// module does.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn world_pipeline(
     device: &wgpu::Device,
@@ -289,6 +288,70 @@ pub(super) fn world_pipeline(
     targets: &[Option<wgpu::ColorTargetState>],
     primitive: wgpu::PrimitiveState,
     depth: Option<DepthPreset>,
+    max_samples: u32,
+) -> super::SampledPipeline {
+    let spec = super::sampling::PipelineSpec {
+        label: label.to_owned(),
+        layout: layout.clone(),
+        shader: shader.clone(),
+        vs_entry: vs_entry.to_owned(),
+        fs_entry: fs_entry.to_owned(),
+        buffers: buffers
+            .iter()
+            .map(super::sampling::VertexLayout::from_wgpu)
+            .collect(),
+        targets: targets.to_vec(),
+        primitive,
+        depth: depth.map(DepthPreset::state),
+    };
+    super::SampledPipeline::new(device, spec, max_samples)
+}
+
+/// A pipeline that only ever draws at one sample per pixel: the screen passes
+/// (UI, crosshair, the scene resolve), the icon bakes, and the half-res
+/// environment passes. Same parameters as [`world_pipeline`] minus the device
+/// ceiling, compiled immediately.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn single_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    vs_entry: &str,
+    fs_entry: &str,
+    buffers: &[wgpu::VertexBufferLayout],
+    targets: &[Option<wgpu::ColorTargetState>],
+    primitive: wgpu::PrimitiveState,
+    depth: Option<DepthPreset>,
+) -> wgpu::RenderPipeline {
+    render_pipeline(
+        device,
+        label,
+        layout,
+        shader,
+        vs_entry,
+        fs_entry,
+        buffers,
+        targets,
+        primitive,
+        depth.map(DepthPreset::state),
+        1,
+    )
+}
+
+/// The one `create_render_pipeline` call every pass goes through.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    vs_entry: &str,
+    fs_entry: &str,
+    buffers: &[wgpu::VertexBufferLayout],
+    targets: &[Option<wgpu::ColorTargetState>],
+    primitive: wgpu::PrimitiveState,
+    depth_stencil: Option<wgpu::DepthStencilState>,
     sample_count: u32,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -307,7 +370,7 @@ pub(super) fn world_pipeline(
             targets,
         }),
         primitive,
-        depth_stencil: depth.map(DepthPreset::state),
+        depth_stencil,
         multisample: wgpu::MultisampleState {
             count: sample_count,
             ..Default::default()

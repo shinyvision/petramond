@@ -8,21 +8,31 @@ use super::uniforms::{Uniforms, UV_RECTS_LEN};
 use super::{item_model, particles, resources, shader_pack, ui};
 
 mod builders;
+mod sampling;
+pub(crate) use sampling::SampledPipeline;
 mod entity_models;
 mod environment;
 #[cfg(test)]
 mod gpu_validation;
 mod grade;
+mod lanes;
 mod model3d;
 mod overlays;
 mod particle;
 mod sky;
 mod terrain;
+mod transition;
 mod ui_icons;
+mod variation;
+
+#[cfg(test)]
+pub(crate) use environment::scaler_sources;
+
+pub(crate) const GRADE_SHADER: &str = include_str!("../shaders/grade.wgsl");
 
 pub(super) use self::environment::{
     create_env_comp_bind, create_env_down_bind, create_environment_bind, EnvPassResources,
-    EnvScaler,
+    EnvScalers,
 };
 pub(super) use self::grade::create_grade_bind;
 
@@ -52,7 +62,7 @@ pub(super) struct PipelineResources {
     /// can build a separate bind group over the entity model texture for the `mob`
     /// pipeline (same shape, different texture).
     pub atlas_bgl: wgpu::BindGroupLayout,
-    pub sky_pipe: wgpu::RenderPipeline,
+    pub sky_pipe: crate::pipeline::SampledPipeline,
     pub sky_bind: wgpu::BindGroup,
     pub sky_texture_bind: wgpu::BindGroup,
     pub sky_shader_param_keys: Vec<String>,
@@ -62,20 +72,20 @@ pub(super) struct PipelineResources {
     /// owns the depth view lifecycle).
     pub env_passes: Vec<EnvPassResources>,
     /// Half-res env scaler (downsample + composite around the env passes).
-    pub env_scaler: EnvScaler,
+    pub env_scaler: EnvScalers,
     /// Terrain opaque (quantized [`TerrainVertex`] + column origin instance).
-    pub opaque_pipe: wgpu::RenderPipeline,
-    pub translucent_pipe: wgpu::RenderPipeline,
-    pub transparent_pipe: wgpu::RenderPipeline,
-    pub transparent_two_sided_pipe: wgpu::RenderPipeline,
+    pub opaque_pipe: crate::pipeline::SampledPipeline,
+    pub translucent_pipe: crate::pipeline::SampledPipeline,
+    pub transparent_pipe: crate::pipeline::SampledPipeline,
+    pub transparent_two_sided_pipe: crate::pipeline::SampledPipeline,
     /// Absolute-`Vertex` opaque pipe for chests / doors / item entities.
-    pub dynamic_opaque_pipe: wgpu::RenderPipeline,
+    pub dynamic_opaque_pipe: crate::pipeline::SampledPipeline,
     /// Full-screen colour-grade pass: reads the offscreen scene texture, writes
     /// the swapchain (see `grade.wgsl`). The bind group over the scene view is
     /// built by [`create_grade_bind`] (and rebuilt on resize).
     pub grade_pipe: wgpu::RenderPipeline,
     pub grade_bgl: wgpu::BindGroupLayout,
-    pub outline_pipe: wgpu::RenderPipeline,
+    pub outline_pipe: crate::pipeline::SampledPipeline,
     pub outline_bind: wgpu::BindGroup,
     pub outline_vbuf: wgpu::Buffer,
     pub crosshair_pipe: wgpu::RenderPipeline,
@@ -86,7 +96,7 @@ pub(super) struct PipelineResources {
     /// Same shader/layout as `model3d_pipe` but WITH a depth attachment (Depth32
     /// Float, write, Less). Used for the first-person held block in the hand pass,
     /// which now carries a cleared depth buffer so the held geometry self-sorts.
-    pub model3d_hand_pipe: wgpu::RenderPipeline,
+    pub model3d_hand_pipe: crate::pipeline::SampledPipeline,
     /// Dynamic-offset uniform buffer holding up to [`MODEL3D_MVP_SLOTS`] MVP
     /// matrices in 256-byte slots; written per frame by the hand / icon passes.
     pub model3d_mvp_buf: wgpu::Buffer,
@@ -111,7 +121,7 @@ pub(super) struct PipelineResources {
     /// the shared `model3d_mvp_buf`; group(1) = the block atlas. Full-bright,
     /// alpha-cutout, double-sided, depth test + write (the hand pass clears depth)
     /// so the front/back/side-wall faces self-sort instead of overdrawing.
-    pub item3d_pipe: wgpu::RenderPipeline,
+    pub item3d_pipe: crate::pipeline::SampledPipeline,
     /// group(0) bind for item3d: just the dynamic-offset MVP (binding 0) over the
     /// shared `model3d_mvp_buf` — reuses slot 0 (the hand slot is free for a held
     /// sprite, which emits no model3d geometry).
@@ -124,37 +134,37 @@ pub(super) struct PipelineResources {
     /// group1 = the ENTITY texture bound by the renderer), the explicit-UV
     /// `ItemVertex`, REPLACE blend + alpha-cutout, double-sided (flat sub-cubes show
     /// from both sides), depth test + WRITE so mobs occlude terrain.
-    pub mob_pipe: wgpu::RenderPipeline,
+    pub mob_pipe: crate::pipeline::SampledPipeline,
     /// World-model pipeline: the chunk's bbmodel-block stream (`ModelVertex`,
     /// model atlas at group1). Same layout/blend/depth as `mob_pipe`, but its
     /// vertices carry (sky, block) light separately and the shader applies the
     /// sim's day/night sky scale at draw time, so placed models darken at
     /// night like terrain (their meshes don't rebake when the sun sets).
-    pub world_model_pipe: wgpu::RenderPipeline,
+    pub world_model_pipe: crate::pipeline::SampledPipeline,
     /// The alpha-BLEND twin of `world_model_pipe` for the chunk's
     /// semi-transparent bbmodel faces (`fs_world_model_blend`): same vertex
     /// layout and depth test+write, drawn in the model-blend pass after the
     /// translucent-block pass.
-    pub world_model_blend_pipe: wgpu::RenderPipeline,
+    pub world_model_blend_pipe: crate::pipeline::SampledPipeline,
     /// Break-overlay pipeline: the cracked-block destroy quad. Reuses the block
     /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
     /// LessEqual / no-write over geometry coincident with the block faces.
-    pub break_pipe: wgpu::RenderPipeline,
+    pub break_pipe: crate::pipeline::SampledPipeline,
     /// Model→terrain contact-shadow pipeline: the packed columns'
     /// `ContactShadowVertex` streams, multiplicative, depth read-only with its
     /// own coplanar bias, drawn between the opaque and sky passes. Binds only
     /// the shared `uniform_bind` at group 0.
-    pub contact_pipe: wgpu::RenderPipeline,
+    pub contact_pipe: crate::pipeline::SampledPipeline,
     /// Entity blob-shadow pipeline: one horizontal MULTIPLY-blended quad per
     /// entity, same depth/cull rules as the contact pass, drawn right after it.
-    pub entity_shadow_pipe: wgpu::RenderPipeline,
+    pub entity_shadow_pipe: crate::pipeline::SampledPipeline,
     /// Cutout terrain-particle cube pipeline. Reuses the block `uniform_bind`
     /// + `atlas_bind`, depth-tests, and depth-writes.
-    pub particle_pipe: wgpu::RenderPipeline,
+    pub particle_pipe: crate::pipeline::SampledPipeline,
     /// Translucent block-emitter particle pipeline: solid-color cube particles, alpha
     /// blended, depth-tested without writes, and back-face culled so transparency never
     /// exposes all six cube faces at once.
-    pub emitter_particle_pipe: wgpu::RenderPipeline,
+    pub emitter_particle_pipe: crate::pipeline::SampledPipeline,
     /// UI pipeline: 2D HUD / inventory quads (NDC pos + uv + color). Alpha-blended,
     /// NO depth, drawn last; group(0) binds whatever texture each quad samples — a
     /// baked GUI texture or the icon atlas (solid quads ignore the sampler).
@@ -175,7 +185,7 @@ pub(super) fn create_pipeline_resources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     uniform_buf: &wgpu::Buffer,
     shader_params_buf: &wgpu::Buffer,
     atlas_view: &wgpu::TextureView,
@@ -183,15 +193,18 @@ pub(super) fn create_pipeline_resources(
     array_view: &wgpu::TextureView,
     array_sampler: &wgpu::Sampler,
 ) -> PipelineResources {
-    let shader = shader_module(
-        device,
-        "block shader",
-        concat!(
+    let block_source = lanes::declarations()
+        + &transition::declarations()
+        + &variation::declarations()
+        + concat!(
             include_str!("../shaders/cel.wgsl"),
             include_str!("../shaders/atmosphere.wgsl"),
+            include_str!("../shaders/water.wgsl"),
+            include_str!("../shaders/texture_transition.wgsl"),
+            include_str!("../shaders/tile_variation.wgsl"),
             include_str!("../shaders/block.wgsl")
-        ),
-    );
+        );
+    let shader = shader_module(device, "block shader", block_source);
     let crosshair_shader = shader_module(
         device,
         "crosshair shader",
@@ -311,7 +324,7 @@ pub(super) fn create_pipeline_resources(
         create_terrain_pipelines(
             device,
             format,
-            sample_count,
+            max_samples,
             &shader,
             &shared.array_layout,
             &[terrain_vbuf_layout, terrain_origin_layout],
@@ -334,26 +347,26 @@ pub(super) fn create_pipeline_resources(
         &dynamic_opaque_targets,
         builders::cull_back(),
         Some(builders::DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     let sky = create_sky_pipeline(
         device,
         queue,
         format,
-        sample_count,
+        max_samples,
         uniform_buf,
         shader_params_buf,
     );
-    let env_passes = create_environment_pipelines(device, queue, format, sample_count);
-    let env_scaler = create_env_scaler(device, format, sample_count);
+    let env_passes = create_environment_pipelines(device, queue, format);
+    let env_scaler = create_env_scaler(device, format, max_samples);
     let (outline_pipe, outline_bind, outline_vbuf) =
-        create_selection_pipeline(device, format, sample_count, uniform_buf);
+        create_selection_pipeline(device, format, max_samples, uniform_buf);
     let (crosshair_pipe, crosshair_vbuf) =
-        create_crosshair_pipeline(device, format, sample_count, &crosshair_shader);
+        create_crosshair_pipeline(device, format, &crosshair_shader);
     let model3d = create_model3d_pipelines(
         device,
         format,
-        sample_count,
+        max_samples,
         uniform_buf,
         &shared.uv_rects_buf,
         &shared.atlas_bgl,
@@ -362,7 +375,7 @@ pub(super) fn create_pipeline_resources(
     let (item3d_pipe, item3d_mvp_bind, item3d_vbuf) = create_item3d_pipeline(
         device,
         format,
-        sample_count,
+        max_samples,
         &shared.atlas_bgl,
         &model3d.mvp_buf,
         &item3d_vbuf_layout,
@@ -370,14 +383,14 @@ pub(super) fn create_pipeline_resources(
     let (mob_pipe, mob_shader) = create_mob_pipeline(
         device,
         format,
-        sample_count,
+        max_samples,
         &shared.layout,
         &item3d_vbuf_layout,
     );
     let world_model_pipe = create_world_model_pipeline(
         device,
         format,
-        sample_count,
+        max_samples,
         &shared.layout,
         &mob_shader,
         false,
@@ -385,21 +398,20 @@ pub(super) fn create_pipeline_resources(
     let world_model_blend_pipe = create_world_model_pipeline(
         device,
         format,
-        sample_count,
+        max_samples,
         &shared.layout,
         &mob_shader,
         true,
     );
     let break_pipe =
-        create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
-    let contact_pipe = create_contact_pipeline(device, format, sample_count, &shared.uniform_bgl);
+        create_break_overlay_pipeline(device, format, max_samples, &shared.layout, &vbuf_layout);
+    let contact_pipe = create_contact_pipeline(device, format, max_samples, &shared.uniform_bgl);
     let entity_shadow_pipe =
-        create_entity_shadow_pipeline(device, format, sample_count, &shared.uniform_bgl);
-    let particles = create_particle_pipeline(device, format, sample_count, &shared.layout);
-    let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format, sample_count);
-    let model_icon_pipe =
-        create_model_icon_pipeline(device, format, sample_count, &shared.atlas_bgl);
-    let (grade_pipe, grade_bgl) = create_grade_pipeline(device, format, sample_count);
+        create_entity_shadow_pipeline(device, format, max_samples, &shared.uniform_bgl);
+    let particles = create_particle_pipeline(device, format, max_samples, &shared.layout);
+    let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format);
+    let model_icon_pipe = create_model_icon_pipeline(device, format, &shared.atlas_bgl);
+    let (grade_pipe, grade_bgl) = create_grade_pipeline(device, format);
 
     PipelineResources {
         atlas_array_bind: shared.atlas_array_bind,

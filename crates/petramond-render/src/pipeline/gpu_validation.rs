@@ -108,7 +108,15 @@ fn packed_vertex_pipeline_validates() {
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-        1,
+        if adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::MULTISAMPLED_SHADING)
+        {
+            4
+        } else {
+            1
+        },
         &uniform_buf,
         &shader_params_buf,
         &atlas_view,

@@ -8,6 +8,11 @@
 
 use super::*;
 
+mod actors;
+mod hud;
+use actors::{build_mob_gpu, build_player_gpu};
+use hud::build_hud_layers;
+
 pub async fn new_renderer_from_target(
     target: impl Into<wgpu::SurfaceTarget<'static>>,
     width: u32,
@@ -21,7 +26,8 @@ pub async fn new_renderer_from_target(
         .get_default_config(&adapter, width, height)
         .expect("surface config");
     surface.configure(&device, &config);
-    new_renderer_inner(Some(surface), device, queue, config)
+    let samples = max_scene_samples(&adapter, config.format);
+    new_renderer_inner(Some(surface), device, queue, config, samples)
 }
 
 /// Instance descriptor selecting native backends (Vulkan/Metal/DX12/GL).
@@ -84,9 +90,10 @@ pub(super) async fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wg
     required_limits.max_texture_array_layers = (2 * petramond_world::tile::Tile::count() as u32)
         .max(required_limits.max_texture_array_layers)
         .min(adapter.limits().max_texture_array_layers);
-    // Timestamp queries are requested only when the GPU-timing instrument is
-    // switched on, so an ordinary run asks for no optional feature at all.
-    let mut required_features = wgpu::Features::empty();
+    // Adapter-specific format features expose supported 8x MSAA; timestamps
+    // remain opt-in for the GPU-timing instrument.
+    let mut required_features =
+        adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     if super::super::gpu_timer::GpuTimer::wanted() {
         required_features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
     }
@@ -111,10 +118,20 @@ pub(super) fn new_renderer_inner(
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    max_samples: u32,
 ) -> Renderer {
     let (width, height) = (config.width, config.height);
+    let anti_aliasing = super::post_process::supported_mode(
+        petramond::save::client::AntiAliasing::default(),
+        super::post_process::max_multiplier(
+            (width, height),
+            device.limits().max_texture_dimension_2d,
+        ),
+        max_samples,
+    );
+    let sample_axis = anti_aliasing.resolution_multiplier();
+    let (scene_w, scene_h) = (width * sample_axis, height * sample_axis);
     let format = config.format;
-    let sample_count = 1u32;
 
     let (_atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
     let (_atlas_array_texture, atlas_array_view, atlas_array_sampler) =
@@ -151,7 +168,7 @@ pub(super) fn new_renderer_inner(
         &device,
         &queue,
         format,
-        sample_count,
+        max_samples,
         &uniform_buf,
         &shader_params_buf,
         &atlas_view,
@@ -159,36 +176,53 @@ pub(super) fn new_renderer_inner(
         &atlas_array_view,
         &atlas_array_sampler,
     );
-    let depth = create_depth(&device, width, height);
-    let scene_color = create_scene_color(&device, width, height, format);
-    let mood_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("grade mood"),
-        size: 16,
+    let depth = crate::resources::create_depth_sampled(
+        &device,
+        scene_w,
+        scene_h,
+        anti_aliasing.sample_count(),
+    );
+    let multisample_color = super::post_process::create_multisample_color(
+        &device,
+        scene_w,
+        scene_h,
+        format,
+        anti_aliasing.sample_count(),
+    );
+    let scene_color = create_scene_color(&device, scene_w, scene_h, format);
+    let post_process_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("post-process controls"),
+        contents: bytemuck::cast_slice(&[0.0_f32, 0.0, sample_axis as f32, 1.0]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
     });
     let grade_bind = super::super::pipeline::create_grade_bind(
         &device,
         &pipelines.grade_bgl,
         &scene_color,
-        &mood_buf,
+        &post_process_buf,
     );
     // Half-res environment targets: env passes march at half the scene dims
     // against a downsampled depth; the composite lifts the result back (see
     // pipeline::EnvScaler).
-    let (env_w, env_h) = (width.div_ceil(2), height.div_ceil(2));
+    let (env_w, env_h) = (scene_w.div_ceil(2), scene_h.div_ceil(2));
     let env_color = create_scene_color(&device, env_w, env_h, format);
     let env_depth = super::super::resources::create_depth(&device, env_w, env_h);
     let env_down_bind = super::super::pipeline::create_env_down_bind(
         &device,
-        &pipelines.env_scaler.down_bgl,
+        &pipelines
+            .env_scaler
+            .get(anti_aliasing.sample_count())
+            .down_bgl,
         &depth,
     );
     let env_comp_bind = super::super::pipeline::create_env_comp_bind(
         &device,
-        &pipelines.env_scaler.comp_bgl,
+        &pipelines
+            .env_scaler
+            .get(anti_aliasing.sample_count())
+            .comp_bgl,
         &env_color,
-        &pipelines.env_scaler.samp,
+        &pipelines.env_scaler.get(anti_aliasing.sample_count()).samp,
         &env_depth,
         &depth,
     );
@@ -218,107 +252,8 @@ pub(super) fn new_renderer_inner(
     let chest_pipe = pipelines.dynamic_opaque_pipe.clone();
     let door_pipe = pipelines.dynamic_opaque_pipe.clone();
 
-    // Build per-species mob render resources by iterating the mob registry: load each
-    // species' `.bbmodel` (geometry + walk animation + embedded texture), upload its
-    // texture as a dedicated atlas, build its group(1) bind, and give it its own
-    // dynamic-draw buffers over the shared mob pipeline. Adding a species is a row in
-    // `mobs.json` — no renderer edit. A model parse failure degrades to an empty
-    // model (that species just doesn't draw) rather than crashing the renderer.
-    // World-space margin added around each species' rest-pose cull bounds.
-    const MOB_CULL_SLACK: f32 = 0.5;
-    let mob_gpu: Vec<MobGpu> = petramond::mob::defs()
-        .iter()
-        .map(|d| {
-            let kind = d.mob;
-            // Borrow this species' precached model (compiled once on startup, shared with
-            // the simulation — see `petramond::mob::model`). The renderer never reads a
-            // `.bbmodel`: at runtime the `.llmob` + this in-memory `Model` are golden.
-            let model = petramond::mob::model(kind);
-            let (_texture, view, sampler) = create_model_texture(
-                &device,
-                &queue,
-                &model.texture_rgba,
-                model.tex_w,
-                model.tex_h,
-            );
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("mob atlas bg"),
-                layout: &pipelines.atlas_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            });
-            // Cull volume from the rest-posed model bounds × render scale. The
-            // horizontal radius takes the farthest posed corner (yaw can point
-            // it in any direction); MOB_CULL_SLACK absorbs what the rest pose
-            // cannot know — walk/idle limb swing, head-look, the interpolation
-            // between replicated positions. Conservative slack costs a few
-            // early-visible instances; too tight pops mobs at screen edges.
-            let (bmin, bmax) = model.rest_bounds();
-            let r = [bmin.x, bmax.x]
-                .into_iter()
-                .flat_map(|x| [bmin.z, bmax.z].map(|z| (x * x + z * z).sqrt()))
-                .fold(0.0f32, f32::max);
-            MobGpu {
-                model,
-                scale: d.scale,
-                bind,
-                draw: DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "mob"),
-                cull_r: r * d.scale + MOB_CULL_SLACK,
-                cull_y0: bmin.y * d.scale - MOB_CULL_SLACK,
-                cull_y1: bmax.y * d.scale + MOB_CULL_SLACK,
-                visible: Vec::new(),
-                verts: Vec::new(),
-                indices: Vec::new(),
-            }
-        })
-        .collect();
-
-    // Player bodies: the precached player model gets the same shape of
-    // resources as one mob species (own skin texture bind + dynamic draw over
-    // the shared mob pipeline), plus three held-item draws attached to the
-    // posed hands: an extruded-sprite stream (2D atlas), a bbmodel-item stream
-    // (model atlas), and a packed block-vertex stream (held mini-cube on the
-    // opaque pipeline). EVERY connected player's body appends into the one
-    // stream, which grows to fit the party.
-    let player_gpu = {
-        let model = petramond::player::model::player_model();
-        let (_texture, view, sampler) = create_model_texture(
-            &device,
-            &queue,
-            &model.texture_rgba,
-            model.tex_w,
-            model.tex_h,
-        );
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("player atlas bg"),
-            layout: &pipelines.atlas_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-        PlayerGpu {
-            model,
-            bind,
-            draw: DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player"),
-            verts: Vec::new(),
-            indices: Vec::new(),
-        }
-    };
+    let mob_gpu = build_mob_gpu(&device, &queue, &pipelines.atlas_bgl, &pipelines.mob_pipe);
+    let player_gpu = build_player_gpu(&device, &queue, &pipelines.atlas_bgl, &pipelines.mob_pipe);
     let player_item_draw = DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player item");
     let player_model_item_draw =
         DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player model item");
@@ -385,86 +320,7 @@ pub(super) fn new_renderer_inner(
     let icon_quad_vbuf =
         super::dynamic_draw::new_buffer(&device, wgpu::BufferUsages::VERTEX, "icon quad vbuf");
 
-    // HUD heart atlas (empty | half | full, side by side). One texture for the whole
-    // health bar; the UI pass selects a cell per heart by UV. Resolved through the
-    // asset overlay (a pack can reskin it) into its own bind group (reusing the
-    // gui-atlas bind layout).
-    let load_gui_bind = |rel: &str| -> Option<wgpu::BindGroup> {
-        let (bytes, _path) = petramond_world::assets::read_bytes(rel)?;
-        let (_tex, view, sampler) = create_gui_panel(&device, &queue, &bytes);
-        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gui texture bind"),
-            layout: &pipelines.atlas_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        }))
-    };
-    // The HUD chrome layers, in draw order. Adding a HUD element = one
-    // `UiBuild` vec + one entry here (see `HudLayer`).
-    let hud_layer = |label: &'static str,
-                     source: fn(&crate::ui::UiBuild) -> &[UiVertex],
-                     texture: super::HudLayerTexture,
-                     under_chrome: bool| {
-        super::HudLayer {
-            source,
-            texture,
-            under_chrome,
-            vbuf: super::dynamic_draw::new_buffer(&device, wgpu::BufferUsages::VERTEX, label),
-            vertex_count: 0,
-        }
-    };
-    // Status-effect icon strip: composed on the CPU from the shared frame +
-    // each registered effect's icon (engine and pack rows alike), uploaded
-    // once — the HUD indexes cells by effect id like hearts index their atlas.
-    let effects_bind = crate::effect_icons::compose_atlas().map(|img| {
-        let (_tex, view, sampler) =
-            crate::resources::create_rgba_nearest(&device, &queue, &img, "effect icons");
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("effect icons bind"),
-            layout: &pipelines.atlas_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        })
-    });
-    let hud_layers = vec![
-        // Hurt-flash red edge vignette, under all chrome (solid gradient quads).
-        hud_layer(
-            "hud vignette",
-            |b| &b.vignette,
-            super::HudLayerTexture::Solid,
-            true,
-        ),
-        // HUD hearts (bottom-left health bar), from the heart atlas.
-        hud_layer(
-            "hud hearts",
-            |b| &b.hearts,
-            super::HudLayerTexture::Texture(load_gui_bind("textures/gui/hearts.png")),
-            false,
-        ),
-        // Status-effect icons (framed row above the hearts), from the strip.
-        hud_layer(
-            "hud effects",
-            |b| &b.effects,
-            super::HudLayerTexture::Texture(effects_bind),
-            false,
-        ),
-    ];
+    let hud_layers = build_hud_layers(&device, &queue, &pipelines.atlas_bgl);
 
     let gpu_timer = super::super::gpu_timer::GpuTimer::new(&device, &queue);
     let column_origins = super::super::resources::ColumnOrigins::new(&device);
@@ -490,8 +346,8 @@ pub(super) fn new_renderer_inner(
         &device,
         pipelines.particle_pipe,
         "particle",
-        crate::particles::VERTS_PER_CUBE as u32,
-        &crate::particles::CUBE_INDEX_PATTERN,
+        4,
+        &[0, 1, 2, 0, 2, 3],
     );
     let entity_shadow_draw = DynamicVertexDraw::new(
         &device,
@@ -663,11 +519,14 @@ pub(super) fn new_renderer_inner(
         targets: SceneTargets {
             render_scale: 1.0,
             grade_enabled: true,
+            anti_aliasing,
             scene_color,
+            multisample_color,
+            max_samples,
             grade_pipe: pipelines.grade_pipe,
             grade_bgl: pipelines.grade_bgl,
             grade_bind,
-            mood_buf,
+            post_process_buf,
             mood: [0.0, 0.0],
             depth,
         },
@@ -735,61 +594,29 @@ impl Renderer {
     pub fn ui_viewport(&self) -> UiViewport {
         UiViewport::new(self.screen_size(), self.ui.viewport_generation)
     }
+}
 
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-        self.config.width = width;
-        self.config.height = height;
-        self.ui.viewport_generation = self.ui.viewport_generation.wrapping_add(1).max(1);
-        if let Some(surface) = &self.surface {
-            surface.configure(&self.device, &self.config);
-        }
-        self.recreate_scene_targets();
-        self.chrome.crosshair_drawn_size = (0, 0);
-        // A real size change earns a fresh suboptimal-retry (render()).
-        self.suboptimal_retried = false;
+pub(super) fn max_scene_samples(adapter: &wgpu::Adapter, format: wgpu::TextureFormat) -> u32 {
+    // Cloud occlusion reads scene depth per coverage sample.
+    if !adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::MULTISAMPLED_SHADING)
+    {
+        return 1;
     }
-
-    /// (Re)build the world-pass targets at the current `render_scale` (and the
-    /// grade bind that reads them). Called on resize and scale changes.
-    pub(super) fn recreate_scene_targets(&mut self) {
-        let (w, h) = self.scene_dims();
-        self.targets.depth = create_depth(&self.device, w, h);
-        self.targets.scene_color = create_scene_color(&self.device, w, h, self.config.format);
-        self.targets.grade_bind = super::super::pipeline::create_grade_bind(
-            &self.device,
-            &self.targets.grade_bgl,
-            &self.targets.scene_color,
-            &self.targets.mood_buf,
-        );
-        // Environment half-res targets and every bind that references the
-        // recreated views.
-        let (env_w, env_h) = (w.div_ceil(2), h.div_ceil(2));
-        self.sky.env_color = create_scene_color(&self.device, env_w, env_h, self.config.format);
-        self.sky.env_depth = super::super::resources::create_depth(&self.device, env_w, env_h);
-        self.sky.env_down_bind = super::super::pipeline::create_env_down_bind(
-            &self.device,
-            &self.sky.env_scaler.down_bgl,
-            &self.targets.depth,
-        );
-        self.sky.env_comp_bind = super::super::pipeline::create_env_comp_bind(
-            &self.device,
-            &self.sky.env_scaler.comp_bgl,
-            &self.sky.env_color,
-            &self.sky.env_scaler.samp,
-            &self.sky.env_depth,
-            &self.targets.depth,
-        );
-        for pass in &mut self.sky.env_passes {
-            pass.bind = super::super::pipeline::create_environment_bind(
-                &self.device,
-                &pass.res.bgl,
-                &self.uniform_buf,
-                &pass.res.params_buf,
-                &self.sky.env_depth,
-            );
+    let features = adapter.features();
+    let flags = |format: wgpu::TextureFormat| {
+        if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+            adapter.get_texture_format_features(format).flags
+        } else {
+            format.guaranteed_format_features(features).flags
         }
-    }
+    };
+    let color = flags(format);
+    let depth = flags(wgpu::TextureFormat::Depth32Float);
+    [8, 4, 1]
+        .into_iter()
+        .find(|n| color.sample_count_supported(*n) && depth.sample_count_supported(*n))
+        .unwrap_or(1)
 }

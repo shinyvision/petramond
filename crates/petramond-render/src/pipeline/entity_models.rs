@@ -16,10 +16,10 @@ use super::builders::{color_target, shader_module, world_pipeline, DepthPreset};
 pub(super) fn create_mob_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     layout: &wgpu::PipelineLayout,
     item3d_vbuf_layout: &wgpu::VertexBufferLayout,
-) -> (wgpu::RenderPipeline, wgpu::ShaderModule) {
+) -> (crate::pipeline::SampledPipeline, wgpu::ShaderModule) {
     let opaque_targets = color_target(
         format,
         Some(wgpu::BlendState::REPLACE),
@@ -45,7 +45,7 @@ pub(super) fn create_mob_pipeline(
         &opaque_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     (mob_pipe, mob_shader)
 }
@@ -66,11 +66,11 @@ pub(super) fn create_mob_pipeline(
 pub(super) fn create_world_model_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    sample_count: u32,
+    max_samples: u32,
     layout: &wgpu::PipelineLayout,
     mob_shader: &wgpu::ShaderModule,
     blended: bool,
-) -> wgpu::RenderPipeline {
+) -> crate::pipeline::SampledPipeline {
     let targets = color_target(
         format,
         Some(if blended {
@@ -140,7 +140,7 @@ pub(super) fn create_world_model_pipeline(
             ..Default::default()
         },
         Some(DepthPreset::WriteLess),
-        sample_count,
+        max_samples,
     );
     world_model_pipe
 }
