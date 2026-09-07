@@ -115,6 +115,36 @@
         "color_bias": 2.2,
         "die_on_contact": true
       }
+    },
+    {
+      "emitter": "petramond:butterfly",
+      "ambient": {
+        "radius": 24,
+        "height": [8, 8],
+        "size": [0.32, 0.42],
+        "alpha": [1.0, 1.0],
+        "color": [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+        "palette": [
+          {"weight": 4, "color": [1.0, 1.0, 1.0]},
+          {"weight": 2, "color": [1.0, 0.42, 0.66]},
+          {"weight": 2, "color": [0.42, 0.78, 1.0]},
+          {"weight": 1, "color": [0.12, 0.28, 0.85]},
+          {"weight": 1, "color": [1.0, 0.40, 0.07]}
+        ],
+        "light": "world",
+        "motion": {
+          "flight": {
+            "spacing": 7.0,
+            "occupancy": 0.35,
+            "orbit": [1.6, 1.3],
+            "hover": [1.1, 0.45],
+            "speed": [0.35, 0.65],
+            "flap_hz": [5.0, 7.0],
+            "sprite": "butterfly",
+            "ground_tags": ["soil"]
+          }
+        }
+      }
     }
   ]
 }

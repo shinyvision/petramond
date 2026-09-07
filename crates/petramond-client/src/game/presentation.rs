@@ -182,6 +182,7 @@ impl GamePresentationScratch {
             .extend(game.particles.particles().iter().map(|particle| {
                 let (uv_min, uv_size) = particle.atlas_uv();
                 ParticlePresentation {
+                    quad_axes: None,
                     atlas: if particle.solid {
                         ParticleAtlas::Solid
                     } else if particle.model.is_some() {

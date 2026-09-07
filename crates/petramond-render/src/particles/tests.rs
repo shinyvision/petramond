@@ -3,6 +3,7 @@ use glam::Vec3;
 
 fn inst(alpha: f32) -> ParticleInstance {
     ParticleInstance {
+        quad_axes: None,
         pos: Vec3::new(1.0, 2.0, 3.0),
         uv_min: [0.1, 0.2],
         uv_size: [0.05; 2],
@@ -75,6 +76,31 @@ fn each_visible_particle_is_one_cube() {
     // Alpha is carried per vertex.
     assert_eq!(v[0].alpha, 1.0);
     assert_eq!(v[VERTS_PER_CUBE].alpha, 0.5);
+}
+
+#[test]
+fn oriented_particles_keep_their_plane_and_atlas_split_among_cubes() {
+    let right = Vec3::new(0.2, 0.3, 0.0);
+    let up = Vec3::Z * 0.4;
+    let quad = ParticleInstance {
+        quad_axes: Some([right, up]),
+        ..inst(1.0)
+    };
+    let mut vertices = Vec::new();
+    let (total, block) = build_particles_split(
+        &[quad, inst(1.0)],
+        &[inst(1.0)],
+        LightEnv::IDENTITY,
+        &mut vertices,
+    );
+    assert_eq!(block, 4 + VERTS_PER_CUBE as u32);
+    assert_eq!(total - block, VERTS_PER_CUBE as u32);
+    let normal = right.cross(up).normalize();
+    for vertex in &vertices[..4] {
+        assert!((Vec3::from(vertex.pos) - quad.pos).dot(normal).abs() < 1e-6);
+    }
+    assert_eq!(vertices[0].pos, (quad.pos - right - up).to_array());
+    assert_eq!(vertices[2].pos, (quad.pos + right + up).to_array());
 }
 
 #[test]

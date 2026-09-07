@@ -114,6 +114,8 @@ pub enum ParticleAtlas {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ParticlePresentation {
+    /// Textured, double-sided quad half-axes; None keeps the ordinary cube.
+    pub quad_axes: Option<[Vec3; 2]>,
     pub atlas: ParticleAtlas,
     pub pos: Vec3,
     pub uv_min: [f32; 2],

@@ -383,6 +383,25 @@ fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<Pa
     // block pipeline (v grows downward in the atlas). The four corners follow
     // the same CCW order as the uv corners: bl, br, tr, tl.
     let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+    if let Some([right, up]) = inst.quad_axes {
+        let corners = [
+            inst.pos - right - up,
+            inst.pos + right - up,
+            inst.pos + right + up,
+            inst.pos - right + up,
+        ];
+        // The textured cutout pipeline has no face culling, so one quad shows both sides.
+        for i in 0..4 {
+            verts.push(ParticleVertex {
+                pos: corners[i].to_array(),
+                uv: corner_uv[i],
+                tint,
+                shade: 1.0,
+                alpha: inst.alpha,
+            });
+        }
+        return;
+    }
     push_cube_faces(
         Vec3::from(inst.pos.to_array()),
         inst.size,

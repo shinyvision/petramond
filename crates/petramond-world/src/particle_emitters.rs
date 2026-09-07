@@ -16,12 +16,20 @@
 //!
 //! Ids are session-scoped: nothing persists them, and the wire ships the key
 //! table at join for remapping (like sounds/effects).
+//!
+//! An ambient bundle is normally ACTIVATED by a client mod (`ClientAmbientSet`).
+//! A biome row may instead list it under `ambient` with a density
+//! (`"ambient": {"petramond:butterfly": 0.45}`), which makes the bundle
+//! BIOME-DRIVEN: every client derives it wherever the local columns' biomes
+//! give it a density, with no mod involved. [`biome_intensity`] is that
+//! per-(bundle, biome) table; [`biome_driven`] lists the bundles it covers.
 
 use std::sync::LazyLock;
 
 use serde::Deserialize;
 
-use crate::block::ParticleEmitter;
+use crate::block::{BlockTag, ParticleEmitter};
+use crate::tile::Tile;
 
 /// Engine bundle keys in frozen id order; the completeness oracle
 /// `particle_emitters.json` is validated against.
@@ -30,6 +38,7 @@ const ENGINE_EMITTER_NAMES: &[&str] = &[
     "petramond:burn_light",
     "petramond:burn_great",
     "petramond:water_splash",
+    "petramond:butterfly",
 ];
 
 /// The engine water-splash burst bundle, emitted by core physics when a player
@@ -57,7 +66,8 @@ pub struct EmitterBundle {
     pub rows: &'static [ParticleEmitter],
     /// One-shot burst parameters.
     pub burst: Option<BurstSpec>,
-    /// Camera-volume parameters.
+    /// Ambient parameters: a precipitation band, a volume of motes, or a
+    /// lattice of fliers (see [`AmbientMotion`]).
     pub ambient: Option<AmbientSpec>,
 }
 
@@ -99,26 +109,29 @@ fn default_color_bias() -> f32 {
     1.0
 }
 
-/// A camera-following ambience/precipitation volume: up to
-/// `count_per_intensity × intensity` cubes (capped) DERIVED statelessly per
-/// frame around the local camera — falling at `fall_speed`, advected by the
-/// activation's wind, fluttering if asked — and killed at each column's
-/// precipitation ceiling (the topmost movement-blocking or water cell), so
-/// nothing falls under a roof and hits land ON the roof. Activated per client
-/// through the `ClientAmbientSet` host call; never simulated, never on the
-/// tick, never replicated.
+/// A world-anchored ambience volume around the local camera, DERIVED
+/// statelessly per frame — nothing is simulated, nothing runs on the tick,
+/// nothing replicates. Its `motion` decides what a particle IS: a falling
+/// drop killed at each column's precipitation ceiling (the topmost
+/// movement-blocking or water cell, so nothing falls under a roof), a drifting
+/// mote, or a flier orbiting above the ground. Activated per client through the
+/// `ClientAmbientSet` host call, or by a biome row's `ambient` density map.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AmbientSpec {
     /// Particles at intensity 1.0 (scaled linearly, capped at `max_count`).
+    /// Falls and volumes only: a flight's population is its lattice.
+    #[serde(default)]
     pub count_per_intensity: f32,
-    /// Hard volume cap.
+    /// Hard volume cap (falls and volumes only).
+    #[serde(default)]
     pub max_count: u32,
     /// Horizontal spawn radius around the camera, blocks.
     pub radius: f32,
     /// Vertical band `[below, above]` the camera the volume covers, blocks.
     pub height: [f32; 2],
-    /// Min/max downward fall speed, blocks/s.
+    /// Min/max downward fall speed, blocks/s (falls and volumes only).
+    #[serde(default)]
     pub fall_speed: [f32; 2],
     /// Multiplier on the activation's wind vector (0 = ignores wind).
     #[serde(default = "default_drift_wind")]
@@ -139,14 +152,20 @@ pub struct AmbientSpec {
     /// Skews the color mix like a burst's (`>1` favors the first endpoint).
     #[serde(default = "default_color_bias")]
     pub color_bias: f32,
+    /// Discrete weighted colours drawn INSTEAD of the `color` mix when
+    /// non-empty — for families that must stay distinct (a white, a pink and a
+    /// blue butterfly, never a mauve one).
+    #[serde(default)]
+    pub palette: Vec<PaletteStop>,
     /// What the ceiling hit shows: nothing (`"die"`, default), or a derived
     /// splash from a named BURST bundle's launch/lifetime/color data
     /// (`{"burst": "ns:key"}` — resolved and shape-checked at load).
     #[serde(default)]
     pub hit: AmbientHit,
     /// How a particle MOVES, and therefore what its position is anchored to.
-    /// `"precipitation"` (default) falls through the band from the camera's
-    /// own ceiling; `"volume"` is a world-anchored drifting body of motes.
+    /// `"precipitation"` (default) falls through the band; `"volume"` is a
+    /// drifting body of motes; `{"flight": {...}}` is a lattice of fliers
+    /// orbiting above the ground.
     #[serde(default)]
     pub motion: AmbientMotion,
     /// Where a particle STOPS. `"ceiling"` (default) is precipitation: each
@@ -191,6 +210,55 @@ fn default_drift_wind() -> f32 {
     1.0
 }
 
+/// One entry of an [`AmbientSpec::palette`]: drawn with probability
+/// `weight / Σ weights`.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaletteStop {
+    pub weight: f32,
+    pub color: [f32; 3],
+}
+
+/// A lattice of world-anchored FLIERS. Every `spacing`-sized ground cell seeds
+/// one candidate (a fraction `occupancy` of them exist at intensity 1); a
+/// candidate orbits a closed-form path above the HIGHEST ground its whole
+/// orbit covers, so no phase of the flight ever clips a slope. A candidate is
+/// refused outright — never lifted — where any column under its orbit is
+/// unloaded, roofed by a non-ground block (a canopy, a slab, a pane of glass),
+/// excluded by the bundle's biome filter, or rolls above the biome's density.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlightSpec {
+    /// Horizontal lattice pitch, blocks — one candidate per cell.
+    pub spacing: f32,
+    /// Fraction of lattice cells occupied at intensity 1.
+    pub occupancy: f32,
+    /// Orbit half-extents `[x, z]` around the cell's anchor, blocks.
+    pub orbit: [f32; 2],
+    /// Cruise height above the anchor ground `[base, bob amplitude]`, blocks.
+    pub hover: [f32; 2],
+    /// Min/max orbit rate, radians/s.
+    pub speed: [f32; 2],
+    /// Min/max wingbeat rate, Hz (used with `sprite`).
+    #[serde(default)]
+    pub flap_hz: [f32; 2],
+    /// Atlas tile whose left and right halves are the two wings, hinged at the
+    /// body and flapping. Absent: the ordinary solid particle cube.
+    #[serde(default)]
+    pub sprite: Option<String>,
+    /// Block tags, ANY of which the ground under the orbit must carry (empty:
+    /// any ground). Butterflies list `soil` so a canopy is an obstruction, not
+    /// a floor.
+    #[serde(default)]
+    pub ground_tags: Vec<String>,
+    /// `sprite` resolved at load.
+    #[serde(skip)]
+    pub sprite_tile: Option<Tile>,
+    /// `ground_tags` resolved at load.
+    #[serde(skip)]
+    pub ground: Vec<BlockTag>,
+}
+
 fn default_stretch() -> f32 {
     1.0
 }
@@ -208,16 +276,14 @@ pub enum AmbientHit {
 
 /// How an ambient volume's particles are anchored and move.
 ///
-/// The two kinds differ in ONE thing: which axes are world-anchored. Both
-/// wrap the world-anchored axes into the camera's box, so the body follows
-/// the player without dragging its contents along.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
+/// Every kind is world-anchored: the body follows the player without dragging
+/// its contents along (falls and volumes wrap positions into the camera's box;
+/// fliers live on a fixed ground lattice).
+#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AmbientMotion {
-    /// A FALL: X and Z are world-anchored, Y is the camera-relative band the
-    /// particle sweeps top-to-bottom before recycling. A raindrop's height is
-    /// already meaningful (it starts over the camera and dies on the ground),
-    /// so it needs no vertical anchor.
+    /// Falling particles reseed their column when recycling across the
+    /// vertical band and can derive splashes at their world-space hit time.
     #[default]
     Precipitation,
     /// A BODY of drifting motes: all three axes are world-anchored, and Y
@@ -225,6 +291,18 @@ pub enum AmbientMotion {
     /// this the band re-centres on the camera every frame and the whole field
     /// rides the player's jump.
     Volume,
+    /// A lattice of fliers orbiting above the ground — see [`FlightSpec`].
+    Flight(FlightSpec),
+}
+
+impl AmbientMotion {
+    /// The flight parameters, for the kind that has them.
+    pub fn flight(&self) -> Option<&FlightSpec> {
+        match self {
+            AmbientMotion::Flight(f) => Some(f),
+            _ => None,
+        }
+    }
 }
 
 /// Where an ambient volume's particles stop.
@@ -292,10 +370,90 @@ pub fn defs() -> &'static [EmitterBundle] {
 }
 
 fn catalog() -> &'static crate::registry::Catalog<EmitterBundle> {
-    static TABLE: LazyLock<crate::registry::Catalog<EmitterBundle>> = LazyLock::new(|| {
-        crate::registry::read_catalog("particle_emitters.json", "emitter", parse_layers)
-    });
-    &TABLE
+    &tables().0
+}
+
+/// The bundle catalog plus the biome-density table over it. Both fail loudly
+/// at first use, like every catalog: a biome row naming a bundle that does not
+/// exist (or is not ambient) is a content error, not a silent no-show.
+fn tables() -> &'static (crate::registry::Catalog<EmitterBundle>, BiomeTable) {
+    static TABLES: LazyLock<(crate::registry::Catalog<EmitterBundle>, BiomeTable)> =
+        LazyLock::new(|| {
+            let catalog =
+                crate::registry::read_catalog("particle_emitters.json", "emitter", parse_layers);
+            let rows = (1..=crate::biome::BIOME_COUNT as u8)
+                .map(|id| (id, crate::biome::Biome::from_id(id).ambient()));
+            let table = BiomeTable::build(&catalog, rows)
+                .unwrap_or_else(|e| panic!("biomes.json ambient densities: {e}"));
+            (catalog, table)
+        });
+    &TABLES
+}
+
+/// The density at which `biome` drives `bundle` — the biome row's `ambient`
+/// entry, `0` for a biome that omits a biome-driven bundle, and `1` for a
+/// bundle no biome row names at all (a mod-driven bundle is not thinned by
+/// biome unless it declares its own filter).
+#[inline]
+pub fn biome_intensity(bundle: u8, biome: u8) -> f32 {
+    tables().1.intensity(bundle, biome)
+}
+
+/// The bundles some biome row drives, id-ordered. Every client derives these
+/// every frame; no mod activation is involved.
+pub fn biome_driven() -> &'static [u8] {
+    &tables().1.driven
+}
+
+/// Per-(bundle, biome) density, dense over the byte id spaces.
+struct BiomeTable {
+    /// `cells[bundle * 256 + biome]`; rows of bundles no biome names are all 1.
+    cells: Box<[f32]>,
+    driven: Box<[u8]>,
+}
+
+impl BiomeTable {
+    fn build<'a>(
+        catalog: &crate::registry::Catalog<EmitterBundle>,
+        biome_rows: impl Iterator<Item = (u8, &'a [(&'a str, f32)])>,
+    ) -> Result<Self, String> {
+        let bundles = catalog.rows().len();
+        let mut cells = vec![1.0f32; bundles * 256].into_boxed_slice();
+        let mut driven = Vec::new();
+        for (biome, entries) in biome_rows {
+            for &(key, density) in entries {
+                let Some(id) = catalog.id(key) else {
+                    return Err(format!(
+                        "biome {biome} names unknown emitter bundle '{key}'"
+                    ));
+                };
+                let id = id as usize;
+                if catalog.rows()[id].ambient.is_none() {
+                    return Err(format!(
+                        "biome {biome} names '{key}', which is not an ambient bundle"
+                    ));
+                }
+                if !driven.contains(&(id as u8)) {
+                    driven.push(id as u8);
+                    cells[id * 256..(id + 1) * 256].fill(0.0);
+                }
+                cells[id * 256 + biome as usize] = density;
+            }
+        }
+        driven.sort_unstable();
+        Ok(Self {
+            cells,
+            driven: driven.into_boxed_slice(),
+        })
+    }
+
+    #[inline]
+    fn intensity(&self, bundle: u8, biome: u8) -> f32 {
+        self.cells
+            .get(bundle as usize * 256 + biome as usize)
+            .copied()
+            .unwrap_or(1.0)
+    }
 }
 
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle>, String> {
@@ -328,6 +486,9 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
             if let Some(ambient) = &mut r.ambient {
                 validate_ambient(&r.emitter, ambient)?;
                 ambient.biome_allow = resolve_biome_filter(&r.emitter, ambient)?;
+                if let AmbientMotion::Flight(flight) = &mut ambient.motion {
+                    resolve_flight(&r.emitter, flight)?;
+                }
             }
             if let Some(tint) = r.tint {
                 for channel in tint {
@@ -415,11 +576,34 @@ fn resolve_biome_filter(key: &str, a: &AmbientSpec) -> Result<Option<[u64; 4]>, 
 
 fn validate_ambient(key: &str, a: &AmbientSpec) -> Result<(), String> {
     let err = |what: &str| Err(format!("emitter '{key}' ambient: {what}"));
-    if !a.count_per_intensity.is_finite() || a.count_per_intensity <= 0.0 {
-        return err("count_per_intensity must be positive and finite");
-    }
-    if !(1..=4096).contains(&a.max_count) {
-        return err("max_count must be in 1..=4096");
+    match &a.motion {
+        AmbientMotion::Flight(flight) => {
+            if a.count_per_intensity != 0.0 || a.max_count != 0 || a.fall_speed != [0.0, 0.0] {
+                return err(
+                    "a flight's population is spacing × occupancy and it never falls: \
+                     omit count_per_intensity, max_count and fall_speed",
+                );
+            }
+            if a.flutter != [0.0, 0.0] || a.stretch != 1.0 || a.hit != AmbientHit::Die {
+                return err("flutter, stretch and hit do not apply to a flight");
+            }
+            validate_flight(key, flight)?;
+        }
+        AmbientMotion::Precipitation | AmbientMotion::Volume => {
+            if !a.count_per_intensity.is_finite() || a.count_per_intensity <= 0.0 {
+                return err("count_per_intensity must be positive and finite");
+            }
+            if !(1..=4096).contains(&a.max_count) {
+                return err("max_count must be in 1..=4096");
+            }
+            if !a.fall_speed[0].is_finite()
+                || !a.fall_speed[1].is_finite()
+                || a.fall_speed[0] < 0.1
+                || a.fall_speed[0] > a.fall_speed[1]
+            {
+                return err("fall_speed must be a finite ordered range (min 0.1)");
+            }
+        }
     }
     if !a.radius.is_finite() || !(4.0..=48.0).contains(&a.radius) {
         return err("radius must be in 4..=48");
@@ -432,11 +616,7 @@ fn validate_ambient(key: &str, a: &AmbientSpec) -> Result<(), String> {
     if a.height[0] + a.height[1] <= 0.0 {
         return err("the height band must have positive extent");
     }
-    for (label, range, min) in [
-        ("fall_speed", a.fall_speed, 0.1),
-        ("size", a.size, f32::EPSILON),
-        ("alpha", a.alpha, 0.0),
-    ] {
+    for (label, range, min) in [("size", a.size, f32::EPSILON), ("alpha", a.alpha, 0.0)] {
         if !range[0].is_finite() || !range[1].is_finite() || range[0] < min || range[0] > range[1] {
             return Err(format!(
                 "emitter '{key}' ambient: {label} must be a finite ordered range (min {min})"
@@ -469,6 +649,16 @@ fn validate_ambient(key: &str, a: &AmbientSpec) -> Result<(), String> {
     if !a.color_bias.is_finite() || !(0.25..=8.0).contains(&a.color_bias) {
         return err("color_bias must be in 0.25..=8");
     }
+    for stop in &a.palette {
+        if !stop.weight.is_finite() || stop.weight <= 0.0 {
+            return err("palette weights must be positive and finite");
+        }
+        for channel in stop.color {
+            if !channel.is_finite() || !(0.0..=1.0).contains(&channel) {
+                return err("palette color channels must be in 0..=1");
+            }
+        }
+    }
     // A splash is derived AT the kill height; an interior volume has no
     // impact plane to derive it at, so the pair is a load error rather than a
     // silently ignored field.
@@ -481,6 +671,61 @@ fn validate_ambient(key: &str, a: &AmbientSpec) -> Result<(), String> {
     if a.motion == AmbientMotion::Volume && a.hit != AmbientHit::Die {
         return err("motion 'volume' does not fall onto anything, so hit must be 'die'");
     }
+    Ok(())
+}
+
+fn validate_flight(key: &str, f: &FlightSpec) -> Result<(), String> {
+    let err = |what: &str| Err(format!("emitter '{key}' flight: {what}"));
+    if !f.spacing.is_finite() || !(1.0..=32.0).contains(&f.spacing) {
+        return err("spacing must be in 1..=32");
+    }
+    if !f.occupancy.is_finite() || !(0.0..=1.0).contains(&f.occupancy) || f.occupancy == 0.0 {
+        return err("occupancy must be in (0, 1]");
+    }
+    for (label, pair, max) in [
+        ("orbit", f.orbit, 16.0),
+        ("hover", f.hover, 16.0),
+        ("flap_hz", f.flap_hz, 32.0),
+    ] {
+        if !pair[0].is_finite() || !pair[1].is_finite() || pair[0] < 0.0 || pair[1] > max {
+            return Err(format!(
+                "emitter '{key}' flight: {label} values must be finite and in 0..={max}"
+            ));
+        }
+    }
+    if f.flap_hz[0] > f.flap_hz[1] {
+        return err("flap_hz must be an ordered range");
+    }
+    if !f.speed[0].is_finite()
+        || !f.speed[1].is_finite()
+        || f.speed[0] <= 0.0
+        || f.speed[0] > f.speed[1]
+        || f.speed[1] > 16.0
+    {
+        return err("speed must be a positive ordered range at or below 16 rad/s");
+    }
+    if f.orbit[0].max(f.orbit[1]) >= f.spacing * 0.5 {
+        return err("orbit half-extents must stay inside half the spacing");
+    }
+    Ok(())
+}
+
+/// Resolve a flight's names against the tile manifest and the block-tag
+/// vocabulary — both load-time facts, so a typo is a load error.
+fn resolve_flight(key: &str, f: &mut FlightSpec) -> Result<(), String> {
+    if let Some(name) = &f.sprite {
+        let Some(tile) = Tile::from_name(name) else {
+            return Err(format!(
+                "emitter '{key}' flight: sprite names no tile '{name}'"
+            ));
+        };
+        f.sprite_tile = Some(tile);
+    }
+    f.ground = f
+        .ground_tags
+        .iter()
+        .map(|t| BlockTag::resolve(t).map_err(|e| format!("emitter '{key}' flight: {e}")))
+        .collect::<Result<_, _>>()?;
     Ok(())
 }
 
@@ -518,271 +763,4 @@ fn validate_burst(key: &str, b: &BurstSpec) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn base() -> String {
-        let (text, _) = crate::assets::read_base_text("particle_emitters.json")
-            .expect("assets/particle_emitters.json must ship");
-        text
-    }
-
-    /// The shipped catalog must load fully — the startup gate as a test.
-    #[test]
-    fn shipped_particle_emitters_json_loads_fully() {
-        let defs = parse_layers(&[&base()])
-            .unwrap_or_else(|e| panic!("shipped catalog: {e}"))
-            .rows();
-        assert_eq!(defs.len(), ENGINE_EMITTER_NAMES.len());
-        for (i, d) in defs.iter().enumerate() {
-            assert_eq!(d.id, i as u8);
-            assert_eq!(d.key, ENGINE_EMITTER_NAMES[i]);
-            let kinds = usize::from(!d.rows.is_empty())
-                + usize::from(d.burst.is_some())
-                + usize::from(d.ambient.is_some());
-            assert_eq!(kinds, 1, "every bundle is exactly one kind");
-        }
-        assert!(
-            by_key(WATER_SPLASH_KEY).unwrap().burst.is_some(),
-            "the water splash ships as a burst"
-        );
-    }
-
-    #[test]
-    fn burst_bundles_validate() {
-        // (count, max, up_speed, bias) — the fields the bad cases vary.
-        let splash = |count: &str, max: &str, up: &str, bias: &str| {
-            format!(
-                r#"{{"emitters": [{{"emitter": "mymod:pop", "burst": {{
-                    "count_per_intensity": {count}, "max_count": {max},
-                    "up_speed": {up}, "radial_speed": [0.5, 1.5],
-                    "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
-                    "color": [[0.1, 0.1, 0.5], [0.4, 0.8, 1.0]],
-                    "color_bias": {bias}, "die_on_contact": true }} }}]}}"#
-            )
-        };
-        let ok = splash("3.0", "24", "[1.0, 2.0]", "2.0");
-        let defs = parse_layers(&[&base(), ok.as_str()])
-            .expect("burst bundle loads")
-            .rows();
-        let d = defs.last().unwrap();
-        assert!(d.burst.is_some() && d.rows.is_empty());
-
-        for (bad, why) in [
-            (
-                splash("0.0", "24", "[1.0, 2.0]", "2.0"),
-                "zero count scaling",
-            ),
-            (splash("3.0", "0", "[1.0, 2.0]", "2.0"), "zero cap"),
-            (splash("3.0", "24", "[2.0, 1.0]", "2.0"), "reversed range"),
-            (
-                splash("3.0", "24", "[1.0, 2.0]", "100.0"),
-                "out-of-range bias",
-            ),
-            (
-                r#"{"emitters": [{"emitter": "mymod:pop", "burst": {
-                    "count_per_intensity": 3.0, "max_count": 24,
-                    "up_speed": [1.0, 2.0], "radial_speed": [0.5, 1.5],
-                    "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
-                    "color": [[0.1, 0.1, 0.5], [0.4, 0.8, 1.0]] },
-                    "particles": [{"rate": 2.0, "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
-                        "color": [[1, 1, 1], [1, 1, 1]], "alpha": [0.5, 0.8]}] }]}"#
-                    .to_owned(),
-                "both burst and particles",
-            ),
-        ] {
-            assert!(
-                parse_layers(&[&base(), bad.as_str()]).is_err(),
-                "{why} must fail the load"
-            );
-        }
-    }
-
-    #[test]
-    fn pack_bundles_register_after_engine_rows_and_validate() {
-        let glow = r#"{"emitter": "mymod:glow", "tint": [1.0, 0.9, 0.6], "particles": [
-            {"rate": 2.0, "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
-             "color": [[0.9, 0.9, 0.2], [1.0, 1.0, 0.6]], "alpha": [0.5, 0.8]}]}"#;
-        let pack = format!(r#"{{"emitters": [{glow}]}}"#);
-        let defs = parse_layers(&[&base(), pack.as_str()])
-            .expect("pack bundle loads")
-            .rows();
-        let d = defs.last().unwrap();
-        assert_eq!(d.key, "mymod:glow");
-        assert_eq!(d.tint, Some([1.0, 0.9, 0.6]));
-        assert_eq!(d.rows.len(), 1);
-
-        for (bad, why) in [
-            (
-                r#"{"emitter": "mymod:glow", "particles": []}"#.to_owned(),
-                "no particle rows",
-            ),
-            (
-                r#"{"emitter": "mymod:glow", "tint": [2.0, 0.0, 0.0], "particles": [
-                    {"rate": 2.0, "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
-                     "color": [[1, 1, 1], [1, 1, 1]], "alpha": [0.5, 0.8]}]}"#
-                    .to_owned(),
-                "out-of-range tint",
-            ),
-            (
-                r#"{"emitter": "mymod:glow", "particles": [
-                    {"rate": 2.0, "lifetime": [0.8, 0.4], "size": [0.05, 0.1],
-                     "color": [[1, 1, 1], [1, 1, 1]], "alpha": [0.5, 0.8]}]}"#
-                    .to_owned(),
-                "a row failing shared emitter validation",
-            ),
-            (
-                r#"{"emitter": "bareglow", "particles": [
-                    {"rate": 2.0, "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
-                     "color": [[1, 1, 1], [1, 1, 1]], "alpha": [0.5, 0.8]}]}"#
-                    .to_owned(),
-                "a bare (un-namespaced) new key",
-            ),
-        ] {
-            let pack = format!(r#"{{"emitters": [{bad}]}}"#);
-            assert!(
-                parse_layers(&[&base(), pack.as_str()]).is_err(),
-                "{why} must fail the load"
-            );
-        }
-    }
-
-    #[test]
-    fn ambient_biome_filters_resolve_and_validate() {
-        let with_filter = |extra: &str| {
-            format!(
-                r#"{{"emitters": [{{"emitter": "mymod:ashfall", "ambient": {{
-                    "count_per_intensity": 100, "max_count": 200, "radius": 16,
-                    "height": [4, 16], "fall_speed": [2, 4],
-                    "size": [0.05, 0.08], "alpha": [0.5, 0.8],
-                    "color": [[0.3, 0.3, 0.3], [0.5, 0.5, 0.5]]{extra} }} }}]}}"#
-            )
-        };
-        // Allow-list resolves to a set admitting exactly its members.
-        let ok = with_filter(r#", "biomes": ["snowy_plains", "snowy_taiga"]"#);
-        let defs = parse_layers(&[&base(), ok.as_str()]).expect("filter loads");
-        let allow = &defs
-            .rows()
-            .last()
-            .unwrap()
-            .ambient
-            .as_ref()
-            .unwrap()
-            .biome_allow;
-        assert!(allow.is_some());
-        assert!(biome_allowed(allow, mod_api::biome::SNOWY_PLAINS));
-        assert!(!biome_allowed(allow, mod_api::biome::PLAINS));
-        // Exclusion admits the complement.
-        let ok = with_filter(r#", "exclude_biomes": ["desert"]"#);
-        let defs = parse_layers(&[&base(), ok.as_str()]).expect("exclusion loads");
-        let allow = &defs
-            .rows()
-            .last()
-            .unwrap()
-            .ambient
-            .as_ref()
-            .unwrap()
-            .biome_allow;
-        assert!(!biome_allowed(allow, mod_api::biome::DESERT));
-        assert!(biome_allowed(allow, mod_api::biome::PLAINS));
-        // No filter = all biomes.
-        let defs = parse_layers(&[&base(), with_filter("").as_str()]).expect("no filter");
-        assert!(defs
-            .rows()
-            .last()
-            .unwrap()
-            .ambient
-            .as_ref()
-            .unwrap()
-            .biome_allow
-            .is_none());
-        // Unknown names and double declarations fail the load.
-        for (bad, why) in [
-            (
-                with_filter(r#", "biomes": ["nope_biome"]"#),
-                "unknown biome",
-            ),
-            (
-                with_filter(r#", "biomes": ["desert"], "exclude_biomes": ["plains"]"#),
-                "both list kinds",
-            ),
-        ] {
-            assert!(
-                parse_layers(&[&base(), bad.as_str()]).is_err(),
-                "{why} must fail the load"
-            );
-        }
-    }
-
-    #[test]
-    fn missing_engine_row_is_a_load_error() {
-        assert!(parse_layers(&[r#"{"emitters": []}"#]).is_err());
-    }
-
-    #[test]
-    fn ambient_bundles_validate_and_resolve_hit_bursts() {
-        let ambient = |hit: &str, radius: &str| {
-            format!(
-                r#"{{"emitters": [{{"emitter": "mymod:rainfall", "ambient": {{
-                    "count_per_intensity": 600, "max_count": 1500, "radius": {radius},
-                    "height": [4, 20], "fall_speed": [16, 22], "drift_wind": 1.0,
-                    "size": [0.03, 0.05], "stretch": 6.0, "alpha": [0.4, 0.7],
-                    "color": [[0.55, 0.62, 0.75], [0.7, 0.78, 0.9]],
-                    "hit": {hit} }} }}]}}"#
-            )
-        };
-
-        // A valid ambient whose hit references the ENGINE water-splash burst.
-        let ok = ambient(r#"{"burst": "petramond:water_splash"}"#, "24");
-        let defs = parse_layers(&[&base(), ok.as_str()])
-            .expect("ambient bundle loads")
-            .rows();
-        let d = defs.last().unwrap();
-        let spec = d.ambient.as_ref().expect("ambient kind");
-        assert!(matches!(&spec.hit, AmbientHit::Burst(k) if k == "petramond:water_splash"));
-        assert!(d.rows.is_empty() && d.burst.is_none());
-
-        // "die" is the default hit.
-        let quiet = ambient(r#""die""#, "24");
-        let defs = parse_layers(&[&base(), quiet.as_str()]).expect("die hit loads");
-        assert_eq!(
-            defs.rows().last().unwrap().ambient.as_ref().unwrap().hit,
-            AmbientHit::Die
-        );
-
-        for (bad, why) in [
-            (
-                ambient(r#"{"burst": "mymod:nope"}"#, "24"),
-                "an unknown hit bundle",
-            ),
-            (
-                ambient(r#"{"burst": "petramond:torch_flame"}"#, "24"),
-                "a hit bundle that is not a burst",
-            ),
-            (ambient(r#""die""#, "200"), "an out-of-range radius"),
-            (
-                ambient(r#"{"burst": "petramond:water_splash"}"#, "24")
-                    .replace(r#""radius": 24"#, r#""radius": 24, "kill": "interior""#),
-                "a splash with no impact point (kill 'interior')",
-            ),
-            (
-                r#"{"emitters": [{"emitter": "mymod:rainfall",
-                    "ambient": {"count_per_intensity": 600, "max_count": 1500,
-                        "radius": 24, "height": [4, 20], "fall_speed": [16, 22],
-                        "size": [0.03, 0.05], "alpha": [0.4, 0.7],
-                        "color": [[0.5, 0.5, 0.5], [0.7, 0.7, 0.7]]},
-                    "burst": {"count_per_intensity": 3.0, "max_count": 24,
-                        "up_speed": [1.0, 2.0], "radial_speed": [0.5, 1.5],
-                        "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
-                        "color": [[0.1, 0.1, 0.5], [0.4, 0.8, 1.0]]} }]}"#
-                    .to_owned(),
-                "declaring both ambient and burst",
-            ),
-        ] {
-            assert!(
-                parse_layers(&[&base(), bad.as_str()]).is_err(),
-                "{why} must fail the load"
-            );
-        }
-    }
-}
+mod tests;

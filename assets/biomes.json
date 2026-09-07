@@ -9,6 +9,7 @@
     },
     {
       "biome": "petramond:beach",
+      "ambient": {"petramond:butterfly": 0.15},
       "fog_color": [0.510, 0.600, 0.660],
       "grass_color": [0.400, 0.740, 0.080],
       "foliage_color": [0.260, 0.620, 0.045],
@@ -16,6 +17,7 @@
     },
     {
       "biome": "petramond:river",
+      "ambient": {"petramond:butterfly": 0.45},
       "fog_color": [0.270, 0.490, 0.720],
       "grass_color": [0.170, 0.720, 0.055],
       "foliage_color": [0.120, 0.600, 0.035],
@@ -30,6 +32,7 @@
     },
     {
       "biome": "petramond:plains",
+      "ambient": {"petramond:butterfly": 1},
       "fog_color": [0.300, 0.510, 0.740],
       "grass_color": [0.200, 0.760, 0.045],
       "foliage_color": [0.130, 0.620, 0.025],
@@ -58,6 +61,7 @@
     },
     {
       "biome": "petramond:forest",
+      "ambient": {"petramond:butterfly": 1},
       "fog_color": [0.240, 0.430, 0.620],
       "grass_color": [0.150, 0.460, 0.035],
       "foliage_color": [0.120, 0.450, 0.040],
@@ -75,6 +79,7 @@
     },
     {
       "biome": "petramond:swamp",
+      "ambient": {"petramond:butterfly": 0.4},
       "fog_color": [0.220, 0.340, 0.280],
       "grass_color": [0.190, 0.400, 0.040],
       "foliage_color": [0.105, 0.310, 0.035],
@@ -86,6 +91,7 @@
     },
     {
       "biome": "petramond:taiga",
+      "ambient": {"petramond:butterfly": 0.2},
       "fog_color": [0.300, 0.440, 0.590],
       "grass_color": [0.140, 0.490, 0.130],
       "foliage_color": [0.075, 0.360, 0.095],
@@ -119,6 +125,7 @@
     },
     {
       "biome": "petramond:mountains",
+      "ambient": {"petramond:butterfly": 0.15},
       "fog_color": [0.340, 0.470, 0.650],
       "grass_color": [0.230, 0.520, 0.100],
       "foliage_color": [0.150, 0.400, 0.065],
@@ -144,6 +151,7 @@
     },
     {
       "biome": "petramond:foothills",
+      "ambient": {"petramond:butterfly": 0.8},
       "fog_color": [0.300, 0.480, 0.680],
       "grass_color": [0.240, 0.690, 0.060],
       "foliage_color": [0.160, 0.550, 0.030],
@@ -155,6 +163,7 @@
     },
     {
       "biome": "petramond:wetland",
+      "ambient": {"petramond:butterfly": 0.5},
       "fog_color": [0.240, 0.390, 0.390],
       "grass_color": [0.140, 0.500, 0.050],
       "foliage_color": [0.085, 0.380, 0.035],
@@ -166,6 +175,7 @@
     },
     {
       "biome": "petramond:redwood_forest",
+      "ambient": {"petramond:butterfly": 0.75},
       "fog_color": [0.160, 0.290, 0.270],
       "grass_color": [0.095, 0.360, 0.060],
       "foliage_color": [0.045, 0.270, 0.045],
@@ -180,6 +190,7 @@
     },
     {
       "biome": "petramond:old_growth_taiga",
+      "ambient": {"petramond:butterfly": 0.25},
       "fog_color": [0.220, 0.340, 0.340],
       "grass_color": [0.130, 0.420, 0.075],
       "foliage_color": [0.070, 0.310, 0.055],
@@ -191,6 +202,7 @@
     },
     {
       "biome": "petramond:meadow",
+      "ambient": {"petramond:butterfly": 1},
       "fog_color": [0.340, 0.540, 0.730],
       "grass_color": [0.240, 0.820, 0.050],
       "foliage_color": [0.150, 0.680, 0.030],
@@ -220,6 +232,7 @@
     },
     {
       "biome": "petramond:windswept_hills",
+      "ambient": {"petramond:butterfly": 0.2},
       "fog_color": [0.330, 0.460, 0.610],
       "grass_color": [0.230, 0.490, 0.130],
       "foliage_color": [0.140, 0.370, 0.085],
@@ -238,6 +251,7 @@
     },
     {
       "biome": "petramond:wooded_hills",
+      "ambient": {"petramond:butterfly": 0.85},
       "fog_color": [0.250, 0.440, 0.630],
       "grass_color": [0.150, 0.480, 0.035],
       "foliage_color": [0.120, 0.440, 0.035],
@@ -255,6 +269,7 @@
     },
     {
       "biome": "petramond:mountain_edge",
+      "ambient": {"petramond:butterfly": 0.35},
       "fog_color": [0.310, 0.490, 0.680],
       "grass_color": [0.230, 0.640, 0.060],
       "foliage_color": [0.150, 0.510, 0.035],

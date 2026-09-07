@@ -579,6 +579,8 @@ pub struct DoorInstance {
 /// atlas directly with no further tile lookup.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ParticleInstance {
+    /// World-space half-axes for a double-sided textured quad, or None for a cube.
+    pub quad_axes: Option<[Vec3; 2]>,
     pub pos: Vec3,
     /// Absolute atlas uv of the patch's min corner.
     pub uv_min: [f32; 2],
