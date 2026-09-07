@@ -2,7 +2,7 @@ use crate::rng::FeatureRng;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 
-use super::{surfaces, trees, BiomeSpec, SnowCover, TreeProfile, VegetationProfile};
+use super::{surfaces, BiomeSpec, SnowCover, VegetationProfile};
 
 fn podzol_cover(rng: &mut FeatureRng) -> Option<Block> {
     if !rng.chance(0.10) {
@@ -23,7 +23,6 @@ fn podzol_cover(rng: &mut FeatureRng) -> Option<Block> {
 pub(super) static SPEC: BiomeSpec = BiomeSpec {
     biome: Biome::OldGrowthTaiga,
     surface: &surfaces::PODZOL_TOP,
-    trees: TreeProfile::new(0.035, trees::spruce),
     vegetation: VegetationProfile::grass(Block::Fern, 0.12).with_podzol_cover(podzol_cover),
     snow_cover: SnowCover::None,
 };

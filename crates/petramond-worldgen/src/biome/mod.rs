@@ -2,8 +2,8 @@
 //!
 //! A game-facing [`Biome`] is only identity: id, name, and
 //! render colours live in `src/biome`. Generation behavior lives here. Each
-//! biome module owns its surface rule, tree placement, and ground-cover
-//! decoration.
+//! biome module owns its surface rule and ground-cover decoration; tree
+//! placement is row data (the `trees` field of the biome row, see `trees`).
 
 pub mod climate;
 pub mod surface_table;
@@ -38,64 +38,12 @@ mod wetland;
 mod windswept_hills;
 mod wooded_hills;
 
-use crate::feature::ConfiguredFeature;
 use crate::rng::FeatureRng;
 use crate::surface::rule::SurfaceRule;
 use petramond_world::biome::{Biome, BIOME_COUNT};
 use petramond_world::block::Block;
 
-pub type TreePicker = fn(&mut FeatureRng) -> &'static ConfiguredFeature;
 pub type PlantPicker = fn(&mut FeatureRng) -> Option<Block>;
-
-#[derive(Copy, Clone)]
-pub enum TreeSupport {
-    None,
-    RedwoodBase,
-}
-
-#[derive(Copy, Clone)]
-pub struct TreeProfile {
-    pub density: f32,
-    pub spacing_radius: i32,
-    pub height_clearance: i32,
-    pub support: TreeSupport,
-    pub picker: TreePicker,
-}
-
-impl TreeProfile {
-    pub const NONE: Self = Self {
-        density: 0.0,
-        spacing_radius: 3,
-        height_clearance: 14,
-        support: TreeSupport::None,
-        picker: trees::oak_small,
-    };
-
-    pub const fn new(density: f32, picker: TreePicker) -> Self {
-        Self {
-            density,
-            spacing_radius: 3,
-            height_clearance: 14,
-            support: TreeSupport::None,
-            picker,
-        }
-    }
-
-    pub const fn with_spacing(mut self, spacing_radius: i32) -> Self {
-        self.spacing_radius = spacing_radius;
-        self
-    }
-
-    pub const fn with_height_clearance(mut self, height_clearance: i32) -> Self {
-        self.height_clearance = height_clearance;
-        self
-    }
-
-    pub const fn with_support(mut self, support: TreeSupport) -> Self {
-        self.support = support;
-        self
-    }
-}
 
 /// Clustering for podzol/grass GROUND COVER (ferns, tufts). When set, cover only
 /// appears where a smooth low-frequency field is below `coverage`, so ferns form
@@ -216,12 +164,9 @@ impl SnowCover {
 pub struct BiomeSpec {
     pub biome: Biome,
     pub surface: &'static SurfaceRule,
-    pub trees: TreeProfile,
     pub vegetation: VegetationProfile,
     pub snow_cover: SnowCover,
 }
-
-pub const MAX_TREE_SPACING_RADIUS: i32 = 10;
 
 pub static SPECS: [&BiomeSpec; BIOME_COUNT] = [
     &ocean::SPEC,

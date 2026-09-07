@@ -13,6 +13,38 @@ use petramond_world::section::Section;
 pub trait VoxelSink {
     fn get(&self, p: IVec3) -> Block;
     fn set(&mut self, p: IVec3, b: Block);
+    fn place(&mut self, p: IVec3, b: Block, rule: PlacementRule) {
+        if matches!(rule, PlacementRule::Always) || rule.allows(self.get(p)) {
+            self.set(p, b);
+        }
+    }
+}
+
+/// A cell-local overwrite predicate, evaluated against the destination at replay.
+#[derive(Clone, Copy)]
+pub enum PlacementRule {
+    Always,
+    Leaf,
+    Branch,
+    Litter,
+    Replace(Block),
+}
+
+impl PlacementRule {
+    fn allows(self, block: Block) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Leaf => {
+                block == Block::Air
+                    || block == Block::Water
+                    || block.is_fragile()
+                    || block.is_snow_cover()
+            }
+            Self::Branch => block == Block::Air || block == Block::Water || block.is_leaves(),
+            Self::Litter => block == Block::Air || block == Block::Water || block.is_snow_cover(),
+            Self::Replace(expected) => block == expected,
+        }
+    }
 }
 
 /// Bulk voxel storage a [`ClippedSink`] clips into: a world-anchored writable

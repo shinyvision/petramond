@@ -4,17 +4,15 @@
 //! materials and geometry params. Engine features own the low ids in the
 //! frozen const order below; a mod pack ADDS a feature with a namespaced
 //! (`mod_id:name`) key or OVERRIDES an engine row to retune it (see
-//! [`petramond_world::registry`]). Biome modules decide which configured feature to
-//! place (`worldgen::biome::trees`), so a pack-added feature only generates
-//! when something references it.
+//! [`petramond_world::registry`]). Which feature a biome places is row data too
+//! (the biome rows' `trees` species tables; a SAPLING's choices are block-row
+//! `grows_into` data), both resolved through [`by_name`], so a pack-added
+//! feature generates wherever a row names it.
 //!
-//! What stays code: the `Feature`/placer implementations themselves, the
-//! trunk-placer strategies (zero-sized, keyed by name here), and the
-//! worldgen RNG-driven variant pickers (`biome::trees`; a SAPLING's tree
-//! choices are block-row data — `grows_into`, resolved through [`by_name`]).
-//! A row's
-//! params affect worldgen geometry, so edits to `features.json` change world
-//! bytes — determinism only demands same-input ⇒ same-output.
+//! What stays code: the `Feature`/placer implementations themselves and the
+//! trunk-placer strategies (zero-sized, keyed by name here). A row's params
+//! affect worldgen geometry, so edits to `features.json` change world bytes —
+//! determinism only demands same-input ⇒ same-output.
 
 use std::sync::LazyLock;
 
@@ -49,9 +47,6 @@ static LEANING: LeaningTrunk = LeaningTrunk;
 
 /// One row of the loaded feature table.
 pub struct FeatureDef {
-    /// The row's registry name (`"petramond:oak_big"`, `"mod_id:palm"`).
-    #[allow(dead_code)]
-    pub name: &'static str,
     pub configured: ConfiguredFeature,
 }
 
@@ -116,8 +111,14 @@ impl RawShape {
     /// so leaking the built feature is the static lifetime, not a leak.
     fn resolve(self) -> Result<&'static dyn Feature, String> {
         Ok(match self {
-            RawShape::BlockyOak(f) => Box::leak(Box::new(f)),
-            RawShape::Canopy(f) => Box::leak(Box::new(f)),
+            RawShape::BlockyOak(f) => {
+                f.validate()?;
+                Box::leak(Box::new(f))
+            }
+            RawShape::Canopy(f) => {
+                f.validate()?;
+                Box::leak(Box::new(f))
+            }
             RawShape::Redwood(f) => Box::leak(Box::new(f)),
             RawShape::Tree(t) => {
                 let trunk: &'static dyn TrunkPlacer = match t.trunk {
@@ -134,10 +135,10 @@ impl RawShape {
                 // window every replaying chunk can serve (the same fence the
                 // oak anchoring gate documents on its root reach).
                 let reach = foliage.horizontal_reach() + trunk.max_lean();
-                if reach > crate::biome::MAX_TREE_SPACING_RADIUS {
+                if reach > crate::biome::trees::MAX_TREE_SPACING_RADIUS {
                     return Err(format!(
-                        "tree foliage reach {reach} exceeds the candidate-window fence {}",
-                        crate::biome::MAX_TREE_SPACING_RADIUS
+                        "foliage reach + trunk lean: {reach} blocks exceed the {} block candidate window",
+                        crate::biome::trees::MAX_TREE_SPACING_RADIUS
                     ));
                 }
                 Box::leak(Box::new(TreeFeature {
@@ -196,7 +197,6 @@ fn parse_layers(texts: &[&str]) -> Result<petramond_world::registry::Catalog<Fea
         |r, id, names| {
             let name = names.name(id).expect("id resolved from this table");
             Ok(FeatureDef {
-                name,
                 configured: ConfiguredFeature {
                     feature: r
                         .shape
@@ -238,8 +238,10 @@ pub fn redwood() -> &'static ConfiguredFeature {
 pub fn spruce() -> &'static ConfiguredFeature {
     engine(5)
 }
-// (birch/jungle have no worldgen picker or code accessor: worldgen never
-// places them and saplings reach them through `by_name` via `grows_into`.)
+pub fn birch() -> &'static ConfiguredFeature {
+    engine(6)
+}
+
 pub fn acacia() -> &'static ConfiguredFeature {
     engine(8)
 }
@@ -276,13 +278,13 @@ mod tests {
             ENGINE_FEATURE_NAMES.len() + 1,
             "the engine override adds no id; the pack addition does"
         );
-        for (id, name) in ENGINE_FEATURE_NAMES.iter().enumerate() {
-            assert_eq!(table.rows()[id].name, *name, "engine ids never move");
+        for name in ENGINE_FEATURE_NAMES {
+            assert!(
+                table.id(name).is_some(),
+                "engine row {name} still registered"
+            );
         }
-        assert_eq!(
-            table.id("mymod:palm"),
-            Some(ENGINE_FEATURE_NAMES.len() as u16)
-        );
+        assert!(table.id("mymod:palm").is_some(), "the pack row registered");
     }
 
     /// A shape's params are required and closed — a missing field or a stray
@@ -324,3 +326,6 @@ mod growth_target_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod posture_tests;

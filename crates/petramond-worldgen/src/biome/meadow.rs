@@ -1,7 +1,7 @@
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 
-use super::{surfaces, trees, BiomeSpec, SnowCover, TreeProfile, VegetationProfile};
+use super::{surfaces, BiomeSpec, SnowCover, VegetationProfile};
 
 const FLOWERS: &[Block] = &[
     Block::Dandelion,
@@ -14,7 +14,6 @@ const FLOWERS: &[Block] = &[
 pub(super) static SPEC: BiomeSpec = BiomeSpec {
     biome: Biome::Meadow,
     surface: &surfaces::PLAINS_TOP,
-    trees: TreeProfile::new(0.006, trees::oak_small),
     vegetation: VegetationProfile::grass(Block::ShortGrass, 0.16)
         .with_flowers(FLOWERS, 0.36, 0.34)
         .with_hemp(0.0045),

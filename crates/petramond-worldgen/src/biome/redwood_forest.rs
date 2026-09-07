@@ -2,10 +2,7 @@ use crate::rng::FeatureRng;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 
-use super::{
-    surfaces, trees, BiomeSpec, CoverCluster, SnowCover, TreeProfile, TreeSupport,
-    VegetationProfile,
-};
+use super::{surfaces, BiomeSpec, CoverCluster, SnowCover, VegetationProfile};
 
 const FLOWERS: &[Block] = &[Block::OxeyeDaisy, Block::Poppy];
 
@@ -31,10 +28,6 @@ fn ground_cover(rng: &mut FeatureRng) -> Option<Block> {
 pub(super) static SPEC: BiomeSpec = BiomeSpec {
     biome: Biome::RedwoodForest,
     surface: &surfaces::REDWOOD_TOP,
-    trees: TreeProfile::new(0.12, trees::redwood_grove)
-        .with_spacing(10)
-        .with_height_clearance(56)
-        .with_support(TreeSupport::RedwoodBase),
     vegetation: VegetationProfile::grass(Block::ShortGrass, 0.0)
         .with_flowers(FLOWERS, 0.05, 0.14)
         .with_podzol_cover(ground_cover)

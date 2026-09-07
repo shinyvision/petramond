@@ -1,5 +1,5 @@
 use super::super::proto::MARGIN;
-use super::tree_select::{tree_candidate_at, tree_spacing_allows};
+use super::tree_select::TreeCandidates;
 use super::{feature_region_bounds, place_features_with_field, RuntimeFeatureField};
 use crate::density::surface::SurfaceDensitySystem;
 use crate::generate_chunk;
@@ -75,6 +75,8 @@ fn configured_trees_place_only_orthogonally_supported_leaves() {
         ("oak_big", features::oak_big()),
         ("spruce", features::spruce()),
         ("redwood", features::redwood()),
+        ("birch", features::by_name("petramond:birch").unwrap()),
+        ("jungle", features::by_name("petramond:jungle").unwrap()),
     ] {
         for seed in [1u32, 7, 42, 99, 1000, 31337] {
             let map = generate_into_map(feat, seed);
@@ -168,9 +170,8 @@ fn tree_canopies_respect_closed_cells_and_stay_supported() {
 
 /// Seen from straight above, an oak's trunk top must end in leaves, never
 /// a bare log end — the exposed-top-log artifact playtesting flagged
-/// (2026-07-12). The trunk centre wanders within ±1 of the origin, so the
-/// tallest log column in that window is the trunk top; its column must
-/// hold a leaf above the log.
+/// (2026-07-12). Search the entire footprint so a leaning crown cannot
+/// escape the check by moving away from the rooted foot.
 #[test]
 fn oak_crowns_bury_the_trunk_top() {
     use crate::data::features;
@@ -182,16 +183,11 @@ fn oak_crowns_bury_the_trunk_top() {
     ] {
         for seed in [1u32, 7, 42, 99, 1000, 31337] {
             let map = generate_into_map(feat, seed);
-            let top_log = |x: i32, z: i32| {
-                map.iter()
-                    .filter(|(p, b)| p.x == x && p.z == z && b.is_log())
-                    .map(|(p, _)| p.y)
-                    .max()
-            };
-            let best = (-1..=1)
-                .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
-                .filter_map(|(x, z)| top_log(x, z).map(|y| (x, z, y)))
-                .max_by_key(|&(_, _, y)| y)
+            let best = map
+                .iter()
+                .filter(|(_, block)| block.is_log())
+                .map(|(p, _)| (p.x, p.z, p.y))
+                .max_by_key(|&(x, z, y)| (y, x, z))
                 .expect("trunk has logs");
             let covered = map
                 .iter()
@@ -239,22 +235,24 @@ fn oaks_refuse_sites_where_roots_would_hang() {
     }
 }
 
-fn accepted_tree_origins(seed: u32, chunk_radius: i32) -> Vec<(i32, i32, i32)> {
+fn accepted_tree_origins(seed: u32, chunk_radius: i32, biome: Biome) -> Vec<(i32, i32, i32)> {
     let mut origins = Vec::new();
 
     for cz in -chunk_radius..=chunk_radius {
         for cx in -chunk_radius..=chunk_radius {
             let ox = cx * CHUNK_SX as i32;
             let oz = cz * CHUNK_SZ as i32;
+            let mut candidates = TreeCandidates::new(seed, ox, oz);
             let (x0, z0, w, h) = feature_region_bounds(ox, oz);
-            let field = synthetic_tree_region(x0, z0, w, h);
+            let mut field = synthetic_tree_region(x0, z0, w, h);
+            field.biomes.fill(biome);
             let mut field = &field;
             for wz in oz..(oz + CHUNK_SZ as i32) {
                 for wx in ox..(ox + CHUNK_SX as i32) {
-                    let Some(candidate) = tree_candidate_at(&mut field, seed, wx, wz) else {
+                    let Some(candidate) = candidates.at(&mut field, wx, wz) else {
                         continue;
                     };
-                    if tree_spacing_allows(candidate, &mut field, seed, wx, wz) {
+                    if candidates.spacing_allows(candidate, &mut field, wx, wz) {
                         origins.push((wx, wz, candidate.spacing_radius));
                     }
                 }
@@ -268,23 +266,25 @@ fn accepted_tree_origins(seed: u32, chunk_radius: i32) -> Vec<(i32, i32, i32)> {
 #[test]
 fn tree_origin_spacing_rule_enforces_configured_radius() {
     for seed in [1u32, 7, 42, 0x1234_5678] {
-        let origins = accepted_tree_origins(seed, 2);
-        assert!(
-            origins.len() > 10,
-            "spacing test sampled too few tree origins for seed {seed:#x}"
-        );
+        for biome in [Biome::RedwoodForest, Biome::Forest, Biome::WoodedHills] {
+            let origins = accepted_tree_origins(seed, 3, biome);
+            assert!(
+                origins.len() > 10,
+                "spacing test sampled too few tree origins for seed {seed:#x}"
+            );
 
-        for i in 0..origins.len() {
-            for j in (i + 1)..origins.len() {
-                let (ax, az, ar) = origins[i];
-                let (bx, bz, br) = origins[j];
-                let dx = (ax - bx).abs();
-                let dz = (az - bz).abs();
-                let required = ar.max(br);
-                assert!(
-                    dx > required || dz > required,
-                    "tree origins ({ax},{az}) and ({bx},{bz}) are within {required} blocks"
-                );
+            for i in 0..origins.len() {
+                for j in (i + 1)..origins.len() {
+                    let (ax, az, ar) = origins[i];
+                    let (bx, bz, br) = origins[j];
+                    let dx = (ax - bx).abs();
+                    let dz = (az - bz).abs();
+                    let required = ar.max(br);
+                    assert!(
+                        dx > required || dz > required,
+                        "tree origins ({ax},{az}) and ({bx},{bz}) are within {required} blocks"
+                    );
+                }
             }
         }
     }
@@ -298,14 +298,15 @@ fn live_density_feature_region_covers_margin_and_spacing_queries() {
     for (cx, cz) in [(0, 0), (-2, 1), (4, -3)] {
         let ox = cx * CHUNK_SX as i32;
         let oz = cz * CHUNK_SZ as i32;
+        let mut candidates = TreeCandidates::new(seed, ox, oz);
         let (x0, z0, w, h) = feature_region_bounds(ox, oz);
         let field = surface.region(x0, z0, w, h);
         let mut field = &field;
 
         for wz in (oz - MARGIN)..(oz + CHUNK_SZ as i32 + MARGIN) {
             for wx in (ox - MARGIN)..(ox + CHUNK_SX as i32 + MARGIN) {
-                if let Some(candidate) = tree_candidate_at(&mut field, seed, wx, wz) {
-                    let _ = tree_spacing_allows(candidate, &mut field, seed, wx, wz);
+                if let Some(candidate) = candidates.at(&mut field, wx, wz) {
+                    let _ = candidates.spacing_allows(candidate, &mut field, wx, wz);
                 }
             }
         }
@@ -427,4 +428,83 @@ fn trees_span_chunk_seams() {
         }
     }
     panic!("no seam-spanning tree found in the sampled region");
+}
+
+#[test]
+fn broadleaf_skeletons_are_connected_and_stay_inside_the_replay_margin() {
+    use crate::data::features;
+    use petramond_world::mathh::IVec3;
+    use std::collections::{HashSet, VecDeque};
+
+    for feat in [
+        features::oak_young(),
+        features::oak_small(),
+        features::oak_big(),
+        features::by_name("petramond:birch").unwrap(),
+        features::by_name("petramond:jungle").unwrap(),
+    ] {
+        for seed in [1, 7, 42, 99, 1000, 31337] {
+            let map = generate_into_map(feat, seed);
+            assert!(map
+                .keys()
+                .all(|p| p.x.abs() <= MARGIN && p.z.abs() <= MARGIN));
+            let mut wood: HashSet<_> = map
+                .iter()
+                .filter(|(_, b)| b.is_log())
+                .map(|(&p, _)| p)
+                .collect();
+            let root = IVec3::new(0, 64, 0);
+            assert!(wood.remove(&root));
+            let mut queue = VecDeque::from([root]);
+            while let Some(p) = queue.pop_front() {
+                for (dx, dy, dz) in [
+                    (1, 0, 0),
+                    (-1, 0, 0),
+                    (0, 1, 0),
+                    (0, -1, 0),
+                    (0, 0, 1),
+                    (0, 0, -1),
+                ] {
+                    let next = IVec3::new(p.x + dx, p.y + dy, p.z + dz);
+                    if wood.remove(&next) {
+                        queue.push_back(next);
+                    }
+                }
+            }
+            assert!(
+                wood.is_empty(),
+                "seed {seed}: detached branch wood {wood:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn canopy_tree_stems_replace_the_sapling_and_ground_cover() {
+    use crate::{data::features, rng::FeatureRng};
+    use petramond_world::mathh::IVec3;
+    for feature in [
+        features::birch(),
+        features::by_name("petramond:jungle").unwrap(),
+    ] {
+        for seed in [1, 7, 42] {
+            let root = IVec3::new(0, 64, 0);
+            let mut sink = MapSink(std::collections::HashMap::from([
+                (root, Block::BirchSapling),
+                (IVec3::new(0, 65, 0), Block::ShortGrass),
+            ]));
+            let mut rng = FeatureRng::positional(seed, 0xACAC, 0, 0, 0);
+            feature.feature.generate(
+                &mut super::FeatureCtx::new(&mut sink),
+                &mut |_| true,
+                root,
+                &mut rng,
+            );
+            assert!(sink.0[&root].is_log(), "tree left its sapling behind");
+            assert!(
+                sink.0[&IVec3::new(0, 65, 0)].is_log(),
+                "ground cover punched a hole in the stem"
+            );
+        }
+    }
 }

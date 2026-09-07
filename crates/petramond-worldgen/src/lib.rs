@@ -411,6 +411,10 @@ mod tests {
             (34, 6, -1),
             (34, 7, -1),
             (34, 8, -1),
+            // Forest groves straddle horizontal and vertical section boundaries.
+            (786, 24, -24),
+            (786, 25, -24),
+            (786, 26, -25),
         ] {
             let generator = driver::ChunkGenerator::new(seed);
             let chunk = generate_chunk(seed, cx, cz);

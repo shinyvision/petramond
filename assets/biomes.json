@@ -2,192 +2,281 @@
   "biomes": [
     {
       "biome": "petramond:ocean",
-      "fog_color": [0.52, 0.70, 0.94],
-      "grass_color": [0.52, 0.74, 0.40],
-      "foliage_color": [0.46, 0.70, 0.36],
-      "water_color": [0.10, 0.44, 0.80]
+      "fog_color": [0.250, 0.460, 0.720],
+      "grass_color": [0.200, 0.680, 0.070],
+      "foliage_color": [0.140, 0.560, 0.045],
+      "water_color": [0.025, 0.250, 0.640]
     },
     {
       "biome": "petramond:beach",
-      "fog_color": [0.94, 0.89, 0.74],
-      "grass_color": [0.72, 0.78, 0.42],
-      "foliage_color": [0.66, 0.74, 0.38],
-      "water_color": [0.14, 0.54, 0.84]
+      "fog_color": [0.510, 0.600, 0.660],
+      "grass_color": [0.400, 0.740, 0.080],
+      "foliage_color": [0.260, 0.620, 0.045],
+      "water_color": [0.025, 0.390, 0.670]
     },
     {
       "biome": "petramond:river",
-      "fog_color": [0.62, 0.78, 0.95],
-      "grass_color": [0.50, 0.76, 0.38],
-      "foliage_color": [0.44, 0.72, 0.34],
-      "water_color": [0.14, 0.52, 0.82]
+      "fog_color": [0.270, 0.490, 0.720],
+      "grass_color": [0.170, 0.720, 0.055],
+      "foliage_color": [0.120, 0.600, 0.035],
+      "water_color": [0.025, 0.340, 0.610]
     },
     {
       "biome": "petramond:desert",
-      "fog_color": [0.97, 0.87, 0.66],
-      "grass_color": [0.85, 0.74, 0.36],
-      "foliage_color": [0.79, 0.68, 0.32],
-      "water_color": [0.16, 0.56, 0.82]
+      "fog_color": [0.640, 0.540, 0.350],
+      "grass_color": [0.750, 0.570, 0.065],
+      "foliage_color": [0.530, 0.430, 0.035],
+      "water_color": [0.035, 0.410, 0.660]
     },
     {
       "biome": "petramond:plains",
-      "fog_color": [0.68, 0.84, 0.98],
-      "grass_color": [0.48, 0.78, 0.30],
-      "foliage_color": [0.40, 0.72, 0.26],
-      "water_color": [0.13, 0.52, 0.82]
+      "fog_color": [0.300, 0.510, 0.740],
+      "grass_color": [0.200, 0.760, 0.045],
+      "foliage_color": [0.130, 0.620, 0.025],
+      "water_color": [0.025, 0.330, 0.640],
+      "trees": {
+        "density": 0.0002,
+        "spacing_radius": 10,
+        "height_clearance": 30,
+        "species": [{"feature": "petramond:oak_big", "weight": 20}, {"feature": "petramond:oak_young", "weight": 25}, {"feature": "petramond:oak_small", "weight": 55}],
+        "rules": [
+          {"when": {"nearby_biome": {"biome": "petramond:river", "radius": 10}},
+           "species": [{"feature": "petramond:birch", "weight": 1}]}
+        ]
+      }
     },
     {
       "biome": "petramond:savanna",
-      "fog_color": [0.84, 0.82, 0.70],
-      "grass_color": [0.80, 0.72, 0.34],
-      "foliage_color": [0.72, 0.66, 0.30],
-      "water_color": [0.16, 0.52, 0.78]
+      "fog_color": [0.440, 0.520, 0.600],
+      "grass_color": [0.700, 0.520, 0.075],
+      "foliage_color": [0.340, 0.470, 0.025],
+      "water_color": [0.025, 0.320, 0.600],
+      "trees": {
+        "density": 0.015,
+        "species": [{"feature": "petramond:acacia", "weight": 1}]
+      }
     },
     {
       "biome": "petramond:forest",
-      "fog_color": [0.58, 0.78, 0.96],
-      "grass_color": [0.30, 0.66, 0.24],
-      "foliage_color": [0.34, 0.70, 0.24],
-      "water_color": [0.11, 0.46, 0.78]
+      "fog_color": [0.240, 0.430, 0.620],
+      "grass_color": [0.150, 0.460, 0.035],
+      "foliage_color": [0.120, 0.450, 0.040],
+      "water_color": [0.020, 0.290, 0.560],
+      "trees": {
+        "density": 0.0045,
+        "spacing_radius": 10,
+        "height_clearance": 30,
+        "species": [{"feature": "petramond:oak_big", "weight": 11}, {"feature": "petramond:oak_young", "weight": 30}, {"feature": "petramond:oak_small", "weight": 59}],
+        "rules": [
+          {"when": {"grove": {"field": "petramond:forest_groves", "period": 84, "transition": [0.792, 0.892], "chance": [0.001, 0.75]}},
+           "species": [{"feature": "petramond:birch", "weight": 1}], "density": 0.06375, "spacing_radius": 1}
+        ]
+      }
     },
     {
       "biome": "petramond:swamp",
-      "fog_color": [0.56, 0.66, 0.62],
-      "grass_color": [0.36, 0.56, 0.30],
-      "foliage_color": [0.32, 0.52, 0.26],
-      "water_color": [0.20, 0.42, 0.44]
+      "fog_color": [0.220, 0.340, 0.280],
+      "grass_color": [0.190, 0.400, 0.040],
+      "foliage_color": [0.105, 0.310, 0.035],
+      "water_color": [0.055, 0.250, 0.220],
+      "trees": {
+        "density": 0.018,
+        "species": [{"feature": "petramond:oak_big", "weight": 15}, {"feature": "petramond:oak_swamp", "weight": 85}]
+      }
     },
     {
       "biome": "petramond:taiga",
-      "fog_color": [0.66, 0.76, 0.84],
-      "grass_color": [0.44, 0.66, 0.42],
-      "foliage_color": [0.38, 0.62, 0.38],
-      "water_color": [0.13, 0.46, 0.74]
+      "fog_color": [0.300, 0.440, 0.590],
+      "grass_color": [0.140, 0.490, 0.130],
+      "foliage_color": [0.075, 0.360, 0.095],
+      "water_color": [0.025, 0.250, 0.510],
+      "trees": {
+        "density": 0.026,
+        "species": [{"feature": "petramond:spruce", "weight": 1}]
+      }
     },
     {
       "biome": "petramond:snowy_tundra",
-      "fog_color": [0.82, 0.86, 0.92],
-      "grass_color": [0.62, 0.72, 0.58],
-      "foliage_color": [0.56, 0.70, 0.54],
-      "water_color": [0.18, 0.52, 0.80]
+      "fog_color": [0.460, 0.590, 0.740],
+      "grass_color": [0.350, 0.580, 0.240],
+      "foliage_color": [0.220, 0.460, 0.170],
+      "water_color": [0.040, 0.330, 0.640],
+      "trees": {
+        "density": 0.004,
+        "species": [{"feature": "petramond:spruce", "weight": 1}]
+      }
     },
     {
       "biome": "petramond:snowy_taiga",
-      "fog_color": [0.78, 0.83, 0.90],
-      "grass_color": [0.50, 0.68, 0.50],
-      "foliage_color": [0.44, 0.64, 0.46],
-      "water_color": [0.16, 0.48, 0.76]
+      "fog_color": [0.360, 0.490, 0.650],
+      "grass_color": [0.170, 0.450, 0.160],
+      "foliage_color": [0.085, 0.340, 0.130],
+      "water_color": [0.030, 0.280, 0.570],
+      "trees": {
+        "density": 0.02,
+        "species": [{"feature": "petramond:spruce", "weight": 1}]
+      }
     },
     {
       "biome": "petramond:mountains",
-      "fog_color": [0.70, 0.78, 0.88],
-      "grass_color": [0.50, 0.70, 0.42],
-      "foliage_color": [0.44, 0.66, 0.38],
-      "water_color": [0.13, 0.48, 0.78]
+      "fog_color": [0.340, 0.470, 0.650],
+      "grass_color": [0.230, 0.520, 0.100],
+      "foliage_color": [0.150, 0.400, 0.065],
+      "water_color": [0.025, 0.280, 0.580],
+      "trees": {
+        "density": 0.004,
+        "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      }
     },
     {
       "biome": "petramond:snowy_peaks",
-      "fog_color": [0.84, 0.87, 0.93],
-      "grass_color": [0.76, 0.84, 0.76],
-      "foliage_color": [0.68, 0.80, 0.68],
-      "water_color": [0.20, 0.54, 0.82]
+      "fog_color": [0.510, 0.620, 0.770],
+      "grass_color": [0.480, 0.690, 0.420],
+      "foliage_color": [0.310, 0.550, 0.310],
+      "water_color": [0.050, 0.350, 0.690]
     },
     {
       "biome": "petramond:deep_ocean",
-      "fog_color": [0.46, 0.66, 0.94],
-      "grass_color": [0.48, 0.70, 0.38],
-      "foliage_color": [0.42, 0.66, 0.34],
-      "water_color": [0.05, 0.26, 0.62]
+      "fog_color": [0.190, 0.370, 0.670],
+      "grass_color": [0.180, 0.600, 0.070],
+      "foliage_color": [0.120, 0.480, 0.035],
+      "water_color": [0.012, 0.140, 0.430]
     },
     {
       "biome": "petramond:foothills",
-      "fog_color": [0.66, 0.80, 0.92],
-      "grass_color": [0.52, 0.74, 0.40],
-      "foliage_color": [0.46, 0.70, 0.36],
-      "water_color": [0.13, 0.48, 0.80]
+      "fog_color": [0.300, 0.480, 0.680],
+      "grass_color": [0.240, 0.690, 0.060],
+      "foliage_color": [0.160, 0.550, 0.030],
+      "water_color": [0.025, 0.300, 0.620],
+      "trees": {
+        "density": 0.012,
+        "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      }
     },
     {
       "biome": "petramond:wetland",
-      "fog_color": [0.62, 0.72, 0.72],
-      "grass_color": [0.38, 0.62, 0.30],
-      "foliage_color": [0.34, 0.58, 0.26],
-      "water_color": [0.18, 0.44, 0.54]
+      "fog_color": [0.240, 0.390, 0.390],
+      "grass_color": [0.140, 0.500, 0.050],
+      "foliage_color": [0.085, 0.380, 0.035],
+      "water_color": [0.040, 0.290, 0.340],
+      "trees": {
+        "density": 0.011,
+        "species": [{"feature": "petramond:oak_small", "weight": 30}, {"feature": "petramond:oak_swamp", "weight": 70}]
+      }
     },
     {
       "biome": "petramond:redwood_forest",
-      "fog_color": [0.52, 0.68, 0.62],
-      "grass_color": [0.32, 0.56, 0.28],
-      "foliage_color": [0.28, 0.52, 0.24],
-      "water_color": [0.13, 0.42, 0.60]
+      "fog_color": [0.160, 0.290, 0.270],
+      "grass_color": [0.095, 0.360, 0.060],
+      "foliage_color": [0.045, 0.270, 0.045],
+      "water_color": [0.018, 0.220, 0.390],
+      "trees": {
+        "density": 0.12,
+        "spacing_radius": 10,
+        "height_clearance": 56,
+        "support": "redwood_base",
+        "species": [{"feature": "petramond:spruce", "weight": 25}, {"feature": "petramond:redwood", "weight": 75}]
+      }
     },
     {
       "biome": "petramond:old_growth_taiga",
-      "fog_color": [0.60, 0.70, 0.68],
-      "grass_color": [0.36, 0.60, 0.32],
-      "foliage_color": [0.32, 0.56, 0.30],
-      "water_color": [0.13, 0.44, 0.64]
+      "fog_color": [0.220, 0.340, 0.340],
+      "grass_color": [0.130, 0.420, 0.075],
+      "foliage_color": [0.070, 0.310, 0.055],
+      "water_color": [0.022, 0.250, 0.450],
+      "trees": {
+        "density": 0.035,
+        "species": [{"feature": "petramond:spruce", "weight": 1}]
+      }
     },
     {
       "biome": "petramond:meadow",
-      "fog_color": [0.72, 0.86, 0.96],
-      "grass_color": [0.44, 0.80, 0.34],
-      "foliage_color": [0.38, 0.74, 0.30],
-      "water_color": [0.16, 0.54, 0.84]
+      "fog_color": [0.340, 0.540, 0.730],
+      "grass_color": [0.240, 0.820, 0.050],
+      "foliage_color": [0.150, 0.680, 0.030],
+      "water_color": [0.030, 0.370, 0.680],
+      "trees": {
+        "density": 0.006,
+        "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      }
     },
     {
       "biome": "petramond:grove",
-      "fog_color": [0.80, 0.86, 0.92],
-      "grass_color": [0.52, 0.68, 0.52],
-      "foliage_color": [0.46, 0.64, 0.46],
-      "water_color": [0.16, 0.50, 0.80]
+      "fog_color": [0.400, 0.540, 0.690],
+      "grass_color": [0.200, 0.490, 0.150],
+      "foliage_color": [0.120, 0.380, 0.110],
+      "water_color": [0.030, 0.300, 0.610],
+      "trees": {
+        "density": 0.024,
+        "species": [{"feature": "petramond:spruce", "weight": 1}]
+      }
     },
     {
       "biome": "petramond:snowy_slopes",
-      "fog_color": [0.85, 0.88, 0.94],
-      "grass_color": [0.68, 0.78, 0.72],
-      "foliage_color": [0.62, 0.76, 0.68],
-      "water_color": [0.18, 0.52, 0.82]
+      "fog_color": [0.480, 0.610, 0.760],
+      "grass_color": [0.370, 0.610, 0.350],
+      "foliage_color": [0.250, 0.490, 0.250],
+      "water_color": [0.040, 0.330, 0.650]
     },
     {
       "biome": "petramond:windswept_hills",
-      "fog_color": [0.68, 0.77, 0.86],
-      "grass_color": [0.48, 0.66, 0.44],
-      "foliage_color": [0.42, 0.62, 0.40],
-      "water_color": [0.13, 0.48, 0.78]
+      "fog_color": [0.330, 0.460, 0.610],
+      "grass_color": [0.230, 0.490, 0.130],
+      "foliage_color": [0.140, 0.370, 0.085],
+      "water_color": [0.025, 0.280, 0.580],
+      "trees": {
+        "density": 0.004,
+        "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      }
     },
     {
       "biome": "petramond:stony_peaks",
-      "fog_color": [0.78, 0.80, 0.83],
-      "grass_color": [0.56, 0.64, 0.54],
-      "foliage_color": [0.50, 0.60, 0.50],
-      "water_color": [0.16, 0.52, 0.80]
+      "fog_color": [0.430, 0.510, 0.610],
+      "grass_color": [0.320, 0.450, 0.180],
+      "foliage_color": [0.220, 0.340, 0.120],
+      "water_color": [0.035, 0.320, 0.620]
     },
     {
       "biome": "petramond:wooded_hills",
-      "fog_color": [0.58, 0.78, 0.94],
-      "grass_color": [0.32, 0.66, 0.24],
-      "foliage_color": [0.34, 0.68, 0.26],
-      "water_color": [0.12, 0.46, 0.78]
+      "fog_color": [0.250, 0.440, 0.630],
+      "grass_color": [0.150, 0.480, 0.035],
+      "foliage_color": [0.120, 0.440, 0.035],
+      "water_color": [0.022, 0.290, 0.580],
+      "trees": {
+        "density": 0.0036,
+        "spacing_radius": 10,
+        "height_clearance": 30,
+        "species": [{"feature": "petramond:oak_big", "weight": 11}, {"feature": "petramond:oak_young", "weight": 30}, {"feature": "petramond:oak_small", "weight": 59}],
+        "rules": [
+          {"when": {"grove": {"field": "petramond:forest_groves", "period": 84, "transition": [0.792, 0.892], "chance": [0.001, 0.75]}},
+           "species": [{"feature": "petramond:birch", "weight": 1}], "density": 0.06375, "spacing_radius": 1}
+        ]
+      }
     },
     {
       "biome": "petramond:mountain_edge",
-      "fog_color": [0.68, 0.80, 0.92],
-      "grass_color": [0.50, 0.72, 0.40],
-      "foliage_color": [0.44, 0.68, 0.36],
-      "water_color": [0.13, 0.48, 0.80]
+      "fog_color": [0.310, 0.490, 0.680],
+      "grass_color": [0.230, 0.640, 0.060],
+      "foliage_color": [0.150, 0.510, 0.035],
+      "water_color": [0.025, 0.300, 0.610],
+      "trees": {
+        "density": 0.008,
+        "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      }
     },
     {
       "biome": "petramond:desert_lakes",
-      "fog_color": [0.96, 0.85, 0.64],
-      "grass_color": [0.83, 0.72, 0.36],
-      "foliage_color": [0.77, 0.66, 0.32],
-      "water_color": [0.18, 0.58, 0.84]
+      "fog_color": [0.620, 0.530, 0.350],
+      "grass_color": [0.730, 0.570, 0.055],
+      "foliage_color": [0.500, 0.430, 0.030],
+      "water_color": [0.035, 0.430, 0.680]
     },
     {
       "biome": "petramond:snowy_plains",
-      "fog_color": [0.85, 0.89, 0.94],
-      "grass_color": [0.60, 0.71, 0.60],
-      "foliage_color": [0.54, 0.68, 0.56],
-      "water_color": [0.18, 0.52, 0.80]
+      "fog_color": [0.470, 0.600, 0.740],
+      "grass_color": [0.300, 0.550, 0.220],
+      "foliage_color": [0.200, 0.440, 0.160],
+      "water_color": [0.040, 0.330, 0.630]
     }
   ]
 }

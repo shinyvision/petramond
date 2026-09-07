@@ -1,23 +1,18 @@
-//! Biome colour rows — a layered catalog (`assets/biomes.json`).
+//! Biome rows — a layered catalog (`assets/biomes.json`): the colour set, the
+//! `ambient` density map (which ambient particle bundles this biome drives,
+//! and how strongly — see [`crate::particle_emitters`]) and the `trees`
+//! placement profile, carried verbatim for the worldgen layer to parse.
 //!
-//! The storybook biome palette. Curation rules, applied 2026-07 with the
-//! worldgen stylization pass (they govern edits to `biomes.json`):
-//!
-//! - GRASS/FOLIAGE greens are warm-shifted (toward yellow-green) and sit in a
-//!   few deliberate families — lush (plains/meadow), deep woodland (forest),
-//!   golden dry (savanna/desert scrub), cool sage (taiga/cold), muted alpine
-//!   (peaks) — instead of one neon green with per-biome noise.
-//! - WATER is one turquoise family across the world, varied only slightly per
-//!   biome (murky in swamp/wetland, ink-deep in deep ocean), so water always
-//!   reads as inviting storybook water.
-//! - FOG colours are airier (lighter, softer) than their biome mood suggests:
-//!   they feed the atmosphere haze and the sky horizon, and distance must
-//!   LIGHTEN. Only mood biomes (swamp, redwood) keep a denser tinted fog.
+//! Authored linear-light tints keep distinct colour families: spring greens,
+//! deep woodland, golden dry grass, cool conifers and subdued alpine plants.
+//! Water is blue/teal with darker swamp and deep-ocean variants. Horizon colours
+//! retain biome atmosphere without bleaching the scene into a pastel wash.
 //!
 //! The biome ID SPACE stays compiled and closed: ids are serialized into
 //! chunk bytes and the [`Biome`] enum is matched across worldgen, so a pack
 //! may OVERRIDE an engine row's colours but cannot add biomes.
 
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use serde::Deserialize;
@@ -68,6 +63,14 @@ struct RawBiomeDef {
     grass_color: [f32; 3],
     foliage_color: [f32; 3],
     water_color: [f32; 3],
+    /// Ambient bundle key → density in `0..=1`: the bundles this biome drives
+    /// on every client, and how thickly. Omitted bundles are absent here.
+    #[serde(default)]
+    ambient: BTreeMap<String, f32>,
+    /// Tree placement profile. This layer only carries it: the vocabulary
+    /// (density, spacing, species tables, selection rules) is worldgen's.
+    #[serde(default)]
+    trees: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -97,6 +100,22 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BiomeDef>, St
                     r.biome
                 ));
             };
+            let mut ambient = Vec::with_capacity(r.ambient.len());
+            for (bundle, density) in r.ambient {
+                if !crate::registry::is_namespaced(&bundle) {
+                    return Err(format!(
+                        "biome '{}': ambient bundle '{bundle}' must be a namespaced key",
+                        r.biome
+                    ));
+                }
+                if !density.is_finite() || !(0.0..=1.0).contains(&density) {
+                    return Err(format!(
+                        "biome '{}': ambient density for '{bundle}' must be in 0..=1",
+                        r.biome
+                    ));
+                }
+                ambient.push((&*bundle.leak(), density));
+            }
             Ok(BiomeDef {
                 biome,
                 name: key.strip_prefix("petramond:").expect("engine biome key"),
@@ -104,6 +123,8 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BiomeDef>, St
                 grass_color: r.grass_color,
                 foliage_color: r.foliage_color,
                 water_color: r.water_color,
+                ambient: Box::leak(ambient.into_boxed_slice()),
+                trees: r.trees.map(|v| &*v.to_string().leak()),
             })
         },
     )
@@ -122,35 +143,4 @@ pub(super) fn def(biome: Biome) -> &'static BiomeDef {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A pack may recolour an engine biome, but a new biome key is refused —
-    /// the id space is chunk-serialized and enum-closed.
-    #[test]
-    fn packs_may_override_colours_but_not_add_biomes() {
-        let base = std::fs::read_to_string(
-            crate::assets::candidate_paths("biomes.json")
-                .into_iter()
-                .find(|p| p.exists())
-                .expect("shipped biomes.json"),
-        )
-        .unwrap();
-        let recolour = r#"{"biomes": [{"biome": "petramond:forest",
-            "fog_color": [0.1, 0.2, 0.3], "grass_color": [0.1, 0.2, 0.3],
-            "foliage_color": [0.1, 0.2, 0.3], "water_color": [0.1, 0.2, 0.3]}]}"#;
-        let table = parse_layers(&[&base, recolour]).expect("override loads");
-        assert_eq!(table.rows().len(), ENGINE_BIOME_COUNT);
-        let forest = &table.rows()[(Biome::Forest.id() - 1) as usize];
-        assert_eq!(forest.grass_color, [0.1, 0.2, 0.3]);
-
-        let addition = r#"{"biomes": [{"biome": "mymod:crystal_fields",
-            "fog_color": [0.1, 0.2, 0.3], "grass_color": [0.1, 0.2, 0.3],
-            "foliage_color": [0.1, 0.2, 0.3], "water_color": [0.1, 0.2, 0.3]}]}"#;
-        let err = match parse_layers(&[&base, addition]) {
-            Ok(_) => panic!("additions must be refused"),
-            Err(e) => e,
-        };
-        assert!(err.contains("engine-defined"), "{err}");
-    }
-}
+mod tests;

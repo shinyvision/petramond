@@ -10,7 +10,7 @@
 //! mutability). Output is therefore a pure function of `(seed, cx, cz)`,
 //! independent of thread or call order.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use mod_api::WorldgenStage;
 
@@ -23,10 +23,9 @@ use petramond_world::section::{Section, SectionSummary};
 use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
     apply_gen_writes, cached_feature_region, feature_candidate_bounds, feature_region_bounds,
-    place_features_section,
     scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
-    vegetation, ColumnFeatureField, RuntimeFeatureField, SurfaceHeights, MAX_TREE_REACH_ABOVE,
-    TREELINE,
+    vegetation, ColumnFeatureField, FeaturePlan, RuntimeFeatureField, SurfaceHeights,
+    MAX_TREE_REACH_ABOVE, TREELINE,
 };
 use super::noise::cave_field::CaveField;
 use super::proto::ProtoChunk;
@@ -91,6 +90,7 @@ pub struct ColumnGen {
 /// spacing margin, cave-adjusted) and the redwood-support surface halo. A pure
 /// function of `(seed, cx, cz)` — droppable and rebuildable at will.
 pub struct FeatureWindows {
+    plan: OnceLock<FeaturePlan>,
     /// Feature candidate window (chunk + spacing margin): surfaces + biomes for the
     /// tree density/spacing rolls.
     candidates: RegionCells,
@@ -111,6 +111,7 @@ impl ColumnGen {
             + self.top_surf.len() * 4;
         let windows = self.feature_windows.as_ref().map_or(0, |w| {
             std::mem::size_of::<FeatureWindows>()
+                + w.plan.get().map_or(0, FeaturePlan::memory_bytes)
                 + w.candidates.surf.capacity() * 4
                 + w.candidates.biomes.capacity()
                     * std::mem::size_of::<petramond_world::biome::Biome>()
@@ -521,10 +522,8 @@ impl ChunkGenerator {
     /// `cached_feature_region`.
     fn finish_feature_windows(&self, ox: i32, oz: i32, candidates: RegionCells) -> FeatureWindows {
         let needs_support = candidates.biomes.iter().any(|b| {
-            matches!(
-                super::biome::spec(*b).trees.support,
-                super::biome::TreeSupport::RedwoodBase
-            )
+            super::biome::trees::profile(*b).support
+                == super::biome::trees::TreeSupport::RedwoodBase
         });
 
         // Support window (the larger redwood-support halo): surfaces only, and ONLY when
@@ -546,6 +545,7 @@ impl ChunkGenerator {
         });
 
         FeatureWindows {
+            plan: OnceLock::new(),
             candidates,
             support,
         }
@@ -633,9 +633,15 @@ impl ChunkGenerator {
                         &rebuilt
                     }
                 };
-                let mut field =
-                    ColumnFeatureField::new(&windows.candidates, windows.support.as_ref());
-                place_features_section(&mut section, &mut field, self.seed);
+                let plan = windows.plan.get_or_init(|| {
+                    let mut field =
+                        ColumnFeatureField::new(&windows.candidates, windows.support.as_ref());
+                    let (ox, oz) = (sp.cx * SECTION_SIZE as i32, sp.cz * SECTION_SIZE as i32);
+                    FeaturePlan::record(sp.cx, sp.cz, |ctx| {
+                        super::feature::place_trees(ctx, &mut field, self.seed, ox, oz)
+                    })
+                });
+                plan.apply(&mut section);
             }
         }
         self.run_gen_features(WorldgenStage::Trees, sp, &mut section, col);

@@ -17,8 +17,12 @@ pub mod tree;
 pub mod vegetation;
 
 mod field;
+mod plan;
 mod sink;
 mod tree_select;
+pub(crate) use plan::FeaturePlan;
+/// The tree origin loop over one column's footprint, for planning.
+pub(crate) use tree_select::place_feature_origins as place_trees;
 
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod tests;
@@ -28,7 +32,7 @@ pub use self::field::{
     RuntimeFeatureField, SurfaceHeights,
 };
 pub use self::sink::*;
-pub use self::tree_select::{place_features_section, place_features_with_field};
+pub use self::tree_select::place_features_with_field;
 
 use petramond_world::block::Block;
 use petramond_world::chunk::CHUNK_SX;
@@ -51,12 +55,13 @@ pub const TREELINE: i32 = 118;
 pub const MAX_TREE_REACH_ABOVE: i32 = 64;
 
 pub fn feature_region_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
-    let pad = super::proto::MARGIN + biome::MAX_TREE_SPACING_RADIUS + REDWOOD_BASE_SUPPORT_REACH;
+    let pad =
+        super::proto::MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS + REDWOOD_BASE_SUPPORT_REACH;
     feature_bounds_with_pad(ox, oz, pad)
 }
 
 pub fn feature_candidate_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
-    let pad = super::proto::MARGIN + biome::MAX_TREE_SPACING_RADIUS;
+    let pad = super::proto::MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS;
     feature_bounds_with_pad(ox, oz, pad)
 }
 
@@ -110,6 +115,26 @@ pub struct ConfiguredFeature {
     pub feature: &'static dyn Feature,
 }
 
+/// A distinct, inert species for tests that only care WHICH feature a
+/// selection returned, never what it writes.
+#[cfg(test)]
+pub(crate) fn stub_species() -> &'static ConfiguredFeature {
+    struct Inert;
+    impl Feature for Inert {
+        fn generate(
+            &self,
+            _: &mut FeatureCtx,
+            _: &mut dyn FnMut(IVec3) -> bool,
+            _: IVec3,
+            _: &mut FeatureRng,
+        ) {
+        }
+    }
+    Box::leak(Box::new(ConfiguredFeature {
+        feature: Box::leak(Box::new(Inert)),
+    }))
+}
+
 /// Bounded voxel writer — the ONLY place imperative feature writes happen. Holds a
 /// `&mut dyn VoxelSink` so one set of placer code targets either a chunk (worldgen)
 /// or the world (growth). The overwrite predicates (`set_leaf` over air/water,
@@ -141,19 +166,13 @@ impl<'a> FeatureCtx<'a> {
     /// (`set_log` is unconditional). Still reads only the cell it writes, so
     /// it stays seam-safe.
     pub fn set_leaf(&mut self, p: IVec3, b: Block) {
-        let c = self.sink.get(p);
-        if c == Block::Air || c == Block::Water || c.is_fragile() || c.is_snow_cover() {
-            self.sink.set(p, b);
-        }
+        self.sink.place(p, b, PlacementRule::Leaf);
     }
 
     /// Write over Air/leaves/Water (== branch predicate). A branch may pass
     /// through leaves placed earlier by its own crown or a neighbouring canopy.
     pub fn set_branch(&mut self, p: IVec3, b: Block) {
-        let c = self.sink.get(p);
-        if c == Block::Air || c.is_leaves() || c == Block::Water {
-            self.sink.set(p, b);
-        }
+        self.sink.place(p, b, PlacementRule::Branch);
     }
 
     /// Write over Air/Water or a SNOW BLANKET (== ground-litter predicate).
@@ -166,18 +185,13 @@ impl<'a> FeatureCtx<'a> {
     /// snowy forest at all — measured as literally zero over 400 chunks before
     /// this existed, in a biome a fresh player can spawn in.
     pub fn set_ground_litter(&mut self, p: IVec3, b: Block) {
-        let c = self.sink.get(p);
-        if c == Block::Air || c == Block::Water || c.is_snow_cover() {
-            self.sink.set(p, b);
-        }
+        self.sink.place(p, b, PlacementRule::Litter);
     }
 
     /// Replace a voxel only when it currently equals `expect`. Used by the
     /// underground ore / stone-blob veins, which overwrite Stone (and never air,
     /// dirt, or an already-placed ore). World coords; clipped to this chunk.
     pub fn replace_block(&mut self, p: IVec3, expect: Block, b: Block) {
-        if self.sink.get(p) == expect {
-            self.sink.set(p, b);
-        }
+        self.sink.place(p, b, PlacementRule::Replace(expect));
     }
 }

@@ -1,11 +1,11 @@
-//! Worldgen byte-parity gate (throwaway, used during the Strata refactor).
+//! Worldgen byte-parity gate.
 //!
-//! Hashes the block + biome bytes of a fixed grid of chunks across several
-//! seeds. Pure code-move phases (P0–P3) must reproduce the same COMBINED hash
-//! as the baseline; phases that intentionally change output (P4) will not, and
-//! are validated by screenshots instead.
+//! Hashes the block + biome bytes of a fixed spread of chunks across several
+//! seeds into one COMBINED hash. A pure code move must reproduce the hash of
+//! the tree it started from; a change that means to alter output will not, and
+//! is judged by captures instead.
 //!
-//! Run: `cargo run --quiet --bin genparity`
+//! Run: `cargo run --quiet --profile playtest --bin genparity`
 
 use petramond_worldgen::generate_chunk;
 
@@ -29,28 +29,22 @@ fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
 }
 
 fn main() {
-    const SEEDS: [u32; 3] = [0x1234_5678, 1, 0xDEAD_BEEF];
-    const COORDS: [(i32, i32); 9] = [
-        (-1, -1),
-        (-1, 0),
-        (-1, 1),
-        (0, -1),
-        (0, 0),
-        (0, 1),
-        (1, -1),
-        (1, 0),
-        (1, 1),
-    ];
-
+    // A wide grid at several seeds so forests, wooded hills, riverbank plains
+    // and redwood stands all fall inside the sample.
+    const SEEDS: [u32; 3] = [0x1234_5678, 786, 0xDEAD_BEEF];
     let mut combined = FNV_OFFSET;
     for &seed in &SEEDS {
-        for &(cx, cz) in &COORDS {
-            let chunk = generate_chunk(seed, cx, cz);
-            let mut h = FNV_OFFSET;
-            h = fnv1a_u16(chunk.blocks_slice(), h);
-            h = fnv1a(chunk.biomes_slice(), h);
-            println!("seed={seed:08x} cx={cx:>2} cz={cz:>2} hash={h:016x}");
-            combined = fnv1a(&h.to_le_bytes(), combined);
+        for cz in -12..=12 {
+            for cx in -12..=12 {
+                if (cx + cz) % 3 != 0 {
+                    continue;
+                }
+                let chunk = generate_chunk(seed, cx * 5, cz * 5);
+                let mut h = FNV_OFFSET;
+                h = fnv1a_u16(chunk.blocks_slice(), h);
+                h = fnv1a(chunk.biomes_slice(), h);
+                combined = fnv1a(&h.to_le_bytes(), combined);
+            }
         }
     }
     println!("COMBINED={combined:016x}");

@@ -2,12 +2,21 @@ use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 use petramond_world::mathh::IVec3;
+#[cfg(test)]
 use petramond_world::section::Section;
 
-use super::super::biome::{self, spec, TreeSupport};
+use super::super::biome::spec;
+use super::super::biome::trees::{
+    self, RuleStage, SpeciesTable, Territory, TreeProfile, TreeSupport, MAX_TREE_SPACING_RADIUS,
+};
 use super::super::rng::FeatureRng;
 use super::tree::{redwood_base_trunk_contains, REDWOOD_BASE_SUPPORT_REACH};
-use super::{ChunkSink, FeatureCtx, FeatureField, SectionSink, TREELINE};
+#[cfg(test)]
+use super::SectionSink;
+use super::{ChunkSink, FeatureCtx, FeatureField, TREELINE};
+
+mod groves;
+use groves::{GroveField, Window};
 
 /// Salt distinguishing the tree-feature positional RNG stream from other users.
 const FEATURE_SALT: u64 = 0x0000_7A3E_0AC0_FFEE;
@@ -25,7 +34,7 @@ const BRANCH_REACH: i32 = 8;
 /// lower than the mean of this range.
 const BRANCH_PER_TREE: (i32, i32) = (0, 2);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct TreeCandidate {
     anchor: i32,
     biome: Biome,
@@ -41,91 +50,258 @@ fn tree_priority(seed: u32, wx: i32, wz: i32) -> u64 {
 
 #[inline]
 fn tree_candidate_beats(
-    lhs_priority: u64,
+    lhs: TreeCandidate,
     lhs_wx: i32,
     lhs_wz: i32,
-    rhs_priority: u64,
+    rhs: TreeCandidate,
     rhs_wx: i32,
     rhs_wz: i32,
 ) -> bool {
-    lhs_priority > rhs_priority
-        || (lhs_priority == rhs_priority && (lhs_wz, lhs_wx) < (rhs_wz, rhs_wx))
+    // Reserve larger crowns first, so dense small trees cannot eliminate oaks.
+    lhs.spacing_radius > rhs.spacing_radius
+        || (lhs.spacing_radius == rhs.spacing_radius
+            && (lhs.priority > rhs.priority
+                || (lhs.priority == rhs.priority && (lhs_wz, lhs_wx) < (rhs_wz, rhs_wx))))
 }
 
-pub(super) fn tree_candidate_at(
-    field: &mut impl FeatureField,
+/// The outcome of walking a profile's rule list for one site.
+struct Selection<'p> {
+    /// `None` only for a profile that roots nothing.
+    species: Option<&'p SpeciesTable>,
+    density: f32,
+    spacing_radius: i32,
+    /// Index of the rule that claimed the site, `None` for the base table.
+    rule: Option<usize>,
+}
+
+/// One memoised site of the candidate window.
+#[derive(Copy, Clone)]
+enum Slot {
+    Unknown,
+    Absent,
+    Present(TreeCandidate),
+}
+
+/// The candidate window of one placement pass — every site an origin loop over
+/// `[o - MARGIN, o + 16 + MARGIN)` can probe, dense so the spacing scans'
+/// repeated lookups are an index, not a hash.
+pub(super) struct TreeCandidates {
     seed: u32,
-    wx: i32,
-    wz: i32,
-) -> Option<TreeCandidate> {
-    // Anchor on the final region surface. Ocean and wet river-channel columns sit
-    // at/below their waterline, so the water guard keeps trees off them.
-    let (surf, biome) = field.column_at(wx, wz);
-    let anchor = surf;
-    if anchor <= SEA_LEVEL || surf > TREELINE {
-        return None;
+    window: Window,
+    groves: GroveField,
+    slots: Box<[Slot]>,
+}
+
+impl TreeCandidates {
+    pub(super) fn new(seed: u32, ox: i32, oz: i32) -> Self {
+        let reach = super::proto::MARGIN + MAX_TREE_SPACING_RADIUS;
+        let window = Window {
+            x_min: ox - reach,
+            x_max: ox + CHUNK_SX as i32 + reach,
+            z_min: oz - reach,
+            z_max: oz + CHUNK_SZ as i32 + reach,
+        };
+        let cells = ((window.x_max - window.x_min) * (window.z_max - window.z_min)) as usize;
+        Self {
+            seed,
+            window,
+            groves: GroveField::new(seed, window),
+            slots: vec![Slot::Unknown; cells].into_boxed_slice(),
+        }
     }
 
-    let tree = spec(biome).trees;
-    // place_oak height guard (origin too low / too near the world top).
-    if anchor < 1 || anchor + tree.height_clearance >= CHUNK_SY as i32 {
-        return None;
+    #[inline]
+    fn slot_index(&self, wx: i32, wz: i32) -> usize {
+        debug_assert!(
+            self.window.contains(wx, wz),
+            "tree candidate probe outside the placement window"
+        );
+        ((wz - self.window.z_min) * (self.window.x_max - self.window.x_min)
+            + (wx - self.window.x_min)) as usize
     }
 
-    let density = tree.density;
-    if density <= 0.0 {
-        return None;
-    }
-
-    let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
-    if !rng.chance(density) {
-        return None;
-    }
-
-    match tree.support {
-        TreeSupport::None => {}
-        TreeSupport::RedwoodBase => {
-            if !redwood_trunk_is_supported(field, wx, wz, anchor) {
-                return None;
+    pub(super) fn at(
+        &mut self,
+        field: &mut impl FeatureField,
+        wx: i32,
+        wz: i32,
+    ) -> Option<TreeCandidate> {
+        let i = self.slot_index(wx, wz);
+        match self.slots[i] {
+            Slot::Present(c) => Some(c),
+            Slot::Absent => None,
+            Slot::Unknown => {
+                let candidate = self.compute(field, wx, wz);
+                self.slots[i] = candidate.map_or(Slot::Absent, Slot::Present);
+                candidate
             }
         }
     }
 
-    Some(TreeCandidate {
-        anchor,
-        biome,
-        density,
-        spacing_radius: tree.spacing_radius,
-        priority: tree_priority(seed, wx, wz),
-    })
-}
+    fn compute(
+        &mut self,
+        field: &mut impl FeatureField,
+        wx: i32,
+        wz: i32,
+    ) -> Option<TreeCandidate> {
+        let seed = self.seed;
+        // Anchor on the final region surface. Ocean and wet river-channel columns sit
+        // at/below their waterline, so the water guard keeps trees off them.
+        let (surf, biome) = field.column_at(wx, wz);
+        let anchor = surf;
+        if anchor <= SEA_LEVEL || surf > TREELINE {
+            return None;
+        }
 
-pub(super) fn tree_spacing_allows(
-    candidate: TreeCandidate,
-    field: &mut impl FeatureField,
-    seed: u32,
-    wx: i32,
-    wz: i32,
-) -> bool {
-    for dz in -biome::MAX_TREE_SPACING_RADIUS..=biome::MAX_TREE_SPACING_RADIUS {
-        for dx in -biome::MAX_TREE_SPACING_RADIUS..=biome::MAX_TREE_SPACING_RADIUS {
-            if dx == 0 && dz == 0 {
+        let profile = trees::profile(biome);
+        if anchor < 1 || anchor + profile.height_clearance >= CHUNK_SY as i32 {
+            return None;
+        }
+
+        let peak_density = profile.peak_density();
+        if peak_density <= 0.0 {
+            return None;
+        }
+        let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
+        let density_roll = rng.next_f32();
+        if density_roll >= peak_density {
+            return None;
+        }
+
+        // Spacing probes reach every site of the window, so only rules that
+        // need no terrain reads decide here; the rest wait for acceptance.
+        let selection = self.select(profile, RuleStage::Candidate, field, wx, wz);
+        if density_roll >= selection.density {
+            return None;
+        }
+
+        match profile.support {
+            TreeSupport::None => {}
+            TreeSupport::RedwoodBase => {
+                if !redwood_trunk_is_supported(field, wx, wz, anchor) {
+                    return None;
+                }
+            }
+        }
+
+        // A rule decided only at acceptance inherits the profile's spacing, so
+        // a site it may still claim reserves that much now.
+        let mut spacing_radius = selection.spacing_radius;
+        if profile.deferred_rule_may_win(selection.rule) {
+            spacing_radius = spacing_radius.max(profile.spacing_radius);
+        }
+        Some(TreeCandidate {
+            anchor,
+            biome,
+            density: selection.density,
+            spacing_radius,
+            priority: tree_priority(seed, wx, wz),
+        })
+    }
+
+    /// Walk `profile`'s rules in order; the first whose territory holds — and
+    /// is answerable at `stage` — decides the site, else the base table does.
+    fn select<'p>(
+        &mut self,
+        profile: &'p TreeProfile,
+        stage: RuleStage,
+        field: &mut impl FeatureField,
+        wx: i32,
+        wz: i32,
+    ) -> Selection<'p> {
+        for (i, rule) in profile.rules.iter().enumerate() {
+            if rule.territory.stage() > stage {
                 continue;
             }
-            let nx = wx + dx;
-            let nz = wz + dz;
-            if let Some(other) = tree_candidate_at(field, seed, nx, nz) {
-                let spacing = candidate.spacing_radius.max(other.spacing_radius);
-                if dx.abs() > spacing || dz.abs() > spacing {
+            let holds = match rule.territory {
+                Territory::Grove(lattice) => self.groves.claims(&lattice, wx, wz),
+                Territory::NearbyBiome { biome, radius } => {
+                    biome_within(field, wx, wz, biome, radius)
+                }
+            };
+            if holds {
+                return Selection {
+                    species: Some(&rule.species),
+                    density: rule.density.unwrap_or(profile.density),
+                    spacing_radius: rule.spacing_radius.unwrap_or(profile.spacing_radius),
+                    rule: Some(i),
+                };
+            }
+        }
+        Selection {
+            species: profile.species.as_ref(),
+            density: profile.density,
+            spacing_radius: profile.spacing_radius,
+            rule: None,
+        }
+    }
+
+    /// The species table an ACCEPTED origin draws from: every rule is
+    /// answerable now, terrain-reading ones included.
+    fn accepted_species<'p>(
+        &mut self,
+        profile: &'p TreeProfile,
+        field: &mut impl FeatureField,
+        wx: i32,
+        wz: i32,
+    ) -> &'p SpeciesTable {
+        self.select(profile, RuleStage::Accepted, field, wx, wz)
+            .species
+            .expect("a rooted candidate's profile states a species table")
+    }
+
+    pub(super) fn spacing_allows(
+        &mut self,
+        candidate: TreeCandidate,
+        field: &mut impl FeatureField,
+        wx: i32,
+        wz: i32,
+    ) -> bool {
+        for dz in -MAX_TREE_SPACING_RADIUS..=MAX_TREE_SPACING_RADIUS {
+            for dx in -MAX_TREE_SPACING_RADIUS..=MAX_TREE_SPACING_RADIUS {
+                if dx == 0 && dz == 0 {
                     continue;
                 }
-                if tree_candidate_beats(other.priority, nx, nz, candidate.priority, wx, wz) {
-                    return false;
+                let nx = wx + dx;
+                let nz = wz + dz;
+                if let Some(other) = self.at(field, nx, nz) {
+                    let spacing = candidate.spacing_radius.max(other.spacing_radius);
+                    if dx.abs() > spacing || dz.abs() > spacing {
+                        continue;
+                    }
+                    if tree_candidate_beats(other, nx, nz, candidate, wx, wz) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Whether a column of `biome` lies within `radius` (Chebyshev) of the site,
+/// nearest ring first. Only accepted origins ask, and their neighbourhood fits
+/// the candidate window, so column and section replays read the same cells.
+fn biome_within(
+    field: &mut impl FeatureField,
+    wx: i32,
+    wz: i32,
+    biome: Biome,
+    radius: i32,
+) -> bool {
+    for ring in 1..=radius {
+        for dz in -ring..=ring {
+            for dx in -ring..=ring {
+                if dx.abs().max(dz.abs()) != ring {
+                    continue;
+                }
+                if field.column_at(wx + dx, wz + dz).1 == biome {
+                    return true;
                 }
             }
         }
     }
-    true
+    false
 }
 
 fn redwood_trunk_is_supported(
@@ -170,7 +346,15 @@ pub fn place_features_with_field(chunk: &mut Chunk, field: &mut impl FeatureFiel
 /// whole-column [`place_features_with_field`] would write there — for the section's
 /// own vertical slab, with no neighbour buffer. `field` covers this section's column
 /// (origin `ox,oz = section column origin`) plus the feature margin.
-pub fn place_features_section(section: &mut Section, field: &mut impl FeatureField, seed: u32) {
+///
+/// Production replays a recorded [`super::FeaturePlan`] instead; this is the
+/// direct reference the plan's replay is proven against.
+#[cfg(test)]
+pub(super) fn place_features_section(
+    section: &mut Section,
+    field: &mut impl FeatureField,
+    seed: u32,
+) {
     let (ox, _oy, oz) = section.origin_world();
     let mut sink = SectionSink::new(section);
     let mut ctx = FeatureCtx::new(&mut sink);
@@ -181,7 +365,7 @@ pub fn place_features_section(section: &mut Section, field: &mut impl FeatureFie
 /// footprint plus a `MARGIN` border, thin by the spacing rule, and generate each
 /// accepted tree into `ctx` (whose sink clips to wherever the caller is writing —
 /// a chunk or one section). `ox,oz` is the column's world origin.
-fn place_feature_origins(
+pub(crate) fn place_feature_origins(
     ctx: &mut FeatureCtx,
     field: &mut impl FeatureField,
     seed: u32,
@@ -189,22 +373,25 @@ fn place_feature_origins(
     oz: i32,
 ) {
     let margin = super::proto::MARGIN;
+    let mut candidates = TreeCandidates::new(seed, ox, oz);
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
         for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {
-            let Some(candidate) = tree_candidate_at(field, seed, wx, wz) else {
+            let Some(candidate) = candidates.at(field, wx, wz) else {
                 continue;
             };
 
-            if !tree_spacing_allows(candidate, field, seed, wx, wz) {
+            if !candidates.spacing_allows(candidate, field, wx, wz) {
                 continue;
             }
 
             // Recreate the accepted origin's stream and consume the already-proven
             // density roll so variant and geometry draws stay on the tree stream.
             let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
-            let _density_hit = rng.chance(candidate.density);
-            debug_assert!(_density_hit);
-            let cf = (spec(candidate.biome).trees.picker)(&mut rng);
+            let density_hit = rng.chance(candidate.density);
+            debug_assert!(density_hit);
+            let cf = candidates
+                .accepted_species(trees::profile(candidate.biome), field, wx, wz)
+                .pick(&mut rng);
             let origin = IVec3::new(wx, candidate.anchor, wz);
             // Ground-anchoring gate, on the accepted origin only. Spacing-scan
             // neighbours are NOT gated, so an unanchorable neighbour still
@@ -304,3 +491,6 @@ fn scatter_fallen_branches(
         );
     }
 }
+
+#[cfg(test)]
+mod tests;
