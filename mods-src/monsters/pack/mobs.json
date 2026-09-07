@@ -72,7 +72,7 @@
         },
         {
           "node": "retaliate",
-          "priority": 25,
+          "priority": 40,
           "params": {
             "memory_ticks": 200
           }
@@ -84,8 +84,14 @@
             "reach": 1.6,
             "damage": 3.0,
             "knockback": 7.0,
-            "cooldown_ticks": 20
+            "cooldown_ticks": 20,
+            "windup_ticks": 6,
+            "animation": "attack"
           }
+        },
+        {
+          "node": "idle_anim",
+          "priority": 10
         }
       ]
     },
@@ -171,7 +177,7 @@
         },
         {
           "node": "retaliate",
-          "priority": 25,
+          "priority": 40,
           "params": {
             "memory_ticks": 200
           }
@@ -183,7 +189,9 @@
             "reach": 1.8,
             "damage": 8.0,
             "knockback": 8.0,
-            "cooldown_ticks": 20
+            "cooldown_ticks": 20,
+            "windup_ticks": 5,
+            "animation": "attack"
           }
         }
       ]

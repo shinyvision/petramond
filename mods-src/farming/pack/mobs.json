@@ -122,6 +122,19 @@
         {
           "node": "farming:husbandry_goal",
           "priority": 18
+        },
+        {
+          "node": "idle_anim",
+          "priority": 10
+        },
+        {
+          "node": "panic",
+          "priority": 40,
+          "params": {
+            "memory_ticks": 120,
+            "radius": 7,
+            "speed_scale": 2.0
+          }
         }
       ]
     },
@@ -188,6 +201,19 @@
         {
           "node": "head_look",
           "priority": 10
+        },
+        {
+          "node": "idle_anim",
+          "priority": 10
+        },
+        {
+          "node": "panic",
+          "priority": 40,
+          "params": {
+            "memory_ticks": 120,
+            "radius": 7,
+            "speed_scale": 2.0
+          }
         }
       ]
     }

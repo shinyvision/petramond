@@ -2,28 +2,45 @@
 //!
 //! The damage pipeline records the attacking entity (player or mob) on the
 //! struck instance; this node reads that memory and — while it is fresher than
-//! `memory_ticks` and the attacker is still alive — chases the attacker's live
-//! position and publishes it as the brain's target, so a co-resident
-//! `melee_attack` strikes back. Being hit is perception in its own right: even
-//! a mob whose ordinary senses can't find the attacker (a hearing hunter axed
-//! by a silent, sneaking player) knows exactly who bit it.
+//! `memory_ticks` and the attacker is still alive — answers it in three phases:
 //!
-//! The grudge takes `warmup_ticks` to boil over: for that long after the FIRST
-//! hit of an engagement the node stays quiet — the mob reels instead of
-//! counter-striking on the very tick it was hit. The warmup anchors on the
-//! first hit deliberately: it counts on the node's own clock, so an attacker
-//! re-hitting inside the window cannot keep resetting it and fight a mob that
-//! never fights back. A NEW attacker restarts the warmup.
+//! 1. **Scan** (the warmup): the mob stands, tracks the attacker's bearing with
+//!    its head and eases its body round, sweeping its head as if looking for
+//!    what hit it. It reels instead of counter-striking on the very tick it
+//!    was hit, and holds the goal/target/attack channels so nothing below it
+//!    hunts or bites meanwhile.
+//! 2. **Pursue**: once the warmup has elapsed and the attacker is in
+//!    collision line of sight, chase its live position and publish it as the
+//!    brain's target, so a co-resident `melee_attack` strikes back. Being hit
+//!    is perception in its own right: even a mob whose ordinary senses can't
+//!    find the attacker (a hearing hunter axed by a silent, sneaking player)
+//!    knows exactly who bit it.
+//! 3. **Escape**: an attacker it cannot see (an archer behind cover) cannot be
+//!    charged blindly, so the mob runs the shared [`EscapeRoute`] instead,
+//!    still looking toward where the shots come from, until sight returns.
+//!
+//! The warmup anchors on the FIRST hit deliberately: it counts on the node's
+//! own clock, so an attacker re-hitting inside the window cannot keep resetting
+//! it and fight a mob that never fights back. Re-hits only renew the memory. A
+//! NEW attacker restarts the warmup.
 //!
 //! Whether a species fights back at all is row data — compose the node into its
-//! brain or don't. Its canonical priority sits ABOVE the chase slot: a mob
-//! under attack drops its current hunt and answers the attacker first.
+//! brain or don't. Its canonical priority sits ABOVE the attack slot: a mob
+//! under attack drops its current hunt and answers the attacker first, and only
+//! from up there can the scan and escape phases hold a stale strike shut.
+
+use std::f32::consts::{PI, TAU};
 
 use serde::Deserialize;
 
-use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
+use super::super::brain::{
+    AiBehavior, AiCtx, BehaviorOutput, ChannelClaims, DecisionChannel, HeadLook,
+};
 use super::super::EntityRef;
 use super::chase::goal_cell_near;
+use super::escape::{EscapeParams, EscapeRoute};
+use super::los;
+use petramond_math::math::Vec3;
 
 /// Default forget window: 10 s at 20 TPS — long enough to finish a fight,
 /// short enough that a fled attacker is eventually forgiven.
@@ -31,8 +48,31 @@ const DEFAULT_MEMORY_TICKS: u32 = 200;
 /// Default boil-over delay: 1 s at 20 TPS between the first hit and the mob
 /// turning on its attacker.
 const DEFAULT_WARMUP_TICKS: u32 = 20;
+/// Where the mob looks FROM, as a fraction of its head height above the feet:
+/// the eye line of a quadruped/biped rig sits a little under the head top.
+const EYE_HEIGHT_FRACTION: f32 = 0.8;
+/// Scan sweep: the head oscillates at this angular rate (radians per tick,
+/// ~one full sweep per second at 20 TPS) ...
+const SCAN_SWEEP_RATE: f32 = 0.32;
+/// ... with this amplitude (radians) either side of the attacker's bearing.
+const SCAN_SWEEP_AMPLITUDE: f32 = 0.55;
+/// How far (radians) the head alone tracks the attacker off the body axis
+/// before the body is expected to turn.
+const HEAD_TRACK_LIMIT: f32 = 0.55;
+/// Hard yaw limit (radians) of head over body, sweep included — past this a
+/// rig's neck breaks visually.
+const HEAD_YAW_LIMIT: f32 = 0.9;
+/// Hard pitch limit (radians) up/down toward the attacker.
+const HEAD_PITCH_LIMIT: f32 = 0.5;
+/// Share of the head sweep the BODY follows while scanning, so the whole
+/// mob visibly casts about rather than only its head.
+const BODY_SWEEP_SHARE: f32 = 0.5;
+/// Horizontal distance (blocks) under which the attacker is directly above or
+/// below and the pitch is clamped instead of computed from a degenerate atan.
+const FLAT_EPSILON: f32 = 0.001;
 
-/// `retaliate` params as written in a `mobs.json` brain row.
+/// `retaliate` params as written in a `mobs.json` brain row (plus the shared
+/// escape `radius`).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetaliateParams {
@@ -42,6 +82,10 @@ struct RetaliateParams {
     /// Ticks after the FIRST hit before the mob turns on the attacker.
     #[serde(default = "default_warmup")]
     warmup_ticks: u32,
+    /// Escape leg reach (blocks) when the attacker is out of sight — see
+    /// [`EscapeParams`].
+    #[serde(default)]
+    radius: Option<u32>,
 }
 
 fn default_memory() -> u32 {
@@ -59,15 +103,25 @@ pub struct RetaliateAi {
     grudge: Option<EntityRef>,
     /// Node ticks since this grudge began (its FIRST hit) — the warmup clock.
     grudge_ticks: u32,
+    escape: EscapeRoute,
 }
 
 impl RetaliateAi {
-    pub fn new(memory_ticks: u32, warmup_ticks: u32) -> Self {
+    /// Channels held while scanning: stand (no destination from below), no
+    /// lock, no strike — the mob is still working out what hit it.
+    const SCAN_HOLDS: ChannelClaims = ChannelClaims::of(&[
+        DecisionChannel::Goal,
+        DecisionChannel::Target,
+        DecisionChannel::Attack,
+    ]);
+
+    pub(super) fn new(memory_ticks: u32, warmup_ticks: u32, escape: EscapeRoute) -> Self {
         RetaliateAi {
             memory_ticks: memory_ticks.max(1),
             warmup_ticks,
             grudge: None,
             grudge_ticks: 0,
+            escape,
         }
     }
 
@@ -83,7 +137,8 @@ impl RetaliateAi {
             // warmup elapsed — the node could never fire.
             return Err("warmup_ticks must be < memory_ticks".into());
         }
-        Ok(RetaliateAi::new(p.memory_ticks, p.warmup_ticks))
+        let escape = EscapeRoute::from_params(EscapeParams::with_radius(p.radius))?;
+        Ok(RetaliateAi::new(p.memory_ticks, p.warmup_ticks, escape))
     }
 }
 
@@ -95,6 +150,7 @@ impl AiBehavior for RetaliateAi {
         let Some((who, _)) = fresh else {
             self.grudge = None;
             self.grudge_ticks = 0;
+            self.escape.reset();
             return BehaviorOutput::default();
         };
         // A new attacker starts a new grudge (and a new warmup); re-hits from
@@ -103,20 +159,53 @@ impl AiBehavior for RetaliateAi {
         if self.grudge != Some(who) {
             self.grudge = Some(who);
             self.grudge_ticks = 0;
+            self.escape.reset();
         }
-        self.grudge_ticks = self.grudge_ticks.saturating_add(1);
-        if self.grudge_ticks <= self.warmup_ticks {
-            // Still reeling: no counter-strike on (or right after) the tick
-            // the hit landed.
-            return BehaviorOutput::default();
-        }
-        // The attacker's live body-centre; a dead or vanished attacker ends
-        // the grudge by simply resolving to nothing.
         let Some(pos) = ctx.entity_pos(who) else {
+            self.grudge = None;
+            self.escape.reset();
             return BehaviorOutput::default();
         };
+        self.grudge_ticks = self.grudge_ticks.saturating_add(1);
+        let eye = ctx.pos + Vec3::new(0.0, ctx.head_height * EYE_HEIGHT_FRACTION, 0.0);
+        let to = pos - eye;
+        // Same convention as the instance: the model faces -Z at yaw 0.
+        let attacker_yaw = (-to.x).atan2(-to.z);
+        let bearing = (attacker_yaw - ctx.yaw + PI).rem_euclid(TAU) - PI;
+        let scanning = self.grudge_ticks <= self.warmup_ticks;
+        let sweep = if scanning {
+            (self.grudge_ticks as f32 * SCAN_SWEEP_RATE).sin() * SCAN_SWEEP_AMPLITUDE
+        } else {
+            0.0
+        };
+        let look = Some(HeadLook {
+            yaw: (bearing.clamp(-HEAD_TRACK_LIMIT, HEAD_TRACK_LIMIT) + sweep)
+                .clamp(-HEAD_YAW_LIMIT, HEAD_YAW_LIMIT),
+            pitch: to
+                .y
+                .atan2(to.x.hypot(to.z).max(FLAT_EPSILON))
+                .clamp(-HEAD_PITCH_LIMIT, HEAD_PITCH_LIMIT),
+        });
+        if scanning {
+            return BehaviorOutput {
+                head_look: look,
+                facing: Some(attacker_yaw + sweep * BODY_SWEEP_SHARE),
+                claims: Self::SCAN_HOLDS,
+                ..Default::default()
+            };
+        }
+        if !los::line_clear(ctx.world, eye, pos) {
+            return BehaviorOutput {
+                goal: self.escape.goal(ctx, pos),
+                head_look: look,
+                claims: EscapeRoute::HOLDS,
+                ..Default::default()
+            };
+        }
+        self.escape.reset();
         BehaviorOutput {
             goal: goal_cell_near(ctx, pos),
+            head_look: look,
             target: Some(who),
             ..Default::default()
         }
@@ -124,181 +213,4 @@ impl AiBehavior for RetaliateAi {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
-    use crate::player::PlayerId;
-    use crate::world::World;
-    use petramond_math::math::Vec3;
-    use petramond_world::block::Block;
-    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-
-    fn flat_world() -> World {
-        let mut world = World::new(0, 1);
-        let mut chunk = Chunk::new(0, 0);
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                chunk.set_block(x, 63, z, Block::Grass);
-            }
-        }
-        world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
-        world
-    }
-
-    fn ctx<'a>(
-        world: &'a World,
-        rng: &'a mut MobRng,
-        pos: petramond_math::math::Vec3,
-        players: &'a [PlayerAnchor],
-        mobs: &'a [AiMob],
-        attacker: Option<(EntityRef, u32)>,
-    ) -> AiCtx<'a> {
-        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
-        c.half_width = 0.22;
-        c.players = players;
-        c.mobs = mobs;
-        c.attacker = attacker;
-        c
-    }
-
-    #[test]
-    fn a_fresh_grudge_chases_the_attacker_and_ages_out() {
-        let world = flat_world();
-        let mut rng = MobRng::new(1);
-        let mut ai = RetaliateAi::new(200, 0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let biter = AiMob {
-            id: 9,
-            kind: Mob::Sheep,
-            pos: Vec3::new(7.5, 64.0, 2.5),
-            active: true,
-            tags: Default::default(),
-        };
-        let mobs = [biter];
-        let grudge = Some((EntityRef::Mob(9), 0));
-
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &mobs, grudge));
-        assert_eq!(out.target, Some(EntityRef::Mob(9)));
-        assert!(out.goal.is_some(), "the grudge chases the biter");
-
-        let stale = Some((EntityRef::Mob(9), 201));
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &mobs, stale));
-        assert_eq!(out.target, None, "an aged-out grudge is forgotten");
-    }
-
-    #[test]
-    fn a_dead_or_absent_attacker_ends_the_grudge() {
-        let world = flat_world();
-        let mut rng = MobRng::new(1);
-        let mut ai = RetaliateAi::new(200, 0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let corpse = [AiMob {
-            id: 9,
-            kind: Mob::Sheep,
-            pos: Vec3::new(7.5, 64.0, 2.5),
-            active: false,
-            tags: Default::default(),
-        }];
-        let grudge = Some((EntityRef::Mob(9), 0));
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &corpse, grudge));
-        assert_eq!(out.target, None, "no vengeance on a corpse");
-
-        // A player attacker who disconnected resolves to nothing the same way.
-        let gone = Some((EntityRef::Player(PlayerId(7)), 0));
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &[], gone));
-        assert_eq!(out.target, None);
-    }
-
-    #[test]
-    fn a_player_attacker_is_chased_by_live_anchor_position() {
-        let world = flat_world();
-        let mut rng = MobRng::new(1);
-        let mut ai = RetaliateAi::new(200, 0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let players = [PlayerAnchor {
-            id: PlayerId(7),
-            pos: Vec3::new(9.5, 64.9, 2.5),
-            sneaking: true, // sneaking does not hide an attacker from their victim
-            ..Default::default()
-        }];
-        let grudge = Some((EntityRef::Player(PlayerId(7)), 3));
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], grudge));
-        assert_eq!(out.target, Some(EntityRef::Player(PlayerId(7))));
-        assert!(out.goal.is_some());
-    }
-
-    #[test]
-    fn the_warmup_delays_the_counter_and_rehits_cannot_rewind_it() {
-        let world = flat_world();
-        let mut rng = MobRng::new(1);
-        let mut ai = RetaliateAi::new(200, 20);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let biter = [AiMob {
-            id: 9,
-            kind: Mob::Sheep,
-            pos: Vec3::new(7.5, 64.0, 2.5),
-            active: true,
-            tags: Default::default(),
-        }];
-
-        // The hit tick and the following warmup window: the mob reels, no
-        // target — it cannot answer on the tick it was struck. The attacker
-        // re-hits midway (age snaps back to 0): the warmup clock is the
-        // node's own and must NOT rewind.
-        for tick in 0..20u32 {
-            let age = if tick < 10 { tick } else { tick - 10 };
-            let grudge = Some((EntityRef::Mob(9), age));
-            let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &biter, grudge));
-            assert_eq!(out.target, None, "still warming up at tick {tick}");
-        }
-        let out = ai.tick(&mut ctx(
-            &world,
-            &mut rng,
-            mob,
-            &[],
-            &biter,
-            Some((EntityRef::Mob(9), 11)),
-        ));
-        assert_eq!(
-            out.target,
-            Some(EntityRef::Mob(9)),
-            "the warmup elapsed exactly once despite the re-hit"
-        );
-
-        // A DIFFERENT attacker restarts the warmup from zero.
-        let out = ai.tick(&mut ctx(
-            &world,
-            &mut rng,
-            mob,
-            &[],
-            &biter,
-            Some((EntityRef::Player(PlayerId(4)), 0)),
-        ));
-        assert_eq!(out.target, None, "a new attacker starts a new warmup");
-    }
-
-    #[test]
-    fn params_are_validated_at_load() {
-        assert!(RetaliateAi::from_params(&serde_json::json!({})).is_ok());
-        assert!(RetaliateAi::from_params(&serde_json::json!({"memory_ticks": 100})).is_ok());
-        assert!(RetaliateAi::from_params(
-            &serde_json::json!({"memory_ticks": 100, "warmup_ticks": 10})
-        )
-        .is_ok());
-        assert!(
-            RetaliateAi::from_params(&serde_json::json!({"memory_ticks": 0})).is_err(),
-            "zero memory is refused"
-        );
-        assert!(
-            RetaliateAi::from_params(
-                &serde_json::json!({"memory_ticks": 100, "warmup_ticks": 100})
-            )
-            .is_err(),
-            "a warmup the memory cannot outlive is refused"
-        );
-        assert!(
-            RetaliateAi::from_params(&serde_json::json!({"bogus": 1})).is_err(),
-            "unknown params are refused"
-        );
-    }
-}
+mod tests;

@@ -70,3 +70,9 @@ pub const GUI_IMAGE_MAX_SIDE: u32 = 640;
 /// by `bind.frame` or cycled by `fps`, not a general animation format; a mod
 /// that needs more frames wants a second sheet.
 pub const GUI_IMAGE_MAX_FRAMES: u32 = 64;
+
+/// Largest locomotion / gait-rate multiplier a brain node may decide for a
+/// mob (`AiNodeDecision::speed_scale`, the `panic` row's `speed_scale`).
+/// Bounded so a row typo or a scripted decision cannot launch a body across
+/// the map in one tick; the engine clamps the settled value to `0..=` this.
+pub const MAX_MOB_SPEED_SCALE: f32 = 4.0;

@@ -288,7 +288,7 @@ impl Instance {
             self.moving = false;
         } else if can_steer {
             self.moving = wish.length_squared() > 1e-6;
-            let mut speed = d.walk_speed;
+            let mut speed = d.walk_speed * self.walk_speed_scale;
             if self.moving {
                 let target = heading_yaw(wish);
                 let turned = turn_toward(self.yaw, target, d.turn_rate * dt);

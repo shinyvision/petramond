@@ -1045,3 +1045,32 @@ fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
         tilt: Tilt::LEVEL
     }));
 }
+
+#[test]
+fn brain_speed_scale_changes_horizontal_travel_and_gait_together() {
+    let mut normal = Instance::new(Mob::Sheep, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut hurried = Instance::new(Mob::Sheep, normal.pos, 0.0, 1);
+    normal.on_ground = true;
+    hurried.on_ground = true;
+    let ratio = 1.75;
+    hurried.walk_speed_scale = ratio;
+    for mob in [&mut normal, &mut hurried] {
+        mob.integrate(
+            0.05,
+            sheep_def(),
+            Vec3::new(0.0, 0.0, -1.0),
+            false,
+            &floor_at_zero,
+            &|_| false,
+        );
+        mob.apply_expression(
+            0.05,
+            sheep_def(),
+            &[],
+            &crate::mob::brain::BehaviorOutput::default(),
+        );
+    }
+    assert!((hurried.vel.z - normal.vel.z * ratio).abs() < 1e-5);
+    assert!((hurried.anim_time - normal.anim_time * ratio).abs() < 1e-5);
+    assert_eq!(hurried.vel.y, normal.vel.y);
+}

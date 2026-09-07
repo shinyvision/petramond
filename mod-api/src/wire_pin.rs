@@ -108,6 +108,7 @@ fn samples() -> Samples {
     s.pin("HostCall::ResolveBlock", &HostCall::ResolveBlock { name: "m:b".into() });
     s.pin("HostCall::RegisterWorldgenFeature", &HostCall::RegisterWorldgenFeature {
         feature_id: 1, stage: WorldgenStage::Trees,
+        filter: Default::default(),
     });
     s.pin("HostCall::RegisterStageReplacement", &HostCall::RegisterStageReplacement {
         stage: WorldgenStage::Terrain, callback_id: 2,
@@ -584,6 +585,7 @@ fn samples() -> Samples {
             mob_id: 1, pos: [1.0, 2.0, 3.0], cell: [1, 2, 3], yaw: 0.5,
             tick: 9, player_id: PlayerId(2),
             player_pos: [4.0, 5.0, 6.0], nav_idle: true, in_water: false,
+            target: Some(EntityRef::Mob(8)), attacker: Some((EntityRef::Player(PlayerId(2)), 3)),
             player_held: Some(ItemId(7)), player_foothold: Some([4, 5, 6]),
             tags: vec![("m:k".into(), MobTagValue::I64(-3))],
         },
@@ -641,10 +643,14 @@ fn samples() -> Samples {
     s.pin("GuestRet::GenBiomes", &GuestRet::GenBiomes(vec![3]));
     s.pin("GuestRet::HostileSpawn", &GuestRet::HostileSpawn(Some("m:k".into())));
     s.pin("GuestRet::AiDecision", &GuestRet::AiDecision(Some(AiNodeDecision {
-        goal: Some([1, 2, 3]), head_look: Some([0.5, 0.25]),
-        idle_anim: Some(1), attack: Some([2.0, 3.0]),
+        goal: Some([1, 2, 3]), head_look: Some([0.5, 0.25]), facing: Some(1.0),
+        speed_scale: Some(2.0), idle_anim: Some(1), attack: Some([2.0, 3.0]),
+        animation: Some("m".into()), target: Some(EntityRef::Mob(4)),
+        claims: ChannelClaims::of(&[DecisionChannel::Attack, DecisionChannel::Target]),
         tags: vec![MobTagWrite { key: "m:k".into(), value: Some(MobTagValue::Bool(true)) }],
     })));
+    // The claim mask is a bit set: a sample past bit 6 pins its width.
+    s.pin("ChannelClaims (all)", &ChannelClaims::ALL);
     // Registry ids are TWO bytes, and postcard varint-encodes them: any sample
     // below 128 encodes byte-for-byte like the one-byte ids used to, so ONLY a
     // high id pins the width. Without these, silently narrowing `BlockId` /
@@ -908,7 +914,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::MobTagSet", "1f07036d3a6b0105"),
     ("HostCall::MobTagDelete", "2007036d3a6b"),
     ("HostCall::ResolveBlock", "21036d3a62"),
-    ("HostCall::RegisterWorldgenFeature", "220104"),
+    ("HostCall::RegisterWorldgenFeature", "220104ffffffff0ffeffffff0f0001"),
     ("HostCall::RegisterStageReplacement", "230102"),
     ("HostCall::RegisterGenerator", "2403"),
     ("HostCall::GuiStateSet", "25016b0102"),
@@ -1091,7 +1097,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::GuiClick", "04036d3a67017701020406"),
     ("GuestCall::HostileSpawnCandidate", "05010000803f000000400000404002040601020300002042"),
     ("GuestCall::BlockBehavior", "060100020406"),
-    ("GuestCall::AiNode", "0701010000803f00000040000040400204060000003f0902000080400000a0400000c0400100010701080a0c01036d3a6b0105"),
+    ("GuestCall::AiNode", "0701010000803f00000040000040400204060000003f0902000080400000a0400000c040010001010801000203010701080a0c01036d3a6b0105"),
     ("GuestCall::ClientFrame", "08cdcc4c3d0000803f00000040000040400000003f0000803e8005e00301036d3a6700"),
     ("GuestCall::ClientKey", "090101"),
     ("GuestCall::ClientUi", "0a036d3a67000162"),
@@ -1107,7 +1113,8 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::GenBlocks", "03020102"),
     ("GuestRet::GenBiomes", "040103"),
     ("GuestRet::HostileSpawn", "0501036d3a6b"),
-    ("GuestRet::AiDecision", "060101020406010000003f0000803e010101000000400000404001036d3a6b010001"),
+    ("GuestRet::AiDecision", "060101020406010000003f0000803e010000803f0100000040010101000000400000404001016d010104a001036d3a6b010001"),
+    ("ChannelClaims (all)", "ff"),
     ("BlockId (wide)", "ac02"),
     ("ItemId (wide)", "ff1f"),
     ("GuestRet::GenWrites (wide)", "0201020406ac02"),

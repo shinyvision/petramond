@@ -12,11 +12,13 @@
 
 mod chase;
 mod contact;
+mod escape;
 mod head_look;
 mod hearing;
 mod idle_anim;
 mod los;
 mod melee;
+mod panic;
 mod retaliate;
 #[cfg(test)]
 pub mod test_support;
@@ -29,13 +31,14 @@ pub use head_look::HeadLookAi;
 pub use hearing::ChaseSoundAi;
 pub use idle_anim::IdleAnimAi;
 pub use melee::MeleeAttackAi;
+pub use panic::PanicAi;
 pub use retaliate::RetaliateAi;
 pub use wander::WanderAi;
 pub use wasm::ScriptedInputs;
 
 use super::brain::{
-    AiBehavior, PRIORITY_ATTACK, PRIORITY_CHASE, PRIORITY_CONTACT, PRIORITY_EXPRESSION,
-    PRIORITY_RETALIATE, PRIORITY_WANDER,
+    AiBehavior, PRIORITY_ATTACK, PRIORITY_CHASE, PRIORITY_CONTACT, PRIORITY_DAMAGE_RESPONSE,
+    PRIORITY_EXPRESSION, PRIORITY_WANDER,
 };
 use super::load::NodeFactory;
 use super::MobDef;
@@ -77,9 +80,13 @@ pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
             factory: chase_contact_node,
             default_priority: PRIORITY_CONTACT,
         },
+        "panic" => NodeSpec {
+            factory: panic_node,
+            default_priority: PRIORITY_DAMAGE_RESPONSE,
+        },
         "retaliate" => NodeSpec {
             factory: retaliate_node,
-            default_priority: PRIORITY_RETALIATE,
+            default_priority: PRIORITY_DAMAGE_RESPONSE,
         },
         "melee_attack" => NodeSpec {
             factory: melee_attack_node,
@@ -172,6 +179,17 @@ fn chase_contact_node(
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_inputs(inputs)?;
     Ok(Box::new(ChaseContactAi::from_params(params)?))
+}
+
+fn panic_node(
+    _node: &'static str,
+    params: &serde_json::Value,
+    inputs: ScriptedInputs,
+    _def: &'static MobDef,
+    _all: &[MobDef],
+) -> Result<Box<dyn AiBehavior>, String> {
+    no_inputs(inputs)?;
+    Ok(Box::new(PanicAi::from_params(params)?))
 }
 
 fn retaliate_node(

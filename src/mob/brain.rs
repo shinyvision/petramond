@@ -1,11 +1,12 @@
 //! Composable mob AI: a [`Brain`] is a priority-ordered set of [`AiBehavior`]s.
 //!
-//! Each game tick the brain asks every behavior for a [`BehaviorOutput`] and merges
-//! them **per field by priority** (highest-priority behavior that sets a field wins
-//! it): the navigation `goal`, the desired `head_look`, any `idle_anim` to play, and
-//! any melee `attack` to land. So behaviors compose — wander supplies a goal, a
-//! head-look behavior supplies head orientation, chase overrides the goal while a
-//! player is near — each just owning the field(s) it cares about at its priority.
+//! Each game tick the brain asks every behavior for a [`BehaviorOutput`] and settles
+//! it **per channel by priority** (see [`DecisionChannel`]): the highest-priority
+//! behavior that FILLS a channel wins it, and a behavior may also HOLD a channel
+//! empty ([`ChannelClaims`]) so nothing below it fills it. So behaviors compose —
+//! wander supplies a goal, a head-look behavior supplies head orientation, chase
+//! overrides the goal while a player is near, a fleeing response holds the attack
+//! channel shut — each owning exactly the channels it names at its priority.
 //!
 //! Behaviors hold their own per-instance state, so — unlike the stateless `&'static`
 //! block behaviors — they are owned per mob (`Box<dyn AiBehavior>`), built per spawn
@@ -16,6 +17,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::world::World;
+pub use mod_api::{ChannelClaims, DecisionChannel};
 use petramond_math::math::{IVec3, Vec3};
 
 use super::model_meta::IdleAnimMeta;
@@ -34,12 +36,14 @@ pub const PRIORITY_CHASE: u8 = 20;
 /// Contact aggression (`chase_contact`) — above ordinary chases: something
 /// touching the mob's body beats whatever it was hunting at a distance.
 pub const PRIORITY_CONTACT: u8 = 22;
-/// Retaliation (`retaliate`) — above contact: a mob that was actually hit
-/// turns on its attacker before answering a mere bump.
-pub const PRIORITY_RETALIATE: u8 = 25;
-/// Attack behaviors (`melee_attack`) — above chase; they own the `attack` field (which
-/// nothing else contends for), and the explicit slot keeps the ordering readable.
+/// Attack behaviors (`melee_attack`) — above chase; they own the `attack` channel
+/// (which nothing else contends for), and the explicit slot keeps the ordering
+/// readable.
 pub const PRIORITY_ATTACK: u8 = 30;
+/// Damage responses (`panic`, `retaliate`) — above attacks: a mob that was just
+/// hit answers THAT first, and holding the attack/target channels from up here
+/// is how fleeing or reeling suppresses a stale combat decision below.
+pub const PRIORITY_DAMAGE_RESPONSE: u8 = 40;
 /// A desired head orientation **relative to the body** (radians): `yaw` swivels the
 /// head left/right, `pitch` tilts it up/down. The renderer applies it to the model's
 /// `head` bone (when the active animation isn't already moving the head).
@@ -248,7 +252,8 @@ pub struct AttackIntent {
 }
 
 /// One behavior's contribution to a tick. The opinion fields default to "no
-/// opinion"; the brain keeps the highest-priority non-`None` value per field.
+/// opinion"; the brain settles each [`DecisionChannel`] with the highest-priority
+/// behavior that filled it, or that HELD it empty through [`claims`](Self::claims).
 /// `tag_writes` is not arbitrated — every node's writes apply, in brain order.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct BehaviorOutput {
@@ -256,19 +261,77 @@ pub struct BehaviorOutput {
     pub goal: Option<IVec3>,
     /// A desired head orientation (relative to the body).
     pub head_look: Option<HeadLook>,
+    /// Desired body facing in world radians, eased at the species turn rate.
+    pub facing: Option<f32>,
+    /// Horizontal locomotion and gait rate multiplier for this tick.
+    pub speed_scale: Option<f32>,
     /// An `idle_*` animation index this behavior wants played.
     pub idle_anim: Option<u8>,
     /// A melee strike this behavior wants landed this tick.
     pub attack: Option<AttackIntent>,
-    /// The entity this behavior is engaged on. The merged value is latched by
+    /// A named animation to activate at the start of an action.
+    pub animation: Option<String>,
+    /// The entity this behavior is engaged on. The settled value is latched by
     /// the instance and fed back as next tick's [`AiCtx::target`], so attack
     /// nodes strike what the winning perception/chase node locked.
     pub target: Option<EntityRef>,
+    /// Channels this behavior holds EMPTY against every lower-priority node
+    /// (filling a channel already settles it). On the settled decision: the
+    /// union of every node's holds this tick.
+    pub claims: ChannelClaims,
     /// Tag writes on the deciding mob itself (`None` value = delete),
     /// namespace-validated at the emitting node. The instance applies them
     /// after the whole brain has decided — the engine-applied half of the
     /// scripted `AiNodeDecision::tags` channel.
     pub tag_writes: Vec<(String, Option<super::MobTagValue>)>,
+}
+
+/// The arbitrated fields of a [`BehaviorOutput`] paired with their
+/// [`DecisionChannel`] — the one place the pairing is written down.
+macro_rules! for_each_channel {
+    ($m:ident) => {
+        $m!(goal => Goal);
+        $m!(head_look => HeadLook);
+        $m!(facing => Facing);
+        $m!(speed_scale => SpeedScale);
+        $m!(idle_anim => IdleAnim);
+        $m!(attack => Attack);
+        $m!(animation => Animation);
+        $m!(target => Target);
+    };
+}
+
+impl BehaviorOutput {
+    /// The channels this output filled with a value.
+    pub fn filled(&self) -> ChannelClaims {
+        let mut filled = ChannelClaims::NONE;
+        macro_rules! mark {
+            ($field:ident => $channel:ident) => {
+                if self.$field.is_some() {
+                    filled = filled.with(DecisionChannel::$channel);
+                }
+            };
+        }
+        for_each_channel!(mark);
+        filled
+    }
+
+    /// Take every channel of `offer` that is still open, then close the ones
+    /// it filled or held.
+    fn settle(&mut self, offer: BehaviorOutput, settled: &mut ChannelClaims) {
+        let closing = offer.claims | offer.filled();
+        macro_rules! take {
+            ($field:ident => $channel:ident) => {
+                if !settled.contains(DecisionChannel::$channel) {
+                    self.$field = offer.$field;
+                }
+            };
+        }
+        for_each_channel!(take);
+        self.claims |= offer.claims;
+        self.tag_writes.extend(offer.tag_writes);
+        *settled |= closing;
+    }
 }
 
 /// One composable unit of mob AI. Each tick it contributes a [`BehaviorOutput`].
@@ -308,114 +371,21 @@ impl Brain {
         self
     }
 
-    /// The merged decision for this tick: per field, the value from the
-    /// highest-priority behavior that supplied one (`or` keeps the first `Some`,
-    /// and behaviors are visited high→low priority).
+    /// The settled decision for this tick: behaviors are visited high→low
+    /// priority and each channel goes to the first one that fills it, or stays
+    /// empty once one holds it (see [`BehaviorOutput::claims`]). Every
+    /// behavior ticks every tick, so clocks advance and tag writes flow even
+    /// under a hold.
     pub fn decide(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
         let mut decision = BehaviorOutput::default();
+        let mut settled = ChannelClaims::NONE;
         for entry in &mut self.entries {
             let out = entry.behavior.tick(ctx);
-            decision.goal = decision.goal.or(out.goal);
-            decision.head_look = decision.head_look.or(out.head_look);
-            decision.idle_anim = decision.idle_anim.or(out.idle_anim);
-            decision.attack = decision.attack.or(out.attack);
-            decision.target = decision.target.or(out.target);
-            decision.tag_writes.extend(out.tag_writes);
+            decision.settle(out, &mut settled);
         }
         decision
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mob::behavior::test_support::ctx;
-
-    /// A behavior that always wants a fixed goal.
-    struct Goal(IVec3);
-    impl AiBehavior for Goal {
-        fn tick(&mut self, _ctx: &mut AiCtx) -> BehaviorOutput {
-            BehaviorOutput {
-                goal: Some(self.0),
-                ..Default::default()
-            }
-        }
-    }
-    /// A behavior that only ever sets a head-look (never a goal).
-    struct Look(HeadLook);
-    impl AiBehavior for Look {
-        fn tick(&mut self, _ctx: &mut AiCtx) -> BehaviorOutput {
-            BehaviorOutput {
-                head_look: Some(self.0),
-                ..Default::default()
-            }
-        }
-    }
-    /// A behavior that yields entirely.
-    struct Yield;
-    impl AiBehavior for Yield {
-        fn tick(&mut self, _ctx: &mut AiCtx) -> BehaviorOutput {
-            BehaviorOutput::default()
-        }
-    }
-
-    #[test]
-    fn higher_priority_goal_wins_but_fields_compose() {
-        let world = World::new(0, 1);
-        let mut rng = MobRng::new(1);
-        let look = HeadLook {
-            yaw: 0.5,
-            pitch: 0.1,
-        };
-        // Wander (low) wants one goal, a high-priority behavior wants another + a
-        // head-look. The goal comes from the high-priority one; the head-look (set by
-        // nobody else) still composes in.
-        let mut brain = Brain::new()
-            .with_boxed(PRIORITY_WANDER, Box::new(Goal(IVec3::new(1, 0, 0))))
-            .with_boxed(PRIORITY_EXPRESSION, Box::new(Look(look)))
-            .with_boxed(100, Box::new(Goal(IVec3::new(9, 0, 0))));
-        let d = brain.decide(&mut ctx(&world, &mut rng));
-        assert_eq!(
-            d.goal,
-            Some(IVec3::new(9, 0, 0)),
-            "highest-priority goal wins"
-        );
-        assert_eq!(
-            d.head_look,
-            Some(look),
-            "an orthogonal field still composes in"
-        );
-    }
-
-    #[test]
-    fn yielding_behaviors_leave_fields_none() {
-        let world = World::new(0, 1);
-        let mut rng = MobRng::new(1);
-        let mut brain = Brain::new().with_boxed(PRIORITY_WANDER, Box::new(Yield));
-        let d = brain.decide(&mut ctx(&world, &mut rng));
-        assert_eq!(d, BehaviorOutput::default());
-    }
-
-    #[test]
-    fn lower_priority_fills_a_field_a_higher_one_left_unset() {
-        let world = World::new(0, 1);
-        let mut rng = MobRng::new(1);
-        // The high-priority behavior only sets head_look; the low one supplies the goal.
-        let mut brain = Brain::new()
-            .with_boxed(PRIORITY_WANDER, Box::new(Goal(IVec3::new(2, 0, 0))))
-            .with_boxed(
-                100,
-                Box::new(Look(HeadLook {
-                    yaw: 0.0,
-                    pitch: 0.0,
-                })),
-            );
-        let d = brain.decide(&mut ctx(&world, &mut rng));
-        assert_eq!(
-            d.goal,
-            Some(IVec3::new(2, 0, 0)),
-            "goal falls through to wander"
-        );
-        assert!(d.head_look.is_some());
-    }
-}
+mod tests;

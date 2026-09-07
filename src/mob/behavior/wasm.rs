@@ -19,6 +19,7 @@
 use mod_api::AiNodeCtx;
 
 use super::super::brain::{AiBehavior, AiCtx, AttackIntent, BehaviorOutput, HeadLook};
+use super::super::EntityRef;
 pub use petramond_world::ai_vocab::ScriptedInputs;
 
 use petramond_math::math::IVec3;
@@ -52,6 +53,8 @@ impl AiBehavior for WasmNodeAi {
             player_pos: ctx.player_pos.to_array(),
             nav_idle: ctx.nav_idle,
             in_water: ctx.in_water,
+            target: ctx.target.map(abi_entity),
+            attacker: ctx.attacker.map(|(who, age)| (abi_entity(who), age)),
             player_held: (self.inputs.player_held)
                 .then_some(ctx.player_held)
                 .flatten()
@@ -79,20 +82,52 @@ impl AiBehavior for WasmNodeAi {
         let Some(d) = crate::modding::ai::dispatch(self.key, &snapshot) else {
             return BehaviorOutput::default();
         };
+        // Every channel an engine node fills, converted 1:1. A scripted strike
+        // lands on the decision's own target, else on the brain's current lock
+        // — the `melee_attack` rule; no target, no strike.
+        let target = d.target.map(engine_entity);
         BehaviorOutput {
             goal: d.goal.map(IVec3::from),
             head_look: d.head_look.map(|[yaw, pitch]| HeadLook { yaw, pitch }),
+            facing: d.facing.filter(|angle| angle.is_finite()),
+            speed_scale: d.speed_scale.filter(|scale| scale.is_finite()),
             idle_anim: d.idle_anim,
-            // A scripted strike targets the nearest player — the only target
-            // the single-player-shaped AI-node ABI can express today.
-            attack: d.attack.map(|[damage, knockback]| AttackIntent {
-                target: crate::mob::EntityRef::Player(ctx.player_id),
-                damage,
-                knockback,
+            attack: d.attack.and_then(|[damage, knockback]| {
+                target.or(ctx.target).map(|target| AttackIntent {
+                    target,
+                    damage,
+                    knockback,
+                })
             }),
-            target: None,
+            animation: d.animation.filter(|name| {
+                let ok = crate::mob::anim::valid_clip_name(name);
+                if !ok {
+                    log::warn!(
+                        "AI node '{}' decision animation {name:?} is empty or over {} bytes — dropped",
+                        self.key,
+                        mod_api::MAX_MOB_ANIM_NAME_BYTES
+                    );
+                }
+                ok
+            }),
+            target,
+            claims: d.claims,
             tag_writes: self.convert_tag_writes(d.tags),
         }
+    }
+}
+
+fn abi_entity(who: EntityRef) -> mod_api::EntityRef {
+    match who {
+        EntityRef::Player(id) => mod_api::EntityRef::Player(mod_api::PlayerId(id.0)),
+        EntityRef::Mob(id) => mod_api::EntityRef::Mob(id),
+    }
+}
+
+fn engine_entity(who: mod_api::EntityRef) -> EntityRef {
+    match who {
+        mod_api::EntityRef::Player(id) => EntityRef::Player(crate::player::PlayerId(id.0)),
+        mod_api::EntityRef::Mob(id) => EntityRef::Mob(id),
     }
 }
 

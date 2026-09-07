@@ -113,6 +113,7 @@ pub struct Instance {
     /// Seconds of knockback stagger remaining. Kept separate from the flash timer so
     /// feedback can compose knockback without forcing a red flash, or vice versa.
     pub(super) stagger_timer: f32,
+    pub(super) walk_speed_scale: f32,
     /// Horizontal knockback velocity (m/s), decaying over the stagger. Kept separate
     /// from `vel` so the per-tick wish-velocity overwrite can't wipe it.
     pub(super) knockback: Vec3,
@@ -258,6 +259,7 @@ impl Instance {
             distance_despawned: false,
             hurt_timer: 0.0,
             stagger_timer: 0.0,
+            walk_speed_scale: 1.0,
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
             tags: std::sync::Arc::new(d.tags.clone()),
@@ -689,6 +691,16 @@ impl Instance {
         };
         self.attack = decision.attack;
         self.current_target = decision.target;
+        self.walk_speed_scale = decision
+            .speed_scale
+            .filter(|scale| scale.is_finite())
+            .unwrap_or(1.0)
+            .clamp(0.0, mod_api::MAX_MOB_SPEED_SCALE);
+        if self.stagger_timer <= 0.0 {
+            if let Some(facing) = decision.facing.filter(|angle| angle.is_finite()) {
+                self.yaw = super::kinematics::turn_toward(self.yaw, facing, d.turn_rate * dt);
+            }
+        }
         // Tag writes carried back by scripted decisions land HERE, after the
         // whole brain decided — the engine-applied half of the detached
         // dispatch contract (`AiNodeDecision::tags`). Same cap rule as the

@@ -35,6 +35,7 @@ use crate::asset_cache::CompiledAsset;
 use petramond_math::face::Face;
 
 mod anim;
+pub mod clips;
 mod parse;
 #[cfg(test)]
 mod tests;
@@ -448,7 +449,7 @@ impl Model {
         // Stable, name-sorted index of the idle_* animations (matches the sim's count).
         let mut idle_anim_names: Vec<String> = animations
             .keys()
-            .filter(|n| n.starts_with("idle_"))
+            .filter(|n| clips::is_idle(n))
             .cloned()
             .collect();
         idle_anim_names.sort();

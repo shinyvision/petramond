@@ -47,6 +47,14 @@ struct MeleeParams {
     knockback: f64,
     /// Game ticks between strikes.
     cooldown_ticks: u32,
+    /// Ticks between announcing a strike (its clip starts, the target is
+    /// latched) and landing it; 0 = land on the announcing tick. Must be
+    /// shorter than the cooldown so a strike lands before the next may start.
+    #[serde(default)]
+    windup_ticks: u32,
+    /// Model clip started when a strike is announced (the wind-up read).
+    #[serde(default)]
+    animation: Option<String>,
 }
 
 pub struct MeleeAttackAi {
@@ -56,6 +64,9 @@ pub struct MeleeAttackAi {
     cooldown_ticks: u32,
     /// Ticks until the next strike may land.
     cooldown: u32,
+    windup_ticks: u32,
+    pending: Option<(EntityRef, u32)>,
+    animation: Option<String>,
 }
 
 impl MeleeAttackAi {
@@ -66,6 +77,9 @@ impl MeleeAttackAi {
             knockback,
             cooldown_ticks: cooldown_ticks.max(1),
             cooldown: 0,
+            windup_ticks: 0,
+            pending: None,
+            animation: None,
         }
     }
 
@@ -79,19 +93,48 @@ impl MeleeAttackAi {
         if p.cooldown_ticks == 0 {
             return Err("cooldown_ticks must be >= 1".into());
         }
-        Ok(MeleeAttackAi::new(
+        if p.windup_ticks >= p.cooldown_ticks {
+            return Err("windup_ticks must be less than cooldown_ticks".into());
+        }
+        if p.animation
+            .as_deref()
+            .is_some_and(|name| !crate::mob::anim::valid_clip_name(name))
+        {
+            return Err(format!(
+                "animation must be a nonempty name of at most {} bytes",
+                mod_api::MAX_MOB_ANIM_NAME_BYTES
+            ));
+        }
+        let mut ai = MeleeAttackAi::new(
             p.reach as f32,
             p.damage as f32,
             p.knockback as f32,
             p.cooldown_ticks,
-        ))
+        );
+        ai.windup_ticks = p.windup_ticks;
+        ai.animation = p.animation;
+        Ok(ai)
     }
 }
 
 impl AiBehavior for MeleeAttackAi {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
         self.cooldown = self.cooldown.saturating_sub(1);
-        if self.cooldown > 0 {
+        let impact = if let Some((target, remaining)) = self.pending {
+            if ctx.target != Some(target) {
+                self.pending = None;
+                return BehaviorOutput::default();
+            }
+            if remaining > 1 {
+                self.pending = Some((target, remaining - 1));
+                return BehaviorOutput::default();
+            }
+            self.pending = None;
+            true
+        } else {
+            false
+        };
+        if self.cooldown > 0 && !impact {
             return BehaviorOutput::default();
         }
         // Resolve the strike target: the brain's current lock ONLY — no lock,
@@ -131,8 +174,18 @@ impl AiBehavior for MeleeAttackAi {
         {
             return BehaviorOutput::default();
         }
-        self.cooldown = self.cooldown_ticks;
+        if !impact {
+            self.cooldown = self.cooldown_ticks;
+            if self.windup_ticks > 0 {
+                self.pending = Some((target, self.windup_ticks));
+                return BehaviorOutput {
+                    animation: self.animation.clone(),
+                    ..Default::default()
+                };
+            }
+        }
         BehaviorOutput {
+            animation: if impact { None } else { self.animation.clone() },
             attack: Some(AttackIntent {
                 target,
                 damage: self.damage,
@@ -161,219 +214,4 @@ fn wrap_angle(a: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mob::MobRng;
-    use crate::world::World;
-    use petramond_world::block::Block;
-    use petramond_world::chunk::ChunkPos;
-
-    /// A ctx whose brain has the (default-id) player LOCKED — melee only
-    /// strikes a published lock, so the classic strike tests provide one.
-    /// The anchor slice is leaked: test-only, and `AiCtx` borrows it.
-    fn ctx<'a>(
-        world: &'a World,
-        rng: &'a mut MobRng,
-        pos: Vec3,
-        yaw: f32,
-        player: Vec3,
-    ) -> AiCtx<'a> {
-        let players: &'static [crate::mob::PlayerAnchor] =
-            Box::leak(Box::new([crate::mob::PlayerAnchor {
-                pos: player,
-                ..Default::default()
-            }]));
-        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
-        c.yaw = yaw;
-        c.head_height = 1.3;
-        c.half_width = 0.45;
-        c.player_pos = player;
-        c.players = players;
-        c.target = Some(EntityRef::Player(Default::default()));
-        c.head = 2;
-        c
-    }
-
-    /// A player one block in front of the mob's face (-Z), inside a 1.5 reach.
-    fn in_reach() -> (Vec3, f32, Vec3) {
-        (Vec3::new(8.5, 64.0, 8.5), 0.0, Vec3::new(8.5, 64.9, 7.2))
-    }
-
-    #[test]
-    fn strikes_in_reach_then_is_gated_by_the_cooldown() {
-        let world = World::new(0, 1);
-        let mut rng = MobRng::new(1);
-        let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
-        let (pos, yaw, player) = in_reach();
-
-        let intent = ai
-            .tick(&mut ctx(&world, &mut rng, pos, yaw, player))
-            .attack
-            .expect("in-reach facing strike lands");
-        assert_eq!(
-            intent,
-            AttackIntent {
-                target: EntityRef::Player(Default::default()),
-                damage: 2.0,
-                knockback: 5.0
-            },
-            "the intent names the locked player"
-        );
-
-        // The next strike only lands once the cooldown has fully elapsed.
-        for i in 0..9 {
-            assert!(
-                ai.tick(&mut ctx(&world, &mut rng, pos, yaw, player))
-                    .attack
-                    .is_none(),
-                "tick {i} is inside the cooldown"
-            );
-        }
-        assert!(
-            ai.tick(&mut ctx(&world, &mut rng, pos, yaw, player))
-                .attack
-                .is_some(),
-            "the cooldown elapsed, the next strike lands"
-        );
-    }
-
-    #[test]
-    fn out_of_reach_or_facing_away_lands_nothing() {
-        let world = World::new(0, 1);
-        let mut rng = MobRng::new(1);
-        let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
-        let pos = Vec3::new(8.5, 64.0, 8.5);
-
-        // 5 blocks away: out of reach.
-        let far = Vec3::new(8.5, 64.9, 3.5);
-        assert!(ai
-            .tick(&mut ctx(&world, &mut rng, pos, 0.0, far))
-            .attack
-            .is_none());
-
-        // In reach at -Z but the mob faces +Z (yaw PI): squarely behind it.
-        let behind = Vec3::new(8.5, 64.9, 7.2);
-        assert!(
-            ai.tick(&mut ctx(&world, &mut rng, pos, PI, behind))
-                .attack
-                .is_none(),
-            "a player behind the mob is not struck"
-        );
-        // The cooldown was never armed by those misses.
-        assert!(
-            ai.tick(&mut ctx(&world, &mut rng, pos, 0.0, behind))
-                .attack
-                .is_some(),
-            "a miss does not arm the cooldown"
-        );
-    }
-
-    #[test]
-    fn block_between_mob_and_player_prevents_strike_without_cooldown() {
-        let mut world = World::new(0, 1);
-        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
-        assert!(world.set_block_world(8, 64, 7, Block::Stone));
-        let mut rng = MobRng::new(1);
-        let mut ai = MeleeAttackAi::new(3.0, 2.0, 5.0, 10);
-        let pos = Vec3::new(8.5, 64.0, 8.5);
-        let player = Vec3::new(8.5, 64.9, 5.8);
-
-        assert!(
-            ai.tick(&mut ctx(&world, &mut rng, pos, 0.0, player))
-                .attack
-                .is_none(),
-            "a colliding block between mob and player blocks melee"
-        );
-
-        assert!(world.set_block_world(8, 64, 7, Block::Air));
-        assert!(
-            ai.tick(&mut ctx(&world, &mut rng, pos, 0.0, player))
-                .attack
-                .is_some(),
-            "the blocked attempt did not arm cooldown"
-        );
-    }
-
-    #[test]
-    fn no_lock_means_no_strike_even_in_reach() {
-        // Attack executes on perception's decision; it never perceives on its
-        // own. An unlocked mob standing on top of the player swings at nothing
-        // — this is what makes a silent player safe beside a blind hunter.
-        let world = World::new(0, 1);
-        let mut rng = MobRng::new(1);
-        let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
-        let (pos, yaw, player) = in_reach();
-        let mut c = ctx(&world, &mut rng, pos, yaw, player);
-        c.target = None;
-        assert!(ai.tick(&mut c).attack.is_none());
-        // And the non-strike never armed the cooldown.
-        assert!(ai
-            .tick(&mut ctx(&world, &mut rng, pos, yaw, player))
-            .attack
-            .is_some());
-    }
-
-    #[test]
-    fn a_locked_mob_target_is_struck_and_a_vanished_one_fizzles() {
-        use super::super::super::brain::AiMob;
-        let world = World::new(0, 1);
-        let mut rng = MobRng::new(1);
-        let mut ai = MeleeAttackAi::new(1.5, 4.0, 5.0, 10);
-        let pos = Vec3::new(8.5, 64.0, 8.5);
-        // A victim mob one block in front of the striker's face (-Z), well
-        // inside reach once its own half-width pads the gap. The player is far
-        // away — a locked mob target must NOT fall back to the player.
-        let victim = AiMob {
-            id: 7,
-            kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(8.5, 64.0, 7.2),
-            active: true,
-            tags: Default::default(),
-        };
-        let far_player = Vec3::new(80.0, 64.9, 80.0);
-
-        let mut c = ctx(&world, &mut rng, pos, 0.0, far_player);
-        let mobs = [victim];
-        c.mobs = &mobs;
-        c.target = Some(EntityRef::Mob(7));
-        let intent = ai.tick(&mut c).attack.expect("locked mob target in reach");
-        assert_eq!(
-            intent.target,
-            EntityRef::Mob(7),
-            "the intent names the locked mob"
-        );
-
-        // The same lock with the victim gone (dead / despawned): no strike, no
-        // player fallback, and the miss never armed the cooldown.
-        let mut c = ctx(&world, &mut rng, pos, 0.0, far_player);
-        c.target = Some(EntityRef::Mob(7));
-        assert!(
-            ai.tick(&mut c).attack.is_none(),
-            "a vanished lock fizzles instead of striking the player"
-        );
-    }
-
-    #[test]
-    fn params_are_validated_at_load() {
-        let ok = serde_json::json!({"reach": 1.5, "damage": 2.0, "knockback": 5.0, "cooldown_ticks": 20});
-        assert!(MeleeAttackAi::from_params(&ok).is_ok());
-        assert!(
-            MeleeAttackAi::from_params(&serde_json::json!({"reach": 1.5})).is_err(),
-            "missing fields are refused"
-        );
-        assert!(
-            MeleeAttackAi::from_params(
-                &serde_json::json!({"reach": 0.0, "damage": 2.0, "knockback": 5.0, "cooldown_ticks": 20})
-            )
-            .is_err(),
-            "zero reach is refused"
-        );
-        assert!(
-            MeleeAttackAi::from_params(
-                &serde_json::json!({"reach": 1.5, "damage": 2.0, "knockback": 5.0, "cooldown_ticks": 0})
-            )
-            .is_err(),
-            "a zero cooldown is refused"
-        );
-    }
-}
+mod tests;
