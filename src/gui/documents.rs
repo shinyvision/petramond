@@ -386,7 +386,19 @@ fn inject_item_tooltip(doc: &mut Document) {
         "children": [
             { "type": "label", "small": true, "wrap": true, "bind": { "text": "item_tip_name" } },
             { "type": "label", "small": true, "style": "label.muted", "wrap": true,
-              "bind": { "text": "item_tip_info", "visible": "item_tip_has_info" } }
+              "bind": { "text": "item_tip_info", "visible": "item_tip_has_info" } },
+            { "type": "label", "small": true, "wrap": true,
+              "bind": { "text": "item_tip_instance", "visible": "item_tip_instance" } },
+            { "type": "row", "layout": { "gap": 4 }, "children": [
+                { "type": "image", "image": "", "layout": { "w": 16, "h": 16 },
+                  "bind": { "image": "item_tip_icon0", "visible": "item_tip_icon0" } },
+                { "type": "image", "image": "", "layout": { "w": 16, "h": 16 },
+                  "bind": { "image": "item_tip_icon1", "visible": "item_tip_icon1" } },
+                { "type": "image", "image": "", "layout": { "w": 16, "h": 16 },
+                  "bind": { "image": "item_tip_icon2", "visible": "item_tip_icon2" } },
+                { "type": "image", "image": "", "layout": { "w": 16, "h": 16 },
+                  "bind": { "image": "item_tip_icon3", "visible": "item_tip_icon3" } }
+            ] }
         ]
     }"#;
     fn binds_item_tip(node: &Node) -> bool {

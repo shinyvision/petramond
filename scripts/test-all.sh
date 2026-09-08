@@ -6,8 +6,8 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 IFS=' ' read -r -a cargo_cmd <<< "${CARGO:-cargo}"
 cd "$repo_root"
 
-"${cargo_cmd[@]}" test --workspace --all-targets
-"${cargo_cmd[@]}" test -p petramond-worldgen --features worldgen-tests --all-targets
-"${cargo_cmd[@]}" test --manifest-path mods-src/Cargo.toml --target-dir target --workspace --all-targets
-"${cargo_cmd[@]}" test --manifest-path mod-sdk/Cargo.toml --target-dir target --all-targets
-"${cargo_cmd[@]}" test --manifest-path gui-builder/Cargo.toml --target-dir target --all-targets
+"${cargo_cmd[@]}" test --profile playtest --workspace --all-targets
+"${cargo_cmd[@]}" test --profile playtest -p petramond-worldgen --features worldgen-tests --all-targets
+"${cargo_cmd[@]}" test --profile playtest --manifest-path mods-src/Cargo.toml --target-dir target --workspace --all-targets
+"${cargo_cmd[@]}" test --profile playtest --manifest-path mod-sdk/Cargo.toml --target-dir target --all-targets
+"${cargo_cmd[@]}" test --profile playtest --manifest-path gui-builder/Cargo.toml --target-dir target --all-targets

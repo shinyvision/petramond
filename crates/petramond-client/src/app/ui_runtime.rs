@@ -167,11 +167,7 @@ impl AppUi {
     ) {
         self.state.clear();
         for (key, value) in state {
-            let value = match value {
-                mod_api::GuiValue::F32(v) => petramond_ui::UiValue::F32(*v),
-                mod_api::GuiValue::I32(v) => petramond_ui::UiValue::I32(*v),
-                mod_api::GuiValue::Str(v) => petramond_ui::UiValue::Str(v.clone()),
-            };
+            let value = super::gui_value::from_api(value);
             self.state.set(key.clone(), value);
         }
     }

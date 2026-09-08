@@ -224,7 +224,7 @@ fn is_secondary_activation(ev: &petramond_ui::UiEvent) -> bool {
     )
 }
 
-fn is_shell_activation(ev: &petramond_ui::UiEvent) -> bool {
+fn is_widget_activation(ev: &petramond_ui::UiEvent) -> bool {
     matches!(
         ev,
         petramond_ui::UiEvent::Click { .. }
@@ -252,7 +252,7 @@ impl App {
             if is_secondary_activation(&ev) {
                 continue;
             }
-            if is_shell_activation(&ev) {
+            if is_widget_activation(&ev) {
                 self.audio.play(Sound::UiClick);
             }
             (ctl.handle)(self, ev);
@@ -285,24 +285,16 @@ impl App {
             // ordinary named GUI-state value; nothing here knows a furnace.
             if let Some(map) = gui_state {
                 for (key, value) in map.iter() {
-                    let v = match value {
-                        petramond_world::gui_state::GuiValue::F32(v) => {
-                            petramond_ui::UiValue::F32(*v)
-                        }
-                        petramond_world::gui_state::GuiValue::I32(v) => {
-                            petramond_ui::UiValue::I32(*v)
-                        }
-                        petramond_world::gui_state::GuiValue::Str(s) => {
-                            petramond_ui::UiValue::Str(s.clone())
-                        }
-                    };
+                    let v = crate::app::gui_value::from_world(value);
                     state.set(key.clone(), v);
                 }
             }
         }
         if let Some(game) = self.game.as_ref() {
             let hover_slot = self.ui.out().hover_slot.clone();
-            crate::app::item_tooltip::populate(game, hover_slot.as_ref(), self.ui.state_mut());
+            let images =
+                crate::app::item_tooltip::populate(game, hover_slot.as_ref(), self.ui.state_mut());
+            self.ui.set_extra_images(&images);
             crate::app::item_tooltip::populate_slot_tip(
                 game,
                 hover_slot.as_ref(),
@@ -320,6 +312,9 @@ impl App {
             }
         };
         for ev in self.ui.take_events() {
+            if is_widget_activation(&ev) && !is_secondary_activation(&ev) {
+                self.audio.play(Sound::UiClick);
+            }
             let handled_crafting = if crafting_station.is_some() {
                 self.game
                     .as_mut()

@@ -135,6 +135,11 @@ pub(super) fn gui_value(v: api::GuiValue) -> petramond_world::gui_state::GuiValu
         api::GuiValue::F32(x) => petramond_world::gui_state::GuiValue::F32(x),
         api::GuiValue::I32(x) => petramond_world::gui_state::GuiValue::I32(x),
         api::GuiValue::Str(s) => petramond_world::gui_state::GuiValue::Str(s),
+        api::GuiValue::List(rows) => petramond_world::gui_state::GuiValue::List(
+            rows.into_iter()
+                .map(|row| row.into_iter().map(|(k, v)| (k, gui_value(v))).collect())
+                .collect(),
+        ),
     }
 }
 
@@ -144,6 +149,15 @@ pub(super) fn gui_value_out(v: &petramond_world::gui_state::GuiValue) -> api::Gu
         petramond_world::gui_state::GuiValue::F32(x) => api::GuiValue::F32(*x),
         petramond_world::gui_state::GuiValue::I32(x) => api::GuiValue::I32(*x),
         petramond_world::gui_state::GuiValue::Str(s) => api::GuiValue::Str(s.clone()),
+        petramond_world::gui_state::GuiValue::List(rows) => api::GuiValue::List(
+            rows.iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|(k, v)| (k.clone(), gui_value_out(v)))
+                        .collect()
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -489,6 +503,21 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gui_lists_preserve_named_values_through_guest_and_network_roundtrip() {
+        let value = api::GuiValue::List(vec![[
+            ("item".into(), api::GuiValue::Str("test:ingredient".into())),
+            ("count".into(), api::GuiValue::I32(7)),
+            ("nested".into(), api::GuiValue::List(vec![])),
+        ]
+        .into_iter()
+        .collect()]);
+        let decoded: api::GuiValue = api::decode(&api::encode(&value).unwrap()).unwrap();
+        let world = gui_value(decoded);
+        let wire = crate::net::protocol::GuiValueWire::from_value(&world);
+        assert_eq!(gui_value_out(&wire.into_value()), value);
+    }
 
     /// A drops override is runtime data from a mod, so its ingestion is
     /// LENIENT like every instance-data read: an unknown item name drops

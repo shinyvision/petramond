@@ -199,8 +199,9 @@ fn hidden_recipe_selection_returns_when_the_search_matches_again() {
     );
 }
 
+#[cfg(feature = "audio")]
 #[test]
-fn crafting_buttons_do_not_use_the_shell_ui_click_sound() {
+fn crafting_buttons_play_ui_click_sound() {
     let mut app = app();
     app.install_test_crafting_recipe();
     app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
@@ -216,7 +217,10 @@ fn crafting_buttons_do_not_use_the_shell_ui_click_sound() {
     app.set_cursor_position(x, y);
     app.click_screen_for_test(screen, 0.2);
 
-    assert!(app.audio.take_played_for_test().is_empty());
+    assert_eq!(
+        app.audio.take_played_for_test(),
+        vec![petramond_world::sound_registry::Sound::UiClick; 2]
+    );
 }
 
 #[test]

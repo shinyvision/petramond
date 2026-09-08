@@ -22,7 +22,6 @@ use validate::{
     CLIENT_ENV_PARAM_MAX, CLIENT_IMAGE_MAX, CLIENT_IMAGE_SIDE_MAX, CLIENT_KEY_BINDING_MAX,
     CLIENT_OVERLAY_DISPLAY_SIDE_MAX, CLIENT_OVERLAY_MAX, CLIENT_SURFACE_QUERY_MAX,
     CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX, CLIENT_UI_STATE_MAX,
-    CLIENT_UI_STRING_MAX,
 };
 
 /// Whether a `client_wasm` instance may issue this call.
@@ -185,6 +184,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::RegisterAiNode { .. }
         | HostCall::ContainerGet { .. }
         | HostCall::ContainerSet { .. }
+        | HostCall::ContainerInsert { .. }
+        | HostCall::ContainerTake { .. }
         | HostCall::RecipeResult { .. }
         | HostCall::EffectApply { .. }
         | HostCall::EffectsActive
@@ -611,8 +612,8 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     "client UI key '{key}' must be namespaced '{mod_id}:name'"
                 ));
             }
-            if matches!(&value, mod_api::GuiValue::Str(text) if text.len() > CLIENT_UI_STRING_MAX) {
-                return HostRet::Error("client UI string exceeds its size limit".into());
+            if !validate::gui_value_fits(&value) {
+                return HostRet::Error("client UI value exceeds its size limit".into());
             }
             if !client.ui_state.contains_key(&key) && client.ui_state.len() >= CLIENT_UI_STATE_MAX {
                 return HostRet::Error("client UI state entry limit reached".into());

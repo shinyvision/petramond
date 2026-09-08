@@ -45,3 +45,14 @@ host_fn! {
     pub fn recipe_result(class: &str, item: &str) -> Option<ItemStackData>
         => RecipeResult { class: class.into(), item: item.into() } => ItemStack
 }
+
+host_fn! {
+    /// Insert into any container using its declared admission rules, returning any remainder.
+    pub fn container_insert(pos: [i32; 3], stack: ItemStackData) -> Option<ItemStackData>
+        => ContainerInsert { pos, stack } => ItemStack
+}
+host_fn! {
+    /// Take up to count from one slot of any container.
+    pub fn container_take(pos: [i32; 3], slot: u32, count: u8) -> Option<ItemStackData>
+        => ContainerTake { pos, slot, count } => ItemStack
+}

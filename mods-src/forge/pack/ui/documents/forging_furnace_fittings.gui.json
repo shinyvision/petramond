@@ -1,0 +1,711 @@
+{
+  "format": 1,
+  "kind": "forge:forging_furnace_fittings",
+  "class": "container",
+  "root": {
+    "type": "frame",
+    "style": "panel.large",
+    "layout": {
+      "w": 260,
+      "pad": [
+        8,
+        4,
+        8,
+        8
+      ],
+      "gap": 10
+    },
+    "children": [
+      {
+        "type": "row",
+        "layout": {
+          "align": "center",
+          "gap": 6,
+          "w": {
+            "grow": 1
+          }
+        },
+        "children": [
+          {
+            "type": "label",
+            "text": "Furnace Upgrades"
+          },
+          {
+            "type": "spacer",
+            "layout": {
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "back",
+            "text": "Back",
+            "layout": {
+              "w": 48,
+              "h": 22
+            }
+          }
+        ]
+      },
+      {
+        "type": "row",
+        "layout": {
+          "gap": 8,
+          "align": "center",
+          "justify": "center",
+          "w": {
+            "grow": 1
+          }
+        },
+        "children": [
+          {
+            "type": "button",
+            "id": "fit_quench",
+            "bind": {
+              "enabled": "forge:fit_quench_on"
+            },
+            "layout": {
+              "w": 48,
+              "h": 48,
+              "align": "center",
+              "justify": "center"
+            },
+            "children": [
+              {
+                "type": "image",
+                "image": "../icons/forge_quench.png",
+                "bind": {
+                  "image": "forge:fit_quench_image",
+                  "visible": "forge:fit_quench_bought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/forge_quench_inactive.png",
+                "bind": {
+                  "image": "forge:fit_quench_inactive_image",
+                  "visible": "forge:fit_quench_unbought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              }
+            ]
+          },
+          {
+            "type": "button",
+            "id": "fit_counterweight",
+            "bind": {
+              "enabled": "forge:fit_counterweight_on"
+            },
+            "layout": {
+              "w": 48,
+              "h": 48,
+              "align": "center",
+              "justify": "center"
+            },
+            "children": [
+              {
+                "type": "image",
+                "image": "../icons/forge_counterweight.png",
+                "bind": {
+                  "image": "forge:fit_counterweight_image",
+                  "visible": "forge:fit_counterweight_bought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/forge_counterweight_inactive.png",
+                "bind": {
+                  "image": "forge:fit_counterweight_inactive_image",
+                  "visible": "forge:fit_counterweight_unbought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              }
+            ]
+          },
+          {
+            "type": "button",
+            "id": "fit_chute",
+            "bind": {
+              "enabled": "forge:fit_chute_on"
+            },
+            "layout": {
+              "w": 48,
+              "h": 48,
+              "align": "center",
+              "justify": "center"
+            },
+            "children": [
+              {
+                "type": "image",
+                "image": "../icons/forge_chute.png",
+                "bind": {
+                  "image": "forge:fit_chute_image",
+                  "visible": "forge:fit_chute_bought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/forge_chute_inactive.png",
+                "bind": {
+                  "image": "forge:fit_chute_inactive_image",
+                  "visible": "forge:fit_chute_unbought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              }
+            ]
+          },
+          {
+            "type": "button",
+            "id": "fit_stoker",
+            "bind": {
+              "enabled": "forge:fit_stoker_on"
+            },
+            "layout": {
+              "w": 48,
+              "h": 48,
+              "align": "center",
+              "justify": "center"
+            },
+            "children": [
+              {
+                "type": "image",
+                "image": "../icons/forge_stoker.png",
+                "bind": {
+                  "image": "forge:fit_stoker_image",
+                  "visible": "forge:fit_stoker_bought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/forge_stoker_inactive.png",
+                "bind": {
+                  "image": "forge:fit_stoker_inactive_image",
+                  "visible": "forge:fit_stoker_unbought"
+                },
+                "layout": {
+                  "w": 32,
+                  "h": 32
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "tooltip",
+        "hover": "fit_quench",
+        "style": "panel.inset",
+        "layout": {
+          "pad": [
+            5,
+            5,
+            5,
+            5
+          ],
+          "gap": 5,
+          "max_w": 220,
+          "abs": {
+            "x": 4,
+            "y": 4
+          }
+        },
+        "bind": {
+          "visible": "forge:fit_quench_name"
+        },
+        "children": [
+          {
+            "type": "row",
+            "layout": {
+              "w": {
+                "grow": 1
+              },
+              "gap": 6,
+              "align": "center"
+            },
+            "children": [
+              {
+                "type": "label",
+                "small": true,
+                "wrap": true,
+                "bind": {
+                  "text": "forge:fit_quench_name"
+                }
+              },
+              {
+                "type": "spacer",
+                "layout": {
+                  "w": {
+                    "grow": 1
+                  }
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/upgrade_installed.png",
+                "layout": {
+                  "w": 10,
+                  "h": 10
+                },
+                "bind": {
+                  "visible": "forge:fit_quench_bought"
+                }
+              }
+            ]
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_quench_info"
+            }
+          },
+          {
+            "type": "list",
+            "layout": {
+              "dir": "row",
+              "gap": 8,
+              "align": "center"
+            },
+            "bind": {
+              "items": "forge:fit_quench_cost"
+            },
+            "children": [
+              {
+                "type": "row",
+                "layout": {
+                  "gap": 1,
+                  "align": "center"
+                },
+                "children": [
+                  {
+                    "type": "hook",
+                    "id": "fit_quench_ingredient",
+                    "bind": {
+                      "item": "item"
+                    },
+                    "layout": {
+                      "w": 16,
+                      "h": 16
+                    }
+                  },
+                  {
+                    "type": "label",
+                    "small": true,
+                    "bind": {
+                      "text": "count"
+                    }
+                  }
+                ]
+              }
+            ],
+            "id": "fit_quench_cost"
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_quench_status",
+              "palette": "forge:fit_quench_palette",
+              "visible": "forge:fit_quench_unbought"
+            }
+          }
+        ]
+      },
+      {
+        "type": "tooltip",
+        "hover": "fit_counterweight",
+        "style": "panel.inset",
+        "layout": {
+          "pad": [
+            5,
+            5,
+            5,
+            5
+          ],
+          "gap": 5,
+          "max_w": 220,
+          "abs": {
+            "x": 4,
+            "y": 4
+          }
+        },
+        "bind": {
+          "visible": "forge:fit_counterweight_name"
+        },
+        "children": [
+          {
+            "type": "row",
+            "layout": {
+              "w": {
+                "grow": 1
+              },
+              "gap": 6,
+              "align": "center"
+            },
+            "children": [
+              {
+                "type": "label",
+                "small": true,
+                "wrap": true,
+                "bind": {
+                  "text": "forge:fit_counterweight_name"
+                }
+              },
+              {
+                "type": "spacer",
+                "layout": {
+                  "w": {
+                    "grow": 1
+                  }
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/upgrade_installed.png",
+                "layout": {
+                  "w": 10,
+                  "h": 10
+                },
+                "bind": {
+                  "visible": "forge:fit_counterweight_bought"
+                }
+              }
+            ]
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_counterweight_info"
+            }
+          },
+          {
+            "type": "list",
+            "layout": {
+              "dir": "row",
+              "gap": 8,
+              "align": "center"
+            },
+            "bind": {
+              "items": "forge:fit_counterweight_cost"
+            },
+            "children": [
+              {
+                "type": "row",
+                "layout": {
+                  "gap": 1,
+                  "align": "center"
+                },
+                "children": [
+                  {
+                    "type": "hook",
+                    "id": "fit_counterweight_ingredient",
+                    "bind": {
+                      "item": "item"
+                    },
+                    "layout": {
+                      "w": 16,
+                      "h": 16
+                    }
+                  },
+                  {
+                    "type": "label",
+                    "small": true,
+                    "bind": {
+                      "text": "count"
+                    }
+                  }
+                ]
+              }
+            ],
+            "id": "fit_counterweight_cost"
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_counterweight_status",
+              "palette": "forge:fit_counterweight_palette",
+              "visible": "forge:fit_counterweight_unbought"
+            }
+          }
+        ]
+      },
+      {
+        "type": "tooltip",
+        "hover": "fit_chute",
+        "style": "panel.inset",
+        "layout": {
+          "pad": [
+            5,
+            5,
+            5,
+            5
+          ],
+          "gap": 5,
+          "max_w": 220,
+          "abs": {
+            "x": 4,
+            "y": 4
+          }
+        },
+        "bind": {
+          "visible": "forge:fit_chute_name"
+        },
+        "children": [
+          {
+            "type": "row",
+            "layout": {
+              "w": {
+                "grow": 1
+              },
+              "gap": 6,
+              "align": "center"
+            },
+            "children": [
+              {
+                "type": "label",
+                "small": true,
+                "wrap": true,
+                "bind": {
+                  "text": "forge:fit_chute_name"
+                }
+              },
+              {
+                "type": "spacer",
+                "layout": {
+                  "w": {
+                    "grow": 1
+                  }
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/upgrade_installed.png",
+                "layout": {
+                  "w": 10,
+                  "h": 10
+                },
+                "bind": {
+                  "visible": "forge:fit_chute_bought"
+                }
+              }
+            ]
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_chute_info"
+            }
+          },
+          {
+            "type": "list",
+            "layout": {
+              "dir": "row",
+              "gap": 8,
+              "align": "center"
+            },
+            "bind": {
+              "items": "forge:fit_chute_cost"
+            },
+            "children": [
+              {
+                "type": "row",
+                "layout": {
+                  "gap": 1,
+                  "align": "center"
+                },
+                "children": [
+                  {
+                    "type": "hook",
+                    "id": "fit_chute_ingredient",
+                    "bind": {
+                      "item": "item"
+                    },
+                    "layout": {
+                      "w": 16,
+                      "h": 16
+                    }
+                  },
+                  {
+                    "type": "label",
+                    "small": true,
+                    "bind": {
+                      "text": "count"
+                    }
+                  }
+                ]
+              }
+            ],
+            "id": "fit_chute_cost"
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_chute_status",
+              "palette": "forge:fit_chute_palette",
+              "visible": "forge:fit_chute_unbought"
+            }
+          }
+        ]
+      },
+      {
+        "type": "tooltip",
+        "hover": "fit_stoker",
+        "style": "panel.inset",
+        "layout": {
+          "pad": [
+            5,
+            5,
+            5,
+            5
+          ],
+          "gap": 5,
+          "max_w": 220,
+          "abs": {
+            "x": 4,
+            "y": 4
+          }
+        },
+        "bind": {
+          "visible": "forge:fit_stoker_name"
+        },
+        "children": [
+          {
+            "type": "row",
+            "layout": {
+              "w": {
+                "grow": 1
+              },
+              "gap": 6,
+              "align": "center"
+            },
+            "children": [
+              {
+                "type": "label",
+                "small": true,
+                "wrap": true,
+                "bind": {
+                  "text": "forge:fit_stoker_name"
+                }
+              },
+              {
+                "type": "spacer",
+                "layout": {
+                  "w": {
+                    "grow": 1
+                  }
+                }
+              },
+              {
+                "type": "image",
+                "image": "../icons/upgrade_installed.png",
+                "layout": {
+                  "w": 10,
+                  "h": 10
+                },
+                "bind": {
+                  "visible": "forge:fit_stoker_bought"
+                }
+              }
+            ]
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_stoker_info"
+            }
+          },
+          {
+            "type": "list",
+            "layout": {
+              "dir": "row",
+              "gap": 8,
+              "align": "center"
+            },
+            "bind": {
+              "items": "forge:fit_stoker_cost"
+            },
+            "children": [
+              {
+                "type": "row",
+                "layout": {
+                  "gap": 1,
+                  "align": "center"
+                },
+                "children": [
+                  {
+                    "type": "hook",
+                    "id": "fit_stoker_ingredient",
+                    "bind": {
+                      "item": "item"
+                    },
+                    "layout": {
+                      "w": 16,
+                      "h": 16
+                    }
+                  },
+                  {
+                    "type": "label",
+                    "small": true,
+                    "bind": {
+                      "text": "count"
+                    }
+                  }
+                ]
+              }
+            ],
+            "id": "fit_stoker_cost"
+          },
+          {
+            "type": "label",
+            "small": true,
+            "wrap": true,
+            "bind": {
+              "text": "forge:fit_stoker_status",
+              "palette": "forge:fit_stoker_palette",
+              "visible": "forge:fit_stoker_unbought"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

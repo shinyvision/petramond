@@ -10,7 +10,8 @@
 //! machine-recipe table IS the result. No metal, mould or product is named
 //! here. An empty basin casts `forge:cast_plate` — which is also what you get
 //! for pulling the mould out mid-pour, because the class is read when the metal
-//! finishes running, not when it starts.
+//! finishes running, not when it starts. Automatic pours retain their mould
+//! choice so removing it cannot accidentally produce plates.
 //!
 //! WHAT THE PLAYER SEES IS ONE MODEL. The fire in the hood is a PER-INSTANCE
 //! PART of a single `.bbmodel`; everything with a level or a
@@ -27,7 +28,10 @@ use mod_sdk::*;
 use crate::content::Casting;
 use crate::liquid::{Basin, Liquid, EJECT_AT};
 
+pub mod fittings;
+mod panel;
 mod state;
+mod storage;
 
 use state::{Phase, State};
 
@@ -119,19 +123,6 @@ fn pouring_visually(state: &State) -> bool {
     state.phase == Phase::Pouring || state.liquid.head > state.liquid.tail
 }
 
-/// Model parts, in the `models.json` row's declared bit order — bit `i` shows
-/// `parts[i]`, so this list and that one are ONE statement written twice.
-/// Pinned by `the_parts_mask_matches_every_row_that_declares_it`, because a
-/// reorder is invisible until a furnace is looked at, and then it is wrong on
-/// every furnace in every existing world.
-///
-/// Only DISCRETE state is a part. Everything with a level or a shape — the
-/// metal, the mould, the cast — is simulated and drawn instead (`liquid.rs`),
-/// which is why adding a mould to this pack needs no model change at all.
-///
-/// It is down to ONE bit, and that is the whole list: the lever moved into the
-/// GUI panel, so the model carries no lever to point either way, and the fire
-/// is the only thing the machine shows that is genuinely on or off.
 const PARTS: [&str; 1] = ["coals"];
 const PART_COALS: u32 = 1 << 0;
 
@@ -144,6 +135,8 @@ pub type ForgingFurnace = Machine<ForgingFurnaceSpec>;
 #[derive(Default)]
 pub struct ForgingFurnaceSpec {
     casting: Option<Casting>,
+    pub fittings: fittings::Fittings,
+    storage: storage::Storage,
 }
 
 impl MachineSpec for ForgingFurnaceSpec {
@@ -157,9 +150,13 @@ impl MachineSpec for ForgingFurnaceSpec {
         &["forge:forging_furnace_lit", "forge:forging_furnace_pour"];
     const ANCHORS_KEY: &'static str = "forge:furnaces";
     const STATE_KEY: &'static str = STATE_KEY;
+    const AUX_KEYS: &'static [&'static str] = &[fittings::KEY];
+    const PANEL_KEYS: &'static [&'static str] = &[fittings::PAGE];
 
     fn init(&mut self) {
         self.casting = Some(Casting::resolve());
+        self.fittings = fittings::Fittings::resolve();
+        self.storage = storage::Storage::resolve();
     }
 
     /// The furnace is gone. Spill what was in the crucible and drop the blob.
@@ -181,6 +178,8 @@ impl MachineSpec for ForgingFurnaceSpec {
             spawn_item(&state.metal, state.units, at(pos));
         }
         section_kv_delete(pos, STATE_KEY);
+        section_kv_delete(pos, fittings::KEY);
+        section_kv_delete(pos, fittings::INFO_KEY);
     }
 
     fn step(
@@ -199,10 +198,23 @@ impl MachineSpec for ForgingFurnaceSpec {
         let mut state = State::decode(stored);
         let before = state.clone();
         let before_slots = slots.clone();
-        // The mould is whatever is in its slot RIGHT NOW. Nothing locks that
-        // slot: the class is read when the metal finishes running, so taking
-        // the mould out mid-pour yields a plate — the metal was committed, the
-        // shape was not.
+        let bits = fittings::record(&ctx.aux[0]);
+        if let Some(stoker) = self.fittings.active(bits, 3) {
+            state.feed_ticks = state.feed_ticks.saturating_add(1);
+            if state.feed_ticks >= stoker.feed_every {
+                state.feed_ticks = 0;
+                self.storage.feed(
+                    ctx.pos,
+                    &mut slots,
+                    &state,
+                    casting,
+                    caches,
+                    stoker.feed_keep,
+                );
+            }
+        }
+        // Manual pours use the live mould; automatic pours retain the mould
+        // they started with so a slot change cannot turn the cast into a plate.
         let mould = slots[SLOT_MOULD].as_ref().map(|s| s.item.clone());
 
         if state.burn_remaining > 0 {
@@ -219,7 +231,24 @@ impl MachineSpec for ForgingFurnaceSpec {
         if self.melt(&mut state, &mut slots, casting) {
             emit_sound(SOUND_FIRE, Some(at(ctx.pos)));
         }
-        self.run_pour(ctx, &mut state, caches, casting, mould.as_deref());
+        if let Some(auto) = self.fittings.active(bits, 1) {
+            let ready = mould
+                .as_deref()
+                .is_some_and(|m| casting.mould_class(m).is_some())
+                && self.pourable(&state, caches, mould.as_deref());
+            if auto_ready(&mut state, ready, mould.as_deref(), auto.dwell_ticks) {
+                state.phase = Phase::Pouring;
+                state.phase_ticks = 0;
+                state.pour_mould = mould.clone().unwrap_or_default();
+                emit_sound(SOUND_LEVER, Some(at(ctx.pos)));
+            }
+        }
+        let cast_mould = if state.pour_mould.is_empty() {
+            mould.clone()
+        } else {
+            Some(state.pour_mould.clone())
+        };
+        self.run_pour(ctx, &mut state, caches, casting, cast_mould.as_deref());
         // The tap is open exactly while the pour phase runs; the metal keeps
         // moving for as long as it has somewhere to go, which is why the
         // stream finishes falling after the phase ends.
@@ -272,11 +301,16 @@ impl MachineSpec for ForgingFurnaceSpec {
         // keeps no memo; the ENGINE owns the change gate (an unchanged
         // submission is compared and dropped before any name resolve,
         // replication or allocation). One gate, where the truth is.
-        let basin = self.basin(&state, casting, caches, mould.as_deref());
+        let set_ticks = self
+            .fittings
+            .active(bits, 0)
+            .map_or(SET_TICKS, |r| r.set_ticks);
+        let basin = self.basin(&state, casting, caches, cast_mould.as_deref(), set_ticks);
         let rgb = casting.metal(&state.metal).molten;
         out.draw(ctx.pos, state.liquid.prims(MELT_TILE, rgb, &basin));
 
         if ctx.gui_open() {
+            self.fittings.publish(ctx, bits);
             let pourable = self.pourable(&state, caches, mould.as_deref());
             // The melt bar's denominator is the INPUT's melt time, because that
             // is what `melt` counts against — the crucible's metal is empty
@@ -420,7 +454,12 @@ impl ForgingFurnaceSpec {
             }
             Phase::Setting => {
                 state.phase_ticks += 1;
-                if state.phase_ticks >= SET_TICKS {
+                if state.phase_ticks
+                    >= self
+                        .fittings
+                        .active(fittings::record(&ctx.aux[0]), 0)
+                        .map_or(SET_TICKS, |r| r.set_ticks)
+                {
                     self.eject(ctx, state, caches, c, mould);
                 }
             }
@@ -454,13 +493,30 @@ impl ForgingFurnaceSpec {
                 // because a section was mid-stream for one frame.
                 return;
             };
-            spawn_item(&result.item, result.count, spot);
+            let remaining = if self
+                .fittings
+                .active(fittings::record(&ctx.aux[0]), 2)
+                .is_some()
+            {
+                self.storage.deliver(ctx.pos, result.clone())
+            } else {
+                Some(result.clone())
+            };
+            if let Some(left) = remaining {
+                let data: Vec<_> = left
+                    .data
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_slice()))
+                    .collect();
+                spawn_item_data(&left.item, left.count, spot, &data);
+            }
             // At the BASIN rather than the anchor: this is the one sound whose
             // exact source the player is looking straight at.
             emit_sound(SOUND_CAST, Some(spot));
         }
         state.phase = Phase::Idle;
         state.phase_ticks = 0;
+        state.pour_mould.clear();
         state.liquid = Liquid::default();
         // The crucible pays only for metal that BECAME something. With no
         // route at all — not even a plate, which needs a pack shipping a metal
@@ -487,7 +543,14 @@ impl ForgingFurnaceSpec {
     /// fill, so the metal accumulates in the shape it is becoming. Only with
     /// a mould — metal poured onto the bare crucible has no shape to grow
     /// into and stays the square pool (`liquid.rs`).
-    fn basin(&self, state: &State, c: &Casting, caches: &mut Caches, mould: Option<&str>) -> Basin {
+    fn basin(
+        &self,
+        state: &State,
+        c: &Casting,
+        caches: &mut Caches,
+        mould: Option<&str>,
+        set_ticks: u32,
+    ) -> Basin {
         let metal = c.metal(&state.metal);
         let cast = match state.phase {
             // The SAME answer `eject` will give, plate fallback and all — the
@@ -498,7 +561,7 @@ impl ForgingFurnaceSpec {
                     .map(|r| (r.item, metal.molten, state.liquid.level))
             }
             Phase::Setting => cast_result(c, caches, &state.metal, mould).map(|r| {
-                let t = (state.phase_ticks as f32 / SET_TICKS as f32).clamp(0.0, 1.0);
+                let t = (state.phase_ticks as f32 / set_ticks as f32).clamp(0.0, 1.0);
                 (r.item, mix(metal.molten, metal.solid, t), 1.0)
             }),
             _ => None,
@@ -554,71 +617,6 @@ impl ForgingFurnaceSpec {
                 .recipe_for(cast_class(casting, mould), &state.metal)
                 .is_some()
     }
-
-    /// `melting` is the item in the input slot — the one whose melt time the
-    /// progress is counted against. Published to the sessions watching THIS
-    /// furnace: two people at two forges read their own metal.
-    fn publish_gauges(
-        &self,
-        ctx: &StepCtx<'_>,
-        state: &State,
-        c: &Casting,
-        pourable: bool,
-        melting: Option<&str>,
-    ) {
-        let burn01 = if state.burn_max == 0 {
-            0.0
-        } else {
-            state.burn_remaining as f32 / state.burn_max as f32
-        };
-        ctx.publish("forge:burn01", GuiValue::F32(burn01));
-        let melt = c.metal(melting.unwrap_or(&state.metal)).melt_ticks.max(1);
-        ctx.publish(
-            "forge:melt01",
-            GuiValue::F32((state.melt_progress as f32 / melt as f32).clamp(0.0, 1.0)),
-        );
-        ctx.publish(
-            "forge:crucible01",
-            GuiValue::F32(state.units as f32 / CRUCIBLE_MAX as f32),
-        );
-        // Hardened metal is the same hue gone dull — the crucible tells you it
-        // has set by its COLOUR, with no extra widget.
-        let metal = c.metal(&state.metal);
-        let rgb = if state.hardened() {
-            metal.solid
-        } else {
-            metal.molten
-        };
-        let packed = ((rgb[0] as i32) << 16) | ((rgb[1] as i32) << 8) | rgb[2] as i32;
-        ctx.publish("forge:crucible_color", GuiValue::I32(packed));
-        // The crucible NAMES its metal on hover: one value is both the tip's
-        // text and its condition (a non-empty string is `true` for bindings),
-        // so an empty or unnamed crucible simply has no tooltip.
-        let tip = if state.units > 0 {
-            metal.name.clone().unwrap_or_default()
-        } else {
-            String::new()
-        };
-        ctx.publish("forge:crucible_tip", GuiValue::Str(tip));
-        // The lever DRAWS from the machine, not from its own latch: the frame
-        // is a function of the phase and its tick count, so the handle swings
-        // down as the pour starts and snaps back up the instant the machine
-        // returns to idle. A control that reports the state it caused cannot
-        // show a pour that is not happening.
-        let pouring = state.phase != Phase::Idle;
-        ctx.publish("forge:pouring", GuiValue::I32(pouring as i32));
-        ctx.publish(
-            "forge:lever_frame",
-            GuiValue::I32(lever_frame(state) as i32),
-        );
-        // A running pour is not STARTABLE, but the control must stay live or the
-        // button paints its disabled face over the frame it should show.
-        ctx.publish(
-            "forge:lever_enabled",
-            GuiValue::I32((pourable || pouring) as i32),
-        );
-        ctx.publish("forge:can_pour", GuiValue::I32(pourable as i32));
-    }
 }
 
 fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
@@ -643,7 +641,7 @@ impl ForgingFurnaceSpec {
         state.phase = Phase::Pouring;
         state.phase_ticks = 0;
         section_kv_set(anchor, STATE_KEY, state.encode());
-        set_model_parts(anchor, self.parts_mask(&state), None);
+
         // AFTER the gate, never before it: the lever is the one control on the
         // machine, and a click that made the noise but not the pour would be
         // the most confusing feedback the panel could give.
@@ -651,254 +649,20 @@ impl ForgingFurnaceSpec {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A crucible that fills up and then goes cold must still be relightable.
-    ///
-    /// Relight used to sit BEHIND the "is there something to melt" gate, and a
-    /// full crucible can melt nothing — so coal did nothing, the metal
-    /// hardened ten seconds later, and two minutes of smelting was gone with
-    /// no way to get it back.
-    #[test]
-    fn a_full_cold_crucible_still_wants_fuel() {
-        let full = State {
-            units: CRUCIBLE_MAX,
-            metal: "petramond:raw_iron".into(),
-            burn_remaining: 0,
-            ..State::default()
-        };
-        assert!(
-            wants_heat(&full, false),
-            "a full crucible must still call for the fire"
-        );
-        let empty = State::default();
-        assert!(
-            !wants_heat(&empty, false),
-            "but an idle forge never eats coal"
-        );
+fn auto_ready(state: &mut State, ready: bool, mould: Option<&str>, dwell: u32) -> bool {
+    let mould = mould.unwrap_or_default();
+    if !ready || mould.is_empty() || state.ready_mould != mould {
+        state.ready_ticks = 0;
+        state.ready_mould = mould.to_owned();
+        return false;
     }
-
-    /// THE BIT ORDER IS A CONTRACT WITH THE PACK. `set_model_parts` masks are
-    /// positional — bit `i` shows `parts[i]` — and the mask is stored per cell,
-    /// so reordering `models.json` reshuffles every furnace already placed in
-    /// every existing world, silently and forever. Nothing about it fails to
-    /// load, and the three rows share one model, so all three have to agree
-    /// with each other as well: a costume swap keeps the stored mask.
-    #[test]
-    fn the_parts_mask_matches_every_row_that_declares_it() {
-        let models = json::Value::parse(include_str!("../pack/models.json"))
-            .and_then(|v| {
-                v.get("models")
-                    .and_then(|m| m.as_array())
-                    .map(<[_]>::to_vec)
-            })
-            .expect("the pack's models.json parses");
-        let declaring: Vec<Vec<String>> = models
-            .iter()
-            .filter_map(|row| Some((row.get("parts")?.as_array()?, row)))
-            .map(|(parts, _)| {
-                parts
-                    .iter()
-                    .map(|p| p.as_str().unwrap_or_default().to_owned())
-                    .collect()
-            })
-            .collect();
-        assert_eq!(
-            declaring.len(),
-            <ForgingFurnaceSpec as MachineSpec>::VARIANT_KEYS.len() + 1,
-            "every furnace row (base + variants) declares the parts list"
-        );
-        for row in &declaring {
-            assert_eq!(row.as_slice(), PARTS, "a row's parts list is the bit order");
-        }
-        // ...and the constants are the INDICES of that list.
-        for (i, part) in PARTS.iter().enumerate() {
-            let bit = match *part {
-                "coals" => PART_COALS,
-                other => panic!("no PART_* constant names '{other}'"),
-            };
-            assert_eq!(bit, 1 << i, "'{part}' is bit {i}");
-        }
+    state.ready_ticks = state.ready_ticks.saturating_add(1);
+    if state.ready_ticks < dwell {
+        return false;
     }
-
-    /// The one bit has to follow the FIRE and nothing else. It used to carry a
-    /// lever as well; the lever is a GUI widget now, and a mask that still set
-    /// its bit would light a cube the model no longer has — which draws
-    /// nothing and is therefore invisible until someone wonders why the forge
-    /// looks cold while it is burning.
-    #[test]
-    fn the_fire_is_the_only_thing_the_mask_stages() {
-        let spec = ForgingFurnaceSpec::default();
-        assert_eq!(
-            spec.parts_mask(&State::default()),
-            0,
-            "a cold forge shows no fire"
-        );
-        let lit = State {
-            burn_remaining: 40,
-            ..State::default()
-        };
-        assert_eq!(spec.parts_mask(&lit), PART_COALS);
-    }
-
-    /// THE STRIP IS A FUNCTION OF THE MACHINE, NOT OF THE CLICK. The lever
-    /// walks 0..7 over twelve ticks and then stays down until the machine is
-    /// idle again — a frame that lagged the pour or survived it would draw a
-    /// handle the machine is not holding.
-    #[test]
-    fn the_lever_frame_follows_the_phase() {
-        let mut state = State::default();
-        assert_eq!(lever_frame(&state), 0, "idle snaps the lever back up");
-
-        state.phase = Phase::Pouring;
-        for (ticks, want) in [(0, 0), (6, 3), (11, 6), (12, 7), (POUR_TICKS - 1, 7)] {
-            state.phase_ticks = ticks;
-            assert_eq!(lever_frame(&state), want, "pour tick {ticks}");
-        }
-
-        state.phase = Phase::Setting;
-        state.phase_ticks = 0;
-        assert_eq!(lever_frame(&state), 7, "the lever stays down while it sets");
-    }
-
-    /// THE POUR ROW FOLLOWS THE STREAM, NOT THE PHASE. The row carries the
-    /// droplet emitter, and the phase outlives the visible stream by the
-    /// whole set — keyed on the phase alone, droplets and spatter run for
-    /// SET_TICKS over a basin the metal finished falling into long ago. The
-    /// row holds while the tap is open or metal is airborne, and drops the
-    /// moment the tail catches the head.
-    #[test]
-    fn the_pour_row_outlives_the_phase_exactly_as_long_as_the_stream_does() {
-        let mut state = State::default();
-        assert!(!pouring_visually(&state), "an idle furnace shows no pour");
-
-        state.phase = Phase::Pouring;
-        assert!(pouring_visually(&state), "the tap is open");
-
-        // The phase ends; what is already falling keeps falling.
-        state.phase = Phase::Setting;
-        state.liquid = Liquid {
-            head: 0.6,
-            tail: 0.2,
-            ..Liquid::default()
-        };
-        assert!(
-            pouring_visually(&state),
-            "early Setting still has metal in the air"
-        );
-
-        // Untapped, the tail falls until it catches the head and both reset.
-        while state.liquid.head > state.liquid.tail {
-            state.liquid.step(false, 0.0);
-        }
-        assert_eq!(state.liquid.head, 0.0, "fixture: the catch-up resets");
-        assert!(
-            !pouring_visually(&state),
-            "the pour is over once the stream has subsided"
-        );
-    }
-
-    fn stack(item: &str) -> Option<ItemStackData> {
-        Some(ItemStackData {
-            item: item.into(),
-            count: 4,
-            data: Vec::new(),
-        })
-    }
-
-    /// A lit furnace with `item` in its metal slot, stepped one tick.
-    fn one_melt_tick(state: &mut State, item: &str) {
-        let casting = Casting::for_test(
-            &[],
-            &[
-                ("petramond:raw_iron", None),
-                ("petramond:raw_copper", None),
-                ("forge:iron_plate", Some("petramond:raw_iron")),
-                ("forge:iron_pickaxe_head", Some("petramond:raw_iron")),
-            ],
-        );
-        let mut slots = vec![stack(item), None, None];
-        ForgingFurnaceSpec::default().melt(state, &mut slots, &casting);
-    }
-
-    /// THE TABLE IS STILL THE WHITELIST. The panel's metal slot now names the
-    /// same `forge:metal` data key this table is built from, so the two agree
-    /// by construction rather than by hand — but the slot is not the only way
-    /// into the container (a mod write, a document that failed to load), and
-    /// the crucible is where the decision has to hold. If this check ever
-    /// stops being consulted a forge full of sand quietly produces iron.
-    #[test]
-    fn only_a_declared_metal_reaches_the_crucible() {
-        let lit = || State {
-            burn_remaining: 200,
-            ..State::default()
-        };
-
-        let mut sand = lit();
-        one_melt_tick(&mut sand, "petramond:sand");
-        assert_eq!(sand.melt_progress, 0, "sand is not a metal, tag or no tag");
-
-        let mut iron = lit();
-        one_melt_tick(&mut iron, "petramond:raw_iron");
-        assert_eq!(iron.melt_progress, 1);
-    }
-
-    /// THE CRUCIBLE NEVER MIXES, and the comparison is against the CANONICAL
-    /// metal. Both halves are silent when broken: mixing hands the player an
-    /// item they cannot explain, and comparing the raw item instead means a
-    /// second plate never matches the iron the first one became — the machine
-    /// just ignores a full stack for no visible reason.
-    #[test]
-    fn a_loaded_crucible_takes_its_own_metal_and_nothing_else() {
-        let holding_iron = || State {
-            burn_remaining: 200,
-            units: 1,
-            metal: "petramond:raw_iron".into(),
-            ..State::default()
-        };
-
-        let mut foreign = holding_iron();
-        one_melt_tick(&mut foreign, "petramond:raw_copper");
-        assert_eq!(foreign.melt_progress, 0, "copper cannot join molten iron");
-
-        let mut same = holding_iron();
-        one_melt_tick(&mut same, "petramond:raw_iron");
-        assert_eq!(same.melt_progress, 1);
-
-        // A plate declares `melts_to: raw_iron`, so it IS the metal already in
-        // there — keyed on the item name it would not be.
-        let mut remelt = holding_iron();
-        one_melt_tick(&mut remelt, "forge:iron_plate");
-        assert_eq!(remelt.melt_progress, 1, "a plate melts back into its metal");
-    }
-
-    /// A CAST HEAD IS THE METAL IT WAS POURED FROM. Remelting one has to join
-    /// a crucible of that metal and nothing else — otherwise a mistake at the
-    /// casting table is a stack of heads the furnace silently ignores, or
-    /// worse, dissolves into the wrong metal.
-    #[test]
-    fn a_cast_head_remelts_into_its_own_metal_only() {
-        let mut same = State {
-            burn_remaining: 200,
-            units: 1,
-            metal: "petramond:raw_iron".into(),
-            ..State::default()
-        };
-        one_melt_tick(&mut same, "forge:iron_pickaxe_head");
-        assert_eq!(same.melt_progress, 1, "a head melts back into its metal");
-
-        let mut foreign = State {
-            burn_remaining: 200,
-            units: 1,
-            metal: "petramond:raw_copper".into(),
-            ..State::default()
-        };
-        one_melt_tick(&mut foreign, "forge:iron_pickaxe_head");
-        assert_eq!(
-            foreign.melt_progress, 0,
-            "a head cannot join a different metal"
-        );
-    }
+    state.ready_ticks = 0;
+    true
 }
+
+#[cfg(test)]
+mod tests;

@@ -2,6 +2,7 @@ mod crafting;
 mod dispatch;
 mod furnace;
 mod generic;
+pub use generic::slot_specs_for_kind;
 mod state;
 mod target;
 mod transport;

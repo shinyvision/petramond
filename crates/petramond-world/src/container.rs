@@ -179,6 +179,49 @@ pub fn slot_admits(
     }
 }
 
+/// Route a stack through authored slot filters, merging before filling empty slots.
+pub fn route_into(
+    src: &mut Option<ItemStack>,
+    slots: &mut [Option<ItemStack>],
+    specs: &[SlotSpec],
+    gui: Option<&crate::gui_state::GuiStateMap>,
+) {
+    let Some(item) = src.map(|s| s.item) else {
+        return;
+    };
+    let by_filter = (0..slots.len()).filter(|&s| {
+        specs
+            .get(s)
+            .is_some_and(|spec| spec.routes_by_filter(item, spec.accepts_mask(gui)))
+    });
+    let open = (0..slots.len()).filter(|&s| {
+        specs.get(s).is_some_and(|spec| {
+            let mask = spec.accepts_mask(gui);
+            !spec.routes_by_filter(item, mask) && spec.routes(item, mask)
+        })
+    });
+    let routed: Vec<usize> = by_filter.chain(open).collect();
+    // Merge-then-fill over the routed order (the inventory's
+    // `insert_into_slots` discipline): top up matching stacks first,
+    // then open empties.
+    for &s in &routed {
+        if src.is_none() {
+            break;
+        }
+        if slots[s].is_some() {
+            crate::inventory::merge_stack(src, &mut slots[s]);
+        }
+    }
+    for &s in &routed {
+        if src.is_none() {
+            break;
+        }
+        if slots[s].is_none() {
+            crate::inventory::merge_stack(src, &mut slots[s]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

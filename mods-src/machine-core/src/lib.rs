@@ -83,6 +83,10 @@ pub trait MachineSpec: Default {
     /// driver reads every live machine's blob in ONE call and writes back only
     /// the ones that changed, so a spec never touches cell KV itself.
     const STATE_KEY: &'static str;
+    /// Additional pages sharing the machine's anchor and viewers.
+    const PANEL_KEYS: &'static [&'static str] = &[];
+    /// Independent persistent records read beside the state.
+    const AUX_KEYS: &'static [&'static str] = &[];
 
     /// Resolve whatever REGISTRY data this kind reads (row data tables, item
     /// ids), once, while the driver is initialising. Registry calls only —
@@ -133,6 +137,8 @@ pub struct StepCtx<'a> {
     pub current: BlockId,
     pub block: BlockId,
     variants: &'a [Option<BlockId>],
+    /// Auxiliary records in AUX_KEYS order.
+    pub aux: &'a [Vec<u8>],
     /// The sessions with THIS machine's panel open right now — the gauge
     /// publish list, and empty for a machine nobody is watching.
     ///
@@ -216,6 +222,11 @@ impl<S: MachineSpec> Machine<S> {
         }
     }
 
+    /// Revalidate a panel action after the machine may have been removed.
+    pub fn is_present(&self, pos: [i32; 3]) -> bool {
+        get_block(pos).is_some_and(|b| Some(b) == self.block || self.variants.contains(&Some(b)))
+    }
+
     /// The spec, for the event handlers a machine kind wires up itself.
     pub fn spec(&self) -> &S {
         &self.spec
@@ -234,7 +245,7 @@ impl<S: MachineSpec> Machine<S> {
     /// knows the whole viewer set (`gui_viewers`), and it is read fresh each
     /// tick, so disconnects and world unloads need no bookkeeping here.
     pub fn on_container_opened(&mut self, kind: &ContainerKind, pos: Option<[i32; 3]>) {
-        if !kind.is(S::KIND_KEY) {
+        if !kind.is(S::KIND_KEY) && !S::PANEL_KEYS.iter().any(|k| kind.is(k)) {
             return;
         }
         if let Some(anchor) = pos {
@@ -276,9 +287,19 @@ impl<S: MachineSpec> Machine<S> {
         let states = paged(positions.clone(), |page| {
             section_kv_get_many(S::STATE_KEY, page)
         });
-        let watchers = Watchers::of_kind(S::KIND_KEY);
+        let auxiliary: Vec<_> = S::AUX_KEYS
+            .iter()
+            .map(|key| paged(positions.clone(), |page| section_kv_get_many(key, page)))
+            .collect();
+        let watchers = Watchers::of_kinds(S::KIND_KEY, S::PANEL_KEYS);
         let mut out = Presentation::default();
-        for (((pos, current), slots), state) in live.into_iter().zip(containers).zip(states) {
+        for (i, (((pos, current), slots), state)) in
+            live.into_iter().zip(containers).zip(states).enumerate()
+        {
+            let aux: Vec<_> = auxiliary
+                .iter()
+                .map(|values| values[i].clone().unwrap_or_default())
+                .collect();
             let mut state = state.unwrap_or_default();
             let before_state = state.clone();
             let ctx = StepCtx {
@@ -287,6 +308,7 @@ impl<S: MachineSpec> Machine<S> {
                 block,
                 variants,
                 viewers: watchers.at(pos),
+                aux: &aux,
             };
             spec.step(&ctx, caches, slots, &mut state, &mut out);
             if state != before_state {
@@ -353,10 +375,13 @@ struct Watchers {
 }
 
 impl Watchers {
-    fn of_kind(kind_key: &str) -> Watchers {
+    fn of_kinds(kind_key: &str, panels: &[&str]) -> Watchers {
         let mut by_anchor: HashMap<[i32; 3], Vec<PlayerId>> = HashMap::new();
         for viewer in gui_viewers() {
-            let (true, Some(anchor)) = (viewer.kind == kind_key, viewer.anchor) else {
+            let (true, Some(anchor)) = (
+                viewer.kind == kind_key || panels.contains(&viewer.kind.as_str()),
+                viewer.anchor,
+            ) else {
                 continue;
             };
             by_anchor.entry(anchor).or_default().push(viewer.player_id);

@@ -10,6 +10,7 @@ mod client_mod_ui;
 mod connect;
 mod crafting_browser;
 mod gui_router;
+mod gui_value;
 mod input;
 mod item_tooltip;
 mod menu_lifecycle;

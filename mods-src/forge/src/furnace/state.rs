@@ -50,6 +50,10 @@ pub(super) struct State {
     pub(super) units: u8,
     pub(super) phase: Phase,
     pub(super) phase_ticks: u32,
+    pub(super) ready_ticks: u32,
+    pub(super) feed_ticks: u32,
+    pub(super) ready_mould: String,
+    pub(super) pour_mould: String,
     /// The item the crucible's metal was melted FROM — the ingredient half of
     /// the cast lookup, and empty when the crucible is.
     pub(super) metal: String,
@@ -63,7 +67,7 @@ pub(super) struct State {
 /// field after the change and hands the machine someone else's numbers, which
 /// surfaces as a furnace full of metal it never melted or a pour that never
 /// ends. An unrecognised version resets the machine instead.
-const STATE_VERSION: u32 = 3;
+const STATE_VERSION: u32 = 4;
 
 impl State {
     pub(super) fn decode(bytes: &[u8]) -> State {
@@ -82,6 +86,10 @@ impl State {
             units: r.u32().unwrap_or(0) as u8,
             phase: Phase::from_u8(r.u32().unwrap_or(0) as u8),
             phase_ticks: r.u32().unwrap_or(0),
+            ready_ticks: r.u32().unwrap_or(0),
+            feed_ticks: r.u32().unwrap_or(0),
+            ready_mould: read_str(&mut r),
+            pour_mould: read_str(&mut r),
             metal: read_str(&mut r),
             liquid: Liquid::decode(&mut r),
         }
@@ -97,6 +105,10 @@ impl State {
         w.u32(self.units as u32);
         w.u32(self.phase.to_u8() as u32);
         w.u32(self.phase_ticks);
+        w.u32(self.ready_ticks);
+        w.u32(self.feed_ticks);
+        write_str(&mut w, &self.ready_mould);
+        write_str(&mut w, &self.pour_mould);
         write_str(&mut w, &self.metal);
         self.liquid.encode(&mut w);
         w.finish()
@@ -144,6 +156,10 @@ mod tests {
             units: 6,
             phase: Phase::Setting,
             phase_ticks: 77,
+            ready_ticks: 13,
+            feed_ticks: 7,
+            ready_mould: "test:mould".into(),
+            pour_mould: "test:mould".into(),
             metal: "forge:raw_copper".into(),
             liquid: Liquid::default(),
         };

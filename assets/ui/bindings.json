@@ -329,6 +329,26 @@
     "craft_empty_hint": {
      "type": "str",
      "doc": "Gather to find recipes before discovery; No matching recipes when filtering"
+    },
+    "item_tip_instance": {
+     "type": "str",
+     "doc": "hovered stack's petramond:info text line"
+    },
+    "item_tip_icon0": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 1; empty hides it"
+    },
+    "item_tip_icon1": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 2; empty hides it"
+    },
+    "item_tip_icon2": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 3; empty hides it"
+    },
+    "item_tip_icon3": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 4; empty hides it"
     }
    },
    "handles": {
@@ -400,6 +420,26 @@
     "craft_empty_hint": {
      "type": "str",
      "doc": "Gather to find recipes before discovery; No matching recipes when filtering"
+    },
+    "item_tip_instance": {
+     "type": "str",
+     "doc": "hovered stack's petramond:info text line"
+    },
+    "item_tip_icon0": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 1; empty hides it"
+    },
+    "item_tip_icon1": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 2; empty hides it"
+    },
+    "item_tip_icon2": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 3; empty hides it"
+    },
+    "item_tip_icon3": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 4; empty hides it"
     }
    },
    "handles": {
@@ -427,6 +467,26 @@
     "item_tip_has_info": {
      "type": "bool",
      "doc": "the hovered item declares an info line"
+    },
+    "item_tip_instance": {
+     "type": "str",
+     "doc": "hovered stack's petramond:info text line"
+    },
+    "item_tip_icon0": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 1; empty hides it"
+    },
+    "item_tip_icon1": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 2; empty hides it"
+    },
+    "item_tip_icon2": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 3; empty hides it"
+    },
+    "item_tip_icon3": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 4; empty hides it"
     }
    },
    "handles": {},
@@ -457,6 +517,26 @@
     "item_tip_has_info": {
      "type": "bool",
      "doc": "the hovered item declares an info line"
+    },
+    "item_tip_instance": {
+     "type": "str",
+     "doc": "hovered stack's petramond:info text line"
+    },
+    "item_tip_icon0": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 1; empty hides it"
+    },
+    "item_tip_icon1": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 2; empty hides it"
+    },
+    "item_tip_icon2": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 3; empty hides it"
+    },
+    "item_tip_icon3": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 4; empty hides it"
     }
    },
    "handles": {},
@@ -516,6 +596,26 @@
     "slot_tip_c{line}s{span}": {
      "type": "str",
      "doc": "host-populated: the matching span's theme palette entry (bind.palette on the span's label); empty = the label's own style"
+    },
+    "item_tip_instance": {
+     "type": "str",
+     "doc": "hovered stack's petramond:info text line"
+    },
+    "item_tip_icon0": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 1; empty hides it"
+    },
+    "item_tip_icon1": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 2; empty hides it"
+    },
+    "item_tip_icon2": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 3; empty hides it"
+    },
+    "item_tip_icon3": {
+     "type": "str",
+     "doc": "hovered stack's instance tooltip image 4; empty hides it"
     }
    },
    "handles": {

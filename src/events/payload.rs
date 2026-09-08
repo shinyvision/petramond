@@ -222,12 +222,14 @@ pub enum DeferredAction {
         feedback: Option<crate::mob::MobDamageFeedback>,
     },
     /// A mod's `GuiOpen` HostCall: request the app shell open this mod GUI
-    /// (honoured only from gameplay, like a block-interact open request).
+    /// for the acting player, replacing an existing menu when present.
     OpenGui {
+        player: crate::player::PlayerId,
         kind: petramond_world::gui_state::GuiKind,
+        pos: Option<petramond_math::math::IVec3>,
     },
     /// A mod's `GuiClose` HostCall: close the open mod GUI, if one is open.
-    CloseGui,
+    CloseGui { player: crate::player::PlayerId },
     /// A mod's `ChatSend` HostCall: deliver one authored chat line on the next
     /// pump. `None` targets = all connected sessions; `Some(ids)` = those
     /// player ids only (unknown / left ids ignored).

@@ -568,6 +568,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         HostCall::ContainerGet { .. }
         | HostCall::ContainerGetMany { .. }
         | HostCall::ContainerSet { .. }
+        | HostCall::ContainerInsert { .. }
+        | HostCall::ContainerTake { .. }
         | HostCall::RecipeResult { .. } => containers::handle_container_call(&data.mod_id, call),
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }

@@ -745,3 +745,70 @@ fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
     assert_eq!(outcome, crate::events::Outcome::Cancel);
     assert_eq!(ev.fate, Fate::Consume, "the echoed fate is the applied one");
 }
+
+#[test]
+fn gui_click_inventory_and_navigation_use_the_acting_session() {
+    use crate::server::player::PendingMenuAction;
+    use petramond_math::math::IVec3;
+    use petramond_world::gui_state::{intern_kind, MenuSlot, PointerButton};
+    use petramond_world::item::{ItemStack, ItemType};
+    let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let s = server.add_session_for_test(player);
+    let player_id = server.sessions[s].id;
+    server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 5));
+    server.sessions[s]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 5));
+    let first = intern_kind("hostile:first").unwrap();
+    let second = intern_kind("hostile:second").unwrap();
+    let anchor = IVec3::new(1, 64, 1);
+    server.sessions[s]
+        .menu
+        .open_document_gui(&mut server.world, first, Some(anchor));
+    server.mods = ModHost::from_instances(vec![calling_guest(
+        "hostile",
+        &[
+            HostCall::TakeItem {
+                player: mod_api::PlayerId(player_id.0),
+                item: "petramond:coal".into(),
+                count: 2,
+                data: Some(Vec::new()),
+            },
+            HostCall::GuiOpen {
+                kind_key: "hostile:second".into(),
+                pos: Some(anchor.to_array()),
+            },
+        ],
+    )]);
+    server.sessions[s]
+        .pending_menu_actions
+        .push(PendingMenuAction::SlotClick {
+            slot: MenuSlot::Widget("navigate"),
+            button: PointerButton::Primary,
+            shift: false,
+            gather: false,
+            request_id: 0,
+        });
+    let mut events = TickEvents::default();
+    server.tick_menu(s, &mut events);
+    server.apply_deferred_actions(&mut events);
+    server.tick_menu(s, &mut events);
+    assert_eq!(
+        server.sessions[s].request_open_gui,
+        Some((second, Some(anchor)))
+    );
+    assert_eq!(server.sessions[0].request_open_gui, None);
+    assert_eq!(
+        server.sessions[s].player.inventory.slot(0).unwrap().count,
+        3
+    );
+    assert_eq!(
+        server.sessions[0].player.inventory.slot(0).unwrap().count,
+        5
+    );
+}

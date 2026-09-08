@@ -46,6 +46,63 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
+        HostCall::ContainerInsert { pos, stack } => {
+            let Some(item) = item_by_name(&stack.item) else {
+                return HostRet::ItemStack(Some(stack));
+            };
+            if stack.count > item.max_stack_size() {
+                return HostRet::ItemStack(Some(stack));
+            }
+            let variant = match super::guards::intern_abi_data("ContainerInsert", &stack.data) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            sim_query(|ctx| {
+                let p = ctx.world.container_anchor(pos.into());
+                let mut remainder = (stack.count > 0).then(|| {
+                    petramond_world::item::ItemStack::with_variant(item, stack.count, variant)
+                });
+                if let Ok(block) = stream_final_cell(ctx, p) {
+                    if let petramond_world::block::BlockInteraction::OpenGui(kind) =
+                        block.interaction()
+                    {
+                        let specs = crate::menu::slot_specs_for_kind(kind);
+                        if !specs.is_empty() && ctx.world.ensure_container(p, specs.len()) {
+                            if let Some(c) = ctx.world.container_at_mut(p) {
+                                petramond_world::container::route_into(
+                                    &mut remainder,
+                                    &mut c.slots,
+                                    &specs,
+                                    None,
+                                );
+                            }
+                            ctx.world.mark_chunk_modified(p);
+                        }
+                    }
+                }
+                HostRet::ItemStack(remainder.map(item_stack_data))
+            })
+        }
+        HostCall::ContainerTake { pos, slot, count } => sim_query(|ctx| {
+            let p = ctx.world.container_anchor(pos.into());
+            let taken = if stream_final_cell(ctx, p).is_ok() && count > 0 {
+                ctx.world
+                    .container_at_mut(p)
+                    .and_then(|c| c.slots.get_mut(slot as usize))
+                    .and_then(|cell| {
+                        let stack = (*cell)?;
+                        let n = stack.count.min(count);
+                        *cell = (stack.count > n).then(|| stack.restack(stack.count - n));
+                        Some(stack.restack(n))
+                    })
+            } else {
+                None
+            };
+            if taken.is_some() {
+                ctx.world.mark_chunk_modified(p);
+            }
+            HostRet::ItemStack(taken.map(item_stack_data))
+        }),
         HostCall::ContainerSet { pos, slots } => {
             if let Some(err) = batch_guard("ContainerSet slot entry", slots.len()) {
                 return err;
@@ -143,83 +200,4 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
 }
 
 #[cfg(test)]
-mod tests {
-    use mod_api::{HostCall, HostRet};
-
-    use crate::events::tick::TickEvents;
-    use crate::events::{PostQueue, SimCtx};
-    use crate::modding::host::{handle_host_call, ModStoreData};
-    use crate::modding::scope;
-    use crate::player::Player;
-    use crate::world::World;
-    use petramond_math::math::Vec3;
-    use petramond_world::chunk::ChunkPos;
-
-    /// Container host calls canonicalize any footprint cell of a multi-cell
-    /// model block to the group ANCHOR: a write through a non-anchor cell
-    /// must land in the one anchored container (the same slots the GUI and
-    /// break-scatter use), never mint a second store at that cell.
-    #[test]
-    fn container_calls_canonicalize_to_the_group_anchor() {
-        let mut world = World::new(1, 4);
-        world.clear_world();
-        world.insert_chunk_for_test(
-            ChunkPos::new(0, 0),
-            petramond_world::chunk::Chunk::new(0, 0),
-        );
-        let origin = petramond_math::math::IVec3::new(5, 64, 5);
-        assert!(world.place_model_block(origin, petramond_world::block::Block::FurnitureWorkbench));
-        let (_, anchor, cells) = world.model_group(origin).expect("a placed model group");
-        let far = *cells
-            .iter()
-            .find(|c| **c != anchor)
-            .expect("a non-anchor cell");
-
-        // The workbench is engine-owned and ContainerSet is guarded to the
-        // caller's own namespace, so the test store impersonates the engine
-        // namespace — this keeps the test off the heavy WASM fixture.
-        let mut store = ModStoreData::new(petramond_world::registry::ENGINE_NAMESPACE, 1);
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut feed = TickEvents::default();
-        let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
-        let mut ctx = SimCtx {
-            world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
-            feed: &mut feed,
-            queue: &mut queue,
-        };
-        scope::enter(&mut ctx, || {
-            let set = handle_host_call(
-                &mut store,
-                HostCall::ContainerSet {
-                    pos: far.to_array(),
-                    slots: vec![(
-                        0,
-                        Some(mod_api::ItemStackData {
-                            item: "petramond:coal".into(),
-                            count: 3,
-                            data: Vec::new(),
-                        }),
-                    )],
-                },
-            );
-            assert_eq!(set, HostRet::Bool(true));
-            // Reading through a different cell (the anchor) sees the write.
-            let got = handle_host_call(
-                &mut store,
-                HostCall::ContainerGet {
-                    pos: anchor.to_array(),
-                },
-            );
-            let HostRet::ContainerSlots(Some(slots)) = got else {
-                panic!("expected slots from the anchor, got {got:?}");
-            };
-            assert_eq!(slots[0].as_ref().map(|s| s.count), Some(3));
-        });
-        // One container, keyed at the anchor — nothing stranded at the cell.
-        assert!(world.container_at(anchor).is_some());
-        assert!(world.container_at(far).is_none());
-    }
-}
+mod tests;

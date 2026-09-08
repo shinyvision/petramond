@@ -18,7 +18,11 @@ use petramond_world::item::ItemStack;
 /// Publish the item-tip keys for the slot hovered on the last solved frame.
 /// Runs for every menu kind: keys a document does not bind are inert, so a
 /// pack document opts into the same tooltip by adding the node itself.
-pub(super) fn populate(game: &Game, hover_slot: Option<&(String, u32)>, state: &mut UiState) {
+pub(super) fn populate(
+    game: &Game,
+    hover_slot: Option<&(String, u32)>,
+    state: &mut UiState,
+) -> Vec<(String, std::path::PathBuf)> {
     // A tooltip that follows the cursor would fight the held stack for the
     // same pixels, so a drag suppresses it (the recipe tip's rule).
     let stack = if game.cursor_has_stack() {
@@ -50,6 +54,43 @@ pub(super) fn populate(game: &Game, hover_slot: Option<&(String, u32)>, state: &
         "item_tip_has_info",
         UiValue::Bool(stack.and_then(|stack| stack.item.info()).is_some()),
     );
+    let data = stack.and_then(|s| petramond_world::item::variant::get(s.variant));
+    let info = data
+        .as_ref()
+        .and_then(|d| d.get(petramond_world::item::variant::INFO_DATA_KEY))
+        .and_then(|v| std::str::from_utf8(v).ok())
+        .unwrap_or_default();
+    let (text, icons) = info.split_once('\n').unwrap_or((info, ""));
+    state.set("item_tip_instance", UiValue::Str(text.to_owned()));
+    let icons: Vec<_> = icons
+        .split(',')
+        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .take(4)
+        .collect();
+    let mut images = Vec::new();
+    for i in 0..4 {
+        let name = icons.get(i).copied().unwrap_or_default();
+        let path = (!name.is_empty())
+            .then(|| {
+                petramond_world::assets::candidate_paths(&format!("ui/icons/{name}.png"))
+                    .into_iter()
+                    .find(|p| p.is_file())
+            })
+            .flatten();
+        let key = format!("item_tip_icon{i}");
+        state.set(
+            &key,
+            UiValue::Str(if path.is_some() {
+                name.to_owned()
+            } else {
+                String::new()
+            }),
+        );
+        if let Some(path) = path {
+            images.push((name.to_owned(), path));
+        }
+    }
+    images
 }
 
 /// Publish the BOUND slot-tip keys: a machine may publish per-slot tooltip

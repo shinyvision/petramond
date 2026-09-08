@@ -177,6 +177,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     });
     roundtrip(HostCall::GuiOpen {
         kind_key: "wheel:wheel".into(),
+        pos: Some([1, 2, 3]),
     });
     roundtrip(HostCall::GuiClose);
     roundtrip(HostCall::ChatSend {

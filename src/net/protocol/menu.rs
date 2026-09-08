@@ -46,6 +46,8 @@ pub enum GuiValueWire {
     F32(f32),
     I32(i32),
     Str(String),
+    /// Named rows for document list templates.
+    List(Vec<std::collections::BTreeMap<String, Self>>),
 }
 
 impl GuiValueWire {
@@ -54,6 +56,15 @@ impl GuiValueWire {
             petramond_world::gui_state::GuiValue::F32(x) => Self::F32(*x),
             petramond_world::gui_state::GuiValue::I32(x) => Self::I32(*x),
             petramond_world::gui_state::GuiValue::Str(s) => Self::Str(s.clone()),
+            petramond_world::gui_state::GuiValue::List(rows) => Self::List(
+                rows.iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|(k, v)| (k.clone(), Self::from_value(v)))
+                            .collect()
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -62,6 +73,11 @@ impl GuiValueWire {
             Self::F32(x) => petramond_world::gui_state::GuiValue::F32(x),
             Self::I32(x) => petramond_world::gui_state::GuiValue::I32(x),
             Self::Str(s) => petramond_world::gui_state::GuiValue::Str(s),
+            Self::List(rows) => petramond_world::gui_state::GuiValue::List(
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(|(k, v)| (k, v.into_value())).collect())
+                    .collect(),
+            ),
         }
     }
 }

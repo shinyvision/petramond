@@ -298,15 +298,16 @@ impl ServerGame {
             mods,
             ..
         } = self;
-        let sess = &mut sessions[s];
-        let mut ctx = SimCtx {
-            world,
-            player: &mut sess.player,
-            gui_state: &mut sess.gui_state,
-            feed: events,
-            queue: bus.queue_mut(),
-        };
-        mods.dispatch_gui_click(&mut ctx, kind_key, widget_id, pos.map(|p| p.to_array()));
+        Self::with_sessions_view(sessions, s, |sess| {
+            let mut ctx = SimCtx {
+                world,
+                player: &mut sess.player,
+                gui_state: &mut sess.gui_state,
+                feed: events,
+                queue: bus.queue_mut(),
+            };
+            mods.dispatch_gui_click(&mut ctx, kind_key, widget_id, pos.map(|p| p.to_array()));
+        });
     }
 
     /// Begin a fresh player-crafting session for the requested station.

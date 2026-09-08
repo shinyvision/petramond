@@ -37,6 +37,9 @@ impl VariantId {
 /// A stack's instance data: namespaced key → small opaque value.
 pub type VariantMap = BTreeMap<String, Vec<u8>>;
 
+/// Instance tooltip text, optionally followed by a newline and comma-separated UI icon names.
+pub const INFO_DATA_KEY: &str = "petramond:info";
+
 /// Most keys one map may hold.
 pub const MAX_KEYS: usize = 4;
 /// Longest key, in bytes (namespaced `ns:name`).

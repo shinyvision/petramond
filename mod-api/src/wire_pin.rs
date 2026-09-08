@@ -118,7 +118,7 @@ fn samples() -> Samples {
         key: "k".into(), value: GuiValue::I32(1),
     });
     s.pin("HostCall::GuiStateGet", &HostCall::GuiStateGet { key: "k".into() });
-    s.pin("HostCall::GuiOpen", &HostCall::GuiOpen { kind_key: "m:g".into() });
+    s.pin("HostCall::GuiOpen", &HostCall::GuiOpen { kind_key: "m:g".into(), pos: Some([1, 2, 3]) });
     s.pin("HostCall::GuiClose", &HostCall::GuiClose);
     s.pin("HostCall::ChatSend", &HostCall::ChatSend {
         text: "t".into(), targets: Some(vec![PlayerId(1)]),
@@ -421,6 +421,9 @@ fn samples() -> Samples {
         mob_id: 7, pos: [1.0, 2.0, 3.0], yaw: 0.5, pitch: -0.25, roll: 0.125,
     });
     s.pin("HostCall::SoundSet", &HostCall::SoundSet { handle: 1, volume: 0.5, pitch: 1.0 });
+
+    s.pin("HostCall::ContainerInsert", &HostCall::ContainerInsert { pos: [1, 2, 3], stack: ItemStackData {item: "m:i".into(), count: 2, data: Vec::new()} });
+    s.pin("HostCall::ContainerTake", &HostCall::ContainerTake { pos: [1, 2, 3], slot: 4, count: 2 });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -832,6 +835,7 @@ fn samples() -> Samples {
     ]);
     s.pin("MobDamageSound::*", &vec![MobDamageSound::Hurt, MobDamageSound::Death]);
     s.pin("BodyAction::*", &vec![BodyAction::Attack, BodyAction::Mine, BodyAction::Use]);
+    s.pin("GuiValue::List", &GuiValue::List(vec![[ ("n".into(),GuiValue::I32(2)) ].into_iter().collect()]));
     s.pin("GuiValue::*", &vec![GuiValue::F32(1.0), GuiValue::I32(-1), GuiValue::Str("s".into())]);
     s.pin("MobTagValue::*", &vec![
         MobTagValue::Bool(true),
@@ -919,7 +923,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::RegisterGenerator", "2403"),
     ("HostCall::GuiStateSet", "25016b0102"),
     ("HostCall::GuiStateGet", "26016b"),
-    ("HostCall::GuiOpen", "27036d3a67"),
+    ("HostCall::GuiOpen", "27036d3a6701020406"),
     ("HostCall::GuiClose", "28"),
     ("HostCall::ChatSend", "290174010101"),
     ("HostCall::SoundPlayAt", "2a036d3a730000803f00000040000040400000803f0000803f"),
@@ -1037,6 +1041,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::PlayerInventory", "9a0103"),
     ("HostCall::MobKinematic", "9b01070000803f00000040000040400000003f000080be0000003e"),
     ("HostCall::SoundSet", "9c01010000003f0000803f"),
+    ("HostCall::ContainerInsert", "9d01020406036d3a690200"),
+    ("HostCall::ContainerTake", "9e010204060402"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -1167,6 +1173,7 @@ const PINS: &[(&str, &str)] = &[
     ("MobDamageFeedbackComponent::*", "0600010000003f020000803f0000003f030004050a"),
     ("MobDamageSound::*", "020001"),
     ("BodyAction::*", "03000102"),
+    ("GuiValue::List", "030101016e0104"),
     ("GuiValue::*", "03000000803f0101020173"),
     ("MobTagValue::*", "040001010102000000000000f83f030173"),
     ("MobTagLookup::*", "030001020101"),

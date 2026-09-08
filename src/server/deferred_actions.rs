@@ -20,10 +20,6 @@ impl ServerGame {
         if !self.bus.queue_mut().has_actions() {
             return;
         }
-        // The GUI and chat actions below are single-player-shaped: they
-        // target the HOST session (0) until per-player ABI addressing
-        // reaches them.
-        let s = 0;
         for action in self.bus.queue_mut().take_actions() {
             match action {
                 DeferredAction::DamagePlayer {
@@ -66,8 +62,8 @@ impl ServerGame {
                             .sessions
                             .iter()
                             .position(|sess| sess.id == id)
-                            .unwrap_or(s),
-                        _ => s,
+                            .unwrap_or(0),
+                        _ => 0,
                     };
                     self.damage_mob_through_pipeline(
                         acting, index, amount, source, origin, feedback, events,
@@ -75,12 +71,18 @@ impl ServerGame {
                 }
                 // GUI opens share the ordered menu boundary with player
                 // clicks and closes; this action point precedes that stage.
-                DeferredAction::OpenGui { kind } => {
-                    self.sessions[s].pending_menu_actions.push(
-                        crate::server::player::PendingMenuAction::OpenGui { kind, pos: None },
-                    );
+                DeferredAction::OpenGui { player, kind, pos } => {
+                    let Some(s) = self.sessions.iter().position(|sess| sess.id == player) else {
+                        continue;
+                    };
+                    self.sessions[s]
+                        .pending_menu_actions
+                        .push(crate::server::player::PendingMenuAction::OpenGui { kind, pos });
                 }
-                DeferredAction::CloseGui => {
+                DeferredAction::CloseGui { player } => {
+                    let Some(s) = self.sessions.iter().position(|sess| sess.id == player) else {
+                        continue;
+                    };
                     self.sessions[s].request_close_gui = true;
                 }
                 DeferredAction::ChatSend { text, targets } => {

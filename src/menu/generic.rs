@@ -15,7 +15,7 @@ use petramond_world::container::{Container, SlotSpec};
 use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
 use petramond_world::gui_state::ContainerView;
 use petramond_world::gui_state::PointerButton;
-use petramond_world::inventory::{merge_stack, Inventory};
+use petramond_world::inventory::Inventory;
 use petramond_world::item::ItemTag;
 use std::sync::{Arc, OnceLock};
 
@@ -36,6 +36,15 @@ fn furnace_slot_specs() -> Arc<Vec<SlotSpec>> {
             Arc::new(specs)
         })
         .clone()
+}
+
+/// Slot admission shared by player menus and automated container transfers.
+pub fn slot_specs_for_kind(kind: petramond_world::gui_state::GuiKind) -> Arc<Vec<SlotSpec>> {
+    if kind == petramond_world::gui_state::GuiKind::Furnace {
+        furnace_slot_specs()
+    } else {
+        crate::gui::documents::container_slot_specs(kind)
+    }
 }
 
 impl ContainerMenu {
@@ -68,8 +77,7 @@ impl ContainerMenu {
     /// machine state (smeltable/fuel/output) rather than authored layout.
     pub(super) fn slot_specs(&self) -> Arc<Vec<SlotSpec>> {
         match self.target.kind() {
-            Some(petramond_world::gui_state::GuiKind::Furnace) => furnace_slot_specs(),
-            Some(kind) => crate::gui::documents::container_slot_specs(kind),
+            Some(kind) => slot_specs_for_kind(kind),
             None => Arc::default(),
         }
     }
@@ -186,37 +194,7 @@ impl ContainerMenu {
             let Some(src) = inv.slot_mut(i) else {
                 return;
             };
-            let by_filter = (0..container.slots.len()).filter(|&s| {
-                specs
-                    .get(s)
-                    .is_some_and(|spec| spec.routes_by_filter(item, spec.accepts_mask(gui)))
-            });
-            let open = (0..container.slots.len()).filter(|&s| {
-                specs.get(s).is_some_and(|spec| {
-                    let mask = spec.accepts_mask(gui);
-                    !spec.routes_by_filter(item, mask) && spec.routes(item, mask)
-                })
-            });
-            let routed: Vec<usize> = by_filter.chain(open).collect();
-            // Merge-then-fill over the routed order (the inventory's
-            // `insert_into_slots` discipline): top up matching stacks first,
-            // then open empties.
-            for &s in &routed {
-                if src.is_none() {
-                    break;
-                }
-                if container.slots[s].is_some() {
-                    merge_stack(src, &mut container.slots[s]);
-                }
-            }
-            for &s in &routed {
-                if src.is_none() {
-                    break;
-                }
-                if container.slots[s].is_none() {
-                    merge_stack(src, &mut container.slots[s]);
-                }
-            }
+            petramond_world::container::route_into(src, &mut container.slots, &specs, gui);
         }
         world.mark_chunk_modified(pos);
     }

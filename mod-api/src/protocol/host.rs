@@ -419,10 +419,10 @@ pub enum HostCall {
     /// Ask the app shell to open the mod GUI registered under `kind_key`
     /// (`"wheel:wheel"` — a baked manifest or `open_gui` block row must have
     /// registered it). Queued like [`HostCall::DamagePlayer`]; the screen
-    /// opens after this tick, only from gameplay (an already-open menu drops
-    /// the request). `false` = unknown / non-mod kind. → [`HostRet::Bool`].
+    /// opens after this tick and may replace an open menu. `false` = unknown / non-mod kind. → [`HostRet::Bool`].
     GuiOpen {
         kind_key: String,
+        pos: Option<[i32; 3]>,
     },
     /// Close the open mod GUI (a no-op if none is open — engine containers
     /// are not closable from mods). Queued like [`HostCall::GuiOpen`].
@@ -1899,6 +1899,17 @@ pub enum HostCall {
         handle: u64,
         volume: f32,
         pitch: f32,
+    },
+    /// Insert through the target container's slot admission rules; returns the remainder.
+    ContainerInsert {
+        pos: [i32; 3],
+        stack: ItemStackData,
+    },
+    /// Take at most count from one slot of any container; returns the taken stack.
+    ContainerTake {
+        pos: [i32; 3],
+        slot: u32,
+        count: u8,
     },
 }
 

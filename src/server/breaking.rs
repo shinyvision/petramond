@@ -372,7 +372,7 @@ impl ServerGame {
         // Carry courier (break side): snapshot the row's `petramond:carry`
         // cell-KV entries BEFORE the removal below wipes the cell's KV, and
         // stamp them onto the block's own item drops as instance data.
-        let carry_variant = self.carry_variant_at(event.pos, event.block, 0);
+        let carry_variant = self.carry_variant_at(container_pos, event.block, 0);
         let broken_tint = self.world.cell_burst_tint(event.pos);
         // A bbmodel block breaks as a whole: removing any cell clears every footprint
         // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
@@ -433,7 +433,7 @@ impl ServerGame {
         // unless the override already stamped its own instance data.
         if let Some(stacks) = drops_override {
             for mut stack in stacks {
-                if stack.item == petramond_world::item::ItemType::from_block(event.block)
+                if carries_to_item(event.block, stack.item)
                     && stack.variant == petramond_world::item::VariantId::NONE
                 {
                     stack.variant = carry_variant;
@@ -601,7 +601,7 @@ impl ServerGame {
                 continue;
             }
             let mut stack = ItemStack::new(d.item, count);
-            if d.item == petramond_world::item::ItemType::from_block(block) {
+            if carries_to_item(block, d.item) {
                 stack.variant = carry_variant;
             }
             let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
@@ -657,4 +657,14 @@ pub fn break_light(
     .map(|n| at(pos + n))
     .max_by_key(|&(sky, block)| sky.max(block.luminance() as u8))
     .unwrap_or((63, petramond_world::light::BlockLight6::DARK))
+}
+
+/// Visual block variants can drop their placeable form. Matching courier
+/// declarations identify that form without copying data onto unrelated loot.
+fn carries_to_item(block: Block, item: petramond_world::item::ItemType) -> bool {
+    item == petramond_world::item::ItemType::from_block(block)
+        || (!block.carry().is_empty()
+            && item
+                .as_block()
+                .is_some_and(|target| target.carry() == block.carry()))
 }

@@ -62,7 +62,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(crate::modding::convert::gui_value_out),
             )
         }),
-        HostCall::GuiOpen { kind_key } => {
+        HostCall::GuiOpen { kind_key, pos } => {
             // Resolve WITHOUT registering: opening a kind nothing declared is
             // a mod bug, reported forgivingly (like an unknown sound key).
             let Some(kind) =
@@ -72,11 +72,22 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                 return HostRet::Bool(false);
             };
             sim_query(|ctx| {
-                ctx.queue.push_action(DeferredAction::OpenGui { kind });
+                let Some(player) = ctx.acting_player_id() else {
+                    return HostRet::Bool(false);
+                };
+                ctx.queue.push_action(DeferredAction::OpenGui {
+                    player,
+                    kind,
+                    pos: pos.map(Into::into),
+                });
                 HostRet::Bool(true)
             })
         }
-        HostCall::GuiClose => sim_call(|ctx| ctx.queue.push_action(DeferredAction::CloseGui)),
+        HostCall::GuiClose => sim_call(|ctx| {
+            if let Some(player) = ctx.acting_player_id() {
+                ctx.queue.push_action(DeferredAction::CloseGui { player });
+            }
+        }),
         other => HostRet::Error(format!(
             "non-GUI call {other:?} mis-routed to handle_gui_call (host bug)"
         )),

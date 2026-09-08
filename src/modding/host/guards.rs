@@ -250,7 +250,7 @@ pub(super) fn abi_data_map(
             )));
         }
     }
-    if !variant::valid(&map) {
+    if !map.is_empty() && !variant::valid(&map) {
         return Err(mod_api::HostRet::Error(format!(
             "{what}: invalid instance data (bare key or over-cap map/value)"
         )));

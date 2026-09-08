@@ -1069,6 +1069,42 @@
       "data": {
         "forge:augment_slots": {}
       }
+    },
+    {
+      "patch": "petramond:raw_iron",
+      "data": {
+        "forge:feed": true
+      }
+    },
+    {
+      "patch": "petramond:raw_copper",
+      "data": {
+        "forge:feed": true
+      }
+    },
+    {
+      "patch": "petramond:raw_gold",
+      "data": {
+        "forge:feed": true
+      }
+    },
+    {
+      "patch": "petramond:iron_ingot",
+      "data": {
+        "forge:feed": true
+      }
+    },
+    {
+      "patch": "petramond:copper_ingot",
+      "data": {
+        "forge:feed": true
+      }
+    },
+    {
+      "patch": "petramond:gold_ingot",
+      "data": {
+        "forge:feed": true
+      }
     }
   ]
 }

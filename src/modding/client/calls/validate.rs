@@ -56,3 +56,51 @@ pub(super) fn valid_client_key_id(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
+
+pub(super) fn gui_value_fits(value: &mod_api::GuiValue) -> bool {
+    let mut pending = vec![value];
+    let mut entries = 0;
+    while let Some(value) = pending.pop() {
+        entries += 1;
+        if entries > CLIENT_UI_STATE_MAX {
+            return false;
+        }
+        match value {
+            mod_api::GuiValue::Str(s) if s.len() > CLIENT_UI_STRING_MAX => return false,
+            mod_api::GuiValue::List(rows) => {
+                for row in rows {
+                    for (key, value) in row {
+                        if key.len() > CLIENT_UI_STRING_MAX {
+                            return false;
+                        }
+                        pending.push(value);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod gui_tests {
+    use super::*;
+    #[test]
+    fn list_values_cannot_bypass_client_state_size_limits() {
+        let list =
+            |value| mod_api::GuiValue::List(vec![[("value".into(), value)].into_iter().collect()]);
+        assert!(gui_value_fits(&list(mod_api::GuiValue::Str(
+            "short".into()
+        ))));
+        assert!(!gui_value_fits(&list(mod_api::GuiValue::Str(
+            "x".repeat(CLIENT_UI_STRING_MAX + 1)
+        ))));
+        assert!(!gui_value_fits(&mod_api::GuiValue::List(vec![
+                [("value".into(), mod_api::GuiValue::I32(1))]
+                    .into_iter()
+                    .collect();
+                CLIENT_UI_STATE_MAX
+            ])));
+    }
+}

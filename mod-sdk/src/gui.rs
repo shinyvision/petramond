@@ -59,8 +59,9 @@ host_fn! {
 host_fn! {
     /// Ask the app shell to open the mod GUI registered under `kind_key` (a baked
     /// manifest or an `open_gui` block row must have registered it). The screen
-    /// opens after this tick, only from gameplay. `false` = unknown/non-mod kind.
-    pub fn gui_open(kind_key: &str) -> bool => GuiOpen { kind_key: kind_key.into() } => Bool
+    /// opens after this tick, replacing an existing menu when present.
+    /// `pos` anchors the document; `false` = unknown/non-mod kind or no actor.
+    pub fn gui_open(kind_key: &str, pos: Option<[i32; 3]>) -> bool => GuiOpen { kind_key: kind_key.into(), pos } => Bool
 }
 
 host_fn! {

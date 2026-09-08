@@ -24,7 +24,7 @@ impl App {
         // interaction (engine container or mod `open_gui` row) or a mod's
         // `GuiOpen` request; one lane for every kind.
         if let Some((kind, pos)) = events.open_gui {
-            if self.screen.gameplay_enabled() {
+            if self.screen.gameplay_enabled() || matches!(self.screen, AppScreen::Menu(_)) {
                 self.open_gui(kind, pos);
             }
         }

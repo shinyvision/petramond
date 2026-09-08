@@ -174,6 +174,19 @@ impl Mod for Forge {
         if kind_key == furnace::ForgingFurnaceSpec::KIND_KEY && widget_id == furnace::WIDGET_LEVER {
             self.furnace.spec().pull_lever(pos, &mut self.caches);
         }
+        if kind_key == furnace::ForgingFurnaceSpec::KIND_KEY && widget_id == "fittings" {
+            gui_open(furnace::fittings::PAGE, Some(pos));
+        }
+        if kind_key == furnace::fittings::PAGE {
+            if widget_id == "back" {
+                gui_open(furnace::ForgingFurnaceSpec::KIND_KEY, Some(pos));
+            }
+            if let Some(kind) = widget_id.strip_prefix("fit_") {
+                if self.furnace.is_present(pos) {
+                    self.furnace.spec().fittings.buy(pos, kind);
+                }
+            }
+        }
         if kind_key == anvil::AnvilSpec::KIND_KEY && widget_id == anvil::WIDGET_AUGMENT {
             self.anvil.spec_mut().request_apply(pos);
         }

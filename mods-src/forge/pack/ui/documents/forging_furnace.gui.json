@@ -16,8 +16,37 @@
         },
         "children": [
             {
-                "type": "label",
-                "text": "Forging Furnace"
+                "type": "row",
+                "layout": {
+                    "align": "center",
+                    "gap": 6,
+                    "w": {
+                        "grow": 1
+                    }
+                },
+                "children": [
+                    {
+                        "type": "label",
+                        "text": "Forging Furnace"
+                    },
+                    {
+                        "type": "spacer",
+                        "layout": {
+                            "w": {
+                                "grow": 1
+                            }
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "fittings",
+                        "icon": "icon.arrow_up",
+                        "layout": {
+                            "w": 20,
+                            "h": 20
+                        }
+                    }
+                ]
             },
             {
                 "type": "row",
@@ -233,6 +262,33 @@
                         }
                     }
                 ]
+            },
+            {
+                "type": "tooltip",
+                "hover": "fittings",
+                "style": "panel.inset",
+                "layout": {
+                    "pad": [
+                        4,
+                        4,
+                        4,
+                        4
+                    ],
+                    "abs": {
+                        "x": 4,
+                        "y": 4
+                    }
+                },
+                "children": [
+                    {
+                        "type": "label",
+                        "text": "Furnace upgrades",
+                        "small": true
+                    }
+                ],
+                "bind": {
+                    "visible": "forge:fit_quench_name"
+                }
             }
         ]
     }

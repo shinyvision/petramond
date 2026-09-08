@@ -29,6 +29,8 @@ pub enum GuiValue {
     F32(f32),
     I32(i32),
     Str(String),
+    /// Named rows for document list templates.
+    List(Vec<std::collections::BTreeMap<String, Self>>),
 }
 
 /// One value in a live mob's tag map. Engine tags use the `petramond:`

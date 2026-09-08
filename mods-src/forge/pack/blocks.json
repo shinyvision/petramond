@@ -94,7 +94,81 @@
       "data": {
         "petramond:harvest": {
           "tier": 1
-        }
+        },
+        "petramond:carry": [
+          "forge:fittings",
+          "petramond:info"
+        ],
+        "forge:upgrades": [
+          {
+            "kind": "quench",
+            "name": "Quench Coil",
+            "info": "Casts cool and leave their moulds faster.",
+            "icon": "forge_quench",
+            "cost": [
+              {
+                "item": "petramond:copper_ingot",
+                "count": 5
+              },
+              {
+                "item": "forge:petramond",
+                "count": 1
+              }
+            ],
+            "set_ticks": 30
+          },
+          {
+            "kind": "counterweight",
+            "name": "Counterweight",
+            "info": "Pours automatically after a short pause. Requires a mould.",
+            "icon": "forge_counterweight",
+            "cost": [
+              {
+                "item": "petramond:iron_ingot",
+                "count": 5
+              },
+              {
+                "item": "forge:petramond",
+                "count": 1
+              }
+            ],
+            "dwell_ticks": 20
+          },
+          {
+            "kind": "chute",
+            "name": "Chute",
+            "info": "Sends finished casts to a touching chest. Spills when full.",
+            "icon": "forge_chute",
+            "cost": [
+              {
+                "item": "petramond:iron_ingot",
+                "count": 5
+              },
+              {
+                "item": "forge:petramond",
+                "count": 1
+              }
+            ]
+          },
+          {
+            "kind": "stoker",
+            "name": "Stoker",
+            "info": "Feeds coal and metal from a touching chest in small batches.",
+            "icon": "forge_stoker",
+            "cost": [
+              {
+                "item": "petramond:iron_ingot",
+                "count": 6
+              },
+              {
+                "item": "forge:petramond",
+                "count": 1
+              }
+            ],
+            "feed_every": 20,
+            "feed_keep": 8
+          }
+        ]
       },
       "hardness": 3.5,
       "drops": [
@@ -131,7 +205,11 @@
       "data": {
         "petramond:harvest": {
           "tier": 1
-        }
+        },
+        "petramond:carry": [
+          "forge:fittings",
+          "petramond:info"
+        ]
       },
       "hardness": 3.5,
       "drops": [
@@ -174,7 +252,11 @@
       "data": {
         "petramond:harvest": {
           "tier": 1
-        }
+        },
+        "petramond:carry": [
+          "forge:fittings",
+          "petramond:info"
+        ]
       },
       "hardness": 3.5,
       "drops": [
@@ -240,6 +322,12 @@
           "chance": 1
         }
       ]
+    },
+    {
+      "patch": "petramond:chest",
+      "data": {
+        "forge:storage": true
+      }
     }
   ]
 }
