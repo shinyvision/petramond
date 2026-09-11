@@ -6,6 +6,7 @@
 //! seam helpers and the singleton table stay in the parent.
 
 use super::*;
+use crate::block::shape_kind::RunRoot;
 
 /// A STATIC BOX SET — the one family for any block whose form is a fixed list
 /// of axis-aligned boxes authored as data (`{"boxes": [...]}`): farmland and
@@ -86,8 +87,15 @@ impl ShapeSim for BoxSetFamily {
         block: Block,
         state: ShapeState,
     ) -> ShapeState {
-        if !box_set(p).corner_joins {
-            return state;
+        match box_set(p).refine {
+            super::super::BoxSetRefine::None => return state,
+            super::super::BoxSetRefine::Run(run) => {
+                // Byte 1 is the run form, the slot a corner form uses, so
+                // every reader decodes one byte whatever the rule was.
+                let form = resolve_run_form(nb, pos, block.shape_kind(), run.root);
+                return ShapeState::new(&[state.byte(0), form]);
+            }
+            super::super::BoxSetRefine::Corners => {}
         }
         // Byte 0 (the placed facing) is IDENTITY and never refined; byte 1 is
         // the corner form — the stair's identity/refined split, resolved by
@@ -210,4 +218,61 @@ impl ShapeRender for BoxSetFamily {
     }
 }
 
-impl ShapePlacement for BoxSetFamily {}
+impl ShapePlacement for BoxSetFamily {
+    /// A run picks its ROOT from the click and its row from the root. A
+    /// ceiling or floor click names the root outright (the clicked side);
+    /// a wall click tries standing first, then hanging. A root holds when
+    /// the cell that way is a segment of the same run or presents a
+    /// complete face (the wall-torch test). Resolving the OTHER root writes
+    /// the row's `flipped` sibling — orientation as block identity, the
+    /// ladder-row pattern — and the form is pre-resolved from the
+    /// neighbours so the write lands already refined. Every other box set
+    /// keeps the generic single-cell path.
+    fn placement_plan(
+        &self,
+        w: &WorldData,
+        block: Block,
+        inputs: &PlaceInputs,
+        occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
+    ) -> PlacementOutcome {
+        let Some(own) = box_set(&block.shape_kind_def().params).run() else {
+            return PlacementOutcome::General;
+        };
+        let p = inputs.place_pos;
+        let roots = match inputs.normal.y {
+            0 => [RunRoot::Down, RunRoot::Up],
+            y if y < 0 => [RunRoot::Up, RunRoot::Down],
+            _ => [RunRoot::Down, RunRoot::Up],
+        };
+        for root in roots {
+            let row = if root == own.root {
+                block
+            } else {
+                match block.flipped_row() {
+                    Some(row) => row,
+                    None => continue,
+                }
+            };
+            let kind = row.shape_kind();
+            let nb: &dyn ShapeNeighborhood = w;
+            let anchor = p + root.dir();
+            let held = run_segment(nb, anchor, kind) || w.mount_face_complete(anchor, root.tip());
+            if !held {
+                continue;
+            }
+            let form = resolve_run_form(nb, p, kind, root);
+            let boxes = box_set(kind.params()).collision(0, form);
+            return match w.finish_single_cell_placement(
+                row,
+                p,
+                ShapeState::new(&[0, form]),
+                boxes,
+                occupied,
+            ) {
+                Some(plan) => PlacementOutcome::Plan(plan),
+                None => PlacementOutcome::Refused,
+            };
+        }
+        PlacementOutcome::Refused
+    }
+}

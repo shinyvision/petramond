@@ -36,6 +36,9 @@ pub enum RawShape {
     /// A custom shape referenced by name (`"shape": "mymod:gate"`),
     /// declared in the pack's `shapes.json`.
     Named(String),
+    /// A vertical RUN: `{"run": {"root": "down", "forms": {...}}}` — a box
+    /// set whose form follows the cell's place in a same-kind run.
+    Run(RawRun),
 }
 
 /// The most boxes one authored shape may list. Shares the guest-bake cap: a
@@ -51,73 +54,13 @@ fn resolve_box_set(
     raw: &[RawBox],
     corners: bool,
 ) -> Result<(ShapeFamily, ShapeParams, String), String> {
-    if raw.is_empty() {
-        return Err("a 'boxes' shape needs at least one box".into());
-    }
-    if raw.len() > MAX_AUTHORED_BOXES {
-        return Err(format!(
-            "a 'boxes' shape may list at most {MAX_AUTHORED_BOXES} boxes, got {}",
-            raw.len()
-        ));
-    }
-    let boxes: Vec<BoxDef> = raw.iter().map(RawBox::resolve).collect::<Result<_, _>>()?;
+    let boxes = resolve_box_list(raw)?;
     if corners && boxes.iter().any(|b| b.pose.is_some()) {
         // A corner form is the INTERSECTION of the shape with its quarter
         // turn, and the intersection of two posed boxes is not a box.
         return Err("'corners' cannot compose a shape with rotated boxes".into());
     }
-    let key = format!(
-        "#boxes/{}",
-        boxes
-            .iter()
-            .map(|b| {
-                // Texel-exact geometry in the key (fractional texels print as
-                // such), so two rows that differ at all never share a kind.
-                let t = |v: f32| format!("{}", (v * 16.0 * 1000.0).round() / 1000.0);
-                let faces: String = b.faces.iter().map(|&f| if f { '1' } else { '0' }).collect();
-                // Tiles are part of the shape's identity: two rows whose boxes
-                // agree but whose face art does not are different kinds.
-                let tiles: String = b
-                    .tiles
-                    .iter()
-                    .map(|t| t.map_or(String::new(), |t| format!(".{}", t.index())))
-                    .collect();
-                let uv: String =
-                    b.uv.iter()
-                        .zip(b.uv_turns)
-                        .map(|(r, turns)| {
-                            format!(
-                                ".{}{}",
-                                r.map_or(String::new(), |r| format!("{r:?}")),
-                                if turns != 0 {
-                                    format!("r{turns}")
-                                } else {
-                                    String::new()
-                                }
-                            )
-                        })
-                        .collect();
-                let pose = b.pose.map_or(String::new(), |p| {
-                    let q = p.rotation.to_array().map(t);
-                    let o = p.origin.to_array().map(t);
-                    format!("@{}|{}", q.join(","), o.join(","))
-                });
-                format!(
-                    "{},{},{}-{},{},{}:{faces}{}{}{}{tiles}{uv}{pose}",
-                    t(b.aabb.min[0]),
-                    t(b.aabb.min[1]),
-                    t(b.aabb.min[2]),
-                    t(b.aabb.max[0]),
-                    t(b.aabb.max[1]),
-                    t(b.aabb.max[2]),
-                    if b.collides { "c" } else { "" },
-                    if b.occludes { "o" } else { "" },
-                    if b.double_sided { "d" } else { "" }
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("/")
-    ) + if corners { "+corners" } else { "" };
+    let key = format!("#boxes/{}", box_list_key(&boxes)) + if corners { "+corners" } else { "" };
     // The AUTHORED-space forms, the stair rule lifted to box lists: straight,
     // outer = self INTERSECT quarter-turned self (the matter both orientations
     // agree on), inner = self UNION quarter-turned self — one clockwise and
@@ -192,7 +135,168 @@ fn resolve_box_set(
         collision,
         targets,
         bounds,
-        corner_joins: corners,
+        refine: if corners {
+            BoxSetRefine::Corners
+        } else {
+            BoxSetRefine::None
+        },
+    }));
+    Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
+}
+
+/// Resolve an authored box list, bounding its length.
+fn resolve_box_list(raw: &[RawBox]) -> Result<Vec<BoxDef>, String> {
+    if raw.is_empty() {
+        return Err("a box list needs at least one box".into());
+    }
+    if raw.len() > MAX_AUTHORED_BOXES {
+        return Err(format!(
+            "a box list may hold at most {MAX_AUTHORED_BOXES} boxes, got {}",
+            raw.len()
+        ));
+    }
+    raw.iter().map(RawBox::resolve).collect()
+}
+
+/// The canonical spelling of a box list — the kind key's body. Texel-exact
+/// geometry (fractional texels print as such), every face flag, and the
+/// tiles and UV of every face: two rows that differ at all never share a
+/// kind, and two that agree always do.
+fn box_list_key(boxes: &[BoxDef]) -> String {
+    boxes
+        .iter()
+        .map(|b| {
+            let t = |v: f32| format!("{}", (v * 16.0 * 1000.0).round() / 1000.0);
+            let faces: String = b.faces.iter().map(|&f| if f { '1' } else { '0' }).collect();
+            // Tiles are part of the shape's identity: two rows whose boxes
+            // agree but whose face art does not are different kinds.
+            let tiles: String = b
+                .tiles
+                .iter()
+                .map(|t| t.map_or(String::new(), |t| format!(".{}", t.index())))
+                .collect();
+            let uv: String =
+                b.uv.iter()
+                    .zip(b.uv_turns)
+                    .map(|(r, turns)| {
+                        format!(
+                            ".{}{}",
+                            r.map_or(String::new(), |r| format!("{r:?}")),
+                            if turns != 0 {
+                                format!("r{turns}")
+                            } else {
+                                String::new()
+                            }
+                        )
+                    })
+                    .collect();
+            let pose = b.pose.map_or(String::new(), |p| {
+                let q = p.rotation.to_array().map(t);
+                let o = p.origin.to_array().map(t);
+                format!("@{}|{}", q.join(","), o.join(","))
+            });
+            format!(
+                "{},{},{}-{},{},{}:{faces}{}{}{}{tiles}{uv}{pose}",
+                t(b.aabb.min[0]),
+                t(b.aabb.min[1]),
+                t(b.aabb.min[2]),
+                t(b.aabb.max[0]),
+                t(b.aabb.max[1]),
+                t(b.aabb.max[2]),
+                if b.collides { "c" } else { "" },
+                if b.occludes { "o" } else { "" },
+                if b.double_sided { "d" } else { "" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The body of a `{"run": {...}}` shape: a box set whose form follows the
+/// cell's place in a same-kind vertical run. The forms are authored STANDING
+/// (rooted below, tapering upward, texel `y = 0` at the floor, like every
+/// other box shape); a row rooted `"up"` gets the same forms mirrored about
+/// the cell's mid-plane, so one authored set serves a stalagmite and its
+/// stalactite.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawRun {
+    /// `"up"` (hangs from the cell above) or `"down"` (stands on the cell
+    /// below).
+    pub root: String,
+    pub forms: RawRunForms,
+}
+
+/// A run's authored forms, each a box list. `merge` is what a free end
+/// becomes when it meets an opposing run's free end (two spikes forming a
+/// column); absent, the free end keeps its `tip` form there.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawRunForms {
+    /// The free end.
+    pub tip: Vec<RawBox>,
+    /// The segment behind the free end.
+    pub frustum: Vec<RawBox>,
+    /// An interior segment.
+    pub middle: Vec<RawBox>,
+    /// The attached end.
+    pub base: Vec<RawBox>,
+    #[serde(default)]
+    pub merge: Option<Vec<RawBox>>,
+}
+
+/// Resolve a `{"run": {...}}` shape. The key spells the root and every form,
+/// so a stalagmite row and a stalactite row are two kinds (they never join
+/// into one run — they MERGE), and two rows authoring identical forms with
+/// the same root share one.
+fn resolve_run(raw: &RawRun) -> Result<(ShapeFamily, ShapeParams, String), String> {
+    let root = match raw.root.as_str() {
+        "up" => RunRoot::Up,
+        "down" => RunRoot::Down,
+        other => return Err(format!("run root '{other}' must be 'up' or 'down'")),
+    };
+    let f = &raw.forms;
+    let named: [(&str, &[RawBox]); 5] = [
+        ("tip", &f.tip),
+        ("frustum", &f.frustum),
+        ("middle", &f.middle),
+        ("base", &f.base),
+        ("merge", f.merge.as_deref().unwrap_or(&f.tip)),
+    ];
+    let mut key = format!("#run/{}", root.name());
+    let mut authored: [&'static [BoxDef]; 5] = [&[]; 5];
+    for (slot, (name, list)) in authored.iter_mut().zip(named) {
+        let boxes = resolve_box_list(list).map_err(|e| format!("run form '{name}': {e}"))?;
+        // Authored standing; a hanging run is the mirror image.
+        let boxes = match root {
+            RunRoot::Down => boxes,
+            RunRoot::Up => boxes.iter().map(BoxDef::mirrored_y).collect(),
+        };
+        key.push_str(&format!("/{name}={}", box_list_key(&boxes)));
+        *slot = Box::leak(boxes.into_boxed_slice());
+    }
+    // A run never turns (a vertical run has no facing), so the four turn
+    // slots share one resolution of each form.
+    let mut collision: [&'static [Aabb]; 5] = [&[]; 5];
+    let mut targets: [&'static [crate::block::PosedBox]; 5] = [&[]; 5];
+    let mut bounds = [Aabb {
+        min: [0.0; 3],
+        max: [0.0; 3],
+    }; 5];
+    for form in 0..5 {
+        let set = authored[form];
+        let c: Vec<Aabb> = set.iter().filter_map(BoxDef::collision_volume).collect();
+        collision[form] = Box::leak(c.into_boxed_slice());
+        let g: Vec<crate::block::PosedBox> = set.iter().map(BoxDef::target).collect();
+        targets[form] = Box::leak(g.into_boxed_slice());
+        bounds[form] = union_bounds(set);
+    }
+    let params: &'static BoxSetParams = Box::leak(Box::new(BoxSetParams {
+        forms: [authored; 4],
+        collision: [collision; 4],
+        targets: [targets; 4],
+        bounds: [bounds; 4],
+        refine: BoxSetRefine::Run(RunParams { root }),
     }));
     Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
 }
@@ -468,6 +572,7 @@ impl RawShape {
                 "petramond:cube".into(),
             ),
             RawShape::Boxes(raw) => resolve_box_set(raw, corners)?,
+            RawShape::Run(raw) => resolve_run(raw)?,
             RawShape::Cross => (
                 ShapeFamily::Cross,
                 ShapeParams::None,
@@ -791,6 +896,78 @@ mod tests {
     /// The authoring vocabulary refuses what the geometry cannot honour:
     /// corner composition of a posed box, a UV rotation off the quarter
     /// grid, a pivot with nothing to pivot, and a box flat on two axes.
+    fn run_shape(root: &str) -> RawShape {
+        serde_json::from_str(&format!(
+            r#"{{"run":{{"root":"{root}","forms":{{
+                "tip":[{{"from":[6,0,6],"to":[10,10,10]}},{{"from":[7,10,7],"to":[9,16,9],"faces":["sides","up"]}}],
+                "frustum":[{{"from":[4,0,4],"to":[12,16,12]}}],
+                "middle":[{{"from":[3,0,3],"to":[13,16,13]}}],
+                "base":[{{"from":[2,0,2],"to":[14,4,14],"tiles":{{"down":"stone"}}}},{{"from":[3,4,3],"to":[13,16,13]}}]
+            }}}}}}"#
+        ))
+        .expect("run parses")
+    }
+
+    /// A run is authored STANDING; the hanging row is the same set reflected
+    /// through the cell's mid-plane, face by face — so one authored set
+    /// serves both roots and the two are distinct kinds.
+    #[test]
+    fn a_hanging_run_is_the_standing_run_mirrored() {
+        let (_, down, key_down) = run_shape("down").resolve(false).expect("standing resolves");
+        let (_, up, key_up) = run_shape("up").resolve(false).expect("hanging resolves");
+        assert_ne!(key_down, key_up, "the root is kind identity");
+        let (down, up) = (down.box_set().unwrap(), up.box_set().unwrap());
+        assert_eq!(down.run().unwrap().root, RunRoot::Down);
+        assert_eq!(up.run().unwrap().root, RunRoot::Up);
+        for form in 0..5u8 {
+            let (a, b) = (down.boxes(0, form), up.boxes(0, form));
+            assert_eq!(a.len(), b.len());
+            for (d, u) in a.iter().zip(b) {
+                assert_eq!(u.aabb.min[1], 1.0 - d.aabb.max[1]);
+                assert_eq!(u.aabb.max[1], 1.0 - d.aabb.min[1]);
+                assert_eq!(u.aabb.min[0], d.aabb.min[0]);
+                assert_eq!(u.faces[2], d.faces[3], "up/down faces swap");
+                assert_eq!(u.faces[3], d.faces[2]);
+                assert_eq!(u.tiles[2], d.tiles[3], "a face's tile travels with it");
+            }
+            // Every turn slot holds the one resolution: a run never turns.
+            assert_eq!(down.boxes(1, form), down.boxes(0, form));
+        }
+        // The merge form defaults to the tip, and collision follows the form.
+        assert_eq!(down.boxes(0, RUN_MERGE), down.boxes(0, RUN_TIP));
+        assert_eq!(down.collision(0, RUN_BASE).len(), 2);
+        assert!(
+            down.bounds(0, RUN_TIP).max[1] > 0.99,
+            "the tip reaches the cell top"
+        );
+    }
+
+    #[test]
+    fn run_authoring_errors_are_load_errors() {
+        assert!(
+            serde_json::from_str::<RawShape>(r#"{"run":{"root":"north","forms":{"tip":[{}],"frustum":[{}],"middle":[{}],"base":[{}]}}}"#)
+                .unwrap()
+                .resolve(false)
+                .is_err(),
+            "a horizontal root"
+        );
+        assert!(
+            serde_json::from_str::<RawShape>(r#"{"run":{"root":"up","forms":{"tip":[],"frustum":[{}],"middle":[{}],"base":[{}]}}}"#)
+                .unwrap()
+                .resolve(false)
+                .is_err(),
+            "an empty form"
+        );
+        assert!(
+            serde_json::from_str::<RawShape>(
+                r#"{"run":{"root":"up","forms":{"tip":[{}],"middle":[{}],"base":[{}]}}}"#
+            )
+            .is_err(),
+            "a missing form"
+        );
+        assert!(run_shape("down").resolve(true).is_err(), "corners on a run");
+    }
+
     #[test]
     fn rotated_box_authoring_errors_are_load_errors() {
         let posed = raw(r#"{"to":[16,8,16],"rotation":[0,45,0]}"#);

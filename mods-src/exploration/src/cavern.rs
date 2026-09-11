@@ -979,7 +979,7 @@ fn beats(a: &Candidate, ra: [i32; 3], b: &Candidate, rb: [i32; 3]) -> bool {
 /// REJECT the batch, which would stop the pack generating anything at all, or
 /// having a cap TRUNCATE it, which drops candidates by list position and lets a
 /// cell that is about to lose to a giant displace a legitimate floor.
-fn batched<T>(positions: Vec<[i32; 3]>, call: fn(Vec<[i32; 3]>) -> Vec<T>) -> Vec<T> {
+pub(crate) fn batched<T>(positions: Vec<[i32; 3]>, call: fn(Vec<[i32; 3]>) -> Vec<T>) -> Vec<T> {
     if positions.is_empty() {
         return Vec::new();
     }
@@ -1087,7 +1087,7 @@ fn patch_at(seed: u32, wx: i32, wz: i32) -> (i32, bool, i32) {
 /// Integer square root, for the falloff. `f64::sqrt` would be fine here, but
 /// every other shape decision in this pack is integer arithmetic and mixing
 /// the two invites a rounding difference between two derivations of one cell.
-fn isqrt(n: i32) -> i32 {
+pub(crate) fn isqrt(n: i32) -> i32 {
     if n <= 0 {
         return 0;
     }

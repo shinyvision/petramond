@@ -298,6 +298,12 @@ fn append_emitter_particles(
                 rand_signed(seed ^ 0x99) * velocity_jitter.z,
             );
         let mut pos = inst.origin + jitter + velocity * age;
+        pos.y -= 0.5 * e.gravity * age * age;
+        // A landing row's particle is gone once it reaches the surface under
+        // its anchor (the gather resolved that height once per emitter).
+        if pos.y - size * 0.5 <= inst.floor_y {
+            continue;
+        }
         // Spiral: each particle orbits the emitter's vertical axis while it
         // rises. Phase, orbit radius, AND angular speed are all per-particle
         // (seed-derived): a shared speed reads as a rigid rotating helix, while

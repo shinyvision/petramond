@@ -39,6 +39,46 @@
         "feather": 8.0,
         "bend": 0.2
       }
+    },
+    {
+      "excavation": "exploration:dripstone_halls",
+      "placement": {
+        "spacing": 72,
+        "one_in": 2,
+        "y": [
+          -48,
+          64
+        ],
+        "underground_biome": "exploration:dripstone_caves",
+        "contact": "natural_cave"
+      },
+      "chamber": {
+        "radius": [
+          12,
+          18
+        ],
+        "flatten": 0.55,
+        "sill": 0.7,
+        "feather": 8,
+        "strength": 1.0,
+        "lobes": 2,
+        "lobe_spread": 0.4,
+        "lobe_scale": [
+          0.5,
+          0.75
+        ],
+        "tunnel": 0.6,
+        "rim_noise": 1.6
+      },
+      "connections": {
+        "radius": [
+          3.0,
+          4.5
+        ],
+        "flatten": 0.8,
+        "feather": 8.0,
+        "bend": 0.2
+      }
     }
   ]
 }

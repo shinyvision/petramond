@@ -39,6 +39,43 @@
           0.9
         ]
       }
+    },
+    {
+      "underground_biome": "exploration:dripstone_caves",
+      "y": [
+        -64,
+        96
+      ],
+      "lining": {
+        "block": "exploration:dripstone_block",
+        "shell": 1.2,
+        "faces": {
+          "floor_depth": 1,
+          "floor": {
+            "weight": 0.85
+          },
+          "wall": {
+            "weight": 0.55
+          },
+          "ceiling": {
+            "weight": 0.85
+          }
+        }
+      },
+      "climate": {
+        "humidity": [
+          -1.0,
+          -0.5
+        ],
+        "temperature": [
+          0.2,
+          1.0
+        ],
+        "depth": [
+          0.2,
+          0.9
+        ]
+      }
     }
   ]
 }

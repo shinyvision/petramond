@@ -135,6 +135,51 @@
         "item": "exploration:torch_purple",
         "count": 4
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:dripstone_block",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "exploration:pointed_dripstone",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "exploration:dripstone_block",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:dripstone_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "exploration:dripstone_block",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "exploration:dripstone_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:dripstone_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "exploration:dripstone_block",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "exploration:dripstone_slab",
+        "count": 6
+      }
     }
   ]
 }

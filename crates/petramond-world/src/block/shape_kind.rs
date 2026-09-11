@@ -32,6 +32,7 @@ pub mod facets;
 pub mod families;
 mod load;
 mod neighborhood;
+pub mod run_form;
 
 pub use custom::{CustomLight, CustomShapeDef};
 pub use facets::{
@@ -41,7 +42,7 @@ pub use facets::{
 };
 
 pub use corner_form::{face_uv_turns, FRONT_AFTER_TURN};
-pub use load::{family_resolves_to_boxes, RawBox, RawCustomShape, RawShape};
+pub use load::{family_resolves_to_boxes, RawBox, RawCustomShape, RawRun, RawShape};
 pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE_STATE_MAX};
 
 /// A block shape kind — a session-local id into the [`ShapeKindDef`] table
@@ -415,12 +416,88 @@ pub struct BoxSetParams {
     collision: [[&'static [Aabb]; 5]; 4],
     targets: [[&'static [crate::block::PosedBox]; 5]; 4],
     bounds: [[Aabb; 5]; 4],
-    /// Whether this kind resolves CORNER forms from its perpendicular
-    /// same-kind neighbours (the row's `"corners": true`) — the stair rule
-    /// lifted from quadrant masks to box lists. `false` = the shape has one
-    /// form per turn and never refines.
-    pub corner_joins: bool,
+    /// How this kind refines its form from its neighbours, if at all.
+    /// [`BoxSetRefine::None`] = one form per turn, never refined.
+    pub refine: BoxSetRefine,
 }
+
+/// Which neighbour rule, if any, a box-set kind resolves its FORM by. The
+/// form is stored in cell-state byte 1 by the refine cascade and decoded by
+/// every reader; a kind with no rule keeps the cascade's cheap path.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BoxSetRefine {
+    None,
+    /// Stair-style corner forms from perpendicular same-kind neighbours (the
+    /// row's `"corners": true`) — the stair rule lifted from quadrant masks
+    /// to box lists.
+    Corners,
+    /// A linear RUN along the vertical axis (`{"run": {...}}`): the form
+    /// follows the cell's place in a same-kind run — free end, the segment
+    /// behind it, interior, attached end.
+    Run(RunParams),
+}
+
+/// The parameters of a run kind.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RunParams {
+    /// Which way the run is ATTACHED: the cell in this direction holds the
+    /// run up, and the forms taper away from it.
+    pub root: RunRoot,
+}
+
+/// The two ways a vertical run can be attached.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RunRoot {
+    /// Hangs from the cell above (a stalactite, an icicle, a hanging root).
+    Up,
+    /// Stands on the cell below (a stalagmite, a pillar, a bamboo stalk).
+    Down,
+}
+
+impl RunRoot {
+    /// Unit step toward the root.
+    #[inline]
+    pub fn dir(self) -> crate::mathh::IVec3 {
+        match self {
+            RunRoot::Up => crate::mathh::IVec3::Y,
+            RunRoot::Down => crate::mathh::IVec3::NEG_Y,
+        }
+    }
+
+    /// Unit step toward the free end.
+    #[inline]
+    pub fn tip(self) -> crate::mathh::IVec3 {
+        -self.dir()
+    }
+
+    #[inline]
+    pub fn opposite(self) -> RunRoot {
+        match self {
+            RunRoot::Up => RunRoot::Down,
+            RunRoot::Down => RunRoot::Up,
+        }
+    }
+
+    /// The JSON spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            RunRoot::Up => "up",
+            RunRoot::Down => "down",
+        }
+    }
+}
+
+/// A run cell's resolved form (cell-state byte 1, the slot a corner form
+/// uses): the free end, the segment behind it, an interior segment, the
+/// attached end, or a free end meeting an OPPOSING run's free end (two
+/// spikes forming a column). Resolved by [`run_form::run_form`]; an
+/// out-of-range stored byte reads as the free end.
+pub type RunForm = u8;
+pub const RUN_TIP: RunForm = 0;
+pub const RUN_FRUSTUM: RunForm = 1;
+pub const RUN_MIDDLE: RunForm = 2;
+pub const RUN_BASE: RunForm = 3;
+pub const RUN_MERGE: RunForm = 4;
 
 /// A corner-joining cell's resolved form (stored in cell-state byte 1; byte 0
 /// stays the placed facing — the stair's identity/refined split):
@@ -431,6 +508,21 @@ pub struct BoxSetParams {
 pub type CornerForm = u8;
 
 impl BoxSetParams {
+    /// Whether this kind resolves stair-style corner forms.
+    #[inline]
+    pub fn corner_joins(&self) -> bool {
+        self.refine == BoxSetRefine::Corners
+    }
+
+    /// This kind's run parameters, if it is a run.
+    #[inline]
+    pub fn run(&self) -> Option<RunParams> {
+        match self.refine {
+            BoxSetRefine::Run(r) => Some(r),
+            _ => None,
+        }
+    }
+
     /// An out-of-vocabulary stored byte (an old world's stale state, until
     /// the load sweep rewrites it) reads as STRAIGHT — never a wrong corner.
     #[inline]
@@ -534,11 +626,13 @@ impl<'de> Deserialize<'de> for RawShape {
             Boxes(Vec<RawBox>),
             Model(BlockModelKind),
             Custom(RawCustomShape),
+            Run(RawRun),
         }
         match serde_json::from_value::<Tagged>(value).map_err(D::Error::custom)? {
             Tagged::Boxes(b) => Ok(RawShape::Boxes(b)),
             Tagged::Model(kind) => Ok(RawShape::Model(kind)),
             Tagged::Custom(custom) => Ok(RawShape::Custom(custom)),
+            Tagged::Run(run) => Ok(RawShape::Run(run)),
         }
     }
 }

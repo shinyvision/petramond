@@ -128,6 +128,11 @@ pub(super) struct RawBlockDef {
     /// the clicked face's normal. Only valid on `ladder`-shaped rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facing_rows: Option<RawFacingRows>,
+    /// For a `{"run": ...}` row: the registry name of the sibling row rooted
+    /// the other way. Only valid on run rows; the target must be a run row
+    /// with the opposite root that names this row back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flipped: Option<String>,
     /// Namespaced consumer-data entries (`"ns:key": <any JSON>`): the block
     /// interop surface, exactly the item rows' `data` field — a consuming
     /// system's key, an opaque JSON value that consumer parses. Attachable to
@@ -279,7 +284,8 @@ fn resolve_emission_rgb(emission: u8, color: [f64; 3]) -> Result<[u8; 3], String
 #[serde(untagged)]
 pub(super) enum RawEmitterRef {
     Key(String),
-    Inline(ParticleEmitter),
+    /// Boxed: the row is a couple of hundred bytes beside a key's string.
+    Inline(Box<ParticleEmitter>),
 }
 
 /// A row's `interaction` field: a bare engine action name (`"none"`,
@@ -483,6 +489,7 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     }
     validate_stage_chains(defs)?;
     validate_facing_rows(defs)?;
+    validate_flipped_rows(defs, shape_kinds)?;
     validate_roots_on(defs)?;
     let n = defs.len();
     let mut flags = vec![BlockFlags::NONE; n].into_boxed_slice();
@@ -604,6 +611,42 @@ fn validate_facing_rows(defs: &[BlockDef]) -> Result<(), String> {
     Ok(())
 }
 
+/// Cross-row run checks `convert` can't do alone: a `flipped` target must be
+/// a run row rooted the OPPOSITE way and must name this row back — otherwise
+/// a ceiling click would commit a row that stands on air, and the two items
+/// would disagree about which row the other one places.
+fn validate_flipped_rows(defs: &[BlockDef], kinds: &[ShapeKindDef]) -> Result<(), String> {
+    let root_of = |d: &BlockDef| {
+        kinds[d.shape_kind.0 as usize]
+            .params
+            .box_set()
+            .and_then(|b| b.run())
+            .map(|r| r.root)
+    };
+    for d in defs {
+        let Some(target) = d.flipped_row else {
+            continue;
+        };
+        let own = root_of(d).expect("run shape enforced in convert");
+        let t = &defs[target.id() as usize];
+        if root_of(t) != Some(own.opposite()) {
+            return Err(format!(
+                "block {:?}: flipped target {:?} is not a run rooted '{}'",
+                d.block,
+                target,
+                own.opposite().name()
+            ));
+        }
+        if t.flipped_row != Some(d.block) {
+            return Err(format!(
+                "block {:?}: flipped target {:?} must name it back",
+                d.block, target
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn facing_name(f: Facing) -> &'static str {
     match f {
         Facing::North => "north",
@@ -676,6 +719,11 @@ fn convert(
         // rule never fires and the flag is dead data.
         if r.corners && !flags.is_directional_view() {
             return Err("'corners' requires the 'directional_view' flag".into());
+        }
+        // A run resolves along the vertical axis alone; a stored facing would
+        // turn forms that were never authored for a turn.
+        if params.box_set().is_some_and(|b| b.run().is_some()) && flags.is_directional_view() {
+            return Err("a 'run' row cannot carry the 'directional_view' flag".into());
         }
         // A sub-cell shape must not claim to be an opaque full cube: neighbours
         // would cull the faces toward it and open an x-ray slit over its gaps.
@@ -900,6 +948,21 @@ fn convert(
             Some(rows)
         }
     };
+    let flipped_row = match &r.flipped {
+        None => None,
+        Some(name) => {
+            if params.box_set().and_then(|b| b.run()).is_none() {
+                return Err("'flipped' requires a '{\"run\": ...}' shape".into());
+            }
+            Some(
+                names
+                    .blocks
+                    .id(name)
+                    .map(Block)
+                    .ok_or_else(|| format!("unknown flipped block '{name}'"))?,
+            )
+        }
+    };
     let side_overlay = match &r.side_overlay {
         None => None,
         Some(raw) => Some(definition::SideOverlay {
@@ -926,7 +989,7 @@ fn convert(
         }
         Some(RawEmitterRef::Inline(row)) => {
             validate_particle_emitter(row)?;
-            Some(Box::leak(Box::new([*row])))
+            Some(Box::leak(Box::new([**row])))
         }
     };
     let shape_kind = interner.intern(family, params, shape_key)?;
@@ -973,6 +1036,7 @@ fn convert(
         grows_into: leak(grows_into),
         panel_facing,
         facing_rows,
+        flipped_row,
         data,
         carry,
         support: r.support,
@@ -1085,6 +1149,15 @@ pub fn validate_particle_emitter(e: &ParticleEmitter) -> Result<(), String> {
     finite("self_lit", e.self_lit)?;
     if !(0.0..=1.0).contains(&e.self_lit) {
         return Err("particle_emitter.self_lit must be in 0..=1".into());
+    }
+    finite("gravity", e.gravity)?;
+    if e.gravity < 0.0 {
+        return Err("particle_emitter.gravity must be >= 0 (it pulls down)".into());
+    }
+    if e.lands && e.gravity <= 0.0 && e.velocity[1] >= 0.0 {
+        return Err(
+            "particle_emitter.lands needs a downward motion: gravity or a negative velocity".into(),
+        );
     }
     Ok(())
 }
@@ -1620,6 +1693,95 @@ mod tests {
                 .unwrap_or_else(|| panic!("{why} must fail the load"));
             assert!(err.contains(needle), "{why}: {err}");
         }
+    }
+
+    /// A run's `flipped` sibling is what a ceiling click commits for a floor
+    /// item, so the load proves the pair: opposite roots, naming each other,
+    /// on run rows only — and a run never carries a stored facing.
+    #[test]
+    fn run_rows_validate_the_flipped_sibling_and_refuse_a_facing() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let run = |root: &str| {
+            format!(
+                r#"{{"run":{{"root":"{root}","forms":{{"tip":[{{"from":[6,0,6],"to":[10,16,10]}}],"frustum":[{{"from":[4,0,4],"to":[12,16,12]}}],"middle":[{{}}],"base":[{{}}]}}}}}}"#
+            )
+        };
+        let row = |name: &str, shape: &str, extra: &str| {
+            format!(
+                r#"{{ "block": "{name}", "shape": {shape}, {extra} "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "hardness": 1.0, "drops": [] }}"#
+            )
+        };
+        let layer = |rows: &[String]| format!(r#"{{ "blocks": [ {} ] }}"#, rows.join(","));
+        let pair = layer(&[
+            row("mymod:spike", &run("down"), r#""flipped": "mymod:icicle","#),
+            row("mymod:icicle", &run("up"), r#""flipped": "mymod:spike","#),
+        ]);
+        parse_test_layers(&[&base, &pair]).expect("a mirrored pair loads");
+        let lone = layer(&[row("mymod:spike", &run("down"), "")]);
+        parse_test_layers(&[&base, &lone]).expect("a run with no sibling loads");
+        for (layer, why, needle) in [
+            (
+                layer(&[
+                    row("mymod:spike", &run("down"), r#""flipped": "mymod:icicle","#),
+                    row("mymod:icicle", &run("down"), r#""flipped": "mymod:spike","#),
+                ]),
+                "a sibling rooted the same way",
+                "not a run rooted 'up'",
+            ),
+            (
+                layer(&[
+                    row("mymod:spike", &run("down"), r#""flipped": "mymod:icicle","#),
+                    row("mymod:icicle", &run("up"), ""),
+                ]),
+                "a sibling that does not name the row back",
+                "name it back",
+            ),
+            (
+                layer(&[row(
+                    "mymod:spike",
+                    r#""cube""#,
+                    r#""flipped": "petramond:stone","#,
+                )]),
+                "flipped on a non-run row",
+                "requires a",
+            ),
+            (
+                layer(&[row(
+                    "mymod:spike",
+                    &run("down"),
+                    r#""flags": ["solid", "directional_view"], "front": "stone","#,
+                )
+                .replacen(r#""flags": ["solid"], "#, "", 1)]),
+                "a run with a stored facing",
+                "directional_view",
+            ),
+        ] {
+            let err = parse_test_layers(&[&base, &layer])
+                .err()
+                .unwrap_or_else(|| panic!("{why} must fail the load"));
+            assert!(err.contains(needle), "{why}: {err}");
+        }
+    }
+
+    /// A landing particle needs something to carry it down, and gravity only
+    /// ever pulls down — both are authoring errors a silent default would
+    /// turn into a drip that never falls or one that floats upward.
+    #[test]
+    fn landing_emitters_need_a_downward_motion() {
+        let row = |extra: &str| {
+            serde_json::from_str::<ParticleEmitter>(&format!(
+                r#"{{"rate": 1, "lifetime": [1, 1], "size": [0.1, 0.1], "alpha": [1, 1], "color": [[0,0,1],[0,0,1]]{extra}}}"#
+            ))
+            .expect("row parses")
+        };
+        assert!(validate_particle_emitter(&row("")).is_ok());
+        assert!(validate_particle_emitter(&row(r#", "gravity": 12, "lands": true"#)).is_ok());
+        assert!(
+            validate_particle_emitter(&row(r#", "velocity": [0, -1, 0], "lands": true"#)).is_ok()
+        );
+        assert!(validate_particle_emitter(&row(r#", "lands": true"#)).is_err());
+        assert!(validate_particle_emitter(&row(r#", "gravity": -1"#)).is_err());
     }
 
     /// Wall-panel facing is block identity (one ladder row per facing), so the

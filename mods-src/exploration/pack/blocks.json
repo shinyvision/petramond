@@ -1120,6 +1120,637 @@
           "chance": 1.0
         }
       ]
+    },
+    {
+      "block": "exploration:dripstone_block",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "exploration:dripstone_block",
+        "exploration:dripstone_block",
+        "exploration:dripstone_block"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "exploration:dripstone_block",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:dripstone_stairs",
+      "shape": "stair",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "exploration:dripstone_block",
+        "exploration:dripstone_block",
+        "exploration:dripstone_block"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "exploration:dripstone_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:dripstone_slab",
+      "shape": "slab",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "exploration:dripstone_block",
+        "exploration:dripstone_block",
+        "exploration:dripstone_block"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "exploration:dripstone_slab",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:stalagmite",
+      "shape": {
+        "run": {
+          "root": "down",
+          "forms": {
+            "tip": [
+              {
+                "from": [
+                  5,
+                  0,
+                  5
+                ],
+                "to": [
+                  11,
+                  5,
+                  11
+                ]
+              },
+              {
+                "from": [
+                  6,
+                  5,
+                  6
+                ],
+                "to": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              {
+                "from": [
+                  7,
+                  10,
+                  7
+                ],
+                "to": [
+                  9,
+                  16,
+                  9
+                ]
+              }
+            ],
+            "frustum": [
+              {
+                "from": [
+                  3,
+                  0,
+                  3
+                ],
+                "to": [
+                  13,
+                  6,
+                  13
+                ]
+              },
+              {
+                "from": [
+                  4,
+                  6,
+                  4
+                ],
+                "to": [
+                  12,
+                  11,
+                  12
+                ]
+              },
+              {
+                "from": [
+                  5,
+                  11,
+                  5
+                ],
+                "to": [
+                  11,
+                  16,
+                  11
+                ]
+              }
+            ],
+            "middle": [
+              {
+                "from": [
+                  3,
+                  0,
+                  3
+                ],
+                "to": [
+                  13,
+                  16,
+                  13
+                ]
+              }
+            ],
+            "base": [
+              {
+                "from": [
+                  2,
+                  0,
+                  2
+                ],
+                "to": [
+                  14,
+                  4,
+                  14
+                ]
+              },
+              {
+                "from": [
+                  3,
+                  4,
+                  3
+                ],
+                "to": [
+                  13,
+                  16,
+                  13
+                ]
+              }
+            ],
+            "merge": [
+              {
+                "from": [
+                  5,
+                  0,
+                  5
+                ],
+                "to": [
+                  11,
+                  6,
+                  11
+                ]
+              },
+              {
+                "from": [
+                  6,
+                  6,
+                  6
+                ],
+                "to": [
+                  10,
+                  16,
+                  10
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "flipped": "exploration:stalactite",
+      "flags": [
+        "solid"
+      ],
+      "tags": [],
+      "behavior": "exploration:pointed_dripstone",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "exploration:pointed_dripstone",
+        "exploration:pointed_dripstone",
+        "exploration:pointed_dripstone"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "exploration:pointed_dripstone",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "extends": "exploration:stalagmite",
+      "block": "exploration:stalactite",
+      "shape": {
+        "run": {
+          "root": "up",
+          "forms": {
+            "tip": [
+              {
+                "from": [
+                  5,
+                  0,
+                  5
+                ],
+                "to": [
+                  11,
+                  5,
+                  11
+                ]
+              },
+              {
+                "from": [
+                  6,
+                  5,
+                  6
+                ],
+                "to": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              {
+                "from": [
+                  7,
+                  10,
+                  7
+                ],
+                "to": [
+                  9,
+                  16,
+                  9
+                ]
+              }
+            ],
+            "frustum": [
+              {
+                "from": [
+                  3,
+                  0,
+                  3
+                ],
+                "to": [
+                  13,
+                  6,
+                  13
+                ]
+              },
+              {
+                "from": [
+                  4,
+                  6,
+                  4
+                ],
+                "to": [
+                  12,
+                  11,
+                  12
+                ]
+              },
+              {
+                "from": [
+                  5,
+                  11,
+                  5
+                ],
+                "to": [
+                  11,
+                  16,
+                  11
+                ]
+              }
+            ],
+            "middle": [
+              {
+                "from": [
+                  3,
+                  0,
+                  3
+                ],
+                "to": [
+                  13,
+                  16,
+                  13
+                ]
+              }
+            ],
+            "base": [
+              {
+                "from": [
+                  2,
+                  0,
+                  2
+                ],
+                "to": [
+                  14,
+                  4,
+                  14
+                ]
+              },
+              {
+                "from": [
+                  3,
+                  4,
+                  3
+                ],
+                "to": [
+                  13,
+                  16,
+                  13
+                ]
+              }
+            ],
+            "merge": [
+              {
+                "from": [
+                  5,
+                  0,
+                  5
+                ],
+                "to": [
+                  11,
+                  6,
+                  11
+                ]
+              },
+              {
+                "from": [
+                  6,
+                  6,
+                  6
+                ],
+                "to": [
+                  10,
+                  16,
+                  10
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "flipped": "exploration:stalagmite"
+    },
+    {
+      "block": "exploration:stalactite_wet",
+      "shape": {
+        "run": {
+          "root": "up",
+          "forms": {
+            "tip": [
+              {
+                "from": [
+                  5,
+                  0,
+                  5
+                ],
+                "to": [
+                  11,
+                  5,
+                  11
+                ]
+              },
+              {
+                "from": [
+                  6,
+                  5,
+                  6
+                ],
+                "to": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              {
+                "from": [
+                  7,
+                  10,
+                  7
+                ],
+                "to": [
+                  9,
+                  16,
+                  9
+                ]
+              }
+            ],
+            "frustum": [
+              {
+                "from": [
+                  3,
+                  0,
+                  3
+                ],
+                "to": [
+                  13,
+                  6,
+                  13
+                ]
+              },
+              {
+                "from": [
+                  4,
+                  6,
+                  4
+                ],
+                "to": [
+                  12,
+                  11,
+                  12
+                ]
+              },
+              {
+                "from": [
+                  5,
+                  11,
+                  5
+                ],
+                "to": [
+                  11,
+                  16,
+                  11
+                ]
+              }
+            ],
+            "middle": [
+              {
+                "from": [
+                  3,
+                  0,
+                  3
+                ],
+                "to": [
+                  13,
+                  16,
+                  13
+                ]
+              }
+            ],
+            "base": [
+              {
+                "from": [
+                  2,
+                  0,
+                  2
+                ],
+                "to": [
+                  14,
+                  4,
+                  14
+                ]
+              },
+              {
+                "from": [
+                  3,
+                  4,
+                  3
+                ],
+                "to": [
+                  13,
+                  16,
+                  13
+                ]
+              }
+            ],
+            "merge": [
+              {
+                "from": [
+                  5,
+                  0,
+                  5
+                ],
+                "to": [
+                  11,
+                  6,
+                  11
+                ]
+              },
+              {
+                "from": [
+                  6,
+                  6,
+                  6
+                ],
+                "to": [
+                  10,
+                  16,
+                  10
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "particle_emitter": "exploration:drip",
+      "flags": [
+        "solid"
+      ],
+      "tags": [],
+      "behavior": "exploration:pointed_dripstone",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "exploration:pointed_dripstone",
+        "exploration:pointed_dripstone",
+        "exploration:pointed_dripstone"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "exploration:pointed_dripstone",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
     }
   ]
 }

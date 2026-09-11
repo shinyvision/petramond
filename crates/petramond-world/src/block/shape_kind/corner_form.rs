@@ -72,6 +72,37 @@ impl BoxDef {
         }
     }
 
+    /// This box reflected through the cell's horizontal mid-plane: how a
+    /// run authored standing becomes its hanging twin. Extent, faces, tiles,
+    /// UV and art all swap `+Y` with `-Y`; a pose reflects too — a rotation
+    /// conjugated by a reflection in the XZ plane keeps its Y angle and
+    /// negates the X and Z ones, which on the quaternion is `(-x, y, -z, w)`.
+    pub fn mirrored_y(&self) -> BoxDef {
+        const SWAP_Y: [usize; 6] = [0, 1, 3, 2, 4, 5];
+        let (min, max) = (self.aabb.min, self.aabb.max);
+        BoxDef {
+            aabb: Aabb {
+                min: [min[0], 1.0 - max[1], min[2]],
+                max: [max[0], 1.0 - min[1], max[2]],
+            },
+            faces: std::array::from_fn(|i| self.faces[SWAP_Y[i]]),
+            tiles: std::array::from_fn(|i| self.tiles[SWAP_Y[i]]),
+            occludes: self.occludes,
+            collides: self.collides,
+            double_sided: self.double_sided,
+            art_turns: std::array::from_fn(|i| self.art_turns[SWAP_Y[i]]),
+            uv: std::array::from_fn(|i| self.uv[SWAP_Y[i]]),
+            uv_turns: std::array::from_fn(|i| self.uv_turns[SWAP_Y[i]]),
+            pose: self.pose.map(|p| {
+                let q = p.rotation;
+                crate::block::BoxPose {
+                    rotation: crate::mathh::Quat::from_xyzw(-q.x, q.y, -q.z, q.w),
+                    origin: crate::mathh::Vec3::new(p.origin.x, 1.0 - p.origin.y, p.origin.z),
+                }
+            }),
+        }
+    }
+
     /// This box with every face's art frame advanced `turns` quarter turns —
     /// what a corner form's donor list needs so its inherited faces still know
     /// which frame they were authored in (see [`art_turns`](Self::art_turns)).

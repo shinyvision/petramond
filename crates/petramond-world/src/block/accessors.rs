@@ -536,6 +536,14 @@ impl Block {
         }
     }
 
+    /// The sibling row of a run family rooted the other way (`"flipped"` in
+    /// `blocks.json`), which placement commits when the click resolves that
+    /// root. `None` = this row places only its own root.
+    #[inline]
+    pub fn flipped_row(self) -> Option<Block> {
+        self.def().flipped_row
+    }
+
     /// Whether a body standing on this block glides (see [`BlockTag::SLIPPERY`]
     /// — ice, packed ice). Reads the dense loader-derived flag, not the tag
     /// list — the physics probe asks every sub-step.

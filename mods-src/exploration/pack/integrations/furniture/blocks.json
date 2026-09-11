@@ -1,0 +1,12 @@
+{
+  "blocks": [
+    {
+      "patch": "furniture:cauldron",
+      "data": {
+        "exploration:drip_vessel": {
+          "filled": "furniture:cauldron_water"
+        }
+      }
+    }
+  ]
+}

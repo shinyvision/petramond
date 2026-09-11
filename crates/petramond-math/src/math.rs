@@ -1,6 +1,6 @@
 //! Misc math helpers not covered by glam.
 
-pub use glam::{IVec3, Mat4, Vec3, Vec4};
+pub use glam::{IVec3, Mat4, Quat, Vec3, Vec4};
 
 /// A body's tilt off level, applied INSIDE its yaw: `pitch` about the
 /// lateral axis (radians, positive = nose up) and `roll` about the facing

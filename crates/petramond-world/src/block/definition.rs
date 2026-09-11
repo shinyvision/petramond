@@ -91,6 +91,12 @@ pub(super) struct BlockDef {
     /// normal. `None` on the non-placeable facing variants. Cross-validated
     /// at load (see `load::validate_facing_rows`).
     pub facing_rows: Option<&'static [Block; 4]>,
+    /// For a RUN row: the sibling row whose run roots the OTHER way, which a
+    /// placement commits when the click resolves that root (a stalagmite
+    /// item clicked on a ceiling places its stalactite row). `None` = the
+    /// row places only its own root. Cross-validated at load (see
+    /// `load::validate_flipped_rows`).
+    pub flipped_row: Option<Block>,
     /// The row's namespaced consumer-data entries (`"data"` in `blocks.json`
     /// plus every layer's `{"patch", "data"}` rows), sorted by key; each
     /// value is the entry's canonical raw JSON text. The block interop
@@ -315,6 +321,22 @@ pub struct ParticleEmitter {
     /// other way.
     #[serde(default)]
     pub spiral: [f32; 2],
+    /// The emitter runs only while the named neighbouring cell is OPEN (does
+    /// not block movement) — `"below"` for a drip off a hanging tip, so only
+    /// the free end of a run drips and never a segment buried in the next.
+    /// Absent = always.
+    #[serde(default)]
+    pub requires_open: Option<SupportDir>,
+    /// Downward acceleration, blocks/s² (default `0` — the classic constant
+    /// drift). A drop or an ember falls under it: `y -= gravity·age²/2`.
+    #[serde(default)]
+    pub gravity: f32,
+    /// Whether a falling particle DIES where it meets the first
+    /// movement-blocking cell under its anchor (a drip vanishing on the
+    /// floor) instead of passing through it. Needs a downward motion —
+    /// `gravity` or a negative vertical `velocity`.
+    #[serde(default)]
+    pub lands: bool,
 }
 
 fn default_particle_anchor() -> ParticleEmitterAnchor {

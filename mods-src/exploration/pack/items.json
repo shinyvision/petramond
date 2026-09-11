@@ -372,6 +372,55 @@
       "sprite": "exploration:torch_purple",
       "tags": [],
       "block": "exploration:torch_purple"
+    },
+    {
+      "item": "exploration:dripstone_block",
+      "key": "exploration:dripstone_block",
+      "name": "Dripstone Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:dripstone_block"
+    },
+    {
+      "item": "exploration:pointed_dripstone",
+      "key": "exploration:pointed_dripstone",
+      "name": "Pointed Dripstone",
+      "max_stack_size": 64,
+      "sprite": "exploration:pointed_dripstone_item",
+      "sprite_axis": 90,
+      "tags": [],
+      "block": "exploration:stalagmite"
+    },
+    {
+      "item": "exploration:dripstone_stairs",
+      "key": "exploration:dripstone_stairs",
+      "name": "Dripstone Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:dripstone_stairs"
+    },
+    {
+      "item": "exploration:dripstone_slab",
+      "key": "exploration:dripstone_slab",
+      "name": "Dripstone Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:dripstone_slab"
     }
   ]
 }

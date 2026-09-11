@@ -223,10 +223,44 @@ fn turns_for(facing: Facing) -> u8 {
 /// the load sweep rewrites it) is clamped by the accessors — see
 /// [`BoxSetParams::boxes`](super::BoxSetParams::boxes).
 fn box_set_form(p: &ShapeParams, nb: &dyn ShapeNeighborhood, pos: IVec3) -> super::CornerForm {
-    if !box_set(p).corner_joins {
+    if box_set(p).refine == super::BoxSetRefine::None {
         return 0;
     }
     nb.shape_state(pos).byte(1)
+}
+
+/// Whether `q` holds a segment of the run kind `kind` — the run's own join
+/// test, identity only (the key spells the root, so two mirrored rows are
+/// two kinds and never join).
+fn run_segment(nb: &dyn ShapeNeighborhood, q: IVec3, kind: super::BlockShapeKind) -> bool {
+    nb.block(q).shape_kind() == kind
+}
+
+/// Whether `q` holds a run rooted the OPPOSITE way to `root` — what a free
+/// end merges with.
+fn opposing_run(nb: &dyn ShapeNeighborhood, q: IVec3, root: super::RunRoot) -> bool {
+    nb.block(q)
+        .shape_kind()
+        .params()
+        .box_set()
+        .and_then(|b| b.run())
+        .is_some_and(|r| r.root == root.opposite())
+}
+
+/// RESOLVE a run cell's form from the neighbourhood — the refine-time (and
+/// pre-placement hypothetical) computation; reads decode the stored byte.
+pub fn resolve_run_form(
+    nb: &dyn ShapeNeighborhood,
+    pos: IVec3,
+    kind: super::BlockShapeKind,
+    root: super::RunRoot,
+) -> super::RunForm {
+    super::run_form::run_form(
+        pos,
+        root,
+        |q| run_segment(nb, q, kind),
+        |q| opposing_run(nb, q, root),
+    )
 }
 
 /// One authored box as drawn geometry.
@@ -383,7 +417,9 @@ pub(super) fn refines(family: ShapeFamily, params: &ShapeParams) -> bool {
         // Per KIND, not per family: only a box set that actually declares a
         // connect group has anything to refine, so farmland and the snow layer
         // keep the cascade's cheap "nothing shaped nearby" path.
-        ShapeFamily::BoxSet => params.box_set().is_some_and(|s| s.corner_joins),
+        ShapeFamily::BoxSet => params
+            .box_set()
+            .is_some_and(|s| s.refine != super::BoxSetRefine::None),
         _ => false,
     }
 }

@@ -155,6 +155,18 @@
     {
       "name": "exploration:torch_purple_side",
       "file": "torch_purple_side.png"
+    },
+    {
+      "name": "exploration:dripstone_block",
+      "file": "dripstone_block.png"
+    },
+    {
+      "name": "exploration:pointed_dripstone",
+      "file": "pointed_dripstone.png"
+    },
+    {
+      "name": "exploration:pointed_dripstone_item",
+      "file": "pointed_dripstone_item.png"
     }
   ]
 }

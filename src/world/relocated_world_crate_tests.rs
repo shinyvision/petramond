@@ -581,7 +581,7 @@ mod shape_kind {
         )
         .unwrap();
         let set = params.box_set().expect("box set params");
-        assert!(set.corner_joins);
+        assert!(set.corner_joins());
         assert!(key.ends_with("+corners"), "the flag is kind identity");
         let t = |v: i32| v as f32 / 16.0;
         // STRAIGHT is byte-identical to the authored list.
@@ -645,7 +645,7 @@ mod shape_kind {
         // identical copies of it.
         let (_, plain, _) = resolve_json(r#"{"boxes":[{"to":[16,15,16]}]}"#).unwrap();
         let plain = plain.box_set().unwrap();
-        assert!(!plain.corner_joins);
+        assert!(!plain.corner_joins());
         for turns in 0..4u8 {
             for form in 0..5 {
                 assert!(

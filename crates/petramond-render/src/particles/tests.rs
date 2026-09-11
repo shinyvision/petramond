@@ -35,10 +35,14 @@ fn emitter_inst() -> ParticleEmitterInstance {
             shrink_power: 1.0,
             self_lit: 1.0,
             spiral: [0.0, 0.0],
+            requires_open: None,
+            gravity: 0.0,
+            lands: false,
         },
         seed: 0x1234_5678_9ABC_DEF0,
         skylight: 0,
         blocklight: petramond_world::light::BlockLight6::DARK,
+        floor_y: f32::NEG_INFINITY,
     }
 }
 
@@ -586,4 +590,45 @@ fn the_cube_pattern_is_thirtysix_per_cube() {
     // Second cube starts at vertex 24.
     let c2 = INDICES_PER_CUBE;
     assert_eq!(&idx[c2..c2 + 6], &[24, 25, 26, 24, 26, 27]);
+}
+
+/// A landing row's particles fall under gravity and are gone once they reach
+/// the floor the gather resolved — never drawn inside the ground below it.
+#[test]
+fn landing_particles_fall_and_vanish_at_their_floor() {
+    let mut inst = emitter_inst();
+    inst.emitter.velocity = [0.0, 0.0, 0.0];
+    inst.emitter.gravity = 10.0;
+    inst.emitter.lifetime = [2.0, 2.0];
+    inst.emitter.rate = [1.0, 1.0];
+    inst.emitter.lands = true;
+    // Two blocks of free fall under the anchor, then a floor.
+    inst.floor_y = inst.origin.y - 2.0;
+    let mut scratch = Vec::new();
+    let mut verts = Vec::new();
+    let mut fell = false;
+    for step in 0..40 {
+        let t = one_live_emitter_time(&inst, 0.05 * step as f32);
+        build_transparent_emitter_particles(
+            std::slice::from_ref(&inst),
+            &[],
+            t,
+            Vec3::ZERO,
+            LightEnv::IDENTITY,
+            1.0,
+            &mut verts,
+            &mut scratch,
+        );
+        for cube in &scratch {
+            assert!(
+                cube.pos.y - cube.size * 0.5 > inst.floor_y,
+                "a particle drawn under its floor at t={t}: {:?}",
+                cube.pos
+            );
+            if cube.pos.y < inst.origin.y - 0.5 {
+                fell = true;
+            }
+        }
+    }
+    assert!(fell, "gravity carried a particle down before it landed");
 }

@@ -370,6 +370,9 @@ impl GamePresentationScratch {
                         seed: m.id ^ stream.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                         skylight: m.skylight,
                         blocklight: m.blocklight,
+                        // A mob's rows anchor at its feet and follow it; a
+                        // floor under a moving body is not a fixed surface.
+                        floor_y: f32::NEG_INFINITY,
                     });
                 }
             }

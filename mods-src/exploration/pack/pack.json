@@ -2,8 +2,8 @@
   "name": "Exploration",
   "id": "exploration",
   "version": "0.1.0",
-  "description": "Explore the mushroom cavern: an underground habitat with its own cave flora, glowing fungi and light.",
-  "summary": "The mushroom cavern and its cave flora.",
+  "description": "Explore the mushroom cavern and the dripstone caves: underground habitats with their own flora, glowing fungi, and dripping stone spikes that grow, fall and impale.",
+  "summary": "The mushroom cavern, the dripstone caves and their cave life.",
   "wasm": "mod.wasm",
   "client_wasm": "mod.wasm",
   "after": [

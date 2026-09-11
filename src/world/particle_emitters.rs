@@ -33,6 +33,11 @@ pub struct PlacedEmitter {
     pub seed: u64,
     pub skylight: u8,
     pub blocklight: BlockLight6,
+    /// World Y of the surface a `lands` row's particles die on — the top of
+    /// the first movement-blocking cell under the anchor within the row's
+    /// fall reach — or `NEG_INFINITY` when nothing is there (and for every
+    /// row that does not land).
+    pub floor_y: f32,
 }
 
 /// Half-extents of the box a row's particles can ever occupy around their
@@ -48,11 +53,19 @@ pub fn emitter_envelope(e: &ParticleEmitter) -> Vec3 {
         velocity.x.abs() + jitter.x,
         velocity.y.abs() + jitter.y,
         velocity.z.abs() + jitter.z,
-    ) * max_life;
+    ) * max_life
+        + Vec3::new(0.0, fall_reach(e), 0.0);
     // The orbit is applied on top of the travelled position, around the
     // anchor's vertical axis, so it widens the box in X and Z.
     let orbit = Vec3::new(e.spiral[0], 0.0, e.spiral[0]);
     Vec3::from_array(e.spawn_box) + travel + orbit + Vec3::splat(max_size + 0.05)
+}
+
+/// How far a row's particles can fall under its `gravity` in their longest
+/// life — the extra vertical travel a constant drift does not account for.
+fn fall_reach(e: &ParticleEmitter) -> f32 {
+    let max_life = e.lifetime[1].max(e.lifetime[0]);
+    0.5 * e.gravity * max_life * max_life
 }
 
 /// How far, in blocks, any loaded block row's emitter particles can reach from
@@ -126,6 +139,12 @@ impl World {
                 // anchor/offset); every row reports separately with a distinct
                 // seed stream so sibling schedules don't pulse in lockstep.
                 for (row_idx, &emitter) in rows.iter().enumerate() {
+                    if let Some(side) = emitter.requires_open {
+                        let q = side.support_cell(cell);
+                        if Block::from_id(self.chunk_block(q.x, q.y, q.z)).blocks_movement() {
+                            continue;
+                        }
+                    }
                     let origin = if let Some(kind) = block.model_kind() {
                         // A multi-cell model emits ONCE per placed group (from its
                         // authored-origin cell), at the FOOTPRINT-space anchor
@@ -147,6 +166,11 @@ impl World {
                     let sample = voxel_at(origin);
                     let (sky, block_light) =
                         self.dynamic_light_at_world(sample.x, sample.y, sample.z);
+                    let floor_y = if emitter.lands {
+                        self.emitter_floor_y(origin, &emitter)
+                    } else {
+                        f32::NEG_INFINITY
+                    };
                     out.push(PlacedEmitter {
                         origin,
                         emitter,
@@ -154,10 +178,31 @@ impl World {
                             ^ (row_idx as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
                         skylight: sky,
                         blocklight: block_light,
+                        floor_y,
                     });
                 }
             }
         }
+    }
+}
+
+impl World {
+    /// The surface a `lands` row's particles die on: the top of the first
+    /// movement-blocking cell under `origin` within the row's whole vertical
+    /// reach (drift plus fall), or `NEG_INFINITY`. The scan starts one cell
+    /// under the anchor's own so a tip hanging inside its cell does not land
+    /// on itself.
+    fn emitter_floor_y(&self, origin: Vec3, e: &ParticleEmitter) -> f32 {
+        let max_life = e.lifetime[1].max(e.lifetime[0]);
+        let reach = (e.velocity[1].abs() + e.velocity_jitter[1]) * max_life + fall_reach(e);
+        let top = voxel_at(origin);
+        let bottom = top.y - reach.ceil() as i32 - 1;
+        for y in (bottom..top.y).rev() {
+            if Block::from_id(self.chunk_block(top.x, y, top.z)).blocks_movement() {
+                return (y + 1) as f32;
+            }
+        }
+        f32::NEG_INFINITY
     }
 }
 
@@ -222,4 +267,56 @@ fn emitter_seed(sp: SectionPos, local_idx: u16, block: Block) -> u64 {
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     x ^ (x >> 31)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use petramond_world::chunk::{Chunk, ChunkPos};
+
+    fn drip() -> ParticleEmitter {
+        serde_json::from_str(
+            r#"{"rate": 1, "lifetime": [2, 2], "size": [0.05, 0.05], "alpha": [1, 1],
+                "color": [[0,0,1],[0,0,1]], "gravity": 10, "lands": true}"#,
+        )
+        .expect("row parses")
+    }
+
+    /// The envelope must include the fall, or a section's cull box misses
+    /// drops that are on screen.
+    #[test]
+    fn the_envelope_covers_the_fall() {
+        let e = drip();
+        // 0.5 · 10 · 2² = 20 blocks of fall in the longest life.
+        assert!(emitter_envelope(&e).y >= 20.0);
+        let mut still = e;
+        still.gravity = 0.0;
+        assert!(emitter_envelope(&still).y < 1.0);
+    }
+
+    /// A landing row's floor is the top of the first movement-blocking cell
+    /// under the anchor within its reach; a walk-through plant is not a
+    /// floor, and nothing in reach is no floor at all.
+    #[test]
+    fn a_landing_emitter_finds_the_first_floor_under_its_anchor() {
+        let mut w = World::new(1, 1);
+        w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
+        let origin = Vec3::new(4.5, 80.0, 4.5);
+        let e = drip();
+        assert_eq!(w.emitter_floor_y(origin, &e), f32::NEG_INFINITY, "open air");
+        w.set_block_world(4, 76, 4, Block::ShortGrass);
+        assert_eq!(
+            w.emitter_floor_y(origin, &e),
+            f32::NEG_INFINITY,
+            "grass is no floor"
+        );
+        w.set_block_world(4, 74, 4, Block::Stone);
+        assert_eq!(w.emitter_floor_y(origin, &e), 75.0);
+        w.set_block_world(4, 78, 4, Block::Stone);
+        assert_eq!(
+            w.emitter_floor_y(origin, &e),
+            79.0,
+            "the nearest floor wins"
+        );
+    }
 }
