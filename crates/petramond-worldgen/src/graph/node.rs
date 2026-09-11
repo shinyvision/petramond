@@ -184,6 +184,20 @@ impl ScalarGraph {
         self.evaluate_node_cached_inner(node, point, cache)
     }
 
+    /// Evaluate several roots at one point, sharing all common dependencies.
+    pub fn evaluate_nodes_cached<const N: usize>(
+        &self,
+        nodes: [NodeId; N],
+        point: SamplePoint,
+        cache: &mut GraphEvaluationCache,
+    ) -> [f64; N] {
+        for node in nodes {
+            self.assert_existing_node(node, "evaluation root");
+        }
+        cache.begin_sample(self);
+        nodes.map(|node| self.evaluate_node_cached_inner(node, point, cache))
+    }
+
     fn evaluate_node_uncached(&self, node: NodeId, point: SamplePoint) -> f64 {
         match &self.nodes[node.index] {
             Node::Constant(value) => *value,

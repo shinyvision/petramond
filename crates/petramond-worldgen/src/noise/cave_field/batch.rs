@@ -18,13 +18,13 @@
 //! box-dependent filter in the build (dropping a chamber that contributes zero
 //! everywhere in the box) is value-neutral by contract.
 
-use super::{CaveCut, CaveField, Col, Fields, CAVE_MIN_Y, CAVE_SURFACE_BUFFER, LATTICE_STEP};
+use super::{CaveField, Col, Fields, CAVE_MIN_Y, CAVE_SURFACE_BUFFER, LATTICE_STEP};
 
 /// Per-position work order for the carve batch: the decision's two cheap
 /// precomputed gates. Positions the gates already answered are not enqueued.
 struct Carve {
     idx: u32,
-    gate: Option<f64>,
+    gate: bool,
     interior: bool,
 }
 
@@ -39,14 +39,14 @@ impl CaveField {
         // cheap, and they reject the overwhelming majority of positions without
         // any lattice at all.
         let mut work: Vec<Carve> = Vec::new();
-        for (i, ([x, y, z], surf_y)) in queries.iter().enumerate() {
-            let (x, y, z, surf_y) = (*x, *y, *z, *surf_y);
-            if y > surf_y {
+        for (i, ([_, y, _], surf_y)) in queries.iter().enumerate() {
+            let (y, surf_y) = (*y, *surf_y);
+            if y > surf_y + self.excavations.surface_offset {
                 continue;
             }
-            let gate = self.entrance_gate_ease(x, y, z, surf_y);
+            let gate = Self::entrance_allowed(y, surf_y);
             let interior = y >= CAVE_MIN_Y && y <= surf_y - CAVE_SURFACE_BUFFER;
-            if gate.is_none() && !interior {
+            if !gate && !interior && !self.field_at_height(y) {
                 continue;
             }
             work.push(Carve {
@@ -56,37 +56,44 @@ impl CaveField {
             });
         }
 
-        subdivide(
-            &mut work,
-            |w| queries[w.idx as usize].0,
-            &mut |group, lo, hi| {
-                let any_interior = group.iter().any(|w| w.interior);
-                let fields = Fields {
-                    carve: true,
-                    interior: any_interior,
-                    biome: any_interior && self.caliber_varies,
-                };
-                let lat =
-                    self.build_lattice_filtered(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], fields);
-                // Column-major within the group: probes arrive as column scans,
-                // and one cursor per column hoists the x/z interpolation out of
-                // the run exactly as the batch carve's walk does.
-                group.sort_unstable_by_key(|w| {
-                    let [x, y, z] = queries[w.idx as usize].0;
-                    (x, z, y)
-                });
-                let mut cursor: Option<([i32; 2], Col)> = None;
-                for w in group.iter() {
-                    let [x, y, z] = queries[w.idx as usize].0;
-                    let c = match &mut cursor {
-                        Some((at, c)) if *at == [x, z] => c,
-                        slot => &mut slot.insert(([x, z], Col::new(&lat, x, z))).1,
+        if work.is_empty() {
+            return;
+        }
+        self.cache_carve_queries(queries, out, |out| {
+            subdivide(
+                &mut work,
+                |w| queries[w.idx as usize].0,
+                &mut |group, lo, hi| {
+                    let any_interior = group.iter().any(|w| w.interior);
+                    let fields = Fields {
+                        carve: true,
+                        interior: any_interior,
+                        biome: false,
+                        excavations: true,
+                        positioned: true,
                     };
-                    out[w.idx as usize] =
-                        self.cut_from_col(c, y, w.gate, w.interior) == CaveCut::Open;
-                }
-            },
-        );
+                    let lat = self
+                        .build_lattice_filtered(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], fields);
+                    // Column-major within the group: probes arrive as column scans,
+                    // and one cursor per column hoists the x/z interpolation out of
+                    // the run exactly as the batch carve's walk does.
+                    group.sort_unstable_by_key(|w| {
+                        let [x, y, z] = queries[w.idx as usize].0;
+                        (x, z, y)
+                    });
+                    let mut cursor: Option<([i32; 2], Col)> = None;
+                    for w in group.iter() {
+                        let [x, y, z] = queries[w.idx as usize].0;
+                        let c = match &mut cursor {
+                            Some((at, c)) if *at == [x, z] => c,
+                            slot => &mut slot.insert(([x, z], Col::new(&lat, x, z))).1,
+                        };
+                        let carved = self.cut_from_col(c, y, w.gate, w.interior).is_open();
+                        out[w.idx as usize] = carved;
+                    }
+                },
+            );
+        });
     }
 
     /// [`CaveField::underground_biome_at`] over a batch, same subdivision.
@@ -97,6 +104,8 @@ impl CaveField {
             carve: false,
             interior: false,
             biome: true,
+            excavations: true,
+            positioned: true,
         };
         let mut order: Vec<u32> = (0..positions.len() as u32).collect();
         subdivide(
@@ -116,7 +125,7 @@ impl CaveField {
                         Some((at, c)) if *at == [x, z] => c,
                         slot => &mut slot.insert(([x, z], Col::new(&lat, x, z))).1,
                     };
-                    out[i as usize] = self.underground.id_at(c.get(super::lane::BIOME, y), y);
+                    out[i as usize] = self.biome_id_col(c, y);
                 }
             },
         );

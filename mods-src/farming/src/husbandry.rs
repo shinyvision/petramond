@@ -902,7 +902,7 @@ fn birth(content: &Content, animals: &mut [Animal], i: usize, j: usize, tick: u6
     let def = &content.husbandry[animals[i].def];
     // Only a kept species ever reaches courtship, but the offspring row is
     // what a birth actually needs — read it, never assume it.
-    let Some((offspring_key, _)) = def.offspring else {
+    let Some((offspring_key, _)) = &def.offspring else {
         return;
     };
     let (pa, pb) = (animals[i].snap.pos, animals[j].snap.pos);

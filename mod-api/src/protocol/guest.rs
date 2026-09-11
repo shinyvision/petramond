@@ -16,6 +16,61 @@ use crate::shape::{
 /// dropped (that clipping IS the seam mechanism, see [`GuestCall::GenFeature`]).
 pub type GenWrite = ([i32; 3], BlockId);
 
+/// A compiled structure positioned by its authored pivot. The host validates
+/// the name and rotation before applying any of the callback's output.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct StructurePlacement {
+    pub template: String,
+    pub origin: [i32; 3],
+    /// Clockwise quarter turns viewed from above, in `0..=3`.
+    pub turn: u8,
+}
+
+/// A configured voxel feature placed at the first admissible candidate origin.
+/// Every section must replay the same ordered candidates and salt, including
+/// candidates outside that section; selection precedes clipping.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct FeaturePlacement {
+    pub feature: String,
+    pub origins: Vec<[i32; 3]>,
+    pub salt: u64,
+}
+
+/// A generation callback's ordered layers: blocks, configured features, pieces.
+/// Workers apply each piece's clipped cells, shape state and initial cell data.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GenOutput {
+    pub blocks: Vec<GenWrite>,
+    pub structures: Vec<StructurePlacement>,
+    pub features: Vec<FeaturePlacement>,
+    /// The callback could not settle a positional fact its writes depend on
+    /// because another instance is deriving it right now (a memo claim came
+    /// back pending). Everything above is ignored and the engine dispatches
+    /// the section again later; the eventual output must not depend on when.
+    pub deferred: bool,
+}
+
+impl GenOutput {
+    /// An output asking for the section to be dispatched again later.
+    pub fn deferred() -> Self {
+        Self {
+            deferred: true,
+            ..Self::default()
+        }
+    }
+}
+
+impl From<Vec<GenWrite>> for GenOutput {
+    fn from(blocks: Vec<GenWrite>) -> Self {
+        Self {
+            blocks,
+            structures: Vec::new(),
+            features: Vec::new(),
+            deferred: false,
+        }
+    }
+}
+
 /// Host → guest: what the engine asks a mod to run through `mod_dispatch`.
 /// (`mod_init` is its own export and carries no payload.)
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -35,7 +90,7 @@ pub enum GuestCall {
 
     // --- worldgen hooks --------------------------------------------------------
     /// Generate one registered feature's writes for one 16³ section.
-    /// → [`GuestRet::GenWrites`].
+    /// → [`GuestRet::GenOutput`].
     ///
     /// DETERMINISM CONTRACT (binding — a violation shows up as world seams):
     /// the reply must be a pure function of this call's fields. Worldgen
@@ -68,7 +123,7 @@ pub enum GuestCall {
     /// `Climate` → [`GuestRet::GenBiomes`] (256 ids; `section_pos` is
     /// `[cx, 0, cz]`, `blocks` empty, `biomes` = the engine's proposal),
     /// `Terrain` → [`GuestRet::GenBlocks`] (the full 4096 fill; `blocks`
-    /// empty), others → [`GuestRet::GenWrites`]. A wrong-shape reply disables
+    /// empty), others → [`GuestRet::GenOutput`]. A wrong-shape reply disables
     /// the mod; the engine stage then runs as the fallback.
     GenStage {
         callback_id: u32,
@@ -164,20 +219,20 @@ pub enum GuestCall {
     /// a private module — the types it defines are re-exported flat, its prose
     /// is not). → [`GuestRet::BakedSim`].
     BakeShapeSim {
-        shape_kind: u8,
+        shape_kind: u16,
         cells: Vec<CellInput>,
     },
     /// Bake the client RENDER geometry (the drawn boxes) for every cell of one
     /// custom shape kind in a section. Client `client_wasm` only; no determinism
     /// requirement. → [`GuestRet::BakedRender`].
     BakeShapeRender {
-        shape_kind: u8,
+        shape_kind: u16,
         cells: Vec<CellInput>,
     },
     /// Bake one block's ITEM geometry (icon / dropped / in-hand), once at load.
     /// → [`GuestRet::BakedItem`].
     BakeShapeItem {
-        shape_kind: u8,
+        shape_kind: u16,
         block_id: BlockId,
     },
     /// Compute a custom shape's placement plan for one click — read-only world
@@ -188,7 +243,7 @@ pub enum GuestCall {
     /// prediction), so the plan must be as deterministic as a bake: a pure
     /// function of `inputs` and world reads. → [`GuestRet::ShapePlacement`].
     ShapePlacementPlan {
-        shape_kind: u8,
+        shape_kind: u16,
         block_id: BlockId,
         inputs: PlaceInputsView,
     },
@@ -208,7 +263,7 @@ pub enum GuestRet {
     /// [`GuestCall::GenStage`]: world-position block writes, applied in order
     /// through the engine's section clip. An unregistered block id disables
     /// the mod (never reaches world storage).
-    GenWrites(Vec<GenWrite>),
+    GenOutput(GenOutput),
     /// Reply to a `Terrain` [`GuestCall::GenStage`]: the complete 4096-block
     /// section fill (layout `y*256 + z*16 + x`). Must be exactly 4096
     /// registered ids.

@@ -3,6 +3,9 @@ use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE};
 use petramond_world::mathh::IVec3;
 use petramond_world::section::Section;
 
+#[cfg(test)]
+mod tests;
+
 /// A destination a feature paints voxels into. Abstracting WHERE the writes land
 /// lets the SAME `Feature` / placer code drive two callers: worldgen, which writes
 /// into one [`Chunk`] clipped to its footprint ([`ChunkSink`]), and runtime sapling
@@ -159,4 +162,32 @@ pub fn apply_gen_writes(section: &mut Section, writes: &[([i32; 3], u16)]) {
     for &([x, y, z], id) in writes {
         sink.set(IVec3::new(x, y, z), Block(id));
     }
+}
+
+/// Apply a validated plan to one section. Shape state and metadata travel with
+/// their owning cells; loading a neighbour never changes this result.
+pub fn apply_gen_plan(section: &mut Section, plan: &crate::hooks::GenerationPlan) {
+    let modified = section.modified;
+    apply_gen_writes(section, &plan.blocks);
+    for feature in &plan.features {
+        feature.apply(section);
+    }
+    let (origin, size) = section.world_box();
+    let clip = petramond_world::structure::Bounds {
+        min: origin,
+        max: origin + size - IVec3::ONE,
+    };
+    for placement in &plan.structures {
+        placement.visit(clip, |pos, cell| {
+            let local = pos - origin;
+            let (x, y, z) = (local.x as usize, local.y as usize, local.z as usize);
+            section.set_block(x, y, z, cell.block);
+            section.set_cell_state(x, y, z, cell.state);
+            for (key, value) in &cell.data {
+                section.cell_kv_set(x, y, z, key.clone(), value.clone());
+            }
+        });
+    }
+    // Generated state belongs to the reproducible base, not a player edit.
+    section.modified = modified;
 }

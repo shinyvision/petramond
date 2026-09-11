@@ -1,0 +1,16 @@
+{
+  "mobs": [
+    {
+      "patch": "petramond:sheep",
+      "data": {
+        "petramond:loot": "kitchen:sheep_drops"
+      }
+    },
+    {
+      "patch": "farming:rabbit",
+      "data": {
+        "petramond:loot": "kitchen:rabbit_drops"
+      }
+    }
+  ]
+}

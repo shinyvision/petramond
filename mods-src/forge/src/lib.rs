@@ -201,12 +201,13 @@ impl Mod for Forge {
         }
     }
 
-    fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> Vec<GenWrite> {
-        match feature_id {
+    fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> GenOutput {
+        (match feature_id {
             GEN_CLAY => self.clay.generate(ctx),
             GEN_ORE => self.ore.generate(ctx),
             _ => Vec::new(),
-        }
+        })
+        .into()
     }
 }
 

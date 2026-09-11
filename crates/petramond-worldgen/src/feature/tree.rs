@@ -35,6 +35,15 @@ pub struct TreeFeature {
 }
 
 impl Feature for TreeFeature {
+    fn is_anchored(
+        &self,
+        surf: &mut dyn FnMut(i32, i32) -> i32,
+        origin: IVec3,
+        _: FeatureRng,
+    ) -> bool {
+        self.trunk.is_anchored(surf, origin)
+    }
+
     fn generate(
         &self,
         ctx: &mut FeatureCtx,

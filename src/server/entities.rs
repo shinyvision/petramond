@@ -310,11 +310,14 @@ impl ServerGame {
     /// instant a mob dies (from the attack that killed it), so loot appears "when
     /// killed" while the corpse ragdolls. No-op for a species with no table.
     pub fn spawn_mob_loot(&mut self, death: DeathDrop) {
-        let Some(table) = self.loot.get(crate::mob::def(death.kind).key) else {
+        let Some(table) = crate::mob::def(death.kind).loot.as_deref() else {
             return;
         };
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        let stacks = table.roll(self.spawn_counter as u64);
+        let mut rng = crate::mob::MobRng::new(self.spawn_counter as u64);
+        let stacks = petramond_world::loot::catalog()
+            .roll(table, || rng.next_u64())
+            .unwrap_or_default();
         // Pop from roughly the mob's body centre so drops don't clip into the floor.
         let centre = death.pos + Vec3::new(0.0, 0.3, 0.0);
         for stack in stacks {

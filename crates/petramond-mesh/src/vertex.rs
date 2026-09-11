@@ -744,9 +744,9 @@ pub struct ModelVertex {
     pub shade: f32,
     /// `(sky, block_r, block_g, block_b)` as four 6-bit levels — see
     /// [`pack_model_light`]. The block channel is per-colour so a placed model
-    /// sits in coloured light like the terrain around it.
+    /// sits in coloured light like the terrain around it. Bit 31 marks unlit artwork.
     pub light: u32,
-    /// Multiply colour packed as `0x00RRGGBB`; `0xFFFFFF` (white) for every
+    /// Multiply colour and animation slot packed as `0xAARRGGBB`; `0xFFFFFF` (white) for every
     /// vertex of a row that declares no `tint_parts`, which is almost all of
     /// them. Packed rather than three floats because this stream is sparse but
     /// not free — a model block pays it per vertex.

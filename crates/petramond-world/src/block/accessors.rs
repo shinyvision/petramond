@@ -273,6 +273,31 @@ impl Block {
         self == Block::Water
     }
 
+    /// Liquid occupancy includes inert generated fluids as well as simulated water.
+    #[inline]
+    pub fn is_fluid(self) -> bool {
+        self.is_water() || self.flags().fluid()
+    }
+
+    /// Stationary fluid occupying the space around this block's shape.
+    #[inline]
+    pub fn contained_fluid(self) -> Option<Block> {
+        if !self.flags().contains_fluid() {
+            return None;
+        }
+        self.def().contained_fluid
+    }
+
+    /// The fluid present in this cell, including the gaps in a submerged shape.
+    #[inline]
+    pub fn fluid(self) -> Option<Block> {
+        if self.is_fluid() {
+            Some(self)
+        } else {
+            self.contained_fluid()
+        }
+    }
+
     /// This block's behaviour — the world-reactive "class" assigned in its data
     /// row (random ticks, …). Most blocks are `behavior::INERT`.
     #[inline]

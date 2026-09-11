@@ -22,7 +22,7 @@ use super::MAX_MODEL_PARTS;
 ///
 /// Serde carries a kind as its registry KEY string (`furniture_workbench`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct BlockModelKind(pub u8);
+pub struct BlockModelKind(pub u16);
 
 /// Engine model-kind consts, named like the enum variants they replaced.
 #[allow(non_upper_case_globals)]
@@ -63,7 +63,7 @@ impl<'de> Deserialize<'de> for BlockModelKind {
         defs()
             .iter()
             .position(|m| m.key == key)
-            .map(|i| BlockModelKind(i as u8))
+            .map(|i| BlockModelKind(i as u16))
             .ok_or_else(|| serde::de::Error::custom(format!("unknown block model '{key}'")))
     }
 }
@@ -72,7 +72,7 @@ impl<'de> Deserialize<'de> for BlockModelKind {
 pub fn all() -> &'static [BlockModelKind] {
     static ALL: LazyLock<Vec<BlockModelKind>> = LazyLock::new(|| {
         (0..defs().len())
-            .map(|id| BlockModelKind(id as u8))
+            .map(|id| BlockModelKind(id as u16))
             .collect()
     });
     &ALL
@@ -228,6 +228,7 @@ pub struct BlockModelDef {
     /// Authored cube NAMES the cell's `petramond:tint` multiplies. Empty (the
     /// usual case) means the row ignores cell tint entirely.
     pub tint_parts: &'static [&'static str],
+    pub surfaces: &'static [super::SurfaceMaterial],
 }
 
 impl BlockModelDef {
@@ -293,6 +294,8 @@ struct RawModelDef {
     parts: Vec<String>,
     #[serde(default)]
     tint_parts: Vec<String>,
+    #[serde(default)]
+    surfaces: Vec<super::SurfaceMaterial>,
 }
 
 /// The loaded, id-ordered model def table. Loads exactly once; a missing or
@@ -334,13 +337,15 @@ fn check_shared_part_lists(rows: &[BlockModelDef]) -> Result<(), String> {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef>, String> {
-    crate::registry::load_catalog(
+    crate::registry::load_catalog_with_capacity(
         texts,
         |text| crate::registry::parse_rows::<RawModelDef>(text, "models", "key"),
         |r| &r.key,
         ENGINE_MODEL_KEYS,
         "block model",
+        crate::registry::WIDE_ID_CAP,
         |r, id, names| {
+            super::material::validate(&r.surfaces).map_err(|e| format!("{}: {e}", r.key))?;
             let part_roles: Vec<(&'static str, PartRole)> = r
                 .part_roles
                 .into_iter()
@@ -396,6 +401,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 part_offsets: Box::leak(part_offsets.into_boxed_slice()),
                 parts: Box::leak(parts.into_boxed_slice()),
                 tint_parts: Box::leak(tint_parts.into_boxed_slice()),
+                surfaces: Box::leak(r.surfaces.into_boxed_slice()),
             })
         },
     )

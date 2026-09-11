@@ -35,6 +35,8 @@ pub enum TileTint {
     Grass,
     Foliage,
     Water,
+    /// Fixed albedo multiply, independent of the column biome.
+    Fixed([u8; 3]),
 }
 
 /// How terrain picks one of a tile row's static `variants` (see
@@ -248,6 +250,8 @@ pub struct CellMeta {
     pub frame: u32,
     /// On the BASE frame of an animated tile: total frames. 0 otherwise.
     pub anim_frames: u32,
+    pub frame_ticks: u16,
+    pub interpolate: bool,
     /// Consecutive static alternatives, including this base. 1 on alternatives.
     pub variation_count: u16,
     /// How terrain selects among them; only the base cell of a row carries it.
@@ -277,6 +281,10 @@ struct RawTile {
     /// A vertical strip of square frames, expanded into consecutive tiles.
     #[serde(default)]
     anim: bool,
+    #[serde(default = "default_frame_ticks")]
+    frame_ticks: u16,
+    #[serde(default)]
+    interpolate: bool,
     #[serde(default)]
     tint: Option<TileTint>,
     #[serde(default)]
@@ -289,6 +297,10 @@ struct RawTile {
     /// How terrain chooses among `variants`; absent = addressed explicitly.
     #[serde(default)]
     variation: Option<VariationSelect>,
+}
+
+fn default_frame_ticks() -> u16 {
+    1
 }
 
 struct TileData {
@@ -356,6 +368,9 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
     // contribute one cell per frame).
     let mut cells: Vec<CellMeta> = Vec::new();
     for t in &rows {
+        if t.frame_ticks == 0 {
+            return Err(format!("tile '{}' frame_ticks must be positive", t.name));
+        }
         if t.variation.is_some() && t.variants.is_empty() {
             return Err(format!(
                 "tile '{}' declares a variation selector without variants",
@@ -382,6 +397,8 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
                     file: file.clone(),
                     frame: 0,
                     anim_frames: 0,
+                    frame_ticks: 1,
+                    interpolate: false,
                     variation_count: if i == 0 {
                         (t.variants.len() + 1) as u16
                     } else {
@@ -413,6 +430,8 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
                 file: t.file.clone(),
                 frame: i,
                 anim_frames: if i == 0 { frames } else { 0 },
+                frame_ticks: t.frame_ticks,
+                interpolate: t.interpolate,
                 variation_count: 1,
                 variation: None,
                 world_tint: t.tint,

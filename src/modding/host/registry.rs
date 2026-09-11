@@ -12,6 +12,34 @@ use super::guards::batch_guard;
 /// membership, reverse name lookups, item row reads).
 pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
     match call {
+        HostCall::MobDataGet { mob, key } => HostRet::Bytes(
+            crate::mob::defs()
+                .get(mob.0 as usize)
+                .and_then(|def| def.data_value(&key))
+                .map(|value| value.as_bytes().to_vec()),
+        ),
+        HostCall::MobsWithData { key } => HostRet::MobDataRows(
+            crate::mob::defs()
+                .iter()
+                .filter_map(|def| {
+                    def.data_value(&key)
+                        .map(|value| (mod_api::MobId(def.mob.id()), value.to_owned()))
+                })
+                .collect(),
+        ),
+        HostCall::LootRoll { key, mut seed } => HostRet::Loot(
+            petramond_world::loot::catalog()
+                .roll(&key, || super::splitmix_next(&mut seed))
+                .map(|stacks| {
+                    stacks
+                        .iter()
+                        .map(crate::modding::convert::item_stack_out)
+                        .collect()
+                }),
+        ),
+        HostCall::StructureInfo { key } => HostRet::StructureInfo(
+            petramond_world::structure::by_key(&key).map(|template| Box::new(template.info())),
+        ),
         HostCall::ResolveBlock { name } => HostRet::Block(
             petramond_world::registry::names()
                 .blocks
@@ -113,7 +141,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         // The shape-kind resolver: like the block/item/mob resolvers, a key→id
         // lookup over the process-wide registry, unknown key = `None`.
         HostCall::ResolveShape { key } => {
-            HostRet::MaybeByte(petramond_world::block::shape_kind_id_by_key(&key))
+            HostRet::MaybeU16(petramond_world::block::shape_kind_id_by_key(&key))
         }
         // The row-data interop surface: opaque raw JSON a consuming system's
         // key names — same never-interns contract as the tag queries.

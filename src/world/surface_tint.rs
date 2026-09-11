@@ -113,6 +113,9 @@ impl<'a> SurfaceTintGrids<'a> {
             petramond_world::tile::TileTint::Grass => &mut self.grids[0],
             petramond_world::tile::TileTint::Foliage => &mut self.grids[1],
             petramond_world::tile::TileTint::Water => &mut self.grids[2],
+            petramond_world::tile::TileTint::Fixed(rgb) => {
+                return rgb.map(|c| f32::from(c) / 255.0)
+            }
         };
         slot.get_or_insert_with(|| Self::build(self.halo, self.column, kind))[lz * 16 + lx]
     }
@@ -128,6 +131,7 @@ impl<'a> SurfaceTintGrids<'a> {
                 petramond_world::tile::TileTint::Grass => biome.grass_color(),
                 petramond_world::tile::TileTint::Foliage => biome.foliage_color(),
                 petramond_world::tile::TileTint::Water => biome.water_color(),
+                petramond_world::tile::TileTint::Fixed(rgb) => rgb.map(|c| f32::from(c) / 255.0),
             }
         };
         let mut out = Box::new([[0.0f32; 3]; 256]);

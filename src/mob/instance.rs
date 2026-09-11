@@ -725,7 +725,8 @@ impl Instance {
             }
         }
         let can_repath = self.on_ground || in_water;
-        let can_steer = route_steering_supported(self.on_ground, in_water, self.vel.y);
+        let can_steer =
+            d.air_control || route_steering_supported(self.on_ground, in_water, self.vel.y);
         // The pathfinder treats every OTHER entity as a soft obstacle to bend
         // around — except the brain's current target (a zombie paths TO the
         // player it hunts, never around them).

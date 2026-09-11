@@ -17,7 +17,7 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
 }
 
 /// The underground biome owning each position — the SAME answer the
-/// carver's lining and caliber read. A per-biome census needs it: judging
+/// habitat lining reads. A per-biome census needs it: judging
 /// "did this row line every floor in its territory" by proximity to the
 /// row's own lining block silently counts the neighbouring biome's rim as
 /// a miss.
@@ -138,6 +138,9 @@ pub fn preview_feature(name: &str, seed: u32) -> Option<FeaturePreview> {
 }
 
 fn configured_feature(name: &str) -> Option<&'static crate::feature::ConfiguredFeature> {
+    if name.contains(':') {
+        return crate::data::features::by_name(name);
+    }
     let key = name.trim().to_ascii_lowercase().replace('-', "_");
     let key = match key.as_str() {
         "young_oak" => "oak_young",

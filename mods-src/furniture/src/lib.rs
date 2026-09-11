@@ -273,7 +273,7 @@ impl Mod for Furniture {
     /// or the cauldron's fixed pot. Light passes them all: the rings and the
     /// lamp are slender and the cauldron is open-topped, so every cell reports
     /// the open aperture.
-    fn bake_shape_sim(&mut self, shape_kind: u8, cells: &[CellInput]) -> Vec<BakedSimCell> {
+    fn bake_shape_sim(&mut self, shape_kind: u16, cells: &[CellInput]) -> Vec<BakedSimCell> {
         if !self.owns_shape(shape_kind) {
             return Vec::new();
         }
@@ -291,7 +291,7 @@ impl Mod for Furniture {
     /// one deliberate divergence: the filled cauldron's fluid sheet, which
     /// draws (tinted, for dye) but never collides (see
     /// `Furniture::cauldron_fluid_box`).
-    fn bake_shape_render(&mut self, shape_kind: u8, cells: &[CellInput]) -> Vec<BakedRenderCell> {
+    fn bake_shape_render(&mut self, shape_kind: u16, cells: &[CellInput]) -> Vec<BakedRenderCell> {
         if !self.owns_shape(shape_kind) {
             return Vec::new();
         }
@@ -334,7 +334,7 @@ impl Mod for Furniture {
     /// dropped form is always the VERTICAL plate pair, however the block row
     /// the item links is oriented — a held chain reads like the vanilla
     /// item. The cauldron is unoriented; its one box list is the item too.
-    fn bake_shape_item(&mut self, shape_kind: u8, _block: BlockId) -> BakedItemGeometry {
+    fn bake_shape_item(&mut self, shape_kind: u16, _block: BlockId) -> BakedItemGeometry {
         let boxes = if self.chains.as_ref().is_some_and(|c| c.shape == shape_kind) {
             chains::cell_links()
         } else if let Some(lanterns) = self.lanterns.as_ref().filter(|l| l.shape == shape_kind) {
@@ -359,7 +359,7 @@ impl Mod for Furniture {
     /// replaceable, body occupancy.
     fn shape_placement_plan(
         &mut self,
-        shape_kind: u8,
+        shape_kind: u16,
         _block: BlockId,
         inputs: &PlaceInputsView,
     ) -> ShapePlacementResult {
@@ -385,7 +385,7 @@ impl Mod for Furniture {
 
 impl Furniture {
     /// Whether a bake dispatch's shape kind is one of this mod's shapes.
-    fn owns_shape(&self, shape_kind: u8) -> bool {
+    fn owns_shape(&self, shape_kind: u16) -> bool {
         self.chains.as_ref().is_some_and(|c| c.shape == shape_kind)
             || self
                 .lanterns
@@ -399,7 +399,7 @@ impl Furniture {
 
     /// The box list for a placed cell — the one geometry source the sim and
     /// render bakes share so collision, selection, and the mesh can't drift.
-    fn shape_boxes(&self, shape_kind: u8, block: BlockId) -> Vec<ShapeAabb> {
+    fn shape_boxes(&self, shape_kind: u16, block: BlockId) -> Vec<ShapeAabb> {
         if let Some(chains) = self.chains.as_ref().filter(|c| c.shape == shape_kind) {
             return chains.links_for(block);
         }

@@ -11,6 +11,7 @@ use super::{Aabb, Block, BlockInteraction, BlockShapeKind, BlockTag};
 pub(super) struct BlockDef {
     pub block: Block,
     pub flags: BlockFlags,
+    pub contained_fluid: Option<Block>,
     /// Category memberships (see [`BlockTag`]) — what this block *is*. Most rows
     /// carry none (`&[]`); a member lists each tag it belongs to. Mirrors the
     /// item table's `tags`.
@@ -439,6 +440,22 @@ pub enum BlockMaterial {
 pub struct BlockFlags(u16);
 
 impl BlockFlags {
+    pub const FLUID: BlockFlags = BlockFlags(1 << 10);
+    pub const CONTAINS_FLUID: BlockFlags = BlockFlags(1 << 12);
+    pub const INVISIBLE: BlockFlags = BlockFlags(1 << 11);
+
+    #[inline]
+    pub const fn contains_fluid(self) -> bool {
+        self.contains(Self::CONTAINS_FLUID)
+    }
+    pub const fn invisible(self) -> bool {
+        self.contains(Self::INVISIBLE)
+    }
+
+    #[inline]
+    pub const fn fluid(self) -> bool {
+        self.contains(Self::FLUID)
+    }
     /// No material properties at all (air). Replaceability is no longer a flag —
     /// it migrated to [`BlockTag::REPLACEABLE`](super::BlockTag::REPLACEABLE).
     pub const NONE: BlockFlags = BlockFlags(0);

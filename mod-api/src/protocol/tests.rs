@@ -486,7 +486,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         biomes: vec![2; 2],
         sea_level: 63,
     });
-    roundtrip(GuestRet::GenWrites(vec![([1, 64, -3], BlockId(7))]));
+    roundtrip(GuestRet::GenOutput(vec![([1, 64, -3], BlockId(7))].into()));
     roundtrip(GuestRet::GenBlocks(vec![1, 0, 1]));
     roundtrip(GuestRet::GenBiomes(vec![4, 4, 5]));
     roundtrip(GuestRet::HostileSpawn(Some("zombies:zombie".into())));

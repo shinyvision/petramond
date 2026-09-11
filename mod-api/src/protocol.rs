@@ -9,5 +9,5 @@ mod host;
 #[cfg(test)]
 mod tests;
 
-pub use guest::{GenWrite, GuestRet, HostCall};
-pub use host::{GuestCall, HostRet};
+pub use guest::{FeaturePlacement, GenOutput, GenWrite, GuestRet, HostCall, StructurePlacement};
+pub use host::{GuestCall, HostRet, MemoClaim};

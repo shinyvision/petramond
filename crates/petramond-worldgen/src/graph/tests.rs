@@ -188,6 +188,17 @@ fn cached_direct_evaluation_matches_channel_and_reuses_shared_nodes() {
         1,
         "cache state must not leak across sample points"
     );
+
+    let roots = [shared, doubled, output];
+    for point in [point, SamplePoint::new(7.0, -8.0, 2.0)] {
+        let expected = roots.map(|node| graph.evaluate_node(node, point));
+        samples.store(0, Ordering::Relaxed);
+        assert_eq!(
+            graph.evaluate_nodes_cached(roots, point, &mut cache),
+            expected
+        );
+        assert_eq!(samples.load(Ordering::Relaxed), 1);
+    }
 }
 
 #[test]

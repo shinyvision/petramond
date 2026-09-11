@@ -47,6 +47,8 @@ pub(super) struct RawBlockDef {
     pub block: String,
     pub shape: RawShape,
     pub flags: Vec<RawFlag>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contained_fluid: Option<String>,
     /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
     /// (interned at load — see [`BlockTag::resolve`]).
     pub tags: Vec<String>,
@@ -329,6 +331,8 @@ impl RawInteraction {
 #[derive(Copy, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RawFlag {
+    Invisible,
+    Fluid,
     Solid,
     Opaque,
     AoOccluder,
@@ -340,6 +344,8 @@ pub(super) enum RawFlag {
 impl RawFlag {
     fn to_flag(self) -> BlockFlags {
         match self {
+            RawFlag::Invisible => BlockFlags::INVISIBLE,
+            RawFlag::Fluid => BlockFlags::FLUID,
             RawFlag::Solid => BlockFlags::SOLID,
             RawFlag::Opaque => BlockFlags::OPAQUE,
             RawFlag::AoOccluder => BlockFlags::AO_OCCLUDER,
@@ -464,6 +470,17 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     }
     let defs: &'static [BlockDef] = Box::leak(defs.into_boxed_slice());
     let shape_kinds: &'static [ShapeKindDef] = Box::leak(interner.into_table().into_boxed_slice());
+    for row in defs {
+        if let Some(fluid) = row.contained_fluid {
+            let target = &defs[fluid.id() as usize];
+            if fluid != Block::Water && !target.flags.fluid() {
+                return Err(format!(
+                    "block '{}' contains a non-fluid block",
+                    names.blocks.name(row.block.id()).unwrap()
+                ));
+            }
+        }
+    }
     validate_stage_chains(defs)?;
     validate_facing_rows(defs)?;
     validate_roots_on(defs)?;
@@ -627,6 +644,26 @@ fn convert(
     for f in &r.flags {
         flags = flags.with(f.to_flag());
     }
+    let contained_fluid = r
+        .contained_fluid
+        .as_ref()
+        .map(|name| {
+            names
+                .blocks
+                .id(name)
+                .map(Block)
+                .ok_or_else(|| format!("unknown contained fluid '{name}'"))
+        })
+        .transpose()?;
+    if contained_fluid.is_some() {
+        if flags.is_opaque() || flags.fluid() || block == Block::Water {
+            return Err("contained_fluid requires a nonopaque, nonfluid host block".into());
+        }
+        flags = flags.with(BlockFlags::CONTAINS_FLUID);
+    }
+    if flags.fluid() && (family != ShapeFamily::Cube || flags.is_opaque() || flags.is_solid()) {
+        return Err("fluid requires a nonopaque, nonsolid cube".into());
+    }
     // Derived, not row-listed: the shape classes the mesher needs as dense flags.
     if family == ShapeFamily::Slab {
         flags = flags.with(BlockFlags::SLAB);
@@ -778,6 +815,26 @@ fn convert(
             );
         }
     }
+    let contained_fluid = r
+        .contained_fluid
+        .as_ref()
+        .map(|name| {
+            names
+                .blocks
+                .id(name)
+                .map(Block)
+                .ok_or_else(|| format!("unknown contained fluid '{name}'"))
+        })
+        .transpose()?;
+    if contained_fluid.is_some() {
+        if flags.is_opaque() || flags.fluid() || block == Block::Water {
+            return Err("contained_fluid requires a nonopaque, nonfluid host block".into());
+        }
+        flags = flags.with(BlockFlags::CONTAINS_FLUID);
+    }
+    if flags.fluid() && (family != ShapeFamily::Cube || flags.is_opaque() || flags.is_solid()) {
+        return Err("fluid requires a nonopaque, nonsolid cube".into());
+    }
     // Derived, not row-listed: the physics climb/grip probes need these as
     // dense flags (see `BlockFlags::CLIMBABLE` / `BlockFlags::SLIPPERY`).
     if tags.contains(&BlockTag::CLIMBABLE) {
@@ -895,6 +952,7 @@ fn convert(
     Ok(BlockDef {
         block,
         flags,
+        contained_fluid,
         tags: leak(tags),
         behavior,
         interaction,

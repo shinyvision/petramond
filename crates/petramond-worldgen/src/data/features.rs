@@ -19,9 +19,9 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 
 use crate::feature::placers::foliage::{
-    ConiferFoliage, DroopyFoliage, FlatSparseFoliage, FoliagePlacer,
+    ConiferFoliage, DroopyFoliage, FlatSparseFoliage, FoliagePlacer, LayeredFoliage,
 };
-use crate::feature::placers::trunk::{LeaningTrunk, StraightTrunk, TrunkPlacer};
+use crate::feature::placers::trunk::{LeaningTrunk, StraightTrunk, TrunkPlacer, WhorledTrunk};
 use crate::feature::tree::{BlockyOakFeature, CanopyTreeFeature, RedwoodFeature, TreeFeature};
 use crate::feature::{ConfiguredFeature, Feature};
 use petramond_world::block::Block;
@@ -94,6 +94,7 @@ struct RawTree {
 enum RawTrunk {
     Straight,
     Leaning,
+    Whorled(WhorledTrunk),
 }
 
 /// Foliage placers carry their shape params as fields, so a row states the
@@ -104,6 +105,7 @@ enum RawFoliage {
     Droopy(DroopyFoliage),
     Conifer(ConiferFoliage),
     FlatSparse(FlatSparseFoliage),
+    Layered(LayeredFoliage),
 }
 
 impl RawShape {
@@ -121,14 +123,23 @@ impl RawShape {
             }
             RawShape::Redwood(f) => Box::leak(Box::new(f)),
             RawShape::Tree(t) => {
+                crate::data::bounds::ascending("height", t.height, 5..=56)?;
                 let trunk: &'static dyn TrunkPlacer = match t.trunk {
                     RawTrunk::Straight => &STRAIGHT,
                     RawTrunk::Leaning => &LEANING,
+                    RawTrunk::Whorled(trunk) => {
+                        trunk.validate(t.height)?;
+                        Box::leak(Box::new(trunk))
+                    }
                 };
                 let foliage: &'static dyn FoliagePlacer = match t.foliage {
                     RawFoliage::Droopy(f) => Box::leak(Box::new(f)),
                     RawFoliage::Conifer(f) => Box::leak(Box::new(f)),
                     RawFoliage::FlatSparse(f) => Box::leak(Box::new(f)),
+                    RawFoliage::Layered(f) => {
+                        f.validate()?;
+                        Box::leak(Box::new(f))
+                    }
                 };
                 // The canopy-open oracle reads column surfaces under every
                 // leaf cell, and those reads must stay inside the candidate

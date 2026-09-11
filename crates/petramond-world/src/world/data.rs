@@ -417,7 +417,7 @@ impl WorldData {
 
     #[inline]
     pub fn water_cell_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
-        self.physics_block(wx, wy, wz) == Block::Water
+        self.physics_block(wx, wy, wz).fluid() == Some(Block::Water)
     }
 
     /// Mark the section owning world voxel `pos` as modified, so a change that no

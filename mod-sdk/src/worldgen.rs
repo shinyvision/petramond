@@ -4,6 +4,16 @@
 //! [`crate::registry`].)
 
 use mod_api::{BlockId, WorldgenStage};
+mod terrain;
+pub use terrain::TerrainCache;
+
+host_fn! {
+    /// Highest solid density cells before cave carving and feature stages.
+    /// Useful for depth limits and scans from a stable pre-excavation surface.
+    /// At most [`crate::SIM_BATCH_MAX`] columns; independent of loaded sections.
+    pub fn terrain_heights_at(columns: Vec<[i32; 2]>) -> Vec<i32>
+        => TerrainHeightsAt { columns } => TerrainHeights
+}
 
 // Imported for intra-doc links only.
 #[allow(unused_imports)]
@@ -54,7 +64,7 @@ host_fn! {
 host_fn! {
     /// The underground biome id owning each world position, parallel to
     /// `positions` (at most [`crate::SIM_BATCH_MAX`] per call). A pure function of position — the
-    /// same partition the cave carver's wall lining and caliber read — so it
+    /// same climate partition used by cave lining and decoration — so it
     /// is seam-safe inside a worldgen feature and needs no loaded section. A
     /// position no row claims answers `0`, the fallback biome.
     ///
@@ -86,6 +96,14 @@ host_fn! {
     /// does not grow with the number of candidates.
     pub fn underground_biomes_in_box(lo: [i32; 3], hi: [i32; 3]) -> Vec<u8>
         => UndergroundBiomesInBox { lo, hi } => UndergroundBiomes
+}
+
+host_fn! {
+    /// Terrain occupancy before feature stages, in request order. Use for
+    /// bounded support/clearance probes that must distinguish water from air.
+    /// At most [`crate::SIM_BATCH_MAX`] positions; independent of loaded sections.
+    pub fn terrain_space_at(positions: Vec<[i32; 3]>) -> Vec<crate::TerrainSpace>
+        => TerrainSpaceAt { positions } => TerrainSpaces
 }
 
 host_fn! {
@@ -128,6 +146,25 @@ host_fn! {
     /// query over a section is the shape that trips the mod watchdog.
     pub fn surface_biome_at(columns: Vec<[i32; 2]>) -> Vec<u8>
         => SurfaceBiomeAt { columns } => SurfaceBiomes
+}
+
+host_fn! {
+    /// Filled and carved terrain materials, independent of loaded sections and later features.
+    /// Batch nearby cells together: every touched section shares generation's immutable cache.
+    pub fn terrain_blocks_at(positions: Vec<[i32; 3]>) -> Vec<BlockId>
+        => TerrainBlocksAt { positions } => BlockList
+}
+
+/// [`terrain_blocks_at`] for one whole 16³ section, in section order
+/// (`(y * 16 + z) * 16 + x`), without shipping every position.
+pub fn terrain_section_at(section: [i32; 3]) -> Vec<BlockId> {
+    match crate::__rt::host_call(&crate::HostCall::TerrainSectionAt { section }) {
+        crate::HostRet::SectionBlocks(bytes) => bytes
+            .chunks_exact(2)
+            .map(|pair| BlockId(u16::from_le_bytes([pair[0], pair[1]])))
+            .collect(),
+        other => panic!("TerrainSectionAt returned {other:?}"),
+    }
 }
 
 /// One worldgen dispatch's inputs, with the accessors a well-behaved feature

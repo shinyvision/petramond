@@ -79,4 +79,19 @@ impl LoadTarget {
         let h = i64::from((self.render_dist / 2).max(8));
         key + h * h
     }
+
+    /// The key a section runs again at after a generation hook DEFERRED it —
+    /// as if it were `render_dist / 2` sections farther out, the same shift
+    /// the surface bias uses. Nearer jobs, which mostly wait on the same fact,
+    /// would otherwise be popped straight back; a fixed shift keeps the retry
+    /// behind the current frontier without ever starving it.
+    pub fn deferred_section_key(
+        self,
+        pos: SectionPos,
+        band_lo: i32,
+        anchor_underground: bool,
+    ) -> i64 {
+        let h = i64::from((self.render_dist / 2).max(8));
+        self.surface_biased_section_key(pos, band_lo, anchor_underground) + h * h
+    }
 }

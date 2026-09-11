@@ -75,7 +75,10 @@
             "speed_scale": 2.0
           }
         }
-      ]
+      ],
+      "data": {
+        "petramond:loot": "petramond:owl_drops"
+      }
     },
     {
       "mob": "petramond:sheep",

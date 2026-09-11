@@ -1,7 +1,7 @@
 //! Block shape kinds: the composable replacement for the closed `RenderShape`
 //! enum's role as `BlockDef`'s shape field.
 //!
-//! A [`BlockShapeKind`] is a session-local `u8` id indexing a registry of
+//! A [`BlockShapeKind`] is a session-local `u16` id indexing a registry of
 //! [`ShapeKindDef`] rows — one row per distinct *parameterization* of a
 //! [`ShapeFamily`] (all plain cubes share one row; a farmland-height and a
 //! snow-height lowered cube are two rows; each bbmodel kind is its own row).
@@ -49,7 +49,7 @@ pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE
 /// `RenderShape` as `BlockDef`'s shape field. Not persisted, so unlike
 /// [`Block`](super::Block) its numeric value is free to change between sessions.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct BlockShapeKind(pub u8);
+pub struct BlockShapeKind(pub u16);
 
 impl BlockShapeKind {
     /// The registry row for this kind.
@@ -550,7 +550,7 @@ impl<'de> Deserialize<'de> for RawShape {
 /// [`into_table`](Self::into_table).
 pub(super) struct ShapeKindInterner {
     table: Vec<ShapeKindDef>,
-    index: HashMap<String, u8>,
+    index: HashMap<String, u16>,
 }
 
 impl ShapeKindInterner {
@@ -571,12 +571,12 @@ impl ShapeKindInterner {
         if let Some(&id) = self.index.get(&key) {
             return Ok(BlockShapeKind(id));
         }
-        if self.table.len() >= 256 {
+        if self.table.len() >= crate::registry::WIDE_ID_CAP {
             return Err(format!(
-                "too many distinct block shape kinds (256 max) registering '{key}'"
+                "too many distinct block shape kinds (4096 max) registering '{key}'"
             ));
         }
-        let id = self.table.len() as u8;
+        let id = self.table.len() as u16;
         let (sim, render, placement) = families::singletons(family);
         self.table.push(ShapeKindDef {
             key: Box::leak(key.clone().into_boxed_str()),

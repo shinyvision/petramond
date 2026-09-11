@@ -85,13 +85,18 @@ impl SurfaceClimate {
     }
 
     pub fn from_graph(graph: &ScalarGraph, point: SamplePoint) -> Option<Self> {
-        Some(Self::new(
-            graph.evaluate_channel(channels::TEMPERATURE, point)? as f32,
-            graph.evaluate_channel(channels::HUMIDITY, point)? as f32,
-            graph.evaluate_channel(channels::CONTINENTALITY, point)? as f32,
-            graph.evaluate_channel(channels::EROSION, point)? as f32,
-            graph.evaluate_channel(channels::VARIANCE, point)? as f32,
-        ))
+        let nodes = [
+            graph.channel_node(channels::TEMPERATURE)?,
+            graph.channel_node(channels::HUMIDITY)?,
+            graph.channel_node(channels::CONTINENTALITY)?,
+            graph.channel_node(channels::EROSION)?,
+            graph.channel_node(channels::VARIANCE)?,
+        ];
+        Some(Self {
+            axes: graph
+                .evaluate_nodes_cached(nodes, point, &mut graph.evaluation_cache())
+                .map(|v| v as f32),
+        })
     }
 
     /// Bilinear blend of four corner climates (`fx`/`fz` in `0..1` from the

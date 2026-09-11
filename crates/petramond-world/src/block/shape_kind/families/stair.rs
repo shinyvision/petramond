@@ -127,6 +127,23 @@ impl ShapeRender for StairFamily {
 }
 
 impl ShapePlacement for StairFamily {
+    fn authored_plan(
+        &self,
+        block: Block,
+        inputs: &mut crate::world::placement::authored::Inputs<'_>,
+    ) -> Result<PlacementPlan, String> {
+        let half = match inputs.property("half", "bottom") {
+            "bottom" => crate::block_state::StairHalf::Bottom,
+            "top" => crate::block_state::StairHalf::Top,
+            value => return Err(format!("unknown stair half '{value}'")),
+        };
+        Ok(PlacementPlan::single(
+            inputs.anchor,
+            block,
+            StairState::new(inputs.facing()?, half).to_cell(),
+        ))
+    }
+
     fn placement_plan(
         &self,
         w: &WorldData,

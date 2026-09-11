@@ -14,7 +14,7 @@ use mod_sdk::*;
 /// The chain family: the shared shape-kind id and its three axis rows —
 /// vertical (the item-linked base), north/south, east/west.
 pub(super) struct Chains {
-    pub(super) shape: u8,
+    pub(super) shape: u16,
     pub(super) rows: [BlockId; 3],
 }
 

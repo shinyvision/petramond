@@ -16,7 +16,6 @@ petramond-math = { path = "../petramond-math" }
 petramond-util = { path = "../petramond-util" }
 petramond-world = { path = "../petramond-world" }
 mod-api = { path = "../../mod-api" }
-noise = { version = "0.9", default-features = false }
 log = "0.4"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }

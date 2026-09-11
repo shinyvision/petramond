@@ -11,6 +11,8 @@ use petramond_world::section::Section;
 
 use crate::world::store::{LoadAnchor, LoadTarget, World};
 
+mod priorities;
+
 /// A block entity arriving through the saved-section overlay path (not a live
 /// placement) must land in the block-entity index, or it renders/ticks as if
 /// it didn't exist after a reload.

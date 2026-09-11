@@ -396,10 +396,13 @@ impl Instance {
         let feet = voxel_at(self.pos);
         if d.buoyancy == super::Buoyancy::Surface {
             let surface = water_surface(feet).or_else(|| water_surface(feet - IVec3::Y));
-            self.vel.y = surface_vertical_velocity(self.vel.y, self.pos.y, surface, dt);
+            self.vel.y =
+                surface_vertical_velocity(self.vel.y, self.pos.y, surface, dt, d.gravity_scale);
         } else {
             let probe = voxel_at(self.pos + Vec3::new(0.0, d.size.height * SWIM_PROBE_FRAC, 0.0));
-            if water(probe) {
+            if !water(probe) {
+                self.vel.y += GRAVITY * d.gravity_scale * dt;
+            } else if d.buoyancy == super::Buoyancy::Swim {
                 // Climbing out: when steering toward a 1-block ledge it can get onto (and
                 // not already falling back), a firm boost crests the waterline and lands it
                 // on the block instead of hugging the shore forever — else the swim bob.
@@ -411,8 +414,6 @@ impl Instance {
                 } else {
                     self.vel.y = approach(self.vel.y, SWIM_RISE, SWIM_VACCEL * dt);
                 }
-            } else {
-                self.vel.y += GRAVITY * dt;
             }
         }
         // Body collision via the shared swept-AABB resolver (the same one the player and
@@ -576,13 +577,19 @@ fn wrap_angle(a: f32) -> f32 {
     (a + PI).rem_euclid(TAU) - PI
 }
 
-fn surface_vertical_velocity(current: f32, feet_y: f32, surface: Option<f32>, dt: f32) -> f32 {
+fn surface_vertical_velocity(
+    current: f32,
+    feet_y: f32,
+    surface: Option<f32>,
+    dt: f32,
+    gravity_scale: f32,
+) -> f32 {
     match surface {
         Some(surface) => {
             let target = surface - SURFACE_DRAFT;
             ((target - feet_y) * SURFACE_FLOAT_RATE).clamp(-SWIM_RISE, SWIM_RISE)
         }
-        None => current + GRAVITY * dt,
+        None => current + GRAVITY * gravity_scale * dt,
     }
 }
 

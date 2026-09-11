@@ -1911,6 +1911,119 @@ pub enum HostCall {
         slot: u32,
         count: u8,
     },
+    /// Nearest live item entities within `radius`, ordered by distance then
+    /// stable id. `limit` bounds the reply (at most `SIM_BATCH_MAX`); zero
+    /// returns nothing. Radius must be finite and within `0..=64`.
+    /// Frozen terrain is omitted. → [`HostRet::ItemEntities`].
+    ItemEntitiesInRadius {
+        pos: [f32; 3],
+        radius: f32,
+        limit: u32,
+    },
+    /// Add world-space velocity deltas (m/s), in request order, to live
+    /// item entities. At most `SIM_BATCH_MAX` entries. A missing, lodged,
+    /// pickup-reserved or terrain-frozen entity answers false; a resulting
+    /// velocity outside the collision sweep bound also answers false.
+    /// Invalid non-finite deltas reject the whole call before any mutation.
+    /// Motion kind, stack, age and ownership are preserved. → [`HostRet::Bools`].
+    ItemImpulses {
+        impulses: Vec<(u64, [f32; 3])>,
+    },
+    /// Cells carrying `key` in one 16³ section, sorted by local cell index.
+    /// `None` while the section is unloaded or awaiting saved terrain; retry
+    /// later. Reads only the sparse data map. → [`HostRet::FoundBlocks`].
+    SectionKvFind {
+        section: [i32; 3],
+        key: String,
+    },
+    /// Compiled template metadata. Registry-only, legal on every runtime side.
+    /// Resolve once during initialization. → [`HostRet::StructureInfo`].
+    StructureInfo {
+        key: String,
+    },
+    /// Sample a reward table without delivering it. Equal table/seed pairs
+    /// return equal results; an unknown table returns None. At most 256 entries.
+    LootRoll {
+        key: String,
+        seed: u64,
+    },
+    /// A species' immutable consumer metadata. Registry-only; absent returns `Bytes(None)`.
+    MobDataGet {
+        mob: crate::MobId,
+        key: String,
+    },
+    /// Species carrying this consumer key, with JSON values in registry order.
+    MobsWithData {
+        key: String,
+    },
+    /// Positional terrain occupancy, before features; at most SIM_BATCH_MAX
+    /// positions, in request order. Legal on detached generation instances.
+    TerrainSpaceAt {
+        positions: Vec<[i32; 3]>,
+    },
+    /// Read one entry of the shared derived-fact memo (see [`Self::MemoPut`]).
+    /// `Bytes(None)` = never stored, or evicted since. Legal on every instance.
+    MemoGet {
+        #[serde(with = "serde_bytes")]
+        key: Vec<u8>,
+    },
+    /// [`Self::MemoGet`] over many keys, reply parallel to `keys`
+    /// ([`HostRet::BytesMany`]). At most `SIM_BATCH_MAX` keys.
+    MemoGetMany {
+        keys: Vec<Vec<u8>>,
+    },
+    /// Publish an entry to the memo every instance of the calling mod shares —
+    /// all threads, all runtime sides — scoped to the mod and the world seed.
+    /// Bounded and discardable: an entry may vanish at any time, so a value
+    /// must be a pure function of the world seed and its key (a settled
+    /// positional decision), never state. `Bool(false)` = the value exceeds
+    /// `MEMO_MAX_VALUE_BYTES` and was not stored; a key over
+    /// `MEMO_MAX_KEY_BYTES` errors.
+    MemoPut {
+        #[serde(with = "serde_bytes")]
+        key: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        value: Vec<u8>,
+    },
+    /// [`Self::MemoGet`] that also settles WHO derives a missing entry: the
+    /// first caller to miss holds the lease and must [`Self::MemoPut`] the
+    /// value; a caller missing while a lease is held waits briefly for that
+    /// value, and past that wait is told the derivation is pending, so a
+    /// generation callback can defer its section instead of idling or
+    /// deriving the same fact on every worker. → [`HostRet::MemoClaim`].
+    MemoClaim {
+        #[serde(with = "serde_bytes")]
+        key: Vec<u8>,
+    },
+    /// Filled and carved terrain materials, before feature stages; reply in request order.
+    TerrainBlocksAt {
+        positions: Vec<[i32; 3]>,
+    },
+    /// Highest solid density cells before cave carving and feature stages.
+    TerrainHeightsAt {
+        columns: Vec<[i32; 2]>,
+    },
+    /// [`HostCall::TerrainBlocksAt`] for one whole 16³ section in section
+    /// order (`(y * 16 + z) * 16 + x`): what a tile-caching reader asks,
+    /// without shipping 4,096 positions to say so.
+    TerrainSectionAt {
+        section: [i32; 3],
+    },
+}
+
+/// The three ways a [`HostCall::MemoClaim`] comes back.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum MemoClaim {
+    /// The published value.
+    Value(#[serde(with = "serde_bytes")] Vec<u8>),
+    /// Nobody held it: this caller does now, and must publish with
+    /// [`HostCall::MemoPut`].
+    Lease,
+    /// Another caller holds the lease and has not published within the
+    /// short wait. A generation callback answers with a deferred
+    /// [`GenOutput`](crate::GenOutput) so the section is dispatched again
+    /// once the value exists; anything else derives the fact itself.
+    Pending,
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -2054,4 +2167,18 @@ pub enum HostRet {
     /// [`HostCall::Raycast`]: the first block the ray stops on; `None` =
     /// nothing within `max`.
     Raycast(Option<RaycastHitData>),
+    /// [`HostCall::ItemEntitiesInRadius`], nearest first, stable id breaks ties.
+    ItemEntities(Vec<ItemEntityData>),
+    StructureInfo(Option<Box<crate::StructureInfoData>>),
+    /// Undelivered reward stacks from [`HostCall::LootRoll`].
+    Loot(Option<Vec<ItemStackData>>),
+    MobDataRows(Vec<(crate::MobId, String)>),
+    TerrainSpaces(Vec<crate::TerrainSpace>),
+    /// [`HostCall::MemoClaim`].
+    MemoClaim(MemoClaim),
+    TerrainHeights(Vec<i32>),
+    MaybeU16(Option<u16>),
+    /// [`HostCall::TerrainSectionAt`]: the 4,096 ids as little-endian pairs
+    /// in section order, copied rather than encoded one by one.
+    SectionBlocks(#[serde(with = "serde_bytes")] Vec<u8>),
 }

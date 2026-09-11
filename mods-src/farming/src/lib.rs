@@ -295,13 +295,13 @@ impl Mod for Farming {
         }
     }
 
-    fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> Vec<GenWrite> {
+    fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> GenOutput {
         let Some(content) = &self.content else {
-            return Vec::new();
+            return GenOutput::default();
         };
         match feature_id {
-            GEN_WILD_PATCHES => worldgen::wild_patches(content, ctx),
-            _ => Vec::new(),
+            GEN_WILD_PATCHES => worldgen::wild_patches(content, ctx).into(),
+            _ => GenOutput::default(),
         }
     }
 }

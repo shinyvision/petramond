@@ -11,8 +11,8 @@ extern "C" {
     fn host_dispatch(ptr: u32, len: u32) -> u64;
 }
 
-/// Host-target stub so the SDK itself type-checks off-wasm (mods only ever
-/// build for wasm32; the engine never links this crate).
+/// Host-target stub so the SDK itself type-checks off-wasm: a mod built
+/// natively answers its host calls through [`NATIVE_HOST`] or not at all.
 #[cfg(not(target_arch = "wasm32"))]
 unsafe fn host_dispatch(_ptr: u32, _len: u32) -> u64 {
     unreachable!("mod-sdk host calls only exist inside the wasm guest")
@@ -65,7 +65,19 @@ fn to_wire(bytes: &[u8]) -> u64 {
 
 /// One host call: encode, dispatch, decode the reply (the host allocated
 /// it in our memory through `mod_alloc`; we own and free it).
+/// Off-wasm, the host every SDK call goes to: a tool that links a mod's logic
+/// natively (to benchmark or test it against the real worldgen) installs one
+/// before the first call.
+#[cfg(not(target_arch = "wasm32"))]
+pub type NativeHost = Box<dyn Fn(&HostCall) -> HostRet + Send + Sync>;
+#[cfg(not(target_arch = "wasm32"))]
+pub static NATIVE_HOST: std::sync::OnceLock<NativeHost> = std::sync::OnceLock::new();
+
 pub fn host_call(call: &HostCall) -> HostRet {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(host) = NATIVE_HOST.get() {
+        return host(call);
+    }
     let request = mod_api::encode(call).expect("encode host call");
     let packed = unsafe { host_dispatch(request.as_ptr() as u32, request.len() as u32) };
     let (ptr, len) = mod_api::unpack_ptr_len(packed);
@@ -187,7 +199,7 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
                 biomes,
                 sea_level,
             };
-            GuestRet::GenWrites(mod_.gen_feature(feature_id, &ctx))
+            GuestRet::GenOutput(mod_.gen_feature(feature_id, &ctx))
         }
         GuestCall::GenStage {
             callback_id,
@@ -214,7 +226,7 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
                 mod_api::WorldgenStage::Terrain => {
                     GuestRet::GenBlocks(mod_.gen_terrain(callback_id, &ctx))
                 }
-                other => GuestRet::GenWrites(mod_.gen_stage(callback_id, other, &ctx)),
+                other => GuestRet::GenOutput(mod_.gen_stage(callback_id, other, &ctx)),
             }
         }
         GuestCall::GuiClick {

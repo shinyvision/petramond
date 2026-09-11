@@ -26,7 +26,6 @@ mod damage;
 mod instance;
 mod kinematics;
 mod load;
-mod loot;
 mod manager;
 mod model_meta;
 mod nav;
@@ -46,7 +45,6 @@ pub use body_geometry::{
 };
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
-pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub use nav::mob_can_reach;
 pub use nav::site_open;
@@ -270,12 +268,17 @@ impl MobCategory {
 /// first (player distance, footing, headroom for the body) and only then asks the
 /// species' rule, so a rule only describes what's *species-specific*: the biomes it
 /// settles in and the blocks it will stand on. Declarative on purpose — adding a
-/// species is data, not a new branch in the spawner. A rule matching nothing (empty
-/// biome or ground list) makes the species programmatic-spawn-only: the natural
-/// spawner skips it entirely (how a mod's tick system owns its own spawning).
+/// species is data, not a new branch in the spawner. A rule without any climate
+/// or underground territory, or without ground and a volume constraint, permits only programmatic spawns.
 pub struct SpawnRule {
     /// Biomes the species may spawn in.
     pub biomes: &'static [Biome],
+    /// Optional underground territory constraint, independent of surface climate.
+    pub underground: &'static [u8],
+    /// Feet-height search interval. Absent selects the exposed surface.
+    pub y: Option<[i32; 2]>,
+    /// Allowed cells throughout the body volume; absent requires dry footing.
+    pub space: Option<&'static [Block]>,
     /// Species-wide spawn chance in `(0, 1]`, multiplied into every biome's
     /// own chance below. This is how RARE the species is as a species — a
     /// `0.25` row is a quarter as common as a full-chance neighbour
@@ -297,14 +300,17 @@ pub struct SpawnRule {
 impl SpawnRule {
     /// Whether a site in `biome`, standing on `ground`, satisfies this rule.
     pub fn admits(&self, biome: Biome, ground: Block) -> bool {
-        self.biomes.contains(&biome) && self.ground.contains(&ground)
+        (self.biomes.contains(&biome) || (self.biomes.is_empty() && !self.underground.is_empty()))
+            && (self.ground.contains(&ground) || (self.ground.is_empty() && self.space.is_some()))
     }
 
     /// The chance in `[0, 1]` that a spawn event in `biome` passes this rule's
     /// rarity: the species-wide `chance` times the row's per-biome chance
-    /// (default 1 for a listed biome), or 0 for a biome the rule doesn't list
-    /// at all.
+    /// (default 1 for a listed biome). A territory-only rule accepts every climate.
     pub fn chance_in(&self, biome: Biome) -> f32 {
+        if self.biomes.is_empty() && !self.underground.is_empty() {
+            return self.chance;
+        }
         match self.biomes.iter().position(|&b| b == biome) {
             Some(i) => self.chance * self.chances.get(i).copied().unwrap_or(1.0),
             None => 0.0,
@@ -314,7 +320,8 @@ impl SpawnRule {
     /// Whether this rule can admit any site at all — `false` marks a species the
     /// natural spawner never attempts (spawnable only programmatically).
     pub fn is_spawnable(&self) -> bool {
-        !self.biomes.is_empty() && !self.ground.is_empty()
+        (!self.biomes.is_empty() || !self.underground.is_empty())
+            && (!self.ground.is_empty() || self.space.is_some())
     }
 }
 
@@ -716,6 +723,10 @@ pub struct MobDef {
     /// tags OVERLAY these (per-key), so a species gaining a new spawn tag
     /// reaches previously saved individuals too.
     pub tags: &'static std::collections::BTreeMap<String, MobTagValue>,
+    /// Immutable, namespaced consumer metadata shared by every instance.
+    pub data: &'static [(&'static str, &'static str)],
+    /// The reward table declared by the `petramond:loot` consumer entry.
+    pub loot: Option<String>,
     /// Ground walk speed (m/s).
     pub walk_speed: f32,
     /// Upward launch speed of a jump (m/s); sized to clear a one-block step.
@@ -748,6 +759,10 @@ pub struct MobDef {
     /// How this species behaves in water (`"buoyancy"` row, default `swim`) —
     /// see [`Buoyancy`].
     pub buoyancy: Buoyancy,
+    /// Multiplier of downward acceleration; zero supports driven airborne bodies.
+    pub gravity_scale: f32,
+    /// Whether locomotion may steer without ground, water, or a rising jump.
+    pub air_control: bool,
     /// This species' body collision role (`"collision"` row, default `soft`) —
     /// see [`MobCollision`].
     pub collision: MobCollision,
@@ -771,6 +786,11 @@ pub struct MobDef {
 }
 
 impl MobDef {
+    pub fn data_value(&self, key: &str) -> Option<&'static str> {
+        self.data
+            .iter()
+            .find_map(|(k, value)| (*k == key).then_some(*value))
+    }
     #[inline]
     pub fn sound_for(&self, category: MobSoundCategory) -> Option<&MobSoundSpec> {
         self.sounds.iter().find(|s| s.category == category)
@@ -798,6 +818,8 @@ pub enum Buoyancy {
     #[default]
     Swim,
     Surface,
+    /// Displacement balances gravity while submerged; movement owns vertical velocity.
+    Neutral,
 }
 
 /// A species' body collision role (`mobs.json` `"collision"`, default

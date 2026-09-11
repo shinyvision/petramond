@@ -21,6 +21,8 @@ use crate::item::ItemType;
 use crate::mathh::IVec3;
 use crate::slab::{SlabRotation, SlabSlot};
 
+pub mod authored;
+
 /// Whether a click on `looked_at` REPLACES it where it stands instead of
 /// building against its face: replaceable MATTER — tall grass, a snow layer,
 /// water (so a bucket pours in place) — which air, being nothing, is not.
@@ -326,6 +328,16 @@ pub enum PlacementOutcome {
 /// per-family placement dispatch: `World::placement_plan` asks the cell's
 /// shape kind, and a mod family answers exactly as an engine one does.
 pub trait ShapePlacement: Send + Sync + 'static {
+    /// Pure authored layout, without player, support or live-world checks.
+    /// The caller validates containment and commits the resulting footprint.
+    fn authored_plan(
+        &self,
+        block: Block,
+        inputs: &mut authored::Inputs<'_>,
+    ) -> Result<PlacementPlan, String> {
+        inputs.general(block)
+    }
+
     /// Resolve a placement of `block` for this click, or defer. Reads the
     /// world for support/occupancy through `w`; `occupied` reports whether a
     /// gameplay body overlaps the given boxes at a cell (side-specific — the
@@ -353,7 +365,7 @@ pub trait ShapePlacement: Send + Sync + 'static {
 pub fn validate_custom_plan(
     result: &mod_api::ShapePlacementResult,
     held: Block,
-    shape_kind: u8,
+    shape_kind: u16,
     place_pos: IVec3,
 ) -> Option<(IVec3, Block)> {
     let write_block = match result.block {

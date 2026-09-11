@@ -25,9 +25,12 @@ mod gui;
 mod instance_data;
 pub use mod_api::{animation, json};
 mod kv;
+mod loot;
+mod memo;
 mod player;
 mod registry;
 mod sounds;
+mod structures;
 mod tags;
 mod world;
 mod worldgen;
@@ -43,9 +46,12 @@ pub use entities::*;
 pub use gui::*;
 pub use instance_data::*;
 pub use kv::*;
+pub use loot::*;
+pub use memo::*;
 pub use player::*;
 pub use registry::*;
 pub use sounds::*;
+pub use structures::*;
 pub use tags::*;
 pub use world::*;
 pub use worldgen::*;
@@ -87,12 +93,12 @@ pub trait Mod: Default {
     }
 
     /// A worldgen feature registered under `feature_id`, dispatched once per
-    /// generated 16³ section. Return the feature's block writes in world
-    /// coordinates; the engine clips them to the dispatched section. MUST be a
+    /// generated 16³ section. Return block writes and template placements in
+    /// world coordinates; the engine clips both to the dispatched section. MUST be a
     /// pure function of `ctx` — see [`GenCtx`] for the full seam/determinism
     /// contract and the helpers that get it right by default.
-    fn gen_feature(&mut self, _feature_id: u32, _ctx: &GenCtx) -> Vec<GenWrite> {
-        Vec::new()
+    fn gen_feature(&mut self, _feature_id: u32, _ctx: &GenCtx) -> GenOutput {
+        GenOutput::default()
     }
 
     /// A registered `Climate` stage replacement: return the 256-entry column
@@ -112,15 +118,10 @@ pub trait Mod: Default {
     }
 
     /// A registered `Underground`/`Vegetation`/`Trees` stage replacement:
-    /// like [`Mod::gen_feature`], but the write list runs INSTEAD of the
+    /// like [`Mod::gen_feature`], but the generation plan runs INSTEAD of the
     /// engine stage.
-    fn gen_stage(
-        &mut self,
-        _callback_id: u32,
-        _stage: WorldgenStage,
-        _ctx: &GenCtx,
-    ) -> Vec<GenWrite> {
-        Vec::new()
+    fn gen_stage(&mut self, _callback_id: u32, _stage: WorldgenStage, _ctx: &GenCtx) -> GenOutput {
+        GenOutput::default()
     }
 
     /// A button of this mod's own GUI was clicked (dispatched on the tick, in
@@ -192,7 +193,7 @@ pub trait Mod: Default {
     /// prediction). The default returns EMPTY, which means "no bake, use the
     /// static fallback" — override to supply geometry. (An empty reply is the
     /// fallback; only a wrong-but-nonzero length is a protocol break.)
-    fn bake_shape_sim(&mut self, _shape_kind: u8, _cells: &[CellInput]) -> Vec<BakedSimCell> {
+    fn bake_shape_sim(&mut self, _shape_kind: u16, _cells: &[CellInput]) -> Vec<BakedSimCell> {
         Vec::new()
     }
 
@@ -201,13 +202,17 @@ pub trait Mod: Default {
     /// input cell, in order. No determinism requirement (client presentation).
     /// The default returns EMPTY (fallback to the cube render), like
     /// [`Mod::bake_shape_sim`].
-    fn bake_shape_render(&mut self, _shape_kind: u8, _cells: &[CellInput]) -> Vec<BakedRenderCell> {
+    fn bake_shape_render(
+        &mut self,
+        _shape_kind: u16,
+        _cells: &[CellInput],
+    ) -> Vec<BakedRenderCell> {
         Vec::new()
     }
 
     /// Bake one block's item geometry (icon / dropped / in-hand), once at load.
     /// Empty = the plain cube fallback.
-    fn bake_shape_item(&mut self, _shape_kind: u8, _block: BlockId) -> BakedItemGeometry {
+    fn bake_shape_item(&mut self, _shape_kind: u16, _block: BlockId) -> BakedItemGeometry {
         BakedItemGeometry { boxes: Vec::new() }
     }
 
@@ -224,7 +229,7 @@ pub trait Mod: Default {
     /// writes only a row sharing this shape kind).
     fn shape_placement_plan(
         &mut self,
-        _shape_kind: u8,
+        _shape_kind: u16,
         _block: BlockId,
         inputs: &PlaceInputsView,
     ) -> ShapePlacementResult {

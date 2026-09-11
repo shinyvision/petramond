@@ -11,6 +11,13 @@
 use crate::__rt::host_fn;
 
 host_fn! {
+    /// Find data-bearing cells after the section's saved terrain is final.
+    /// Use the existing batched reads to fetch their values. `None` means retry.
+    pub fn section_kv_find(section: [i32; 3], key: &str) -> Option<Vec<[i32; 3]>>
+        => SectionKvFind { section, key: key.into() } => FoundBlocks
+}
+
+host_fn! {
     /// Read a world KV entry (persists in the save's `level.dat`).
     pub fn world_kv_get(key: &str) -> Option<Vec<u8>> => WorldKvGet { key: key.into() } => Bytes
 }

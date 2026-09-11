@@ -18,6 +18,53 @@ use super::*;
 const WB: BlockModelKind = BlockModelKind::FurnitureWorkbench;
 
 #[test]
+fn baking_nested_group_rotations_preserves_every_authored_corner() {
+    use crate::bbmodel::{euler_quat, Model};
+    use glam::Mat4;
+
+    let source = serde_json::json!({
+        "resolution": {"width": 16, "height": 16},
+        "textures": [{"source": GOLDEN_URI}],
+        "groups": [
+            {"uuid": "parent", "origin": [3, 5, -2], "rotation": [21, 37, -16]},
+            {"uuid": "child", "origin": [-1, 4, 2], "rotation": [-13, 72, 9]}
+        ],
+        "elements": [{
+            "uuid": "cube", "type": "cube", "from": [2, 3, 4], "to": [6, 8, 9],
+            "origin": [1, -2, 3], "rotation": [-25, 17, 40],
+            "faces": {"up": {"uv": [0, 0, 16, 16], "texture": 0}}
+        }],
+        "outliner": [{"uuid": "parent", "children": [
+            {"uuid": "child", "children": ["cube"]}
+        ]}]
+    })
+    .to_string();
+    let authored = Model::load(&source).unwrap();
+    let compiled = BlockModel::compile(source.as_bytes()).unwrap();
+    let original = &authored.cubes[0];
+    let baked = &compiled.cubes[0];
+    let transform = |origin, rotation| {
+        Mat4::from_translation(origin)
+            * Mat4::from_quat(euler_quat(rotation))
+            * Mat4::from_translation(-origin)
+    };
+    let before =
+        authored.rest_pose()[original.bone] * transform(original.origin, original.rotation);
+    let after = transform(baked.origin, baked.rotation);
+    for (a, b) in super::geometry::box_corners(original.from, original.to)
+        .into_iter()
+        .zip(super::geometry::box_corners(baked.from, baked.to))
+    {
+        let expected = before.transform_point3(a);
+        let actual = after.transform_point3(b);
+        assert!(
+            expected.abs_diff_eq(actual, 1e-4),
+            "{expected:?} != {actual:?}"
+        );
+    }
+}
+
+#[test]
 fn workbench_compiles_with_geometry_and_texture() {
     let m = BlockModel::compile(&model_bytes(WB)).expect("compiles");
     assert!(!m.cubes.is_empty());
@@ -492,7 +539,7 @@ const GOLDEN_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB
 /// update GOLDEN_VERSION + GOLDEN_HEX together.
 #[test]
 fn compiled_block_model_layout_change_requires_a_format_version_bump() {
-    const GOLDEN_VERSION: u32 = 12;
+    const GOLDEN_VERSION: u32 = 13;
     const GOLDEN_HEX: &str = "01000000000000000400000000000000626f647900000000000000000000000000008041000080400000804100000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000000000000000400000000000000ff0000ff010000000100000001000000000000000000000000000000000000000000804100008040000080410000000000000000000000000000804100008040000080410000000000007041000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000f0410000344200000000000000000000803f000000009a99193f9a99193f9a99193f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000004100000000";
 
     const SRC: &str = r##"{

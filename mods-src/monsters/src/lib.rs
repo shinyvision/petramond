@@ -322,31 +322,22 @@ fn hushjaw_admits(
 /// here, and with nothing tagged the table is empty and this mod behaves
 /// exactly as it did before the rule existed.
 ///
-/// A `BlockId` is a u8, so the whole id space is 256 bytes — the dense-table
-/// shape the engine uses for its own per-id lookups. The lookup is not the
-/// cost on this path (the block read that feeds it crosses the host boundary),
-/// but a constant-time table means the cost cannot grow as packs tag more
-/// surfaces. Built once in `init` from the tag reply; there is no registry
-/// lazy in the guest for it to deadlock against.
+/// Built once from the tag reply, with storage up to the highest marked id.
+/// A larger unmarked id can still appear as more content packs are loaded.
+#[derive(Default)]
 struct SpawnProof {
-    proof: [bool; 256],
+    proof: Vec<bool>,
     /// How many surfaces are marked — logged at init as the only signal that
     /// the tag string actually matched something.
     count: usize,
 }
 
-impl Default for SpawnProof {
-    fn default() -> Self {
-        Self {
-            proof: [false; 256],
-            count: 0,
-        }
-    }
-}
-
 impl SpawnProof {
     fn new(blocks: Vec<BlockId>) -> Self {
-        let mut set = Self::default();
+        let mut set = Self {
+            proof: vec![false; blocks.iter().map(|b| b.0 as usize + 1).max().unwrap_or(0)],
+            count: 0,
+        };
         for b in blocks {
             if !set.proof[b.0 as usize] {
                 set.proof[b.0 as usize] = true;
@@ -367,7 +358,8 @@ impl SpawnProof {
     /// ticks a second); a monster in a cavern that promised safety is the bug
     /// this rule exists to prevent.
     fn refuses(&self, ground: &dyn Fn() -> Option<BlockId>) -> bool {
-        self.count > 0 && ground().is_none_or(|b| self.proof[b.0 as usize])
+        self.count > 0
+            && ground().is_none_or(|b| self.proof.get(b.0 as usize).copied().unwrap_or(false))
     }
 }
 
@@ -664,6 +656,17 @@ mod tests {
             None,
             "a lit site is still refused"
         );
+    }
+
+    #[test]
+    fn spawn_proof_membership_covers_wide_and_unmarked_block_ids() {
+        let marked = BlockId(300);
+        let proof = SpawnProof::new(vec![marked, marked]);
+        assert_eq!(proof.count, 1);
+        assert!(proof.refuses(&|| Some(marked)));
+        assert!(!proof.refuses(&|| Some(BlockId(u16::MAX))));
+        let highest = SpawnProof::new(vec![BlockId(u16::MAX)]);
+        assert!(highest.refuses(&|| Some(BlockId(u16::MAX))));
     }
 
     #[test]

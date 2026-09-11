@@ -143,6 +143,36 @@ impl ShapeRender for SlabFamily {
 }
 
 impl ShapePlacement for SlabFamily {
+    fn authored_plan(
+        &self,
+        block: Block,
+        inputs: &mut crate::world::placement::authored::Inputs<'_>,
+    ) -> Result<PlacementPlan, String> {
+        use crate::block_state::SlabSplit;
+        let normal = match inputs.property("half", "bottom") {
+            "bottom" => -IVec3::Y,
+            "top" => IVec3::Y,
+            "north" => -IVec3::Z,
+            "south" => IVec3::Z,
+            "west" => -IVec3::X,
+            "east" => IVec3::X,
+            value => return Err(format!("unknown slab half '{value}'")),
+        };
+        let normal = inputs.turn.apply(normal);
+        let (split, lane) = if normal.x != 0 {
+            (SlabSplit::X, normal.x)
+        } else if normal.y != 0 {
+            (SlabSplit::Y, normal.y)
+        } else {
+            (SlabSplit::Z, normal.z)
+        };
+        Ok(PlacementPlan::single(
+            inputs.anchor,
+            block,
+            SlabState::single(split, usize::from(lane > 0), block).to_cell(),
+        ))
+    }
+
     fn placement_plan(
         &self,
         w: &WorldData,

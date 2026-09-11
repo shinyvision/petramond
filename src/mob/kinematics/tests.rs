@@ -41,6 +41,50 @@ fn gravity_settles_the_mob_on_the_floor() {
 }
 
 #[test]
+fn zero_gravity_preserves_vertical_drive_but_still_collides() {
+    let (text, _) = petramond_world::assets::read_base_text("mobs.json").unwrap();
+    let mut rows: serde_json::Value = serde_json::from_str(&text).unwrap();
+    for row in rows["mobs"].as_array_mut().unwrap() {
+        row["gravity_scale"] = serde_json::json!(0.0);
+        row["air_control"] = serde_json::json!(true);
+    }
+    let text = rows.to_string();
+    let table = crate::mob::load::parse_layers(&[&text]).unwrap();
+    let d = table.defs.iter().find(|d| d.mob == Mob::Owl).unwrap();
+    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+    owl.vel.y = -1.0;
+    owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    assert!((owl.vel.y + 1.0).abs() < 1e-6);
+    assert!((owl.pos.y - 4.95).abs() < 1e-5);
+    let mut touched_floor = false;
+    for _ in 0..120 {
+        owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+        touched_floor |= owl.on_ground();
+    }
+    assert!(touched_floor);
+    assert!(owl.pos.y.abs() < 0.01);
+    assert_eq!(owl.vel.y, 0.0);
+}
+
+#[test]
+fn neutral_buoyancy_preserves_vertical_motion_only_in_water() {
+    let (text, _) = petramond_world::assets::read_base_text("mobs.json").unwrap();
+    let mut rows: serde_json::Value = serde_json::from_str(&text).unwrap();
+    for row in rows["mobs"].as_array_mut().unwrap() {
+        row["buoyancy"] = serde_json::json!("neutral");
+    }
+    let text = rows.to_string();
+    let table = crate::mob::load::parse_layers(&[&text]).unwrap();
+    let d = table.defs.iter().find(|d| d.mob == Mob::Owl).unwrap();
+    let mut mob = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+    mob.vel.y = -0.4;
+    mob.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| true);
+    assert!((mob.vel.y + 0.4).abs() < 1e-6);
+    mob.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    assert!(mob.vel.y < -0.4);
+}
+
+#[test]
 fn a_body_embedded_in_a_grown_column_slides_out_sideways_without_bobbing() {
     // A trunk grew around the sheep (a door shut on it, ...): the foot heal
     // lifts it by its cap, gravity drops it back through the box it still
@@ -531,7 +575,7 @@ fn surface_buoyancy_converges_from_both_sides_without_overshoot() {
         let mut y = start;
         for _ in 0..200 {
             let before = target - y;
-            let velocity = surface_vertical_velocity(0.0, y, Some(surface), 0.05);
+            let velocity = surface_vertical_velocity(0.0, y, Some(surface), 0.05, 1.0);
             y += velocity * 0.05;
             let after = target - y;
             assert!(
@@ -554,7 +598,7 @@ fn surface_buoyancy_converges_from_both_sides_without_overshoot() {
 fn a_surface_body_out_of_water_falls_under_gravity() {
     let mut velocity = 0.0;
     for _ in 0..3 {
-        let next = surface_vertical_velocity(velocity, 10.0, None, 0.05);
+        let next = surface_vertical_velocity(velocity, 10.0, None, 0.05, 1.0);
         assert!(next < velocity, "gravity accelerates the dry hull downward");
         velocity = next;
     }

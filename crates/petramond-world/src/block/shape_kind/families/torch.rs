@@ -39,6 +39,19 @@ impl ShapeRender for TorchFamily {
 }
 
 impl ShapePlacement for TorchFamily {
+    fn authored_plan(
+        &self,
+        block: Block,
+        inputs: &mut crate::world::placement::authored::Inputs<'_>,
+    ) -> Result<PlacementPlan, String> {
+        let mount = match inputs.property("mount", "floor") {
+            "floor" => TorchPlacement::Floor,
+            "wall" => TorchPlacement::from_place_normal(inputs.facing()?.dir()).unwrap(),
+            value => return Err(format!("unknown torch mount '{value}'")),
+        };
+        Ok(PlacementPlan::single(inputs.anchor, block, mount.to_cell()))
+    }
+
     fn placement_plan(
         &self,
         w: &WorldData,

@@ -115,6 +115,36 @@ impl WaterSurface {
         }
     }
 
+    pub(super) fn stationary(
+        pos: [i32; 3],
+        block: Block,
+        tile: Tile,
+        block_at: impl Fn(i32, i32, i32) -> Block,
+    ) -> Self {
+        let [x, y, z] = pos;
+        let fluid = |x, y, z| {
+            (block_at(x, y, z).fluid() == Some(block)).then(|| {
+                if block_at(x, y + 1, z).fluid() == Some(block) {
+                    1.0
+                } else {
+                    8.0 / 9.0
+                }
+            })
+        };
+        let mut surface = Self::new(
+            x,
+            y,
+            z,
+            block_at(x, y + 1, z).fluid() == Some(block),
+            &block_at,
+            &fluid,
+            &|_, _, _| true,
+        );
+        surface.top_tile = tile;
+        surface.top_angle = 0;
+        surface
+    }
+
     /// The top-face tile (still or flow).
     #[inline]
     pub(super) fn top_tile(&self) -> Tile {

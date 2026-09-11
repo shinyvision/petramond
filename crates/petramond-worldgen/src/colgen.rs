@@ -18,22 +18,18 @@ use petramond_util::bytecodec::{deflate, inflate, put_u32, put_u64, put_u8, Read
 use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 use petramond_world::region::{REGION_SHIFT, REGION_SIZE};
 
-/// Bumped to 6 when underground biomes became data-driven: a pack row can now
-/// change cave shape, which moves `top_surf`. Older records describe surfaces
-/// the current generator no longer produces, so they are rejected and
-/// regenerated. No upgrade path — this is a disposable cache.
-///
-/// 7: the caliber feather now ramps off the carvable floor rather than off a
-/// row's declared band floor, which reshapes caves at the bottom of any row
-/// banded below it — engine drift the table fingerprint cannot see.
-pub const VERSION: u8 = 7;
+/// Disposable generation cache format. Version 11 rebalances natural cavern density.
+pub const VERSION: u8 = 11;
 
-/// Fingerprint of the loaded underground-biome table, stamped beside the seed.
+/// Fingerprint of habitat and excavation catalogs, stamped beside the seed.
 /// A version byte only catches ENGINE drift; installing, removing, or retuning
 /// a pack that reshapes caves changes no version but does change `top_surf`,
 /// and without this the cache would happily serve the stale columns.
 fn table_fingerprint() -> u64 {
-    crate::data::underground::table().fingerprint
+    crate::data::underground::table()
+        .fingerprint
+        .rotate_left(17)
+        ^ crate::data::excavations::table().fingerprint
 }
 const CELLS: usize = SECTION_SIZE * SECTION_SIZE;
 const MESH_BIOME_SIDE: usize = SECTION_SIZE + 4;

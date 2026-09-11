@@ -180,7 +180,7 @@ impl SectionMeshPad<'_> {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        if Block::from_id(self.blocks[i]) != Block::Water {
+        if Block::from_id(self.blocks[i]).fluid() != Some(Block::Water) {
             return false;
         }
         water_math::fills_cell(self.water[i], self.block_above_local(px, py, pz))
@@ -190,7 +190,7 @@ impl SectionMeshPad<'_> {
     pub(super) fn fluid_height_local(&self, lx: i32, ly: i32, lz: i32) -> Option<f32> {
         let (px, py, pz) = Self::local_pad_xyz(lx, ly, lz)?;
         let i = mesh_pad_idx(px, py, pz);
-        if Block::from_id(self.blocks[i]) != Block::Water {
+        if Block::from_id(self.blocks[i]).fluid() != Some(Block::Water) {
             return None;
         }
         Some(water_math::fluid_height(
@@ -205,7 +205,8 @@ impl SectionMeshPad<'_> {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        Block::from_id(self.blocks[i]) == Block::Water && water_math::is_still_source(self.water[i])
+        Block::from_id(self.blocks[i]).fluid() == Some(Block::Water)
+            && water_math::is_still_source(self.water[i])
     }
 
     #[inline]

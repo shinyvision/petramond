@@ -83,6 +83,11 @@ pub fn build_block_model_item(
             * Mat4::from_translation(-cube.origin);
         for (slot, face) in Face::ALL.into_iter().enumerate() {
             let Some(uv) = cube.faces[slot] else { continue };
+            let appearance = block_model::atlas().appearance(kind, uv.uv);
+            let tint = std::array::from_fn(|a| {
+                let light = if appearance.unlit { 1.0 } else { tint[a] };
+                light * f32::from(appearance.tint[a]) / 255.0
+            });
             // Faces the chunk bake dropped (fully transparent atlas rect) drop
             // here too — same faces in every presentation.
             if !inst.face_draw[ci][slot] {
@@ -115,7 +120,7 @@ pub fn build_block_model_item(
                 verts.push(ItemVertex {
                     pos: p[i].to_array(),
                     uv: corner_uv[i],
-                    shade: shade * ao[i],
+                    shade: appearance.shading(shade, ao[i]),
                     tint,
                 });
             }
@@ -159,6 +164,8 @@ pub fn build_block_model_icon(
             * Mat4::from_translation(-cube.origin);
         for (slot, face) in Face::ALL.into_iter().enumerate() {
             let Some(uv) = cube.faces[slot] else { continue };
+            let appearance = block_model::atlas().appearance(kind, uv.uv);
+            let tint = std::array::from_fn(|a| tint[a] * f32::from(appearance.tint[a]) / 255.0);
             if !inst.face_draw[ci][slot] {
                 continue;
             }
@@ -186,7 +193,7 @@ pub fn build_block_model_icon(
             let corner = |i: usize| ItemVertex {
                 pos: p[i].to_array(),
                 uv: corner_uv[i],
-                shade: shade * ao[i],
+                shade: appearance.shading(shade, ao[i]),
                 tint,
             };
             let quad = [corner(0), corner(1), corner(2), corner(3)];

@@ -85,6 +85,18 @@ impl BlockCube {
         }
     }
 
+    /// Every id in cell order into `out`, which must hold the section volume.
+    pub fn copy_ids(&self, out: &mut [u16]) {
+        match &self.repr {
+            Repr::Narrow(b) => {
+                for (o, &id) in out.iter_mut().zip(b.iter()) {
+                    *o = u16::from(id);
+                }
+            }
+            Repr::Wide(b) => out.copy_from_slice(b),
+        }
+    }
+
     /// Ids in cell order.
     pub fn iter(&self) -> impl Iterator<Item = u16> + '_ {
         (0..self.len()).map(move |i| self.get(i))

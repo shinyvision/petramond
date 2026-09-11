@@ -67,12 +67,12 @@ pub fn camera_fog(
 
 fn camera_eye_underwater(world: &World, eye: Vec3) -> bool {
     let cell = voxel_at(eye);
-    if Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)) != Block::Water {
+    if Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)).fluid() != Some(Block::Water) {
         return false;
     }
 
     // Water above means this is an interior water volume, not the open surface.
-    if Block::from_id(world.chunk_block(cell.x, cell.y + 1, cell.z)) == Block::Water {
+    if Block::from_id(world.chunk_block(cell.x, cell.y + 1, cell.z)).fluid() == Some(Block::Water) {
         return true;
     }
 
@@ -113,7 +113,7 @@ fn water_surface_y_at(world: &World, cell: IVec3, eye_x: f32, eye_z: f32) -> f32
 }
 
 fn fluid_height_at(world: &World, wx: i32, wy: i32, wz: i32) -> Option<f32> {
-    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
+    if Block::from_id(world.chunk_block(wx, wy, wz)).fluid() != Some(Block::Water) {
         return None;
     }
     Some(petramond::world::water::fluid_height(
@@ -123,7 +123,7 @@ fn fluid_height_at(world: &World, wx: i32, wy: i32, wz: i32) -> Option<f32> {
 }
 
 fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
-    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
+    if Block::from_id(world.chunk_block(wx, wy, wz)).fluid() != Some(Block::Water) {
         return false;
     }
     petramond::world::water::fills_cell(

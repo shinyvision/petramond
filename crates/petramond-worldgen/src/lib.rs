@@ -18,13 +18,20 @@ pub mod data;
 pub mod density;
 pub mod driver;
 pub mod feature;
+pub mod formula;
+mod terrain_query;
+pub use terrain_query::blocks_at as terrain_blocks_at;
+pub use terrain_query::heights_at as terrain_heights_at;
+pub use terrain_query::section_blocks as terrain_section_at;
 pub mod graph;
 pub mod hooks;
+mod memo;
 mod noise;
 pub mod preview;
 mod proto;
 pub mod region;
 pub mod rng;
+mod section_memo;
 pub mod spawn;
 mod surface;
 
@@ -86,7 +93,7 @@ pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32)
 }
 
 /// The underground biome owning each world position for `seed` — the same
-/// partition the cave carver's wall lining and caliber read, so it answers
+/// climate partition used by cave lining and habitat decoration, so it answers
 /// before any section exists. Purely positional: no loaded world, no order
 /// dependence. This is the engine side of the mod ABI's `UndergroundBiomeAt`.
 pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
@@ -103,12 +110,23 @@ pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
 /// so a mod whose content belongs to one biome can reject a whole dispatch on
 /// it instead of asking cell by cell.
 pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u8> {
+    type Key = (u32, [usize; 2], [i32; 3], [i32; 3]);
+    // Every section of a column asks about the same box, and neighbouring
+    // columns about the same few.
+    static BOXES: std::sync::LazyLock<memo::SharedMemo<Key, std::sync::Arc<[u8]>>> =
+        std::sync::LazyLock::new(|| memo::SharedMemo::new(4096));
     let (lo, hi) = (clamp_query(lo), clamp_query(hi));
     let box_lo = std::array::from_fn(|a| lo[a].min(hi[a]));
     let box_hi = std::array::from_fn(|a| lo[a].max(hi[a]));
-    cave_field(seed)
-        .underground_biome_ids_in_box(box_lo, box_hi)
-        .ids()
+    let field = cave_field(seed);
+    BOXES
+        .get_or_compute_unlocked((seed, field.table_identities(), box_lo, box_hi), || {
+            field
+                .underground_biome_ids_in_box(box_lo, box_hi)
+                .ids()
+                .into()
+        })
+        .to_vec()
 }
 
 /// Is the generated terrain solid at each world position for `seed`? The
@@ -131,18 +149,85 @@ pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u
 /// section actually receives. Queries arrive in columns, so one tile is kept
 /// hot rather than re-fetched per cell.
 pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
-    const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
+    terrain_samples(seed, positions)
+        .into_iter()
+        .map(|(_, _, solid)| solid)
+        .collect()
+}
 
+pub use mod_api::TerrainSpace;
+
+/// Distinguish dry clearance from aquifers and surface water without loading
+/// neighbouring sections. Shares the terrain-solid query's surface/carve path.
+pub fn terrain_space_at(seed: u32, positions: &[[i32; 3]]) -> Vec<TerrainSpace> {
+    let samples = terrain_samples(seed, positions);
+    let caves = cave_field(seed);
+    let table = data::underground::table();
+    let wet_candidates: Vec<_> = samples
+        .iter()
+        .filter_map(|(p, surface, solid)| {
+            (!solid
+                && p[1] <= *surface
+                && table
+                    .aquifer_y_span
+                    .is_some_and(|(lo, hi)| (lo..=hi).contains(&p[1])))
+            .then_some(*p)
+        })
+        .collect();
+    let mut wet_biomes = underground_biomes_at(seed, &wet_candidates).into_iter();
+    samples
+        .into_iter()
+        .map(|(pos, surface, solid)| {
+            let field_space = caves.field_space_at(pos);
+            if solid {
+                return TerrainSpace::Solid;
+            }
+            if pos[1] > surface {
+                return field_space.unwrap_or(if pos[1] <= petramond_world::chunk::SEA_LEVEL {
+                    TerrainSpace::Water
+                } else {
+                    TerrainSpace::Air
+                });
+            }
+            if table
+                .aquifer_y_span
+                .is_some_and(|(lo, hi)| (lo..=hi).contains(&pos[1]))
+            {
+                let biome = wet_biomes.next().expect("one biome per wet candidate");
+                if table
+                    .aquifer(biome)
+                    .is_some_and(|aquifer| pos[1] <= aquifer.level)
+                {
+                    return field_space.unwrap_or(TerrainSpace::Water);
+                }
+            }
+            field_space.unwrap_or(TerrainSpace::Air)
+        })
+        .collect()
+}
+
+fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, bool)> {
+    use petramond_world::chunk::{SectionPos, SECTION_SIZE};
+    const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
+    /// Positions inside one section from which filling and carving the whole
+    /// section once — kept for its generation and every later probe — beats
+    /// sampling them on their own lattice.
+    const SECTION_MASK_MIN: usize = 128;
     let caves = cave_field(seed);
     let surface = surface_system(seed);
     let mut tile: Option<(i32, i32, Vec<i32>)> = None;
     // Pair each position with its column surface first (one tile fetch per
-    // 16×16 run), then answer the carve question for the whole batch at once —
-    // one lattice per spatial bucket instead of one per position.
+    // 16×16 run). Dense groups then read the memoized section terrain, and
+    // the rest answer the carve question as one batch — one lattice per
+    // spatial bucket instead of one per position.
     let mut queries: Vec<([i32; 3], i32)> = Vec::with_capacity(positions.len());
     // Positions the carve question cannot even apply to (above the column
     // surface, or below the carve floor).
     let mut no_carve = vec![false; positions.len()];
+    // Probes arrive column by column, so a position's section is nearly always
+    // the previous one's, and a call spans a few dozen sections at most.
+    let mut groups: Vec<([i32; 3], Vec<u32>)> = Vec::new();
+    let mut last = usize::MAX;
     for (i, p) in positions.iter().enumerate() {
         let [x, y, z] = clamp_query(*p);
         let (tcx, tcz) = (x.div_euclid(TILE), z.div_euclid(TILE));
@@ -160,16 +245,77 @@ pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
         }
         let raw = &tile.as_ref().expect("tile just filled").2;
         let surf_y = raw[((z - tcz * TILE) * TILE + (x - tcx * TILE)) as usize];
-        no_carve[i] = y > surf_y || y < noise::settings::CAVE_MIN_Y;
+        no_carve[i] = y > surf_y || (y < noise::settings::CAVE_MIN_Y && !caves.field_at_height(y));
         queries.push(([x, y, z], surf_y));
+        let section = [tcx, y.div_euclid(SECTION_SIZE as i32), tcz];
+        if last == usize::MAX || groups[last].0 != section {
+            last = match groups.iter().position(|(key, _)| *key == section) {
+                Some(k) => k,
+                None => {
+                    groups.push((section, Vec::new()));
+                    groups.len() - 1
+                }
+            };
+        }
+        groups[last].1.push(i as u32);
     }
-    let mut carved = Vec::new();
-    caves.cave_carved_batch(&queries, &mut carved);
+    let mut solid = vec![false; positions.len()];
+    let mut sparse: Vec<([i32; 3], i32)> = Vec::new();
+    let mut sparse_idx: Vec<u32> = Vec::new();
+    for (sp, idx) in groups {
+        let sp = SectionPos::new(sp[0], sp[1], sp[2]);
+        let mask = if idx.len() >= SECTION_MASK_MIN {
+            let (region, raw) = feature::cached_feature_region(
+                &surface,
+                &caves,
+                seed,
+                sp.cx * TILE,
+                sp.cz * TILE,
+                TILE as usize,
+                TILE as usize,
+            );
+            let biomes: Vec<u8> = region.biomes.iter().map(|b| b.id()).collect();
+            Some(section_memo::solid_mask(
+                &surface, &caves, seed, sp, &biomes, &raw,
+            ))
+        } else {
+            section_memo::solid_mask_if_memoized(&caves, seed, sp)
+        };
+        match mask {
+            Some(mask) => {
+                let (ox, oy, oz) = sp.origin_world();
+                for &i in &idx {
+                    let [x, y, z] = queries[i as usize].0;
+                    let cell = petramond_world::chunk::section_idx(
+                        (x - ox) as usize,
+                        (y - oy) as usize,
+                        (z - oz) as usize,
+                    );
+                    solid[i as usize] = mask[cell / 64] & (1 << (cell % 64)) != 0;
+                }
+            }
+            None => {
+                for &i in &idx {
+                    sparse.push(queries[i as usize]);
+                    sparse_idx.push(i);
+                }
+            }
+        }
+    }
+    if !sparse.is_empty() {
+        let mut carved = Vec::new();
+        caves.cave_carved_batch(&sparse, &mut carved);
+        for (k, &i) in sparse_idx.iter().enumerate() {
+            let (p, surf_y) = queries[i as usize];
+            solid[i as usize] = match caves.field_space_at(p) {
+                Some(TerrainSpace::Solid) => true,
+                Some(_) => false,
+                None => p[1] <= surf_y && (no_carve[i as usize] || !carved[k]),
+            };
+        }
+    }
     (0..positions.len())
-        .map(|i| {
-            let (_, surf_y) = queries[i];
-            queries[i].0[1] <= surf_y && (no_carve[i] || !carved[i])
-        })
+        .map(|i| (queries[i].0, queries[i].1, solid[i]))
         .collect()
 }
 
@@ -187,7 +333,6 @@ pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
 /// the answer cannot drift from the biome a section is actually dressed with.
 pub fn surface_biome_at(seed: u32, columns: &[[i32; 2]]) -> Vec<u8> {
     const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
-
     let caves = cave_field(seed);
     let surface = surface_system(seed);
     // Answered TILE BY TILE rather than in the caller's order: a batch of
@@ -234,9 +379,8 @@ fn clamp_query(p: [i32; 3]) -> [i32; 3] {
     ]
 }
 
-/// A `CaveField` is ten OpenSimplex permutation tables, so it is memoized in
-/// ONE slot keyed by seed rather than rebuilt per call; sessions are serial,
-/// and a seed change self-evicts.
+/// Reuse the immutable cave sources and their bounded positional caches across
+/// host queries. A seed change replaces the shared instance.
 fn cave_field(seed: u32) -> std::sync::Arc<noise::cave_field::CaveField> {
     use std::sync::{Arc, Mutex};
     static SLOT: Mutex<Option<(u32, Arc<noise::cave_field::CaveField>)>> = Mutex::new(None);

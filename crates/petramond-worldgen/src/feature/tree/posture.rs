@@ -1,3 +1,4 @@
+use crate::feature::placers::shapes::connected_line;
 use petramond_world::{block::Block, mathh::IVec3};
 
 use crate::{feature::FeatureCtx, rng::FeatureRng};
@@ -42,37 +43,6 @@ pub(super) fn connected_branch(ctx: &mut FeatureCtx, a: IVec3, b: IVec3, log: Bl
 
 pub(super) fn connected_trunk(ctx: &mut FeatureCtx, a: IVec3, b: IVec3, log: Block) {
     connected_line(a, b, |p| ctx.set_log(p, log));
-}
-
-fn connected_line(a: IVec3, b: IVec3, mut emit: impl FnMut(IVec3)) {
-    let delta = IVec3::new(b.x - a.x, b.y - a.y, b.z - a.z);
-    let steps = delta.x.abs().max(delta.y.abs()).max(delta.z.abs()).max(1);
-    let mut previous = a;
-    emit(a);
-    for i in 1..=steps {
-        let t = i as f32 / steps as f32;
-        let next = IVec3::new(
-            a.x + (delta.x as f32 * t).round() as i32,
-            a.y + (delta.y as f32 * t).round() as i32,
-            a.z + (delta.z as f32 * t).round() as i32,
-        );
-        // Bridge every diagonal: forks must be wood-connected, even when a
-        // one-block stem changes both height and horizontal cell together.
-        for axis in 0..3 {
-            let target = match axis {
-                0 => next.x,
-                1 => next.z,
-                _ => next.y,
-            };
-            let coordinate = match axis {
-                0 => &mut previous.x,
-                1 => &mut previous.z,
-                _ => &mut previous.y,
-            };
-            *coordinate = target;
-            emit(previous);
-        }
-    }
 }
 
 #[cfg(test)]

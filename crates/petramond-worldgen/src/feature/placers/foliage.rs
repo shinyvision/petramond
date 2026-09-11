@@ -29,6 +29,9 @@ use petramond_world::block::behavior::MAX_LOG_DISTANCE;
 use petramond_world::block::Block;
 use petramond_world::mathh::{IVec3, FACE_NEIGHBORS};
 
+mod layered;
+pub use layered::LayeredFoliage;
+
 pub trait FoliagePlacer: Send + Sync {
     /// Build the canopy. `open` answers whether a world cell may hold a canopy
     /// leaf or route leaf-support through one (see [`Canopy::commit`]); the

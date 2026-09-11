@@ -25,11 +25,11 @@ pub fn on_tag_removed(content: &Content, mob_id: u64, kind: MobId, key: &str) {
         return;
     }
     // Which adult this juvenile grows into is spec-table data.
-    let Some(def) = content
-        .husbandry
-        .iter()
-        .find(|d| d.offspring.is_some_and(|(_, young)| young == kind))
-    else {
+    let Some(def) = content.husbandry.iter().find(|d| {
+        d.offspring
+            .as_ref()
+            .is_some_and(|(_, young)| *young == kind)
+    }) else {
         return;
     };
     // Gone between the removal and this drain point (died, unloaded): the
@@ -37,7 +37,7 @@ pub fn on_tag_removed(content: &Content, mob_id: u64, kind: MobId, key: &str) {
     let Some(snap) = mob_info(mob_id) else {
         return;
     };
-    if spawn_mob_checked(def.key, snap.pos, snap.yaw).is_some() {
+    if spawn_mob_checked(&def.key, snap.pos, snap.yaw).is_some() {
         despawn_mob(mob_id);
     } else {
         mob_tag_set(

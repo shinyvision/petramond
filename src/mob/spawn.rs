@@ -169,6 +169,14 @@ pub(super) fn spawn_with(
 ) -> Option<Spawn> {
     let pos = site(world, kind, wx, wz)?;
     let yaw = rng.next_f32() * std::f32::consts::TAU;
+    if !world.mob_spawn_pose_clear(kind, pos, yaw)
+        || def(kind)
+            .spawn
+            .space
+            .is_some_and(|space| !volume_site::body_in_space(world, kind, pos, yaw, space))
+    {
+        return None;
+    }
     Some(Spawn { kind, pos, yaw })
 }
 
@@ -187,6 +195,9 @@ fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> O
 /// The player-independent site judgment: surface footing, body clearance (dry),
 /// then the species' own [`SpawnRule`](super::SpawnRule) (biome + ground block).
 pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<Vec3> {
+    if let Some(band) = def(kind).spawn.y {
+        return volume_site::find(world, kind, &def(kind).spawn, wx, wz, band);
+    }
     // The surface to stand on, and the feet cell resting on top of it.
     let ground_y = world.surface_collision_y(wx, wz)?;
     let feet = IVec3::new(wx, ground_y + 1, wz);
@@ -207,6 +218,8 @@ pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<Vec
 
     Some(feet_pos)
 }
+
+mod volume_site;
 
 /// Roll the species' per-biome spawn chance for the column's biome — the
 /// climate-rarity gate shared by the trickle attempt and the worldgen herds,

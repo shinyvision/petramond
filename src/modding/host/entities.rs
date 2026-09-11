@@ -96,7 +96,7 @@ pub(super) fn attack_source(
 }
 
 /// One item entity as the ABI snapshots it.
-fn item_entity_data(it: &DroppedItem) -> mod_api::ItemEntityData {
+pub(super) fn item_entity_data(it: &DroppedItem) -> mod_api::ItemEntityData {
     use crate::entity::Motion;
     let (owner, motion) = match it.motion {
         Motion::Loose => (None, mod_api::ItemMotion::Loose),

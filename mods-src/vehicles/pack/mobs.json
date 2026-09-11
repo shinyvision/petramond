@@ -59,7 +59,10 @@
           -0.1,
           -0.81
         ]
-      ]
+      ],
+      "data": {
+        "petramond:loot": "vehicles:boat_drops"
+      }
     },
     {
       "mob": "vehicles:minecart",
@@ -112,7 +115,10 @@
           -0.23,
           0.0
         ]
-      ]
+      ],
+      "data": {
+        "petramond:loot": "vehicles:minecart_drops"
+      }
     }
   ]
 }

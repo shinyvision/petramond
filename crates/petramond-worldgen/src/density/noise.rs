@@ -319,6 +319,18 @@ pub struct ReferenceDoublePerlin {
 }
 
 impl ReferenceDoublePerlin {
+    pub(crate) fn from_seed(
+        world_seed: u64,
+        salt: [u64; 2],
+        first_octave: i32,
+        amplitudes: &[f64],
+    ) -> Self {
+        let mut root = Xoroshiro::new(world_seed);
+        let mut fork =
+            Xoroshiro::from_parts(root.next_long() ^ salt[0], root.next_long() ^ salt[1]);
+        Self::init(&mut fork, amplitudes, first_octave)
+    }
+
     fn init(xr: &mut Xoroshiro, amplitudes: &[f64], omin: i32) -> Self {
         let oct_a = OctaveStack::init(xr, amplitudes, omin, -1);
         let oct_b = OctaveStack::init(xr, amplitudes, omin, -1);

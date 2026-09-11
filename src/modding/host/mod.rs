@@ -36,7 +36,9 @@ mod containers;
 mod core;
 mod entities;
 mod gui;
+mod item_motion;
 mod kv;
+pub(in crate::modding) mod memo;
 pub(in crate::modding) mod player;
 mod registry;
 mod sounds;
@@ -468,6 +470,9 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::SetModelPartsMany { .. }
         | HostCall::BlockLocalToWorld { .. }
         | HostCall::Raycast { .. } => blocks::handle_block_call(&data.mod_id, call),
+        HostCall::ItemEntitiesInRadius { .. } | HostCall::ItemImpulses { .. } => {
+            item_motion::handle(call)
+        }
         HostCall::SpawnMob { .. }
         | HostCall::MobInfo { .. }
         | HostCall::MobCanReach { .. }
@@ -529,6 +534,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::SectionKvGet { .. }
         | HostCall::SectionKvSet { .. }
         | HostCall::SectionKvDelete { .. }
+        | HostCall::SectionKvFind { .. }
         | HostCall::SectionKvGetMany { .. }
         | HostCall::SectionKvSetMany { .. } => kv::handle_kv_call(&data.mod_id, call),
         HostCall::MobTagGet { .. }
@@ -536,7 +542,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobTagDelete { .. }
         | HostCall::MobTagsGet { .. }
         | HostCall::MobsWithTag { .. } => tags::handle_tag_call(&data.mod_id, call),
-        HostCall::ResolveBlock { .. }
+        HostCall::StructureInfo { .. }
+        | HostCall::LootRoll { .. }
+        | HostCall::MobDataGet { .. }
+        | HostCall::MobsWithData { .. }
+        | HostCall::ResolveBlock { .. }
         | HostCall::ResolveItem { .. }
         | HostCall::ResolveMob { .. }
         | HostCall::BlockNames { .. }
@@ -557,8 +567,16 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ResolveUndergroundBiome { .. }
         | HostCall::UndergroundBiomeAt { .. }
         | HostCall::UndergroundBiomesInBox { .. }
+        | HostCall::TerrainBlocksAt { .. }
+        | HostCall::TerrainSectionAt { .. }
+        | HostCall::TerrainHeightsAt { .. }
         | HostCall::TerrainSolidAt { .. }
+        | HostCall::TerrainSpaceAt { .. }
         | HostCall::SurfaceBiomeAt { .. } => worldgen::handle_worldgen_call(data, call),
+        HostCall::MemoGet { .. }
+        | HostCall::MemoGetMany { .. }
+        | HostCall::MemoPut { .. }
+        | HostCall::MemoClaim { .. } => memo::handle_memo_call(data, call),
         HostCall::GuiStateSet { .. }
         | HostCall::GuiStateSetFor { .. }
         | HostCall::GuiViewers

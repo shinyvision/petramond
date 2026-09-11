@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::mob::Mobs;
 use crate::save::WorldSave;
-use crate::worker::{JobCancel, JobPool, WorkerPool};
+use crate::worker::{GenJobHandle, JobCancel, JobPool, WorkerPool};
 use petramond_mesh::ChunkMesh;
 use petramond_world::block::Block;
 use petramond_world::chunk::{ChunkPos, SectionPos};
@@ -131,8 +131,9 @@ pub(in crate::world) struct WorldgenJobs {
     /// submitting per-section jobs and sizing each column's vertical load window.
     /// Present for every loaded column; dropped when the column unloads.
     pub(in crate::world) column_gen: FxHashMap<ChunkPos, Arc<ColumnGen>>,
-    /// Columns queued for the (heavy, once-per-column) `ColumnGen` job.
-    pub(in crate::world) pending: FxHashMap<ChunkPos, Option<JobCancel>>,
+    /// Column generation or cache reads in flight. `None` belongs to the save
+    /// thread, so the generation queue cannot reclaim that admission slot.
+    pub(in crate::world) pending: FxHashMap<ChunkPos, Option<GenJobHandle>>,
     /// Sections with an in-flight per-section gen job, so the streamer never submits a
     /// section twice while it is being generated.
     pub(in crate::world) pending_sections: FxHashSet<SectionPos>,
@@ -142,7 +143,7 @@ pub(in crate::world) struct WorldgenJobs {
     pub(in crate::world) pending_section_columns: FxHashMap<ChunkPos, u16>,
     /// Cancellation handles for pending worker-generated sections. Disk-primary
     /// requests are in `pending_sections` without an entry here.
-    pub(in crate::world) pending_section_jobs: FxHashMap<SectionPos, JobCancel>,
+    pub(in crate::world) pending_section_jobs: FxHashMap<SectionPos, GenJobHandle>,
     /// Saved (player-modified) sections read back from disk whose generated column has
     /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
     /// lands, then overlaid over the generated terrain (see `world::stream::poll`).

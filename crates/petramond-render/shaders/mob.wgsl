@@ -141,11 +141,17 @@ struct WmOut {
     @location(3) light: vec4<f32>,
     @location(4) world_y: f32,
     @location(5) tint: vec3<f32>,
+    @location(6) @interpolate(flat) animation: vec3<f32>,
 };
 
 @vertex
 fn vs_world_model(in: WmIn) -> WmOut {
     var out: WmOut;
+    let a = model_animation(in.tint >> 24u);
+    let phase = u.fog.z * a.z;
+    let frame = u32(floor(phase)) % u32(a.y);
+    out.animation = vec3<f32>(f32(frame) * a.x,
+        f32((frame + 1u) % u32(a.y)) * a.x, fract(phase) * a.w);
     let local_pos = in.pos - u.render_origin.xyz;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.uv = in.uv;
@@ -158,6 +164,7 @@ fn vs_world_model(in: WmIn) -> WmOut {
         f32((in.light >> 12u) & 63u),
         f32((in.light >> 18u) & 63u),
     ) / 63.0;
+    if ((in.light & 0x80000000u) != 0u) { out.light = vec4<f32>(1.0); }
     out.tint = vec3<f32>(
         f32((in.tint >> 16u) & 255u),
         f32((in.tint >> 8u) & 255u),
@@ -168,7 +175,7 @@ fn vs_world_model(in: WmIn) -> WmOut {
 
 @fragment
 fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
-    let tex_color = textureSample(tex, samp, in.uv);
+    let tex_color = sample_model_texture(in.uv, in.animation);
     if (tex_color.a < 0.5) { discard; }
     // The same two-term light as block.wgsl: sky scaled + tinted by the sim's
     // day/night state, block light night-invariant and COLOURED, max of the two.
@@ -204,7 +211,7 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
 // has partial alpha, and the rest of the rect may still hold cutout holes.
 @fragment
 fn fs_world_model_blend(in: WmOut) -> @location(0) vec4<f32> {
-    let tex_color = textureSample(tex, samp, in.uv);
+    let tex_color = sample_model_texture(in.uv, in.animation);
     if (tex_color.a < 0.004) { discard; }
     let sky_term = mix(SKY_MIN, 1.0, pow(in.light.x, SKY_GAMMA) * u.fog_color.w) * u.sky_color.rgb;
     let blk = in.light.yzw;
@@ -228,4 +235,14 @@ fn fs_world_model_blend(in: WmOut) -> @location(0) vec4<f32> {
         u.sun_dir.w,
     );
     return vec4<f32>(out, tex_color.a);
+}
+
+
+fn sample_model_texture(uv: vec2<f32>, animation: vec3<f32>) -> vec4<f32> {
+    let dx = dpdx(uv);
+    let dy = dpdy(uv);
+    let color = textureSampleGrad(tex, samp, uv + vec2<f32>(0.0, animation.x), dx, dy);
+    if (animation.z == 0.0) { return color; }
+    let next = textureSampleGrad(tex, samp, uv + vec2<f32>(0.0, animation.y), dx, dy);
+    return mix(color, next, animation.z);
 }

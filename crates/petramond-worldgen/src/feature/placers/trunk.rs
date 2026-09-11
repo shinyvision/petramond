@@ -12,6 +12,9 @@ use crate::rng::FeatureRng;
 use petramond_world::block::Block;
 use petramond_world::mathh::IVec3;
 
+mod whorled;
+pub use whorled::WhorledTrunk;
+
 /// A placed trunk: where the foliage attaches, and every log cell written —
 /// the wood the canopy commit treats as leaf support.
 pub struct TrunkPlan {
@@ -35,6 +38,10 @@ pub trait TrunkPlacer: Send + Sync {
     /// validates at load, so foliage never reads outside the candidate window.
     fn max_lean(&self) -> i32 {
         0
+    }
+
+    fn is_anchored(&self, _: &mut dyn FnMut(i32, i32) -> i32, _: IVec3) -> bool {
+        true
     }
 }
 

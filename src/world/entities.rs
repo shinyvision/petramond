@@ -31,6 +31,7 @@ use petramond_world::item::ItemStack;
 
 use super::store::World;
 
+mod influence;
 mod step;
 mod sweep;
 #[cfg(test)]

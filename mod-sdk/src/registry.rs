@@ -10,6 +10,18 @@
 
 use mod_api::{BlockId, ItemId, ItemInfoData, ItemStackData, MobId};
 
+host_fn! {
+    /// Immutable consumer metadata on a species, available on every runtime side.
+    pub fn mob_data(mob: MobId, key: &str) -> Option<Vec<u8>>
+        => MobDataGet { mob, key: key.into() } => Bytes
+}
+
+host_fn! {
+    /// Species carrying a consumer key, with raw JSON values in registry order.
+    pub fn mobs_with_data(key: &str) -> Vec<(MobId, String)>
+        => MobsWithData { key: key.into() } => MobDataRows
+}
+
 // Imported for intra-doc links only.
 #[allow(unused_imports)]
 use crate::Mod;
@@ -58,7 +70,7 @@ host_fn! {
     /// branch on which one a bake batch is for. `None` = no such shape kind.
     /// Registry-only (legal on any instance); resolve once in [`Mod::init`] and
     /// compare against the `shape_kind` argument (but NEVER persist the id).
-    pub fn resolve_shape(key: &str) -> Option<u8> => ResolveShape { key: key.into() } => MaybeByte
+    pub fn resolve_shape(key: &str) -> Option<u16> => ResolveShape { key: key.into() } => MaybeU16
 }
 
 host_fn! {

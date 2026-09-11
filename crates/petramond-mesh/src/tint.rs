@@ -51,6 +51,7 @@ impl BiomeTints {
             Some(TileTint::Grass) => self.grass[ci],
             Some(TileTint::Foliage) => self.foliage[ci],
             Some(TileTint::Water) => self.water[ci],
+            Some(TileTint::Fixed(rgb)) => rgb.map(|c| f32::from(c) / 255.0),
             None => NO_TINT,
         }
     }

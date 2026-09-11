@@ -105,8 +105,8 @@ pub struct GenHooks {
     fallback_logged: [AtomicBool; STAGE_COUNT],
 }
 
-use petramond_worldgen::hooks::GenHookDispatch;
 pub use petramond_worldgen::hooks::GenInputs;
+use petramond_worldgen::hooks::{FeatureOutcome, GenHookDispatch, GenerationPlan};
 
 impl GenHooks {
     /// Whether `stage` has a registered replacement.
@@ -128,15 +128,16 @@ impl GenHooks {
             .collect()
     }
 
-    /// Dispatch feature `idx` for one section. `None` = the feature failed
-    /// (instance disabled with a logged error) and is skipped.
-    pub fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> Option<Vec<([i32; 3], u16)>> {
+    /// Dispatch feature `idx` for one section. `Skipped` = the feature
+    /// failed (instance disabled with a logged error) or its filter rejected
+    /// the section.
+    pub fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> FeatureOutcome {
         let hook = &self.features[idx];
         if !hook
             .filter
             .intersects(inputs.section_pos[1], inputs.surface_heights)
         {
-            return None;
+            return FeatureOutcome::Skipped;
         }
         let call = GuestCall::GenFeature {
             feature_id: hook.feature_id,
@@ -151,29 +152,31 @@ impl GenHooks {
             sea_level: SEA_LEVEL,
         };
         self.dispatch(hook.mod_idx, &call, |ret| match ret {
-            GuestRet::GenWrites(w) => validated_writes(w),
-            other => Err(reply_shape("GenFeature", "GenWrites", &other)),
+            GuestRet::GenOutput(w) => outcome(w, self.seed),
+            other => Err(reply_shape("GenFeature", "GenOutput", &other)),
         })
+        .unwrap_or(FeatureOutcome::Skipped)
     }
 
     /// Run the registered replacement of a write-list stage
-    /// (underground/vegetation/trees). `None` = no replacement registered OR
-    /// it failed — either way the caller runs the ENGINE stage.
-    pub fn replace_stage(
-        &self,
-        stage: WorldgenStage,
-        inputs: &GenInputs,
-    ) -> Option<Vec<([i32; 3], u16)>> {
-        let hook = self.replacements[stage_index(stage)].as_ref()?;
+    /// (underground/vegetation/trees). `Skipped` = no replacement registered
+    /// OR it failed — either way the caller runs the ENGINE stage.
+    pub fn replace_stage(&self, stage: WorldgenStage, inputs: &GenInputs) -> FeatureOutcome {
+        let Some(hook) = self.replacements[stage_index(stage)].as_ref() else {
+            return FeatureOutcome::Skipped;
+        };
         let call = self.stage_call(hook, stage, inputs);
         let res = self.dispatch(hook.mod_idx, &call, |ret| match ret {
-            GuestRet::GenWrites(w) => validated_writes(w),
-            other => Err(reply_shape("GenStage", "GenWrites", &other)),
+            GuestRet::GenOutput(w) => outcome(w, self.seed),
+            other => Err(reply_shape("GenStage", "GenOutput", &other)),
         });
-        if res.is_none() {
-            self.log_fallback(stage, hook.mod_idx);
+        match res {
+            Some(outcome) => outcome,
+            None => {
+                self.log_fallback(stage, hook.mod_idx);
+                FeatureOutcome::Skipped
+            }
         }
-        res
     }
 
     /// Run the registered terrain replacement: the full 4096-block fill.
@@ -341,7 +344,7 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
     let got = match got {
         GuestRet::Unit => "Unit",
         GuestRet::Event { .. } => "Event",
-        GuestRet::GenWrites(_) => "GenWrites",
+        GuestRet::GenOutput(_) => "GenOutput",
         GuestRet::GenBlocks(_) => "GenBlocks",
         GuestRet::GenBiomes(_) => "GenBiomes",
         GuestRet::HostileSpawn(_) => "HostileSpawn",
@@ -354,17 +357,59 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
     format!("{call} expected a {expected} reply, got {got}")
 }
 
+/// A write-list reply as the driver consumes it: deferred, or validated.
+fn outcome(output: mod_api::GenOutput, seed: u32) -> Result<FeatureOutcome, String> {
+    if output.deferred {
+        return Ok(FeatureOutcome::Deferred);
+    }
+    validated_writes(output, seed).map(FeatureOutcome::Plan)
+}
+
 /// Validate a write list's block ids against the loaded registry — an
 /// unregistered id must never reach a section buffer.
-fn validated_writes(w: Vec<mod_api::GenWrite>) -> Result<Vec<([i32; 3], u16)>, String> {
+fn validated_writes(output: mod_api::GenOutput, seed: u32) -> Result<GenerationPlan, String> {
     let registered = Block::all().len();
-    if let Some((_, bad)) = w.iter().find(|(_, id)| id.0 as usize >= registered) {
+    if output.blocks.len() > 262_144 || output.structures.len() > 256 || output.features.len() > 32
+    {
+        return Err("generation output exceeds placement budget".into());
+    }
+    if let Some((_, bad)) = output
+        .blocks
+        .iter()
+        .find(|(_, id)| id.0 as usize >= registered)
+    {
         return Err(format!(
             "worldgen write with unregistered block id {}",
             bad.0
         ));
     }
-    Ok(w.into_iter().map(|(p, id)| (p, id.0)).collect())
+    let structures = output
+        .structures
+        .into_iter()
+        .map(|placement| {
+            let template = petramond_world::structure::by_key(&placement.template)
+                .ok_or_else(|| format!("unknown structure '{}'", placement.template))?;
+            let turn = petramond_world::world::placement::authored::Turn::new(placement.turn)?;
+            template.place(placement.origin.into(), turn)
+        })
+        .collect::<Result<_, String>>()?;
+    let features = output
+        .features
+        .into_iter()
+        .map(|placement| {
+            petramond_worldgen::feature::placement::PlacedFeature::resolve_first(
+                &placement.feature,
+                &placement.origins,
+                seed,
+                placement.salt,
+            )
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(GenerationPlan {
+        features,
+        blocks: output.blocks.into_iter().map(|(p, id)| (p, id.0)).collect(),
+        structures,
+    })
 }
 
 enum Slot {
@@ -527,11 +572,7 @@ impl GenHookDispatch for GenHooks {
     fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>> {
         GenHooks::replace_terrain(self, inputs)
     }
-    fn replace_stage(
-        &self,
-        stage: WorldgenStage,
-        inputs: &GenInputs,
-    ) -> Option<Vec<([i32; 3], u16)>> {
+    fn replace_stage(&self, stage: WorldgenStage, inputs: &GenInputs) -> FeatureOutcome {
         GenHooks::replace_stage(self, stage, inputs)
     }
     fn any_features_after(&self, stage: WorldgenStage) -> bool {
@@ -540,7 +581,7 @@ impl GenHookDispatch for GenHooks {
     fn features_after(&self, stage: WorldgenStage) -> Vec<usize> {
         GenHooks::features_after(self, stage)
     }
-    fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> Option<Vec<([i32; 3], u16)>> {
+    fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> FeatureOutcome {
         GenHooks::dispatch_feature(self, idx, inputs)
     }
 }

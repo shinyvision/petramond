@@ -14,7 +14,7 @@ use std::sync::{Arc, OnceLock};
 
 use mod_api::WorldgenStage;
 
-use crate::hooks::{GenHookDispatch, GenInputs};
+use crate::hooks::{FeatureOutcome, GenHookDispatch, GenInputs};
 use petramond_world::chunk::{
     idx, Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE,
 };
@@ -22,7 +22,7 @@ use petramond_world::section::{Section, SectionSummary};
 
 use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
-    apply_gen_writes, cached_feature_region, feature_candidate_bounds, feature_region_bounds,
+    apply_gen_plan, cached_feature_region, feature_candidate_bounds, feature_region_bounds,
     scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
     vegetation, ColumnFeatureField, FeaturePlan, RuntimeFeatureField, SurfaceHeights,
     MAX_TREE_REACH_ABOVE, TREELINE,
@@ -261,6 +261,9 @@ impl ColumnGen {
     }
 }
 
+/// A hook deferred the section (see [`FeatureOutcome::Deferred`]).
+struct Deferred;
+
 #[inline]
 fn ranges_overlap(a_lo: i32, a_hi: i32, b_lo: i32, b_hi: i32) -> bool {
     a_lo <= b_hi && b_lo <= a_hi
@@ -447,14 +450,7 @@ impl ChunkGenerator {
             cand_surf_max = cand_surf_max.max(s);
         }
 
-        for z in 0..SECTION_SIZE {
-            for x in 0..SECTION_SIZE {
-                let i = z * SECTION_SIZE + x;
-                let wx = ox + x as i32;
-                let wz = oz + z as i32;
-                top_surf[i] = self.caves.surface_after_caves(wx, wz, surf[i]);
-            }
-        }
+        top_surf.copy_from_slice(&self.caves.surfaces_after_caves(ox, oz, &surf));
 
         // Mod climate replacement: substitute the column's OWN biome map (what the
         // terrain skin, vegetation, and every later hook read). The candidate-window
@@ -564,6 +560,25 @@ impl ChunkGenerator {
     /// and registered FEATURES run after their stage, unconditionally — mod content
     /// is not bounded by the engine stages' reach gates.
     pub fn generate_section(&self, sp: SectionPos, col: &ColumnGen) -> Section {
+        loop {
+            if let Some(section) = self.try_generate_section(sp, col) {
+                return section;
+            }
+            // Another worker is deriving a fact a hook here waits on.
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    /// [`generate_section`](Self::generate_section) that answers `None` when a
+    /// hook DEFERRED the section: a positional fact it depends on is being
+    /// derived by another worker right now. The caller runs the job again
+    /// later; nothing of this attempt is kept, so the section's eventual
+    /// content does not depend on when.
+    pub fn try_generate_section(&self, sp: SectionPos, col: &ColumnGen) -> Option<Section> {
+        self.build_section(sp, col).ok()
+    }
+
+    fn build_section(&self, sp: SectionPos, col: &ColumnGen) -> Result<Section, Deferred> {
         debug_assert_eq!((sp.cx, sp.cz), (col.cx, col.cz));
         let mut section = Section::new(sp.cx, sp.cy, sp.cz);
         let (_ox, oy, _oz) = sp.origin_world();
@@ -579,27 +594,43 @@ impl ChunkGenerator {
             Some(fill) => {
                 *section.blocks_mut() = petramond_world::section::BlockCube::from_ids(&fill)
             }
-            None => {
+            // A replaced climate fills with the mod's biome map, which the
+            // shared terrain memo (keyed on the engine's) must not carry.
+            None if self
+                .hooks
+                .as_ref()
+                .is_some_and(|h| h.replaces(WorldgenStage::Climate)) =>
+            {
                 self.surface_density
                     .fill_section(&mut section, &col.biome, &col.surf);
                 self.caves.carve_section(&mut section, &col.surf);
             }
+            None => {
+                *section.blocks_mut() = crate::section_memo::terrain_cube(
+                    &self.surface_density,
+                    &self.caves,
+                    self.seed,
+                    sp,
+                    &col.biome,
+                    &col.surf,
+                );
+            }
         }
         section.recompute_opaque_count();
-        self.run_gen_features(WorldgenStage::Terrain, sp, &mut section, col);
+        self.run_gen_features(WorldgenStage::Terrain, sp, &mut section, col)?;
 
         // 2. Underground scatter: needs stone in the section AND overlap with the ore band.
-        if !self.run_stage_replacement(WorldgenStage::Underground, sp, &mut section, col) {
+        if !self.run_stage_replacement(WorldgenStage::Underground, sp, &mut section, col)? {
             let has_stone = sec_lo <= col.surf_max;
             if has_stone && ranges_overlap(sec_lo, sec_hi, SCATTER_MIN_Y, SCATTER_MAX_Y) {
                 scatter::place_underground_section(&mut section, self.seed);
             }
         }
-        self.run_gen_features(WorldgenStage::Underground, sp, &mut section, col);
+        self.run_gen_features(WorldgenStage::Underground, sp, &mut section, col)?;
 
         // 3. Ground vegetation: the bare-ground plant cell (anchor+1) can fall here only
         //    if some land column's surface (≥ sea level) sits within reach of the section.
-        if !self.run_stage_replacement(WorldgenStage::Vegetation, sp, &mut section, col)
+        if !self.run_stage_replacement(WorldgenStage::Vegetation, sp, &mut section, col)?
             && col.surf_max >= SEA_LEVEL
             && ranges_overlap(sec_lo, sec_hi, SEA_LEVEL + 1, col.surf_max + 1)
         {
@@ -611,13 +642,13 @@ impl ChunkGenerator {
                 self.seed,
             );
         }
-        self.run_gen_features(WorldgenStage::Vegetation, sp, &mut section, col);
+        self.run_gen_features(WorldgenStage::Vegetation, sp, &mut section, col)?;
 
         // 4. Trees: a tree roots only where the surface is in (sea level, treeline] and
         //    reaches up to MAX_TREE_REACH_ABOVE. Anchors can sit at margin origins / in
         //    neighbours, so gate on the candidate-window surface range. Skip the section
         //    when no anchor can reach it.
-        if !self.run_stage_replacement(WorldgenStage::Trees, sp, &mut section, col) {
+        if !self.run_stage_replacement(WorldgenStage::Trees, sp, &mut section, col)? {
             let anchor_lo = col.cand_surf_min.max(SEA_LEVEL + 1);
             let anchor_hi = col.cand_surf_max.min(TREELINE);
             if anchor_lo <= anchor_hi
@@ -644,10 +675,10 @@ impl ChunkGenerator {
                 plan.apply(&mut section);
             }
         }
-        self.run_gen_features(WorldgenStage::Trees, sp, &mut section, col);
+        self.run_gen_features(WorldgenStage::Trees, sp, &mut section, col)?;
 
         section.dirty = true;
-        section
+        Ok(section)
     }
 
     /// The mod terrain replacement's 4096-block fill, or `None` when no
@@ -674,14 +705,14 @@ impl ChunkGenerator {
         sp: SectionPos,
         section: &mut Section,
         col: &ColumnGen,
-    ) -> bool {
+    ) -> Result<bool, Deferred> {
         let Some(hooks) = &self.hooks else {
-            return false;
+            return Ok(false);
         };
         if !hooks.replaces(stage) {
-            return false;
+            return Ok(false);
         }
-        let writes = hooks.replace_stage(
+        let outcome = hooks.replace_stage(
             stage,
             &GenInputs {
                 seed: self.seed,
@@ -691,12 +722,13 @@ impl ChunkGenerator {
                 biomes: &col.biome,
             },
         );
-        match writes {
-            Some(writes) => {
-                apply_gen_writes(section, &writes);
-                true
+        match outcome {
+            FeatureOutcome::Plan(writes) => {
+                apply_gen_plan(section, &writes);
+                Ok(true)
             }
-            None => false,
+            FeatureOutcome::Skipped => Ok(false),
+            FeatureOutcome::Deferred => Err(Deferred),
         }
     }
 
@@ -708,15 +740,15 @@ impl ChunkGenerator {
         sp: SectionPos,
         section: &mut Section,
         col: &ColumnGen,
-    ) {
+    ) -> Result<(), Deferred> {
         let Some(hooks) = &self.hooks else {
-            return;
+            return Ok(());
         };
         if !hooks.any_features_after(stage) {
-            return;
+            return Ok(());
         }
         for idx in hooks.features_after(stage) {
-            let writes = hooks.dispatch_feature(
+            let outcome = hooks.dispatch_feature(
                 idx,
                 &GenInputs {
                     seed: self.seed,
@@ -726,10 +758,13 @@ impl ChunkGenerator {
                     biomes: &col.biome,
                 },
             );
-            if let Some(writes) = writes {
-                apply_gen_writes(section, &writes);
+            match outcome {
+                FeatureOutcome::Plan(writes) => apply_gen_plan(section, &writes),
+                FeatureOutcome::Skipped => {}
+                FeatureOutcome::Deferred => return Err(Deferred),
             }
         }
+        Ok(())
     }
 
     /// Whole-chunk generation ASSEMBLED from the cubic per-section path — the

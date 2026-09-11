@@ -97,6 +97,9 @@ fn light_blocked_mesh_leaves_hot_dirty_queue() {
     let mut section = Section::new(pos.cx, pos.cy, pos.cz);
     section.set_block(0, 0, 0, Block::Dirt);
     world.insert_section_for_test(pos, section);
+    // Hold the dependency unresolved; a fast fixture bake can otherwise finish
+    // inside the pump before the mesh ever needs to wait.
+    world.light_deferred.insert(pos);
 
     world.tick_mesh_budget(1);
 

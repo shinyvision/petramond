@@ -71,6 +71,11 @@ impl World {
         }
         self.set_column_gen(pos, col);
         self.bump_column_payload_revision(pos);
+        if self.last_load_target.is_some_and(|t| t.center == pos)
+            || self.extra_load_targets.iter().any(|t| t.center == pos)
+        {
+            self.refresh_generation_priorities();
+        }
     }
 
     /// Swap `pos`'s retained `ColumnGen` for its slimmed clone once the column has
@@ -223,6 +228,29 @@ impl World {
                     w.remove_pending_section(sp);
                     w.gen.pending_section_jobs.remove(&sp);
                     w.queue_deferred_rechecks_around(sp);
+                }
+                // A hook is waiting on a fact another worker derives: run the
+                // job again at its priority. The section stays pending, so
+                // the streamer neither re-requests nor judges it absent.
+                GenOutput::SectionDeferred { sp, col } => {
+                    if !w.gen.pending_section_jobs.contains_key(&sp)
+                        || !w.within_current_keep_radius(sp.chunk_pos())
+                    {
+                        w.remove_pending_section(sp);
+                        w.gen.pending_section_jobs.remove(&sp);
+                        return;
+                    }
+                    let band_lo = *Self::surface_window_for_column(&col, 0).start();
+                    let underground = w.anchor_underground(target);
+                    let job = w.worker.submit(
+                        target.deferred_section_key(sp, band_lo, underground),
+                        GenJob::Section {
+                            sp,
+                            col,
+                            seed: w.seed,
+                        },
+                    );
+                    w.gen.pending_section_jobs.insert(sp, job);
                 }
                 GenOutput::Section { sp, section } => {
                     if !w.remove_pending_section(sp) {

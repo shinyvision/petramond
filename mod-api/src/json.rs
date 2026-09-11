@@ -50,6 +50,11 @@ impl Value {
         }
     }
 
+    pub fn as_i32(&self) -> Option<i32> {
+        let n = self.as_f64()?;
+        (n.fract() == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64).then_some(n as i32)
+    }
+
     /// The value as a u8, if it is a number representing one exactly.
     pub fn as_u8(&self) -> Option<u8> {
         let n = self.as_f64()?;
@@ -245,5 +250,13 @@ mod tests {
         assert!(Value::parse("{\"unterminated\":").is_none());
         assert!(Value::parse("[1,2] trailing").is_none());
         assert_eq!(Value::parse("256").unwrap().as_u8(), None);
+        assert_eq!(
+            Value::parse("-2147483648").unwrap().as_i32(),
+            Some(i32::MIN)
+        );
+        assert_eq!(Value::parse("2147483647").unwrap().as_i32(), Some(i32::MAX));
+        for text in ["2147483648", "-2147483649", "2.5", "1e100", "true"] {
+            assert_eq!(Value::parse(text).unwrap().as_i32(), None);
+        }
     }
 }

@@ -425,6 +425,23 @@ fn samples() -> Samples {
     s.pin("HostCall::ContainerInsert", &HostCall::ContainerInsert { pos: [1, 2, 3], stack: ItemStackData {item: "m:i".into(), count: 2, data: Vec::new()} });
     s.pin("HostCall::ContainerTake", &HostCall::ContainerTake { pos: [1, 2, 3], slot: 4, count: 2 });
 
+    s.pin("HostCall::ItemEntitiesInRadius", &HostCall::ItemEntitiesInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0, limit: 8 });
+    s.pin("HostCall::ItemImpulses", &HostCall::ItemImpulses { impulses: vec![(9, [1.0, 0.0, -1.0])] });
+    s.pin("HostCall::SectionKvFind", &HostCall::SectionKvFind { section: [-1, -2, 3], key: "fixture:marker".into() });
+    s.pin("HostCall::StructureInfo", &HostCall::StructureInfo { key: "fixture:room".into() });
+    s.pin("HostCall::LootRoll", &HostCall::LootRoll { key: "fixture:loot".into(), seed: 7 });
+    s.pin("HostCall::MobDataGet", &HostCall::MobDataGet { mob: MobId(4), key: "m:k".into() });
+    s.pin("HostCall::MobsWithData", &HostCall::MobsWithData { key: "m:k".into() });
+    s.pin("HostCall::TerrainSpaceAt", &HostCall::TerrainSpaceAt { positions: vec![[1, -2, 3]] });
+    s.pin("HostCall::MemoGet", &HostCall::MemoGet { key: b"k".to_vec() });
+    s.pin("HostCall::MemoGetMany", &HostCall::MemoGetMany { keys: vec![b"k".to_vec()] });
+    s.pin("HostCall::MemoPut", &HostCall::MemoPut { key: b"k".to_vec(), value: b"v".to_vec() });
+    s.pin("HostCall::MemoClaim", &HostCall::MemoClaim { key: b"k".to_vec() });
+
+    s.pin("HostCall::TerrainBlocksAt", &HostCall::TerrainBlocksAt { positions: vec![[1, -2, 3]] });
+    s.pin("HostCall::TerrainHeightsAt", &HostCall::TerrainHeightsAt { columns: vec![[1, -2]] });
+    s.pin("HostCall::TerrainSectionAt", &HostCall::TerrainSectionAt { section: [1, -2, 3] });
+
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
     s.pin("HostRet::U64", &HostRet::U64(1));
@@ -555,8 +572,23 @@ fn samples() -> Samples {
     s.pin("HostRet::Raycast", &HostRet::Raycast(Some(RaycastHitData {
         block: [1, 2, 3], face: [0, 1, 0], distance: 2.5,
     })));
+    s.pin("HostRet::ItemEntities", &HostRet::ItemEntities(Vec::new()));
+    s.pin("HostRet::StructureInfo", &HostRet::StructureInfo(Some(Box::new(StructureInfoData {
+        bounds: [([-1, 0, -2], [1, 3, 2]); 4],
+        connectors: vec![StructureConnectorData { name: "out".into(), kind: "fixture:door".into(), pos: [0, 0, 2], normal: [0, 0, 1] }],
+        requirements: vec![StructureRequirementData { min: [-1, -2, -3], max: [1, 2, 3], space: TerrainSpace::Solid }],
+    }))));
 
     // --- GuestCall: every variant, declaration order -------------------------
+    s.pin("HostRet::Loot", &HostRet::Loot(Some(Vec::new())));
+    s.pin("HostRet::MobDataRows", &HostRet::MobDataRows(vec![(MobId(4), "{}".into())]));
+    s.pin("HostRet::MemoClaim (value)", &HostRet::MemoClaim(MemoClaim::Value(b"v".to_vec())));
+    s.pin("HostRet::MemoClaim (lease)", &HostRet::MemoClaim(MemoClaim::Lease));
+    s.pin("HostRet::MemoClaim (pending)", &HostRet::MemoClaim(MemoClaim::Pending));
+    s.pin("HostRet::TerrainHeights", &HostRet::TerrainHeights(vec![1, -2]));
+    s.pin("HostRet::MaybeU16", &HostRet::MaybeU16(Some(300)));
+    s.pin("HostRet::SectionBlocks", &HostRet::SectionBlocks(vec![1, 0, 9, 0]));
+    s.pin("HostRet::TerrainSpaces", &HostRet::TerrainSpaces(vec![TerrainSpace::Air, TerrainSpace::Water, TerrainSpace::Solid]));
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
     s.pin("GuestCall::HandleEvent", &GuestCall::HandleEvent {
         id: 1, payload: EventPayload::PlayerDied,
@@ -641,7 +673,7 @@ fn samples() -> Samples {
     s.pin("GuestRet::Event", &GuestRet::Event {
         outcome: Outcome::Cancel, payload: EventPayload::ItemUsed { player: PlayerId(1), item: ItemId(1), kind: ItemUseEvent::Handler },
     });
-    s.pin("GuestRet::GenWrites", &GuestRet::GenWrites(vec![([1, 2, 3], BlockId(4))]));
+    s.pin("GuestRet::GenOutput", &GuestRet::GenOutput(vec![([1, 2, 3], BlockId(4))].into()));
     s.pin("GuestRet::GenBlocks", &GuestRet::GenBlocks(vec![1, 2]));
     s.pin("GuestRet::GenBiomes", &GuestRet::GenBiomes(vec![3]));
     s.pin("GuestRet::HostileSpawn", &GuestRet::HostileSpawn(Some("m:k".into())));
@@ -660,7 +692,15 @@ fn samples() -> Samples {
     // `ItemId` back to `u8` would pass every other pin in this file.
     s.pin("BlockId (wide)", &BlockId(300));
     s.pin("ItemId (wide)", &ItemId(4095));
-    s.pin("GuestRet::GenWrites (wide)", &GuestRet::GenWrites(vec![([1, 2, 3], BlockId(300))]));
+    s.pin("GuestRet::GenOutput (wide)", &GuestRet::GenOutput(vec![([1, 2, 3], BlockId(300))].into()));
+    s.pin("GuestRet::GenOutput (structure)", &GuestRet::GenOutput(GenOutput {
+        features: Vec::new(), blocks: Vec::new(), structures: vec![StructurePlacement { template: "fixture:room".into(), origin: [-17, -32, 15], turn: 3 }],
+        deferred: false,
+    }));
+    s.pin("GuestRet::GenOutput (feature)", &GuestRet::GenOutput(GenOutput {
+        features: vec![FeaturePlacement { feature: "fixture:tree".into(), origins: vec![[-17, -32, 15]], salt: 7 }],
+        ..GenOutput::default()
+    }));
     s.pin("GuestRet::GenBlocks (wide)", &GuestRet::GenBlocks(vec![1, 300]));
 
     s.pin("GuestRet::BakedSim", &GuestRet::BakedSim(vec![BakedSimCell {
@@ -1043,6 +1083,21 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::SoundSet", "9c01010000003f0000803f"),
     ("HostCall::ContainerInsert", "9d01020406036d3a690200"),
     ("HostCall::ContainerTake", "9e010204060402"),
+    ("HostCall::ItemEntitiesInRadius", "9f010000803f00000040000040400000804008"),
+    ("HostCall::ItemImpulses", "a00101090000803f00000000000080bf"),
+    ("HostCall::SectionKvFind", "a1010103060e666978747572653a6d61726b6572"),
+    ("HostCall::StructureInfo", "a2010c666978747572653a726f6f6d"),
+    ("HostCall::LootRoll", "a3010c666978747572653a6c6f6f7407"),
+    ("HostCall::MobDataGet", "a40104036d3a6b"),
+    ("HostCall::MobsWithData", "a501036d3a6b"),
+    ("HostCall::TerrainSpaceAt", "a60101020306"),
+    ("HostCall::MemoGet", "a701016b"),
+    ("HostCall::MemoGetMany", "a80101016b"),
+    ("HostCall::MemoPut", "a901016b0176"),
+    ("HostCall::MemoClaim", "aa01016b"),
+    ("HostCall::TerrainBlocksAt", "ab0101020306"),
+    ("HostCall::TerrainHeightsAt", "ac01010203"),
+    ("HostCall::TerrainSectionAt", "ad01020306"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -1096,6 +1151,17 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::BlockInfo", "32010573746f6e650000c03f0101077069636b61786501ac02010000000000000000000000000000803f0000003f0000803f"),
     ("HostRet::HeldStack", "3301036d3a690101036d3a6b0107"),
     ("HostRet::Raycast", "340102040600020000002040"),
+    ("HostRet::ItemEntities", "3500"),
+    ("HostRet::StructureInfo", "360101000302060401000302060401000302060401000302060401036f75740c666978747572653a646f6f720000040000020101030502040602"),
+    ("HostRet::Loot", "370100"),
+    ("HostRet::MobDataRows", "380104027b7d"),
+    ("HostRet::MemoClaim (value)", "3a000176"),
+    ("HostRet::MemoClaim (lease)", "3a01"),
+    ("HostRet::MemoClaim (pending)", "3a02"),
+    ("HostRet::TerrainHeights", "3b020203"),
+    ("HostRet::MaybeU16", "3c01ac02"),
+    ("HostRet::SectionBlocks", "3d0401000900"),
+    ("HostRet::TerrainSpaces", "3903000102"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -1115,7 +1181,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::ShapePlacementPlan", "10010400000000020000020000"),
     ("GuestRet::Unit", "00"),
     ("GuestRet::Event", "010108010101"),
-    ("GuestRet::GenWrites", "020102040604"),
+    ("GuestRet::GenOutput", "020102040604000000"),
     ("GuestRet::GenBlocks", "03020102"),
     ("GuestRet::GenBiomes", "040103"),
     ("GuestRet::HostileSpawn", "0501036d3a6b"),
@@ -1123,7 +1189,9 @@ const PINS: &[(&str, &str)] = &[
     ("ChannelClaims (all)", "ff"),
     ("BlockId (wide)", "ac02"),
     ("ItemId (wide)", "ff1f"),
-    ("GuestRet::GenWrites (wide)", "0201020406ac02"),
+    ("GuestRet::GenOutput (wide)", "0201020406ac02000000"),
+    ("GuestRet::GenOutput (structure)", "0200010c666978747572653a726f6f6d213f1e030000"),
+    ("GuestRet::GenOutput (feature)", "020000010c666978747572653a7472656501213f1e0700"),
     ("GuestRet::GenBlocks (wide)", "030201ac02"),
     ("GuestRet::BakedSim", "0701010000000000000000000000000000803f0000803f0000803f01"),
     ("GuestRet::BakedRender", "0801010000000000000000000000000000803f0000803f0000803f01c81e28011e01"),

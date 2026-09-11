@@ -194,7 +194,10 @@
             "animation": "attack"
           }
         }
-      ]
+      ],
+      "data": {
+        "petramond:loot": "monsters:hushjaw_drops"
+      }
     }
   ]
 }

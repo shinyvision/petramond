@@ -1,12 +1,16 @@
-//! The combined model texture atlas — every kind's texture stacked into one sheet with
+//! The combined model texture atlas — every kind's texture packed into one sheet with
 //! a per-kind UV transform — plus the pre-scanned break/mining particle patches
 //! sampled from it.
 
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
+
+mod packing;
 
 use super::{all, BlockModelKind, MODELS};
 
-/// Every model kind's texture packed into ONE RGBA sheet (vertically stacked), with a
+/// Every model kind's texture packed into one RGBA sheet, with a
 /// per-kind UV transform into it, so all model geometry in a chunk draws with a single
 /// texture bind. Built once from [`MODELS`]; the mesher remaps each face UV through
 /// [`remap`](Self::remap) and the renderer uploads [`rgba`](Self::rgba).
@@ -17,41 +21,129 @@ pub struct ModelAtlas {
     /// Per-kind `[u_off, v_off, u_scale, v_scale]` mapping the kind's own `[0,1]` UVs
     /// into the combined sheet.
     xform: Vec<[f32; 4]>,
+    animations: Vec<super::TextureAnimation>,
+    surface_animations: Vec<Vec<u8>>,
 }
 
 impl ModelAtlas {
     fn build() -> Self {
-        // Vertical stack: width = widest texture, height = sum of heights. No rectangle
-        // packing needed and it generalises to any number of kinds.
-        let w = MODELS.iter().map(|m| m.tex_w).max().unwrap_or(1).max(1);
-        let total_h: u32 = MODELS.iter().map(|m| m.tex_h).sum::<u32>().max(1);
-        let mut rgba = vec![0u8; (w * total_h * 4) as usize];
-        let mut xform = Vec::with_capacity(MODELS.len());
-        let mut y_off = 0u32;
-        for m in MODELS.iter() {
-            // Blit this model's texture into the sheet at (0, y_off).
+        // State variants commonly share an entire sheet. Equality checks keep
+        // content deduplication safe even when two hashes collide.
+        let mut hashes: HashMap<u64, Vec<usize>> = HashMap::new();
+        let mut unique: Vec<usize> = Vec::new();
+        let mut entries = Vec::with_capacity(MODELS.len());
+        for (i, m) in MODELS.iter().enumerate() {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            (m.tex_w, m.tex_h, &m.texture_rgba).hash(&mut hash);
+            let candidates = hashes.entry(hash.finish()).or_default();
+            let entry = candidates
+                .iter()
+                .copied()
+                .find(|&slot| {
+                    let other = &MODELS[unique[slot]];
+                    m.tex_w == other.tex_w
+                        && m.tex_h == other.tex_h
+                        && m.texture_rgba == other.texture_rgba
+                })
+                .unwrap_or_else(|| {
+                    let slot = unique.len();
+                    unique.push(i);
+                    candidates.push(slot);
+                    slot
+                });
+            entries.push(entry);
+        }
+        let sizes: Vec<_> = unique
+            .iter()
+            .map(|&i| [MODELS[i].tex_w.max(1), MODELS[i].tex_h.max(1)])
+            .collect();
+        let layout = packing::pack(&sizes, 8192).expect("block model atlas");
+        let [w, h] = layout.size;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for (&i, &[x_off, y_off]) in unique.iter().zip(&layout.origins) {
+            let m = &MODELS[i];
             for row in 0..m.tex_h {
                 let src = (row * m.tex_w * 4) as usize;
-                let dst = ((y_off + row) * w * 4) as usize;
+                let dst = (((y_off + row) * w + x_off) * 4) as usize;
                 let n = (m.tex_w * 4) as usize;
-                if src + n <= m.texture_rgba.len() && dst + n <= rgba.len() {
+                if src + n <= m.texture_rgba.len() {
                     rgba[dst..dst + n].copy_from_slice(&m.texture_rgba[src..src + n]);
                 }
             }
+        }
+        let mut xform = Vec::with_capacity(MODELS.len());
+        for (m, &entry) in MODELS.iter().zip(&entries) {
+            let [x_off, y_off] = layout.origins[entry];
             xform.push([
-                0.0,
-                y_off as f32 / total_h as f32,
+                x_off as f32 / w as f32,
+                y_off as f32 / h as f32,
                 m.tex_w as f32 / w as f32,
-                m.tex_h as f32 / total_h as f32,
+                m.tex_h as f32 / h as f32,
             ]);
-            y_off += m.tex_h;
+        }
+        let mut animations = vec![super::TextureAnimation::default()];
+        let mut surface_animations = Vec::new();
+        for (&kind, transform) in all().iter().zip(&xform) {
+            let slots = super::def(kind)
+                .surfaces
+                .iter()
+                .map(|surface| {
+                    let Some(a) = surface.animation else {
+                        return 0;
+                    };
+                    let value = super::TextureAnimation {
+                        stride: (surface.rect[3] - surface.rect[1]) * transform[3]
+                            / f32::from(a.frames),
+                        frames: a.frames,
+                        frame_ticks: a.frame_ticks,
+                        interpolate: a.interpolate,
+                    };
+                    let id = animations
+                        .iter()
+                        .position(|v| *v == value)
+                        .unwrap_or_else(|| {
+                            let id = animations.len();
+                            animations.push(value);
+                            id
+                        });
+                    u8::try_from(id).expect("model atlas exceeds 255 distinct flipbooks")
+                })
+                .collect();
+            surface_animations.push(slots);
         }
         ModelAtlas {
+            animations,
+            surface_animations,
             rgba,
             w,
-            h: total_h,
+            h,
             xform,
         }
+    }
+
+    /// Animation table shared by the template bake and shader compiler.
+    pub fn animations(&self) -> &[super::TextureAnimation] {
+        &self.animations
+    }
+
+    /// The face's appearance resolved from its atlas-space UV rectangle.
+    pub fn appearance(&self, kind: BlockModelKind, uv: [f32; 4]) -> super::FaceAppearance {
+        let [uo, vo, us, vs] = self.xform[kind.0 as usize];
+        let x = ((uv[0] + uv[2]) * 0.5 - uo) / us;
+        let y = ((uv[1] + uv[3]) * 0.5 - vo) / vs;
+        for (i, surface) in super::def(kind).surfaces.iter().enumerate() {
+            let [x0, y0, x1, y1] = surface.rect;
+            if x >= x0 && x < x1 && y >= y0 && y < y1 {
+                return super::FaceAppearance {
+                    tint: surface.tint,
+                    unlit: surface.unlit,
+                    shade: surface.shade,
+                    ambient_occlusion: surface.ambient_occlusion,
+                    animation: self.surface_animations[kind.0 as usize][i],
+                };
+            }
+        }
+        super::FaceAppearance::default()
     }
 
     /// The combined sheet bytes + dimensions, for GPU upload.
@@ -194,8 +286,7 @@ impl ParticlePatches {
 /// flecks read as its own texture; falls back to the whole sheet if nothing scanned
 /// opaque. Shared by `crate::entity::ParticleSystem`'s model spawn paths.
 ///
-/// The patch is inset half a sheet texel per side: the sheet stacks every kind's
-/// texture vertically, and a UV landing exactly on a stack boundary resolves
+/// The patch is inset half a sheet texel per side: a UV exactly on a packing boundary resolves
 /// (nearest filtering) to the NEIGHBOURING kind's texels.
 pub fn particle_patch(kind: BlockModelKind, r: f32) -> ([f32; 2], [f32; 2]) {
     let p = &PATCHES[kind.0 as usize];
@@ -247,6 +338,8 @@ mod tests {
             w: 4,
             h: 4,
             xform: Vec::new(),
+            animations: Vec::new(),
+            surface_animations: Vec::new(),
         };
         let [u0, v0, u1, v1] = at.inset_face_uv([0.0, 0.0, 1.0, 1.0]);
         let half = 0.5 / 4.0;

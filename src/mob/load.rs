@@ -85,6 +85,8 @@ struct RawMobDef {
     /// with (JSON bool/int/float/string → the typed [`MobTagValue`]). Must
     /// carry a positive numeric `petramond:health` — health IS a tag.
     tags: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    data: serde_json::Map<String, serde_json::Value>,
     walk_speed: f64,
     jump_speed: f64,
     turn_rate: f64,
@@ -101,6 +103,10 @@ struct RawMobDef {
     /// Water behavior (see [`Buoyancy`]); omitted = `swim`.
     #[serde(default)]
     buoyancy: Buoyancy,
+    #[serde(default = "default_gravity_scale")]
+    gravity_scale: f32,
+    #[serde(default)]
+    air_control: bool,
     /// Body collision role (see [`MobCollision`]); omitted = `soft`.
     #[serde(default)]
     collision: MobCollision,
@@ -120,8 +126,14 @@ struct RawMobDef {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawSpawn {
+    #[serde(default)]
+    space: Option<Vec<Block>>,
     /// Biome names (see [`Biome::from_name`]). Empty = never natural-spawned.
     biomes: Vec<String>,
+    #[serde(default)]
+    underground: Vec<String>,
+    #[serde(default)]
+    y: Option<[i32; 2]>,
     /// Optional species-wide rarity in `(0, 1]`; omitted = 1 (as common as
     /// any other species admitting the site). See [`SpawnRule::chance`].
     #[serde(default)]
@@ -261,6 +273,7 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
     let mut extensions: Vec<(usize, RawBrainExtension)> = Vec::new();
     let mut parse_li = 0usize;
     let mut keys = HashSet::new();
+    let patches = std::cell::RefCell::new(Vec::new());
     let catalog = petramond_world::registry::load_catalog(
         &texts,
         |text| {
@@ -271,7 +284,12 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
                 let ext: Vec<RawBrainExtension> = serde_json::from_value(ext.clone())?;
                 extensions.extend(ext.into_iter().map(|e| (li, e)));
             }
-            petramond_world::registry::parse_rows_of::<RawMobDef>(&file, "mobs", "mob")
+            petramond_world::registry::parse_rows_with_patches_of::<RawMobDef>(
+                &file,
+                "mobs",
+                "mob",
+                &mut patches.borrow_mut(),
+            )
         },
         |r| &r.mob,
         ENGINE_MOB_NAMES,
@@ -284,10 +302,16 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
                 ));
             }
             let name = r.mob.clone();
-            convert(r, Mob(id as u8), names).map_err(|e| format!("mob '{name}': {e}"))
+            convert(r, Mob(id as u8), names, &patches.borrow())
+                .map_err(|e| format!("mob '{name}': {e}"))
         },
     )?;
     let defs = catalog.rows();
+    for patch in patches.borrow().iter() {
+        if catalog.id(&patch.patch).is_none() {
+            return Err(format!("data patch targets unknown mob '{}'", patch.patch));
+        }
+    }
 
     // Brain validation needs the leaked `&'static MobDef` rows (node factories read
     // row data), so it runs last: every factory must accept its params NOW, failing
@@ -331,8 +355,16 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
     })
 }
 
-fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> {
+fn convert(
+    r: RawMobDef,
+    mob: Mob,
+    names: &NameTable,
+    patches: &[petramond_world::registry::RawDataPatch],
+) -> Result<MobDef, String> {
     r.size.validate()?;
+    if !(0.0..=4.0).contains(&r.gravity_scale) {
+        return Err("gravity_scale must be finite and inside [0, 4]".into());
+    }
     let cohesion = match r.wander.cohesion {
         Some(c) => Some(WanderCohesion {
             companion: names
@@ -376,8 +408,17 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         seats.push(seat);
     }
 
+    let data = petramond_world::registry::compile_data_map(&r.mob, &r.data, patches)?;
+    let loot = petramond_world::registry::engine_data::<String>(data, "petramond:loot")?;
+    if let Some(key) = &loot {
+        if !petramond_world::loot::catalog().contains(key) {
+            return Err(format!("unknown reward table '{key}'"));
+        }
+    }
     Ok(MobDef {
         mob,
+        data,
+        loot,
         name: Box::leak(r.mob.into_boxed_str()),
         key: Box::leak(r.key.into_boxed_str()),
         model: Box::leak(r.model.into_boxed_str()),
@@ -405,6 +446,8 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         },
         avoid_water: r.avoid_water,
         buoyancy: r.buoyancy,
+        gravity_scale: r.gravity_scale,
+        air_control: r.air_control,
         collision: r.collision,
         shear: r.shear,
         damage_feedback: convert_damage_feedback(r.damage_feedback)?,
@@ -416,6 +459,10 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
 
 fn default_flash_duration() -> f64 {
     DEFAULT_DAMAGE_FLASH_SECS as f64
+}
+
+fn default_gravity_scale() -> f32 {
+    1.0
 }
 
 fn default_knockback_scale() -> f64 {
@@ -535,6 +582,32 @@ fn convert_spawn_tags(
 /// biomes, values in `(0, 1]`, and aligned index-for-index with the biome
 /// list — see [`SpawnRule::chances`]), and the ground block list.
 fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
+    if let Some([lo, hi]) = raw.y {
+        use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
+        if lo <= WORLD_MIN_Y || hi >= WORLD_MAX_Y || lo > hi || hi - lo > 128 {
+            return Err("spawn.y must be an increasing interval of at most 129 feet heights inside the world".into());
+        }
+    }
+    let underground = raw
+        .underground
+        .iter()
+        .map(|name| {
+            petramond_worldgen::data::underground::id_by_name(name)
+                .ok_or_else(|| format!("unknown underground spawn biome '{name}'"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if !underground.is_empty() && raw.y.is_none() {
+        return Err("underground spawn territory requires a bounded spawn.y search".into());
+    }
+    let space = match raw.space {
+        Some(space) => {
+            if raw.y.is_none() || space.is_empty() || space.len() > 8 {
+                return Err("spawn.space needs 1–8 blocks and a bounded spawn.y search".into());
+            }
+            Some(&*Box::leak(space.into_boxed_slice()))
+        }
+        None => None,
+    };
     let biomes = resolve_biomes(raw.biomes)?;
     let chance = raw.chance.unwrap_or(1.0);
     if !chance.is_finite() || chance <= 0.0 || chance > 1.0 {
@@ -563,6 +636,9 @@ fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
     };
     Ok(SpawnRule {
         biomes,
+        underground: Box::leak(underground.into_boxed_slice()),
+        y: raw.y,
+        space,
         chance: chance as f32,
         chances,
         ground: Box::leak(raw.ground.into_boxed_slice()),

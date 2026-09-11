@@ -1,7 +1,28 @@
 {
-  "tables": {
-    "monsters:hushjaw": [
-      { "item": "monsters:hushjaw_tooth", "min": 1, "max": 2 }
-    ]
-  }
+  "loot_tables": [
+    {
+      "loot": "monsters:hushjaw_drops",
+      "pools": [
+        {
+          "rolls": [
+            1,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 10000,
+              "result": {
+                "type": "item",
+                "item": "monsters:hushjaw_tooth",
+                "count": [
+                  1,
+                  2
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }

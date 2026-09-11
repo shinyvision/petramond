@@ -42,6 +42,32 @@ impl ShapeRender for DoorFamily {
 }
 
 impl ShapePlacement for DoorFamily {
+    fn authored_plan(
+        &self,
+        block: Block,
+        inputs: &mut crate::world::placement::authored::Inputs<'_>,
+    ) -> Result<PlacementPlan, String> {
+        let facing = inputs.facing()?;
+        let open = match inputs.property("open", "false") {
+            "true" => true,
+            "false" => false,
+            value => return Err(format!("unknown door open value '{value}'")),
+        };
+        Ok(PlacementPlan {
+            anchor: inputs.anchor,
+            writes: [false, true]
+                .into_iter()
+                .map(|top| {
+                    PlacementPlan::whole(
+                        inputs.anchor + IVec3::Y * i32::from(top),
+                        block,
+                        crate::door::DoorState { facing, open, top }.to_cell(),
+                    )
+                })
+                .collect(),
+        })
+    }
+
     fn placement_plan(
         &self,
         w: &WorldData,

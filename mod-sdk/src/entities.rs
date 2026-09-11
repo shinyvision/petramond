@@ -16,6 +16,23 @@ pub fn mob_facing_xz(yaw: f32) -> [f32; 2] {
 }
 
 host_fn! {
+    /// Nearest live item entities in a sphere, by distance then stable id.
+    /// `radius` is in `0..=64`, `limit` at most [`crate::SIM_BATCH_MAX`].
+    /// Terrain-frozen entities are omitted; zero limit returns nothing.
+    pub fn item_entities_in_radius(pos: [f32; 3], radius: f32, limit: u32) -> Vec<mod_api::ItemEntityData>
+        => ItemEntitiesInRadius { pos, radius, limit } => ItemEntities
+}
+
+host_fn! {
+    /// Add velocity deltas (m/s) to item entities in request order, at most
+    /// [`crate::SIM_BATCH_MAX`] entries. Returns one success flag per entry.
+    /// Missing, lodged, pickup-reserved, terrain-frozen and unsafe-speed
+    /// entries are refused. Non-finite input rejects the whole batch.
+    pub fn item_impulses(impulses: Vec<(u64, [f32; 3])>) -> Vec<bool>
+        => ItemImpulses { impulses } => Bools
+}
+
+host_fn! {
     /// Spawn a mob by species key at `pos` (feet) facing `yaw`, unconditionally
     /// (site fitness is your business — see [`spawn_mob_checked`]). Returns the
     /// newborn's STABLE id — tag/configure it immediately through the ordinary
@@ -189,6 +206,13 @@ host_fn! {
     /// call composes all three parts at once.
     pub fn mob_drive(mob_id: u64, vel: [f32; 2], yaw: Option<f32>) -> bool
         => MobDrive { mob_id, horizontal: Some(vel), vertical: None, yaw, while_walking: false } => Bool
+}
+
+host_fn! {
+    /// Drive all velocity axes in one intent. A later drive replaces the whole
+    /// intent, so compose horizontal and vertical motion before submitting it.
+    pub fn mob_drive_velocity(mob_id: u64, vel: [f32; 3], yaw: Option<f32>) -> bool
+        => MobDrive { mob_id, horizontal: Some([vel[0], vel[2]]), vertical: Some(vel[1]), yaw, while_walking: false } => Bool
 }
 
 host_fn! {

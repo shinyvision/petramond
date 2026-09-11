@@ -26,6 +26,27 @@ fn shipped_mobs_json_loads_fully() {
 }
 
 #[test]
+fn consumer_data_patches_override_only_their_named_entry() {
+    let first = r#"{"mobs":[{"patch":"petramond:owl","data":{"fixture:diet":{"restore":2},"fixture:other":true}}]}"#;
+    let second = r#"{"mobs":[{"patch":"petramond:owl","data":{"fixture:diet":{"restore":5}}}]}"#;
+    let loaded = parse_layers(&[&base(), first, second]).unwrap();
+    let row = loaded.defs.iter().find(|row| row.mob == Mob::Owl).unwrap();
+    assert_eq!(row.data_value("fixture:diet"), Some(r#"{"restore":5}"#));
+    assert_eq!(row.data_value("fixture:other"), Some("true"));
+    assert_eq!(row.data_value("fixture:missing"), None);
+    assert!(parse_layers(&[
+        &base(),
+        r#"{"mobs":[{"patch":"fixture:absent","data":{"fixture:diet":{}}}]}"#
+    ])
+    .is_err());
+    assert!(parse_layers(&[
+        &base(),
+        r#"{"mobs":[{"patch":"petramond:owl","data":{"bare":{}}}]}"#
+    ])
+    .is_err());
+}
+
+#[test]
 fn loader_rejects_geometry_that_is_non_finite_or_unbounded() {
     let invalid = |edit: fn(&mut serde_json::Value)| {
         let mut value: serde_json::Value = serde_json::from_str(&base()).unwrap();

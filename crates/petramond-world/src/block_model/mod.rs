@@ -14,7 +14,7 @@
 //! 1. [`BlockModel`] — the CACHED parse: cube geometry (model space) + the decoded
 //!    texture. This is the expensive step (`serde_json` + base64 + PNG decode), compiled
 //!    once into a `.llblock` (see [`crate::asset_cache`]) and reused.
-//! 2. `ModelAtlas` — all kinds' textures stacked into one sheet, with a per-kind UV
+//! 2. `ModelAtlas` — all kinds' textures packed into one sheet, with a per-kind UV
 //!    transform, built once from the cached models. Shared by the off-thread mesher (UV
 //!    remap) and the renderer (GPU upload).
 //! 3. [`ModelInstance`] — the runtime bake derived from the cached model + its data row:
@@ -41,6 +41,7 @@ mod defs;
 mod display;
 mod geometry;
 pub mod instance;
+mod material;
 mod placement;
 mod query;
 #[cfg(test)]
@@ -51,6 +52,7 @@ pub use compiled::*;
 pub use defs::*;
 pub use display::*;
 pub use instance::*;
+pub use material::{FaceAppearance, FrameStrip, SurfaceMaterial, TextureAnimation};
 pub use placement::{
     base_from_cell, base_from_centered_anchor, base_from_front_left_anchor,
     oriented_footprint_cells, placement_transform,

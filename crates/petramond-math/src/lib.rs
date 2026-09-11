@@ -7,5 +7,7 @@
 pub mod face;
 pub mod facing;
 pub mod math;
+pub mod noise;
 pub mod pose;
+pub mod random;
 pub mod wire_enum;

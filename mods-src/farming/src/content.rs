@@ -45,113 +45,8 @@ struct ExtraDrop {
     count: (u64, u64),
 }
 
-/// What a grazing bite costs the plant it lands on.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Eaten {
-    /// The plant is consumed and the cell clears (grass under a sheep).
-    Clear,
-    /// A cultivated crop is knocked back one growth stage. A plant already at
-    /// stage zero has nothing left to lose and survives the bite — the raider
-    /// still gets fed, so it never parks on one seedling forever.
-    Regress,
-    /// The stand is nibbled and left standing (wild forage, which is endless
-    /// on purpose — only what a player planted is worth losing).
-    Keep,
-}
-
-/// One food GROUP on a grazer's row: the plants, and what a bite costs them.
-///
-/// Groups are ordered by PREFERENCE — a hungry animal takes the first group
-/// with a reachable plant in range, which is the whole reason a rabbit ruins
-/// the field before it bothers with the wild patch beside it.
-struct FoodSpec {
-    blocks: &'static [&'static str],
-    eaten: Eaten,
-}
-
-/// One grazing species row: the whole husbandry system (saturation, love
-/// mode, courtship, offspring, growth — see [`crate::husbandry`] and
-/// [`crate::growth`]) drives off these. Adding one is ONE row here plus
-/// `farming:husbandry_goal` on its brain — never a species branch in the
-/// logic.
-struct HusbandrySpec {
-    /// The ADULT species key (`mobs.json` row key) — what breeds, and what a
-    /// grown juvenile becomes.
-    mob: &'static str,
-    /// The JUVENILE species a birth spawns (this pack's own row); it carries
-    /// `farming:baby` and grows into `mob` when the tag is removed. `None`
-    /// marks a WILD species: it grazes and gets hungry like any other, but
-    /// never drinks from a trough and never pairs. Husbandry is what a
-    /// pasture earns, and a wild animal is not kept.
-    offspring: Option<&'static str>,
-    /// What this species eats, most-wanted group first.
-    food: &'static [FoodSpec],
-    /// Saturation restored per eaten plant (balance data).
-    restore: i64,
-}
-
-const HUSBANDRY: &[HusbandrySpec] = &[
-    HusbandrySpec {
-        mob: "petramond:sheep",
-        offspring: Some("farming:lamb"),
-        food: &[FoodSpec {
-            blocks: &["petramond:short_grass"],
-            eaten: Eaten::Clear,
-        }],
-        restore: 3,
-    },
-    // The rabbit is a PEST, not livestock: it wants what a player planted and
-    // settles for the wild stand only when the field is out of reach.
-    HusbandrySpec {
-        mob: "farming:rabbit",
-        offspring: None,
-        food: &[
-            FoodSpec {
-                blocks: &[
-                    "farming:carrots_0",
-                    "farming:carrots_1",
-                    "farming:carrots_2",
-                    "farming:carrots_3",
-                ],
-                eaten: Eaten::Regress,
-            },
-            FoodSpec {
-                blocks: &["farming:wild_carrots"],
-                eaten: Eaten::Keep,
-            },
-        ],
-        restore: 4,
-    },
-];
-
-/// One food group, resolved from its [`FoodSpec`] row.
-pub struct FoodGroup {
-    pub blocks: Vec<BlockId>,
-    pub eaten: Eaten,
-}
-
-/// One grazing species, resolved from its [`HusbandrySpec`] row.
-pub struct HusbandryDef {
-    pub key: &'static str,
-    pub kind: MobId,
-    /// The juvenile this species births, or `None` for a wild grazer.
-    pub offspring: Option<(&'static str, MobId)>,
-    /// Food groups in preference order.
-    pub food: Vec<FoodGroup>,
-    pub restore: i64,
-}
-
-impl HusbandryDef {
-    /// Whether this species is KEPT: it breeds, and a trough serves it.
-    pub fn kept(&self) -> bool {
-        self.offspring.is_some()
-    }
-
-    /// The food group `block` belongs to, if this species eats it at all.
-    pub fn food_group(&self, block: BlockId) -> Option<&FoodGroup> {
-        self.food.iter().find(|g| g.blocks.contains(&block))
-    }
-}
+mod husbandry;
+pub use husbandry::{Eaten, HusbandryDef};
 
 const CROPS: &[CropSpec] = &[
     CropSpec {
@@ -298,7 +193,7 @@ pub struct Content {
     pub wooden_bucket: ItemId,
     /// Water-filled wooden bucket.
     pub water_bucket: ItemId,
-    /// The breedable species, one [`HusbandryDef`] per [`HUSBANDRY`] row.
+    /// Species carrying the husbandry consumer-data entry.
     pub husbandry: Vec<HusbandryDef>,
     /// The pack's rabbit — the hop gait's species (see [`crate::hop`]).
     pub rabbit: MobId,
@@ -325,41 +220,7 @@ impl Content {
             sapling_finals.push((block(&format!("petramond:{species}_sapling_1"))?, last));
             sapling_finals.push((last, last));
         }
-        let mut husbandry = Vec::with_capacity(HUSBANDRY.len());
-        for spec in HUSBANDRY {
-            let mut food = Vec::with_capacity(spec.food.len());
-            for group in spec.food {
-                let mut blocks = Vec::with_capacity(group.blocks.len());
-                for name in group.blocks {
-                    blocks.push(block(name)?);
-                }
-                food.push(FoodGroup {
-                    blocks,
-                    eaten: group.eaten,
-                });
-            }
-            let Some(kind) = resolve_mob(spec.mob) else {
-                log(&format!("farming: unknown grazing species '{}'", spec.mob));
-                return None;
-            };
-            let offspring = match spec.offspring {
-                None => None,
-                Some(key) => match resolve_mob(key) {
-                    Some(kind) => Some((key, kind)),
-                    None => {
-                        log(&format!("farming: unknown offspring species '{key}'"));
-                        return None;
-                    }
-                },
-            };
-            husbandry.push(HusbandryDef {
-                key: spec.mob,
-                kind,
-                offspring,
-                food,
-                restore: spec.restore,
-            });
-        }
+        let husbandry = husbandry::resolve();
         let mut crops = Vec::with_capacity(CROPS.len());
         for spec in CROPS {
             let mut stages = [BlockId::AIR; 4];

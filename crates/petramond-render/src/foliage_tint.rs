@@ -82,6 +82,11 @@ pub fn face_material(tile: Tile) -> FaceMaterial {
             overlay_tile: None,
             tint: default_foliage_color(),
         },
+        Some(TileTint::Fixed(rgb)) => FaceMaterial {
+            base_tile: tile,
+            overlay_tile: None,
+            tint: rgb.map(|c| f32::from(c) / 255.0),
+        },
         _ => FaceMaterial {
             base_tile: tile,
             overlay_tile: None,

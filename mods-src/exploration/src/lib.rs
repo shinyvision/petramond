@@ -1,16 +1,4 @@
-//! Exploration: rare, cathedral-scale mushroom caverns deep underground.
-//!
-//! The mod owns POLICY (where its biome lives, how big its rooms are, what
-//! grows in them). The engine owns PRIMITIVES: a data-driven underground-biome
-//! registry, a positional query for which biome a point is in, coloured block
-//! light, and an additive room term the cave carver sums into its own cavern
-//! threshold. Nothing in the engine knows what a mushroom is.
-//!
-//! The cathedral is DATA — a `chamber` clause on this pack's
-//! `underground_biomes.json` row — precisely so the engine's carvers extend
-//! into it. A room the pack STAMPED after the carve was a boolean union
-//! against finished geometry: a tunnel reaching its wall ended at a flat face
-//! instead of opening into the room.
+//! The mushroom cavern: an underground habitat and its cave flora.
 
 use mod_sdk::*;
 
@@ -30,10 +18,10 @@ const GEN_CAVERN: u32 = 1;
 /// mod never re-implements the engine's selection noise.
 pub const BIOME_KEY: &str = "exploration:mushroom_cavern";
 
-/// Top of the depth band that row declares (`"y": [-64, -16]`). Nothing this
+/// Top of the depth band that row declares (`"y": [-64, -8]`). Nothing this
 /// pack places can be rooted above it, so worldgen derives its altitude gate
 /// from here — retuning the band moves this one value with the JSON.
-pub const BIOME_TOP_Y: i32 = -16;
+pub const BIOME_TOP_Y: i32 = 96;
 
 #[derive(Default)]
 struct Exploration {
@@ -43,15 +31,12 @@ struct Exploration {
 
 impl Mod for Exploration {
     fn init(&mut self) {
-        // The client side runs presentation only — the spore haze — and needs
-        // none of the worldgen content, so it is resolved before the content
-        // gate and survives a pack whose blocks failed to resolve.
         if runtime_side() == RuntimeSide::Client {
             self.spores.init();
             return;
         }
         let Some(content) = Content::resolve() else {
-            log("exploration: pack content failed to resolve; the mod stays idle");
+            log("exploration: mushroom content failed to resolve; mushroom decoration disabled");
             return;
         };
         self.content = Some(content);
@@ -61,13 +46,14 @@ impl Mod for Exploration {
         register_worldgen_feature(WorldgenStage::Trees, GEN_CAVERN, cavern::GEN_FILTER);
     }
 
-    fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> Vec<GenWrite> {
-        let Some(content) = &self.content else {
-            return Vec::new();
-        };
+    fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> GenOutput {
         match feature_id {
-            GEN_CAVERN => cavern::generate(content, ctx),
-            _ => Vec::new(),
+            GEN_CAVERN => match self.content.as_ref().map(|c| cavern::generate(c, ctx)) {
+                Some(Ok(writes)) => writes.into(),
+                Some(Err(cavern::Deferred)) => GenOutput::deferred(),
+                None => GenOutput::default(),
+            },
+            _ => GenOutput::default(),
         }
     }
 

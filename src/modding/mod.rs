@@ -22,6 +22,7 @@ pub mod client;
 mod convert;
 pub mod gen;
 mod host;
+pub(crate) use host::memo::{clear_pending_key, park, sweep_parked, take_pending_key};
 mod instance;
 pub use petramond_world::pack_manifest as manifest;
 pub mod modset;
@@ -438,7 +439,7 @@ impl ModHost {
         // diverge and desync (the per-cell purity contract makes that a bug, but
         // the ordered dispatch is the belt-and-braces).
         let mut groups: std::collections::BTreeMap<
-            (String, u8),
+            (String, u16),
             Vec<super::world::CustomBakeCell>,
         > = std::collections::BTreeMap::new();
         for cell in cells {
@@ -492,7 +493,7 @@ impl ModHost {
         &self,
         ctx: &mut SimCtx,
         shape_key: &str,
-        shape_kind: u8,
+        shape_kind: u16,
         input: mod_api::CellInput,
     ) -> Option<Vec<petramond_world::block::Aabb>> {
         let mod_id = petramond_world::registry::namespace(shape_key)?;
@@ -527,7 +528,7 @@ impl ModHost {
         &self,
         ctx: &mut SimCtx,
         shape_key: &str,
-        shape_kind: u8,
+        shape_kind: u16,
         block_id: u16,
         inputs: mod_api::PlaceInputsView,
     ) -> Option<mod_api::ShapePlacementResult> {

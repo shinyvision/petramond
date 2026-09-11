@@ -12,6 +12,7 @@ mod sampling;
 pub(crate) use sampling::SampledPipeline;
 mod entity_models;
 mod environment;
+mod flipbook;
 #[cfg(test)]
 mod gpu_validation;
 mod grade;
@@ -196,6 +197,7 @@ pub(super) fn create_pipeline_resources(
     let block_source = lanes::declarations()
         + &transition::declarations()
         + &variation::declarations()
+        + &flipbook::declarations()
         + concat!(
             include_str!("../shaders/cel.wgsl"),
             include_str!("../shaders/atmosphere.wgsl"),

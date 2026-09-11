@@ -52,6 +52,31 @@ impl ShapeRender for ModelFamily {
 }
 
 impl ShapePlacement for ModelFamily {
+    fn authored_plan(
+        &self,
+        block: Block,
+        inputs: &mut crate::world::placement::authored::Inputs<'_>,
+    ) -> Result<PlacementPlan, String> {
+        let kind = block
+            .model_kind()
+            .expect("model family carries a model kind");
+        let facing = inputs.facing()?;
+        let base = crate::block_model::base_from_cell(inputs.anchor, kind, [0, 0, 0], facing);
+        Ok(PlacementPlan {
+            anchor: inputs.anchor,
+            writes: crate::block_model::oriented_footprint_cells(base, kind, facing)
+                .into_iter()
+                .map(|(cell, offset)| {
+                    PlacementPlan::whole(
+                        cell,
+                        block,
+                        crate::block_model::ModelCellState { offset, facing }.to_cell(),
+                    )
+                })
+                .collect(),
+        })
+    }
+
     fn placement_plan(
         &self,
         w: &WorldData,

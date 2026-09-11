@@ -31,10 +31,45 @@ pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> H
         HostCall::UndergroundBiomesInBox { lo, hi } => HostRet::UndergroundBiomes(
             petramond_worldgen::underground_biomes_in_box(data.world_seed(), lo, hi),
         ),
+        HostCall::TerrainBlocksAt { positions } => {
+            match batch_guard("TerrainBlocksAt position", positions.len()) {
+                Some(err) => err,
+                None => HostRet::BlockList(
+                    petramond_worldgen::terrain_blocks_at(data.world_seed(), &positions)
+                        .into_iter()
+                        .map(mod_api::BlockId)
+                        .collect(),
+                ),
+            }
+        }
+        HostCall::TerrainSectionAt { section } => HostRet::SectionBlocks(
+            petramond_worldgen::terrain_section_at(data.world_seed(), section)
+                .into_iter()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+        ),
+        HostCall::TerrainHeightsAt { columns } => {
+            match batch_guard("TerrainHeightsAt column", columns.len()) {
+                Some(err) => err,
+                None => HostRet::TerrainHeights(petramond_worldgen::terrain_heights_at(
+                    data.world_seed(),
+                    &columns,
+                )),
+            }
+        }
         HostCall::TerrainSolidAt { positions } => {
             match batch_guard("TerrainSolidAt position", positions.len()) {
                 Some(err) => err,
                 None => HostRet::TerrainSolid(petramond_worldgen::terrain_solid_at(
+                    data.world_seed(),
+                    &positions,
+                )),
+            }
+        }
+        HostCall::TerrainSpaceAt { positions } => {
+            match batch_guard("TerrainSpaceAt position", positions.len()) {
+                Some(err) => err,
+                None => HostRet::TerrainSpaces(petramond_worldgen::terrain_space_at(
                     data.world_seed(),
                     &positions,
                 )),

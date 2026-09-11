@@ -83,6 +83,15 @@ impl ShapeRender for LadderFamily {
 }
 
 impl ShapePlacement for LadderFamily {
+    fn authored_plan(
+        &self,
+        block: Block,
+        inputs: &mut crate::world::placement::authored::Inputs<'_>,
+    ) -> Result<PlacementPlan, String> {
+        let row = block.wall_panel_row(inputs.facing()?);
+        Ok(PlacementPlan::single(inputs.anchor, row, ShapeState::NONE))
+    }
+
     fn placement_plan(
         &self,
         w: &WorldData,

@@ -208,6 +208,82 @@ pub struct Feature {
     pub wet: Vec<[i32; 3]>,
 }
 
+/// A settled cell's key in the shared memo (the host scopes it to this mod
+/// and the world seed).
+pub fn memo_key(ours: u8, (lx, ly, lz): (i32, i32, i32)) -> Vec<u8> {
+    let mut w = ByteWriter::with_capacity(14);
+    w.raw(&[b'c', ours]);
+    w.i32x3([lx, ly, lz]);
+    w.finish()
+}
+
+impl Feature {
+    /// The memo value of a settled cell: `None` = no cascade here.
+    pub fn encode(feature: Option<&Feature>) -> Vec<u8> {
+        let Some(f) = feature else {
+            return vec![0];
+        };
+        let mut w = ByteWriter::with_capacity(
+            13 + 13 * f.writes.len() + 12 * (f.reserves.len() + f.suppressed.len()),
+        );
+        w.raw(&[1]);
+        w.u32(f.writes.len() as u32);
+        for &(p, kind) in &f.writes {
+            w.i32x3(p);
+            w.raw(&[match kind {
+                Kind::Water => 0,
+                Kind::Silt => 1,
+                Kind::Air => 2,
+            }]);
+        }
+        w.u32(f.reserves.len() as u32);
+        for &p in &f.reserves {
+            w.i32x3(p);
+        }
+        w.u32(f.suppressed.len() as u32);
+        for &p in &f.suppressed {
+            w.i32x3(p);
+        }
+        w.finish()
+    }
+
+    /// Outer `None` = malformed (recompute); inner `None` = no cascade.
+    pub fn decode(bytes: &[u8]) -> Option<Option<Feature>> {
+        let mut r = ByteReader::new(bytes);
+        match r.take(1)? {
+            [0] => return Some(None),
+            [1] => {}
+            _ => return None,
+        }
+        let mut writes = Vec::new();
+        for _ in 0..r.u32()? {
+            let p = r.i32x3()?;
+            let kind = match r.take(1)? {
+                [0] => Kind::Water,
+                [1] => Kind::Silt,
+                [2] => Kind::Air,
+                _ => return None,
+            };
+            writes.push((p, kind));
+        }
+        let mut reserves = Vec::new();
+        for _ in 0..r.u32()? {
+            reserves.push(r.i32x3()?);
+        }
+        let mut suppressed = Vec::new();
+        for _ in 0..r.u32()? {
+            suppressed.push(r.i32x3()?);
+        }
+        Some(Some(Feature {
+            writes,
+            reserves,
+            suppressed,
+            #[cfg(test)]
+            wet: Vec::new(),
+        }))
+    }
+}
+
 /// A rolled candidate cell. The roll decides only THAT this cell tries; the
 /// terrain decides everything else.
 pub struct Cell {

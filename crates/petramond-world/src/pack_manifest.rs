@@ -193,7 +193,7 @@ type RowFilter = (&'static str, &'static str);
 /// A catalog's own check over its raw file text, beyond the shared row rules.
 type ExtraValidate = fn(&str) -> Result<(), String>;
 
-const CATALOGS: [CatalogSpec; 12] = {
+const CATALOGS: [CatalogSpec; 15] = {
     const fn plain(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
         CatalogSpec {
             rel,
@@ -223,6 +223,9 @@ const CATALOGS: [CatalogSpec; 12] = {
         // Custom shape declarations (WASM-baked geometry).
         plain("shapes.json", "shapes", "key"),
         plain("features.json", "features", "feature"),
+        plain("excavations.json", "excavations", "excavation"),
+        plain("structures.json", "structures", "structure"),
+        plain("loot_tables.json", "loot_tables", "loot"),
         plain(
             "underground_biomes.json",
             "underground_biomes",

@@ -17,6 +17,7 @@ pub mod tree;
 pub mod vegetation;
 
 mod field;
+pub mod placement;
 mod plan;
 mod sink;
 mod tree_select;

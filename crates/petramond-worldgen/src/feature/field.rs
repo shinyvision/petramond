@@ -133,11 +133,7 @@ fn cached_tile<'a>(
         let (tx0, tz0) = (tcx * T, tcz * T);
         let bulk = surface.region(tx0, tz0, T as usize, T as usize);
         let mut adj = [0i32; 256];
-        for (i, slot) in adj.iter_mut().enumerate() {
-            let wx = tx0 + (i % T as usize) as i32;
-            let wz = tz0 + (i / T as usize) as i32;
-            *slot = caves.feature_surface_after_caves(wx, wz, bulk.surf[i]);
-        }
+        adj.copy_from_slice(&caves.feature_surfaces_after_caves(tx0, tz0, &bulk.surf));
         tile.seed = seed;
         tile.tcx = tcx;
         tile.tcz = tcz;

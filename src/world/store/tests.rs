@@ -195,10 +195,16 @@ fn mesh_column_index_tracks_multiple_vertical_meshes() {
 
 #[test]
 fn virtual_full_opaque_summary_blocks_collision_without_raw_voxels() {
-    let seed = 0x51EED;
-    let generator = ChunkGenerator::new(seed);
-    let mut world = World::new(seed, 0);
-    install_column_summary(&mut world, &generator, ChunkPos::new(0, 0));
+    use petramond_world::{section::SectionSummary, world::WorldData};
+    let mut world = World::new(0, 0);
+    let pos = ChunkPos::new(0, 0);
+    world.ensure_column(pos);
+    let mut summaries = vec![SectionSummary::Unknown; WorldData::column_section_range().count()];
+    summaries[0] = SectionSummary::FullOpaque;
+    world
+        .data
+        .column_summaries
+        .insert(pos, summaries.into_boxed_slice());
 
     let y = SECTION_MIN_CY * SECTION_SIZE as i32;
     assert_eq!(

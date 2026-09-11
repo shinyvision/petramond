@@ -1,10 +1,52 @@
 {
-  "tables": {
-    "petramond:sheep": [
-      { "item": "kitchen:raw_mutton", "min": 1, "max": 2 }
-    ],
-    "farming:rabbit": [
-      { "item": "kitchen:raw_rabbit", "min": 1, "max": 1 }
-    ]
-  }
+  "loot_tables": [
+    {
+      "loot": "kitchen:sheep_drops",
+      "pools": [
+        {
+          "rolls": [
+            1,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 10000,
+              "result": {
+                "type": "item",
+                "item": "kitchen:raw_mutton",
+                "count": [
+                  1,
+                  2
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "loot": "kitchen:rabbit_drops",
+      "pools": [
+        {
+          "rolls": [
+            1,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 10000,
+              "result": {
+                "type": "item",
+                "item": "kitchen:raw_rabbit",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }

@@ -47,6 +47,14 @@ pub const KV_MAX_VALUE_BYTES: usize = 64 * 1024;
 /// existing key always pass; only a NEW key beyond the cap errors.
 pub const CELL_KV_MAX_KEYS: usize = 16;
 
+/// Key cap for the shared derived-fact memo (`MemoGet`/`MemoPut`). A key is
+/// authored by the mod, so exceeding it is a bug and errors.
+pub const MEMO_MAX_KEY_BYTES: usize = 256;
+/// Value cap for one memo entry. Sized for a whole positional decision — a
+/// feature's write set, a candidate list — rather than a KV row; an oversized
+/// value is refused (`false`), never an error, since its size is data.
+pub const MEMO_MAX_VALUE_BYTES: usize = 256 * 1024;
+
 /// A mod event's payload bound (`EmitEvent`). Same order as a KV value: the
 /// post queue holds these until the next drain point, and an event is a
 /// notification, not a transport.

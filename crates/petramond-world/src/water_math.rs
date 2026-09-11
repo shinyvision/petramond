@@ -68,7 +68,7 @@ pub fn fluid_height(meta: u8, above: Block) -> f32 {
 /// mesher, buoyancy/contact probes, and the underwater-camera test share this
 /// one rule.
 pub fn fills_cell(meta: u8, above: Block) -> bool {
-    above == Block::Water || is_falling(meta)
+    above.fluid() == Some(Block::Water) || is_falling(meta)
 }
 
 /// Whether this water meta is a STILL SOURCE — exposed for the mesher's flow
@@ -114,7 +114,7 @@ where
     for d in CARDINALS {
         let (nx, nz) = (wx + d.x, wz + d.z);
         let nb = block_at(nx, wy, nz);
-        let nh = if nb == Block::Water {
+        let nh = if nb.fluid() == Some(Block::Water) {
             if i_am_still && still_at(nx, wy, nz) {
                 continue; // still source ↔ still source: no flow between them
             }

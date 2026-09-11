@@ -4,6 +4,7 @@ use petramond_world::chunk::SectionPos;
 use petramond_world::section::Section;
 
 mod poll;
+mod priorities;
 mod requests;
 mod settle;
 mod shape;

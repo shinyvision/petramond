@@ -11,142 +11,226 @@
 //! Cost comes from bounding rather than evaluating. Trilinear values are convex
 //! combinations of the eight cell corners, so a lattice cell's field WINDOW is
 //! its corner min/max, and the table answers which rows can claim that window at
-//! that depth. The answer is then memoized per world-anchored [`BLOCK`]³ cube:
-//! query boxes from neighbouring sections overlap heavily, and a cube's set is a
-//! pure function of `(seed, cube)`.
+//! that depth. Leaves are world-anchored [`BLOCK`]³ cubes; they are computed a
+//! whole [`GRID`]³ of them at a time and memoized per grid, because a query box
+//! from a section reads a few hundred leaves that neighbouring sections' boxes
+//! read again — a dense grid answers each with one memory read where a
+//! hierarchy of separately locked cubes paid a lock per node.
 
-use std::sync::Mutex;
+use std::cell::RefCell;
+use std::sync::Arc;
 
-use super::{CaveField, Fields, LATTICE_STEP};
-use crate::data::underground::IdSet;
+use super::{CaveField, LATTICE_STEP};
+use crate::data::underground::{ClimatePoint, IdSet, UndergroundBiomes};
+use crate::memo::SharedMemo;
 
-/// Memo granularity in world blocks: two lattice cells per axis. Coarser reuses
+/// Leaf granularity in world blocks: two lattice cells per axis. Coarser reuses
 /// better but snaps a query box further outward, and the whole value of the gate
 /// is how tightly it bounds the caller's actual reach.
 const BLOCK: i32 = 2 * LATTICE_STEP;
+/// Leaves per grid axis: 32-block grids keep a first-touch computation short,
+/// so workers needing the same grid at once wait only briefly for it.
+const GRID: i32 = 4;
+const GRID_BLOCKS: i32 = GRID * BLOCK;
+const LEAVES: usize = (GRID * GRID * GRID) as usize;
 
-/// Direct-mapped memo of per-block id sets, shared across worker threads
-/// (values are pure functions of the key, so any thread's computation serves
-/// every other).
-const MEMO_BITS: u32 = 15;
-
-#[derive(Clone, Copy)]
-struct Slot {
-    init: bool,
-    key: Key,
-    ids: IdSet,
-}
-
-/// Everything a block's id set is a function of. The PARTITION TABLE belongs in
-/// here as much as the seed does: the set is a fact about a table's bands, and
-/// the seed alone does not name one — a second table can be interned in the same
-/// process (a test bench, a re-layered pack) and would otherwise read the first
-/// one's answers out of these slots. The table is `&'static`, so its address is
-/// its identity.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Everything a grid's leaf sets are a function of. The PARTITION TABLE belongs
+/// in here as much as the seed does: the set is a fact about a table's bands,
+/// and the seed alone does not name one — a second table can be interned in the
+/// same process (a test bench, a re-layered pack) and would otherwise read the
+/// first one's answers out of these slots. The table is `&'static`, so its
+/// address is its identity.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Key {
     seed: u32,
     table: usize,
     pos: [i32; 3],
 }
 
-static MEMO: std::sync::LazyLock<Box<[Mutex<Slot>]>> = std::sync::LazyLock::new(|| {
-    (0..1usize << MEMO_BITS)
-        .map(|_| {
-            Mutex::new(Slot {
-                init: false,
-                key: Key {
-                    seed: 0,
-                    table: 0,
-                    pos: [0; 3],
-                },
-                ids: IdSet::default(),
-            })
-        })
-        .collect()
-});
+struct Grid {
+    leaves: Box<[IdSet; LEAVES]>,
+    /// The union of every leaf, for a box that covers the whole grid.
+    all: IdSet,
+}
 
-fn slot_idx(k: Key) -> usize {
-    let key = (k.pos[0] as u32 as u64)
-        ^ ((k.pos[2] as u32 as u64) << 21)
-        ^ ((k.pos[1] as u32 as u64) << 42)
-        ^ ((k.seed as u64) << 11)
-        ^ (k.table as u64).wrapping_mul(0x2545_F491_4F6C_DD1D);
-    ((key.wrapping_mul(0x9E37_79B9_7F4A_7C15)) >> (64 - MEMO_BITS)) as usize
+static GRIDS: std::sync::LazyLock<SharedMemo<Key, Arc<Grid>>> =
+    std::sync::LazyLock::new(|| SharedMemo::new(8192));
+
+// A query touches at most eight grids and the next section's query the same
+// ones, so a small per-thread copy fronts the shared slots' locks.
+const LOCAL_ENTRIES: usize = 256;
+type LocalEntry = Option<(Key, Arc<Grid>)>;
+thread_local! {
+    static LOCAL: RefCell<Vec<LocalEntry>> = RefCell::new(vec![None; LOCAL_ENTRIES]);
 }
 
 impl CaveField {
     /// The conservative set of underground biome ids that can own a cell inside
-    /// the inclusive world box `lo..=hi`, snapped outward to the memo grid.
+    /// the inclusive world box `lo..=hi`, snapped outward to the leaf grid.
     pub fn underground_biome_ids_in_box(&self, lo: [i32; 3], hi: [i32; 3]) -> IdSet {
         let mut out = IdSet::default();
-        let s = |v: i32| v.div_euclid(BLOCK);
-        for sy in s(lo[1])..=s(hi[1]) {
-            for sz in s(lo[2])..=s(hi[2]) {
-                for sx in s(lo[0])..=s(hi[0]) {
-                    out.union(&self.block_ids([sx, sy, sz]));
+        super::volumes::claims::include(self, lo, hi, &mut out);
+        let lo = lo.map(|v| v.div_euclid(BLOCK));
+        let hi = hi.map(|v| v.div_euclid(BLOCK));
+        for gy in lo[1].div_euclid(GRID)..=hi[1].div_euclid(GRID) {
+            for gz in lo[2].div_euclid(GRID)..=hi[2].div_euclid(GRID) {
+                for gx in lo[0].div_euclid(GRID)..=hi[0].div_euclid(GRID) {
+                    let grid = self.grid([gx, gy, gz]);
+                    let origin = [gx * GRID, gy * GRID, gz * GRID];
+                    let a: [i32; 3] = std::array::from_fn(|i| (lo[i] - origin[i]).max(0));
+                    let b: [i32; 3] = std::array::from_fn(|i| (hi[i] - origin[i]).min(GRID - 1));
+                    if a == [0; 3] && b == [GRID - 1; 3] {
+                        out.union(&grid.all);
+                        continue;
+                    }
+                    for ly in a[1]..=b[1] {
+                        for lz in a[2]..=b[2] {
+                            for lx in a[0]..=b[0] {
+                                out.union(&grid.leaves[((ly * GRID + lz) * GRID + lx) as usize]);
+                            }
+                        }
+                    }
                 }
             }
         }
         out
     }
 
-    fn block_ids(&self, sp: [i32; 3]) -> IdSet {
+    fn grid(&self, gp: [i32; 3]) -> Arc<Grid> {
         let key = Key {
             seed: self.seed,
             table: std::ptr::from_ref(self.underground) as usize,
-            pos: sp,
+            pos: gp,
         };
-        let mut slot = MEMO[slot_idx(key)]
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if slot.init && slot.key == key {
-            return slot.ids;
+        let hash = (gp[0] as u32 as u64)
+            ^ (gp[1] as u32 as u64).rotate_left(21)
+            ^ (gp[2] as u32 as u64).rotate_left(42)
+            ^ self.seed as u64;
+        let slot = (hash.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 56) as usize;
+        if let Some(hit) = LOCAL.with(|cache| match &cache.borrow()[slot] {
+            Some((saved, grid)) if *saved == key => Some(Arc::clone(grid)),
+            _ => None,
+        }) {
+            return hit;
         }
-        let ids = self.compute_block_ids(sp);
-        *slot = Slot {
-            init: true,
-            key,
-            ids,
-        };
-        ids
+        let grid = GRIDS.get_or_compute_unlocked(key, || Arc::new(self.compute_grid(gp)));
+        LOCAL.with(|cache| cache.borrow_mut()[slot] = Some((key, Arc::clone(&grid))));
+        grid
     }
 
-    fn compute_block_ids(&self, sp: [i32; 3]) -> IdSet {
-        let lo = [sp[0] * BLOCK, sp[1] * BLOCK, sp[2] * BLOCK];
-        let hi = [lo[0] + BLOCK - 1, lo[1] + BLOCK - 1, lo[2] + BLOCK - 1];
-        let lat = self.build_lattice_filtered(
-            lo[0],
-            lo[1],
-            lo[2],
-            hi[0],
-            hi[1],
-            hi[2],
-            Fields {
-                carve: false,
-                interior: false,
-                biome: true,
-            },
-        );
-        let (mx, my, mz) = (lat.nx - 1, lat.ny - 1, lat.nz - 1);
-        let mut out = IdSet::default();
-        for cy in 0..my {
-            let wy_lo = (lat.ly0 + cy as i32) * LATTICE_STEP;
-            let y = (wy_lo.max(lo[1]), (wy_lo + LATTICE_STEP - 1).min(hi[1]));
-            for cz in 0..mz {
-                for cx in 0..mx {
-                    let mut f = (f64::INFINITY, f64::NEG_INFINITY);
-                    for d in 0..8usize {
-                        let v = lat.biome[((cy + (d >> 2 & 1)) * lat.nz + cz + (d >> 1 & 1))
-                            * lat.nx
-                            + cx
-                            + (d & 1)];
-                        f = (f.0.min(v), f.1.max(v));
-                    }
-                    self.underground.ids_in(y, f, &mut out);
+    /// Every leaf of one grid from its shared climate columns: a leaf's nine
+    /// columns are its neighbours' too, so the grid samples `(2·GRID+1)²`
+    /// columns once instead of nine per leaf.
+    fn compute_grid(&self, gp: [i32; 3]) -> Grid {
+        let lo = gp.map(|v| v * GRID_BLOCKS);
+        let n = (2 * GRID + 1) as usize;
+        let columns: Vec<ClimatePoint> = (0..n * n)
+            .map(|i| {
+                self.climate_column(
+                    lo[0] + (i % n) as i32 * LATTICE_STEP,
+                    lo[2] + (i / n) as i32 * LATTICE_STEP,
+                )
+            })
+            .collect();
+        let mut leaves = Box::new([IdSet::default(); LEAVES]);
+        let mut all = IdSet::default();
+        for lz in 0..GRID {
+            for lx in 0..GRID {
+                let nine: [ClimatePoint; 9] = std::array::from_fn(|i| {
+                    columns[(lz * 2 + (i / 3) as i32) as usize * n
+                        + (lx * 2 + (i % 3) as i32) as usize]
+                });
+                for ly in 0..GRID {
+                    let y = lo[1] + ly * BLOCK;
+                    let mut ids = leaf_ids(self.underground, &nine, y);
+                    let start = [lo[0] + lx * BLOCK, y, lo[2] + lz * BLOCK];
+                    self.include_region_biomes(start, start.map(|v| v + BLOCK - 1), &mut ids);
+                    leaves[((ly * GRID + lz) * GRID + lx) as usize] = ids;
+                    all.union(&ids);
                 }
             }
         }
-        out
+        Grid { leaves, all }
+    }
+
+    /// One leaf on its own, the reference the grid must agree with.
+    #[cfg(test)]
+    fn compute_block_ids(&self, sp: [i32; 3]) -> IdSet {
+        let lo = [sp[0] * BLOCK, sp[1] * BLOCK, sp[2] * BLOCK];
+        let columns: [_; 9] = std::array::from_fn(|i| {
+            self.climate_column(
+                lo[0] + (i % 3) as i32 * LATTICE_STEP,
+                lo[2] + (i / 3) as i32 * LATTICE_STEP,
+            )
+        });
+        let mut ids = leaf_ids(self.underground, &columns, lo[1]);
+        self.include_region_biomes(lo, lo.map(|v| v + BLOCK - 1), &mut ids);
+        ids
+    }
+}
+
+/// The ids that can own a cell of the leaf whose bottom is `y_lo`, from its
+/// nine climate columns (row-major, west to east then north to south).
+fn leaf_ids(table: &UndergroundBiomes, columns: &[ClimatePoint; 9], y_lo: i32) -> IdSet {
+    let mut out = IdSet::default();
+    for cz in 0..2 {
+        for cx in 0..2 {
+            let mut climate = [[f64::INFINITY, f64::NEG_INFINITY]; 6];
+            for d in 0..4usize {
+                let point = columns[(cz + (d >> 1)) * 3 + cx + (d & 1)];
+                for (range, value) in climate.iter_mut().zip(point) {
+                    range[0] = range[0].min(value);
+                    range[1] = range[1].max(value);
+                }
+            }
+            let heights = climate[5];
+            for cy in 0..2 {
+                let wy = y_lo + cy * LATTICE_STEP;
+                climate[5] = [
+                    (heights[0] - (wy + LATTICE_STEP) as f64) / 128.0,
+                    (heights[1] - wy as f64) / 128.0,
+                ];
+                table.ids_in((wy, wy + LATTICE_STEP - 1), climate, &mut out);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_box_query_is_the_exact_union_of_covered_leaf_blocks() {
+        let table = crate::data::underground::test_table(&[r#"{"underground_biomes":[
+            {"underground_biome":"test:shallow","y":[0,63],"climate":{"depth":[-2.0,2.0]}},
+            {"underground_biome":"test:deep","y":[-48,-1],"climate":{"depth":[-2.0,2.0]}}
+        ]}"#]);
+        let field =
+            CaveField::with_tables(91, table, crate::data::excavations::test_table(&[], table));
+        let mut seen = IdSet::default();
+        for (lo, hi) in [
+            ([-71_i32, -25, -5], [7_i32, 16, 68]),
+            ([0, -64, 0], [63, -1, 63]),
+            ([-1, -1, -1], [0, 0, 0]),
+            ([-64, -64, -64], [63, 63, 63]),
+        ] {
+            let mut expected = IdSet::default();
+            for y in lo[1].div_euclid(BLOCK)..=hi[1].div_euclid(BLOCK) {
+                for z in lo[2].div_euclid(BLOCK)..=hi[2].div_euclid(BLOCK) {
+                    for x in lo[0].div_euclid(BLOCK)..=hi[0].div_euclid(BLOCK) {
+                        expected.union(&field.compute_block_ids([x, y, z]));
+                    }
+                }
+            }
+            let got = field.underground_biome_ids_in_box(lo, hi);
+            seen.union(&got);
+            for id in 0..=255 {
+                assert_eq!(got.contains(id), expected.contains(id));
+            }
+        }
+        assert!(seen.contains(table.id("test:shallow").unwrap()));
+        assert!(seen.contains(table.id("test:deep").unwrap()));
     }
 }

@@ -163,7 +163,7 @@ impl BlockModel {
                 // with `s = o' − o`). Faces stay attached to the cube's local axes,
                 // exactly like an authored static tilt.
                 let rot = Quat::from_mat4(&pose) * euler_quat(c.rotation);
-                let (ex, ey, ez) = rot.to_euler(glam::EulerRot::XYZ);
+                let (ez, ey, ex) = rot.to_euler(glam::EulerRot::ZYX);
                 let origin = pose.transform_point3(c.origin);
                 let shift = origin - c.origin;
                 ModelCube {
@@ -311,7 +311,8 @@ impl CompiledAsset for BlockModel {
     /// v8: cubes carry their authored element NAME (per-row part roles
     /// need it).
     /// v9: cubes carry their per-face `cullface` directions.
-    const FORMAT_VERSION: u32 = 12;
+    /// v13: composed group/cube rotations retain the authored ZYX order.
+    const FORMAT_VERSION: u32 = 13;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 

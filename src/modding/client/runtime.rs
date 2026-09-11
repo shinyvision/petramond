@@ -406,7 +406,7 @@ impl ClientModRuntime {
         world: &World,
         actor: &PlayerSnapshot,
         shape_key: &str,
-        shape_kind: u8,
+        shape_kind: u16,
         block_id: u16,
         inputs: mod_api::PlaceInputsView,
     ) -> Option<mod_api::ShapePlacementResult> {
@@ -437,7 +437,7 @@ impl ClientModRuntime {
         &mut self,
         world: &World,
         shape_key: &str,
-        shape_kind: u8,
+        shape_kind: u16,
         input: mod_api::CellInput,
     ) -> (
         Option<Vec<petramond_world::block::Aabb>>,
@@ -502,7 +502,7 @@ impl ClientModRuntime {
         // dispatch order the server uses (C1) — the SIM bake is cross-checked
         // against the server, so the two sides must dispatch identically.
         let mut groups: std::collections::BTreeMap<
-            (&'static str, u8),
+            (&'static str, u16),
             Vec<crate::world::CustomBakeCell>,
         > = std::collections::BTreeMap::new();
         for cell in cells {

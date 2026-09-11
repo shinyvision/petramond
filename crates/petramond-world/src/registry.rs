@@ -178,8 +178,29 @@ pub fn load_catalog<R, D>(
     what: &str,
     convert: impl FnMut(R, u16, &NameTable) -> Result<D, String>,
 ) -> Result<Catalog<D>, String> {
+    load_catalog_with_capacity(
+        texts,
+        parse_layer,
+        row_key,
+        engine,
+        what,
+        BYTE_ID_CAP,
+        convert,
+    )
+}
+
+/// The catalog frame with an explicit identity capacity for wider registries.
+pub fn load_catalog_with_capacity<R, D>(
+    texts: &[&str],
+    parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
+    row_key: fn(&R) -> &str,
+    engine: &[&'static str],
+    what: &str,
+    capacity: usize,
+    convert: impl FnMut(R, u16, &NameTable) -> Result<D, String>,
+) -> Result<Catalog<D>, String> {
     let (merged, layer_keys) = parse_and_merge(texts, parse_layer, row_key)?;
-    let names = NameTable::build(engine, &layer_keys, what, BYTE_ID_CAP)?;
+    let names = NameTable::build(engine, &layer_keys, what, capacity)?;
     let rows = resolve_merged(merged, row_key, &names, what, convert)?;
     Ok(Catalog {
         rows: Box::leak(rows.into_boxed_slice()),
@@ -317,7 +338,16 @@ pub fn parse_rows_with_patches<R: serde::de::DeserializeOwned>(
     key_field: &str,
     patches: &mut Vec<RawDataPatch>,
 ) -> Result<Vec<R>, serde_json::Error> {
-    let rows = layer_rows(&serde_json::from_str(text)?, array_key, key_field)?;
+    parse_rows_with_patches_of(&serde_json::from_str(text)?, array_key, key_field, patches)
+}
+
+pub fn parse_rows_with_patches_of<R: serde::de::DeserializeOwned>(
+    file: &serde_json::Value,
+    array_key: &str,
+    key_field: &str,
+    patches: &mut Vec<RawDataPatch>,
+) -> Result<Vec<R>, serde_json::Error> {
+    let rows = layer_rows(file, array_key, key_field)?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         if row.get("patch").is_some() {

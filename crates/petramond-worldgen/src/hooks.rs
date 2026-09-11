@@ -15,6 +15,28 @@ use std::sync::{Arc, RwLock};
 use mod_api::WorldgenStage;
 use petramond_world::section::BlockCube;
 
+/// Validated generation layers. Template references share their compiled
+/// storage across workers; no voxel expansion crosses the mod ABI.
+#[derive(Default)]
+pub struct GenerationPlan {
+    pub blocks: Vec<([i32; 3], u16)>,
+    pub structures: Vec<petramond_world::structure::Placement<'static>>,
+    pub features: Vec<std::sync::Arc<crate::feature::placement::PlacedFeature>>,
+}
+
+/// What one feature or stage-replacement dispatch produced.
+pub enum FeatureOutcome {
+    /// Writes to apply.
+    Plan(GenerationPlan),
+    /// Nothing registered, or the hook failed and was skipped.
+    Skipped,
+    /// The hook could not settle a positional fact its writes depend on
+    /// because another worker is deriving it: the whole section must be
+    /// generated again later, and its eventual content does not depend on
+    /// when.
+    Deferred,
+}
+
 /// Borrowed inputs of one per-section hook dispatch (copied into the guest
 /// call only when a hook actually fires).
 pub struct GenInputs<'a> {
@@ -42,19 +64,16 @@ pub trait GenHookDispatch: Send + Sync {
     fn replace_climate(&self, inputs: &GenInputs) -> Option<Vec<u8>>;
     /// Terrain replacement: a full section fill, or `None`.
     fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>>;
-    /// Stage replacement writes, or `None` (caller runs the engine stage).
-    fn replace_stage(
-        &self,
-        stage: WorldgenStage,
-        inputs: &GenInputs,
-    ) -> Option<Vec<([i32; 3], u16)>>;
+    /// Stage replacement writes; `Skipped` = unregistered or failed (the
+    /// caller runs the engine stage).
+    fn replace_stage(&self, stage: WorldgenStage, inputs: &GenInputs) -> FeatureOutcome;
     /// Whether any feature attaches after `stage` (the driver's cheap gate).
     fn any_features_after(&self, stage: WorldgenStage) -> bool;
     /// Indices (dispatch order) of the features attached after `stage`.
     fn features_after(&self, stage: WorldgenStage) -> Vec<usize>;
-    /// Dispatch feature `idx` for one section. `None` = the feature failed
-    /// (instance disabled with a logged error) and is skipped.
-    fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> Option<Vec<([i32; 3], u16)>>;
+    /// Dispatch feature `idx` for one section. `Skipped` = the feature
+    /// failed (instance disabled with a logged error) or declined.
+    fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> FeatureOutcome;
 }
 
 static INSTALLED: RwLock<Option<Arc<dyn GenHookDispatch>>> = RwLock::new(None);

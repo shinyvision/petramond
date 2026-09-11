@@ -28,11 +28,13 @@ pub(super) fn create_mob_pipeline(
     let mob_shader = shader_module(
         device,
         "mob shader",
-        concat!(
+        [
             include_str!("../../shaders/cel.wgsl"),
             include_str!("../../shaders/atmosphere.wgsl"),
-            include_str!("../../shaders/mob.wgsl")
-        ),
+            &super::flipbook::model_declarations(),
+            include_str!("../../shaders/mob.wgsl"),
+        ]
+        .concat(),
     );
     let mob_pipe = world_pipeline(
         device,

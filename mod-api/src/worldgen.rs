@@ -3,6 +3,57 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Occupancy left by positional terrain generation, before feature stages.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerrainSpace {
+    Air,
+    Water,
+    Solid,
+}
+
+/// Maximum terrain cells inspected by one template's authored requirements.
+pub const STRUCTURE_PROBES_MAX: usize = 4096;
+
+/// An inclusive region that must have one terrain occupancy. Coordinates in
+/// template metadata are unrotated and relative to its pivot.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StructureRequirementData {
+    pub min: [i32; 3],
+    pub max: [i32; 3],
+    pub space: TerrainSpace,
+}
+
+impl StructureRequirementData {
+    /// Reject reversed or oversized regions before expanding any probes.
+    pub fn cell_count(&self) -> Option<usize> {
+        (0..3).try_fold(1usize, |volume, axis| {
+            let length = i64::from(self.max[axis]) - i64::from(self.min[axis]) + 1;
+            let count = volume.checked_mul(usize::try_from(length).ok()?)?;
+            (length > 0 && count <= STRUCTURE_PROBES_MAX).then_some(count)
+        })
+    }
+}
+
+/// Immutable template metadata, with bounds for each clockwise quarter turn.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct StructureInfoData {
+    pub bounds: [([i32; 3], [i32; 3]); 4],
+    /// Unrotated connector positions relative to the authored pivot.
+    pub connectors: Vec<StructureConnectorData>,
+    /// Optional terrain admission policy, evaluated before section clipping.
+    pub requirements: Vec<StructureRequirementData>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct StructureConnectorData {
+    pub name: String,
+    pub kind: String,
+    pub pos: [i32; 3],
+    pub normal: [i32; 3],
+}
+
 /// Conservative WRITE bounds of a worldgen feature, declared with
 /// [`HostCall::RegisterWorldgenFeature`] and checked by the host per section
 /// BEFORE it snapshots blocks and encodes the guest call — a section the

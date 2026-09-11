@@ -56,7 +56,18 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::BlockDataGet { .. }
         | HostCall::BlocksWithData { .. }
         | HostCall::BlockInfo { .. }
+        | HostCall::StructureInfo { .. }
+        | HostCall::LootRoll { .. }
+        | HostCall::MobDataGet { .. }
+        | HostCall::MobsWithData { .. }
         | HostCall::ResolveUndergroundBiome { .. }
+        // The shared derived-fact memo is scoped to (mod, world seed) and
+        // reads no simulation state: a client instance may share settled
+        // positional facts with its server twin exactly as worldgen workers do.
+        | HostCall::MemoGet { .. }
+        | HostCall::MemoGetMany { .. }
+        | HostCall::MemoPut { .. }
+        | HostCall::MemoClaim { .. }
         // Pure (world seed, position) → the underground-biome partition, the
         // same answer the carver reads. It touches no simulation state and no
         // loaded section, and a client instance is constructed with the real
@@ -154,6 +165,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SectionKvGet { .. }
         | HostCall::SectionKvSet { .. }
         | HostCall::SectionKvDelete { .. }
+        | HostCall::SectionKvFind { .. }
         | HostCall::SectionKvGetMany { .. }
         | HostCall::SectionKvSetMany { .. }
         | HostCall::MobTagGet { .. }
@@ -217,7 +229,11 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // position — a generation-cost query, not a field sample, and nothing
         // presentation-side has a use for it. (`underground_biome_at`, which
         // is a cheap partition lookup, is legal above.)
+        | HostCall::TerrainBlocksAt { .. }
+        | HostCall::TerrainSectionAt { .. }
+        | HostCall::TerrainHeightsAt { .. }
         | HostCall::TerrainSolidAt { .. }
+        | HostCall::TerrainSpaceAt { .. }
         // `surface_biome_at` builds the same generation tile — the density
         // surface, the cave adjustment and the climate classification — so it
         // is a generation-cost query too. A client instance that wants the
@@ -248,6 +264,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // predicting it would be predicting its own permission.
         | HostCall::SetPlayerDeniedActions { .. }
         | HostCall::EmitEvent { .. }
+        | HostCall::ItemEntitiesInRadius { .. }
+        | HostCall::ItemImpulses { .. }
         | HostCall::Players => false,
     }
 }

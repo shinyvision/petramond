@@ -1,18 +1,59 @@
 {
-  "tables": {
-    "petramond:owl": [
-      {
-        "item": "petramond:stick",
-        "min": 1,
-        "max": 2,
-        "chance": 0.5
-      },
-      {
-        "item": "petramond:coal",
-        "min": 1,
-        "max": 1,
-        "chance": 0.25
-      }
-    ]
-  }
+  "loot_tables": [
+    {
+      "loot": "petramond:owl_drops",
+      "pools": [
+        {
+          "rolls": [
+            1,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 5000,
+              "result": {
+                "type": "item",
+                "item": "petramond:stick",
+                "count": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "weight": 5000,
+              "result": {
+                "type": "empty"
+              }
+            }
+          ]
+        },
+        {
+          "rolls": [
+            1,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 2500,
+              "result": {
+                "type": "item",
+                "item": "petramond:coal",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 7500,
+              "result": {
+                "type": "empty"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }

@@ -103,7 +103,7 @@ const WATER_AO: u8 = 30;
 /// per-cell KV under [`DYE_KEY`] — continuous state that cannot be block
 /// identity.
 pub(super) struct Cauldron {
-    pub(super) shape: u8,
+    pub(super) shape: u16,
     pub(super) empty: BlockId,
     pub(super) water: BlockId,
     pub(super) dye: BlockId,
@@ -472,7 +472,7 @@ impl Furniture {
     /// Client-only — the uses ride the replica's cell KV.
     pub(super) fn cauldron_dye_uses(
         &self,
-        shape_kind: u8,
+        shape_kind: u16,
         cells: &[CellInput],
     ) -> HashMap<[i32; 3], u8> {
         let dye_cells: Vec<[i32; 3]> = match &self.cauldron {
@@ -503,7 +503,7 @@ impl Furniture {
     /// `None` for the empty pot and every non-cauldron cell.
     pub(super) fn cauldron_fluid_box(
         &self,
-        shape_kind: u8,
+        shape_kind: u16,
         cell: &CellInput,
         uses_at: &HashMap<[i32; 3], u8>,
     ) -> Option<ShapeRenderBox> {

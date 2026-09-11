@@ -223,7 +223,7 @@ impl WorldData {
 /// dispatches by, plus the `ready wire input`.
 pub struct CustomBakeCell {
     pub pos: IVec3,
-    pub shape_kind: u8,
+    pub shape_kind: u16,
     pub shape_key: &'static str,
     pub input: mod_api::CellInput,
 }

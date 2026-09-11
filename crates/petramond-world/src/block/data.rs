@@ -228,12 +228,12 @@ pub(super) fn shape_kind_def(kind: BlockShapeKind) -> &'static ShapeKindDef {
 /// The session-local shape-kind id for a registry `key`, or `None` — the
 /// `ResolveShape` host call's lookup. A linear scan over the small shape-kind
 /// table (dozens of rows), like the other name→id resolvers.
-pub fn shape_kind_id_by_key(key: &str) -> Option<u8> {
+pub fn shape_kind_id_by_key(key: &str) -> Option<u16> {
     REGISTRY
         .shape_kinds
         .iter()
         .position(|d| d.key == key)
-        .map(|i| i as u8)
+        .map(|i| i as u16)
 }
 
 /// Whether ANY registered shape kind declares `key` as its per-cell state key

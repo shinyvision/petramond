@@ -7,12 +7,9 @@ use petramond_worldgen::driver::ColumnGen;
 
 use crate::world::store::{LoadAnchor, LoadTarget, World, WorldRole};
 
-/// Keep worldgen useful under fast flight by bounding queued-but-unstarted column
-/// jobs. The shared pool is priority-ordered (nearest first), so — unlike the old
-/// FIFO channel these caps were sized for — far columns can no longer delay near
-/// ones; the caps now only bound wasted work on columns the player outruns
-/// (pruned from `pending`, their results discarded on drain).
-const MAX_PENDING_COLUMN_GEN_JOBS: usize = 192;
+/// Bound column work while allowing nearer requests to replace waiting jobs
+/// when the anchors move.
+pub(super) const MAX_PENDING_COLUMN_GEN_JOBS: usize = 192;
 const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 64;
 
 impl World {
@@ -35,14 +32,15 @@ impl World {
 
     fn update_load_target(&mut self, target: LoadTarget) {
         // The single-anchor path: any multi-anchor residue is gone.
+        let anchors_changed = !self.extra_load_targets.is_empty();
         self.extra_load_targets.clear();
-        if self.last_load_target == Some(target) {
+        if !anchors_changed && self.last_load_target == Some(target) {
             if !self.missing_columns_settled {
                 self.request_missing_columns(target);
             }
             return;
         }
-        let prev = self.last_load_target;
+        let prev = self.last_load_target.filter(|_| !anchors_changed);
         self.last_load_target = Some(target);
         self.missing_columns_settled = false;
         self.deferred_recheck_needed = true;
@@ -53,6 +51,8 @@ impl World {
             prev.is_none_or(|p| p.center != target.center || p.render_dist != target.render_dist);
 
         self.prune_stale_column_requests(target);
+        self.reclaim_far_column_requests();
+        self.refresh_generation_priorities();
         self.request_missing_columns(target);
         // `request_wanted_sections` re-scans EVERY loaded column's whole vertical window.
         // That full scan only changes existing wanted columns when the vertical centre
@@ -130,6 +130,8 @@ impl World {
             }
             keep
         });
+        self.reclaim_far_column_requests();
+        self.refresh_generation_priorities();
         self.request_missing_columns_multi(&targets);
         self.request_wanted_sections_multi(&targets);
         self.unload_far_multi(&targets);

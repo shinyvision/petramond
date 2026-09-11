@@ -185,11 +185,6 @@ pub fn build_server_with_pool(
         operators,
         recipes,
         unlocks: unlocks.clone(),
-        loot: {
-            let loot = crate::mob::load_loot();
-            perf.mark("loot");
-            loot
-        },
         bus: crate::events::EventBus::default(),
         systems: crate::events::TickSystems::default(),
         mods: {

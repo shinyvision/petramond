@@ -51,6 +51,7 @@ fn block_color(block: u16) -> [u8; 3] {
         Some(TileTint::Grass) => Biome::Plains.grass_color(),
         Some(TileTint::Foliage) => Biome::Plains.foliage_color(),
         Some(TileTint::Water) => Biome::Plains.water_color(),
+        Some(TileTint::Fixed(rgb)) => rgb.map(|c| f32::from(c) / 255.0),
     };
     std::array::from_fn(|c| (base[c] as f32 * tint[c]).round().clamp(0.0, 255.0) as u8)
 }

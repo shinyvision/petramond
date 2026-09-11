@@ -78,6 +78,7 @@ pub(super) fn cell_classes() -> &'static [u8] {
             .map(|&block| {
                 let family = block.shape_family();
                 let mut c = if block == Block::Air
+                    || block.flags().invisible()
                     || block == Block::Chest
                     || family == ShapeFamily::Door
                 {
@@ -102,7 +103,7 @@ pub(super) fn cell_classes() -> &'static [u8] {
                 if c & SKIP == 0 && fast_cube_candidate(block) {
                     c |= FAST_CUBE;
                 }
-                if block == Block::Water {
+                if block.is_fluid() {
                     c |= WATER;
                 }
                 c
@@ -120,7 +121,7 @@ pub(super) fn cell_classes() -> &'static [u8] {
 /// does not emit. Sub-cell shapes never reach here at all — they are not the
 /// cube family.
 fn fast_cube_candidate(block: Block) -> bool {
-    block != Block::Water
+    !block.is_fluid()
         && !block.merges_with_self()
         && !block.is_translucent()
         && block.shape_family() == ShapeFamily::Cube

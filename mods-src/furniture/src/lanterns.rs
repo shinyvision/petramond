@@ -28,7 +28,7 @@ use mod_sdk::*;
 /// The lantern family: the shared shape-kind id and its rows — standing,
 /// hanging, and one per WALL side (indexed by [`WALL_SIDES`]).
 pub(super) struct Lanterns {
-    pub(super) shape: u8,
+    pub(super) shape: u16,
     pub(super) standing: BlockId,
     pub(super) hanging: BlockId,
     pub(super) wall: [BlockId; 4],

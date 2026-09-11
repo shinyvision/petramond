@@ -2,6 +2,35 @@ use super::*;
 use petramond_world::chunk::SectionPos;
 use petramond_worldgen::driver::ChunkGenerator;
 
+#[test]
+fn invalid_plan_members_reject_the_whole_generation_output() {
+    let good = ([0, 0, 0], mod_api::BlockId(Block::Stone.id()));
+    assert!(validated_writes(
+        mod_api::GenOutput {
+            features: Vec::new(),
+            blocks: vec![good, ([1, 0, 0], mod_api::BlockId(u16::MAX))],
+            structures: Vec::new(),
+            deferred: false,
+        },
+        1
+    )
+    .is_err());
+    assert!(validated_writes(
+        mod_api::GenOutput {
+            features: Vec::new(),
+            blocks: vec![good],
+            structures: vec![mod_api::StructurePlacement {
+                template: "fixture:missing".into(),
+                origin: [0, 0, 0],
+                turn: 0,
+            }],
+            deferred: false,
+        },
+        1
+    )
+    .is_err());
+}
+
 /// A minimal guest whose init succeeds and whose every dispatch traps —
 /// the "runaway/broken gen mod" for the fallback contract.
 fn trapping_module() -> Module {

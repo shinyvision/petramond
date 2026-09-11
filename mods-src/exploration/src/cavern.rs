@@ -1,12 +1,6 @@
-//! Dressing a mushroom cavern.
-//!
-//! THIS MODULE DOES NOT SHAPE ANYTHING. The cathedral-scale room is declared by
-//! the `chamber` clause on this pack's `underground_biomes.json` row, so the
-//! engine's own carvers open it and natural tunnels blend into it. The pack
-//! used to carve that room itself, as air writes two stages after the terrain
-//! was carved, and a stamp against finished geometry left every tunnel that
-//! reached it ending at a flat face. Nothing here should ever go back to
-//! stamping a ROOM as air.
+//! Mushroom cavern dressing. Geometry comes from the separate excavation catalog.
+//! Every cross-section placement decision reads positional terrain so caps,
+//! stems and hanging growth agree regardless of section generation order.
 //!
 //! (`cascade.rs` does write air, and the distinction is the whole point: it
 //! cuts spill notches a few cells wide through terrace lips its containment
@@ -59,6 +53,8 @@
 //! vetoes a basin,
 //! and the ordering is real in every section because it is a positional
 //! query, not an emission-order accident.
+
+mod giants;
 
 use std::rc::Rc;
 
@@ -224,15 +220,19 @@ struct MarginCol {
     rows: usize,
 }
 
-pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
+/// A cascade cell this section needs is being settled by another worker:
+/// the section is dispatched again once it is.
+pub(crate) struct Deferred;
+
+pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferred> {
     // The host already skips sections above the filter; a direct call (a unit
     // test) gets the same answer from the same bounds.
     if !GEN_FILTER.intersects(ctx.section_pos()[1], &[]) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let origin = ctx.origin_world();
     let Some(ours) = biome_id() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let seed = ctx.seed();
 
@@ -283,7 +283,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
     // `cascade_cell` — so the shared batches below carry no cascade slots.
     let mut features: Vec<Rc<cascade::Feature>> = Vec::new();
     for cell in cascade::cells_overlapping(origin, CLAIM_ROWS) {
-        if let Some(f) = cascade_cell(seed, ours, cell) {
+        if let Some(f) = cascade_cell(seed, ours, cell)? {
             features.push(f);
         }
     }
@@ -299,7 +299,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
         && ceilings.is_empty()
         && margins.is_empty()
     {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // --- ONE batched biome query ----------------------------------------
@@ -318,7 +318,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
     let want = query.len();
     let biomes = batched(query, underground_biome_at);
     if biomes.len() != want {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mine = |i: usize| biomes[i] == ours;
 
@@ -365,7 +365,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
     let want = probe.len();
     let solid = batched(probe, terrain_solid_at);
     if solid.len() != want {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let mut out: Vec<GenWrite> = Vec::new();
@@ -387,7 +387,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
         if !reaches_section(&c, origin) {
             continue;
         }
-        if giant_suppressed(seed, ours, &c) {
+        if giant_suppressed(seed, ours, &c)? {
             continue;
         }
         let [wx, wy, wz] = root;
@@ -498,7 +498,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
         });
     }
 
-    out
+    Ok(out)
 }
 
 /// Every rolled decoration cell this section owns, plus the vine roots sitting
@@ -516,6 +516,8 @@ fn gather_dressing(
     for lz in 0..16 {
         for lx in 0..16 {
             let (x, z) = (origin[0] + lx, origin[2] + lz);
+            // A colony is a thing on the ground, so its density is the column's.
+            let patch_density = patch_at(seed, x, z).0;
             for ly in 0..16 {
                 let p = [x, origin[1] + ly, z];
                 if !is_open(ctx, p) {
@@ -528,7 +530,7 @@ fn gather_dressing(
                 // (rows 0 and 15) is kept for BOTH passes rather than guessed
                 // at; the probe decides which one it belongs to.
                 let mut ground = GenRng::positional(seed, SALT_GROUND, p[0], p[1], p[2]);
-                if ground.next_i32(0, 999) < patch_at(seed, p[0], p[2]).0 && below != Some(false) {
+                if ground.next_i32(0, 999) < patch_density && below != Some(false) {
                     floors.push(Dress {
                         p,
                         below,
@@ -650,7 +652,11 @@ fn reaches_section(c: &Candidate, origin: [i32; 3]) -> bool {
 /// terrain, so visit order changes only who computes it first, never what it
 /// is. Same pattern as `biome_id` below, which caches a pure resolution the
 /// same way.
-fn cascade_cell(seed: u32, ours: u8, cell: (i32, i32, i32)) -> Option<Rc<cascade::Feature>> {
+fn cascade_cell(
+    seed: u32,
+    ours: u8,
+    cell: (i32, i32, i32),
+) -> Result<Option<Rc<cascade::Feature>>, Deferred> {
     /// `(seed, cell x, y, z)` -> the cascade feature that cell resolves to.
     type CascadeCache =
         std::collections::HashMap<(u32, i32, i32, i32), Option<Rc<cascade::Feature>>>;
@@ -660,9 +666,25 @@ fn cascade_cell(seed: u32, ours: u8, cell: (i32, i32, i32)) -> Option<Rc<cascade
     }
     let key = (seed, cell.0, cell.1, cell.2);
     if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
-        return hit;
+        return Ok(hit);
     }
-    let out = compute_cascade_cell(seed, ours, cell);
+    // Every worker's instance derives the same outcome, so the first one to
+    // claim a cell settles it for the rest; a section arriving while that
+    // is under way is dispatched again once the cell is published.
+    let memo_key = cascade::memo_key(ours, cell);
+    let settled = match memo_claim(&memo_key) {
+        MemoClaim::Value(bytes) => cascade::Feature::decode(&bytes),
+        MemoClaim::Lease => None,
+        MemoClaim::Pending => return Err(Deferred),
+    };
+    let out = match settled {
+        Some(settled) => settled.map(Rc::new),
+        None => {
+            let out = compute_cascade_cell(seed, ours, cell);
+            memo_put(&memo_key, cascade::Feature::encode(out.as_deref()));
+            out
+        }
+    };
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         // The cache only ever grows on cells a streaming session actually
@@ -673,7 +695,7 @@ fn cascade_cell(seed: u32, ours: u8, cell: (i32, i32, i32)) -> Option<Rc<cascade
         }
         c.insert(key, out.clone());
     });
-    out
+    Ok(out)
 }
 
 /// The uncached pipeline: rarity roll, cheap biome pre-gate, coarse height
@@ -767,18 +789,18 @@ fn compute_cascade_cell(
 /// containment proof decides which giants stand, and a giant the proof cannot
 /// hold with is skipped — in every section, because the answer is a pure
 /// function of `(seed, cell)` through the same memo the emitter uses.
-fn giant_suppressed(seed: u32, ours: u8, c: &Candidate) -> bool {
+fn giant_suppressed(seed: u32, ours: u8, c: &Candidate) -> Result<bool, Deferred> {
     let r = c.giant.reach();
     let lo = [c.x - r, c.cell_floor_y, c.z - r];
     let hi = [c.x + r, c.cell_top_y() + c.giant.rise(), c.z + r];
     for cell in cascade::cells_overlapping_box(lo, hi) {
-        if let Some(f) = cascade_cell(seed, ours, cell) {
+        if let Some(f) = cascade_cell(seed, ours, cell)? {
             if f.suppressed.contains(&c.lat) {
-                return true;
+                return Ok(true);
             }
         }
     }
-    false
+    Ok(false)
 }
 
 /// The giant-mushroom roll one lattice cell carries, or `None`. ONE function
@@ -915,65 +937,9 @@ pub(crate) fn standing_giants_over(
     if cands.is_empty() {
         return Vec::new();
     }
-    // Biome gate at the middle of the root window, the same fixed point every
-    // other pass asks about.
-    let gate: Vec<[i32; 3]> = cands
-        .iter()
-        .map(|c| [c.x, c.cell_floor_y + ANCHOR_LATTICE / 2, c.z])
-        .collect();
-    let want = gate.len();
-    let biomes = batched(gate, underground_biome_at);
-    if biomes.len() != want {
+    let Some(viable) = giants::viable_roots(seed, ours, &cands) else {
         return Vec::new();
-    }
-    // Roots for the biome survivors: one column span each, one crossing.
-    let mut probe: Vec<[i32; 3]> = Vec::new();
-    let mut spans: Vec<(usize, usize)> = Vec::new();
-    for (i, c) in cands.iter().enumerate() {
-        if biomes[i] != ours {
-            continue;
-        }
-        spans.push((i, probe.len()));
-        for wy in (c.cell_floor_y - 1)..=c.cell_top_y() {
-            probe.push([c.x, wy, c.z]);
-        }
-    }
-    let want = probe.len();
-    let solid = batched(probe, terrain_solid_at);
-    if solid.len() != want {
-        return Vec::new();
-    }
-    let mut rooted: Vec<(usize, [i32; 3])> = Vec::new();
-    for &(i, start) in &spans {
-        let c = &cands[i];
-        if let Some(k) = highest_floor(&solid[start..start + PROBE_PER_CANDIDATE]) {
-            rooted.push((i, [c.x, c.cell_floor_y - 1 + k as i32, c.z]));
-        }
-    }
-    if rooted.is_empty() {
-        return Vec::new();
-    }
-    // The fit skeletons, one more crossing for all of them together.
-    let mut probe: Vec<[i32; 3]> = Vec::new();
-    let mut fit_at: Vec<usize> = Vec::with_capacity(rooted.len());
-    for &(i, root) in &rooted {
-        fit_at.push(probe.len());
-        cands[i].giant.fit_probes(|dx, dy, dz| {
-            probe.push([root[0] + dx, root[1] + dy, root[2] + dz]);
-        });
-    }
-    let want = probe.len();
-    let solid = batched(probe, terrain_solid_at);
-    if solid.len() != want {
-        return Vec::new();
-    }
-    let mut viable: Vec<(usize, [i32; 3])> = Vec::new();
-    for (k, &(i, root)) in rooted.iter().enumerate() {
-        let end = fit_at.get(k + 1).copied().unwrap_or(solid.len());
-        if solid[fit_at[k]..end].iter().all(|&s| !s) {
-            viable.push((i, root));
-        }
-    }
+    };
     let mut out = Vec::new();
     'next: for &(i, root) in &viable {
         for &(j, rj) in &viable {
@@ -1811,6 +1777,6 @@ mod ctx_tests {
         let content = test_content();
         let first_clear = TOP_CONTENT_Y.div_euclid(16) + 1;
         let ctx = split_section([0, first_clear, 0]);
-        assert!(generate(&content, &ctx).is_empty());
+        assert!(generate(&content, &ctx).is_ok_and(|writes| writes.is_empty()));
     }
 }

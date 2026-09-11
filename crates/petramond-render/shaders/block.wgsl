@@ -178,15 +178,7 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
     var shade_idx = (packed >> 13u) & 0x3u;
     if (transition) { shade_idx = face_shade_idx(ncode); }
 
-    // Animate water: WaterStill / WaterFlow are the first of `frame_count`
-    // consecutive flipbook tiles; advance base + frame over time.
-    var atile = tile;
-    let frames = u.atlas_anim.z;
-    if (!transition && frames > 0u && (tile == u.atlas_anim.x || tile == u.atlas_anim.y)) {
-        var fps = WATER_STILL_FPS;
-        if (tile == u.atlas_anim.y) { fps = WATER_FLOW_FPS; }
-        atile = tile + (u32(floor(u.fog.z * fps)) % frames);
-    }
+    let atile = tile;
 
     // Tile-LOCAL uv in [0,1]; the array layer selects the tile.
     var uv = corner_local(corner);
@@ -407,7 +399,7 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
         rgb = transition_albedo(in, grad_x, grad_y);
     } else {
         let layer = terrain_variant_layer(in, in.layer, vec2<i32>(0));
-        let base = textureSampleGrad(atlas, samp, in.uv, i32(layer), grad_x, grad_y);
+        let base = sample_flipbook(layer, in.uv, grad_x, grad_y);
         if (in.overlay == FACE_OVERLAY) {
             // Grass side: untinted dirt base + biome-tinted grayscale grass overlay,
             // composited by the overlay's alpha so the grass matches the tinted top.
@@ -453,7 +445,7 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
 fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     let dist = length(in.view);
     let vdir = in.view / max(dist, 1e-4);
-    let tex = textureSample(atlas, samp, in.uv, i32(in.layer));
+    let tex = sample_flipbook(in.layer, in.uv, dpdx(in.uv), dpdy(in.uv));
     // Water has its own surface response; ice and glass keep authored alpha.
     if (tex.a < 0.03) { discard; }
     var albedo = tex.rgb;
@@ -495,4 +487,17 @@ fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
         u.sun_dir.w,
     );
     return vec4<f32>(out, alpha);
+}
+
+fn sample_flipbook(tile: u32, uv: vec2<f32>, grad_x: vec2<f32>, grad_y: vec2<f32>) -> vec4<f32> {
+    let anim = tile_animation(tile);
+    if (anim.x <= 1.0) {
+        return textureSampleGrad(atlas, samp, uv, i32(tile), grad_x, grad_y);
+    }
+    let phase = u.fog.z * anim.y;
+    let frame = u32(floor(phase)) % u32(anim.x);
+    let color = textureSampleGrad(atlas, samp, uv, i32(tile + frame), grad_x, grad_y);
+    if (anim.z == 0.0) { return color; }
+    let next = textureSampleGrad(atlas, samp, uv, i32(tile + (frame + 1u) % u32(anim.x)), grad_x, grad_y);
+    return mix(color, next, fract(phase));
 }

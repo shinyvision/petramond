@@ -4,7 +4,7 @@ use petramond_world::block_model::{self, BlockModelKind};
 use petramond_world::facing::Facing;
 
 use super::super::face::Face;
-use super::super::vertex::{ContactShadowVertex, ModelVertex, MODEL_TINT_NONE};
+use super::super::vertex::{ContactShadowVertex, ModelVertex};
 
 /// Stream one bbmodel-block cell's geometry into the `model` buffers: copy the cell's
 /// startup-baked template (positions already taken through the cube rotation + placement
@@ -124,8 +124,8 @@ fn copy_run(
         pos: (basef + v.pos).to_array(),
         uv: v.uv,
         shade: v.shade,
-        light,
-        tint: if v.tinted { tint } else { MODEL_TINT_NONE },
+        light: light | (u32::from(v.appearance.unlit) << 31),
+        tint: v.appearance.packed(v.tinted.then_some(tint)),
     }));
     indices.extend(
         tmpl.indices[is..is + il]
@@ -173,12 +173,14 @@ pub(super) fn emit_model_contact(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex::MODEL_TINT_NONE;
     use block_model::{ModelCellTemplate, ModelTemplateVertex, PartRun, TemplateSegment};
 
     /// A three-segment template: 2 always-on verts, then two optional parts of
     /// 2 verts each, every run's indices numbered against the WHOLE template.
     fn template() -> ModelCellTemplate {
         let v = |x: f32, tinted: bool| ModelTemplateVertex {
+            appearance: block_model::FaceAppearance::default(),
             pos: Vec3::new(x, 0.0, 0.0),
             uv: [0.0, 0.0],
             shade: 1.0,
@@ -288,6 +290,7 @@ mod tests {
         let quad = |x: f32| {
             (0..4)
                 .map(|i| ModelTemplateVertex {
+                    appearance: block_model::FaceAppearance::default(),
                     pos: Vec3::new(x + i as f32 * 0.01, 0.0, 0.0),
                     uv: [0.0, 0.0],
                     shade: 1.0,
