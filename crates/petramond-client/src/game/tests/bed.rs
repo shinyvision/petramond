@@ -310,7 +310,7 @@ fn respawning_with_a_bed_restores_health_beside_it() {
         "respawn restores health"
     );
     let feet = game.server.sessions[0].player.pos;
-    let (dx, dz) = (feet.x - base.x as f32, feet.z - base.z as f32);
+    let (dx, dz) = (feet.x - base.x as f64, feet.z - base.z as f64);
     assert!(
         dx.abs() < 8.0 && dz.abs() < 8.0,
         "respawn lands near the bed: {feet:?}"

@@ -108,7 +108,7 @@ pub struct ProjectileHit {
     pub owner: Option<crate::mob::EntityRef>,
     pub target: crate::world::ImpactTarget,
     /// The impact point.
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// The velocity it arrived with.
     pub vel: Vec3,
     /// MUTABLE — what becomes of the entity after the dispatch.
@@ -133,7 +133,7 @@ pub struct MobDamagePre {
     pub amount: f32,
     pub source: DamageSource,
     /// Optional world-space origin for attack knockback or spatial feedback.
-    pub origin: Option<Vec3>,
+    pub origin: Option<petramond_math::world_pos::WorldPos>,
     /// Mutable default feedback controls for damage that survives this hook.
     pub feedback: MobDamageFeedback,
 }
@@ -145,7 +145,7 @@ pub struct PlayerDamagePre {
     pub amount: i32,
     pub source: DamageSource,
     /// Optional world-space origin for attack knockback or spatial feedback.
-    pub origin: Option<Vec3>,
+    pub origin: Option<petramond_math::world_pos::WorldPos>,
 }
 
 /// Why an entity is taking damage. Knockback is only a default consequence for
@@ -208,7 +208,7 @@ pub enum DeferredAction {
         player: crate::player::PlayerId,
         amount: i32,
         source: DamageSource,
-        origin: Option<Vec3>,
+        origin: Option<petramond_math::world_pos::WorldPos>,
     },
     /// The mob-damage pipeline (`mob_damage_pre` → `Mobs::damage_mob` → death loot).
     /// Carries the STABLE mob id; the drain resolves it to a live index only
@@ -219,7 +219,7 @@ pub enum DeferredAction {
         mob_id: u64,
         amount: f32,
         source: DamageSource,
-        origin: Option<Vec3>,
+        origin: Option<petramond_math::world_pos::WorldPos>,
         /// The request's composed damage pipeline; `None` = the species'
         /// resolved `damage_feedback`. No `Immunity` component = DoT (burn):
         /// neither blocked by an active i-frame window nor granting one.
@@ -294,13 +294,13 @@ pub enum PostEvent {
         /// state keyed by it.
         id: u64,
         kind: Mob,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
     },
     MobSpawned {
         /// The newborn's stable session id.
         id: u64,
         kind: Mob,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
     },
     PlayerDamaged {
         amount: i32,
@@ -361,7 +361,7 @@ pub enum PostEvent {
         item: ItemType,
         count: u8,
         /// The collector's body centre — the drop entity is already gone.
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
     },
     /// An item kind entered a player's inventory for the FIRST time ever,
     /// from ANY source (pickup, craft, furnace/chest take, mod `GiveItem`).

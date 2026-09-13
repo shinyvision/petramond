@@ -7,7 +7,7 @@ use super::*;
 use petramond_world::particle_emitters::{self as emitters, EmitterBundle};
 
 pub(super) struct EmitterBody {
-    feet: Vec3,
+    feet: petramond_math::world_pos::WorldPos,
     size: Vec3,
     yaw: f32,
     seed: u64,
@@ -151,8 +151,7 @@ impl GamePresentationScratch {
             }
             None => {
                 let (skylight, blocklight) = game.held_item_light();
-                let mut feet = game.player.pos;
-                feet.y += game.camera_step_y_offset;
+                let feet = game.player.pos + Vec3::new(0.0, game.camera_step_y_offset, 0.0);
                 EmitterBody::player(feet, local_body_yaw(game), skylight, blocklight, 0)
             }
         };
@@ -177,7 +176,7 @@ impl GamePresentationScratch {
 impl EmitterBody {
     /// A player body at its presented feet and body yaw; `id` seeds its streams.
     pub(super) fn player(
-        feet: Vec3,
+        feet: petramond_math::world_pos::WorldPos,
         yaw: f32,
         skylight: u8,
         blocklight: petramond_world::light::BlockLight6,

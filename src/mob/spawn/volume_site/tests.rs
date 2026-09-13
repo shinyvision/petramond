@@ -34,7 +34,7 @@ fn bounded_search_finds_a_cave_floor_below_the_exposed_surface() {
     let rule = rule();
     assert_eq!(
         find(&world, Mob::Owl, &rule, 8, 8, [18, 28]),
-        Some(Vec3::new(8.5, 21.0, 8.5))
+        Some(WorldPos::new(8.5, 21.0, 8.5))
     );
     assert!(find(&world, Mob::Owl, &rule, 8, 8, [22, 28]).is_none());
 }
@@ -81,7 +81,7 @@ fn volume_spawns_need_the_declared_medium_without_inventing_a_floor() {
     assert!(rule.is_spawnable());
     assert_eq!(
         find(&world, Mob::Owl, &rule, 8, 8, [24, 24]),
-        Some(Vec3::new(8.5, 24.0, 8.5))
+        Some(WorldPos::new(8.5, 24.0, 8.5))
     );
     world.set_block_world(8, 24, 8, Block::Air);
     assert!(find(&world, Mob::Owl, &rule, 8, 8, [24, 24]).is_none());

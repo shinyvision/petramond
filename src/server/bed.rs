@@ -222,7 +222,7 @@ impl ServerGame {
 
     /// Where a respawn lands: beside the (still existing) spawn bed, or a
     /// random dry-land surface column near the origin — the fresh-spawn pick.
-    fn respawn_position(&mut self, s: usize) -> Vec3 {
+    fn respawn_position(&mut self, s: usize) -> petramond_math::world_pos::WorldPos {
         if let Some(bs) = self.sessions[s].player.bed_spawn {
             if !self.world.chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) {
                 // The bed's chunk isn't loaded, so it can't be verified (or
@@ -241,11 +241,7 @@ impl ServerGame {
             self.sessions[s].player.bed_spawn = None;
         }
         let surface = petramond_worldgen::spawn::find_spawn(self.world.seed);
-        Vec3::new(
-            surface.x as f32 + 0.5,
-            (surface.y + 1) as f32,
-            surface.z as f32 + 0.5,
-        )
+        petramond_math::world_pos::WorldPos::block_min(surface) + Vec3::new(0.5, 1.0, 0.5)
     }
 
     /// Wake beside `base`: the freshest safe spot, or on top of the bed when
@@ -305,18 +301,18 @@ fn bed_top_cell(base: IVec3) -> IVec3 {
 }
 
 /// Feet position at the centre of cell `c` (feet on the cell's floor).
-fn cell_centre(c: IVec3) -> Vec3 {
-    Vec3::new(c.x as f32 + 0.5, c.y as f32, c.z as f32 + 0.5)
+fn cell_centre(c: IVec3) -> petramond_math::world_pos::WorldPos {
+    petramond_math::world_pos::WorldPos::block_min(c) + Vec3::new(0.5, 0.0, 0.5)
 }
 
 /// Centre of the bed group, slightly above the mattress, for the tuck-in.
-fn group_centre(cells: &[IVec3]) -> Vec3 {
-    let n = cells.len().max(1) as f32;
-    let sum = cells.iter().fold(Vec3::ZERO, |acc, c| {
-        acc + Vec3::new(c.x as f32 + 0.5, 0.0, c.z as f32 + 0.5)
+fn group_centre(cells: &[IVec3]) -> petramond_math::world_pos::WorldPos {
+    let n = cells.len().max(1) as f64;
+    let (sx, sz) = cells.iter().fold((0.0, 0.0), |(x, z), c| {
+        (x + f64::from(c.x) + 0.5, z + f64::from(c.z) + 0.5)
     });
     let base_y = cells.iter().map(|c| c.y).min().unwrap_or(0);
-    Vec3::new(sum.x / n, base_y as f32 + 0.6, sum.z / n)
+    petramond_math::world_pos::WorldPos::new(sx / n, f64::from(base_y) + 0.6, sz / n)
 }
 
 /// The closest cell beside the bed where the player safely fits: both body

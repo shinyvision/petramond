@@ -136,8 +136,8 @@ fn head_look_toward(to: Vec3, body_yaw: f32) -> Option<HeadLook> {
 }
 
 /// Approximate world position of the mob's head (feet + head height).
-fn head_pos(ctx: &AiCtx) -> Vec3 {
-    Vec3::new(ctx.pos.x, ctx.pos.y + ctx.head_height, ctx.pos.z)
+fn head_pos(ctx: &AiCtx) -> petramond_math::world_pos::WorldPos {
+    ctx.pos + Vec3::new(0.0, ctx.head_height, 0.0)
 }
 
 fn wrap_angle(a: f32) -> f32 {

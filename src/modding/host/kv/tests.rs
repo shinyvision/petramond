@@ -7,7 +7,7 @@ use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
 use crate::player::Player;
 use crate::world::World;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn sparse_find_is_sorted_and_never_fabricates_unloaded_cells() {
@@ -76,7 +76,7 @@ fn with_ctx(f: impl FnOnce()) {
         }
     }
     world.insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), c);
-    let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
     let mut gui = petramond_world::gui_state::empty_gui_state();

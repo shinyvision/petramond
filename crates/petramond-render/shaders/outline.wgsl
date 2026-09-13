@@ -8,14 +8,14 @@ struct Uniforms {
     fog:       vec4<f32>,
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<f32>,
+    render_origin: vec4<i32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
 @vertex
 fn vs_outline(@location(0) pos: vec3<f32>) -> @builtin(position) vec4<f32> {
-    return u.view_proj * vec4<f32>(pos - u.render_origin.xyz, 1.0);
+    return u.view_proj * vec4<f32>(pos, 1.0);
 }
 
 @fragment

@@ -9,7 +9,7 @@ mod tests;
 pub(super) fn handle(call: HostCall) -> HostRet {
     match call {
         HostCall::ItemEntitiesInRadius { pos, radius, limit } => {
-            let pos = match finite3(pos, "ItemEntitiesInRadius.pos") {
+            let pos = match super::guards::finite_pos(pos, "ItemEntitiesInRadius.pos") {
                 Ok(pos) => pos,
                 Err(error) => return error,
             };

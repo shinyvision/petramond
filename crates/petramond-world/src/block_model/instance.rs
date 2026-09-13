@@ -9,7 +9,6 @@ use glam::{Mat4, Vec3};
 use crate::bbmodel::{euler_quat, face_corners};
 use crate::block::Aabb;
 use crate::facing::Facing;
-use crate::mathh::IVec3;
 use crate::shade::{ContactShadowVertex, SHADES};
 use petramond_math::face::Face;
 
@@ -473,16 +472,16 @@ impl ModelInstance {
             }
         }
 
-        // Bake the per-facing render geometry once. `placement_transform` with a ZERO base
-        // gives the facing's rotation + footprint shift; the mesher adds the integer world
-        // base at remesh. All the per-cube/per-face math the mesher used to redo every
+        // Bake the per-facing render geometry once. `placement_transform` gives the
+        // facing's rotation + footprint shift relative to the base; the mesher adds the
+        // integer world base at remesh. All the per-cube/per-face math the mesher used to redo every
         // remesh (quaternions, matrix products, face bias, degenerate-face culling) is
         // resolved here.
         let oriented_render = std::array::from_fn(|i| {
             let facing = Facing::from_u8(i as u8);
             // Explicit local footprint, NOT placement_transform(kind, ..): this runs inside
             // the INSTANCES LazyLock init, so resolving footprint(kind) would deadlock.
-            let base_xform = placement_transform_fp(IVec3::ZERO, footprint, facing);
+            let base_xform = placement_transform_fp(footprint, facing);
             cells
                 .iter()
                 .map(|cell| {
@@ -502,7 +501,7 @@ impl ModelInstance {
         });
         let oriented_contact = std::array::from_fn(|i| {
             let facing = Facing::from_u8(i as u8);
-            let base_xform = placement_transform_fp(IVec3::ZERO, footprint, facing);
+            let base_xform = placement_transform_fp(footprint, facing);
             (0..cells.len())
                 .map(|ci| ContactCellTemplate {
                     pieces: authored_contact

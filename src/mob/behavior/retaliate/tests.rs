@@ -2,7 +2,7 @@ use super::*;
 use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
 use crate::player::PlayerId;
 use crate::world::World;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
@@ -21,7 +21,7 @@ fn flat_world() -> World {
 fn ctx<'a>(
     world: &'a World,
     rng: &'a mut MobRng,
-    pos: petramond_math::math::Vec3,
+    pos: WorldPos,
     players: &'a [PlayerAnchor],
     mobs: &'a [AiMob],
     attacker: Option<(EntityRef, u32)>,
@@ -42,10 +42,10 @@ fn a_hidden_archer_causes_escape_until_sight_returns() {
     }
     let mut rng = MobRng::new(5);
     let mut ai = RetaliateAi::new(200, 0, EscapeRoute::default());
-    let pos = Vec3::new(8.5, 64.0, 8.5);
+    let pos = WorldPos::new(8.5, 64.0, 8.5);
     let players = [PlayerAnchor {
         id: PlayerId(7),
-        pos: Vec3::new(2.5, 64.9, 8.5),
+        pos: WorldPos::new(2.5, 64.9, 8.5),
         ..Default::default()
     }];
     let memory = Some((EntityRef::Player(PlayerId(7)), 0));
@@ -73,11 +73,11 @@ fn a_fresh_grudge_chases_the_attacker_and_ages_out() {
     let world = flat_world();
     let mut rng = MobRng::new(1);
     let mut ai = RetaliateAi::new(200, 0, EscapeRoute::default());
-    let mob = Vec3::new(2.5, 64.0, 2.5);
+    let mob = WorldPos::new(2.5, 64.0, 2.5);
     let biter = AiMob {
         id: 9,
         kind: Mob::Sheep,
-        pos: Vec3::new(7.5, 64.0, 2.5),
+        pos: WorldPos::new(7.5, 64.0, 2.5),
         active: true,
         tags: Default::default(),
     };
@@ -98,11 +98,11 @@ fn a_dead_or_absent_attacker_ends_the_grudge() {
     let world = flat_world();
     let mut rng = MobRng::new(1);
     let mut ai = RetaliateAi::new(200, 0, EscapeRoute::default());
-    let mob = Vec3::new(2.5, 64.0, 2.5);
+    let mob = WorldPos::new(2.5, 64.0, 2.5);
     let corpse = [AiMob {
         id: 9,
         kind: Mob::Sheep,
-        pos: Vec3::new(7.5, 64.0, 2.5),
+        pos: WorldPos::new(7.5, 64.0, 2.5),
         active: false,
         tags: Default::default(),
     }];
@@ -121,10 +121,10 @@ fn a_player_attacker_is_chased_by_live_anchor_position() {
     let world = flat_world();
     let mut rng = MobRng::new(1);
     let mut ai = RetaliateAi::new(200, 0, EscapeRoute::default());
-    let mob = Vec3::new(2.5, 64.0, 2.5);
+    let mob = WorldPos::new(2.5, 64.0, 2.5);
     let players = [PlayerAnchor {
         id: PlayerId(7),
-        pos: Vec3::new(9.5, 64.9, 2.5),
+        pos: WorldPos::new(9.5, 64.9, 2.5),
         sneaking: true, // sneaking does not hide an attacker from their victim
         ..Default::default()
     }];
@@ -139,11 +139,11 @@ fn the_warmup_delays_the_counter_and_rehits_cannot_rewind_it() {
     let world = flat_world();
     let mut rng = MobRng::new(1);
     let mut ai = RetaliateAi::new(200, 20, EscapeRoute::default());
-    let mob = Vec3::new(2.5, 64.0, 2.5);
+    let mob = WorldPos::new(2.5, 64.0, 2.5);
     let biter = [AiMob {
         id: 9,
         kind: Mob::Sheep,
-        pos: Vec3::new(7.5, 64.0, 2.5),
+        pos: WorldPos::new(7.5, 64.0, 2.5),
         active: true,
         tags: Default::default(),
     }];

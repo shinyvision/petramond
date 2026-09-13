@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use petramond::world::environment::ShaderParamMap;
 use petramond::world::World;
-use petramond_math::math::{lerp, voxel_at, IVec3, Vec3};
+use petramond_math::math::{lerp, IVec3, Vec3};
 use petramond_world::biome::{blended_fog_color, Biome};
 use petramond_world::block::Block;
 
@@ -49,7 +49,7 @@ impl Game {
 /// world reads that world directly.
 pub fn camera_fog(
     world: &World,
-    eye: Vec3,
+    eye: petramond_math::world_pos::WorldPos,
     biome_at: impl FnMut(i32, i32) -> Biome,
 ) -> ([f32; 3], Option<Block>) {
     let eye_fluid = camera_eye_fluid(world, eye);
@@ -61,8 +61,8 @@ pub fn camera_fog(
 }
 
 /// The fluid the camera eye is inside, judged by its medium's `eye_margin`.
-fn camera_eye_fluid(world: &World, eye: Vec3) -> Option<Block> {
-    let cell = voxel_at(eye);
+fn camera_eye_fluid(world: &World, eye: petramond_math::world_pos::WorldPos) -> Option<Block> {
+    let cell = eye.block();
     let fluid = Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)).fluid()?;
     let margin = fluid.fluid_def()?.medium.eye_margin;
     eye_inside(world, eye, fluid, margin).then_some(fluid)
@@ -71,19 +71,24 @@ fn camera_eye_fluid(world: &World, eye: Vec3) -> Option<Block> {
 /// Whether an eye in a cell of `fluid` counts as inside it. With a `margin`
 /// only an eye that far below the open surface does, so a barely-clipping eye
 /// (a shallow flowing film) stays dry; without one, any eye in the cell does.
-fn eye_inside(world: &World, eye: Vec3, fluid: Block, margin: Option<f32>) -> bool {
+fn eye_inside(
+    world: &World,
+    eye: petramond_math::world_pos::WorldPos,
+    fluid: Block,
+    margin: Option<f32>,
+) -> bool {
     let Some(margin) = margin else {
         return true;
     };
-    let cell = voxel_at(eye);
+    let cell = eye.block();
     // The same fluid above means an interior volume, not the open surface.
     if Block::from_id(world.chunk_block(cell.x, cell.y + 1, cell.z)).fluid() == Some(fluid) {
         return true;
     }
-    eye.y < surface_y_at(world, cell, eye.x, eye.z, fluid) - margin
+    eye.y < f64::from(surface_y_at(world, cell, eye.relative_to(cell), fluid) - margin)
 }
 
-fn surface_y_at(world: &World, cell: IVec3, eye_x: f32, eye_z: f32, fluid: Block) -> f32 {
+fn surface_y_at(world: &World, cell: IVec3, eye_in_cell: Vec3, fluid: Block) -> f32 {
     if fills_cell_at(world, cell.x, cell.y, cell.z, fluid) {
         return cell.y as f32 + 1.0;
     }
@@ -110,8 +115,8 @@ fn surface_y_at(world: &World, cell: IVec3, eye_x: f32, eye_z: f32, fluid: Block
         }
     }
 
-    let fx = (eye_x - cell.x as f32).clamp(0.0, 1.0);
-    let fz = (eye_z - cell.z as f32).clamp(0.0, 1.0);
+    let fx = eye_in_cell.x.clamp(0.0, 1.0);
+    let fz = eye_in_cell.z.clamp(0.0, 1.0);
     let z0 = lerp(h[0][0], h[1][0], fx);
     let z1 = lerp(h[0][1], h[1][1], fx);
     cell.y as f32 + lerp(z0, z1, fz)
@@ -143,7 +148,8 @@ fn fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32, fluid: Block) -> bool
 mod tests {
     use super::eye_inside;
     use crate::game::Game;
-    use petramond_math::math::{IVec3, Vec3};
+    use petramond_math::math::IVec3;
+    use petramond_math::world_pos::WorldPos;
     use petramond_render::camera::Camera;
     use petramond_world::block::Block;
     use petramond_world::chunk::ChunkPos;
@@ -154,7 +160,12 @@ mod tests {
     const FALLING_META: u8 = 0x80;
 
     fn game() -> Game {
-        let mut game = Game::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1);
+        let mut game = Game::new(
+            Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0),
+            "",
+            1,
+            1,
+        );
         // The environment reads the REPLICA (what the camera sees); a full
         // empty column (every section present) so a fluid write at any Y lands.
         game.replica.clear_world();
@@ -178,7 +189,7 @@ mod tests {
     }
 
     fn inside(game: &Game, p: IVec3, y: f32) -> bool {
-        let eye = Vec3::new(p.x as f32 + 0.5, y, p.z as f32 + 0.5);
+        let eye = WorldPos::new(p.x as f64 + 0.5, f64::from(y), p.z as f64 + 0.5);
         eye_inside(&game.replica, eye, Block::Water, Some(MARGIN))
     }
 
@@ -203,7 +214,11 @@ mod tests {
         assert!(!inside(&game, p, surface + 0.01));
         assert!(!inside(&game, p, surface - MARGIN * 0.5));
         assert!(inside(&game, p, surface - MARGIN - 0.01));
-        let eye = Vec3::new(p.x as f32 + 0.5, surface - MARGIN * 0.5, p.z as f32 + 0.5);
+        let eye = WorldPos::new(
+            p.x as f64 + 0.5,
+            f64::from(surface - MARGIN * 0.5),
+            p.z as f64 + 0.5,
+        );
         assert!(
             eye_inside(&game.replica, eye, Block::Water, None),
             "a medium without a margin counts any eye in its cell"
@@ -233,7 +248,7 @@ mod tests {
         let p = IVec3::new(8, 64, 8);
         set_fluid(&mut game, p, 0);
         set_fluid(&mut game, p + IVec3::Y, 0);
-        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
+        game.cam.pos = WorldPos::new(p.x as f64 + 0.5, p.y as f64 + 0.5, p.z as f64 + 0.5);
         assert_eq!(game.environment(0.0).eye_fluid, Some(Block::Water));
     }
 }

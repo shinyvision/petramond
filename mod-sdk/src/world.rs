@@ -148,7 +148,7 @@ host_fn! {
     /// twice.
     ///
     /// At most [`crate::SIM_BATCH_MAX`] points per call.
-    pub fn block_local_to_world(pos: [i32; 3], points: Vec<[f32; 3]>) -> Option<Vec<[f32; 3]>>
+    pub fn block_local_to_world(pos: [i32; 3], points: Vec<[f32; 3]>) -> Option<Vec<[f64; 3]>>
         => BlockLocalToWorld { pos, points } => Points
 }
 
@@ -231,7 +231,7 @@ host_fn! {
     /// ray. THE line-of-sight primitive — a swung weapon reaching for a
     /// body, a projectile's flight, an AI's sightline. `None` = nothing
     /// within `max`.
-    pub fn raycast(from: [f32; 3], dir: [f32; 3], max: f32, filter: RayFilter)
+    pub fn raycast(from: [f64; 3], dir: [f32; 3], max: f32, filter: RayFilter)
         -> Option<RaycastHitData>
         => Raycast { from, dir, max, filter } => Raycast
 }

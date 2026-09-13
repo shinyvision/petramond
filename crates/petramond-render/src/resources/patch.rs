@@ -11,16 +11,11 @@ fn patch_terrain_verts(
     buf: &Option<Layer>,
     vertex_start: u32,
     src: &[Vertex],
-    col_ox: i32,
-    col_oz: i32,
 ) -> bool {
     if src.is_empty() {
         return true;
     }
-    let quantized: Vec<TerrainVertex> = src
-        .iter()
-        .map(|v| TerrainVertex::from_world(v, col_ox, col_oz))
-        .collect();
+    let quantized: Vec<TerrainVertex> = src.iter().map(TerrainVertex::from_mesh).collect();
     patch_verts(queue, arena, buf, vertex_start, &quantized)
 }
 
@@ -95,7 +90,6 @@ pub(super) fn try_patch_column_verts(
             return false;
         }
     }
-    let (ox, oz) = (prev.col_ox, prev.col_oz);
     for (&(_, mesh), (_, gpu)) in meshes.iter().zip(&prev.sections) {
         if !mesh.mesh_dirty {
             continue;
@@ -106,40 +100,30 @@ pub(super) fn try_patch_column_verts(
             &prev.opaque_vbuf,
             gpu.opaque_vertex_start,
             &mesh.opaque,
-            ox,
-            oz,
         ) || !patch_terrain_verts(
             queue,
             arena,
             &prev.far_opaque_vbuf,
             gpu.far_opaque_vertex_start,
             &mesh.far_opaque,
-            ox,
-            oz,
         ) || !patch_terrain_verts(
             queue,
             arena,
             &prev.transparent_vbuf,
             gpu.transparent_vertex_start,
             &mesh.transparent,
-            ox,
-            oz,
         ) || !patch_terrain_verts(
             queue,
             arena,
             &prev.transparent_ts_vbuf,
             gpu.transparent_ts_vertex_start,
             &mesh.transparent_two_sided,
-            ox,
-            oz,
         ) || !patch_terrain_verts(
             queue,
             arena,
             &prev.translucent_vbuf,
             gpu.translucent_vertex_start,
             &mesh.translucent,
-            ox,
-            oz,
         ) || !patch_verts(
             queue,
             arena,

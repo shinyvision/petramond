@@ -10,8 +10,9 @@ fn shared_corners_agree_across_section_boundaries() {
         }
     };
     for x in [-17, -1, 15, 31] {
-        let left = CrownCorners::new([x, 15, 0], blocks, |_, _, _| true);
-        let right = CrownCorners::new([x + 1, 15, 0], blocks, |_, _, _| true);
+        let at = |x: i32| Vec3::new(x as f32, 15.0, 0.0);
+        let left = CrownCorners::new([x, 15, 0], at(x), blocks, |_, _, _| true);
+        let right = CrownCorners::new([x + 1, 15, 0], at(x + 1), blocks, |_, _, _| true);
         for key in [0, 2, 4, 6] {
             assert_eq!(left.offsets[key + 1], right.offsets[key]);
             assert_ne!(left.offsets[key + 1], Vec3::ZERO);
@@ -23,12 +24,14 @@ fn shared_corners_agree_across_section_boundaries() {
 fn flat_canopies_and_solid_contacts_do_not_shrink() {
     let plane = CrownCorners::new(
         [0, 0, 0],
+        Vec3::ZERO,
         |_, y, _| if y == 0 { Block::OakLeaves } else { Block::Air },
         |_, _, _| true,
     );
     assert!(plane.offsets.iter().all(|p| *p == Vec3::ZERO));
     let contact = CrownCorners::new(
         [0, 0, 0],
+        Vec3::ZERO,
         |x, y, z| {
             if y == -1 {
                 Block::Stone
@@ -45,6 +48,7 @@ fn flat_canopies_and_solid_contacts_do_not_shrink() {
     }
     let missing = CrownCorners::new(
         [0, 0, 0],
+        Vec3::ZERO,
         |x, y, z| {
             if [x, y, z] == [0, 0, 0] {
                 Block::OakLeaves
@@ -72,6 +76,7 @@ fn subdivision_preserves_colored_light_and_uv_extent() {
         .collect();
     let shape = CrownCorners::new(
         [0, 0, 0],
+        Vec3::ZERO,
         |x, y, z| {
             if [x, y, z] == [0, 0, 0] {
                 Block::OakLeaves

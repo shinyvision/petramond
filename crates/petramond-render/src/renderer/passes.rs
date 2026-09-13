@@ -185,6 +185,7 @@ impl Renderer {
             );
             pass.set_pipeline(self.contact_pipe.get(samples));
             pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
             for (_, pos) in contact_columns {
                 let Some(col) = self.terrain.columns.get(pos) else {
                     continue;
@@ -194,7 +195,8 @@ impl Renderer {
                 }
                 if let Some(vb) = &col.contact_vbuf {
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    pass.draw(0..col.contact_vertex_count, 0..1);
+                    let slot = col.origin_slot.index();
+                    pass.draw(0..col.contact_vertex_count, slot..slot + 1);
                 }
             }
         }
@@ -266,6 +268,7 @@ impl Renderer {
             // vertices carry (sky, block) light so the shader applies the
             // day/night sky scale (meshes don't rebake at sunset).
             pass.set_pipeline(self.world_model_pipe.get(samples));
+            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
             for (_, pos) in model_columns {
                 let Some(col) = self.terrain.columns.get(pos) else {
                     continue;
@@ -274,12 +277,13 @@ impl Renderer {
                     continue;
                 }
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    let slot = col.origin_slot.index();
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     pass.set_index_buffer(
                         self.terrain.geometry.slice(&ib.alloc, ib.len),
                         wgpu::IndexFormat::Uint32,
                     );
-                    pass.draw_indexed(0..col.model_idx_count, 0, 0..1);
+                    pass.draw_indexed(0..col.model_idx_count, 0, slot..slot + 1);
                 }
             }
             for item in order.iter() {
@@ -290,6 +294,7 @@ impl Renderer {
                     continue;
                 };
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    let slot = col.origin_slot.index();
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     pass.set_index_buffer(
                         self.terrain.geometry.slice(&ib.alloc, ib.len),
@@ -298,7 +303,7 @@ impl Renderer {
                     pass.draw_indexed(
                         item.model_index_start..item.model_index_start + item.model_idx_count,
                         0,
-                        0..1,
+                        slot..slot + 1,
                     );
                 }
             }
@@ -469,6 +474,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.model_atlas_bind, &[]);
             pass.set_pipeline(self.world_model_blend_pipe.get(samples));
+            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
             for (_, pos) in model_columns {
                 let Some(col) = self.terrain.columns.get(pos) else {
                     continue;
@@ -477,6 +483,7 @@ impl Renderer {
                     continue;
                 }
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    let slot = col.origin_slot.index();
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     pass.set_index_buffer(
                         self.terrain.geometry.slice(&ib.alloc, ib.len),
@@ -485,7 +492,7 @@ impl Renderer {
                     pass.draw_indexed(
                         col.model_idx_count..col.model_idx_count + col.model_blend_idx_count,
                         0,
-                        0..1,
+                        slot..slot + 1,
                     );
                 }
             }
@@ -497,6 +504,7 @@ impl Renderer {
                     continue;
                 };
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    let slot = col.origin_slot.index();
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     pass.set_index_buffer(
                         self.terrain.geometry.slice(&ib.alloc, ib.len),
@@ -506,7 +514,7 @@ impl Renderer {
                         item.model_blend_index_start
                             ..item.model_blend_index_start + item.model_blend_idx_count,
                         0,
-                        0..1,
+                        slot..slot + 1,
                     );
                 }
             }

@@ -158,7 +158,7 @@ impl GamePresentationScratch {
         let world = &game.replica;
         self.item_entities
             .extend(game.replicated_items.iter().map(|entry| {
-                let c = petramond_math::math::voxel_at(entry.curr.pos);
+                let c = entry.curr.pos.block();
                 DroppedItemPresentation {
                     prev_pos: entry.prev.pos,
                     pos: entry.curr.pos,
@@ -285,7 +285,7 @@ impl GamePresentationScratch {
         let world = &game.replica;
         self.mobs.extend(game.replicated_mobs.iter().map(|entry| {
             let (prev, curr) = (&entry.prev, &entry.curr);
-            let c = petramond_math::math::voxel_at(curr.pos + Vec3::new(0.0, 0.3, 0.0));
+            let c = (curr.pos + Vec3::new(0.0, 0.3, 0.0)).block();
             let emitters = body_emitters(&curr.emitters, &curr.conditions);
             MobPresentation {
                 id: curr.id,
@@ -366,11 +366,13 @@ impl GamePresentationScratch {
         self.footsteps.clear();
         let world = &game.replica;
         // The block a body at `pos` (feet centre, model y=0) stands on.
-        let ground = |pos: Vec3, walking: bool| -> Option<petramond_world::block::Block> {
+        let ground = |pos: petramond_math::world_pos::WorldPos,
+                      walking: bool|
+         -> Option<petramond_world::block::Block> {
             if !walking {
                 return None;
             }
-            let c = petramond_math::math::voxel_at(pos - Vec3::new(0.0, 0.1, 0.0));
+            let c = (pos - Vec3::new(0.0, 0.1, 0.0)).block();
             world.block_if_loaded(c.x, c.y, c.z)
         };
         let p = &game.player;
@@ -448,11 +450,10 @@ impl GamePresentationScratch {
                 // Mirror of `collect_player`'s sleeping branch: the sleeper
                 // stands at the bed-group centre; the lying model's feet
                 // anchor shifts back so the head lands on the pillow.
-                pos.x -= body_yaw.sin() * 0.925;
-                pos.z -= body_yaw.cos() * 0.925;
+                pos -= Vec3::new(body_yaw.sin(), 0.0, body_yaw.cos()) * 0.925;
             }
             // Sample light at the body's torso cell (~mid-height).
-            let c = petramond_math::math::voxel_at(pos + Vec3::new(0.0, 0.9, 0.0));
+            let c = (pos + Vec3::new(0.0, 0.9, 0.0)).block();
             let emitters = body_emitters(&[], &p.curr.conditions);
             self.remote_players.push(RemotePlayerRender {
                 body: PlayerRenderInstance {
@@ -538,7 +539,7 @@ impl GamePresentationScratch {
         let world = &game.replica;
         // A generous box around the feet — the decal is at most a couple of
         // blocks across and sits below the body, never above it.
-        let visible = |feet: Vec3| {
+        let visible = |feet: petramond_math::world_pos::WorldPos| {
             view.aabb_visible(
                 feet - Vec3::new(2.0, 1.0, 2.0),
                 feet + Vec3::new(2.0, 2.0, 2.0),
@@ -597,7 +598,7 @@ const SEATED_HEAD_YAW_LIMIT: f32 = 1.2;
 fn push_entity_shadow(
     world: &petramond_world::world::WorldData,
     out: &mut Vec<EntityShadow>,
-    feet: Vec3,
+    feet: petramond_math::world_pos::WorldPos,
     radius: f32,
 ) {
     let x = feet.x.floor() as i32;
@@ -613,12 +614,12 @@ fn push_entity_shadow(
         let ground = y as f32 + top;
         // Geometry poking up beside/into the body (a snow layer, a stair the
         // feet clip) is not ground UNDER it; keep probing deeper.
-        if ground > feet.y + 0.01 {
+        if f64::from(ground) > feet.y + 0.01 {
             continue;
         }
-        let t = ((feet.y - ground) / SHADOW_MAX_DROP).clamp(0.0, 1.0);
+        let t = ((feet.y - f64::from(ground)) as f32 / SHADOW_MAX_DROP).clamp(0.0, 1.0);
         out.push(EntityShadow {
-            center: Vec3::new(feet.x, ground, feet.z),
+            center: petramond_math::world_pos::WorldPos::new(feet.x, f64::from(ground), feet.z),
             radius: radius * (1.0 + 0.5 * t),
             strength: SHADOW_STRENGTH * (1.0 - t * t),
         });
@@ -657,8 +658,7 @@ fn collect_player(
     let (skylight, blocklight) = game.held_item_light();
     // The body shares the first-person camera's auto-step vertical easing (a
     // negative, settling lag) so stepping up a ledge glides instead of popping.
-    let mut pos = game.player.pos;
-    pos.y += game.camera_step_y_offset;
+    let mut pos = game.player.pos + Vec3::new(0.0, game.camera_step_y_offset, 0.0);
     // Sleep state reads the replicated self view (the sim's SleepState stays
     // server-side).
     let sleeping = game.self_view.sleeping.is_some();
@@ -667,8 +667,7 @@ fn collect_player(
         // anchor shifts back toward the foot end so the head lands on the pillow
         // (bed length 2, model ~1.85 → feet ~0.925 behind centre).
         let head_yaw = game.third_person.pose.body_yaw;
-        pos.x -= head_yaw.sin() * 0.925;
-        pos.z -= head_yaw.cos() * 0.925;
+        pos -= Vec3::new(head_yaw.sin(), 0.0, head_yaw.cos()) * 0.925;
     }
     // Seated: the body sits SQUARE in the seat and leans with it — its yaw
     // is the mount's facing, never the look-follow (which would spin the

@@ -521,7 +521,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         height: 1.2,
         half_length: 0.4,
     }]));
-    roundtrip(HostRet::Player(PlayerSnapshot {
+    roundtrip(HostRet::Player(Box::new(PlayerSnapshot {
         id: Some(PlayerId(1)),
         pos: [0.5, 80.0, 0.5],
         vel: [0.0, -1.0, 0.0],
@@ -546,7 +546,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         height: 1.8,
         eye_height: 1.62,
         conditions: Vec::new(),
-    }));
+    })));
     roundtrip(HostRet::Bytes(Some(vec![1, 2, 3])));
     roundtrip(GuestRet::Event {
         outcome: Outcome::Continue,

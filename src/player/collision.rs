@@ -88,8 +88,8 @@ impl Player {
         // resolves against the same `collision::sweep_axis`; the player just applies the
         // travel to its body and reports whether it was clamped short.
         let travel = petramond_world::collision::sweep_axis_dyn(
-            [mn.x, mn.y, mn.z],
-            [mx.x, mx.y, mx.z],
+            mn,
+            mx,
             ai,
             delta,
             boxes,
@@ -97,9 +97,9 @@ impl Player {
             petramond_world::collision::NOT_AN_ENTITY,
         );
         match axis {
-            Axis::X => self.pos.x += travel,
-            Axis::Y => self.pos.y += travel,
-            Axis::Z => self.pos.z += travel,
+            Axis::X => self.pos.x += f64::from(travel),
+            Axis::Y => self.pos.y += f64::from(travel),
+            Axis::Z => self.pos.z += f64::from(travel),
         }
         travel.abs() + 1e-6 < delta.abs()
     }
@@ -110,9 +110,9 @@ impl Player {
     pub fn intersects_block(&self, b: IVec3) -> bool {
         let min = self.aabb_min();
         let max = self.aabb_max();
-        (cell_min(min.x)..=cell_max(max.x)).contains(&b.x)
-            && (cell_min(min.y)..=cell_max(max.y)).contains(&b.y)
-            && (cell_min(min.z)..=cell_max(max.z)).contains(&b.z)
+        (cell_min(min[0] as f32)..=cell_max(max[0] as f32)).contains(&b.x)
+            && (cell_min(min[1] as f32)..=cell_max(max[1] as f32)).contains(&b.y)
+            && (cell_min(min[2] as f32)..=cell_max(max[2] as f32)).contains(&b.z)
     }
 }
 

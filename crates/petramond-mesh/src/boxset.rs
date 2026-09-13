@@ -141,12 +141,14 @@ pub(super) struct BoxSetScratch {
 ///   cell + cell-local pocket AABB) — the out-of-cell probe resolution AND
 ///   the plane gather's cast probe, so box shapes receive neighbour casting
 ///   with exactly the cube faces' semantics.
+/// - `anchor`: the mesh-space origin the emitted positions are relative to.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_box_set<B, S, L, K>(
     vbuf: &mut Vec<Vertex>,
     wx: i32,
     wy: i32,
     wz: i32,
+    anchor: glam::IVec3,
     boxes: &[ShapeBox],
     scratch: &mut BoxSetScratch,
     neighbor_solid: &dyn Fn(Face) -> bool,
@@ -179,6 +181,7 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 emit_posed_face(
                     vbuf,
                     (wx, wy, wz),
+                    anchor,
                     b,
                     &pose,
                     face,
@@ -282,16 +285,11 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 } else {
                     (wx, wy, wz)
                 };
-                let front = (fx, fy, fz);
-                // The gather's probe pockets sit ON the face plane — the
-                // voxel boundary when flush, the box's own plane height
-                // when interior (a slab top's pockets at 0.5, not the cell
-                // floor).
-                let plane = if flush {
-                    boundary_plane(face, front)
-                } else {
-                    [wx, wy, wz][axis] as f32 + d
-                };
+                // The gather's probe pockets sit ON the face plane, measured
+                // from the front cell — the voxel boundary when flush, the
+                // box's own plane height when interior (a slab top's pockets
+                // at 0.5, not the cell floor).
+                let plane = if flush { boundary_plane(face) } else { d };
                 let (ao, sky, block) = cube_face_lighting(
                     face,
                     fx,
@@ -370,7 +368,11 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     let ci = (k + rot) & 3;
                     let lp = local[ci];
                     vbuf.push(Vertex {
-                        pos: [wx as f32 + lp[0], wy as f32 + lp[1], wz as f32 + lp[2]],
+                        pos: [
+                            (wx - anchor.x) as f32 + lp[0],
+                            (wy - anchor.y) as f32 + lp[1],
+                            (wz - anchor.z) as f32 + lp[2],
+                        ],
                         tint: light[ci].tint_word(style.tint),
                         packed: pack_vertex(
                             style.tile.index() as u32,
@@ -421,6 +423,7 @@ fn quant_uv(x: f32) -> u32 {
 fn emit_posed_face<B, S, L, K>(
     vbuf: &mut Vec<Vertex>,
     (wx, wy, wz): (i32, i32, i32),
+    anchor: glam::IVec3,
     b: &ShapeBox,
     pose: &petramond_world::block::BoxPose,
     face: Face,
@@ -455,7 +458,7 @@ fn emit_posed_face<B, S, L, K>(
         wx,
         wy,
         wz,
-        [wx, wy, wz][laxis] as f32 + centre,
+        centre,
         neighbour_light(wx, wy, wz) as u32,
         neighbour_blocklight(wx, wy, wz),
         lit != Face::NegY,
@@ -498,7 +501,11 @@ fn emit_posed_face<B, S, L, K>(
         let ci = (k + rot) & 3;
         let p = posed[ci];
         vbuf.push(Vertex {
-            pos: [wx as f32 + p[0], wy as f32 + p[1], wz as f32 + p[2]],
+            pos: [
+                (wx - anchor.x) as f32 + p[0],
+                (wy - anchor.y) as f32 + p[1],
+                (wz - anchor.z) as f32 + p[2],
+            ],
             tint: light[ci].tint_word(style.tint),
             packed: pack_vertex(
                 style.tile.index() as u32,

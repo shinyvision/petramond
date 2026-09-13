@@ -104,14 +104,14 @@ pub fn simplex3(p: [f64; 3]) -> f64 {
     32.0 * sum
 }
 
-/// Spatial sampling in single-precision block coordinates, offset by one period.
-pub fn scaled_simplex2(x: f32, z: f32, scale: f32) -> f32 {
-    simplex2(((x + scale) / scale) as f64, ((z + scale) / scale) as f64) as f32
+/// Spatial sampling in block coordinates, offset by one period.
+pub fn scaled_simplex2(x: f64, z: f64, scale: f64) -> f64 {
+    simplex2((x + scale) / scale, (z + scale) / scale)
 }
 
-/// Spatial sampling in single-precision block coordinates, offset by one period.
-pub fn scaled_simplex3(p: [f32; 3], scale: f32) -> f32 {
-    simplex3(p.map(|v| ((v + scale) / scale) as f64)) as f32
+/// Spatial sampling in block coordinates, offset by one period.
+pub fn scaled_simplex3(p: [f64; 3], scale: f64) -> f64 {
+    simplex3(p.map(|v| (v + scale) / scale))
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use super::*;
+use petramond_math::world_pos::WorldPos;
 
 fn rain_spec(hit: AmbientHit) -> AmbientSpec {
     AmbientSpec {
@@ -43,7 +44,7 @@ fn splash_spec() -> BurstSpec {
 /// open sky above. The camera floats over the floor with the ground
 /// INSIDE the fall band (`below` = 4 → band bottom 64 < floor top 65),
 /// so drops really land.
-const CAM: Vec3 = Vec3::new(8.0, 68.0, 8.0);
+const CAM: WorldPos = WorldPos::new(8.0, 68.0, 8.0);
 const FLOOR_TOP: f32 = 65.0;
 
 #[test]
@@ -77,14 +78,14 @@ fn particles_stay_inside_the_volume_and_above_the_ground() {
         assert!(!out.is_empty(), "an active volume derives particles");
         for p in &out {
             assert!(
-                p.pos.y > FLOOR_TOP - 0.001,
+                p.pos.y > f64::from(FLOOR_TOP - 0.001),
                 "nothing renders below the floor top (y={})",
                 p.pos.y
             );
-            assert!(p.pos.y <= CAM.y + spec.height[1] + 0.001);
+            assert!(p.pos.y <= CAM.y + f64::from(spec.height[1]) + 0.001);
             let (dx, dz) = (p.pos.x - CAM.x, p.pos.z - CAM.z);
             assert!(
-                dx * dx + dz * dz <= (spec.radius + 0.001).powi(2),
+                dx * dx + dz * dz <= f64::from((spec.radius + 0.001).powi(2)),
                 "particles stay inside the radius disc"
             );
             assert_eq!(p.stretch, spec.stretch);
@@ -178,7 +179,7 @@ fn splashes_appear_at_the_kill_height_shortly_after_hits() {
             if p.stretch == 1.0 {
                 splashes_seen += 1;
                 assert!(
-                    p.pos.y >= FLOOR_TOP - 0.001 && p.pos.y < FLOOR_TOP + 1.5,
+                    p.pos.y >= f64::from(FLOOR_TOP - 0.001) && p.pos.y < f64::from(FLOOR_TOP + 1.5),
                     "droplets arc just above the floor top (y={})",
                     p.pos.y
                 );
@@ -335,11 +336,14 @@ fn windy_advection_keeps_invariants_and_splash_anchors_static() {
         for p in &out {
             let (dx, dz) = (p.pos.x - CAM.x, p.pos.z - CAM.z);
             assert!(
-                dx * dx + dz * dz <= (spec.radius + 0.001).powi(2),
+                dx * dx + dz * dz <= f64::from((spec.radius + 0.001).powi(2)),
                 "row outside the disc under wind (step {step})"
             );
-            assert!(p.pos.y > FLOOR_TOP - 0.001, "row below the floor");
-            assert!(p.pos.y <= CAM.y + spec.height[1] + 0.001);
+            assert!(
+                p.pos.y > f64::from(FLOOR_TOP - 0.001),
+                "row below the floor"
+            );
+            assert!(p.pos.y <= CAM.y + f64::from(spec.height[1]) + 0.001);
             if p.stretch == 1.0 {
                 // Quantize to catch drift far above f32 noise but far
                 // below one particle spacing.
@@ -348,7 +352,7 @@ fn windy_advection_keeps_invariants_and_splash_anchors_static() {
                     (p.pos.z * 64.0).round() as i32,
                 ));
             } else {
-                falling.push((p.pos.x, p.pos.z));
+                falling.push((p.pos.x as f32, p.pos.z as f32));
             }
         }
         // THE regression signature: `wind × absolute time` displaces
@@ -435,7 +439,7 @@ fn an_interior_volume_derives_where_precipitation_cannot() {
     let world = roofed_world();
     // The camera sits between the floor and the roof, the way a player
     // stands in a cave: the whole band is under the ceiling.
-    let cam = Vec3::new(8.0, 70.0, 8.0);
+    let cam = WorldPos::new(8.0, 70.0, 8.0);
     let mut spec = rain_spec(AmbientHit::Die);
     spec.height = [6.0, 6.0];
     let mut ceilings = FxHashMap::default();
@@ -533,7 +537,7 @@ fn world_lit_motes_take_the_cells_own_light() {
             }
         }
     }
-    let cam = Vec3::new(8.0, 70.0, 8.0);
+    let cam = WorldPos::new(8.0, 70.0, 8.0);
     let mut spec = rain_spec(AmbientHit::Die);
     spec.height = [6.0, 6.0];
     spec.kill = AmbientKill::Interior;
@@ -595,7 +599,7 @@ fn ambient_particles_stay_world_anchored_when_the_camera_moves() {
     // the two frames hold the same motes and nothing else can explain a
     // difference.
     let world = petramond::world::testutil::flat_world();
-    let base_cam = Vec3::new(8.0, 120.0, 8.0);
+    let base_cam = WorldPos::new(8.0, 120.0, 8.0);
     let mut spec = rain_spec(AmbientHit::Die);
     spec.count_per_intensity = 400.0;
     spec.max_count = 400;
@@ -606,7 +610,7 @@ fn ambient_particles_stay_world_anchored_when_the_camera_moves() {
     spec.light = AmbientLight::World;
     let span = spec.height[0] + spec.height[1];
     let time = 37.0;
-    let sample = |spec: &AmbientSpec, cam: Vec3| {
+    let sample = |spec: &AmbientSpec, cam: WorldPos| {
         let mut out = Vec::new();
         let mut ceilings = FxHashMap::default();
         derive_volume(
@@ -632,12 +636,14 @@ fn ambient_particles_stay_world_anchored_when_the_camera_moves() {
     };
     // Fraction of `b` that still sits at a position present in `a`,
     // identified by the two axes the camera did not move along.
-    let anchored = |a: &[Vec3], b: &[Vec3], axis: usize| -> f32 {
+    let anchored = |a: &[WorldPos], b: &[WorldPos], axis: usize| -> f32 {
         let others: Vec<usize> = (0..3).filter(|i| *i != axis).collect();
         let kept = b
             .iter()
             .filter(|p| {
+                let p = p.to_array();
                 a.iter().any(|q| {
+                    let q = q.to_array();
                     others.iter().all(|i| (p[*i] - q[*i]).abs() < 1e-4)
                         && (p[axis] - q[axis]).abs() < 1e-3
                 })
@@ -662,12 +668,13 @@ fn ambient_particles_stay_world_anchored_when_the_camera_moves() {
         let cam = base_cam + Vec3::new(0.0, jump, 0.0);
         for p in &jumped {
             assert!(
-                p.y >= cam.y - spec.height[0] - 1e-3 && p.y <= cam.y + spec.height[1] + 1e-3,
+                p.y >= cam.y - f64::from(spec.height[0]) - 1e-3
+                    && p.y <= cam.y + f64::from(spec.height[1]) + 1e-3,
                 "mote outside the band around the new camera (y={})",
                 p.y
             );
             let (dx, dz) = (p.x - cam.x, p.z - cam.z);
-            assert!(dx * dx + dz * dz <= (spec.radius + 1e-3).powi(2));
+            assert!(dx * dx + dz * dz <= f64::from((spec.radius + 1e-3).powi(2)));
         }
         // Control: the HORIZONTAL anchor both kinds already had. If the
         // helper could not detect anchoring at all, this would fail too.
@@ -712,7 +719,7 @@ fn a_teleported_camera_still_stands_in_a_full_volume() {
             },
             &View {
                 world: &world,
-                cam: Vec3::new(8.0, cam_y, 8.0),
+                cam: WorldPos::new(8.0, f64::from(cam_y), 8.0),
                 time: 101.0,
             },
             &mut ceilings,
@@ -724,8 +731,8 @@ fn a_teleported_camera_still_stands_in_a_full_volume() {
             out.len()
         );
         for p in &out {
-            assert!(p.pos.y >= cam_y - spec.height[0] - 1e-3);
-            assert!(p.pos.y <= cam_y + spec.height[1] + 1e-3);
+            assert!(p.pos.y >= f64::from(cam_y - spec.height[0] - 1e-3));
+            assert!(p.pos.y <= f64::from(cam_y + spec.height[1] + 1e-3));
         }
     }
 }

@@ -1,7 +1,9 @@
 use super::*;
 use petramond::net::protocol::Transform;
+use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
-fn row(id: u8, pos: Vec3) -> PlayerStateRow {
+fn row(id: u8, pos: WorldPos) -> PlayerStateRow {
     PlayerStateRow {
         conditions: Vec::new(),
         id: PlayerId(id),
@@ -42,8 +44,8 @@ fn apply(store: &mut RemotePlayers, rows: &[PlayerStateRow]) {
 #[test]
 fn store_pairs_batches_skips_own_id_and_drops_absent_ids() {
     let mut store = RemotePlayers::default();
-    let p1 = Vec3::new(1.0, 70.0, 1.0);
-    let p2 = Vec3::new(2.0, 70.0, 1.0);
+    let p1 = WorldPos::new(1.0, 70.0, 1.0);
+    let p2 = WorldPos::new(2.0, 70.0, 1.0);
 
     // Own id (0) skipped entirely; fresh ids start prev == curr.
     apply(&mut store, &[row(0, p1), row(1, p1), row(2, p1)]);
@@ -64,15 +66,15 @@ fn store_pairs_batches_skips_own_id_and_drops_absent_ids() {
     assert_eq!(paired.curr.transform.pos, p2);
     // Midpoint interpolation over the pair.
     let (mid, _, _) = interpolate(&paired.prev, &paired.curr, 0.5);
-    assert_eq!(mid, Vec3::new(1.5, 70.0, 1.0));
+    assert_eq!(mid, WorldPos::new(1.5, 70.0, 1.0));
 }
 
 #[test]
 fn interpolation_lerps_yaw_across_the_wrap_seam() {
     use std::f32::consts::PI;
-    let mut a = row(1, Vec3::ZERO);
+    let mut a = row(1, WorldPos::ZERO);
     a.transform.yaw = PI - 0.1;
-    let mut b = row(1, Vec3::ZERO);
+    let mut b = row(1, WorldPos::ZERO);
     b.transform.yaw = -PI + 0.1;
     let (_, yaw, _) = interpolate(&a, &b, 0.5);
     assert!(
@@ -84,8 +86,8 @@ fn interpolation_lerps_yaw_across_the_wrap_seam() {
 #[test]
 fn snap_rows_skip_interpolation() {
     let mut store = RemotePlayers::default();
-    let here = Vec3::new(1.0, 70.0, 1.0);
-    let far = Vec3::new(500.0, 90.0, -300.0);
+    let here = WorldPos::new(1.0, 70.0, 1.0);
+    let far = WorldPos::new(500.0, 90.0, -300.0);
     apply(&mut store, &[row(1, here)]);
     let mut tp = row(1, far);
     tp.snap = true;
@@ -103,7 +105,7 @@ fn snap_rows_skip_interpolation() {
 fn a_broke_action_latches_exactly_one_animator_jab() {
     let mut store = RemotePlayers::default();
     store.apply(
-        &[row(1, Vec3::ZERO)],
+        &[row(1, WorldPos::ZERO)],
         &[(PlayerId(1), PlayerActionKind::Broke)],
         PlayerId(0),
     );
@@ -125,7 +127,7 @@ fn a_broke_action_latches_exactly_one_animator_jab() {
 #[test]
 fn hurt_edge_runs_a_decaying_flash_envelope() {
     let mut store = RemotePlayers::default();
-    let mut hurt = row(1, Vec3::ZERO);
+    let mut hurt = row(1, WorldPos::ZERO);
     hurt.hurt_recent = true;
     apply(&mut store, &[hurt]);
     assert_eq!(store.iter().next().unwrap().hurt_flash01(), 1.0);

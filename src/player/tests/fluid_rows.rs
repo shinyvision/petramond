@@ -2,6 +2,7 @@ use super::*;
 use crate::entity::fluid_fixture::{
     self, block, flowing_brine, pool, set_flow, BRINE, FLOOR_Y, SYRUP,
 };
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn fluid_rows_drive_the_player_body() {
@@ -27,7 +28,7 @@ fn wet_locomotion_ignores_sprint_at_every_step_rate() {
         for hz in [20, 60, 144] {
             for jump in [false, true] {
                 let swim = |sprint| {
-                    let start = Vec3::new(5.5, 70.0, 8.5);
+                    let start = WorldPos::new(5.5, 70.0, 8.5);
                     let mut player = p(start);
                     let input = Input {
                         wishdir: Vec3::X,
@@ -56,13 +57,13 @@ fn entry_brakes_a_fast_fall() {
     for name in [BRINE, SYRUP] {
         let world = pool(block(name), 75);
         for hz in [20, 60, 144] {
-            let mut player = p(Vec3::new(5.5, 79.0, 8.5));
+            let mut player = p(WorldPos::new(5.5, 79.0, 8.5));
             player.vel = Vec3::new(SPRINT, -super::super::movement::TERMINAL, 0.0);
             for _ in 0..hz {
                 player.update(1.0 / hz as f32, &world, Input::default());
             }
             assert!(
-                player.pos.y > (FLOOR_Y + 2) as f32,
+                player.pos.y > (FLOOR_Y + 2) as f64,
                 "{name}: entry catches the fall: {:?}",
                 player.pos
             );
@@ -77,7 +78,7 @@ fn entry_brakes_a_fast_fall() {
 }
 
 fn immersion_follows_the_probe_and_the_real_flow_height() {
-    let feet = Vec3::new(8.5, FLOOR_Y as f32, 8.5);
+    let feet = WorldPos::new(8.5, FLOOR_Y as f64, 8.5);
     for (name, probe_reaches_a_thin_flow) in [(SYRUP, true), (BRINE, false)] {
         let fluid = block(name);
         let mut world = pool(Block::Air, FLOOR_Y - 1);
@@ -122,7 +123,7 @@ fn immersion_follows_the_probe_and_the_real_flow_height() {
 
 fn a_current_carries_an_idle_swimmer() {
     let world = flowing_brine();
-    let start = Vec3::new(7.5, FLOOR_Y as f32, 8.5);
+    let start = WorldPos::new(7.5, FLOOR_Y as f64, 8.5);
     let mut player = p(start);
     for _ in 0..20 {
         player.update(0.05, &world, Input::default());

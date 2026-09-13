@@ -125,6 +125,7 @@ mod tests {
     use crate::entity::DroppedItem;
     use crate::events::Outcome;
     use petramond_math::math::IVec3;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::item::{ItemStack, ItemType};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -142,12 +143,12 @@ mod tests {
                 cell,
                 face: IVec3::new(-1, 0, 0),
             },
-            point: Vec3::new(cell.x as f32, cell.y as f32 + 0.5, cell.z as f32 + 0.5),
+            point: WorldPos::new(cell.x as f64, cell.y as f64 + 0.5, cell.z as f64 + 0.5),
             vel: Vec3::new(30.0, 0.0, 0.0),
         }
     }
 
-    fn launch(server: &mut ServerGame, at: Vec3) -> u64 {
+    fn launch(server: &mut ServerGame, at: WorldPos) -> u64 {
         let it = DroppedItem::launched(
             at,
             ItemStack::new(ItemType::Stone, 1),
@@ -179,10 +180,10 @@ mod tests {
     fn the_handlers_fate_is_applied_and_the_verdict_only_ends_the_dispatch() {
         let mut server = fresh_server();
         let cell = stone_cell(&mut server);
-        let at = Vec3::new(
-            cell.x as f32 - 0.2,
-            cell.y as f32 + 0.5,
-            cell.z as f32 + 0.5,
+        let at = WorldPos::new(
+            cell.x as f64 - 0.2,
+            cell.y as f64 + 0.5,
+            cell.z as f64 + 0.5,
         );
         let mut events = TickEvents::default();
 
@@ -244,10 +245,10 @@ mod tests {
     fn an_impact_with_no_sessions_takes_the_default_fate() {
         let mut server = fresh_server();
         let cell = stone_cell(&mut server);
-        let at = Vec3::new(
-            cell.x as f32 - 0.2,
-            cell.y as f32 + 0.5,
-            cell.z as f32 + 0.5,
+        let at = WorldPos::new(
+            cell.x as f64 - 0.2,
+            cell.y as f64 + 0.5,
+            cell.z as f64 + 0.5,
         );
         let id = launch(&mut server, at);
         server.sessions.clear();

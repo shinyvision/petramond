@@ -108,15 +108,15 @@ pub(crate) fn probe_worthy(block: Block) -> bool {
 /// The four sub-cell AO cast probe POCKETS of one face corner — the
 /// side-u / side-v / diagonal / interior quadrants of a
 /// [`PROBE_REACH`]-sized volume around the corner `(su, sv)` on the face
-/// fronted by world voxel `f`, lifted [`PROBE_LIFT`] off the face plane
-/// into the front region. `plane` is the face plane's WORLD coordinate along
-/// the face normal: the voxel boundary for cube faces
+/// fronted by voxel `f`, lifted [`PROBE_LIFT`] off the face plane into the
+/// front region. `plane` is the face plane's coordinate along the face
+/// normal, measured from `f`'s minimum corner: the voxel boundary for cube faces
 /// ([`boundary_plane`]), but an INTERIOR height for a box family's inner
 /// planes (a slab's top at 0.5) — pockets must sit off the actual plane, or
 /// they probe matter BELOW it (the slab's own bottom half, the neighbouring
 /// slab it forms a continuous floor with) and shadow a face that nothing
 /// overhangs. Each
-/// pocket is an AABB `(lo, hi)` in WORLD space, overlap-tested against its
+/// pocket is an AABB `(lo, hi)` in `f`'s local frame, overlap-tested against its
 /// ring cell's occupancy — the grid-AO generalization: for an opaque ring
 /// cell the whole-cell bit answers; for a box-family cell the pocket must
 /// overlap its actual matter. Pockets are VOLUMES, not points: an inset base
@@ -130,7 +130,6 @@ pub(crate) fn probe_worthy(block: Block) -> bool {
 #[inline]
 pub(crate) fn corner_cast_probes(
     face: Face,
-    f: (i32, i32, i32),
     su: i32,
     sv: i32,
     plane: f32,
@@ -141,9 +140,9 @@ pub(crate) fn corner_cast_probes(
     let (ux, uy, uz) = face.ao_u();
     let u = [ux, uy, uz];
 
-    // The corner's world position: on the face plane, at the corner the
-    // (su, sv) signs pick.
-    let mut corner = [f.0 as f32, f.1 as f32, f.2 as f32];
+    // The corner's position in the front cell: on the face plane, at the
+    // corner the (su, sv) signs pick.
+    let mut corner = [0.0f32; 3];
     for a in 0..3 {
         if d[a] != 0 {
             corner[a] = plane;
@@ -195,14 +194,12 @@ pub(crate) fn corner_cast_probes(
     ]
 }
 
-/// The world coordinate (along the face normal) of a cube face's plane: the
-/// front voxel `f`'s boundary toward the cell it fronts.
+/// A cube face's plane along the face normal, measured from its front voxel's
+/// minimum corner: the front voxel's boundary toward the cell it fronts.
 #[inline]
-pub(crate) fn boundary_plane(face: Face, f: (i32, i32, i32)) -> f32 {
+pub(crate) fn boundary_plane(face: Face) -> f32 {
     let (dx, dy, dz) = face.dir();
-    let (axis, _, _) = face_axes(face);
-    let d = [dx, dy, dz][axis];
-    [f.0, f.1, f.2][axis] as f32 + (d < 0) as u32 as f32
+    (dx + dy + dz < 0) as u32 as f32
 }
 
 /// One cube face's per-corner AO + smooth light (skylight + coloured block light),
@@ -226,9 +223,10 @@ pub(crate) fn cube_face_lighting<B, S, L, K, P>(
     fx: i32,
     fy: i32,
     fz: i32,
-    // The face plane's world coordinate along the normal —
-    // `boundary_plane(face, f)` for cube faces, the actual plane height for a
-    // box family's interior planes (see `corner_cast_probes`).
+    // The face plane along the normal, measured from the front voxel's
+    // minimum corner — `boundary_plane(face)` for cube faces, the actual
+    // plane height for a box family's interior planes (see
+    // `corner_cast_probes`).
     plane: f32,
     f_l: u32,
     f_bl: LightRgb,
@@ -257,12 +255,10 @@ where
     // bottom slab's open-top light DOES feed the slab-top plane beside it.
     let front_half = {
         let (dx, dy, dz) = face.dir();
-        let (axis, _, _) = face_axes(face);
-        let plane_local = plane - [fx, fy, fz][axis] as f32;
         if dx + dy + dz > 0 {
-            (plane_local >= 0.25) as usize
+            (plane >= 0.25) as usize
         } else {
-            (plane_local > 0.75) as usize
+            (plane > 0.75) as usize
         }
     };
 
@@ -337,7 +333,7 @@ where
             || (probe_cell[1][iv] && !s2)
             || (probe_cell[iu][iv] && !c)
         {
-            let pk = corner_cast_probes(face, (fx, fy, fz), su, sv, plane);
+            let pk = corner_cast_probes(face, su, sv, plane);
             let cell_of = |s_u: i32, s_v: i32| {
                 (
                     fx + s_u * ux + s_v * vx,
@@ -346,7 +342,11 @@ where
                 )
             };
             let local = |p: [f32; 3], cl: (i32, i32, i32)| {
-                [p[0] - cl.0 as f32, p[1] - cl.1 as f32, p[2] - cl.2 as f32]
+                [
+                    p[0] - (cl.0 - fx) as f32,
+                    p[1] - (cl.1 - fy) as f32,
+                    p[2] - (cl.2 - fz) as f32,
+                ]
             };
             if probe_cell[iu][1] && !s1 {
                 let cl = cell_of(su, 0);

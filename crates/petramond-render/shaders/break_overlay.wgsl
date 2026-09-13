@@ -22,7 +22,7 @@ struct Uniforms {
     fog:       vec4<f32>,
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<f32>,
+    render_origin: vec4<i32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -68,7 +68,7 @@ fn corner_uv(r: vec4<f32>, corner: u32) -> vec2<f32> {
 @vertex
 fn vs_break(in: VsIn) -> VsOut {
     var out: VsOut;
-    let local_pos = in.pos - u.render_origin.xyz;
+    let local_pos = in.pos;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     let tile = in.packed & 0x7FFu;
     let corner = (in.packed >> 11u) & 0x3u;
@@ -86,7 +86,7 @@ fn vs_break(in: VsIn) -> VsOut {
     // World-space camera distance, for the fog fade in the fragment stage (matches
     // block.wgsl so the crack fades on the same curve as the surface it sits on).
     out.dist = length(u.cam_pos.xyz - local_pos);
-    out.world_y = in.pos.y;
+    out.world_y = in.pos.y + f32(u.render_origin.y);
     return out;
 }
 
@@ -113,7 +113,7 @@ fn fs_break(in: VsOut) -> @location(0) vec4<f32> {
             u.fog.x,
             u.fog.y,
             in.world_y,
-            u.cam_pos.y + u.render_origin.y,
+            u.cam_pos.y + f32(u.render_origin.y),
         );
     }
     crack = mix(crack, vec3<f32>(1.0), f);

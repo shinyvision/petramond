@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use crate::entity::{DroppedItem, Motion};
 use crate::mob::PlayerAnchor;
 use crate::player::PlayerId;
-use petramond_math::math::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::chunk::SectionPos;
 use petramond_world::item::ItemStack;
 
@@ -69,7 +69,7 @@ pub struct ItemReactionFx {
     pub burst: Option<u8>,
     /// The item row's one-shot sound, if declared.
     pub sound: Option<petramond_world::sound_registry::Sound>,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
 }
 
 /// What a flying item struck.
@@ -94,7 +94,7 @@ pub struct ItemImpact {
     pub id: u64,
     pub target: ImpactTarget,
     /// The impact point.
-    pub point: Vec3,
+    pub point: petramond_math::world_pos::WorldPos,
     /// The velocity it arrived with.
     pub vel: Vec3,
 }
@@ -209,11 +209,11 @@ impl DroppedItems {
             if freeze_unloaded && !terrain_under_drop_is_final(world, it.pos) {
                 continue;
             }
-            let before = voxel_at(it.pos);
+            let before = it.pos.block();
             if let Some(impact) = it.step(&ctx) {
                 step.impacts.push(impact);
             }
-            let after = voxel_at(it.pos);
+            let after = it.pos.block();
             if before != after {
                 it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
                 it.blocklight = petramond_world::light::BlockLight6::from_x2(
@@ -310,7 +310,7 @@ impl DroppedItems {
     pub fn request_pickups(
         &mut self,
         requester: PlayerId,
-        player_pos: Vec3,
+        player_pos: petramond_math::world_pos::WorldPos,
         mut request: impl FnMut(ItemStack) -> u8,
     ) {
         let was_requested: Vec<Option<PlayerId>> =
@@ -355,7 +355,7 @@ impl DroppedItems {
     pub fn collect_requested_pickups(
         &mut self,
         requester: PlayerId,
-        player_pos: Vec3,
+        player_pos: petramond_math::world_pos::WorldPos,
         mut deposit: impl FnMut(ItemStack) -> Option<ItemStack>,
     ) {
         let mut i = self.items.len();
@@ -421,7 +421,7 @@ impl DroppedItems {
         }
         let mut cells: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
         for (i, it) in self.items.iter().enumerate() {
-            let c = voxel_at(it.pos);
+            let c = it.pos.block();
             cells.entry((c.x, c.y, c.z)).or_default().push(i as u32);
         }
         let mut consumed = vec![false; self.items.len()];
@@ -432,7 +432,7 @@ impl DroppedItems {
             if consumed[i] || self.items[i].pickup_requested.is_some() || !loose(&self.items[i]) {
                 continue;
             }
-            let origin = voxel_at(self.items[i].pos);
+            let origin = self.items[i].pos.block();
             // The radius fits inside the 3×3×3 cell neighbourhood around the
             // survivor's cell (worst case: adjacent cells touching corner-wise).
             let near = |cells: &HashMap<(i32, i32, i32), Vec<u32>>| {
@@ -498,7 +498,11 @@ impl DroppedItems {
         self.items.truncate(w);
     }
 
-    fn pickup_request_candidate(&self, i: usize, player_pos: Vec3) -> bool {
+    fn pickup_request_candidate(
+        &self,
+        i: usize,
+        player_pos: petramond_math::world_pos::WorldPos,
+    ) -> bool {
         let item = &self.items[i];
         item.ticks_lived >= ITEM_PICKUP_DELAY_TICKS
             && item.collectable()
@@ -640,7 +644,7 @@ impl World {
 /// Chunk (column) coordinates owning world position `pos`. Used for the
 /// coarse "is the terrain under this drop loaded?" freeze check.
 #[inline]
-fn chunk_xz(pos: Vec3) -> (i32, i32) {
+fn chunk_xz(pos: petramond_math::world_pos::WorldPos) -> (i32, i32) {
     ((pos.x.floor() as i32) >> 4, (pos.z.floor() as i32) >> 4)
 }
 
@@ -654,8 +658,8 @@ fn chunk_xz(pos: Vec3) -> (i32, i32) {
 /// drop simulated against that absent floor reads air, falls through it and
 /// is out of the world a second later — a corpse pile spilled where a player
 /// died on floor the server had not regenerated yet.
-fn terrain_under_drop_is_final(world: &World, pos: Vec3) -> bool {
-    let c = voxel_at(pos);
+fn terrain_under_drop_is_final(world: &World, pos: petramond_math::world_pos::WorldPos) -> bool {
+    let c = pos.block();
     c.y >= petramond_world::chunk::WORLD_MIN_Y
         && world.physics_cell_final_at(c.x, c.y, c.z)
         && world.physics_cell_final_at(c.x, c.y - 1, c.z)
@@ -664,7 +668,7 @@ fn terrain_under_drop_is_final(world: &World, pos: Vec3) -> bool {
 /// The 16³ section owning world position `pos` (`None` if outside the world's
 /// vertical range — not reachable in normal play).
 #[inline]
-fn section_of(pos: Vec3) -> Option<SectionPos> {
+fn section_of(pos: petramond_math::world_pos::WorldPos) -> Option<SectionPos> {
     SectionPos::from_world(
         pos.x.floor() as i32,
         pos.y.floor() as i32,

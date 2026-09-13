@@ -16,11 +16,11 @@ fn fluid_rays_inner() {
 }
 
 /// Eye three blocks over the top face of `cell`, looking straight down.
-fn eye_over(cell: IVec3) -> (Vec3, Vec3) {
-    let eye = Vec3::new(
-        cell.x as f32 + 0.5,
-        cell.y as f32 + 4.0,
-        cell.z as f32 + 0.5,
+fn eye_over(cell: IVec3) -> (petramond_math::world_pos::WorldPos, Vec3) {
+    let eye = petramond_math::world_pos::WorldPos::new(
+        cell.x as f64 + 0.5,
+        cell.y as f64 + 4.0,
+        cell.z as f64 + 0.5,
     );
     (eye, Vec3::new(0.0, -1.0, 0.0))
 }

@@ -555,10 +555,8 @@ fn apply(
             }
         }
         Op::Perlin(i) => noises[i].sample(a, b, c),
-        Op::Noise2 => petramond_math::noise::scaled_simplex2(a as f32, b as f32, c as f32) as f64,
-        Op::Noise3 => {
-            petramond_math::noise::scaled_simplex3([a as f32, b as f32, c as f32], d as f32) as f64
-        }
+        Op::Noise2 => petramond_math::noise::scaled_simplex2(a, b, c),
+        Op::Noise3 => petramond_math::noise::scaled_simplex3([a, b, c], d),
         Op::Random => {
             crate::rng::FeatureRng::positional(seed, a as u64, b as i32, c as i32, d as i32)
                 .next_f32() as f64

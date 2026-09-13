@@ -12,6 +12,7 @@ use crate::game::presentation::{FootstepSource, MobPresentation};
 use crate::game::{GameEvents, WorldEvent};
 use petramond_audio::SpatialListener;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
@@ -39,11 +40,11 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
             // A FOREIGN pickup cues positionally; the local player's own
             // pickup keeps the non-positional `picked_up_item` play instead.
             WorldEvent::ItemPickedUp {
-                pos: Vec3::new(4.5, 64.5, 4.5),
+                pos: WorldPos::new(4.5, 64.5, 4.5),
                 by_self: false,
             },
             WorldEvent::ItemPickedUp {
-                pos: Vec3::new(1.5, 64.5, 1.5),
+                pos: WorldPos::new(1.5, 64.5, 1.5),
                 by_self: true,
             },
         ],
@@ -85,7 +86,7 @@ fn idle_sound_deadlines_are_consumed_while_inventory_is_open() {
     }
     let first_handle = test_app.next_mob_sound_handle;
     let listener = SpatialListener {
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         right: Vec3::X,
     };
 
@@ -130,8 +131,8 @@ fn mob_presentation(id: u64) -> MobPresentation {
     MobPresentation {
         id,
         kind: petramond::mob::Mob::Sheep,
-        prev_pos: Vec3::ZERO,
-        pos: Vec3::ZERO,
+        prev_pos: WorldPos::ZERO,
+        pos: WorldPos::ZERO,
         prev_yaw: 0.0,
         yaw: 0.0,
         prev_tilt: petramond_math::math::Tilt::LEVEL,
@@ -165,12 +166,12 @@ fn mob_presentation(id: u64) -> MobPresentation {
 fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
     let mut test_app = app();
     let listener = SpatialListener {
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         right: Vec3::X,
     };
     let walking = |id: u64| FootstepSource {
         id,
-        pos: Vec3::new(0.0, 64.0, 0.0),
+        pos: WorldPos::new(0.0, 64.0, 0.0),
         ground: Some(petramond_world::block::Block::Stone),
         sprinting: false,
     };

@@ -4,7 +4,6 @@
 //! that forward platform keyboard events into the GUI-document runtime.
 
 use super::{now_seconds, App, AppScreen, HandTriggers};
-use petramond_math::math::Vec3;
 use petramond_render::camera::Camera;
 use petramond_world::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 
@@ -497,7 +496,7 @@ impl App {
     /// display name, so opening by name would silently start a fresh world.
     pub fn start_game(&mut self, world_dir_name: &str, seed: u32) {
         let cam = Camera::new(
-            Vec3::new(8.0, 90.0, 8.0),
+            petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
             self.shell_camera.aspect.max(0.01),
         );
         self.adopt_game(crate::game::Game::new(

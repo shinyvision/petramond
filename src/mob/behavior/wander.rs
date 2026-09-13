@@ -26,6 +26,7 @@
 //! could never reach.
 
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 
@@ -390,7 +391,7 @@ fn companion_within_cell(ctx: &AiCtx, rule: WanderCohesion, cell: IVec3, radius:
     companion_within(
         ctx,
         rule,
-        Vec3::new(cell.x as f32 + 0.5, cell.y as f32, cell.z as f32 + 0.5),
+        WorldPos::block_min(cell) + Vec3::new(0.5, 0.0, 0.5),
         radius,
     )
 }
@@ -399,12 +400,13 @@ fn companion_within_cell(ctx: &AiCtx, rule: WanderCohesion, cell: IVec3, radius:
 /// at `dest` — wandering there would just press into them. Read from the tick
 /// snapshot (self excluded): a best-effort veto, not a reservation.
 fn body_occupied(ctx: &AiCtx, dest: IVec3) -> bool {
-    let center = Vec3::new(dest.x as f32 + 0.5, dest.y as f32, dest.z as f32 + 0.5);
-    let hit = |pos: Vec3, hw: f32, height: f32| {
-        (pos.x - center.x).abs() < hw + ctx.half_width
-            && (pos.z - center.z).abs() < hw + ctx.half_width
-            && pos.y < center.y + ctx.head_height
-            && center.y < pos.y + height
+    let center = WorldPos::block_min(dest) + Vec3::new(0.5, 0.0, 0.5);
+    let hit = |pos: WorldPos, hw: f32, height: f32| {
+        let d = pos - center;
+        d.x.abs() < hw + ctx.half_width
+            && d.z.abs() < hw + ctx.half_width
+            && d.y < ctx.head_height
+            && -d.y < height
     };
     ctx.mobs.iter().enumerate().any(|(i, m)| {
         if i == ctx.mob_index || !m.active {
@@ -417,13 +419,13 @@ fn body_occupied(ctx: &AiCtx, dest: IVec3) -> bool {
             return false;
         };
         let (mn, mx) = body.aabb();
-        let hw = ctx.half_width;
-        mn.x < center.x + hw
-            && mx.x > center.x - hw
-            && mn.z < center.z + hw
-            && mx.z > center.z - hw
-            && mn.y < center.y + ctx.head_height
-            && mx.y > center.y
+        let hw = f64::from(ctx.half_width);
+        mn[0] < center.x + hw
+            && mx[0] > center.x - hw
+            && mn[2] < center.z + hw
+            && mx[2] > center.z - hw
+            && mn[1] < center.y + f64::from(ctx.head_height)
+            && mx[1] > center.y
     })
 }
 
@@ -437,16 +439,15 @@ fn reject_for_cohesion(
     origin_has_companion && !companion_within_cell(ctx, rule, dest, radius)
 }
 
-fn companion_within(ctx: &AiCtx, rule: WanderCohesion, pos: Vec3, radius: i32) -> bool {
+fn companion_within(ctx: &AiCtx, rule: WanderCohesion, pos: WorldPos, radius: i32) -> bool {
     let r = radius.max(0) as f32;
     let r2 = r * r;
     ctx.mobs.iter().enumerate().any(|(i, mob)| {
         if i == ctx.mob_index || !mob.active || mob.kind != rule.companion || mob.confined() {
             return false;
         }
-        let dx = mob.pos.x - pos.x;
-        let dz = mob.pos.z - pos.z;
-        dx * dx + dz * dz <= r2
+        let d = mob.pos - pos;
+        d.x * d.x + d.z * d.z <= r2
     })
 }
 
@@ -578,7 +579,7 @@ mod tests {
         rng: &'a mut MobRng,
         mobs: &'a [AiMob],
         mob_index: usize,
-        pos: Vec3,
+        pos: WorldPos,
     ) -> AiCtx<'a> {
         let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
         c.head_height = 1.0;
@@ -690,21 +691,21 @@ mod tests {
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(0.5, 64.0, 0.5),
+                pos: WorldPos::new(0.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Owl,
-                pos: Vec3::new(2.5, 64.0, 0.5),
+                pos: WorldPos::new(2.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(3.5, 64.0, 0.5),
+                pos: WorldPos::new(3.5, 64.0, 0.5),
                 active: false,
                 tags: Default::default(),
             },
@@ -720,7 +721,7 @@ mod tests {
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(4.5, 64.0, 0.5),
+                pos: WorldPos::new(4.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
@@ -745,14 +746,14 @@ mod tests {
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(0.5, 64.0, 0.5),
+                pos: WorldPos::new(0.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(2.5, 64.0, 0.5),
+                pos: WorldPos::new(2.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
@@ -785,14 +786,14 @@ mod tests {
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(0.5, 64.0, 0.5),
+                pos: WorldPos::new(0.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(15.5, 64.0, 0.5),
+                pos: WorldPos::new(15.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
@@ -829,14 +830,14 @@ mod tests {
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(0.5, 64.0, 0.5),
+                pos: WorldPos::new(0.5, 64.0, 0.5),
                 active: true,
                 tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
-                pos: Vec3::new(2.5, 64.0, 0.5),
+                pos: WorldPos::new(2.5, 64.0, 0.5),
                 active: true,
                 tags: std::sync::Arc::new(BTreeMap::from([(
                     crate::mob::tags::CONFINED.to_string(),
@@ -865,11 +866,11 @@ mod tests {
         let mobs = [AiMob {
             id: 0,
             kind: Mob::Sheep,
-            pos: Vec3::new(3.5, 64.0, 0.5),
+            pos: WorldPos::new(3.5, 64.0, 0.5),
             active: true,
             tags: Default::default(),
         }];
-        let ctx = make_ctx(&world, &mut rng, &mobs, 1, Vec3::new(0.5, 64.0, 0.5));
+        let ctx = make_ctx(&world, &mut rng, &mobs, 1, WorldPos::new(0.5, 64.0, 0.5));
         assert!(
             body_occupied(&ctx, IVec3::new(3, 64, 0)),
             "the other sheep's cell is covered"
@@ -920,7 +921,7 @@ mod tests {
         let mut picked = 0;
         for seed in 0..20 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
             ctx.confined_region = Some(&region);
             let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
             if let Some(goal) = ai.tick(&mut ctx).goal {
@@ -946,7 +947,7 @@ mod tests {
         let region = region_for(&world, IVec3::new(5, 65, 5));
         assert!(region.cells.len() < MIN_REGION_WANDER_CELLS);
         let mut rng = MobRng::new(3);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(5.5, 65.0, 5.5));
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(5.5, 65.0, 5.5));
         ctx.confined_region = Some(&region);
         let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
         for _ in 0..50 {
@@ -975,7 +976,7 @@ mod tests {
         let mut picked = 0;
         for seed in 0..30 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
             let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
             if let Some(goal) = ai.tick(&mut ctx).goal {
                 picked += 1;
@@ -1005,7 +1006,7 @@ mod tests {
             }
         });
         let mut rng = MobRng::new(1);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
         let pick = pick_destination(&mut ctx, wander_tuning(10), plains_habitat(), true);
         assert!(pick.goal.is_none() && pick.exhausted, "sealed = exhausted");
 
@@ -1033,7 +1034,7 @@ mod tests {
         });
         for seed in 0..10 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
             let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
             assert_eq!(ai.tick(&mut ctx).goal, None, "seed {seed}");
         }
@@ -1098,7 +1099,7 @@ mod tests {
         let mut picked = 0;
         for seed in 0..30 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(7.5, 65.0, 7.5));
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(7.5, 65.0, 7.5));
             let pick = pick_destination(&mut ctx, tuning(6), plains_habitat(), true);
             if let Some(goal) = pick.goal {
                 picked += 1;
@@ -1121,7 +1122,7 @@ mod tests {
         let mut picked = 0;
         for seed in 0..30 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(7.5, 65.0, 7.5));
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(7.5, 65.0, 7.5));
             if pick_destination(&mut ctx, tuning(6), plains_habitat(), true)
                 .goal
                 .is_some()
@@ -1147,7 +1148,7 @@ mod tests {
             chunk.set_fluid(8, 65, 8, Block::Water, 0);
         });
         let mut rng = MobRng::new(1);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.2, 8.5));
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.2, 8.5));
         ctx.cell = IVec3::new(8, 66, 8);
         ctx.in_fluid = Some(Block::Water);
         let mut ai = WanderAi::new(
@@ -1179,7 +1180,7 @@ mod tests {
             }
         });
         let mut rng = MobRng::new(1);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.2, 8.5));
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.2, 8.5));
         ctx.cell = IVec3::new(8, 66, 8);
         ctx.in_fluid = Some(Block::Water);
         let mut ai = WanderAi::new(

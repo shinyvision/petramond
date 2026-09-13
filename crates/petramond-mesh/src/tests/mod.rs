@@ -385,6 +385,7 @@ mod fluid;
 mod foliage;
 mod glass;
 mod greedy;
+mod mesh_space;
 mod oriented_blocks;
 mod parity;
 mod quad_streams;

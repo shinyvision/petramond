@@ -7,7 +7,7 @@ use super::common::game;
 use crate::game::{GameInput, SpatialSoundCommand};
 use petramond::events::tick::TickEvents;
 use petramond::events::{Attach, DamageSource, PostEvent, PostEventKind, Stage};
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn player_died_fires_exactly_once_on_the_zero_transition() {
@@ -105,7 +105,7 @@ fn spatial_sound_commands_reach_game_events_without_loss() {
                 .push(SpatialSoundCommand::PlayAt {
                     handle: 7,
                     sound,
-                    pos: Vec3::new(3.0, 81.0, -2.0),
+                    pos: WorldPos::new(3.0, 81.0, -2.0),
                     volume: 0.6,
                     pitch: 1.1,
                 });
@@ -117,7 +117,7 @@ fn spatial_sound_commands_reach_game_events_without_loss() {
         vec![SpatialSoundCommand::PlayAt {
             handle: 7,
             sound,
-            pos: Vec3::new(3.0, 81.0, -2.0),
+            pos: WorldPos::new(3.0, 81.0, -2.0),
             volume: 0.6,
             pitch: 1.1,
         }]

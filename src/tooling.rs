@@ -96,7 +96,8 @@ pub mod mods {
     pub fn load(seed: u32) -> WorldgenMods {
         let mut host = crate::modding::ModHost::load(seed, &Default::default());
         let mut world = crate::world::World::new(seed, 4);
-        let mut player = crate::player::Player::new(glam::Vec3::new(0.0, 80.0, 0.0));
+        let mut player =
+            crate::player::Player::new(petramond_math::world_pos::WorldPos::new(0.0, 80.0, 0.0));
         let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut bus = crate::events::EventBus::default();
         let mut systems = crate::events::TickSystems::default();

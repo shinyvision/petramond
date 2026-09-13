@@ -8,6 +8,7 @@ use petramond::net::protocol::{
     ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, TickUpdate,
 };
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::gui_state::PointerButton;
 use petramond_world::gui_state::{GuiKind, MenuSlot};
@@ -421,7 +422,7 @@ fn break_finished_without_observed_mining_is_denied() {
         .world
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
 
-    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 4.5);
+    game.server.sessions[0].player.pos = WorldPos::new(2.5, 65.0, 4.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
 
     // Never started mining: the finish is TooFast-deferred, then abandoned
@@ -467,7 +468,7 @@ fn two_instabreak_finishes_in_one_tick_window_both_accept() {
         .server
         .world
         .set_block_world(b.x, b.y, b.z, Block::Poppy));
-    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 4.5);
+    game.server.sessions[0].player.pos = WorldPos::new(2.5, 65.0, 4.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
 
     // Two instabreak blocks broken back-to-back land in the same tick window.
@@ -524,7 +525,7 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
         .server
         .world
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 65.0, 10.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
 
     let mut u = player_update(&game, true);
@@ -587,7 +588,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
         .server
         .world
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 65.0, 10.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
 
     // Start the server's observed mining window.
@@ -660,7 +661,7 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
         .server
         .world
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 65.0, 10.5);
 
     // Latch a held break on the target: the server's own mining timer is the
     // observation the finish is validated against.
@@ -776,7 +777,7 @@ fn movement_claim_validation_cases() {
 
     for case in cases {
         let mut game = game_on_empty_chunk();
-        let start = Vec3::new(8.5, 70.0, 8.5);
+        let start = WorldPos::new(8.5, 70.0, 8.5);
         game.server.sessions[0].player.pos = start;
         if case.gap_ticks > 0 {
             let mut u = player_update(&game, true);
@@ -833,9 +834,9 @@ fn movement_claim_validation_cases() {
 fn claim_inside_solid_geometry_is_rejected() {
     let mut game = game_on_empty_chunk();
     assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 66.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 66.0, 8.5);
     let mut u = player_update(&game, true);
-    u.transform.pos = Vec3::new(8.5, 64.3, 8.5); // feet well inside the stone cell
+    u.transform.pos = WorldPos::new(8.5, 64.3, 8.5); // feet well inside the stone cell
     u.transform.vel = Vec3::ZERO;
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u));
@@ -973,7 +974,7 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
         .server
         .world
         .set_block_world(b.x, b.y, b.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(9.5, 63.0, 9.5);
+    game.server.sessions[0].player.pos = WorldPos::new(9.5, 63.0, 9.5);
     game.server.sessions[0].player.inventory = filled_inventory(); // dirt
 
     // Click aimed at A...
@@ -1020,7 +1021,7 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
         .server
         .world
         .set_block_world(t.x, t.y, t.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.5, 10.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 65.5, 10.5);
 
     // Empty hand, non-interactable stone: the server consumes nothing — the
     // client may have clicked a cell that only exists in ITS replica, so the
@@ -1052,7 +1053,7 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
 fn transform_corrections_ship_only_on_real_divergence() {
     let mut game = game_on_empty_chunk();
     let sess = &mut game.server.sessions[0];
-    sess.player.pos = Vec3::new(8.5, 70.0, 8.5);
+    sess.player.pos = WorldPos::new(8.5, 70.0, 8.5);
     sess.player.vel = Vec3::new(0.0, -1.4, 0.0);
     // The server free-ran a little past the client's last claim: small pos
     // phase drift, one tick of gravity — time-phase, not divergence.
@@ -1133,7 +1134,7 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     // Park the body clear of the place cell so placement_blocked_by_body
     // does not refuse the ghost.
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     game.server.sessions[0].player.inventory = filled_inventory();
     game.sync_self_view_for_test();
     let before = game
@@ -1211,7 +1212,7 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
         .replica
         .set_block_world(chest.x, chest.y, chest.z, Block::Chest));
     // Park the body clear of the build cell so occupancy never refuses.
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, item, 8);
     game.sync_self_view_for_test();
     // Scripted accepted plan on the build cell — the deterministic answer a
@@ -1265,7 +1266,7 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
         .game
         .replica
         .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::Torch, 1);
     game.sync_self_view_for_test();
 
@@ -1301,7 +1302,7 @@ fn optimistic_stair_place_records_orientation_immediately() {
         .game
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::OakStairs, 1);
     game.sync_self_view_for_test();
 
@@ -1359,7 +1360,7 @@ fn optimistic_chest_place_records_front_facing_immediately() {
         .game
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::Chest, 1);
     game.sync_self_view_for_test();
 
@@ -1411,7 +1412,7 @@ fn optimistic_ladder_place_commits_the_facing_row() {
         .game
         .replica
         .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::Ladder, 1);
     game.sync_self_view_for_test();
 
@@ -1446,7 +1447,7 @@ fn slab_stack_click_is_not_predicted() {
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     // A bottom slab in the cell: clicking its top face stacks INTO that cell
     // server-side, off the ghost convention (`target + normal`), so the
     // request denies by design — the client must not ghost a slab above.
@@ -1559,7 +1560,7 @@ fn break_finished_deny_queues_corrective_cells() {
         .server
         .world
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 4.5);
+    game.server.sessions[0].player.pos = WorldPos::new(2.5, 65.0, 4.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
 
     game.server.apply_message(
@@ -1591,12 +1592,12 @@ fn far_claim_does_not_grant_reach() {
         .server
         .world
         .set_block_world(far.x, far.y, far.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(2.5, 65.0, 2.5);
+    game.server.sessions[0].player.pos = WorldPos::new(2.5, 65.0, 2.5);
 
     // A fabricated claim right next to the far block: outside the drift ring
     // of the server's own integration, so it must not become the reach eye.
     let mut u = player_update(&game, true);
-    u.transform.pos = Vec3::new(13.5, 65.0, 13.5);
+    u.transform.pos = WorldPos::new(13.5, 65.0, 13.5);
     u.transform.vel = Vec3::ZERO;
     u.target = Some(hit(far, IVec3::Y));
     game.server
@@ -1634,7 +1635,7 @@ fn far_claim_does_not_grant_reach() {
 fn fake_on_ground_claims_do_not_evade_fall_damage() {
     let mut game = game_on_empty_chunk();
     assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 80.0, 8.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
     game.server.sessions[0].fall.reset(80.0);
 
@@ -1642,7 +1643,7 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
     // (no support under the feet), so the peak must survive to the landing.
     for y in [80.0, 76.0, 72.0, 68.0, 65.0] {
         let mut u = player_update(&game, true);
-        u.transform.pos = Vec3::new(8.5, y, 8.5);
+        u.transform.pos = WorldPos::new(8.5, y, 8.5);
         u.transform.vel = Vec3::new(0.0, -20.0, 0.0);
         u.on_ground = true;
         game.server
@@ -1674,7 +1675,7 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
         assert!(game.server.world.set_block_world(x, 58, 8, Block::Stone));
     }
 
-    let start = Vec3::new(2.3, 71.0, 8.5);
+    let start = WorldPos::new(2.3, 71.0, 8.5);
     game.server.sessions[0].player.pos = start;
     game.server.sessions[0].claim_pos = start;
     game.server.sessions[0].fall.reset(start.y);
@@ -1748,7 +1749,7 @@ fn unpredicted_break_finish_keeps_the_initiators_break_event() {
         .server
         .world
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 10.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 65.0, 10.5);
 
     let mut u = player_update(&game, true);
     u.break_held = true;

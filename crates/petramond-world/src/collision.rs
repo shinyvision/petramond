@@ -12,6 +12,10 @@
 //! lifted from the player's original `Player::sweep_boxes` so the player, mobs, and items
 //! share one implementation; particles, being points, use the cheaper [`point_in_solid`].
 //!
+//! World-space boxes and points are `f64`, like `WorldPos`: the contact epsilon and
+//! the 1/16-grained block geometry stay meaningful however far out a body is.
+//! Displacements and the travel a resolver returns stay `f32`.
+//!
 //! [`World::collision_boxes_at`]: crate::world::WorldData::collision_boxes_at
 
 use crate::block::Aabb;
@@ -26,8 +30,8 @@ mod tests;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct DynBox {
     pub id: u64,
-    pub min: [f32; 3],
-    pub max: [f32; 3],
+    pub min: [f64; 3],
+    pub max: [f64; 3],
 }
 
 impl DynBox {
@@ -43,10 +47,10 @@ impl DynBox {
 /// player): matches no live entity id, so every dynamic box participates.
 pub const NOT_AN_ENTITY: u64 = u64::MAX;
 
-/// Boundary epsilon (world units). The body is shrunk by this before its float edges meet
+/// Boundary epsilon (world units). The body is shrunk by this before its edges meet
 /// block faces, so a body flush on a voxel boundary — or a hair off from float error — is
 /// not treated as overlapping. Matches the player collision constant it was extracted from.
-const EPS: f32 = 1e-4;
+const EPS: f64 = 1e-4;
 
 /// Largest per-tick displacement accepted from an external locomotion intent.
 /// Sweeps are continuous, but their broad phase scans every crossed cell; this
@@ -55,14 +59,20 @@ const EPS: f32 = 1e-4;
 /// resolver directly for distances it owns.
 pub const MAX_SAFE_EXTERNAL_SWEEP_DISTANCE: f32 = 16.0;
 
+/// The world-space corner of cell `(x, y, z)` plus a cell-local offset.
+#[inline]
+fn at_cell(cell: i32, local: f32) -> f64 {
+    f64::from(cell) + f64::from(local)
+}
+
 /// Whether two open world-space AABBs overlap. Touching faces are not an
 /// overlap, matching the swept resolver's contact semantics.
 #[inline]
 pub fn aabb_overlaps(
-    min: [f32; 3],
-    max: [f32; 3],
-    other_min: [f32; 3],
-    other_max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
+    other_min: [f64; 3],
+    other_max: [f64; 3],
 ) -> bool {
     (0..3).all(|axis| min[axis] < other_max[axis] && max[axis] > other_min[axis])
 }
@@ -70,17 +80,17 @@ pub fn aabb_overlaps(
 /// Whether a world-space AABB overlaps any cell-local collision box in the
 /// cells it spans. This is the neutral overlap query used by server claim
 /// validation and both sides' riding placement probes.
-pub fn aabb_hits_cells<F>(min: [f32; 3], max: [f32; 3], boxes_fn: F) -> bool
+pub fn aabb_hits_cells<F>(min: [f64; 3], max: [f64; 3], boxes_fn: F) -> bool
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
     for x in (min[0].floor() as i32)..=(max[0].floor() as i32) {
         for y in (min[1].floor() as i32)..=(max[1].floor() as i32) {
             for z in (min[2].floor() as i32)..=(max[2].floor() as i32) {
-                let cell = [x as f32, y as f32, z as f32];
+                let cell = [x, y, z];
                 for b in boxes_fn(x, y, z) {
-                    let bmin = [cell[0] + b.min[0], cell[1] + b.min[1], cell[2] + b.min[2]];
-                    let bmax = [cell[0] + b.max[0], cell[1] + b.max[1], cell[2] + b.max[2]];
+                    let bmin: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.min[i]));
+                    let bmax: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.max[i]));
                     if aabb_overlaps(min, max, bmin, bmax) {
                         return true;
                     }
@@ -92,7 +102,7 @@ where
 }
 
 /// Whether an AABB overlaps any participating dynamic body.
-pub fn aabb_hits_dynamic(min: [f32; 3], max: [f32; 3], dyn_boxes: &[DynBox], ignore: u64) -> bool {
+pub fn aabb_hits_dynamic(min: [f64; 3], max: [f64; 3], dyn_boxes: &[DynBox], ignore: u64) -> bool {
     DynBox::against(dyn_boxes, ignore).any(|d| aabb_overlaps(min, max, d.min, d.max))
 }
 
@@ -118,7 +128,7 @@ pub const SUPPORT_PROBE_MARGIN: f32 = 0.01;
 /// World-only form of [`sweep_axis_dyn`] — production sweeps that may meet a
 /// solid entity always pass the dynamic boxes, so this stays a test entry.
 #[cfg(any(test, feature = "test-support"))]
-pub fn sweep_axis<F>(min: [f32; 3], max: [f32; 3], axis: usize, delta: f32, boxes_fn: F) -> f32
+pub fn sweep_axis<F>(min: [f64; 3], max: [f64; 3], axis: usize, delta: f32, boxes_fn: F) -> f32
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
@@ -128,8 +138,8 @@ where
 /// `sweep_axis` that ALSO clamps against dynamic world-space boxes (solid
 /// entities), skipping the one owned by `ignore`.
 pub fn sweep_axis_dyn<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     axis: usize,
     delta: f32,
     boxes_fn: F,
@@ -143,29 +153,22 @@ where
         return 0.0;
     }
     let ai = axis;
+    let reach = f64::from(delta);
     // Broad-phase cell ranges over the swept volume: the body, with the swept axis
     // extended by `delta` toward the move direction.
-    let mut lo = [
-        min[0].floor() as i32,
-        min[1].floor() as i32,
-        min[2].floor() as i32,
-    ];
-    let mut hi = [
-        max[0].floor() as i32,
-        max[1].floor() as i32,
-        max[2].floor() as i32,
-    ];
+    let mut lo = min.map(|v| v.floor() as i32);
+    let mut hi = max.map(|v| v.floor() as i32);
     if delta > 0.0 {
-        hi[ai] = (max[ai] + delta).floor() as i32;
+        hi[ai] = (max[ai] + reach).floor() as i32;
     } else {
-        lo[ai] = (min[ai] + delta).floor() as i32;
+        lo[ai] = (min[ai] + reach).floor() as i32;
     }
 
-    let mut travel = delta;
+    let mut travel = reach;
     for cx in lo[0]..=hi[0] {
         for cy in lo[1]..=hi[1] {
             for cz in lo[2]..=hi[2] {
-                let cell = [cx as f32, cy as f32, cz as f32];
+                let cell = [cx, cy, cz];
                 for b in boxes_fn(cx, cy, cz) {
                     // Overlap on the two NON-swept axes (touching within EPS doesn't count).
                     let mut cross = true;
@@ -173,8 +176,8 @@ where
                         if i == ai {
                             continue;
                         }
-                        let wlo = cell[i] + b.min[i];
-                        let whi = cell[i] + b.max[i];
+                        let wlo = at_cell(cell[i], b.min[i]);
+                        let whi = at_cell(cell[i], b.max[i]);
                         if !(max[i] > wlo + EPS && min[i] < whi - EPS) {
                             cross = false;
                             break;
@@ -186,12 +189,12 @@ where
                     // Clamp travel so the leading face just meets the box's near face on
                     // the swept axis (only while the box is ahead of us).
                     if delta > 0.0 {
-                        let allowed = (cell[ai] + b.min[ai]) - max[ai];
+                        let allowed = at_cell(cell[ai], b.min[ai]) - max[ai];
                         if allowed >= -EPS {
                             travel = travel.min(allowed.max(0.0));
                         }
                     } else {
-                        let allowed = (cell[ai] + b.max[ai]) - min[ai];
+                        let allowed = at_cell(cell[ai], b.max[ai]) - min[ai];
                         if allowed <= EPS {
                             travel = travel.max(allowed.min(0.0));
                         }
@@ -227,7 +230,7 @@ where
             }
         }
     }
-    travel
+    travel as f32
 }
 
 /// Lift a body straight up out of SHALLOW foot penetration. Swept collision
@@ -245,7 +248,7 @@ where
 /// it).
 /// World-only form of [`depenetrate_up_dyn`] (see [`sweep_axis`]).
 #[cfg(any(test, feature = "test-support"))]
-pub fn depenetrate_up<F>(min: [f32; 3], max: [f32; 3], max_lift: f32, boxes_fn: F) -> f32
+pub fn depenetrate_up<F>(min: [f64; 3], max: [f64; 3], max_lift: f32, boxes_fn: F) -> f32
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
@@ -256,8 +259,8 @@ where
 /// surfacing under standing feet (a boat rising beneath a swimmer) lifts the
 /// body onto its top exactly like a grown block.
 pub fn depenetrate_up_dyn<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     max_lift: f32,
     boxes_fn: F,
     dyn_boxes: &[DynBox],
@@ -266,18 +269,18 @@ pub fn depenetrate_up_dyn<F>(
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
-    let mut need = 0.0f32;
+    let mut need = 0.0f64;
     for cx in min[0].floor() as i32..=max[0].floor() as i32 {
         for cy in min[1].floor() as i32..=max[1].floor() as i32 {
             for cz in min[2].floor() as i32..=max[2].floor() as i32 {
-                let cell = [cx as f32, cy as f32, cz as f32];
+                let cell = [cx, cy, cz];
                 for b in boxes_fn(cx, cy, cz) {
                     // Overlap on X/Z (touching within EPS doesn't count) —
                     // the same cross test the sweep uses.
                     let mut cross = true;
                     for i in [0, 2] {
-                        let wlo = cell[i] + b.min[i];
-                        let whi = cell[i] + b.max[i];
+                        let wlo = at_cell(cell[i], b.min[i]);
+                        let whi = at_cell(cell[i], b.max[i]);
                         if !(max[i] > wlo + EPS && min[i] < whi - EPS) {
                             cross = false;
                             break;
@@ -286,8 +289,8 @@ where
                     if !cross {
                         continue;
                     }
-                    let wbot = cell[1] + b.min[1];
-                    let wtop = cell[1] + b.max[1];
+                    let wbot = at_cell(cy, b.min[1]);
+                    let wtop = at_cell(cy, b.max[1]);
                     if wbot <= min[1] + EPS && wtop > min[1] + EPS {
                         need = need.max(wtop - min[1]);
                     }
@@ -303,20 +306,20 @@ where
             need = need.max(d.max[1] - min[1]);
         }
     }
-    let need = need.min(max_lift);
+    let need = need.min(f64::from(max_lift));
     if need <= EPS {
         return 0.0;
     }
     // Respect headroom: the boxes being escaped sit behind an upward sweep
     // (their bottoms are below the head), so only a real ceiling clamps.
-    sweep_axis_dyn(min, max, 1, need, boxes_fn, dyn_boxes, ignore).max(0.0)
+    sweep_axis_dyn(min, max, 1, need as f32, boxes_fn, dyn_boxes, ignore).max(0.0)
 }
 
 /// A body is EMBEDDED when a world box it overlaps tops out more than this
 /// many heal lifts above its feet: the upward heal converges on anything
 /// closer (lift, fall a hair, lift again) and can never clear anything
 /// farther — a trunk that grew around the body, a door that shut on it.
-const EMBEDDED_HEAL_REACH: f32 = 2.0;
+const EMBEDDED_HEAL_REACH: f64 = 2.0;
 
 /// The shortest horizontal translation that frees `[min, max]` from every
 /// world box it is embedded in (see [`EMBEDDED_HEAL_REACH`]); zero when it is
@@ -326,22 +329,23 @@ const EMBEDDED_HEAL_REACH: f32 = 2.0;
 /// place for as long as the block stands. Sideways there is always a face
 /// within half a block, so the caller slides the body out along the cheapest
 /// axis instead (capped per tick — a slide, not a teleport).
-pub fn embedded_escape<F>(min: [f32; 3], max: [f32; 3], max_lift: f32, boxes_fn: F) -> [f32; 2]
+pub fn embedded_escape<F>(min: [f64; 3], max: [f64; 3], max_lift: f32, boxes_fn: F) -> [f32; 2]
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
     // Needed travel per direction: +x, −x, +z, −z.
-    let mut need = [0.0f32; 4];
+    let mut need = [0.0f64; 4];
     let mut any = false;
     for cx in min[0].floor() as i32..=max[0].floor() as i32 {
         for cy in min[1].floor() as i32..=max[1].floor() as i32 {
             for cz in min[2].floor() as i32..=max[2].floor() as i32 {
-                let cell = [cx as f32, cy as f32, cz as f32];
+                let cell = [cx, cy, cz];
                 for b in boxes_fn(cx, cy, cz) {
-                    let lo = [cell[0] + b.min[0], cell[1] + b.min[1], cell[2] + b.min[2]];
-                    let hi = [cell[0] + b.max[0], cell[1] + b.max[1], cell[2] + b.max[2]];
+                    let lo: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.min[i]));
+                    let hi: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.max[i]));
                     let overlaps = (0..3).all(|i| max[i] > lo[i] + EPS && min[i] < hi[i] - EPS);
-                    if !overlaps || hi[1] <= min[1] + EMBEDDED_HEAL_REACH * max_lift + EPS {
+                    let reach = EMBEDDED_HEAL_REACH * f64::from(max_lift);
+                    if !overlaps || hi[1] <= min[1] + reach + EPS {
                         continue;
                     }
                     any = true;
@@ -356,14 +360,14 @@ where
     if !any {
         return [0.0; 2];
     }
-    let (mut best, mut best_need) = (0usize, f32::INFINITY);
+    let (mut best, mut best_need) = (0usize, f64::INFINITY);
     for (i, n) in need.iter().enumerate() {
         if *n < best_need {
             best = i;
             best_need = *n;
         }
     }
-    let d = best_need + EPS;
+    let d = (best_need + EPS) as f32;
     match best {
         0 => [d, 0.0],
         1 => [-d, 0.0],
@@ -384,8 +388,8 @@ where
 /// World-only form of [`clamp_to_supported_dyn`] (see [`sweep_axis`]).
 #[cfg(any(test, feature = "test-support"))]
 pub fn clamp_to_supported<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     dx: f32,
     dz: f32,
     max_drop: f32,
@@ -401,8 +405,8 @@ where
 /// sneaking body edge-guards on a solid entity's deck like on any floor.
 #[allow(clippy::too_many_arguments)]
 pub fn clamp_to_supported_dyn<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     dx: f32,
     dz: f32,
     max_drop: f32,
@@ -421,20 +425,21 @@ where
     // feet line so a wall RESTING at foot height (a step-up ahead) is not
     // mistaken for floor — the ordinary sweep handles walls.
     let supported = |ox: f32, oz: f32| -> bool {
+        let (ox, oz) = (f64::from(ox), f64::from(oz));
         let lo = [
             min[0] + ox,
-            min[1] - max_drop - SUPPORT_PROBE_MARGIN,
+            min[1] - f64::from(max_drop) - f64::from(SUPPORT_PROBE_MARGIN),
             min[2] + oz,
         ];
         let hi = [max[0] + ox, min[1], max[2] + oz];
         for cx in lo[0].floor() as i32..=hi[0].floor() as i32 {
             for cy in lo[1].floor() as i32..=hi[1].floor() as i32 {
                 for cz in lo[2].floor() as i32..=hi[2].floor() as i32 {
-                    let cell = [cx as f32, cy as f32, cz as f32];
+                    let cell = [cx, cy, cz];
                     for b in boxes_fn(cx, cy, cz) {
                         let inside = (0..3).all(|i| {
-                            let wlo = cell[i] + b.min[i];
-                            let whi = cell[i] + b.max[i];
+                            let wlo = at_cell(cell[i], b.min[i]);
+                            let whi = at_cell(cell[i], b.max[i]);
                             hi[i] > wlo + EPS && lo[i] < whi - EPS
                         });
                         if inside {
@@ -480,8 +485,8 @@ where
 /// those). Shared by mob + dropped-item physics; the player drives [`step_horizontal`] /
 /// `sweep_axis` directly because it layers water on top.
 pub fn resolve_body<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     vel: [f32; 3],
     dt: f32,
     step_height: f32,
@@ -498,8 +503,8 @@ where
 /// box skipped via `ignore`).
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_body_dyn<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     vel: [f32; 3],
     dt: f32,
     step_height: f32,
@@ -518,8 +523,8 @@ where
     // tunnelling through the box it started inside.
     let lift = depenetrate_up_dyn(mn, mx, STEP_HEIGHT, &boxes_fn, dyn_boxes, ignore);
     if lift > 0.0 {
-        mn[1] += lift;
-        mx[1] += lift;
+        mn[1] += f64::from(lift);
+        mx[1] += f64::from(lift);
     }
 
     let (mut moved, grounded, hit) = resolve_body_dyn_from_depenetrated(
@@ -543,8 +548,8 @@ where
 /// preserve that mandatory lift as a separate motion waypoint.
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_body_dyn_from_depenetrated<F>(
-    mut mn: [f32; 3],
-    mut mx: [f32; 3],
+    mut mn: [f64; 3],
+    mut mx: [f64; 3],
     vel: [f32; 3],
     dt: f32,
     step_height: f32,
@@ -563,8 +568,8 @@ where
     let dy = vel[1] * dt;
     if dy != 0.0 {
         let ty = sweep_axis_dyn(mn, mx, 1, dy, &boxes_fn, dyn_boxes, ignore);
-        mn[1] += ty;
-        mx[1] += ty;
+        mn[1] += f64::from(ty);
+        mx[1] += f64::from(ty);
         moved[1] += ty;
         hit[1] = ty.abs() + 1e-6 < dy.abs();
     }
@@ -606,8 +611,8 @@ where
 /// full block is never climbed. `step_height = 0.0` is a plain slide. The caller gates
 /// `step_height` on being grounded.
 pub fn step_horizontal<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     dx: f32,
     dz: f32,
     step_height: f32,
@@ -623,8 +628,8 @@ where
 /// boxes.
 #[allow(clippy::too_many_arguments)]
 pub fn step_horizontal_dyn<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     dx: f32,
     dz: f32,
     step_height: f32,
@@ -649,19 +654,20 @@ where
 
     // Try stepping: how high can we rise (capped by a ceiling)?
     let up = sweep_axis_dyn(min, max, 1, step_height, &boxes_fn, dyn_boxes, ignore);
-    if up <= EPS {
+    if f64::from(up) <= EPS {
         return normal;
     }
-    let rmin = [min[0], min[1] + up, min[2]];
-    let rmax = [max[0], max[1] + up, max[2]];
+    let rise = f64::from(up);
+    let rmin = [min[0], min[1] + rise, min[2]];
+    let rmax = [max[0], max[1] + rise, max[2]];
     let (sx, sz) = slide_xz(rmin, rmax, dx, dz, &boxes_fn, dyn_boxes, ignore);
     // Keep the step only if the raised slide got us meaningfully further horizontally.
     if sx * sx + sz * sz <= nx * nx + nz * nz + 1e-9 {
         return normal;
     }
     // Settle back down onto the ledge (never below where we started).
-    let smin = [rmin[0] + sx, rmin[1], rmin[2] + sz];
-    let smax = [rmax[0] + sx, rmax[1], rmax[2] + sz];
+    let smin = [rmin[0] + f64::from(sx), rmin[1], rmin[2] + f64::from(sz)];
+    let smax = [rmax[0] + f64::from(sx), rmax[1], rmax[2] + f64::from(sz)];
     let down = sweep_axis_dyn(smin, smax, 1, -up, &boxes_fn, dyn_boxes, ignore);
     (
         [sx, up + down, sz],
@@ -673,8 +679,8 @@ where
 /// Slide a body horizontally: sweep X, then sweep Z from the X-resolved position (so a wall
 /// on one axis never blocks the other). Returns the per-axis travel.
 fn slide_xz<F>(
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
     dx: f32,
     dz: f32,
     boxes_fn: &F,
@@ -685,8 +691,8 @@ where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
     let tx = sweep_axis_dyn(min, max, 0, dx, boxes_fn, dyn_boxes, ignore);
-    let m2 = [min[0] + tx, min[1], min[2]];
-    let mx2 = [max[0] + tx, max[1], max[2]];
+    let m2 = [min[0] + f64::from(tx), min[1], min[2]];
+    let mx2 = [max[0] + f64::from(tx), max[1], max[2]];
     let tz = sweep_axis_dyn(m2, mx2, 2, dz, boxes_fn, dyn_boxes, ignore);
     (tx, tz)
 }
@@ -698,7 +704,7 @@ where
 /// distance wins. Returns `max_dist` when nothing blocks, and `0.0` when the start is
 /// already inside an expanded box (the camera stays at the eye rather than clipping).
 pub fn clamp_padded_segment<F>(
-    start: [f32; 3],
+    start: [f64; 3],
     dir: [f32; 3],
     max_dist: f32,
     pad: f32,
@@ -710,11 +716,9 @@ where
     if max_dist <= 0.0 {
         return 0.0;
     }
-    let end = [
-        start[0] + dir[0] * max_dist,
-        start[1] + dir[1] * max_dist,
-        start[2] + dir[2] * max_dist,
-    ];
+    let dir = dir.map(f64::from);
+    let (max_dist, pad) = (f64::from(max_dist), f64::from(pad));
+    let end: [f64; 3] = std::array::from_fn(|i| start[i] + dir[i] * max_dist);
     // Broad phase: every cell the padded segment's AABB touches.
     let mut lo = [0i32; 3];
     let mut hi = [0i32; 3];
@@ -727,15 +731,15 @@ where
     for cx in lo[0]..=hi[0] {
         for cy in lo[1]..=hi[1] {
             for cz in lo[2]..=hi[2] {
-                let cell = [cx as f32, cy as f32, cz as f32];
+                let cell = [cx, cy, cz];
                 for b in boxes_fn(cx, cy, cz) {
                     // Slab-clip the ray against the pad-expanded box.
-                    let mut t_enter = 0.0f32;
+                    let mut t_enter = 0.0f64;
                     let mut t_exit = travel;
                     let mut miss = false;
                     for i in 0..3 {
-                        let bmin = cell[i] + b.min[i] - pad;
-                        let bmax = cell[i] + b.max[i] + pad;
+                        let bmin = at_cell(cell[i], b.min[i]) - pad;
+                        let bmax = at_cell(cell[i], b.max[i]) + pad;
                         if dir[i].abs() < 1e-8 {
                             if start[i] < bmin || start[i] > bmax {
                                 miss = true;
@@ -767,7 +771,7 @@ where
             }
         }
     }
-    travel
+    travel as f32
 }
 
 /// Is point `p` inside any collision box of its cell? The particle test — a particle is a
@@ -775,18 +779,15 @@ where
 /// through the empty margin of an inset/model cell. EPS keeps a point exactly on a face
 /// from counting, matching `sweep_axis`. Cell-local: boxes never extend past their cell
 /// (model boxes are clipped per cell; a normal block's box *is* its cell).
-pub fn point_in_solid<F>(p: [f32; 3], boxes_fn: F) -> bool
+pub fn point_in_solid<F>(p: [f64; 3], boxes_fn: F) -> bool
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
-    let cell = [
-        p[0].floor() as i32,
-        p[1].floor() as i32,
-        p[2].floor() as i32,
-    ];
-    let base = [cell[0] as f32, cell[1] as f32, cell[2] as f32];
+    let cell = p.map(|v| v.floor() as i32);
     for b in boxes_fn(cell[0], cell[1], cell[2]) {
-        if (0..3).all(|i| p[i] > base[i] + b.min[i] + EPS && p[i] < base[i] + b.max[i] - EPS) {
+        if (0..3).all(|i| {
+            p[i] > at_cell(cell[i], b.min[i]) + EPS && p[i] < at_cell(cell[i], b.max[i]) - EPS
+        }) {
             return true;
         }
     }

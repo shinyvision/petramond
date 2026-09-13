@@ -65,12 +65,13 @@ impl Placement {
     /// A loose stack Y-spins about its hover centre (`BOB_BASE` + bob above
     /// `pos`); an aimed item lies in its heading's basis about the entity's
     /// own centre — pitched as well as yawed, never bobbing.
-    fn of(inst: &ItemEntityInstance) -> Self {
+    fn of(inst: &ItemEntityInstance, render_origin: glam::IVec3) -> Self {
+        let pos = inst.pos.relative_to(render_origin);
         match inst.pose {
             ItemEntityPose::Spin(spin) => {
                 let (s, c) = spin.sin_cos();
                 Placement {
-                    origin: inst.pos + Vec3::new(0.0, BOB_BASE + bob(spin), 0.0),
+                    origin: pos + Vec3::new(0.0, BOB_BASE + bob(spin), 0.0),
                     x: Vec3::new(c, 0.0, -s),
                     y: Vec3::Y,
                     z: Vec3::new(s, 0.0, c),
@@ -79,7 +80,7 @@ impl Placement {
             ItemEntityPose::Aimed { yaw, pitch, .. } => {
                 let (forward, up, across) = aim_basis(yaw, pitch);
                 Placement {
-                    origin: inst.pos,
+                    origin: pos,
                     x: forward,
                     y: up,
                     z: across,
@@ -134,6 +135,7 @@ fn trail_length(speed: f32) -> f32 {
 /// Nothing for a loose stack or a slow flight.
 fn push_flight_trail(
     inst: &ItemEntityInstance,
+    render_origin: glam::IVec3,
     env: LightEnv,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
@@ -145,7 +147,7 @@ fn push_flight_trail(
     if length <= 0.0 {
         return;
     }
-    let placement = Placement::of(inst);
+    let placement = Placement::of(inst, render_origin);
     let light = super::lighting::fold_tint([1.0; 3], inst_light(inst), env);
     let [u0, v0, u1, v1] = crate::atlas::tile_uv(petramond_world::tile::engine().item_trail);
     let uv = [(u0 + u1) * 0.5, (v0 + v1) * 0.5];
@@ -202,6 +204,7 @@ const STACK_LAYER_OFFSETS: [Vec3; STACK_MAX_LAYERS] = [
 /// instances before calling (so culled items cost nothing here).
 pub fn build_item_entities(
     instances: &[ItemEntityInstance],
+    render_origin: glam::IVec3,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
@@ -215,12 +218,12 @@ pub fn build_item_entities(
             ItemRenderKind::BlockCube(Block::Chest) => {
                 // A dropped chest spins as its full inset 3D model, not a plain cube.
                 for &offset in &STACK_LAYER_OFFSETS[..layers] {
-                    push_posed_chest(verts, indices, inst, offset);
+                    push_posed_chest(verts, indices, inst, render_origin, offset);
                 }
             }
             ItemRenderKind::BlockCube(block) => {
                 for &offset in &STACK_LAYER_OFFSETS[..layers] {
-                    push_posed_cube(verts, indices, inst, block, offset);
+                    push_posed_cube(verts, indices, inst, render_origin, block, offset);
                 }
             }
             // Sprite items ride the explicit-UV block-atlas stream, baked by
@@ -249,6 +252,7 @@ pub fn build_item_entities(
 /// flying cube or bbmodel streaks from here too.
 pub fn build_item_sprite_entities(
     instances: &[ItemEntityInstance],
+    render_origin: glam::IVec3,
     env: LightEnv,
     scratch: &mut Vec<ItemVertex>,
     verts: &mut Vec<ItemVertex>,
@@ -257,7 +261,7 @@ pub fn build_item_sprite_entities(
     verts.clear();
     indices.clear();
     for inst in instances {
-        push_flight_trail(inst, env, verts, indices);
+        push_flight_trail(inst, render_origin, env, verts, indices);
         let ItemRenderKind::Sprite(tile) = inst.item.render_kind() else {
             continue;
         };
@@ -281,7 +285,7 @@ pub fn build_item_sprite_entities(
             ItemEntityPose::Spin(_) => 0.0,
         };
         let (rs, rc) = roll.sin_cos();
-        let placement = Placement::of(inst);
+        let placement = Placement::of(inst, render_origin);
         for &offset in &STACK_LAYER_OFFSETS[..layers(inst)] {
             let base = verts.len() as u32;
             for v in scratch.iter() {
@@ -313,6 +317,7 @@ pub fn build_item_sprite_entities(
 /// real baked model, posed like any dropped stack, not a stand-in cube.
 pub fn build_item_model_entities(
     instances: &[ItemEntityInstance],
+    render_origin: glam::IVec3,
     env: LightEnv,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
@@ -323,7 +328,7 @@ pub fn build_item_model_entities(
         let ItemRenderKind::Model(kind) = inst.item.render_kind() else {
             continue;
         };
-        let placement = Placement::of(inst).matrix();
+        let placement = Placement::of(inst, render_origin).matrix();
         for &offset in &STACK_LAYER_OFFSETS[..layers(inst)] {
             let transform = placement
                 * Mat4::from_translation(offset)
@@ -363,6 +368,7 @@ fn push_posed_cube(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     inst: &ItemEntityInstance,
+    render_origin: glam::IVec3,
     block: Block,
     offset: Vec3,
 ) {
@@ -381,7 +387,7 @@ fn push_posed_cube(
     );
     // Instance-data tint (`petramond:tint`): one multiply over the fresh verts.
     super::item_model::dye_block_verts(&mut verts[start..], inst.variant);
-    place_into_world(verts, start, inst, offset);
+    place_into_world(verts, start, inst, render_origin, offset);
 }
 
 /// Like [`push_posed_cube`] but bakes the chest's full inset 3D model (body + lid
@@ -390,6 +396,7 @@ fn push_posed_chest(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     inst: &ItemEntityInstance,
+    render_origin: glam::IVec3,
     offset: Vec3,
 ) {
     let half = ITEM_CUBE_SIZE * 0.5;
@@ -401,14 +408,20 @@ fn push_posed_chest(
         ITEM_CUBE_SIZE,
         inst_light(inst),
     );
-    place_into_world(verts, start, inst, offset);
+    place_into_world(verts, start, inst, render_origin, offset);
 }
 
 /// Place the just-appended model-space verts `[start..]` per `inst.pose`
 /// (offset within the pile first so layered copies turn coherently). Shared
 /// by the dropped cube and chest builders.
-fn place_into_world(verts: &mut [Vertex], start: usize, inst: &ItemEntityInstance, offset: Vec3) {
-    let placement = Placement::of(inst);
+fn place_into_world(
+    verts: &mut [Vertex],
+    start: usize,
+    inst: &ItemEntityInstance,
+    render_origin: glam::IVec3,
+    offset: Vec3,
+) {
+    let placement = Placement::of(inst, render_origin);
     for v in verts[start..].iter_mut() {
         v.pos = placement.apply(Vec3::from(v.pos) + offset).to_array();
     }
@@ -417,13 +430,14 @@ fn place_into_world(verts: &mut [Vertex], start: usize, inst: &ItemEntityInstanc
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::item::ItemType;
 
     #[test]
     fn empty_instances_produce_no_geometry() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        let n = build_item_entities(&[], &mut v, &mut i);
+        let n = build_item_entities(&[], petramond_math::math::IVec3::ZERO, &mut v, &mut i);
         assert_eq!(n, 0);
         assert!(v.is_empty() && i.is_empty());
     }
@@ -433,7 +447,7 @@ mod tests {
         let mut v = Vec::new();
         let mut i = Vec::new();
         let inst = ItemEntityInstance {
-            pos: Vec3::new(10.0, 64.0, -5.0),
+            pos: WorldPos::new(10.0, 64.0, -5.0),
             item: ItemType::Stone,
             variant: petramond_world::item::VariantId::NONE,
             count: 1,
@@ -441,7 +455,12 @@ mod tests {
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: petramond_world::light::BlockLight6::DARK,
         };
-        let n = build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
+        let n = build_item_entities(
+            std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
         assert_eq!(n, 36, "one textured cube = 36 indices");
         // Cube is centred near pos (+ bob base), not at the origin.
@@ -454,7 +473,7 @@ mod tests {
     /// its trail rides the block-atlas sprite stream.
     #[test]
     fn an_aimed_cube_pitches_about_its_centre_and_trails() {
-        let pos = Vec3::new(4.0, 70.0, -3.0);
+        let pos = WorldPos::new(4.0, 70.0, -3.0);
         let inst = ItemEntityInstance {
             pos,
             item: ItemType::Stone,
@@ -470,12 +489,17 @@ mod tests {
         };
         let mut v = Vec::new();
         let mut i = Vec::new();
-        build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
+        build_item_entities(
+            std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 24, "one piece, whatever the count would layer");
         let mean = v.iter().map(|vert| Vec3::from(vert.pos)).sum::<Vec3>() / v.len() as f32;
         assert!(
-            mean.distance(pos) < 1e-3,
-            "aimed cube centred on the entity, not hovering: {mean} vs {pos}"
+            mean.distance(pos.relative_to(glam::IVec3::ZERO)) < 1e-3,
+            "aimed cube centred on the entity, not hovering: {mean} vs {pos:?}"
         );
         let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(lo, hi), vert| {
             (lo.min(vert.pos[1]), hi.max(vert.pos[1]))
@@ -492,6 +516,7 @@ mod tests {
         let mut si = Vec::new();
         let n = build_item_sprite_entities(
             std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
             LightEnv::IDENTITY,
             &mut scratch,
             &mut sv,
@@ -506,7 +531,7 @@ mod tests {
         // Poppy is a cross-plant -> Sprite render kind: it must emit NOTHING on
         // the packed stream and an extruded 3D slab on the ItemVertex stream.
         let inst = ItemEntityInstance {
-            pos: Vec3::new(3.0, 10.0, -2.0),
+            pos: WorldPos::new(3.0, 10.0, -2.0),
             item: ItemType::Poppy,
             variant: petramond_world::item::VariantId::NONE,
             count: 1,
@@ -516,7 +541,12 @@ mod tests {
         };
         let mut v = Vec::new();
         let mut i = Vec::new();
-        let n = build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
+        let n = build_item_entities(
+            std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         assert_eq!(n, 0, "sprites no longer bake on the packed stream");
 
         let mut scratch = Vec::new();
@@ -524,6 +554,7 @@ mod tests {
         let mut si = Vec::new();
         let n = build_item_sprite_entities(
             std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
             LightEnv::IDENTITY,
             &mut scratch,
             &mut sv,
@@ -555,7 +586,7 @@ mod tests {
     #[test]
     fn sprite_stack_bakes_layered_copies() {
         let inst = ItemEntityInstance {
-            pos: Vec3::ZERO,
+            pos: WorldPos::ZERO,
             item: ItemType::Poppy,
             variant: petramond_world::item::VariantId::NONE,
             count: 3,
@@ -568,6 +599,7 @@ mod tests {
         let mut si = Vec::new();
         build_item_sprite_entities(
             std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
             LightEnv::IDENTITY,
             &mut scratch,
             &mut sv,
@@ -581,6 +613,7 @@ mod tests {
         let huge = ItemEntityInstance { count: 64, ..inst };
         build_item_sprite_entities(
             std::slice::from_ref(&huge),
+            petramond_math::math::IVec3::ZERO,
             LightEnv::IDENTITY,
             &mut scratch,
             &mut sv,
@@ -594,7 +627,7 @@ mod tests {
         let mut v = Vec::new();
         let mut i = Vec::new();
         let inst = ItemEntityInstance {
-            pos: Vec3::ZERO,
+            pos: WorldPos::ZERO,
             item: ItemType::Dirt,
             variant: petramond_world::item::VariantId::NONE,
             count: 1,
@@ -602,11 +635,21 @@ mod tests {
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: petramond_world::light::BlockLight6::DARK,
         };
-        build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
+        build_item_entities(
+            std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         let (cap_v, cap_i) = (v.capacity(), i.capacity());
         // Same input -> identical vert/index count, so the cleared+refilled
         // buffers keep their capacity: rebuilding to the same size never reallocs.
-        build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
+        build_item_entities(
+            std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
         assert_eq!(v.capacity(), cap_v, "vert buffer reused");
         assert_eq!(i.capacity(), cap_i, "index buffer reused");
@@ -617,7 +660,7 @@ mod tests {
         let mut v = Vec::new();
         let mut i = Vec::new();
         let inst = ItemEntityInstance {
-            pos: Vec3::ZERO,
+            pos: WorldPos::ZERO,
             item: ItemType::Stone,
             variant: petramond_world::item::VariantId::NONE,
             count: 1,
@@ -626,7 +669,12 @@ mod tests {
             blocklight: petramond_world::light::BlockLight6::grey(7),
         };
 
-        build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
+        build_item_entities(
+            std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
 
         for vert in &v {
             assert_eq!(
@@ -644,7 +692,7 @@ mod tests {
         let mut i = Vec::new();
         // A 3-stack cube bakes 3 layered cubes = 72 verts / 108 indices.
         let three = ItemEntityInstance {
-            pos: Vec3::new(2.0, 5.0, 2.0),
+            pos: WorldPos::new(2.0, 5.0, 2.0),
             item: ItemType::Stone,
             variant: petramond_world::item::VariantId::NONE,
             count: 3,
@@ -652,18 +700,33 @@ mod tests {
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: petramond_world::light::BlockLight6::DARK,
         };
-        let n = build_item_entities(std::slice::from_ref(&three), &mut v, &mut i);
+        let n = build_item_entities(
+            std::slice::from_ref(&three),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 24 * 3, "3-stack = 3 layered cubes");
         assert_eq!(n, 36 * 3);
 
         // A huge count is capped at 5 layered copies, not 64.
         let huge = ItemEntityInstance { count: 64, ..three };
-        build_item_entities(std::slice::from_ref(&huge), &mut v, &mut i);
+        build_item_entities(
+            std::slice::from_ref(&huge),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 24 * 5, "count capped at 5 layers");
 
         // count 0 is treated as a single layer (never zero geometry).
         let zero = ItemEntityInstance { count: 0, ..three };
-        build_item_entities(std::slice::from_ref(&zero), &mut v, &mut i);
+        build_item_entities(
+            std::slice::from_ref(&zero),
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i,
+        );
         assert_eq!(v.len(), 24, "count 0 still draws one layer");
     }
 }

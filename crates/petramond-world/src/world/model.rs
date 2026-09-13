@@ -99,25 +99,24 @@ impl WorldData {
     /// empty space around it, exactly like the player/mob/item bodies. (Bodies use
     /// [`crate::collision::resolve_body`] over the same box source; this is the point case.)
     #[inline]
-    pub fn point_blocked(&self, p: crate::mathh::Vec3) -> bool {
-        crate::collision::point_in_solid([p.x, p.y, p.z], |x, y, z| {
-            self.collision_boxes_at(x, y, z)
-        })
+    pub fn point_blocked(&self, p: petramond_math::world_pos::WorldPos) -> bool {
+        crate::collision::point_in_solid(p.to_array(), |x, y, z| self.collision_boxes_at(x, y, z))
     }
 
-    /// The WORLD-space black-outline box for the model block at `pos`: the model's tight
-    /// bounding box (baked from geometry) positioned at its rotated-footprint base, so the
-    /// wireframe traces the whole multi-block as ONE box hugging its real extent rather
-    /// than a per-cell cube. `None` for a non-model cell.
-    pub fn model_outline_box(&self, pos: IVec3) -> Option<([f32; 3], [f32; 3])> {
+    /// The black-outline box for the model block at `pos`: the model's tight bounding box
+    /// (baked from geometry) under its placed facing, relative to the rotated-footprint
+    /// base returned with it, so the wireframe traces the whole multi-block as ONE box
+    /// hugging its real extent rather than a per-cell cube. `None` for a non-model cell.
+    pub fn model_outline_box(&self, pos: IVec3) -> Option<(IVec3, [f32; 3], [f32; 3])> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
         let kind = block.model_kind()?;
         let off = self.model_offset_at(pos.x, pos.y, pos.z);
         let facing = self.model_facing_at(pos.x, pos.y, pos.z);
         let base = block_model::base_from_cell(pos, kind, off, facing);
         let (mn, mx) = block_model::outline_bounds(kind);
-        let m = block_model::placement_transform(base, kind, facing);
-        Some(transform_box(m, mn, mx))
+        let m = block_model::placement_transform(kind, facing);
+        let (mn, mx) = transform_box(m, mn, mx);
+        Some((base, mn, mx))
     }
 
     /// The cells a `kind` block placed with its rotated-footprint base at `base` occupies —

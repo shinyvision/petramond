@@ -6,6 +6,7 @@ use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::player;
 use petramond::server::game::ATTACK_COOLDOWN_TICKS;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 
 fn strike() -> MobAttack {
@@ -14,7 +15,7 @@ fn strike() -> MobAttack {
         mob_index: 0,
         mob: Mob::Owl,
         mob_id: 1,
-        origin: Vec3::new(7.0, 64.0, 8.0),
+        origin: WorldPos::new(7.0, 64.0, 8.0),
         damage: 2.0,
         knockback_dir: Vec3::new(1.0, 0.0, 0.0),
         knockback: 5.0,
@@ -68,7 +69,7 @@ fn immunity_is_a_composable_pipeline_component() {
     };
     let mut game = game();
     let mut ev = TickEvents::default();
-    let pos = Vec3::new(8.0, 64.0, 8.0);
+    let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Sheep, pos, 0.0));
     let health = game.server.world.mobs().instances()[0].health();
 
@@ -132,7 +133,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
 
     let mut game = game();
     let mut ev = TickEvents::default();
-    let pos = Vec3::new(8.0, 64.0, 8.0);
+    let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Sheep, pos, 0.0));
     let player_health = game.server.sessions[0].player.health();
     let mob_health = game.server.world.mobs().instances()[0].health();
@@ -233,7 +234,9 @@ fn mob_strikes_route_to_the_targeted_session_only() {
     let mut game = game();
     let other = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(30.0, 80.0, 0.0)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            30.0, 80.0, 0.0,
+        )));
     let other_id = game.server.sessions[other].id;
     let mut ev = TickEvents::default();
     let h0 = game.server.sessions[0].player.health();
@@ -389,7 +392,7 @@ fn queued_mod_actions_apply_within_a_game_tick() {
 #[test]
 fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() {
     let mut game = game_on_empty_chunk();
-    game.cam.pos = Vec3::new(8.0, 66.0, 8.0);
+    game.cam.pos = WorldPos::new(8.0, 66.0, 8.0);
     game.cam.pitch = 0.0; // level look, so the eye ray stays at constant y
     let dir = game.cam.forward();
     // An owl two metres ahead, feet dropped so the eye-level ray crosses its body.
@@ -468,7 +471,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
 fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
     use petramond::net::protocol::MobStateRow;
 
-    fn row(id: u64, pos: Vec3) -> MobStateRow {
+    fn row(id: u64, pos: WorldPos) -> MobStateRow {
         MobStateRow {
             id,
             kind_id: Mob::Owl.0,
@@ -491,15 +494,15 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
     }
 
     let mut game = game();
-    let eye = Vec3::new(8.0, 66.0, 8.0);
+    let eye = WorldPos::new(8.0, 66.0, 8.0);
     let dir = Vec3::Z;
     let feet_y = eye.y - 0.35;
     let previous = eye + dir * 2.0;
     let future = eye + dir * 6.0;
     game.replicated_mobs
-        .apply(vec![row(42, Vec3::new(previous.x, feet_y, previous.z))]);
+        .apply(vec![row(42, WorldPos::new(previous.x, feet_y, previous.z))]);
     game.replicated_mobs
-        .apply(vec![row(42, Vec3::new(future.x, feet_y, future.z))]);
+        .apply(vec![row(42, WorldPos::new(future.x, feet_y, future.z))]);
     game.replica_clock.start();
     game.replica_clock.advance(TICK_DT * 0.5);
 
@@ -513,7 +516,7 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
 #[test]
 fn fist_takes_four_hits_to_kill_an_owl() {
     let mut game = game();
-    let pos = Vec3::new(8.0, 64.0, 8.0);
+    let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
     assert_eq!(petramond_world::item::attack_damage(None), (1.0, 1.0));
     let from = pos + Vec3::X;
@@ -570,7 +573,7 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
         .server
         .world
         .mobs_mut()
-        .spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+        .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let mut ev = TickEvents::default();
 
     // A click resolves on the tick (the tick after it was registered).
@@ -619,7 +622,7 @@ fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
         .server
         .world
         .mobs_mut()
-        .spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+        .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let h0 = game.server.world.mobs().instances()[0].health();
     let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = std::sync::Arc::clone(&seen);
@@ -684,13 +687,13 @@ fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
 fn a_mod_hit_landed_for_a_player_shoves_like_the_players_own_melee() {
     let mut game = game_on_empty_chunk();
     let mut ev = TickEvents::default();
-    let from = Vec3::new(6.0, 200.0, 8.0);
+    let from = WorldPos::new(6.0, 200.0, 8.0);
     for (attack, label) in [(false, "the mod's own damage"), (true, "a player's strike")] {
         assert!(game
             .server
             .world
             .mobs_mut()
-            .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+            .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
         let idx = game.server.world.mobs().instances().len() - 1;
         let id = game.server.world.mobs().instances()[idx].id();
         let h0 = game.server.world.mobs().instances()[idx].health();
@@ -729,7 +732,7 @@ fn dead_and_spectator_players_cannot_attack_mobs() {
             .server
             .world
             .mobs_mut()
-            .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+            .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
         click_attack_at(&mut game, 0);
         if spectator {
             game.server.sessions[0]
@@ -763,7 +766,7 @@ fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation
         .server
         .world
         .mobs_mut()
-        .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+        .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
     click_attack_at(&mut game, 0);
     let mob_id = game.server.world.mobs().instances()[0].id();
     let player_id = game.server.sessions[0].id.0;
@@ -796,12 +799,12 @@ fn a_forged_mob_id_cannot_redirect_an_attack_past_the_nearest_body() {
         .server
         .world
         .mobs_mut()
-        .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+        .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
     assert!(game
         .server
         .world
         .mobs_mut()
-        .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 9.0), 0.0));
+        .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 9.0), 0.0));
     common::aim_server_at_mob(&mut game, 0);
     let forged = game.server.world.mobs().instances()[1].id();
     let health: Vec<_> = game
@@ -837,7 +840,7 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
         .server
         .world
         .mobs_mut()
-        .spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+        .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let mob_id = game.server.world.mobs().instances()[0].id();
 
     // A click message latches while playing...
@@ -878,7 +881,7 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
 #[test]
 fn a_killed_mob_ragdolls_then_despawns() {
     let mut game = game_on_empty_chunk();
-    let pos = Vec3::new(8.0, 64.0, 8.0);
+    let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
     assert!(game
         .server
@@ -932,7 +935,7 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
         .world
         .insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), chunk);
 
-    let spawn = Vec3::new(8.5, 70.0, 8.5);
+    let spawn = WorldPos::new(8.5, 70.0, 8.5);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, spawn, 0.0));
     let health0 = game.server.world.mobs().instances()[0].health();
     let player = game.server.sessions[0].player.body_center();
@@ -958,7 +961,7 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
 
     assert!(landed, "the mob landed and reported a fall");
     let mob = &game.server.world.mobs().instances()[0];
-    let expected = petramond::server::health::fall_damage_health(spawn.y - 64.0) as f32;
+    let expected = petramond::server::health::fall_damage_health((spawn.y - 64.0) as f32) as f32;
     assert_eq!(expected, 3.0, "fixture is a six-block fall");
     assert_eq!(mob.health(), health0 - expected);
     assert!(!mob.is_dead(), "the owl survives this fall at one health");
@@ -967,7 +970,7 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
 #[test]
 fn killing_owls_drops_loot_into_the_world() {
     let mut game = game_on_empty_chunk();
-    let pos = Vec3::new(8.0, 64.0, 8.0);
+    let pos = WorldPos::new(8.0, 64.0, 8.0);
     // Over many kills the owl table (50% sticks / 25% coal) virtually always yields
     // something — this proves the death→loot path is wired, without pinning the
     // (freely-editable) table contents.
@@ -998,12 +1001,12 @@ fn a_mob_pushes_the_player_per_frame() {
     // The push acts on the CLIENT's predicted player against the REPLICATED
     // mob rows (the shove reaches the server in the next PlayerUpdate).
     let mut game = game();
-    game.player.pos = Vec3::new(8.0, 64.0, 8.0);
+    game.player.pos = WorldPos::new(8.0, 64.0, 8.0);
     game.replicated_mobs
         .apply(vec![petramond::net::protocol::MobStateRow {
             id: 1,
             kind_id: Mob::Owl.0,
-            pos: Vec3::new(8.2, 64.0, 8.0),
+            pos: WorldPos::new(8.2, 64.0, 8.0),
             yaw: 0.0,
             tilt: petramond_math::math::Tilt::LEVEL,
             anim_time: 0.0,
@@ -1041,7 +1044,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
     use petramond::net::protocol::PlayerStateRow;
     use petramond::player::PlayerId;
 
-    fn remote_row(pos: Vec3, visible: bool, sleeping: bool) -> PlayerStateRow {
+    fn remote_row(pos: WorldPos, visible: bool, sleeping: bool) -> PlayerStateRow {
         PlayerStateRow {
             conditions: Vec::new(),
             id: PlayerId(1),
@@ -1077,8 +1080,8 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
 
     let mut game = game();
     let own_id = game.game.self_id;
-    let start = Vec3::new(8.0, 64.0, 8.0);
-    let overlap = Vec3::new(8.2, 64.0, 8.0); // just east, footprints overlapping
+    let start = WorldPos::new(8.0, 64.0, 8.0);
+    let overlap = WorldPos::new(8.2, 64.0, 8.0); // just east, footprints overlapping
 
     let run = |game: &mut common::TestGame, row: PlayerStateRow| {
         game.player.pos = start;
@@ -1108,14 +1111,14 @@ fn cannot_place_a_solid_block_inside_a_mob() {
     game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
     game.server.sessions[0].player.inventory.set_active(0);
     // Park the player far off so only the mob can block placement here.
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
 
     // An owl standing in cell (8, 200, 8), high up and clear of the player.
     assert!(game
         .server
         .world
         .mobs_mut()
-        .spawn(Mob::Owl, Vec3::new(8.5, 200.0, 8.5), 0.0));
+        .spawn(Mob::Owl, WorldPos::new(8.5, 200.0, 8.5), 0.0));
 
     // Aiming a Dirt block into the owl's cell does nothing: no block lands and the
     // held stack isn't consumed.
@@ -1164,11 +1167,13 @@ fn cannot_place_a_solid_block_inside_another_player() {
     game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
     game.server.sessions[0].player.inventory.set_active(0);
     // Park the placer far off so only the other session can block placement here.
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
 
     let other = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(8.5, 200.0, 8.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            8.5, 200.0, 8.5,
+        )));
 
     let before = game.server.sessions[0]
         .player
@@ -1236,11 +1241,13 @@ fn click_attack_player(game: &mut super::common::TestGame, target: petramond::pl
 /// Two sessions in reach; a fist guarantees the deterministic (1.0, 1.0)
 /// damage roll.
 fn pvp_pair(game: &mut super::common::TestGame) -> usize {
-    game.server.sessions[0].player.pos = Vec3::new(0.5, 64.0, 0.5);
+    game.server.sessions[0].player.pos = WorldPos::new(0.5, 64.0, 0.5);
     game.server.sessions[0].player.inventory = petramond_world::inventory::Inventory::new();
     let t = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(2.5, 64.0, 0.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            2.5, 64.0, 0.5,
+        )));
     game.server.sessions[t].player.vel = Vec3::ZERO;
     t
 }
@@ -1288,7 +1295,7 @@ fn a_pvp_attack_damages_the_target_through_the_funnel_with_knockback_and_cooldow
 fn a_pvp_attack_out_of_reach_lands_no_damage() {
     let mut game = game();
     let t = pvp_pair(&mut game);
-    game.server.sessions[t].player.pos = Vec3::new(20.5, 64.0, 0.5); // beyond REACH + 1
+    game.server.sessions[t].player.pos = WorldPos::new(20.5, 64.0, 0.5); // beyond REACH + 1
     let h0 = game.server.sessions[t].player.health();
     let target_id = game.server.sessions[t].id;
 
@@ -1429,7 +1436,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     use petramond::net::protocol::PlayerStateRow;
     use petramond::player::PlayerId;
 
-    fn remote_row(id: u8, pos: Vec3, visible: bool) -> PlayerStateRow {
+    fn remote_row(id: u8, pos: WorldPos, visible: bool) -> PlayerStateRow {
         PlayerStateRow {
             conditions: Vec::new(),
             id: PlayerId(id),
@@ -1464,7 +1471,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     }
 
     let mut game = game_on_empty_chunk();
-    game.cam.pos = Vec3::new(8.0, 66.0, 8.0);
+    game.cam.pos = WorldPos::new(8.0, 66.0, 8.0);
     game.cam.pitch = 0.0;
     let dir = game.cam.forward();
     let own_id = game.game.self_id;
@@ -1534,7 +1541,7 @@ fn multi_tick_pumps_never_eat_fall_damage() {
     let mut game = game();
     common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
     let sess = &mut game.server.sessions[0];
-    sess.player.pos = Vec3::new(8.5, 79.0, 8.5);
+    sess.player.pos = WorldPos::new(8.5, 79.0, 8.5);
     sess.player.vel = Vec3::ZERO;
     sess.player.on_ground = false;
     sess.fall.reset(79.0);

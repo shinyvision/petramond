@@ -26,7 +26,7 @@ use rustc_hash::FxHashMap;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
 /// Cells one climb edge rises. The body delivers it with a jump on land and a
@@ -193,7 +193,7 @@ pub fn is_navigation_foothold_with(
 /// and it would never path anywhere (it'd freeze at the edge).
 #[cfg(test)]
 fn standing_cell(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     head: i32,
     solid: &impl Fn(IVec3) -> bool,
@@ -205,7 +205,7 @@ fn standing_cell(
 /// [`is_navigation_foothold_with`]): partial-collision blocks bear feet
 /// without blanket-blocking their cell.
 pub fn standing_cell_with(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     head: i32,
     solid: &impl Fn(IVec3) -> bool,
@@ -239,9 +239,9 @@ pub fn standing_cell_with(
     for sx in [-half_width, half_width] {
         for sz in [-half_width, half_width] {
             let corner = IVec3::new(
-                (pos.x + sx).floor() as i32,
+                (pos.x + f64::from(sx)).floor() as i32,
                 feet_y,
-                (pos.z + sz).floor() as i32,
+                (pos.z + f64::from(sz)).floor() as i32,
             );
             if corner == centre {
                 continue;
@@ -249,7 +249,10 @@ pub fn standing_cell_with(
             let Some(c) = foothold_at(corner) else {
                 continue;
             };
-            let (dx, dz) = (c.x as f32 + 0.5 - pos.x, c.z as f32 + 0.5 - pos.z);
+            let (dx, dz) = (
+                (f64::from(c.x) + 0.5 - pos.x) as f32,
+                (f64::from(c.z) + 0.5 - pos.z) as f32,
+            );
             let dist = dx * dx + dz * dz;
             if best.is_none_or(|(_, bd)| dist < bd) {
                 best = Some((c, dist));
@@ -264,7 +267,7 @@ pub fn standing_cell_with(
 /// surface just above them can be.
 #[cfg(test)]
 fn swimming_cell(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     head: i32,
     solid: &impl Fn(IVec3) -> bool,
@@ -275,7 +278,7 @@ fn swimming_cell(
 
 /// Swimming-cell resolution with the separate `support` predicate.
 pub fn swimming_cell_with(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     head: i32,
     solid: &impl Fn(IVec3) -> bool,
@@ -303,7 +306,7 @@ pub fn swimming_cell_with(
 /// leaving the mob goalless, bobbing in place forever.
 #[cfg(test)]
 fn navigation_cell(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     head: i32,
     in_fluid: bool,
@@ -315,7 +318,7 @@ fn navigation_cell(
 
 /// Navigation-cell resolution with the separate `support` predicate.
 pub fn navigation_cell_with(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     head: i32,
     in_fluid: bool,
@@ -714,6 +717,7 @@ fn reconstruct(came_from: &FxHashMap<IVec3, IVec3>, end: IVec3) -> Vec<IVec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::world_pos::WorldPos;
     use rustc_hash::FxHashSet;
 
     /// A solid world from a predicate, with a floor plane at `y < floor_y` always
@@ -928,7 +932,7 @@ mod tests {
     fn swimming_cell_snaps_to_the_fluid_surface() {
         let solid = |c: IVec3| c.y <= -1;
         let fluid = |c: IVec3| (0..=3).contains(&c.y);
-        let cell = swimming_cell(Vec3::new(0.5, 1.2, 0.5), 0.25, 1, &solid, &fluid);
+        let cell = swimming_cell(WorldPos::new(0.5, 1.2, 0.5), 0.25, 1, &solid, &fluid);
         assert_eq!(
             cell,
             Some(IVec3::new(0, 4, 0)),
@@ -945,7 +949,7 @@ mod tests {
         // be the surface cell above, from which the dry shore is reachable.
         let solid = |c: IVec3| c.y < 0 || (c.x >= 3 && c.y == 0);
         let fluid = |c: IVec3| c.x <= 2 && c.y == 0;
-        let wading = Vec3::new(1.5, 0.3, 0.5);
+        let wading = WorldPos::new(1.5, 0.3, 0.5);
 
         let feet = IVec3::new(1, 0, 0);
         assert!(
@@ -1000,17 +1004,17 @@ mod tests {
         let solid = |c: IVec3| c == IVec3::new(0, 0, 0);
         // Centre just past the +X edge (cell (1,1,0) overhangs air), but the footprint
         // still rests on the block -> returns that block's foothold (0,1,0).
-        let cell = standing_cell(Vec3::new(1.1, 1.0, 0.5), 0.25, 1, &solid);
+        let cell = standing_cell(WorldPos::new(1.1, 1.0, 0.5), 0.25, 1, &solid);
         assert_eq!(
             cell,
             Some(IVec3::new(0, 1, 0)),
             "edge overhang resolves to the block"
         );
         // Centre squarely on the block -> the centre cell.
-        let on = standing_cell(Vec3::new(0.5, 1.0, 0.5), 0.25, 1, &solid);
+        let on = standing_cell(WorldPos::new(0.5, 1.0, 0.5), 0.25, 1, &solid);
         assert_eq!(on, Some(IVec3::new(0, 1, 0)));
         // Over nothing (mid-air) -> None.
-        let off = standing_cell(Vec3::new(5.0, 1.0, 5.0), 0.25, 1, &solid);
+        let off = standing_cell(WorldPos::new(5.0, 1.0, 5.0), 0.25, 1, &solid);
         assert_eq!(off, None);
     }
 
@@ -1021,14 +1025,14 @@ mod tests {
         // cell (feet y ≈ 1.56). The foothold must resolve to the cell above the
         // block, not fail and strand the mob goalless (the zombies-on-beds bug).
         let solid = |c: IVec3| c.y == 0 || c == IVec3::new(0, 1, 0);
-        let on_bed = standing_cell(Vec3::new(0.5, 1.56, 0.5), 0.25, 1, &solid);
+        let on_bed = standing_cell(WorldPos::new(0.5, 1.56, 0.5), 0.25, 1, &solid);
         assert_eq!(on_bed, Some(IVec3::new(0, 2, 0)));
 
         // The corner fallback gets the same treatment: a bed on a one-block
         // pillar, mob centre overhanging past its edge into open air — the
         // corner still resting on the bed resolves to the cell above it.
         let pillar = |c: IVec3| c == IVec3::new(0, 0, 0) || c == IVec3::new(0, 1, 0);
-        let edge = standing_cell(Vec3::new(1.1, 1.56, 0.5), 0.25, 1, &pillar);
+        let edge = standing_cell(WorldPos::new(1.1, 1.56, 0.5), 0.25, 1, &pillar);
         assert_eq!(edge, Some(IVec3::new(0, 2, 0)));
     }
 
@@ -1176,7 +1180,7 @@ mod tests {
         let floor = |c: IVec3| c.y < 1;
         let bed = IVec3::new(0, 1, 0);
         let support = |c: IVec3| floor(c) || c == bed;
-        let cell = standing_cell_with(Vec3::new(0.5, 1.56, 0.5), 0.25, 1, &floor, &support);
+        let cell = standing_cell_with(WorldPos::new(0.5, 1.56, 0.5), 0.25, 1, &floor, &support);
         assert_eq!(cell, Some(IVec3::new(0, 2, 0)));
     }
 

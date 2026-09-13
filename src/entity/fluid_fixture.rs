@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-use petramond_math::math::Vec3;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, SectionPos};
 use petramond_world::section::Section;
@@ -169,8 +168,8 @@ pub fn bank(world: &mut World, from_x: i32, top: i32) {
 }
 
 /// Where a body starts beside the bank in a pool whose top fluid cell is `top`.
-pub fn beside_bank(from_x: i32, top: i32) -> Vec3 {
-    Vec3::new(from_x as f32 - 1.0, top as f32 - 0.5, 8.5)
+pub fn beside_bank(from_x: i32, top: i32) -> petramond_math::world_pos::WorldPos {
+    petramond_math::world_pos::WorldPos::new(from_x as f64 - 1.0, top as f64 - 0.5, 8.5)
 }
 
 /// Write fluid `meta` for `fluid` into the cell at [`FLOOR_Y`].

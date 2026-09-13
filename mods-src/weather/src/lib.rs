@@ -224,7 +224,7 @@ impl Weather {
             let dz = ((roll >> 16) & 0xFFFF) as i32 % (2 * SNOW_RADIUS + 1) - SNOW_RADIUS;
             let x = p.state.pos[0] as i32 + dx;
             let z = p.state.pos[2] as i32 + dz;
-            let intensity = rain_from_coverage(coverage(x as f32, z as f32, params));
+            let intensity = rain_from_coverage(coverage(f64::from(x), f64::from(z), params));
             if intensity <= 0.0 {
                 continue;
             }
@@ -371,7 +371,8 @@ impl Weather {
         let (lx, lz) = ((wx & 15) as usize, (wz & 15) as usize);
         let idx = (lz * 16 + lx) * CLIENT_SURFACE_CELL_BYTES;
         let h = i16::from_le_bytes([cells[idx], cells[idx + 1]]);
-        self.covered = h != CLIENT_SURFACE_UNKNOWN_HEIGHT && (h as f32) > frame.player_pos[1] + 2.0;
+        self.covered =
+            h != CLIENT_SURFACE_UNKNOWN_HEIGHT && f64::from(h) > frame.player_pos[1] + 2.0;
         if !self.covered {
             // Nothing overhead at all — trivially sky access.
             self.roofed = false;

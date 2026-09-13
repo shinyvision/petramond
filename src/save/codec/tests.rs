@@ -1,6 +1,6 @@
 use super::*;
 use petramond_math::facing::Facing;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::block_state::{LogAxis, SlabSplit, SlabState, StairState};
 use petramond_world::item::{ItemStack, ItemType};
@@ -89,7 +89,7 @@ fn section_record_roundtrips_entities() {
     s.set_block(8, 0, 8, Block::Dirt);
     let mut snap = SectionSnapshot::from_section(&s);
     let mut drop = DroppedItem::new(
-        Vec3::new(40.5, 65.0, 40.5),
+        WorldPos::new(40.5, 65.0, 40.5),
         ItemStack::new(ItemType::Stone, 7),
         1,
     );
@@ -114,7 +114,7 @@ fn section_record_roundtrips_mobs() {
     let mut snap = SectionSnapshot::from_section(&s);
     snap.mobs.push(SavedMob {
         kind: crate::mob::Mob::Owl,
-        pos: Vec3::new(-12.5, 65.0, 72.25),
+        pos: WorldPos::new(-12.5, 65.0, 72.25),
         yaw: 1.75,
         tags: Default::default(),
     });
@@ -126,7 +126,7 @@ fn section_record_roundtrips_mobs() {
     assert_eq!(mobs[0].kind, crate::mob::Mob::Owl);
     assert_eq!(
         mobs[0].pos,
-        Vec3::new(-12.5, 65.0, 72.25),
+        WorldPos::new(-12.5, 65.0, 72.25),
         "position persists"
     );
     assert_eq!(mobs[0].yaw, 1.75, "facing persists");

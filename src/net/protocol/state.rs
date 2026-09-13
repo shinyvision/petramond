@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::player::PlayerId;
-use petramond_math::math::{IVec3, Tilt, Vec3};
+use petramond_math::math::{IVec3, Tilt};
 
 use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 
@@ -64,7 +64,7 @@ pub struct MobStateRow {
     pub id: u64,
     /// Wire mob id (`Mob.0` on the server).
     pub kind_id: u8,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
     /// Body tilt inside the yaw; level for every body the engine moves itself.
     pub tilt: Tilt,
@@ -113,7 +113,7 @@ pub struct ItemStateRow {
     /// Canonical instance-data blob (`None` = plain stack) — see
     /// [`super::ItemSlotWire::data`].
     pub data: Option<Vec<u8>>,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub spin: f32,
     /// `[yaw, pitch, speed]` of an item in flight or lodged in a block —
     /// drawn pointing that way (a fast one trailing its path), no spin, no
@@ -212,7 +212,7 @@ pub enum PlayerMount {
     /// convention), and the named pose (`mod_api::pose`; unknown values
     /// render the rest pose).
     Anchor {
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         yaw: f32,
         pose: u8,
     },
@@ -365,7 +365,7 @@ pub enum WorldEventMsg {
     },
     /// A player collected at least one drop this tick, at their body centre.
     ItemPickedUp {
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         by: PlayerId,
     },
     /// A semantic mob sound (hurt/death); the client resolves the species hook.
@@ -374,18 +374,18 @@ pub enum WorldEventMsg {
         kind_id: u8,
         /// `MobSoundCategory` discriminant.
         category: u8,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
     },
     /// A one-shot sound (`EmitSound`); `pos = None` is non-spatial.
     Sound {
         sound_id: u8,
-        pos: Option<Vec3>,
+        pos: Option<petramond_math::world_pos::WorldPos>,
     },
     /// A one-shot particle burst (a `particle_emitters.json` burst bundle by
     /// wire catalog id) at `pos` — e.g. the water splash.
     EmitterBurst {
         emitter_id: u8,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         intensity: f32,
     },
     /// A handle-addressed spatial sound command (`SoundPlayAt`/`OnMob`/`Stop`).
@@ -398,7 +398,7 @@ pub enum SpatialSoundMsg {
     PlayAt {
         handle: u64,
         sound_id: u8,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         volume: f32,
         pitch: f32,
     },
@@ -409,7 +409,7 @@ pub enum SpatialSoundMsg {
         volume: f32,
         pitch: f32,
         /// The mob position at emission (fallback if it despawns client-side).
-        last_pos: Vec3,
+        last_pos: petramond_math::world_pos::WorldPos,
     },
     Stop {
         handle: u64,

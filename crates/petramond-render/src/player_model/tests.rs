@@ -1,5 +1,6 @@
 use super::*;
 use petramond::player::model::player_model;
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn swimming_gaze_stays_on_target_through_torso_rotation() {
@@ -42,7 +43,7 @@ fn instance() -> PlayerRenderInstance {
     PlayerRenderInstance {
         emitter_tint: [1.0; 3],
         emitter_self_lit: 0.0,
-        pos: Vec3::new(4.0, 70.0, -3.0),
+        pos: WorldPos::new(4.0, 70.0, -3.0),
         body_yaw: 0.0,
         head_yaw: 0.0,
         head_pitch: 0.0,
@@ -74,6 +75,7 @@ fn bake(inst: &PlayerRenderInstance, swing: f32) -> Vec<ItemVertex> {
         player_model(),
         LightEnv::IDENTITY,
         inst,
+        petramond_math::math::IVec3::ZERO,
         &[],
         &swing_view(swing),
         &crate::HeldItemView::default(),
@@ -101,6 +103,7 @@ fn self_lit_players_keep_fire_and_hurt_tints_in_darkness() {
             sky_color: [0.6, 0.7, 1.0],
         },
         &inst,
+        petramond_math::math::IVec3::ZERO,
         &[],
         &swing_view(0.0),
         &crate::HeldItemView::default(),
@@ -127,6 +130,7 @@ fn hand(inst: &PlayerRenderInstance, swing: f32) -> Mat4 {
         player_model(),
         LightEnv::IDENTITY,
         inst,
+        petramond_math::math::IVec3::ZERO,
         &[],
         &swing_view(swing),
         &crate::HeldItemView::default(),
@@ -142,6 +146,7 @@ fn off_hand(inst: &PlayerRenderInstance, off_swing: f32) -> Mat4 {
         player_model(),
         LightEnv::IDENTITY,
         inst,
+        petramond_math::math::IVec3::ZERO,
         &[],
         &crate::HeldItemView::default(),
         &swing_view(off_swing),
@@ -301,7 +306,7 @@ fn sleeping_lies_the_body_flat() {
     // nestle slightly below — into the pillow — never the whole body.
     let min_y = lying.iter().map(|v| v.pos[1]).fold(f32::MAX, f32::min);
     assert!(
-        min_y >= asleep.pos.y - 0.2,
+        min_y >= (asleep.pos.y - 0.2) as f32,
         "only a pillow-deep nestle below the mattress: {min_y}"
     );
 }
@@ -507,7 +512,7 @@ fn held_grip_is_on_the_visual_right_side() {
     let inst = instance();
     let grip = hand(&inst, 0.0).transform_point3(HAND_GRIP_PX);
     assert!(
-        grip.x < inst.pos.x,
+        grip.x < inst.pos.x as f32,
         "yaw 0 player-right is camera-right/world -X, grip at {grip:?}"
     );
 }
@@ -673,7 +678,7 @@ fn render_third_person_off_hand_preview() {
     // The shared fixture parks the body away from the origin; the camera
     // above looks at the origin, so stand the body there.
     let mut inst = instance();
-    inst.pos = Vec3::ZERO;
+    inst.pos = WorldPos::ZERO;
     for (row, (off_swing, model_row)) in
         [(0.0, false), (0.0, true), (0.5, false)].iter().enumerate()
     {
@@ -683,6 +688,7 @@ fn render_third_person_off_hand_preview() {
             model,
             LightEnv::IDENTITY,
             &inst,
+            petramond_math::math::IVec3::ZERO,
             &[],
             &held_view,
             &off_view,
@@ -754,7 +760,7 @@ fn off_hand_grip_is_on_the_visual_left_side_and_jabs_inward() {
     let grip_local = Vec3::new(-HAND_GRIP_PX.x, HAND_GRIP_PX.y, HAND_GRIP_PX.z);
     let rest = off_hand(&inst, 0.0).transform_point3(grip_local);
     assert!(
-        rest.x > inst.pos.x,
+        rest.x > inst.pos.x as f32,
         "yaw 0 player-left is world +X, off grip at {rest:?}"
     );
     for swing in [0.1, 0.25, 0.5, 0.75] {

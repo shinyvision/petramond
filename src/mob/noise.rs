@@ -19,8 +19,6 @@
 //! needs kind-dependent ranges, put the tuning on ITS node params — the
 //! vocabulary here already distinguishes the kinds.
 
-use petramond_math::math::Vec3;
-
 use super::EntityRef;
 
 /// The audible action a [`Noise`] records.
@@ -40,7 +38,7 @@ pub enum NoiseKind {
 /// a block's centre) — for a block action that is NOT the actor's position.
 #[derive(Copy, Clone, Debug)]
 pub struct Noise {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub kind: NoiseKind,
     pub source: EntityRef,
 }

@@ -7,7 +7,7 @@ pub(super) fn find(
     x: i32,
     z: i32,
     [lo, hi]: [i32; 2],
-) -> Option<Vec3> {
+) -> Option<petramond_math::world_pos::WorldPos> {
     let biome = Biome::from_id(world.column_biome(x, z)?);
     let mut candidates = Vec::new();
     for y in lo..=hi {
@@ -37,7 +37,8 @@ pub(super) fn find(
             continue;
         }
         let feet = IVec3::new(x, y, z);
-        let pos = Vec3::new(x as f32 + 0.5, y as f32, z as f32 + 0.5);
+        let pos = petramond_math::world_pos::WorldPos::block_min(feet)
+            + petramond_math::math::Vec3::new(0.5, 0.0, 0.5);
         let fits = match rule.space {
             Some(space) => body_in_space(world, kind, pos, 0.0, space),
             None => body_fits_at(world, kind, feet),
@@ -52,7 +53,7 @@ pub(super) fn find(
 pub(super) fn body_in_space(
     world: &World,
     kind: Mob,
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     yaw: f32,
     allowed: &[Block],
 ) -> bool {

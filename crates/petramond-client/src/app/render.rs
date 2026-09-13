@@ -458,7 +458,7 @@ fn play_pending_mob_sound_events(
     events: &mut Vec<crate::game::MobSoundEvent>,
     next_handle: &mut u64,
     listener: SpatialListener,
-    positions: &[(u64, petramond_math::math::Vec3)],
+    positions: &[(u64, petramond_math::world_pos::WorldPos)],
 ) {
     for event in events.drain(..) {
         let Some(spec) = petramond::mob::def(event.kind).sound_for(event.category) else {
@@ -535,7 +535,7 @@ pub(super) fn tick_idle_mob_sounds(
     next_handle: &mut u64,
     listener: SpatialListener,
     mobs: &[MobPresentation],
-    positions: &[(u64, petramond_math::math::Vec3)],
+    positions: &[(u64, petramond_math::world_pos::WorldPos)],
     current_tick: u64,
 ) {
     for mob in mobs {
@@ -569,7 +569,7 @@ fn play_mob_sound(
     sound: petramond_world::sound_registry::Sound,
     mob_id: u64,
     listener: SpatialListener,
-    initial: petramond_math::math::Vec3,
+    initial: petramond_math::world_pos::WorldPos,
 ) {
     audio.play_spatial_randomized(
         alloc_mob_sound_handle(next_handle),
@@ -587,9 +587,9 @@ fn alloc_mob_sound_handle(next: &mut u64) -> u64 {
 }
 
 fn mob_position(
-    positions: &[(u64, petramond_math::math::Vec3)],
+    positions: &[(u64, petramond_math::world_pos::WorldPos)],
     mob_id: u64,
-) -> Option<petramond_math::math::Vec3> {
+) -> Option<petramond_math::world_pos::WorldPos> {
     positions
         .iter()
         .find(|(id, _)| *id == mob_id)

@@ -1,6 +1,7 @@
 use super::common::game_on_empty_chunk;
 use petramond::events::tick::TickEvents;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
@@ -27,7 +28,11 @@ fn aim_down_at(game: &mut super::common::TestGame, cell: IVec3) {
 
 /// Place the player so their EYE sits exactly at `eye`.
 fn set_player_eye(game: &mut super::common::TestGame, eye: Vec3) {
-    game.server.sessions[0].player.pos = Vec3::new(eye.x, eye.y - petramond::player::EYE, eye.z);
+    game.server.sessions[0].player.pos = WorldPos::new(
+        f64::from(eye.x),
+        f64::from(eye.y - petramond::player::EYE),
+        f64::from(eye.z),
+    );
 }
 
 fn right_click(game: &mut super::common::TestGame) -> TickEvents {
@@ -175,7 +180,8 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
         &mut game,
         Vec3::new(src.x as f32 + 3.3, 79.5, src.z as f32 + 0.5),
     );
-    let target = Vec3::new(src.x as f32 + 0.5, 78.4, src.z as f32 + 0.5);
+    let target =
+        petramond_math::world_pos::WorldPos::new(src.x as f64 + 0.5, 78.4, src.z as f64 + 0.5);
     let dir = target - game.server.sessions[0].player.eye();
     game.server.sessions[0].player.yaw = dir.x.atan2(dir.z);
     game.server.sessions[0].player.pitch = (dir.y / dir.length()).asin();
@@ -365,7 +371,7 @@ fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
     game.server.sessions[0].player.inventory = holding(ItemType::Shears);
     assert!(game.server.world.mobs_mut().spawn(
         petramond::mob::Mob::Sheep,
-        Vec3::new(8.0, 64.0, 8.0),
+        WorldPos::new(8.0, 64.0, 8.0),
         0.0
     ));
     let events = right_click_at_mob(&mut game, 0);
@@ -409,7 +415,7 @@ fn shearing_needs_the_shears_in_hand() {
     game.server.sessions[0].player.inventory = holding(ItemType::Dirt);
     assert!(game.server.world.mobs_mut().spawn(
         petramond::mob::Mob::Sheep,
-        Vec3::new(8.0, 64.0, 8.0),
+        WorldPos::new(8.0, 64.0, 8.0),
         0.0
     ));
     let events = right_click_at_mob(&mut game, 0);

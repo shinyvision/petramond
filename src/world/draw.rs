@@ -170,16 +170,49 @@ impl BlockDrawSet {
     }
 }
 
+/// A block's own authored space placed in the world: an integer anchor cell
+/// and the transform from block space into space relative to that anchor. The
+/// anchor never becomes a float translation, so a machine far from the origin
+/// keeps its sub-texel detail.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BlockLocalFrame {
+    pub anchor: IVec3,
+    pub transform: petramond_math::math::Mat4,
+}
+
+impl BlockLocalFrame {
+    /// A block-space point in the world.
+    pub fn to_world(&self, p: petramond_math::math::Vec3) -> petramond_math::world_pos::WorldPos {
+        petramond_math::world_pos::WorldPos::block_min(self.anchor)
+            + self.transform.transform_point3(p)
+    }
+
+    /// The transform from block space into space relative to `origin`.
+    pub fn relative_to(&self, origin: IVec3) -> petramond_math::math::Mat4 {
+        petramond_math::math::Mat4::from_translation((self.anchor - origin).as_vec3())
+            * self.transform
+    }
+}
+
 /// A prim-space box in world axes: the bounds of its transformed corners.
 /// The transform is a yaw plus a translation, so that is exact rather than
 /// conservative.
-pub fn world_bounds(to_world: &petramond_math::math::Mat4, lo: [f32; 3], hi: [f32; 3]) -> DrawBox {
+pub fn world_bounds(
+    frame: &BlockLocalFrame,
+    lo: [f32; 3],
+    hi: [f32; 3],
+) -> (
+    petramond_math::world_pos::WorldPos,
+    petramond_math::world_pos::WorldPos,
+) {
     let mut mn = [f32::MAX; 3];
     let mut mx = [f32::MIN; 3];
     for cx in [lo[0], hi[0]] {
         for cy in [lo[1], hi[1]] {
             for cz in [lo[2], hi[2]] {
-                let p = to_world.transform_point3(petramond_math::math::Vec3::new(cx, cy, cz));
+                let p = frame
+                    .transform
+                    .transform_point3(petramond_math::math::Vec3::new(cx, cy, cz));
                 for a in 0..3 {
                     mn[a] = mn[a].min(p[a]);
                     mx[a] = mx[a].max(p[a]);
@@ -187,7 +220,8 @@ pub fn world_bounds(to_world: &petramond_math::math::Mat4, lo: [f32; 3], hi: [f3
             }
         }
     }
-    (mn, mx)
+    let base = petramond_math::world_pos::WorldPos::block_min(frame.anchor);
+    (base + mn.into(), base + mx.into())
 }
 
 /// The prim-space AABB of a whole set. An item prim is a cube of side `scale`
@@ -224,7 +258,7 @@ pub type BlockDraw = Arc<BlockDrawSet>;
 /// An axis-aligned `(min, max)` box, in whichever space the holder documents.
 pub type DrawBox = ([f32; 3], [f32; 3]);
 
-/// A stored set together with its PLACEMENT: the block-space→world transform
+/// A stored set together with its PLACEMENT: the block-space frame
 /// and the world box that transform puts its prims in.
 ///
 /// Both are resolved when the set is stored (and re-resolved by every path
@@ -237,10 +271,13 @@ pub type DrawBox = ([f32; 3], [f32; 3]);
 /// gather may never be.
 pub(in crate::world) struct PlacedDraw {
     pub(in crate::world) set: BlockDraw,
-    pub(in crate::world) to_world: petramond_math::math::Mat4,
+    pub(in crate::world) frame: BlockLocalFrame,
     /// [`BlockDrawSet::bounds`] in world axes; `None` for a set that resolved
     /// to no prims and can therefore never be visible.
-    pub(in crate::world) world: Option<DrawBox>,
+    pub(in crate::world) world: Option<(
+        petramond_math::world_pos::WorldPos,
+        petramond_math::world_pos::WorldPos,
+    )>,
 }
 
 /// One placed block's draw set to draw this frame, with the light at its cell.
@@ -255,10 +292,10 @@ pub struct BlockDrawInstance {
     pub pos: IVec3,
     /// Shared with the world — a frame copies a refcount, never the prims.
     pub set: BlockDraw,
-    /// Prim space → world. For a model block this is its footprint space
-    /// turned by the placed facing, so a mod's geometry follows the model it
-    /// was authored against instead of the world axes.
-    pub transform: petramond_math::math::Mat4,
+    /// Prim space placed in the world. For a model block this is its
+    /// footprint space turned by the placed facing, so a mod's geometry
+    /// follows the model it was authored against instead of the world axes.
+    pub frame: BlockLocalFrame,
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
 }
@@ -277,25 +314,37 @@ pub(in crate::world) struct SectionDraws {
     /// exactly on removal: a machine redrawing itself inside its authored
     /// envelope must not pay an O(members) refold every tick, and a bound that
     /// is too big only costs a section that could have been rejected.
-    lo: [f32; 3],
-    hi: [f32; 3],
+    lo: petramond_math::world_pos::WorldPos,
+    hi: petramond_math::world_pos::WorldPos,
 }
 
 impl SectionDraws {
     fn empty() -> SectionDraws {
         SectionDraws {
             cells: Vec::new(),
-            lo: [f32::MAX; 3],
-            hi: [f32::MIN; 3],
+            lo: petramond_math::world_pos::WorldPos::new(f64::MAX, f64::MAX, f64::MAX),
+            hi: petramond_math::world_pos::WorldPos::new(f64::MIN, f64::MIN, f64::MIN),
         }
     }
 
-    fn grow(&mut self, world: Option<DrawBox>) {
+    fn grow(
+        &mut self,
+        world: Option<(
+            petramond_math::world_pos::WorldPos,
+            petramond_math::world_pos::WorldPos,
+        )>,
+    ) {
         let Some((lo, hi)) = world else { return };
-        for a in 0..3 {
-            self.lo[a] = self.lo[a].min(lo[a]);
-            self.hi[a] = self.hi[a].max(hi[a]);
-        }
+        self.lo = petramond_math::world_pos::WorldPos::new(
+            self.lo.x.min(lo.x),
+            self.lo.y.min(lo.y),
+            self.lo.z.min(lo.z),
+        );
+        self.hi = petramond_math::world_pos::WorldPos::new(
+            self.hi.x.max(hi.x),
+            self.hi.y.max(hi.y),
+            self.hi.z.max(hi.z),
+        );
     }
 }
 
@@ -339,16 +388,22 @@ impl World {
         self.log_block_draw(pos);
     }
 
-    /// The block-space→world transform and the world box a set's prims land in
+    /// The block-space frame and the world box a set's prims land in
     /// under it — resolved once, here, for every path that stores a set.
     fn draw_placement(
         &self,
         pos: IVec3,
         set: &BlockDrawSet,
-    ) -> (petramond_math::math::Mat4, Option<DrawBox>) {
-        let to_world = self.block_local_transform(pos);
-        let world = set.bounds.map(|(lo, hi)| world_bounds(&to_world, lo, hi));
-        (to_world, world)
+    ) -> (
+        BlockLocalFrame,
+        Option<(
+            petramond_math::world_pos::WorldPos,
+            petramond_math::world_pos::WorldPos,
+        )>,
+    ) {
+        let frame = self.block_local_frame(pos);
+        let world = set.bounds.map(|(lo, hi)| world_bounds(&frame, lo, hi));
+        (frame, world)
     }
 
     /// Store `set` at `pos`, keeping the per-section index and its bound.
@@ -358,18 +413,11 @@ impl World {
         let Some(sp) = petramond_world::chunk::SectionPos::from_world(pos.x, pos.y, pos.z) else {
             return;
         };
-        let (to_world, world) = self.draw_placement(pos, &set);
+        let (frame, world) = self.draw_placement(pos, &set);
         let fresh = self
             .draw_stream
             .block_draws
-            .insert(
-                pos,
-                PlacedDraw {
-                    set,
-                    to_world,
-                    world,
-                },
-            )
+            .insert(pos, PlacedDraw { set, frame, world })
             .is_none();
         let entry = self
             .draw_stream
@@ -398,18 +446,12 @@ impl World {
         if entry.cells.is_empty() {
             return true;
         }
-        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        let mut refolded = SectionDraws::empty();
         for c in &entry.cells {
-            let Some(Some((l, h))) = self.draw_stream.block_draws.get(c).map(|p| p.world) else {
-                continue;
-            };
-            for a in 0..3 {
-                lo[a] = lo[a].min(l[a]);
-                hi[a] = hi[a].max(h[a]);
-            }
+            refolded.grow(self.draw_stream.block_draws.get(c).and_then(|p| p.world));
         }
-        entry.lo = lo;
-        entry.hi = hi;
+        entry.lo = refolded.lo;
+        entry.hi = refolded.hi;
         self.draw_stream.block_draw_sections.insert(sp, entry);
         true
     }
@@ -433,8 +475,8 @@ impl World {
         else {
             return;
         };
-        let (to_world, _) = self.draw_placement(pos, &set);
-        if self.draw_stream.block_draws[&pos].to_world == to_world {
+        let (frame, _) = self.draw_placement(pos, &set);
+        if self.draw_stream.block_draws[&pos].frame == frame {
             return;
         }
         self.insert_draw(pos, set);
@@ -458,7 +500,7 @@ impl World {
         // were resolved at store time, so a set that is not on screen costs no
         // transform, no eight-corner fold and no light sample.
         for entry in self.draw_stream.block_draw_sections.values() {
-            if !view.aabb_visible(entry.lo.into(), entry.hi.into()) {
+            if !view.aabb_visible(entry.lo, entry.hi) {
                 continue;
             }
             for &pos in &entry.cells {
@@ -468,7 +510,7 @@ impl World {
                 let Some((mn, mx)) = placed.world else {
                     continue;
                 };
-                if !view.aabb_visible(mn.into(), mx.into()) {
+                if !view.aabb_visible(mn, mx) {
                     continue;
                 }
                 let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
@@ -478,7 +520,7 @@ impl World {
                 out.push(BlockDrawInstance {
                     pos,
                     set: Arc::clone(&placed.set),
-                    transform: placed.to_world,
+                    frame: placed.frame,
                     skylight: sky,
                     blocklight: block,
                 });
@@ -497,19 +539,20 @@ impl World {
     /// ONE rule with two consumers: the draw-set gather below, and the ABI's
     /// `BlockLocalToWorld`, which is what lets a mod ask for a world point off
     /// its own model instead of writing this transform out a second time.
-    pub fn block_local_transform(&self, pos: IVec3) -> petramond_math::math::Mat4 {
+    pub fn block_local_frame(&self, pos: IVec3) -> BlockLocalFrame {
         let block = petramond_world::block::Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
         if let Some(kind) = block.model_kind() {
             let offset = self.model_offset_at(pos.x, pos.y, pos.z);
             let facing = self.model_facing_at(pos.x, pos.y, pos.z);
-            let base = petramond_world::block_model::base_from_cell(pos, kind, offset, facing);
-            return petramond_world::block_model::placement_transform(base, kind, facing);
+            return BlockLocalFrame {
+                anchor: petramond_world::block_model::base_from_cell(pos, kind, offset, facing),
+                transform: petramond_world::block_model::placement_transform(kind, facing),
+            };
         }
-        petramond_math::math::Mat4::from_translation(petramond_math::math::Vec3::new(
-            pos.x as f32,
-            pos.y as f32,
-            pos.z as f32,
-        ))
+        BlockLocalFrame {
+            anchor: pos,
+            transform: petramond_math::math::Mat4::IDENTITY,
+        }
     }
 
     /// Drop the set at `pos` — called from the sweep that forgets a cell's
@@ -650,8 +693,8 @@ mod tests {
         assert!(w.place_model_block_facing(base, WB, Facing::East));
         let anchor = w.container_anchor(base);
         w.set_block_draw(anchor, prims());
-        let before = w.draw_stream.block_draws[&anchor].to_world;
-        assert_eq!(before, w.block_local_transform(anchor), "stored fresh");
+        let before = w.draw_stream.block_draws[&anchor].frame;
+        assert_eq!(before, w.block_local_frame(anchor), "stored fresh");
 
         // The cell turns under a surviving set — exactly what a costume swap
         // does to a machine that keeps its drawing.
@@ -663,9 +706,9 @@ mod tests {
             chunk.set_model_facing(lx, ly, lz, Facing::North);
         }
         w.refresh_region(&cells);
-        let after = w.draw_stream.block_draws[&anchor].to_world;
+        let after = w.draw_stream.block_draws[&anchor].frame;
         assert_ne!(before, after, "fixture: the placement must actually move");
-        assert_eq!(after, w.block_local_transform(anchor), "refreshed");
+        assert_eq!(after, w.block_local_frame(anchor), "refreshed");
     }
 
     /// A delta lane is filtered PER RECIPIENT, so what a machine's redraw

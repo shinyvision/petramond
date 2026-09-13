@@ -105,7 +105,8 @@ mod tests {
     use crate::player::Player;
     use crate::player::PlayerId;
     use crate::world::World;
-    use petramond_math::math::{IVec3, Vec3};
+    use petramond_math::math::IVec3;
+    use petramond_math::world_pos::WorldPos;
 
     /// TWO sessions with panels open at TWO machines, which is the whole
     /// point: a mod runs once for the server, and a tick system acts as the
@@ -116,8 +117,8 @@ mod tests {
     #[test]
     fn gauges_reach_the_session_that_is_looking_not_the_host_session() {
         let mut world = World::new(1, 1);
-        let mut host = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut guest = Player::new(Vec3::new(8.0, 80.0, 8.0));
+        let mut host = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut guest = Player::new(WorldPos::new(8.0, 80.0, 8.0));
         let mut host_gui = petramond_world::gui_state::empty_gui_state();
         let mut guest_gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();

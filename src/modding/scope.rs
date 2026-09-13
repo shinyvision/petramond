@@ -95,12 +95,12 @@ mod tests {
     use crate::events::PostQueue;
     use crate::player::Player;
     use crate::world::World;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
 
     #[test]
     fn scope_is_bounded_and_reentrancy_safe() {
         let mut world = World::new(1, 1);
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
 

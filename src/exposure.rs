@@ -3,12 +3,14 @@
 //! players and mobs alike.
 
 use crate::world::World;
-use petramond_math::math::Vec3;
 use petramond_world::condition::BodyConditions;
 use petramond_world::exposure::{BodyExposure, ExposureDamage};
 use petramond_world::{fluid::FluidDef, fluid_math::fluid_height};
 
-const CONTACT_EPS: f32 = 1e-4;
+const CONTACT_EPS: f64 = 1e-4;
+
+/// A world-space `(min, max)` body box.
+type WorldBox = ([f64; 3], [f64; 3]);
 
 /// Buffers reused across exposure ticks, so ticking a body allocates nothing.
 #[derive(Default)]
@@ -24,7 +26,7 @@ impl ExposureScratch {
     pub fn tick(
         &mut self,
         world: &World,
-        boxes: impl IntoIterator<Item = (Vec3, Vec3)>,
+        boxes: impl IntoIterator<Item = WorldBox>,
         exposure: &mut BodyExposure,
     ) {
         self.damage.clear();
@@ -43,16 +45,16 @@ impl ExposureScratch {
 /// and contained fluids count like any other.
 fn gather_touched_fluids(
     world: &World,
-    boxes: impl IntoIterator<Item = (Vec3, Vec3)>,
+    boxes: impl IntoIterator<Item = WorldBox>,
     out: &mut Vec<&'static FluidDef>,
 ) -> bool {
     out.clear();
     for (min, max) in boxes {
-        let lo = (min + Vec3::splat(CONTACT_EPS)).floor().as_ivec3();
-        let hi = (max - Vec3::splat(CONTACT_EPS)).floor().as_ivec3();
-        for y in lo.y..=hi.y {
-            for z in lo.z..=hi.z {
-                for x in lo.x..=hi.x {
+        let lo = min.map(|v| (v + CONTACT_EPS).floor() as i32);
+        let hi = max.map(|v| (v - CONTACT_EPS).floor() as i32);
+        for y in lo[1]..=hi[1] {
+            for z in lo[2]..=hi[2] {
+                for x in lo[0]..=hi[0] {
                     let Some(block) = world.block_if_stream_final(x, y, z) else {
                         return false;
                     };
@@ -63,7 +65,7 @@ fn gather_touched_fluids(
                         return false;
                     };
                     let height = fluid_height(world.fluid_meta_world(x, y, z), above, def.block);
-                    if min.y + CONTACT_EPS < y as f32 + height {
+                    if min[1] + CONTACT_EPS < f64::from(y) + f64::from(height) {
                         out.push(def);
                     }
                 }
@@ -79,7 +81,7 @@ fn gather_touched_fluids(
 #[cfg(test)]
 pub(crate) fn touched_fluids(
     world: &World,
-    boxes: impl IntoIterator<Item = (Vec3, Vec3)>,
+    boxes: impl IntoIterator<Item = WorldBox>,
 ) -> Option<Vec<&'static FluidDef>> {
     let mut out = Vec::new();
     gather_touched_fluids(world, boxes, &mut out).then_some(out)

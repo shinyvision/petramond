@@ -134,7 +134,7 @@ pub struct Game {
     /// active. Camera only: the collision box and the sim eye stay full
     /// height.
     camera_sneak_y_offset: f32,
-    last_player_eye_y: f32,
+    last_player_eye_y: f64,
     /// Third-person view state (boom camera + body pose). `cam` above stays the
     /// authoritative first-person eye for every presentation consumer; see
     /// `third_person.rs`.
@@ -325,7 +325,7 @@ impl Game {
     /// attenuation of positional mod sounds. Movement-derived → the client's
     /// predicted player.
     #[inline]
-    pub fn listener_position(&self) -> petramond_math::math::Vec3 {
+    pub fn listener_position(&self) -> petramond_math::world_pos::WorldPos {
         self.player.eye()
     }
 
@@ -692,7 +692,7 @@ impl Game {
     /// Pin the locally-simulated player for tests that need a deterministic
     /// sampling location (the server session is placed by the caller).
     #[cfg(test)]
-    pub fn place_player_for_test(&mut self, feet: petramond_math::math::Vec3) {
+    pub fn place_player_for_test(&mut self, feet: petramond_math::world_pos::WorldPos) {
         self.player.pos = feet;
         self.player.vel = petramond_math::math::Vec3::ZERO;
     }

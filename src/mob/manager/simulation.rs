@@ -5,7 +5,7 @@ use crate::mob::model_meta::{self, IdleAnimMeta, Skeleton};
 use crate::mob::noise::{Noise, NoiseKind};
 use crate::mob::{def, defs, model, EntityRef, Instance, Mob};
 use crate::world::World;
-use petramond_math::math::{voxel_at, Vec3};
+use petramond_math::math::Vec3;
 use petramond_world::body::Body;
 
 use super::{nearest_anchor, Mobs};
@@ -18,7 +18,7 @@ pub struct PlayerAnchor {
     pub id: crate::player::PlayerId,
     /// Body centre — the AI's target/despawn anchor (matches the old single
     /// `player_pos` argument).
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// The pushable body; `None` for a spectator (nothing to jostle or strike).
     pub body: Option<Body>,
     /// Whether this player is sneaking — hostile detection shrinks for a
@@ -37,7 +37,7 @@ impl Default for PlayerAnchor {
     fn default() -> Self {
         PlayerAnchor {
             id: Default::default(),
-            pos: Vec3::ZERO,
+            pos: petramond_math::world_pos::WorldPos::ZERO,
             body: None,
             sneaking: false,
             held: None,
@@ -47,7 +47,7 @@ impl Default for PlayerAnchor {
 
 #[derive(Copy, Clone)]
 pub(super) struct PushBody {
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     yaw: f32,
     size: super::MobSize,
     /// Horizontal radius past which this body provably cannot overlap another
@@ -70,7 +70,7 @@ pub struct MobAttack {
     /// struck mob's retaliation memory can name the biter across ticks.
     pub mob_id: u64,
     /// Attacker position for damage origin / presentation context.
-    pub origin: Vec3,
+    pub origin: petramond_math::world_pos::WorldPos,
     /// Who the strike lands on (whatever the attacker's brain locked).
     pub target: EntityRef,
     /// Damage in half-heart points (rounded when applied to a player).
@@ -96,7 +96,7 @@ pub struct MobFall {
 /// tick). `ServerGame` throws the splash burst above the entry point.
 #[derive(Copy, Clone, Debug)]
 pub struct MobSplash {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// Blocks fallen into the surface — the burst intensity.
     pub fall: f32,
 }
@@ -155,7 +155,7 @@ fn push_reach(size: super::MobSize) -> f32 {
 
 #[cfg(test)]
 impl PushBody {
-    pub(super) fn pos(self) -> Vec3 {
+    pub(super) fn pos(self) -> petramond_math::world_pos::WorldPos {
         self.pos
     }
     pub(super) fn yaw(self) -> f32 {
@@ -168,7 +168,11 @@ impl PushBody {
 
 /// Build a push body from raw geometry — the broadphase test's fixture.
 #[cfg(test)]
-pub(super) fn push_body_for_test(pos: Vec3, yaw: f32, size: super::MobSize) -> PushBody {
+pub(super) fn push_body_for_test(
+    pos: petramond_math::world_pos::WorldPos,
+    yaw: f32,
+    size: super::MobSize,
+) -> PushBody {
     PushBody {
         pos,
         yaw,
@@ -189,7 +193,7 @@ pub(super) fn push_body_for_test(pos: Vec3, yaw: f32, size: super::MobSize) -> P
 pub(super) fn overlap_pairs(
     bodies: &[Option<PushBody>],
     order: &[usize],
-    sweep: &mut Vec<(f32, u32)>,
+    sweep: &mut Vec<(f64, u32)>,
     pairs: &mut Vec<(u32, u32)>,
 ) {
     sweep.clear();
@@ -205,7 +209,7 @@ pub(super) fn overlap_pairs(
         let (x, ra) = sweep[p];
         let span = bodies[order[ra as usize]].expect("participating").reach + max_reach;
         for &(qx, rb) in &sweep[p + 1..] {
-            if qx - x >= span {
+            if qx - x >= f64::from(span) {
                 break;
             }
             pairs.push((ra.min(rb), ra.max(rb)));
@@ -501,7 +505,7 @@ impl Mobs {
                         .map(|damage| MobExposureDamage { mob_id, damage }),
                 );
             }
-            let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
+            let c = (mob.pos + Vec3::new(0.0, 0.3, 0.0)).block();
             mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
             mob.blocklight = petramond_world::light::BlockLight6::from_x2(
                 world.blocklight_rgb_at_world(c.x, c.y, c.z),
@@ -688,7 +692,7 @@ impl Mobs {
 /// against that absent floor reads air and falls out of the world (the same
 /// rule as `world::entities::terrain_under_drop_is_final`).
 fn terrain_under_mob_is_final(world: &World, mob: &Instance) -> bool {
-    let c = voxel_at(mob.pos);
+    let c = mob.pos.block();
     c.y >= petramond_world::chunk::WORLD_MIN_Y
         && world.physics_cell_final_at(c.x, c.y, c.z)
         && world.physics_cell_final_at(c.x, c.y - 1, c.z)

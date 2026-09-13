@@ -350,7 +350,7 @@ pub enum ItemEntityPose {
 /// A stack draws as several offset, layered copies (capped at 5) per `count`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ItemEntityInstance {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub item: ItemType,
     /// The stack's instance-data variant (tint resolution at draw).
     pub variant: petramond_world::item::VariantId,
@@ -378,7 +378,7 @@ pub struct MobRenderInstance {
     /// Which species (selects the model / texture / draw buffers).
     pub kind: petramond::mob::Mob,
     /// World position of the mob's feet (model `y=0`).
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// Facing yaw in radians (rotation about Y).
     pub yaw: f32,
     /// Body tilt applied inside the yaw; level for every body the engine
@@ -482,7 +482,7 @@ pub struct PlayerRenderInstance {
     /// active emitter's `body_self_lit`): a burning body stays visible in the dark.
     pub emitter_self_lit: f32,
     /// World position of the feet (model `y=0`).
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// Body facing yaw in radians (engine yaw space).
     pub body_yaw: f32,
     /// Head yaw relative to the body, and look pitch (radians).
@@ -543,8 +543,8 @@ pub struct RemotePlayerRender {
 /// [`chest_model::build_chests`].
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ChestInstance {
-    /// World position of the block's min corner (block coords as f32).
-    pos: Vec3,
+    /// The chest's cell.
+    pos: petramond_math::math::IVec3,
     /// Placement orientation (which way the front + latch face).
     facing: petramond_math::facing::Facing,
     /// Lid open fraction: `0.0` closed, `1.0` fully open.
@@ -563,8 +563,8 @@ pub struct ChestInstance {
 /// `top_tile`).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct DoorInstance {
-    /// World position of the lower cell's min corner (block coords as f32).
-    pos: Vec3,
+    /// The door's lower cell.
+    pos: petramond_math::math::IVec3,
     /// The edge the CLOSED door rests on (its outward normal); see [`petramond_world::door`].
     facing: petramond_math::facing::Facing,
     /// Swing fraction: `0.0` closed, `1.0` fully open onto the adjacent edge.
@@ -590,7 +590,7 @@ pub struct DoorInstance {
 pub struct ParticleInstance {
     /// World-space half-axes for a double-sided textured quad, or None for a cube.
     pub quad_axes: Option<[Vec3; 2]>,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// Absolute atlas uv of the patch's min corner.
     pub uv_min: [f32; 2],
     /// Absolute atlas uv extent of the patch, per axis (the atlas is not square
@@ -613,7 +613,7 @@ pub struct ParticleInstance {
 /// as an alpha-blended cube in the same pass as the looping-emitter cubes.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SolidParticleInstance {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub color: [f32; 3],
     pub alpha: f32,
     pub size: f32,

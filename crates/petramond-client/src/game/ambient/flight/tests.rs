@@ -1,4 +1,5 @@
 use super::*;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::{Block, BlockTag};
 use petramond_world::particle_emitters::{AmbientHit, AmbientKill, AmbientMotion};
 use petramond_world::tile::Tile;
@@ -57,7 +58,7 @@ fn activation<'a>(intensity: f32, weight: &'a dyn Fn(u8) -> f32) -> Activation<'
 fn collect(
     spec: &AmbientSpec,
     world: &World,
-    cam: Vec3,
+    cam: WorldPos,
     time: f32,
     intensity: f32,
     weight: &dyn Fn(u8) -> f32,
@@ -118,7 +119,7 @@ fn everywhere(_: u8) -> f32 {
 fn fliers_gate_their_own_columns_and_stay_anchored_when_the_camera_jumps() {
     let spec = flier_spec(true);
     let world = habitat();
-    let cam = Vec3::new(0.0, 67.0, 8.0);
+    let cam = WorldPos::new(0.0, 67.0, 8.0);
     let (mut base, mut jumped) = (Vec::new(), Vec::new());
     collect(&spec, &world, cam, 7.0, 1.0, &west_only, &mut base);
     collect(
@@ -133,7 +134,7 @@ fn fliers_gate_their_own_columns_and_stay_anchored_when_the_camera_jumps() {
     assert!(!base.is_empty());
     assert_eq!(base, jumped, "camera motion never drags a flier");
     for wings in base.chunks_exact(2) {
-        let center = (wings[0].pos + wings[1].pos) * 0.5;
+        let center = wings[0].pos.lerp(wings[1].pos, 0.5);
         assert!(
             center.x < 0.0,
             "an orbit must not cross into a zero-density biome"
@@ -147,7 +148,7 @@ fn fliers_gate_their_own_columns_and_stay_anchored_when_the_camera_jumps() {
     collect(
         &spec,
         &world,
-        Vec3::new(0.0, 50.0, 8.0),
+        WorldPos::new(0.0, 50.0, 8.0),
         7.0,
         1.0,
         &everywhere,
@@ -167,7 +168,7 @@ fn without_a_sprite_a_flier_is_an_ordinary_cube() {
     collect(
         &spec,
         &world,
-        Vec3::new(0.0, 67.0, 8.0),
+        WorldPos::new(0.0, 67.0, 8.0),
         7.0,
         1.0,
         &everywhere,
@@ -187,7 +188,7 @@ fn zero_intensity_derives_nothing() {
     collect(
         &spec,
         &world,
-        Vec3::new(0.0, 67.0, 8.0),
+        WorldPos::new(0.0, 67.0, 8.0),
         1.0,
         0.0,
         &everywhere,
@@ -226,7 +227,7 @@ fn an_admitted_flier_survives_its_whole_orbit_over_steps_and_density_borders() {
             orbit_ground(&spec, flight, &act, &world, x, z, roll).map(|g| (seed, x, z, g))
         })
         .expect("fixture contains an admitted flight");
-    let cam = Vec3::new(x, ground + 1.0, z);
+    let cam = WorldPos::new(x, f64::from(ground + 1.0), z);
     let mut out = Vec::new();
     for step in 0..120 {
         let time = step as f32 * 0.25;
@@ -236,8 +237,9 @@ fn an_admitted_flier_survives_its_whole_orbit_over_steps_and_density_borders() {
         let wings = out
             .chunks_exact(2)
             .find(|wings| {
-                let center = (wings[0].pos + wings[1].pos) * 0.5;
-                (center.x - x - offset.x).abs() < 1e-4 && (center.z - z - offset.z).abs() < 1e-4
+                let center = wings[0].pos.lerp(wings[1].pos, 0.5);
+                (center.x - x - f64::from(offset.x)).abs() < 1e-4
+                    && (center.z - z - f64::from(offset.z)).abs() < 1e-4
             })
             .expect("an admitted flier must never disappear partway through its orbit");
         for wing in wings {
@@ -252,7 +254,7 @@ fn an_admitted_flier_survives_its_whole_orbit_over_steps_and_density_borders() {
                     .precipitation_ceiling_y(corner.x.floor() as i32, corner.z.floor() as i32)
                     .unwrap();
                 assert!(
-                    corner.y > floor as f32 + 1.0,
+                    corner.y > floor as f64 + 1.0,
                     "every wing corner clears the ground"
                 );
             }
@@ -276,7 +278,8 @@ fn roofs_and_overhangs_reject_flights_even_above_a_ground_floor() {
     let flight = flight_of(&spec);
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
-    let ground = |world: &World, x: f32| orbit_ground(&spec, flight, &act, world, x, 8.5, 0.0);
+    let ground =
+        |world: &World, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
     assert!(ground(&world, 0.5).is_some());
     for roof in [Block::OakPlanks, Block::Glass, Block::StoneSlab] {
         assert!(world.set_block_world(0, 70, 8, roof));
@@ -296,9 +299,9 @@ fn roof_clearance_includes_diagonally_rotated_wing_corners() {
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
     let x = -flight.orbit[0] - spec.size[1] * FRAC_1_SQRT_2 + 0.01;
-    assert!(orbit_ground(&spec, flight, &act, &world, x, 8.5, 0.0).is_some());
+    assert!(orbit_ground(&spec, flight, &act, &world, f64::from(x), 8.5, 0.0).is_some());
     assert!(world.set_block_world(0, 70, 8, Block::Stone));
-    assert!(orbit_ground(&spec, flight, &act, &world, x, 8.5, 0.0).is_none());
+    assert!(orbit_ground(&spec, flight, &act, &world, f64::from(x), 8.5, 0.0).is_none());
 }
 
 #[test]
@@ -307,7 +310,8 @@ fn canopies_reject_ground_flights_instead_of_lifting_them_to_the_treetop() {
     let flight = flight_of(&spec);
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
-    let ground = |world: &World, x: f32| orbit_ground(&spec, flight, &act, world, x, 8.5, 0.0);
+    let ground =
+        |world: &World, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
     let original = ground(&world, 0.5);
     assert!(original.is_some());
     for canopy_y in [67, 75] {

@@ -110,7 +110,7 @@ const NEAR: f32 = 0.3;
 /// `(sin yaw, cos yaw)`, pitch tips it) is decided here and nowhere else.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Aim {
-    pub eye: [f32; 3],
+    pub eye: [f64; 3],
     pub forward: [f32; 3],
     pub across: [f32; 3],
     pub up: [f32; 3],
@@ -123,7 +123,11 @@ impl Aim {
         let forward = [sy * cp, sp, cy * cp];
         let across = [cy, 0.0, -sy];
         Aim {
-            eye: [state.pos[0], state.pos[1] + state.eye_height, state.pos[2]],
+            eye: [
+                state.pos[0],
+                state.pos[1] + f64::from(state.eye_height),
+                state.pos[2],
+            ],
             forward,
             across,
             up: cross(across, forward),
@@ -132,7 +136,7 @@ impl Aim {
 }
 
 /// One world-space box of a body: `(min, max)`.
-pub type Box3 = ([f32; 3], [f32; 3]);
+pub type Box3 = ([f64; 3], [f64; 3]);
 
 /// A mob's body as the engine collides and targets it: one square box, or —
 /// for a long body — a run of overlapping squares along its facing, the
@@ -149,10 +153,11 @@ pub fn mob_boxes(m: &MobSnapshot) -> Vec<Box3> {
             } else {
                 -reach + 2.0 * reach * i as f32 / (segments - 1) as f32
             };
-            let c = add(m.pos, scale(facing, offset));
+            let c = offset_by(m.pos, scale(facing, offset));
+            let (hw, height) = (f64::from(hw), f64::from(m.height));
             (
                 [c[0] - hw, c[1], c[2] - hw],
-                [c[0] + hw, c[1] + m.height, c[2] + hw],
+                [c[0] + hw, c[1] + height, c[2] + hw],
             )
         })
         .collect()
@@ -160,13 +165,10 @@ pub fn mob_boxes(m: &MobSnapshot) -> Vec<Box3> {
 
 /// A player's body box.
 pub fn player_box(p: &PlayerSnapshot) -> Box3 {
+    let (hw, height) = (f64::from(p.half_width), f64::from(p.height));
     (
-        [p.pos[0] - p.half_width, p.pos[1], p.pos[2] - p.half_width],
-        [
-            p.pos[0] + p.half_width,
-            p.pos[1] + p.height,
-            p.pos[2] + p.half_width,
-        ],
+        [p.pos[0] - hw, p.pos[1], p.pos[2] - hw],
+        [p.pos[0] + hw, p.pos[1] + height, p.pos[2] + hw],
     )
 }
 
@@ -176,7 +178,7 @@ pub struct Hit {
     /// What the tool's damage roll is scaled by.
     pub multiplier: f32,
     /// The body's closest point to the eye — where the sightline is tested.
-    pub point: [f32; 3],
+    pub point: [f64; 3],
     pub distance: f32,
 }
 
@@ -190,25 +192,27 @@ pub fn judge(profile: &Profile, aim: &Aim, boxes: &[Box3]) -> Option<Hit> {
         .max_by(|a, b| a.multiplier.total_cmp(&b.multiplier))
 }
 
-fn judge_box(profile: &Profile, aim: &Aim, min: [f32; 3], max: [f32; 3]) -> Option<Hit> {
-    let nearest = clamp3(aim.eye, min, max);
-    let distance = length(sub(nearest, aim.eye));
+fn judge_box(profile: &Profile, aim: &Aim, min: [f64; 3], max: [f64; 3]) -> Option<Hit> {
+    // Eye-relative, so the geometry below stays exact far from the origin.
+    let (min, max) = (relative(min, aim.eye), relative(max, aim.eye));
+    let nearest = clamp3([0.0; 3], min, max);
+    let distance = length(nearest);
     // Out of reach, or not in FRONT at all: the angular miss below is
     // measured across the look ray and cannot see a body behind the eye.
-    if distance > profile.reach || dot(sub(nearest, aim.eye), aim.forward) < 0.0 {
+    if distance > profile.reach || dot(nearest, aim.forward) < 0.0 {
         return None;
     }
     // Where the look ray passes the box, by alternating projection: the
     // ray's point nearest the box, the box's point nearest that, again.
     // Two rounds settle it to well under a degree for a body-sized box.
     let centre = scale(add(min, max), 0.5);
-    let mut t = dot(sub(centre, aim.eye), aim.forward).clamp(NEAR, profile.reach);
+    let mut t = dot(centre, aim.forward).clamp(NEAR, profile.reach);
     for _ in 0..2 {
-        let on_ray = add(aim.eye, scale(aim.forward, t));
+        let on_ray = scale(aim.forward, t);
         let on_box = clamp3(on_ray, min, max);
-        t = dot(sub(on_box, aim.eye), aim.forward).clamp(NEAR, profile.reach);
+        t = dot(on_box, aim.forward).clamp(NEAR, profile.reach);
     }
-    let on_ray = add(aim.eye, scale(aim.forward, t));
+    let on_ray = scale(aim.forward, t);
     let miss = sub(clamp3(on_ray, min, max), on_ray);
     let yaw_err = dot(miss, aim.across).abs().atan2(t);
     let pitch_err = dot(miss, aim.up).abs().atan2(t);
@@ -225,7 +229,7 @@ fn judge_box(profile: &Profile, aim: &Aim, min: [f32; 3], max: [f32; 3]) -> Opti
     let multiplier = profile.floor + (profile.peak - profile.floor) * aim_term * dist_term;
     Some(Hit {
         multiplier,
-        point: nearest,
+        point: offset_by(aim.eye, nearest),
         distance,
     })
 }
@@ -237,7 +241,7 @@ fn in_sight(aim: &Aim, hit: &Hit) -> bool {
     if hit.distance <= NEAR {
         return true;
     }
-    let dir = sub(hit.point, aim.eye);
+    let dir = relative(hit.point, aim.eye);
     raycast(aim.eye, dir, hit.distance, RayFilter::Collidable)
         .is_none_or(|block| block.distance >= hit.distance - 0.05)
 }
@@ -334,7 +338,7 @@ pub fn land(me: PlayerId, style: Style, state: &PlayerSnapshot) {
     let base = roll_damage(me);
     let origin = Some([
         state.pos[0],
-        state.pos[1] + state.height * 0.5,
+        state.pos[1] + f64::from(state.height * 0.5),
         state.pos[2],
     ]);
     let attacker = Some(EntityRef::Player(me));
@@ -359,6 +363,24 @@ fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 
 fn scale(a: [f32; 3], s: f32) -> [f32; 3] {
     [a[0] * s, a[1] * s, a[2] * s]
+}
+
+/// World point `a` moved by the offset `b`.
+pub(crate) fn offset_by(a: [f64; 3], b: [f32; 3]) -> [f64; 3] {
+    [
+        a[0] + f64::from(b[0]),
+        a[1] + f64::from(b[1]),
+        a[2] + f64::from(b[2]),
+    ]
+}
+
+/// World point `a` as an offset from the world point `origin`.
+pub(crate) fn relative(a: [f64; 3], origin: [f64; 3]) -> [f32; 3] {
+    [
+        (a[0] - origin[0]) as f32,
+        (a[1] - origin[1]) as f32,
+        (a[2] - origin[2]) as f32,
+    ]
 }
 
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -412,7 +434,7 @@ mod tests {
     }
 
     /// A 0.8-wide, 1.8-tall body with its feet at `(x, 0, z)`.
-    fn body(x: f32, z: f32) -> Box3 {
+    fn body(x: f64, z: f64) -> Box3 {
         ([x - 0.4, 0.0, z - 0.4], [x + 0.4, 1.8, z + 0.4])
     }
 
@@ -484,11 +506,11 @@ mod tests {
         };
         let boxes = mob_boxes(&hull);
         assert!(boxes.len() >= 3, "a run of squares: {boxes:?}");
-        let bow = boxes.iter().map(|b| b.0[0]).fold(f32::INFINITY, f32::min);
+        let bow = boxes.iter().map(|b| b.0[0]).fold(f64::INFINITY, f64::min);
         let stern = boxes
             .iter()
             .map(|b| b.1[0])
-            .fold(f32::NEG_INFINITY, f32::max);
+            .fold(f64::NEG_INFINITY, f64::max);
         assert!(
             (bow + 1.4).abs() < 1e-4 && (stern - 1.4).abs() < 1e-4,
             "{bow} {stern}"

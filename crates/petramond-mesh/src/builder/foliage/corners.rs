@@ -11,14 +11,17 @@ pub(in crate::builder) struct CrownCorners {
 }
 
 impl CrownCorners {
+    /// `world` addresses the neighbourhood reads; `origin` is the cell's
+    /// minimum corner in the space its face vertices are emitted in.
     pub(in crate::builder) fn new(
         world: [i32; 3],
+        origin: Vec3,
         block: impl Fn(i32, i32, i32) -> Block,
         loaded: impl Fn(i32, i32, i32) -> bool,
     ) -> Self {
         let [wx, wy, wz] = world;
         let mut shape = Self {
-            origin: Vec3::new(wx as f32, wy as f32, wz as f32),
+            origin,
             offsets: [Vec3::ZERO; 8],
         };
         if crate::face::Face::ALL

@@ -1,10 +1,11 @@
 use super::*;
 use glam::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 fn inst(alpha: f32) -> ParticleInstance {
     ParticleInstance {
         quad_axes: None,
-        pos: Vec3::new(1.0, 2.0, 3.0),
+        pos: WorldPos::new(1.0, 2.0, 3.0),
         uv_min: [0.1, 0.2],
         uv_size: [0.05; 2],
         tint: [1.0, 1.0, 1.0],
@@ -17,7 +18,7 @@ fn inst(alpha: f32) -> ParticleInstance {
 
 fn emitter_inst() -> ParticleEmitterInstance {
     ParticleEmitterInstance {
-        origin: Vec3::new(1.0, 2.0, 3.0),
+        origin: WorldPos::new(1.0, 2.0, 3.0),
         emitter: petramond_world::block::ParticleEmitter {
             anchor: petramond_world::block::ParticleEmitterAnchor::BlockTop,
             origin: [0.5, 1.0, 0.5],
@@ -95,16 +96,32 @@ fn oriented_particles_keep_their_plane_and_atlas_split_among_cubes() {
         &[quad, inst(1.0)],
         &[inst(1.0)],
         LightEnv::IDENTITY,
+        petramond_math::math::IVec3::ZERO,
         &mut vertices,
     );
     assert_eq!(block, 4 + VERTS_PER_CUBE as u32);
     assert_eq!(total - block, VERTS_PER_CUBE as u32);
     let normal = right.cross(up).normalize();
     for vertex in &vertices[..4] {
-        assert!((Vec3::from(vertex.pos) - quad.pos).dot(normal).abs() < 1e-6);
+        assert!(
+            (Vec3::from(vertex.pos) - quad.pos.relative_to(glam::IVec3::ZERO))
+                .dot(normal)
+                .abs()
+                < 1e-6
+        );
     }
-    assert_eq!(vertices[0].pos, (quad.pos - right - up).to_array());
-    assert_eq!(vertices[2].pos, (quad.pos + right + up).to_array());
+    assert_eq!(
+        vertices[0].pos,
+        (quad.pos - right - up)
+            .relative_to(glam::IVec3::ZERO)
+            .to_array()
+    );
+    assert_eq!(
+        vertices[2].pos,
+        (quad.pos + right + up)
+            .relative_to(glam::IVec3::ZERO)
+            .to_array()
+    );
 }
 
 #[test]
@@ -175,6 +192,7 @@ fn block_emitter_particles_rise_shrink_and_fade() {
         std::slice::from_ref(&inst),
         &[],
         one_live_emitter_time(&inst, 0.25),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -185,6 +203,7 @@ fn block_emitter_particles_rise_shrink_and_fade() {
         std::slice::from_ref(&inst),
         &[],
         one_live_emitter_time(&inst, 0.75),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -220,6 +239,7 @@ fn emitter_light_factor(self_lit: f32, skylight: u8) -> f32 {
         std::slice::from_ref(&inst),
         &[],
         one_live_emitter_time(&inst, 0.25),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -270,6 +290,7 @@ fn spiral_emitter_particles_orbit_the_vertical_axis_as_they_age() {
         std::slice::from_ref(&inst),
         &[],
         one_live_emitter_time(&inst, 0.25),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -280,6 +301,7 @@ fn spiral_emitter_particles_orbit_the_vertical_axis_as_they_age() {
         std::slice::from_ref(&inst),
         &[],
         one_live_emitter_time(&inst, 0.5),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -290,7 +312,7 @@ fn spiral_emitter_particles_orbit_the_vertical_axis_as_they_age() {
     let axis = inst.origin;
     let horiz = |v: &[ParticleVertex]| {
         let c = vertex_center(v);
-        Vec3::new(c.x - axis.x, 0.0, c.z - axis.z)
+        Vec3::new(c.x - axis.x as f32, 0.0, c.z - axis.z as f32)
     };
     let (a, b) = (horiz(&early), horiz(&late));
     // Orbit radius is per-particle (60-100% of the row's 0.5) but stable
@@ -329,6 +351,7 @@ fn ramp_emitter_particles_cool_through_the_ramp_as_they_age() {
         std::slice::from_ref(&inst),
         &[],
         one_live_emitter_time(&inst, 0.1),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -339,6 +362,7 @@ fn ramp_emitter_particles_cool_through_the_ramp_as_they_age() {
         std::slice::from_ref(&inst),
         &[],
         one_live_emitter_time(&inst, 0.9),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -375,6 +399,7 @@ fn lower_fade_power_keeps_late_life_particles_more_visible() {
         std::slice::from_ref(&quick),
         &[],
         one_live_emitter_time(&quick, 0.75),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -385,6 +410,7 @@ fn lower_fade_power_keeps_late_life_particles_more_visible() {
         std::slice::from_ref(&lingering),
         &[],
         one_live_emitter_time(&lingering, 0.75),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -413,6 +439,7 @@ fn lower_shrink_power_keeps_late_life_particles_larger() {
         std::slice::from_ref(&linear),
         &[],
         one_live_emitter_time(&linear, 0.75),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -423,6 +450,7 @@ fn lower_shrink_power_keeps_late_life_particles_larger() {
         std::slice::from_ref(&chunky),
         &[],
         one_live_emitter_time(&chunky, 0.75),
+        petramond_math::math::IVec3::ZERO,
         Vec3::ZERO,
         LightEnv::IDENTITY,
         1.0,
@@ -603,7 +631,7 @@ fn landing_particles_fall_and_vanish_at_their_floor() {
     inst.emitter.rate = [1.0, 1.0];
     inst.emitter.lands = true;
     // Two blocks of free fall under the anchor, then a floor.
-    inst.floor_y = inst.origin.y - 2.0;
+    inst.floor_y = (inst.origin.y - 2.0) as f32;
     let mut scratch = Vec::new();
     let mut verts = Vec::new();
     let mut fell = false;
@@ -613,6 +641,7 @@ fn landing_particles_fall_and_vanish_at_their_floor() {
             std::slice::from_ref(&inst),
             &[],
             t,
+            petramond_math::math::IVec3::ZERO,
             Vec3::ZERO,
             LightEnv::IDENTITY,
             1.0,
@@ -625,7 +654,7 @@ fn landing_particles_fall_and_vanish_at_their_floor() {
                 "a particle drawn under its floor at t={t}: {:?}",
                 cube.pos
             );
-            if cube.pos.y < inst.origin.y - 0.5 {
+            if f64::from(cube.pos.y) < inst.origin.y - 0.5 {
                 fell = true;
             }
         }

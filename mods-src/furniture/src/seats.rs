@@ -80,13 +80,13 @@ impl Furniture {
         let Some(group) = block_model_group(pos) else {
             return false; // frozen/inconsistent state: never claim
         };
-        let occupied: Vec<[f32; 3]> = players()
+        let occupied: Vec<[f64; 3]> = players()
             .into_iter()
             .filter_map(|p| p.state.pose_anchor)
             .collect();
         let yaw = facing_player_yaw(group.facing);
-        let (cx, cz) = (pos[0] as f32 + 0.5, pos[2] as f32 + 0.5);
-        let mut free: Vec<(f32, [f32; 3])> = piece
+        let (cx, cz) = (pos[0] as f64 + 0.5, pos[2] as f64 + 0.5);
+        let mut free: Vec<(f64, [f64; 3])> = piece
             .seats
             .iter()
             .map(|seat| footprint_local_to_world(group.base, piece.footprint, group.facing, *seat))
@@ -128,7 +128,7 @@ impl Furniture {
 /// (same f32 pipeline as the sit), so equality is sound and a neighbouring
 /// piece's sitter can never be released by proximity.
 pub(super) fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [i32; 3]) {
-    let posed: Vec<(PlayerId, [f32; 3])> = players()
+    let posed: Vec<(PlayerId, [f64; 3])> = players()
         .into_iter()
         .filter_map(|p| p.state.pose_anchor.map(|a| (p.id, a)))
         .collect();

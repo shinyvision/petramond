@@ -1,8 +1,9 @@
 use super::*;
+use petramond_math::world_pos::WorldPos;
 
 fn sample() -> MotionSample {
     MotionSample {
-        position: Vec3::ZERO,
+        position: WorldPos::ZERO,
         velocity: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -55,7 +56,7 @@ fn teleport_and_disabled_presentation_cannot_carry_an_impulse() {
     motion.advance(
         0.016,
         MotionSample {
-            position: Vec3::splat(50.0),
+            position: WorldPos::new(50.0, 50.0, 50.0),
             ..sample()
         },
         true,

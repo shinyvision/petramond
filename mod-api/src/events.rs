@@ -359,7 +359,7 @@ pub enum EventPayload {
         amount: f32,
         source: DamageSource,
         /// Optional world-space origin for attack knockback or spatial feedback.
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
         /// Mutable: written back by the engine after the dispatch.
         feedback: MobDamageFeedback,
     },
@@ -369,7 +369,7 @@ pub enum EventPayload {
         amount: i32,
         source: DamageSource,
         /// Optional world-space origin for attack knockback or spatial feedback.
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
     },
     BlockPlaced {
         pos: [i32; 3],
@@ -403,7 +403,7 @@ pub enum EventPayload {
         /// Stable session id the mob lived under.
         id: u64,
         kind: MobId,
-        pos: [f32; 3],
+        pos: [f64; 3],
     },
     /// POST — a mob entered the live world (natural, hostile-planner, or a
     /// mod's [`HostCall::SpawnMob`]; save-restores announce as
@@ -414,7 +414,7 @@ pub enum EventPayload {
         /// Stable session id the mob now answers to.
         id: u64,
         kind: MobId,
-        pos: [f32; 3],
+        pos: [f64; 3],
     },
     PlayerDamaged {
         amount: i32,
@@ -489,7 +489,7 @@ pub enum EventPayload {
         item: ItemId,
         count: u8,
         /// Where the collector's body was — the drop is already gone.
-        pos: [f32; 3],
+        pos: [f64; 3],
     },
     /// POST — an item kind entered a player's inventory for the FIRST time
     /// ever, from ANY source: a pickup, a craft, a furnace output, a chest
@@ -590,7 +590,7 @@ pub enum EventPayload {
         entity: u64,
         target: ProjectileTarget,
         /// Where the impact is, in world space.
-        pos: [f32; 3],
+        pos: [f64; 3],
         /// The velocity it arrived with (m/s) — how hard it hit, and which
         /// way it was going.
         vel: [f32; 3],

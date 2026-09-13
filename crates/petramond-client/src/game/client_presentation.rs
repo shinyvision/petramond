@@ -6,7 +6,7 @@
 //! lives on the server thread); everything mutated is
 //! client-owned (particles, lids, swings, the mesh pump).
 
-use petramond_math::math::{voxel_at, IVec3};
+use petramond_math::math::IVec3;
 use petramond_world::block::{Block, ShapeFamily};
 
 use super::{Game, MINING_DUST_INTERVAL};
@@ -70,7 +70,7 @@ impl Game {
                     else {
                         continue;
                     };
-                    let c = voxel_at(pos);
+                    let c = pos.block();
                     let (sky, blk) = self.replica.dynamic_light_at_world(c.x, c.y, c.z);
                     self.particles
                         .spawn_emitter_burst(spec, pos, intensity, sky, blk);
@@ -242,7 +242,7 @@ impl Game {
     /// / held item: it brightens AND takes the colour of nearby block light,
     /// and the torch channel keeps it lit at night.
     pub(super) fn held_item_light(&self) -> (u8, petramond_world::light::BlockLight6) {
-        let c = voxel_at(self.cam.pos);
+        let c = self.cam.pos.block();
         self.replica.dynamic_light_at_world(c.x, c.y, c.z)
     }
 

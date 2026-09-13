@@ -22,7 +22,7 @@ struct Uniforms {
     // rgb = fog colour; w = sim-owned sky scale (1.0 = noon; night dims it).
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<f32>,
+    render_origin: vec4<i32>,
     atlas_layout: vec4<u32>,
     // rgb = sim-owned sky light COLOUR (white = identity; night tints subtly
     // blue). Applied to the SKY term only — torch light keeps its warmth.
@@ -59,15 +59,14 @@ struct VsOut {
 @vertex
 fn vs_mob(in: VsIn) -> VsOut {
     var out: VsOut;
-    // Positions are baked in world space on the CPU; subtract the current render
-    // origin so the GPU transform stays camera-local far from spawn.
-    let local_pos = in.pos - u.render_origin.xyz;
+    // Positions are baked relative to the render origin on the CPU.
+    let local_pos = in.pos;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.uv = in.uv;
     out.shade = in.shade;
     out.tint = in.tint;
     out.view = local_pos - u.cam_pos.xyz;
-    out.world_y = in.pos.y;
+    out.world_y = in.pos.y + f32(u.render_origin.y);
     return out;
 }
 
@@ -91,7 +90,7 @@ fn fs_mob(in: VsOut) -> @location(0) vec4<f32> {
         color,
         in.view,
         in.world_y,
-        u.cam_pos.y + u.render_origin.y,
+        u.cam_pos.y + f32(u.render_origin.y),
         u.fog.x,
         u.fog.y,
         u.fog_color.rgb,
@@ -129,6 +128,7 @@ struct WmIn {
     // Packed 0x00RRGGBB multiply colour; white unless the row declared this
     // cube tintable and the cell carries a tint.
     @location(4) tint: u32,
+    @location(5) col_origin: vec4<i32>,
 };
 
 struct WmOut {
@@ -150,7 +150,7 @@ fn vs_world_model(in: WmIn) -> WmOut {
     let frame = u32(floor(phase)) % u32(a.y);
     out.animation = vec3<f32>(f32(frame) * a.x,
         f32((frame + 1u) % u32(a.y)) * a.x, fract(phase) * a.w);
-    let local_pos = in.pos - u.render_origin.xyz;
+    let local_pos = vec3<f32>(in.col_origin.xyz - u.render_origin.xyz) + in.pos;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.uv = in.uv;
     out.shade = in.shade;
@@ -192,7 +192,7 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
         color,
         in.view,
         in.world_y,
-        u.cam_pos.y + u.render_origin.y,
+        u.cam_pos.y + f32(u.render_origin.y),
         u.fog.x,
         u.fog.y,
         u.fog_color.rgb,
@@ -225,7 +225,7 @@ fn fs_world_model_blend(in: WmOut) -> @location(0) vec4<f32> {
         color,
         in.view,
         in.world_y,
-        u.cam_pos.y + u.render_origin.y,
+        u.cam_pos.y + f32(u.render_origin.y),
         u.fog.x,
         u.fog.y,
         u.fog_color.rgb,

@@ -50,9 +50,9 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
     };
     set_block(pos, soil);
     let center = [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 1.0,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 1.0,
+        pos[2] as f64 + 0.5,
     ];
     emit_sound("farming:till", Some(center));
     emitter_burst("farming:till_burst", center, 1.0);

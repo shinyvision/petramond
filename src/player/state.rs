@@ -106,7 +106,7 @@ pub struct PlayerRosterSnapshot {
     /// Session player id.
     pub id: u8,
     /// Feet position.
-    pub pos: [f32; 3],
+    pub pos: [f64; 3],
     pub vel: [f32; 3],
     pub yaw: f32,
     pub pitch: f32,
@@ -160,7 +160,7 @@ pub struct BedSpawn {
 #[derive(Clone)]
 pub struct Player {
     /// Feet centre (see module docs).
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub vel: Vec3,
     /// Look direction, radians. `yaw` turns about +Y; `pitch` tilts up/down,
     /// clamped to [`PITCH_LIMIT`]. The player is the authority for the facing —
@@ -189,7 +189,7 @@ pub struct Player {
     /// in a fluid). The fall distance of a landing is this minus the landing `y`. Reset when
     /// grounded/submerged so a fall is measured from where it began, and the arc of a
     /// jump counts from its apex, not its take-off.
-    pub(super) fall_peak_y: f32,
+    pub(super) fall_peak_y: f64,
     /// Fall distance (blocks) of the hardest landing since the tick last consumed it —
     /// latched by per-frame physics, drained on the tick where it becomes damage. Kept
     /// as the max (not a sum) because two damaging landings can't occur within one 50 ms
@@ -231,7 +231,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(feet: Vec3) -> Self {
+    pub fn new(feet: petramond_math::world_pos::WorldPos) -> Self {
         Self {
             pos: feet,
             vel: Vec3::ZERO,
@@ -536,7 +536,7 @@ impl Player {
     /// Move the feet to `pos` (a mod `Teleport` HostCall), clearing the fall
     /// bookkeeping — re-anchoring the peak and dropping any pending landing —
     /// so a teleport can never be measured as a fall. Velocity is kept.
-    pub fn teleport(&mut self, pos: Vec3) {
+    pub fn teleport(&mut self, pos: petramond_math::world_pos::WorldPos) {
         self.pos = pos;
         self.fall_peak_y = pos.y;
         self.fall_distance = 0.0;
@@ -551,7 +551,7 @@ impl Player {
             self.fall_peak_y = self.pos.y;
         } else if self.on_ground {
             if !was_on_ground {
-                let dist = self.fall_peak_y - self.pos.y;
+                let dist = (self.fall_peak_y - self.pos.y) as f32;
                 if dist > self.fall_distance {
                     self.fall_distance = dist;
                 }
@@ -604,8 +604,8 @@ impl Player {
 
     /// Eye position (camera origin).
     #[inline]
-    pub fn eye(&self) -> Vec3 {
-        Vec3::new(self.pos.x, self.pos.y + EYE, self.pos.z)
+    pub fn eye(&self) -> petramond_math::world_pos::WorldPos {
+        self.pos + Vec3::new(0.0, EYE, 0.0)
     }
 
     /// View direction from yaw/pitch — the sim-side twin of
@@ -623,8 +623,8 @@ impl Player {
     /// centre so a drop resting at the player's feet is measured from the body,
     /// not the eye (contract §6: "within pickup radius of player AABB").
     #[inline]
-    pub fn body_center(&self) -> Vec3 {
-        Vec3::new(self.pos.x, self.pos.y + HEIGHT * 0.5, self.pos.z)
+    pub fn body_center(&self) -> petramond_math::world_pos::WorldPos {
+        self.pos + Vec3::new(0.0, HEIGHT * 0.5, 0.0)
     }
 
     /// Gameplay body: feet at `pos`, using the player's collision dimensions.
@@ -635,18 +635,20 @@ impl Player {
 
     /// AABB min corner.
     #[inline]
-    pub(super) fn aabb_min(&self) -> Vec3 {
-        Vec3::new(self.pos.x - HALF_W, self.pos.y, self.pos.z - HALF_W)
+    pub(super) fn aabb_min(&self) -> [f64; 3] {
+        let hw = f64::from(HALF_W);
+        [self.pos.x - hw, self.pos.y, self.pos.z - hw]
     }
 
     /// AABB max corner.
     #[inline]
-    pub(super) fn aabb_max(&self) -> Vec3 {
-        Vec3::new(
-            self.pos.x + HALF_W,
-            self.pos.y + HEIGHT,
-            self.pos.z + HALF_W,
-        )
+    pub(super) fn aabb_max(&self) -> [f64; 3] {
+        let hw = f64::from(HALF_W);
+        [
+            self.pos.x + hw,
+            self.pos.y + f64::from(HEIGHT),
+            self.pos.z + hw,
+        ]
     }
 
     /// True if every chunk column the horizontal AABB overlaps is loaded. The
@@ -655,10 +657,11 @@ impl Player {
     /// load frontier). Column membership can't change within a frame, so this
     /// need not be re-checked per sub-step.
     pub fn columns_loaded(&self, world: &World) -> bool {
-        let cx0 = (self.pos.x - HALF_W).floor() as i32 >> 4;
-        let cx1 = (self.pos.x + HALF_W).floor() as i32 >> 4;
-        let cz0 = (self.pos.z - HALF_W).floor() as i32 >> 4;
-        let cz1 = (self.pos.z + HALF_W).floor() as i32 >> 4;
+        let hw = f64::from(HALF_W);
+        let cx0 = (self.pos.x - hw).floor() as i32 >> 4;
+        let cx1 = (self.pos.x + hw).floor() as i32 >> 4;
+        let cz0 = (self.pos.z - hw).floor() as i32 >> 4;
+        let cz1 = (self.pos.z + hw).floor() as i32 >> 4;
         for cx in cx0..=cx1 {
             for cz in cz0..=cz1 {
                 if !world.chunk_loaded(cx, cz) {

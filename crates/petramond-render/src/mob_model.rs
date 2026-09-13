@@ -71,6 +71,7 @@ pub fn build_mob_instances(
     scale: f32,
     env: LightEnv,
     instances: &[MobRenderInstance],
+    render_origin: glam::IVec3,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
@@ -158,7 +159,7 @@ pub fn build_mob_instances(
         // facing, the tilt inside it), translate so model `y=0` (the feet)
         // sits at the instance position. For a ragdoll, `pos`/`yaw` are
         // frozen at death — only the bones move (within this `global`).
-        let global = Mat4::from_translation(inst.pos)
+        let global = Mat4::from_translation(inst.pos.relative_to(render_origin))
             * inst.tilt.body_frame(inst.yaw)
             * Mat4::from_scale(Vec3::splat(scale));
         // Two-channel RGB light folds into the tint (shade keeps the directional

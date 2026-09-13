@@ -16,7 +16,7 @@
 //! polygon offset toward the camera (`BREAK_DEPTH_BIAS`) so the crack wins that tie
 //! everywhere.
 //!
-//! Geometry is in WORLD space (the break pipeline's vertex shader transforms by
+//! Geometry is relative to the render origin (the break pipeline's vertex shader transforms by
 //! `view_proj`, like the block pipeline) and full-bright. Built into a
 //! caller-owned `Vec` whose capacity is reused frame to frame.
 
@@ -44,13 +44,14 @@ fn destroy_tile(stage: u8) -> Tile {
 /// did, so the single-player path is geometry-identical.
 pub fn build_break_overlays(
     views: &[BreakOverlayView],
+    render_origin: glam::IVec3,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
     verts.clear();
     indices.clear();
     for view in views {
-        append_break_overlay(view, verts, indices);
+        append_break_overlay(view, render_origin, verts, indices);
     }
     indices.len() as u32
 }
@@ -64,7 +65,12 @@ pub fn build_break_overlay(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
-    build_break_overlays(std::slice::from_ref(view), verts, indices)
+    build_break_overlays(
+        std::slice::from_ref(view),
+        glam::IVec3::ZERO,
+        verts,
+        indices,
+    )
 }
 
 /// Append the crack overlay geometry for `view` (indices are vert-relative, so
@@ -78,13 +84,14 @@ pub fn build_break_overlay(
 /// for that block. The pipeline's depth `LessEqual` + a small polygon offset
 /// (`BREAK_DEPTH_BIAS`) put the crack on the surface without z-fighting (see the
 /// module docs for why the offset is needed).
-fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
+fn append_break_overlay(
+    view: &BreakOverlayView,
+    render_origin: glam::IVec3,
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+) {
     let tile = destroy_tile(view.stage);
-    let base = Vec3::new(
-        view.block.x as f32,
-        view.block.y as f32,
-        view.block.z as f32,
-    );
+    let base = (view.block - render_origin).as_vec3();
     if let Some((kind, offset, facing)) = view.model {
         // A bbmodel block cracks over its WHOLE model's actual cube surfaces, so the crack
         // hugs the model (every leg, the top) instead of one coarse box hanging in the
@@ -93,7 +100,8 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
         // object, so the whole piece cracks (MC-like).
         let model_base =
             petramond_world::block_model::base_from_cell(view.block, kind, offset, facing);
-        let placement = petramond_world::block_model::placement_transform(model_base, kind, facing);
+        let placement = glam::Mat4::from_translation((model_base - render_origin).as_vec3())
+            * petramond_world::block_model::placement_transform(kind, facing);
         for b in petramond_world::block_model::model_render_boxes(kind) {
             // Skip very small surfaces (decoration specks) — crack only the structural cubes.
             let ext = [

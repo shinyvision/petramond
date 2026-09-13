@@ -7,13 +7,13 @@ struct SheenSurface {
 }
 
 fn fluid_sheen(
-    color: vec3<f32>, alpha: f32, local_pos: vec3<f32>, origin: vec3<f32>,
+    color: vec3<f32>, alpha: f32, local_pos: vec3<f32>, origin: vec3<i32>,
     view_dir: vec3<f32>, dist: f32, time: f32, exposure: f32,
     sky_scale: f32, sky_color: vec3<f32>, haze: vec3<f32>, body_tint: vec3<f32>,
     sun_dir: vec3<f32>, daylight: f32,
 ) -> SheenSurface {
     // Integral wave frequencies make the origin's 64-block wrap seamless.
-    let p = local_pos.xz + origin.xz % vec2<f32>(64.0);
+    let p = local_pos.xz + vec2<f32>(origin.xz % vec2<i32>(64));
     let wave = vec2<f32>(
         sin(dot(p, vec2<f32>(0.09817477, 0.19634954)) + time * 0.7),
         sin(dot(p, vec2<f32>(-0.19634954, 0.09817477)) + time * 0.5),

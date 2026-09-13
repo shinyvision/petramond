@@ -131,20 +131,11 @@ impl<V: bytemuck::Pod> LayerPlan<V> {
 }
 
 impl LayerPlan<TerrainVertex> {
-    fn terrain(
-        &mut self,
-        src: &[Vertex],
-        previous: Option<(u32, u32)>,
-        ox: i32,
-        oz: i32,
-    ) -> (u32, u32) {
+    fn terrain(&mut self, src: &[Vertex], previous: Option<(u32, u32)>) -> (u32, u32) {
         if previous.is_some() {
             return self.push(&[], previous);
         }
-        let vertices: Vec<_> = src
-            .iter()
-            .map(|v| TerrainVertex::from_world(v, ox, oz))
-            .collect();
+        let vertices: Vec<_> = src.iter().map(TerrainVertex::from_mesh).collect();
         self.push(&vertices, None)
     }
 }
@@ -190,7 +181,7 @@ pub(super) fn repack(
         macro_rules! terrain {
             ($plan:ident, $src:ident, $start:ident, $count:ident) => {
                 (section.$start, section.$count) =
-                    $plan.terrain(&mesh.$src, retained.map(|s| (s.$start, s.$count)), ox, oz);
+                    $plan.terrain(&mesh.$src, retained.map(|s| (s.$start, s.$count)));
             };
         }
         terrain!(opaque, opaque, opaque_vertex_start, opaque_vertex_count);

@@ -255,7 +255,7 @@ impl Game {
 
     pub(super) fn sync_camera_to_player_eye(&mut self, dt: f32) {
         let target = self.player.eye();
-        let eye_dy = target.y - self.last_player_eye_y;
+        let eye_dy = (target.y - self.last_player_eye_y) as f32;
         let grounded_still = self.player.on_ground && self.player.vel.y.abs() <= STEP_CAMERA_EPS;
         // A mount carries the body: a seat rising up a slope is not a step,
         // and gliding it would draw the rider (and the eye) under the seat.
@@ -335,12 +335,12 @@ impl Game {
         // so the player visibly lies down rather than standing on the bed.
         // Sleep state reads the replicated self view.
         let eye_y = if self.self_view.sleeping.is_some() {
-            self.player.pos.y + SLEEP_EYE_HEIGHT
+            self.player.pos.y + f64::from(SLEEP_EYE_HEIGHT)
         } else {
             target.y
-                + self.camera_step_y_offset
-                + self.camera_sneak_y_offset
-                + bob_up * BOB_EYE_RISE
+                + f64::from(
+                    self.camera_step_y_offset + self.camera_sneak_y_offset + bob_up * BOB_EYE_RISE,
+                )
         };
         // The sway is LATERAL in the camera's own frame, so it reads as the
         // body swinging under the head whichever way the player is looking.
@@ -349,7 +349,8 @@ impl Game {
         // cannot tilt the sway out of the horizon.
         let (sin_yaw, cos_yaw) = self.cam.yaw.sin_cos();
         let right = Vec3::new(cos_yaw, 0.0, -sin_yaw);
-        self.cam.pos = Vec3::new(target.x, eye_y, target.z) + right * (bob_side * BOB_EYE_SWAY);
+        self.cam.pos = petramond_math::world_pos::WorldPos::new(target.x, eye_y, target.z)
+            + right * (bob_side * BOB_EYE_SWAY);
         self.last_player_eye_y = target.y;
     }
 
@@ -422,7 +423,12 @@ impl Game {
     /// the ray enters within `max_dist` (and within reach), with its ray
     /// distance; skips dead corpses. `max_dist` is the block hit distance, so
     /// a mob *behind* the block isn't targeted (the block occludes it).
-    pub(super) fn closest_mob(&self, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<(u64, f32)> {
+    pub(super) fn closest_mob(
+        &self,
+        eye: petramond_math::world_pos::WorldPos,
+        dir: Vec3,
+        max_dist: f32,
+    ) -> Option<(u64, f32)> {
         let limit = max_dist.min(player::REACH);
         let own_mount = self.self_mount.and_then(|m| match m {
             petramond::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
@@ -454,7 +460,7 @@ impl Game {
     /// [`closest_mob`]: Self::closest_mob
     pub(super) fn closest_remote_player(
         &self,
-        eye: Vec3,
+        eye: petramond_math::world_pos::WorldPos,
         dir: Vec3,
         max_dist: f32,
     ) -> Option<(u8, f32)> {
@@ -465,14 +471,14 @@ impl Game {
             if !row.visible || !row.alive {
                 continue;
             }
-            let pos = row.transform.pos;
+            let pos = row.transform.pos - eye;
             let min = Vec3::new(pos.x - player::HALF_W, pos.y, pos.z - player::HALF_W);
             let max = Vec3::new(
                 pos.x + player::HALF_W,
                 pos.y + player::HEIGHT,
                 pos.z + player::HALF_W,
             );
-            if let Some(t) = player::ray_vs_aabb(eye, dir, min, max) {
+            if let Some(t) = player::ray_vs_aabb(Vec3::ZERO, dir, min, max) {
                 if t <= limit && best.is_none_or(|(_, bt)| t < bt) {
                     best = Some((row.id.0, t));
                 }

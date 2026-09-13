@@ -1,4 +1,5 @@
 use super::*;
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn malformed_requests_are_rejected_before_entering_simulation() {
@@ -40,7 +41,7 @@ fn read_only_dispatch_can_query_but_cannot_change_item_velocity() {
     let mut world = World::new(1, 1);
     world.clear_world();
     world.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
-    let pos = Vec3::new(4.5, 64.5, 4.5);
+    let pos = WorldPos::new(4.5, 64.5, 4.5);
     let id = world.spawn_item(DroppedItem::new(pos, ItemStack::new(ItemType::Dirt, 1), 1));
     let before = world.dropped_items().get(id).unwrap().vel;
     let mut player = Player::new(pos);

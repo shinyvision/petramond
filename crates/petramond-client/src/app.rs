@@ -61,7 +61,7 @@ pub struct App {
     /// Spatial sound commands emitted by ticks since the last render. They are
     /// applied alongside the same mob presentation snapshot the renderer uses.
     spatial_sound_commands: Vec<crate::game::SpatialSoundCommand>,
-    spatial_mob_positions: Vec<(u64, petramond_math::math::Vec3)>,
+    spatial_mob_positions: Vec<(u64, petramond_math::world_pos::WorldPos)>,
     /// Gameplay-originated mob sound events waiting for the next presentation
     /// snapshot, where they can be pinned to interpolated mob positions.
     mob_sound_events: Vec<crate::game::MobSoundEvent>,
@@ -69,7 +69,7 @@ pub struct App {
     /// lids, foreign pickups) waiting for the next render's spatial listener.
     world_sound_cues: Vec<(
         petramond_world::sound_registry::Sound,
-        petramond_math::math::Vec3,
+        petramond_math::world_pos::WorldPos,
     )>,
     /// Client-owned idle sound scheduling per live mob session id.
     mob_sound_state: HashMap<u64, MobSoundState>,

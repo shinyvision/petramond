@@ -62,7 +62,7 @@ pub struct AiMob {
     pub id: u64,
     pub kind: Mob,
     /// Feet position (like `Instance::pos`).
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub active: bool,
     /// Engine- and mod-owned tags attached to this mob instance, shared with
     /// [`Instance::tags`](super::Instance::tags) by `Arc` clone (copy-on-write
@@ -129,7 +129,7 @@ pub struct AiCtx<'a> {
     /// key per-mob guest state off it.
     pub mob_id: u64,
     /// Mob feet position (world space).
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// Mob foothold cell (the voxel its feet occupy).
     pub cell: IVec3,
     /// Mob body facing (radians) — for resolving head-look yaw relative to the body.
@@ -149,7 +149,7 @@ pub struct AiCtx<'a> {
     /// what a player-anchored behavior (chase, melee fallback) targets.
     pub player_id: crate::player::PlayerId,
     /// Player body-centre — for head-look (and future flee / attack).
-    pub player_pos: Vec3,
+    pub player_pos: petramond_math::world_pos::WorldPos,
     /// Whether that player is sneaking — sneaking shrinks hostile detection
     /// (see `chase_player`'s `sneak_radius_penalty`).
     pub player_sneaking: bool,
@@ -224,7 +224,7 @@ impl AiCtx<'_> {
 
     /// `who`'s live body-centre position, or `None` when it is gone/dead.
     /// (Player anchors are body centres already; mob snapshots carry feet.)
-    pub fn entity_pos(&self, who: EntityRef) -> Option<Vec3> {
+    pub fn entity_pos(&self, who: EntityRef) -> Option<petramond_math::world_pos::WorldPos> {
         match who {
             EntityRef::Player(pid) => self.players.iter().find(|a| a.id == pid).map(|a| a.pos),
             EntityRef::Mob(id) => self

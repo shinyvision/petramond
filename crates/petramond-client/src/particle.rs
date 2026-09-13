@@ -12,7 +12,8 @@
 use petramond_render::atlas;
 
 use petramond::world::World;
-use petramond_math::math::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::block_model::{self, BlockModelKind};
@@ -70,7 +71,7 @@ const FADE_TAIL: f32 = 0.4;
 /// One terrain particle: a tiny textured quad sampling a sub-patch of `tile`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Particle {
-    pub pos: Vec3,
+    pub pos: WorldPos,
     pub vel: Vec3,
     /// 6-bit SKY light, re-sampled each tick so the fleck tracks the lighting it
     /// drifts through (and dims with the environment sky scale at night).
@@ -257,14 +258,14 @@ impl ParticleSystem {
         // through the empty space around it — the same `collision_boxes_at` shape source the
         // player/mob/item bodies collide against (here the point case, `World::point_blocked`).
         self.tick_with(dt, &|p| world.point_blocked(p), &|p| {
-            let c = voxel_at(p);
+            let c = p.block();
             world.fluid_cell_at(c.x, c.y, c.z)
         });
         // Re-sample light each tick so a fleck dims/brightens as the lighting around
         // it changes (e.g. a torch broken in a dark cave), rather than staying frozen
         // at its spawn light.
         for p in &mut self.particles {
-            let c = voxel_at(p.pos);
+            let c = p.pos.block();
             let (sky, block) = world.dynamic_light_at_world(c.x, c.y, c.z);
             p.skylight = sky;
             p.blocklight = block;
@@ -277,8 +278,8 @@ impl ParticleSystem {
     fn tick_with(
         &mut self,
         dt: f32,
-        blocked: &impl Fn(Vec3) -> bool,
-        fluid: &impl Fn(Vec3) -> bool,
+        blocked: &impl Fn(WorldPos) -> bool,
+        fluid: &impl Fn(WorldPos) -> bool,
     ) {
         let mut i = 0;
         while i < self.particles.len() {
@@ -382,7 +383,7 @@ impl ParticleSystem {
         );
         let count = 2 + (self.rand() * 3.0) as usize; // 2..=4 at full
         let count = self.scaled_count(count);
-        let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
+        let base = WorldPos::block_min(block_pos);
         for _ in 0..count {
             // Spawn just outside the mined face, jittered across it.
             let face_center = base + Vec3::splat(0.5) + n * 0.55;
@@ -450,8 +451,7 @@ impl ParticleSystem {
         kv_tint: Option<[u8; 3]>,
     ) {
         let tiles = block.tiles();
-        let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
-            + Vec3::splat(0.5);
+        let center = WorldPos::block_center(block_pos);
         let count = 16 + (self.rand() * 16.0) as usize; // 16..=31 at full
         let count = self.scaled_count(count);
         for _ in 0..count {
@@ -509,8 +509,7 @@ impl ParticleSystem {
         skylight: u8,
         blocklight: petramond_world::light::BlockLight6,
     ) {
-        let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
-            + Vec3::splat(0.5);
+        let center = WorldPos::block_center(block_pos);
         let count = 16 + (self.rand() * 16.0) as usize; // 16..=31 at full
         let count = self.scaled_count(count);
         for _ in 0..count {
@@ -540,7 +539,7 @@ impl ParticleSystem {
     pub fn spawn_emitter_burst(
         &mut self,
         spec: &petramond_world::particle_emitters::BurstSpec,
-        pos: Vec3,
+        pos: WorldPos,
         intensity: f32,
         skylight: u8,
         blocklight: petramond_world::light::BlockLight6,
@@ -611,7 +610,7 @@ impl ParticleSystem {
         );
         let count = 2 + (self.rand() * 3.0) as usize; // 2..=4 at full
         let count = self.scaled_count(count);
-        let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
+        let base = WorldPos::block_min(block_pos);
         for _ in 0..count {
             let face_center = base + Vec3::splat(0.5) + n * 0.55;
             let jitter = Vec3::new(
@@ -641,7 +640,7 @@ impl ParticleSystem {
 #[allow(clippy::too_many_arguments)]
 fn model_fleck(
     kind: BlockModelKind,
-    pos: Vec3,
+    pos: WorldPos,
     vel: Vec3,
     skylight: u8,
     blocklight: petramond_world::light::BlockLight6,

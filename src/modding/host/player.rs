@@ -17,7 +17,7 @@ use super::intern_mod_id;
 /// The pose anchor a player is pinned at, read LIVE from the riding registry
 /// (not the start-of-tick roster) so an occupancy check made right after a
 /// same-tick `PlayerPoseSet` already sees the seat taken.
-fn pose_anchor_of(world: &crate::world::World, id: u8) -> Option<[f32; 3]> {
+fn pose_anchor_of(world: &crate::world::World, id: u8) -> Option<[f64; 3]> {
     match world.riding().mount_of(id)?.target {
         crate::mob::riding::MountTarget::Anchor(a) => Some(a.pos.to_array()),
         crate::mob::riding::MountTarget::Mob(_) => None,
@@ -45,7 +45,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 .unwrap_or((false, false, Default::default()));
             let id = ctx.acting_player_id().map(|id| mod_api::PlayerId(id.0));
             let p = &*ctx.player;
-            HostRet::Player(PlayerSnapshot {
+            HostRet::Player(Box::new(PlayerSnapshot {
                 id,
                 pos: p.pos.to_array(),
                 vel: p.vel.to_array(),
@@ -77,7 +77,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 height: crate::player::HEIGHT,
                 eye_height: crate::player::EYE,
                 conditions: crate::exposure::condition_data(p.conditions()),
-            })
+            }))
         }),
         HostCall::Players => sim_query(|ctx| {
             HostRet::Players(
@@ -118,7 +118,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             origin,
             attacker,
         } => match origin
-            .map(|p| finite3(p, "DamagePlayer.origin"))
+            .map(|p| super::guards::finite_pos(p, "DamagePlayer.origin"))
             .transpose()
         {
             Err(e) => e,
@@ -303,7 +303,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             }))
         }),
         HostCall::SetHealth { value } => sim_call(|ctx| ctx.player.set_health(value)),
-        HostCall::Teleport { pos } => match finite3(pos, "Teleport.pos") {
+        HostCall::Teleport { pos } => match super::guards::finite_pos(pos, "Teleport.pos") {
             Err(e) => e,
             Ok(pos) => sim_call(|ctx| ctx.player.teleport(pos)),
         },
@@ -571,7 +571,7 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
 
     /// The held-data write compares the VALUE it is replacing, not just the
     /// item: a stack that another handler re-stamped between the mod's read
@@ -598,7 +598,7 @@ mod tests {
 
         let mut data = ModStoreData::new("alpha", 1);
         let mut world = World::new(1, 1);
-        let mut acting = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let held = variant::intern(&stamp(2)).expect("the fixture map interns");
         let active = acting.inventory.active_slot() as usize;
         *acting.inventory.slot_mut(active).expect("hotbar slot") =
@@ -659,7 +659,7 @@ mod tests {
 
         let mut data = ModStoreData::new("alpha", 1);
         let mut world = World::new(1, 1);
-        let mut acting = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let tinted = variant::intern(&stamp(2)).expect("the fixture map interns");
         *acting.inventory.slot_mut(0).expect("slot") = Some(ItemStack::new(ItemType::Stick, 2));
         *acting.inventory.slot_mut(1).expect("slot") =
@@ -729,8 +729,8 @@ mod tests {
 
         let mut data = ModStoreData::new("alpha", 1);
         let mut world = World::new(1, 1);
-        let mut acting = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
+        let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -809,8 +809,8 @@ mod tests {
         let mut alpha = ModStoreData::new("alpha", 1);
         let mut beta = ModStoreData::new("beta", 1);
         let mut world = World::new(1, 1);
-        let mut acting = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
+        let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();

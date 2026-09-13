@@ -59,6 +59,11 @@ pub(super) fn section_geometry(
     let mut contact: Vec<super::super::vertex::ContactShadowVertex> = vec![];
 
     let (ox, oy, oz) = pos.origin_world();
+    // Every vertex is emitted in MESH space: column-local X/Z, world Y. An
+    // absolute coordinate never becomes a float, so a section meshes
+    // identically however far out it lies; the draw adds the column's integer
+    // origin back relative to the camera.
+    let anchor = IVec3::new(ox, 0, oz);
     let tint_tile = |kind, ci| match kind {
         Some(petramond_world::tile::TileTint::Fixed(rgb)) => rgb.map(|c| f32::from(c) / 255.0),
         _ => tints.map_or(tint::NO_TINT, |t| t.tile(kind, ci)),
@@ -287,7 +292,7 @@ pub(super) fn section_geometry(
             fx,
             fy,
             fz,
-            boundary_plane(face, (fx, fy, fz)),
+            boundary_plane(face),
             neighbour_light(fx, fy, fz) as u32,
             neighbour_blocklight(fx, fy, fz),
             true,
@@ -353,6 +358,7 @@ pub(super) fn section_geometry(
                             block,
                             block == resident,
                             IVec3::new(wx, wy, wz),
+                            anchor,
                             |kind| tint_tile(kind, ci),
                             part_tint(section_idx(lx, ly, lz), 0),
                         );
@@ -403,6 +409,7 @@ pub(super) fn section_geometry(
                                 wx,
                                 wy,
                                 wz,
+                                anchor,
                                 &bed_boxes,
                                 &mut box_scratch,
                                 &neighbor_solid,
@@ -434,9 +441,9 @@ pub(super) fn section_geometry(
                         emit_plant(
                             &mut opaque,
                             shape,
-                            wx as f32,
+                            (wx - ox) as f32,
                             wy as f32,
-                            wz as f32,
+                            (wz - oz) as f32,
                             tile,
                             tint,
                             sky6,
@@ -463,9 +470,9 @@ pub(super) fn section_geometry(
                         let placement = section.torch_placement(lx, ly, lz);
                         super::torch::emit_torch(
                             &mut opaque,
-                            wx as f32,
+                            (wx - ox) as f32,
                             wy as f32,
-                            wz as f32,
+                            (wz - oz) as f32,
                             placement,
                             side_tile,
                             top_tile,
@@ -518,6 +525,7 @@ pub(super) fn section_geometry(
                                     wx,
                                     wy,
                                     wz,
+                                    anchor,
                                     &mesh_boxes,
                                     &mut box_scratch,
                                     &neighbor_solid,
@@ -561,6 +569,7 @@ pub(super) fn section_geometry(
                             wx,
                             wy,
                             wz,
+                            anchor,
                             sky6,
                             blight,
                             parts,
@@ -591,6 +600,7 @@ pub(super) fn section_geometry(
                                 wx,
                                 wy,
                                 wz,
+                                anchor,
                                 |gx, gz| {
                                     let below = block_at(gx, wy - 1, gz);
                                     if below.shape_family() != ShapeFamily::Cube
@@ -647,8 +657,8 @@ pub(super) fn section_geometry(
                     let front_faces = block
                         .front_tile()
                         .map(|front| (facing_face(section.entity_facing(lx, ly, lz)), front));
-                    let base_x = wx as f32;
-                    let base_z = wz as f32;
+                    let base_x = (wx - ox) as f32;
+                    let base_z = (wz - oz) as f32;
                     let base_y = wy as f32;
                     // Canopy dressing is decided once per cell; the crown's corner
                     // shape is resolved lazily by the first face that survives culling.
@@ -656,7 +666,12 @@ pub(super) fn section_geometry(
                     let crown = std::cell::OnceCell::new();
                     let crown = || {
                         crown.get_or_init(|| {
-                            foliage::CrownCorners::new([wx, wy, wz], block_at, &neighbour_loaded)
+                            foliage::CrownCorners::new(
+                                [wx, wy, wz],
+                                glam::Vec3::new(base_x, base_y, base_z),
+                                block_at,
+                                &neighbour_loaded,
+                            )
                         })
                     };
                     // A transition recolours the face; a set may add a biome tint.
@@ -924,7 +939,7 @@ pub(super) fn section_geometry(
 
     // Collapse the deferred flat faces into merged tiled quads, then return the scratch to
     // the thread-local for the next section.
-    emit_greedy_quads(&mut greedy, &mut opaque, ox, oy, oz);
+    emit_greedy_quads(&mut greedy, &mut opaque, IVec3::new(0, oy, 0));
     GREEDY.with(|g| *g.borrow_mut() = greedy);
 
     ChunkMesh {

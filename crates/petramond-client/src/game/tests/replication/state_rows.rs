@@ -7,13 +7,16 @@ use crate::game::presentation::GamePresentationScratch;
 use petramond::events::tick::{TickEvents, TICK_DT};
 use petramond::events::DamageSource;
 use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn replicated_conditions_draw_on_local_and_remote_players_without_hud_effects() {
     let mut game = game_on_empty_chunk();
     let remote = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(4.5, 65.0, 4.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            4.5, 65.0, 4.5,
+        )));
     let mut scratch = GamePresentationScratch::new();
     let view = petramond_render::camera::ViewVolume::unbounded();
     let baseline = scratch.snapshot(&game, 0.0, &view).particle_emitters.len();
@@ -116,7 +119,7 @@ fn hud_health_matches_session_truth_after_a_damage_tick() {
 #[test]
 fn every_sessions_player_row_reaches_the_local_batch() {
     let mut game = game_on_empty_chunk();
-    let s1_pos = Vec3::new(2.5, 64.0, 2.5);
+    let s1_pos = WorldPos::new(2.5, 64.0, 2.5);
     let s1 = game
         .server
         .add_session_for_test(petramond::player::Player::new(s1_pos));
@@ -264,7 +267,7 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
             conditions: Vec::new(),
             id: PlayerId(id),
             transform: petramond::net::protocol::Transform {
-                pos: Vec3::new(4.0, 64.0, 4.0),
+                pos: WorldPos::new(4.0, 64.0, 4.0),
                 vel: Vec3::ZERO,
                 yaw: 0.0,
                 pitch: 0.0,

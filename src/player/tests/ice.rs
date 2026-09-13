@@ -8,7 +8,7 @@ use super::*;
 fn ice_glides_far_beyond_ordinary_ground() {
     let solid = |_x: i32, y: i32, _z: i32| y < 64;
     let coast = |ice_floor: bool| {
-        let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
+        let mut pl = p(WorldPos::new(0.5, 64.0, 0.5));
         pl.vel = Vec3::new(6.0, 0.0, 0.0); // launched at walk speed, then no input
         let slippery = move |_x: i32, y: i32, _z: i32| ice_floor && y == 63;
         let x0 = pl.pos.x;
@@ -27,7 +27,7 @@ fn ice_glides_far_beyond_ordinary_ground() {
     // Steering: from a +X slide, full -X input for a quarter second reverses a
     // grounded body but only BRAKES an ice-borne one — the slide smears.
     let steer = |ice_floor: bool| {
-        let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
+        let mut pl = p(WorldPos::new(0.5, 64.0, 0.5));
         pl.vel = Vec3::new(6.0, 0.0, 0.0);
         let slippery = move |_x: i32, y: i32, _z: i32| ice_floor && y == 63;
         let back = Input {

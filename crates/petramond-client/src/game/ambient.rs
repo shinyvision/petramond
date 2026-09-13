@@ -135,7 +135,7 @@ impl AmbientDrives {
     pub fn collect(
         &mut self,
         world: &World,
-        cam: Vec3,
+        cam: petramond_math::world_pos::WorldPos,
         time: f32,
         density: f32,
         out: &mut Vec<ParticlePresentation>,
@@ -254,7 +254,7 @@ impl Activation<'_> {
 /// The viewer this frame: the replica world, the camera, and the volume clock.
 struct View<'a> {
     world: &'a World,
-    cam: Vec3,
+    cam: petramond_math::world_pos::WorldPos,
     time: f32,
 }
 
@@ -323,6 +323,14 @@ fn wrap_center(v: f32, d: f32) -> f32 {
     v.rem_euclid(d) - d * 0.5
 }
 
+/// [`wrap_center`] for a world-anchored horizontal coordinate, as an offset
+/// from the camera's `cam` coordinate. Wrapped in f64: an f32 world coordinate
+/// is too coarse far from the origin.
+#[inline]
+fn wrap_offset(anchor: f32, cam: f64, d: f32) -> f32 {
+    ((f64::from(anchor) - cam).rem_euclid(f64::from(d)) - f64::from(d) * 0.5) as f32
+}
+
 /// The kill height (blocking cell's TOP face, `None` when the column blocks
 /// nothing) plus the column BIOME, for the column containing world `(x, z)`,
 /// cached per collect. `None` = the column is not loaded. The biome feeds the
@@ -337,8 +345,8 @@ type ColumnInfoCache = FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>;
 fn column_info(
     world: &World,
     cache: &mut ColumnInfoCache,
-    x: f32,
-    z: f32,
+    x: f64,
+    z: f64,
 ) -> Option<(Option<f32>, u8)> {
     let key = (x.floor() as i32, z.floor() as i32);
     *cache.entry(key).or_insert_with(|| {
@@ -353,7 +361,7 @@ fn column_info(
 /// The kill height for a column that must have one — the precipitation path's
 /// original contract (`None` for unloaded columns AND for columns that block
 /// nothing).
-fn column_ceiling(world: &World, cache: &mut ColumnInfoCache, x: f32, z: f32) -> Option<(f32, u8)> {
+fn column_ceiling(world: &World, cache: &mut ColumnInfoCache, x: f64, z: f64) -> Option<(f32, u8)> {
     let (kill, biome) = column_info(world, cache, x, z)?;
     Some((kill?, biome))
 }
@@ -371,7 +379,7 @@ fn derive_volume(
     let count = ((spec.count_per_intensity * intensity).round() as u32).min(spec.max_count);
     let diameter = spec.radius * 2.0;
     let span = spec.height[0] + spec.height[1];
-    let y_top = cam.y + spec.height[1];
+    let y_top = cam.y as f32 + spec.height[1];
     // A volume's vertical extent is the `height` BAND, never the horizontal
     // diameter: a cavern is far wider than it is tall, and wrapping Y over
     // `diameter` would park most of the budget in the rock above the ceiling.
@@ -435,9 +443,9 @@ fn derive_volume(
         } else {
             (0.0, 0.0)
         };
-        let x = cam.x + wrap_center(base_x - cam.x, diameter) + flutter_x;
-        let z = cam.z + wrap_center(base_z - cam.z, diameter) + flutter_z;
-        let (dx, dz) = (x - cam.x, z - cam.z);
+        let dx = wrap_offset(base_x, cam.x, diameter) + flutter_x;
+        let dz = wrap_offset(base_z, cam.z, diameter) + flutter_z;
+        let (x, z) = (cam.x + f64::from(dx), cam.z + f64::from(dz));
         let dist_sq = dx * dx + dz * dz;
         // The MOST RECENT landing's splash, anchored where that drop
         // actually died: its position and kill column are FROZEN at the hit
@@ -460,9 +468,9 @@ fn derive_volume(
                 let t_hit_guess = (idx + 0.85 - band_phase) * cycle;
                 let adv_hx = adv_x - wind_x * (time - t_hit_guess);
                 let adv_hz = adv_z - wind_z * (time - t_hit_guess);
-                let hx = cam.x + wrap_center(hx_base + adv_hx - cam.x, diameter);
-                let hz = cam.z + wrap_center(hz_base + adv_hz - cam.z, diameter);
-                let (hdx, hdz) = (hx - cam.x, hz - cam.z);
+                let hdx = wrap_offset(hx_base + adv_hx, cam.x, diameter);
+                let hdz = wrap_offset(hz_base + adv_hz, cam.z, diameter);
+                let (hx, hz) = (cam.x + f64::from(hdx), cam.z + f64::from(hdz));
                 if hdx * hdx + hdz * hdz > SPLASH_RADIUS_SQ {
                     continue;
                 }
@@ -482,14 +490,12 @@ fn derive_volume(
                 // which at full wind is several blocks) and re-read that
                 // column's ceiling so the crown sits where the drop died.
                 let t_hit = (idx - kill_y / span - phase) * cycle;
-                let hx = cam.x
-                    + wrap_center(hx_base + adv_x - wind_x * (time - t_hit) - cam.x, diameter);
-                let hz = cam.z
-                    + wrap_center(hz_base + adv_z - wind_z * (time - t_hit) - cam.z, diameter);
+                let rdx = wrap_offset(hx_base + adv_x - wind_x * (time - t_hit), cam.x, diameter);
+                let rdz = wrap_offset(hz_base + adv_z - wind_z * (time - t_hit), cam.z, diameter);
+                let (hx, hz) = (cam.x + f64::from(rdx), cam.z + f64::from(rdz));
                 // Re-check the splash gate on the REFINED anchor: the
                 // correction (or a wrap fold) can move it past the visible
                 // disc or the splash radius.
-                let (rdx, rdz) = (hx - cam.x, hz - cam.z);
                 let gate_sq = SPLASH_RADIUS_SQ.min(spec.radius * spec.radius);
                 if rdx * rdx + rdz * rdz > gate_sq {
                     continue;
@@ -534,7 +540,8 @@ fn derive_volume(
                             hz.floor() as i32,
                         ),
                     };
-                    derive_splash(burst, hseed, hx + fh_x, kill_y, hz + fh_z, age, light, out);
+                    let (sx, sz) = (hx + f64::from(fh_x), hz + f64::from(fh_z));
+                    derive_splash(burst, hseed, sx, kill_y, sz, age, light, out);
                 }
             }
         }
@@ -596,7 +603,7 @@ fn derive_volume(
         out.push(ParticlePresentation {
             quad_axes: None,
             atlas: ParticleAtlas::Solid,
-            pos: Vec3::new(x, y, z),
+            pos: petramond_math::world_pos::WorldPos::new(x, f64::from(y), z),
             uv_min: [0.0, 0.0],
             uv_size: [0.0; 2],
             tint: colour(spec, seed ^ 0x07),
@@ -615,9 +622,9 @@ fn derive_volume(
 fn derive_splash(
     burst: &BurstSpec,
     cseed: u64,
-    x: f32,
+    x: f64,
     kill_y: f32,
-    z: f32,
+    z: f64,
     age: f32,
     light: (u8, petramond_world::light::BlockLight6),
     out: &mut Vec<ParticlePresentation>,
@@ -640,11 +647,12 @@ fn derive_splash(
         out.push(ParticlePresentation {
             quad_axes: None,
             atlas: ParticleAtlas::Solid,
-            pos: Vec3::new(
-                x + angle.cos() * radial * age,
-                (kill_y + up * age - 0.5 * SPLASH_GRAVITY * age * age).max(kill_y),
-                z + angle.sin() * radial * age,
-            ),
+            pos: petramond_math::world_pos::WorldPos::new(x, f64::from(kill_y), z)
+                + Vec3::new(
+                    angle.cos() * radial * age,
+                    (up * age - 0.5 * SPLASH_GRAVITY * age * age).max(0.0),
+                    angle.sin() * radial * age,
+                ),
             uv_min: [0.0, 0.0],
             uv_size: [0.0; 2],
             tint: mix3(burst.color[0], burst.color[1], mix),

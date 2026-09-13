@@ -5,6 +5,7 @@
 //! client picking, and server-side target validation.
 
 use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 use super::MobSize;
 
@@ -19,7 +20,8 @@ pub use queries::{
     body_separation, body_separation_from_body, clamp_body_yaw, closest_body_ray_hit,
 };
 
-type WorldBox = ([f32; 3], [f32; 3]);
+/// A world-space `(min, max)` box, double precision like [`WorldPos`].
+type WorldBox = ([f64; 3], [f64; 3]);
 
 fn segment_offsets(size: MobSize) -> impl Iterator<Item = f32> {
     let hw = size.half_width;
@@ -36,11 +38,16 @@ fn segment_offsets(size: MobSize) -> impl Iterator<Item = f32> {
     })
 }
 
-fn segment_centre(pos: Vec3, yaw: f32, offset: f32) -> Vec3 {
-    pos + Vec3::new(-yaw.sin(), 0.0, -yaw.cos()) * offset
+/// A segment centre's offset from the body position along its facing.
+fn segment_offset(yaw: f32, offset: f32) -> Vec3 {
+    Vec3::new(-yaw.sin(), 0.0, -yaw.cos()) * offset
 }
 
-fn segment_centres(pos: Vec3, yaw: f32, size: MobSize) -> impl Iterator<Item = Vec3> {
+fn segment_centre(pos: WorldPos, yaw: f32, offset: f32) -> WorldPos {
+    pos + segment_offset(yaw, offset)
+}
+
+fn segment_centres(pos: WorldPos, yaw: f32, size: MobSize) -> impl Iterator<Item = WorldPos> {
     segment_offsets(size).map(move |offset| segment_centre(pos, yaw, offset))
 }
 
@@ -50,12 +57,13 @@ fn segment_centres(pos: Vec3, yaw: f32, size: MobSize) -> impl Iterator<Item = V
 /// run of overlapping square boxes along its facing axis, matching the solid
 /// collision staircase at diagonal yaws without filling the enclosing
 /// square's empty corners.
-pub fn body_boxes(pos: Vec3, yaw: f32, size: MobSize) -> impl Iterator<Item = (Vec3, Vec3)> {
-    let hw = size.half_width;
+pub fn body_boxes(pos: WorldPos, yaw: f32, size: MobSize) -> impl Iterator<Item = WorldBox> {
+    let hw = f64::from(size.half_width);
+    let height = f64::from(size.height);
     segment_centres(pos, yaw, size).map(move |centre| {
         (
-            Vec3::new(centre.x - hw, centre.y, centre.z - hw),
-            Vec3::new(centre.x + hw, centre.y + size.height, centre.z + hw),
+            [centre.x - hw, centre.y, centre.z - hw],
+            [centre.x + hw, centre.y + height, centre.z + hw],
         )
     })
 }

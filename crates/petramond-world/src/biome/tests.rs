@@ -48,11 +48,11 @@ fn blended_fog_color_uses_ten_block_border_window() {
     };
 
     assert_color_close(
-        blended_fog_color(-(SKY_FOG_BLEND_SPAN_BLOCKS as f32) - 1.0, 0.5, boundary),
+        blended_fog_color(-(SKY_FOG_BLEND_SPAN_BLOCKS as f64) - 1.0, 0.5, boundary),
         Biome::Plains.fog_color(),
     );
     assert_color_close(
-        blended_fog_color(SKY_FOG_BLEND_SPAN_BLOCKS as f32 + 1.0, 0.5, boundary),
+        blended_fog_color(SKY_FOG_BLEND_SPAN_BLOCKS as f64 + 1.0, 0.5, boundary),
         Biome::Desert.fog_color(),
     );
 

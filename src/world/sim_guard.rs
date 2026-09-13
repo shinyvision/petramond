@@ -187,7 +187,8 @@ mod tests {
     use super::super::store::World;
     use crate::mob::Mob;
     use crate::world::testutil::flat_world;
-    use petramond_math::math::{IVec3, Vec3};
+    use petramond_math::math::IVec3;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE};
 
@@ -259,7 +260,7 @@ mod tests {
         let mut w = World::new(0, 0);
         let column = ChunkPos::new(0, 0);
         w.ensure_column(column);
-        let pos = Vec3::new(8.5, 64.0, 8.5);
+        let pos = WorldPos::new(8.5, 64.0, 8.5);
 
         assert!(w.physics_cell_final_at(8, 64, 8));
         assert!(!w.section_stream_final_at(8, 64, 8));

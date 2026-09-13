@@ -66,7 +66,7 @@ const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
 #[derive(Clone, PartialEq, Eq)]
 struct TerrainViewKey {
     view_proj: [u32; 16],
-    cam: [u32; 3],
+    cam: [u64; 3],
     fog: u32,
 }
 
@@ -669,8 +669,9 @@ struct ChromePass {
     crosshair_visible: bool,
     /// Currently-targeted outline shape, or None when nothing is targeted.
     selection: Option<SelectionShape>,
-    /// The target whose geometry currently sits in `outline_vbuf`.
-    selection_drawn: Option<SelectionShape>,
+    /// The target whose geometry currently sits in `outline_vbuf`, and the
+    /// render origin it was baked relative to.
+    selection_drawn: Option<(SelectionShape, glam::IVec3)>,
 }
 
 impl ChromePass {
@@ -722,10 +723,10 @@ struct ViewState {
     frustum: Frustum,
     /// Camera world position, refreshed in `update_uniforms`; used to sort
     /// chunk draws front-to-back (opaque) / back-to-front (transparent).
-    cam_pos: glam::Vec3,
-    /// Snapped world-space origin subtracted by world shaders before applying the
-    /// camera matrix, keeping GPU transform math camera-local far from spawn.
-    render_origin: glam::Vec3,
+    cam_pos: petramond_math::world_pos::WorldPos,
+    /// Snapped integer world origin every world draw is positioned relative to,
+    /// keeping GPU transform math camera-local far from spawn.
+    render_origin: glam::IVec3,
     /// Visual time from the current frame uniforms, used by presentation-only
     /// render effects such as block-row particle emitters.
     visual_time: f32,

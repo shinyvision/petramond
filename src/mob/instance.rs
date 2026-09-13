@@ -17,7 +17,7 @@
 //! and the per-tick orchestration.
 
 use crate::world::World;
-use petramond_math::math::{voxel_at, IVec3, Tilt, Vec3};
+use petramond_math::math::{IVec3, Tilt, Vec3};
 
 use super::anim::AnimKind;
 // Re-exported so `mob::instance::AnimLayer` consumers (the manager's
@@ -61,7 +61,7 @@ pub struct Instance {
     /// this does not change when `Mobs::remove` uses `swap_remove`.
     pub(super) id: u64,
     pub kind: Mob,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
     /// Body tilt inside the yaw. Level for every body the engine moves
     /// itself: only a kinematic placement (`set_kinematic`) tilts a body,
@@ -82,7 +82,7 @@ pub struct Instance {
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
     pub blocklight: petramond_world::light::BlockLight6,
     /// Previous-tick pose, for render interpolation.
-    pub prev_pos: Vec3,
+    pub prev_pos: petramond_math::world_pos::WorldPos,
     pub prev_yaw: f32,
     pub prev_tilt: Tilt,
     pub prev_anim_time: f32,
@@ -98,7 +98,7 @@ pub struct Instance {
     pub(super) damage_immunity: petramond_world::damage::DamageImmunity,
     /// Highest feet Y reached since the mob last stood/swum. A landing compares this
     /// peak to the landed feet Y to produce deterministic fall damage.
-    pub(super) fall_peak_y: f32,
+    pub(super) fall_peak_y: f64,
     /// Landing distance latched by [`finish_motion`](Self::finish_motion) and drained by the
     /// manager after the tick so `ServerGame` can route damage through `mob_damage_pre`.
     pub(super) fall_distance: f32,
@@ -231,7 +231,7 @@ pub struct Instance {
 impl Instance {
     /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`. `seed` makes its AI
     /// deterministic and distinct per mob.
-    pub fn new(kind: Mob, pos: Vec3, yaw: f32, seed: u64) -> Self {
+    pub fn new(kind: Mob, pos: petramond_math::world_pos::WorldPos, yaw: f32, seed: u64) -> Self {
         let d = def(kind);
         Instance {
             id: seed,
@@ -349,7 +349,7 @@ impl Instance {
 
     /// The mob's centre-square body projection. Systems that need the complete
     /// long-body footprint use `mob::body_geometry` instead.
-    pub fn aabb(&self) -> (Vec3, Vec3) {
+    pub fn aabb(&self) -> ([f64; 3], [f64; 3]) {
         self.body().aabb()
     }
 
@@ -478,7 +478,7 @@ impl Instance {
         idle_anims: &[IdleAnimMeta],
         named_anims: &[super::model_meta::NamedAnimMeta],
         skeleton: &Skeleton,
-    ) -> Option<(bool, Vec3)> {
+    ) -> Option<(bool, petramond_math::world_pos::WorldPos)> {
         let world: &World = inputs.world;
         let player_pos = anchor.pos;
         self.prev_pos = self.pos;
@@ -597,7 +597,7 @@ impl Instance {
             &support,
             &fluid,
         )
-        .unwrap_or_else(|| voxel_at(self.pos));
+        .unwrap_or_else(|| self.pos.block());
 
         // Periodic confined-state refresh. Only grounded, dry mobs are judged:
         // a swimming or falling mob's space is transient, and dead mobs don't

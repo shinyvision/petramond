@@ -79,8 +79,8 @@ const APEX_GRAVITY: f32 = 0.7;
 /// production, stubs in the land-physics tests.
 pub(super) struct Surroundings<'a> {
     pub boxes: &'a dyn Fn(i32, i32, i32) -> &'static [Aabb],
-    pub fluid: &'a dyn Fn(Vec3) -> Option<Immersion>,
-    pub current: &'a dyn Fn(Vec3) -> FluidCurrent,
+    pub fluid: &'a dyn Fn(petramond_math::world_pos::WorldPos) -> Option<Immersion>,
+    pub current: &'a dyn Fn(petramond_math::world_pos::WorldPos) -> FluidCurrent,
     pub climb: &'a dyn Fn(i32, i32, i32) -> Option<Climb>,
     pub slippery: &'a dyn Fn(i32, i32, i32) -> bool,
     pub obstacles: &'a [DynBox],
@@ -90,10 +90,10 @@ pub(super) struct Surroundings<'a> {
 impl<'a> Surroundings<'a> {
     /// Dry, still, ladderless, grippy surroundings over `boxes`.
     pub(super) fn dry(boxes: &'a dyn Fn(i32, i32, i32) -> &'static [Aabb]) -> Self {
-        fn no_fluid(_: Vec3) -> Option<Immersion> {
+        fn no_fluid(_: petramond_math::world_pos::WorldPos) -> Option<Immersion> {
             None
         }
-        fn still(_: Vec3) -> FluidCurrent {
+        fn still(_: petramond_math::world_pos::WorldPos) -> FluidCurrent {
             FluidCurrent::NONE
         }
         fn no_climb(_: i32, _: i32, _: i32) -> Option<Climb> {
@@ -192,8 +192,10 @@ impl Player {
     ) {
         // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
-        let fluid = |feet: Vec3| world.body_fluid(feet, HEIGHT, Buoyancy::Swim);
-        let current = |p: Vec3| world.fluid_current_at(p);
+        let fluid = |feet: petramond_math::world_pos::WorldPos| {
+            world.body_fluid(feet, HEIGHT, Buoyancy::Swim)
+        };
+        let current = |p: petramond_math::world_pos::WorldPos| world.fluid_current_at(p);
         let climb = |x: i32, y: i32, z: i32| world.climb_at(x, y, z);
         let slippery = |x: i32, y: i32, z: i32| world.physics_block(x, y, z).is_slippery();
         let env = Surroundings {
@@ -370,14 +372,14 @@ impl Player {
         // variant swap) would otherwise be skipped by the sweep and the
         // player tunnels through the floor (see `collision::depenetrate_up`).
         let (mn, mx) = (self.aabb_min(), self.aabb_max());
-        self.pos.y += collision::depenetrate_up_dyn(
-            mn.to_array(),
-            mx.to_array(),
+        self.pos.y += f64::from(collision::depenetrate_up_dyn(
+            mn,
+            mx,
             collision::STEP_HEIGHT,
             env.boxes,
             env.obstacles,
             collision::NOT_AN_ENTITY,
-        );
+        ));
         let dy = self.vel.y * dt;
         if self.sweep_boxes_dyn(Axis::Y, dy, &env.boxes, env.obstacles) {
             // Landed if we were moving down; bonked head if moving up. Either way
@@ -533,8 +535,8 @@ impl Player {
         };
         let (mn, mx) = (self.aabb_min(), self.aabb_max());
         let (moved, hit_x, hit_z) = collision::step_horizontal_dyn(
-            mn.to_array(),
-            mx.to_array(),
+            mn,
+            mx,
             dx,
             dz,
             step,
@@ -559,8 +561,8 @@ impl Player {
     fn sneak_clamp(&mut self, dx: f32, dz: f32, env: &Surroundings<'_>) -> (f32, f32) {
         let (mn, mx) = (self.aabb_min(), self.aabb_max());
         let (cx, cz) = collision::clamp_to_supported_dyn(
-            mn.to_array(),
-            mx.to_array(),
+            mn,
+            mx,
             dx,
             dz,
             collision::STEP_HEIGHT,
@@ -591,8 +593,8 @@ impl Player {
         let probe = -(collision::STEP_HEIGHT + collision::SUPPORT_PROBE_MARGIN);
         let (mn, mx) = (self.aabb_min(), self.aabb_max());
         let down = collision::sweep_axis_dyn(
-            mn.to_array(),
-            mx.to_array(),
+            mn,
+            mx,
             1,
             probe,
             env.boxes,
@@ -603,7 +605,7 @@ impl Player {
             // Blocked within a step: rest on it (0 while anything is still
             // underfoot, so flat walking never moves). `on_ground` stays
             // true and `vel.y` stays 0 — the body never counted as falling.
-            self.pos.y += down;
+            self.pos.y += f64::from(down);
         }
     }
 

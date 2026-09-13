@@ -23,7 +23,7 @@
 use rustc_hash::FxHashSet;
 
 use crate::world::World;
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 use petramond_world::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
 
 use super::spawn::{
@@ -116,7 +116,7 @@ fn wins_spacing(seed: u32, chunk: ChunkPos, own: u32) -> bool {
 /// merely skipped as unloaded, so frontier chunks retry as they stream in.
 pub(super) fn attempt(
     world: &World,
-    anchor: Vec3,
+    anchor: petramond_math::world_pos::WorldPos,
     checked: &mut FxHashSet<ChunkPos>,
 ) -> Vec<HerdSpawn> {
     // Same gate as the trickle: until every nearby column landed and every
@@ -232,6 +232,7 @@ fn choose_kind_for_site(world: &World, wx: i32, wz: i32, rng: &mut MobRng) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::biome::Biome;
     use petramond_world::block::Block;
     use petramond_world::chunk::Chunk;
@@ -253,8 +254,8 @@ mod tests {
         world
     }
 
-    fn anchor() -> Vec3 {
-        Vec3::new(8.0, 65.0, 8.0)
+    fn anchor() -> WorldPos {
+        WorldPos::new(8.0, 65.0, 8.0)
     }
 
     /// A seed that actually PLACES a herd on the anchor chunk — searched, not
@@ -367,7 +368,7 @@ mod tests {
         // geometry (chance × radius), not by the trickle's caps — otherwise
         // travelling at cap would silently leave new terrain barren.
         for i in 0..MobCategory::Passive.cap() {
-            let pos = Vec3::new(8.0 + i as f32 * 0.2, 65.0, 8.0);
+            let pos = WorldPos::new(f64::from(8.0 + i as f32 * 0.2), 65.0, 8.0);
             assert!(world.spawn_mob(Mob::Sheep, pos, 0.0).is_some());
         }
 

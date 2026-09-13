@@ -122,7 +122,7 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
 
     /// The tag lifecycle events fire on PRESENCE TRANSITIONS through the ABI
     /// surface: a NEW key emits `mob_tag_added`, deleting a present key emits
@@ -134,10 +134,10 @@ mod tests {
         let mut world = World::new(1, 1);
         assert!(world
             .mobs_mut()
-            .spawn(crate::mob::Mob::Owl, Vec3::new(1.0, 80.0, 1.0), 0.0));
+            .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
         let id = world.mobs().instances()[0].id();
 
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         queue.want_for_test(PostEventKind::MobTagAdded);

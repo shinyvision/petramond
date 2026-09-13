@@ -79,7 +79,7 @@ impl ReplicatedMob {
     /// collision, seats, and rendering all speak this same prev→curr blend;
     /// keeping the shortest-arc yaw rule here prevents interaction geometry
     /// from drifting onto the future tick while the model is still between.
-    pub fn interpolated_pose(&self, alpha: f32) -> (Vec3, f32) {
+    pub fn interpolated_pose(&self, alpha: f32) -> (petramond_math::world_pos::WorldPos, f32) {
         (
             self.prev.pos.lerp(self.curr.pos, alpha),
             petramond_math::math::lerp_angle(self.prev.yaw, self.curr.yaw, alpha),
@@ -99,7 +99,7 @@ impl ReplicatedMob {
 /// cannot drift apart between the two.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MountPose {
-    pub seat: Vec3,
+    pub seat: petramond_math::world_pos::WorldPos,
     pub body_yaw: f32,
     pub tilt: Tilt,
 }

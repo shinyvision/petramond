@@ -46,7 +46,7 @@ fn transition_owner(in: VsOut, style: vec4<u32>) -> TransitionSample {
     if (all(uv >= vec2<f32>(radius)) && all(uv <= vec2<f32>(1.0 - radius))) { return original; }
     // Keeping the large origin out of the floating-point sum preserves the
     // mask phase when the renderer rebases, including negative coordinates.
-    let p = in.view + u.cam_pos.xyz + u.render_origin.xyz % vec3<f32>(f32(TRANSITION_MASK_TEXELS));
+    let p = in.view + u.cam_pos.xyz + vec3<f32>(u.render_origin.xyz % vec3<i32>(TRANSITION_MASK_TEXELS));
     let pixel = vec2<i32>(floor(transition_plane(p, in.ncode) * 16.0));
     // A power-of-two mask wraps negative coordinates without signed remainders.
     let wrapped = pixel & vec2<i32>(TRANSITION_MASK_TEXELS - 1);

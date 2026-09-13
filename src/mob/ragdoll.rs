@@ -264,8 +264,9 @@ impl Ragdoll {
     }
 
     /// Advance one tick. `mob_pos`/`yaw`/`scale` are the (frozen-at-death) transform that
-    /// places the model-space sim into the world; `solid(cell)` reports whether a world
-    /// block stops movement. Each corner is collided against the real voxels — so the
+    /// places the model-space sim into the frame `solid(cell)` answers in — any frame the
+    /// caller chooses, which keeps a far-away corpse's sweeps small; `solid(cell)` reports
+    /// whether a block stops movement. Each corner is collided against the real voxels — so the
     /// corpse can't sink through a floor or pass through a wall, and corners hanging over
     /// an edge keep falling.
     pub fn step(

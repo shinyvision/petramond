@@ -141,7 +141,7 @@ pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleV
         if inst.alpha <= 0.0 {
             continue;
         }
-        push_particle_cube(inst, LightEnv::IDENTITY, verts);
+        push_particle_cube(inst, LightEnv::IDENTITY, glam::IVec3::ZERO, verts);
     }
     verts.len() as u32
 }
@@ -156,6 +156,7 @@ pub fn build_particles_split(
     block: &[ParticleInstance],
     model: &[ParticleInstance],
     env: LightEnv,
+    render_origin: glam::IVec3,
     verts: &mut Vec<ParticleVertex>,
 ) -> (u32, u32) {
     verts.clear();
@@ -163,14 +164,14 @@ pub fn build_particles_split(
         if inst.alpha <= 0.0 {
             continue;
         }
-        push_particle_cube(inst, env, verts);
+        push_particle_cube(inst, env, render_origin, verts);
     }
     let block_verts = verts.len() as u32;
     for inst in model {
         if inst.alpha <= 0.0 {
             continue;
         }
-        push_particle_cube(inst, env, verts);
+        push_particle_cube(inst, env, render_origin, verts);
     }
     (verts.len() as u32, block_verts)
 }
@@ -203,10 +204,13 @@ struct EmitterSchedule {
 /// `solids` are the SIMULATED solid-color particles (emitter-burst droplets,
 /// already positioned by the particle system's physics): they join the same
 /// sorted alpha-blended draw so splashes and flames composite correctly.
+/// Vertices come out relative to `render_origin`, and `cam_pos` is too.
+#[allow(clippy::too_many_arguments)]
 pub fn build_transparent_emitter_particles(
     emitters: &[ParticleEmitterInstance],
     solids: &[super::SolidParticleInstance],
     time: f32,
+    render_origin: glam::IVec3,
     cam_pos: Vec3,
     env: LightEnv,
     density: f32,
@@ -219,17 +223,18 @@ pub fn build_transparent_emitter_particles(
         if s.alpha <= 0.001 || s.size <= 0.001 {
             continue;
         }
+        let pos = s.pos.relative_to(render_origin);
         scratch.push(TransparentParticleCube {
-            pos: s.pos,
+            pos,
             color: lighting::fold_tint(s.color, DynLight::new(s.skylight, s.blocklight), env),
             alpha: s.alpha,
             size: s.size,
             stretch: s.stretch,
-            dist_sq: (cam_pos - s.pos).length_squared(),
+            dist_sq: (cam_pos - pos).length_squared(),
         });
     }
     for inst in emitters {
-        append_emitter_particles(inst, time, cam_pos, env, density, scratch);
+        append_emitter_particles(inst, time, render_origin, cam_pos, env, density, scratch);
     }
     scratch.sort_by(|a, b| b.dist_sq.total_cmp(&a.dist_sq));
     for p in scratch.iter() {
@@ -241,6 +246,7 @@ pub fn build_transparent_emitter_particles(
 fn append_emitter_particles(
     inst: &ParticleEmitterInstance,
     time: f32,
+    render_origin: glam::IVec3,
     cam_pos: Vec3,
     env: LightEnv,
     density: f32,
@@ -297,11 +303,11 @@ fn append_emitter_particles(
                 rand_signed(seed ^ 0x88) * velocity_jitter.y,
                 rand_signed(seed ^ 0x99) * velocity_jitter.z,
             );
-        let mut pos = inst.origin + jitter + velocity * age;
+        let mut pos = inst.origin.relative_to(render_origin) + jitter + velocity * age;
         pos.y -= 0.5 * e.gravity * age * age;
         // A landing row's particle is gone once it reaches the surface under
         // its anchor (the gather resolved that height once per emitter).
-        if pos.y - size * 0.5 <= inst.floor_y {
+        if pos.y - size * 0.5 <= inst.floor_y - render_origin.y as f32 {
             continue;
         }
         // Spiral: each particle orbits the emitter's vertical axis while it
@@ -374,7 +380,13 @@ fn emitter_birth_time(seed: u64, schedule: EmitterSchedule, seq: i64) -> f32 {
 /// Append one particle's textured cube (24 verts) to `verts`. Every face samples the
 /// particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by `inst.tint` and
 /// shaded per-face. The caller does the capacity + alpha gating.
-fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<ParticleVertex>) {
+fn push_particle_cube(
+    inst: &ParticleInstance,
+    env: LightEnv,
+    render_origin: glam::IVec3,
+    verts: &mut Vec<ParticleVertex>,
+) {
+    let pos = inst.pos.relative_to(render_origin);
     let [u0, v0] = inst.uv_min;
     let u1 = u0 + inst.uv_size[0];
     let v1 = v0 + inst.uv_size[1];
@@ -391,10 +403,10 @@ fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<Pa
     let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
     if let Some([right, up]) = inst.quad_axes {
         let corners = [
-            inst.pos - right - up,
-            inst.pos + right - up,
-            inst.pos + right + up,
-            inst.pos - right + up,
+            pos - right - up,
+            pos + right - up,
+            pos + right + up,
+            pos - right + up,
         ];
         // The textured cutout pipeline has no face culling, so one quad shows both sides.
         for i in 0..4 {
@@ -408,14 +420,7 @@ fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<Pa
         }
         return;
     }
-    push_cube_faces(
-        Vec3::from(inst.pos.to_array()),
-        inst.size,
-        corner_uv,
-        tint,
-        inst.alpha,
-        verts,
-    );
+    push_cube_faces(pos, inst.size, corner_uv, tint, inst.alpha, verts);
 }
 
 fn push_colored_particle_cube(inst: &TransparentParticleCube, verts: &mut Vec<ParticleVertex>) {

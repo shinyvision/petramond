@@ -5,31 +5,31 @@ use crate::{
     mathh::{IVec3, Vec3},
     world::WorldData,
 };
+use petramond_math::world_pos::WorldPos;
 
 impl WorldData {
     /// The real fluid volume at a point; air above a thin flow is never immersed.
-    pub fn fluid_at_point(&self, point: Vec3) -> Option<Immersion> {
-        let cell = point.floor().as_ivec3();
-        let sample = self.fluid_in_cell(cell)?;
-        (point.y < sample.surface_y).then_some(sample)
+    pub fn fluid_at_point(&self, point: WorldPos) -> Option<Immersion> {
+        let sample = self.fluid_in_cell(point.block())?;
+        (point.y < f64::from(sample.surface_y)).then_some(sample)
     }
 
     /// Fluid response for a body, using its size and buoyancy mode.
-    pub fn body_fluid(&self, feet: Vec3, height: f32, buoyancy: Buoyancy) -> Option<Immersion> {
+    pub fn body_fluid(&self, feet: WorldPos, height: f32, buoyancy: Buoyancy) -> Option<Immersion> {
         if buoyancy == Buoyancy::Surface {
-            let cell = feet.floor().as_ivec3();
+            let cell = feet.block();
             return self
                 .fluid_surface_at(cell)
                 .or_else(|| self.fluid_surface_at(cell - IVec3::Y));
         }
         let x = feet.x.floor() as i32;
         let z = feet.z.floor() as i32;
-        for y in feet.y.floor() as i32..=(feet.y + height).floor() as i32 {
+        for y in feet.y.floor() as i32..=(feet.y + f64::from(height)).floor() as i32 {
             let Some(sample) = self.fluid_in_cell(IVec3::new(x, y, z)) else {
                 continue;
             };
-            let probe = feet.y + sample.fluid.motion.probe_height(height);
-            if probe >= y as f32 && probe < sample.surface_y {
+            let probe = feet.y + f64::from(sample.fluid.motion.probe_height(height));
+            if probe >= f64::from(y) && probe < f64::from(sample.surface_y) {
                 return Some(sample);
             }
         }
@@ -79,7 +79,7 @@ impl WorldData {
 
     /// Current at a point below the actual fluid surface, using the same
     /// gradient as the mesher and the fluid's configured speed/acceleration.
-    pub fn fluid_current_at(&self, p: Vec3) -> FluidCurrent {
+    pub fn fluid_current_at(&self, p: WorldPos) -> FluidCurrent {
         let Some(sample) = self.fluid_at_point(p) else {
             return FluidCurrent::NONE;
         };
@@ -87,7 +87,7 @@ impl WorldData {
         if fluid.current.speed <= 0.0 {
             return FluidCurrent::NONE;
         }
-        let c = p.floor().as_ivec3();
+        let c = p.block();
         FluidCurrent {
             velocity: self.fluid_flow_dir_at(c.x, c.y, c.z, fluid.block) * fluid.current.speed,
             accel: fluid.current.accel,
@@ -97,7 +97,7 @@ impl WorldData {
     /// Sample the swimming probe, then shallow wading contact when it has no current.
     pub fn body_current(
         &self,
-        feet: Vec3,
+        feet: WorldPos,
         height: f32,
         immersion: Option<Immersion>,
     ) -> FluidCurrent {
@@ -121,10 +121,10 @@ impl WorldData {
 
 /// Sample a body's fluid current from any point-query source.
 pub fn sample_body_current(
-    feet: Vec3,
+    feet: WorldPos,
     height: f32,
     immersion: Option<Immersion>,
-    at: impl Fn(Vec3) -> FluidCurrent,
+    at: impl Fn(WorldPos) -> FluidCurrent,
 ) -> FluidCurrent {
     let probe = immersion.map_or(0.05, |s| s.fluid.motion.probe_height(height));
     let current = at(feet + Vec3::Y * probe);

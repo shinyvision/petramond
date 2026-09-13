@@ -289,11 +289,11 @@ impl MachineSpec for AnvilSpec {
 
 /// The anvil's centre as a sound position — block precision is plenty
 /// against the attenuation distances in `sounds.json`.
-fn at(pos: [i32; 3]) -> [f32; 3] {
+fn at(pos: [i32; 3]) -> [f64; 3] {
     [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 0.5,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 0.5,
+        pos[2] as f64 + 0.5,
     ]
 }
 

@@ -21,7 +21,6 @@ use petramond::net::handshake::{
 };
 use petramond::net::protocol::ModEntry;
 use petramond::server::handle::ServerHandle;
-use petramond_math::math::Vec3;
 use petramond_render::camera::Camera;
 
 /// Per-step network deadline: the TCP connect and each handshake read.
@@ -260,7 +259,7 @@ impl App {
     /// it to the restored player.
     fn start_remote_game(&mut self, join: HandshakeJoin, handle: ServerHandle) {
         let cam = Camera::new(
-            Vec3::new(8.0, 90.0, 8.0),
+            petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
             self.shell_camera.aspect.max(0.01),
         );
         let retained_cache = self.retained_section_cache.take();

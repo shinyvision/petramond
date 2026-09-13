@@ -11,12 +11,24 @@ impl OutlineVertices {
     }
 }
 
-/// The line-segment endpoints for a selection outline, in world space.
-pub(super) fn outline_vertices(shape: SelectionShape) -> OutlineVertices {
+/// The line-segment endpoints for a selection outline, relative to `render_origin`.
+pub(super) fn outline_vertices(shape: SelectionShape, render_origin: IVec3) -> OutlineVertices {
     match shape {
-        SelectionShape::Box { min, max } => box_outline_vertices(min, max),
-        SelectionShape::Torch { origin, transform } => torch_outline_vertices(origin, transform),
-        SelectionShape::Boxes { boxes } => box_list_outline_vertices(boxes),
+        SelectionShape::Box { origin, min, max } => {
+            let base = (origin - render_origin).as_vec3();
+            box_outline_vertices(base + min, base + max)
+        }
+        SelectionShape::Torch { origin, transform } => {
+            torch_outline_vertices((origin - render_origin).as_vec3(), transform)
+        }
+        SelectionShape::Boxes { origin, mut boxes } => {
+            let base = (origin - render_origin).as_vec3();
+            for b in &mut boxes.boxes {
+                b.0 += base;
+                b.1 += base;
+            }
+            box_list_outline_vertices(boxes)
+        }
     }
 }
 
@@ -267,10 +279,10 @@ fn push_box_edges(out: &mut OutlineVertices, min: Vec3, max: Vec3) {
 }
 
 /// The 12 edges of the torch's pole box, `transform`-mapped from local model space
-/// and offset by the cell `origin`. Mirrors [`box_outline_vertices`]'s edge layout
+/// and offset by the cell corner `base`. Mirrors [`box_outline_vertices`]'s edge layout
 /// but over a (possibly tilted) box, so a floor torch outlines a straight pole and a
 /// wall torch a leaning one — matching `mesh::torch`, which uses the same transform.
-fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
+fn torch_outline_vertices(base: Vec3, transform: Mat4) -> OutlineVertices {
     // Inflate in the torch's LOCAL frame so the wireframe sits a hair outside the
     // pole on every face after the tilt (same purpose as box `INFLATE`).
     const INFLATE: f32 = 0.003;
@@ -280,8 +292,7 @@ fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
         POLE_HEIGHT + INFLATE,
         POLE_HALF + INFLATE,
     ];
-    let base = Vec3::new(origin.x as f32, origin.y as f32, origin.z as f32);
-    // World-space corner for (x_hi?, y_hi?, z_hi?), transformed then cell-offset.
+    // Corner for (x_hi?, y_hi?, z_hi?), transformed then cell-offset.
     let c = |xh: bool, yh: bool, zh: bool| {
         let local = Vec3::new(
             if xh { hi[0] } else { lo[0] },
@@ -333,13 +344,15 @@ mod tests {
 
     #[test]
     fn stair_box_outline_removes_internal_join_but_keeps_step_edges() {
-        let (boxes, len) = petramond_world::connect::world_boxes(
+        let (boxes, len) =
+            petramond_world::connect::local_boxes(petramond_world::stair::boxes(Facing::South));
+        let outline = outline_vertices(
+            SelectionShape::Boxes {
+                origin: IVec3::ZERO,
+                boxes: SelectionBoxes { boxes, len },
+            },
             IVec3::ZERO,
-            petramond_world::stair::boxes(Facing::South),
         );
-        let outline = outline_vertices(SelectionShape::Boxes {
-            boxes: SelectionBoxes { boxes, len },
-        });
         let segments = segments(&outline);
 
         assert!(

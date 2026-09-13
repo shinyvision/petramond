@@ -5,6 +5,7 @@ use petramond::net::protocol::{ClientToServer, PlayerUpdate, TargetRef};
 use petramond::server::game::ServerGame;
 use petramond::server::handle::LoopbackServer;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
@@ -36,7 +37,7 @@ impl std::ops::DerefMut for TestGame {
 }
 
 pub(super) fn game() -> TestGame {
-    game_with_camera(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0))
+    game_with_camera(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0))
 }
 
 /// [`game`] with the world already reduced to one empty chunk at (0,0) — the
@@ -337,7 +338,7 @@ fn install_flat_floor(
 
 /// Put the authoritative session eye at `eye`, looking along `dir`, with an
 /// exact matching movement claim so reach validation uses that position.
-pub(super) fn set_server_view(game: &mut TestGame, eye: Vec3, dir: Vec3) {
+pub(super) fn set_server_view(game: &mut TestGame, eye: WorldPos, dir: Vec3) {
     let dir = dir.normalize();
     let sess = &mut game.server.sessions[0];
     sess.player.pos = eye - Vec3::Y * petramond::player::EYE;

@@ -223,6 +223,7 @@ fn a_posed_plane_lands_on_its_rotated_corners_and_seals_nothing() {
         0,
         0,
         0,
+        glam::IVec3::ZERO,
         &boxes,
         &mut scratch,
         &|_| false,

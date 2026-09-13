@@ -1,6 +1,7 @@
 use super::*;
 use crate::mob::{def, Mob};
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 
 fn floor_at_zero(p: IVec3) -> bool {
     p.y < 0
@@ -25,8 +26,8 @@ fn ambient_clocks_are_individual_and_action_starts_at_zero() {
             looping: false,
         },
     ];
-    let mut a = Instance::new(Mob::Owl, Vec3::ZERO, 0.0, 1);
-    let mut b = Instance::new(Mob::Owl, Vec3::ZERO, 0.0, 2);
+    let mut a = Instance::new(Mob::Owl, WorldPos::ZERO, 0.0, 1);
+    let mut b = Instance::new(Mob::Owl, WorldPos::ZERO, 0.0, 2);
     a.id = 1;
     b.id = 2;
     let decision = BehaviorOutput {
@@ -47,7 +48,7 @@ fn ambient_clocks_are_individual_and_action_starts_at_zero() {
 #[test]
 fn expression_advances_walk_and_eases_the_head() {
     use super::super::brain::HeadLook;
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     // A walking tick (integrate sets `moving`), then expression advances the walk.
     owl.integrate(
         1.0 / 60.0,
@@ -114,7 +115,7 @@ fn named_anim_set_is_sorted_capped_and_idempotent() {
     let names = |owl: &Instance| -> Vec<String> {
         owl.active_anims().iter().map(|l| l.name.clone()).collect()
     };
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_anim_active("row_right", true));
     assert!(owl.set_anim_active("row_left", true));
     assert!(
@@ -142,7 +143,7 @@ fn named_anim_layers_self_clock_by_their_rates() {
     // Each layer's phase advances by ITS OWN rate — rate 0 freezes a
     // layer mid-stroke (an oar pauses in place, never snaps home),
     // negative reverses — independent of the walk/idle clock.
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_anim_active("a", true));
     assert!(owl.set_anim_active("b", true));
     assert!(
@@ -173,7 +174,7 @@ fn named_anim_seek_lands_exactly_holds_and_yields_to_rate() {
     // A seek approaches its target DIRECTLY at |rate|/s, lands EXACTLY on
     // it (no overshoot, then holds at rate 0) — the settle-to-pose
     // contract an oar's gentle return depends on. A rate call cancels it.
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_anim_active("a", true));
     assert!(
         !owl.set_anim_seek("missing", 0.0, 1.0),
@@ -206,7 +207,7 @@ fn named_anim_seek_lands_exactly_holds_and_yields_to_rate() {
 
 #[test]
 fn named_anim_controls_are_bounded_and_phase_stepping_stays_finite() {
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(!owl.set_anim_active(&"a".repeat(mod_api::MAX_MOB_ANIM_NAME_BYTES + 1), true));
     assert!(owl.set_anim_active("a", true));
     assert!(!owl.set_anim_rate("a", mod_api::MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0));
@@ -248,7 +249,7 @@ fn a_finished_one_shot_layer_retires_itself() {
             looping: true,
         },
     ];
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_anim_active("bite", true));
     assert!(owl.set_anim_active("hum", true));
     assert!(owl.set_anim_active("mystery", true));

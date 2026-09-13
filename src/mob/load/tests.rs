@@ -1,5 +1,6 @@
 use super::*;
 use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 fn base() -> String {
     let (text, _) =
@@ -195,8 +196,8 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
         w
     };
     let mut rng = super::super::MobRng::new(1);
-    let mob_pos = Vec3::new(2.5, 64.0, 2.5);
-    let player = Vec3::new(3.7, 64.9, 2.5); // 1.2 blocks away: chase + melee range
+    let mob_pos = WorldPos::new(2.5, 64.0, 2.5);
+    let player = WorldPos::new(3.7, 64.9, 2.5); // 1.2 blocks away: chase + melee range
     let players = [crate::mob::PlayerAnchor {
         pos: player,
         ..Default::default()
@@ -565,7 +566,7 @@ fn dynamic_pack_mob_inner() {
     // --- Spawnable programmatically; the data brain builds on spawn. ---
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
-    let home = Vec3::new(8.0, 64.0, 8.0);
+    let home = WorldPos::new(8.0, 64.0, 8.0);
     assert!(mobs.spawn(z, home, 0.0));
 
     // --- Hostile despawn contract: culled on the first far tick. ---

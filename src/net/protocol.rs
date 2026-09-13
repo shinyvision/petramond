@@ -40,7 +40,7 @@ pub use terrain::*;
 /// four fields spelled inline.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transform {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub vel: Vec3,
     pub yaw: f32,
     pub pitch: f32,

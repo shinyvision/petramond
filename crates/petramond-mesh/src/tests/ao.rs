@@ -188,7 +188,7 @@ fn cast_pockets_reach_an_inset_neighbour_base() {
     let base_lo = [1.0 / 16.0, 0.0, 1.0 / 16.0];
     let base_hi = [15.0 / 16.0, 3.0 / 16.0, 15.0 / 16.0];
     for sv in [-1, 1] {
-        let pockets = corner_cast_probes(Face::PosY, (0, 0, 0), 1, sv, 0.0);
+        let pockets = corner_cast_probes(Face::PosY, 1, sv, 0.0);
         // The side-u pocket, moved into the side cell's local frame.
         let (lo, hi) = pockets[0];
         let (lo, hi) = ([lo[0] - 1.0, lo[1], lo[2]], [hi[0] - 1.0, hi[1], hi[2]]);

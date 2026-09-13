@@ -11,8 +11,6 @@
 //! The buffers are cleared + refilled (capacity reused) so a bounded per-frame count
 //! never reallocs.
 
-use glam::Vec3;
-
 use super::{
     ChestInstance, DoorInstance, EntityShadow, ItemEntityInstance, MobRenderInstance,
     ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
@@ -161,7 +159,7 @@ impl Scene {
             let raw = chest.lid_progress;
             let lid01 = raw * raw * (3.0 - 2.0 * raw);
             self.chests.push(ChestInstance {
-                pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
+                pos,
                 facing: chest.facing,
                 lid01,
                 skylight: chest.skylight,
@@ -182,7 +180,7 @@ impl Scene {
             let raw = door.swing_progress;
             let open01 = raw * raw * (3.0 - 2.0 * raw);
             self.doors.push(DoorInstance {
-                pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
+                pos,
                 facing: door.state.facing,
                 open01,
                 bottom_tile,

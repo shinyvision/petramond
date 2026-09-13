@@ -41,7 +41,7 @@ impl DecodedSound {
 impl SpatialListener {
     fn audio_space(
         self,
-        emitter: petramond_math::math::Vec3,
+        emitter: petramond_math::world_pos::WorldPos,
         attenuation_distance: f32,
     ) -> ([f32; 3], [f32; 3], [f32; 3]) {
         let scale = attenuation_distance.max(1.0);
@@ -64,7 +64,7 @@ struct ActiveSpatialSound {
     /// slider move mid-play takes effect.
     local_gain: f32,
     pitch: f32,
-    last_position: petramond_math::math::Vec3,
+    last_position: petramond_math::world_pos::WorldPos,
 }
 
 /// The audio engine: owns the output stream and the decoded sound buffers, and
@@ -322,7 +322,7 @@ impl Audio {
         volume: f32,
         pitch: f32,
         listener: SpatialListener,
-        initial_position: petramond_math::math::Vec3,
+        initial_position: petramond_math::world_pos::WorldPos,
     ) {
         if handle == 0 || volume <= 0.0 || pitch <= 0.0 {
             return;
@@ -396,7 +396,7 @@ impl Audio {
         sound: Sound,
         source: SpatialSoundSource,
         listener: SpatialListener,
-        initial_position: petramond_math::math::Vec3,
+        initial_position: petramond_math::world_pos::WorldPos,
     ) {
         let def = sound.def();
         let pitch = def.pitch * (1.0 + self.next_jitter() * def.pitch_variation);
@@ -448,7 +448,7 @@ impl Audio {
     pub fn update_spatial(
         &mut self,
         listener: SpatialListener,
-        mobs: &[(u64, petramond_math::math::Vec3)],
+        mobs: &[(u64, petramond_math::world_pos::WorldPos)],
     ) {
         if self.sink.is_none() {
             self.spatial.clear();

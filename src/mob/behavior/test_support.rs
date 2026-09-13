@@ -5,7 +5,8 @@
 use crate::mob::brain::AiCtx;
 use crate::mob::MobRng;
 use crate::world::World;
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
+use petramond_math::world_pos::WorldPos;
 
 /// A neutral, idle, dry context: a small mob at the origin, the nearest
 /// player at the origin too, no perception input of any kind. Tests set only
@@ -14,14 +15,14 @@ pub fn ctx<'a>(world: &'a World, rng: &'a mut MobRng) -> AiCtx<'a> {
     AiCtx {
         reach: None,
         mob_id: 1,
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         cell: IVec3::ZERO,
         yaw: 0.0,
         head_height: 0.7,
         half_width: 0.25,
         world,
         player_id: Default::default(),
-        player_pos: Vec3::ZERO,
+        player_pos: WorldPos::ZERO,
         player_sneaking: false,
         player_held: None,
         players: &[],
@@ -51,9 +52,9 @@ pub fn empty_tags() -> &'static std::collections::BTreeMap<String, crate::mob::M
 }
 
 /// [`ctx`] positioned at `pos` (cell derived from the feet).
-pub fn ctx_at<'a>(world: &'a World, rng: &'a mut MobRng, pos: Vec3) -> AiCtx<'a> {
+pub fn ctx_at<'a>(world: &'a World, rng: &'a mut MobRng, pos: WorldPos) -> AiCtx<'a> {
     let mut c = ctx(world, rng);
     c.pos = pos;
-    c.cell = petramond_math::math::voxel_at(pos);
+    c.cell = pos.block();
     c
 }

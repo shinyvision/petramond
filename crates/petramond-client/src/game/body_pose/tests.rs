@@ -1,4 +1,5 @@
 use super::*;
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn small_look_turns_move_only_the_head() {
@@ -84,7 +85,7 @@ fn lerp_angle_crosses_the_wrap_seam_the_short_way() {
 
 fn motion(velocity: glam::Vec3, grounded: bool) -> MotionFrame {
     MotionFrame {
-        position: glam::Vec3::ZERO,
+        position: WorldPos::ZERO,
         velocity,
         yaw: 0.0,
         grounded,
@@ -140,7 +141,7 @@ fn suppression_and_teleports_clear_airborne_history() {
     pose.advance(
         0.016,
         MotionFrame {
-            position: Vec3::splat(100.0),
+            position: WorldPos::new(100.0, 100.0, 100.0),
             ..motion(Vec3::ZERO, true)
         },
     );

@@ -32,11 +32,14 @@ impl Cover {
     /// No origin means no direction to judge, so the guard holds — refusing
     /// on missing spatial context would quietly break the shield for any
     /// future damage source that omits it.
-    pub fn covers(self, state: &PlayerSnapshot, origin: Option<[f32; 3]>) -> bool {
+    pub fn covers(self, state: &PlayerSnapshot, origin: Option<[f64; 3]>) -> bool {
         let Some(origin) = origin else {
             return true;
         };
-        let (dx, dz) = (origin[0] - state.pos[0], origin[2] - state.pos[2]);
+        let (dx, dz) = (
+            (origin[0] - state.pos[0]) as f32,
+            (origin[2] - state.pos[2]) as f32,
+        );
         let distance = (dx * dx + dz * dz).sqrt();
         // Standing exactly inside the attacker names no direction either.
         if distance < 1e-4 {
@@ -132,7 +135,7 @@ impl Claims {
 
     /// Does this body's guard stop a hit arriving from `origin`? No cover,
     /// no block.
-    pub fn covers(&self, state: &PlayerSnapshot, origin: Option<[f32; 3]>) -> bool {
+    pub fn covers(&self, state: &PlayerSnapshot, origin: Option<[f64; 3]>) -> bool {
         self.cover.is_some_and(|cover| cover.covers(state, origin))
     }
 }

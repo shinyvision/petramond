@@ -209,18 +209,14 @@ pub fn boxes_for_mask(shapes: &'static [Shape; 16], mask: u8) -> &'static [Aabb]
     shapes[(mask & 0b1111) as usize].as_slice()
 }
 
-/// Cell-local boxes lifted to world space for the selection outline (a
+/// Cell-local boxes in the selection outline's fixed-capacity form (a
 /// connection shape has at most 2 runs, under the outline cap).
 #[inline]
-pub fn world_boxes(origin: IVec3, boxes: &[Aabb]) -> ([(Vec3, Vec3); MAX_SELECTION_BOXES], u8) {
-    let base = Vec3::new(origin.x as f32, origin.y as f32, origin.z as f32);
+pub fn local_boxes(boxes: &[Aabb]) -> ([(Vec3, Vec3); MAX_SELECTION_BOXES], u8) {
     let mut out = [(Vec3::ZERO, Vec3::ZERO); MAX_SELECTION_BOXES];
     let len = boxes.len().min(MAX_SELECTION_BOXES);
     for (dst, b) in out.iter_mut().zip(boxes.iter()) {
-        *dst = (
-            base + Vec3::new(b.min[0], b.min[1], b.min[2]),
-            base + Vec3::new(b.max[0], b.max[1], b.max[2]),
-        );
+        *dst = (Vec3::from(b.min), Vec3::from(b.max));
     }
     (out, len as u8)
 }

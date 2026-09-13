@@ -3,6 +3,7 @@ use std::sync::Arc;
 use petramond_math::math::{IVec3, Vec3};
 
 use super::*;
+use petramond_math::world_pos::WorldPos;
 
 fn roundtrip<T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug>(v: &T) {
     let bytes = postcard::to_allocvec(v).expect("encode");
@@ -42,7 +43,7 @@ fn representative_messages_roundtrip_through_postcard() {
     });
     roundtrip(&ClientToServer::PlayerUpdate(PlayerUpdate {
         transform: Transform {
-            pos: Vec3::new(1.5, 80.0, -3.25),
+            pos: WorldPos::new(1.5, 80.0, -3.25),
             vel: Vec3::ZERO,
             yaw: 1.25,
             pitch: -0.5,
@@ -258,7 +259,7 @@ fn tick_updates_roundtrip() {
         mobs: vec![MobStateRow {
             id: 4211,
             kind_id: 1,
-            pos: Vec3::new(4.5, 71.0, -2.25),
+            pos: WorldPos::new(4.5, 71.0, -2.25),
             yaw: 0.75,
             tilt: petramond_math::math::Tilt::LEVEL,
             anim_time: 12.5,
@@ -279,7 +280,7 @@ fn tick_updates_roundtrip() {
             item_id: 3,
             count: 12,
             data: None,
-            pos: Vec3::new(0.5, 65.0, 0.5),
+            pos: WorldPos::new(0.5, 65.0, 0.5),
             spin: 1.25,
             flight: None,
         }],
@@ -287,7 +288,7 @@ fn tick_updates_roundtrip() {
             conditions: Vec::new(),
             id: PlayerId(1),
             transform: Transform {
-                pos: Vec3::new(4.5, 71.0, -2.25),
+                pos: WorldPos::new(4.5, 71.0, -2.25),
                 vel: Vec3::new(0.0, -0.5, 1.0),
                 yaw: 0.75,
                 pitch: -0.25,
@@ -370,7 +371,7 @@ fn tick_updates_roundtrip() {
             sleep_bed: None,
             transform: Some(SelfTransform {
                 transform: Transform {
-                    pos: Vec3::new(1.5, 80.0, -3.25),
+                    pos: WorldPos::new(1.5, 80.0, -3.25),
                     vel: Vec3::ZERO,
                     yaw: 1.25,
                     pitch: -0.5,
@@ -391,7 +392,7 @@ fn tick_updates_roundtrip() {
                 tint: None,
             },
             WorldEventMsg::ItemPickedUp {
-                pos: Vec3::new(1.0, 65.0, 2.0),
+                pos: WorldPos::new(1.0, 65.0, 2.0),
                 by: PlayerId(1),
             },
             WorldEventMsg::SpatialSound(SpatialSoundMsg::PlayOnMob {
@@ -400,7 +401,7 @@ fn tick_updates_roundtrip() {
                 mob_id: 4211,
                 volume: 0.5,
                 pitch: 1.1,
-                last_pos: Vec3::new(0.0, 70.0, 0.0),
+                last_pos: WorldPos::new(0.0, 70.0, 0.0),
             }),
         ],
         self_events: SelfEvents {

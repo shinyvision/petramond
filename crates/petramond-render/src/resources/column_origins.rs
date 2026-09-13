@@ -1,7 +1,8 @@
-/// The shared instance-step table of per-column world XZ origins.
+/// The shared instance-step table of per-column integer world XZ origins.
 ///
-/// `vs_terrain` reconstructs absolute positions from a column-local vertex plus
-/// this origin. It used to be a 16-byte GPU buffer PER COLUMN, which cost a
+/// A column's terrain, model and contact streams are in mesh space
+/// (column-local XZ); their vertex shaders offset them by this origin minus
+/// the render origin, in integers. It used to be a 16-byte GPU buffer PER COLUMN, which cost a
 /// `set_vertex_buffer` on every single terrain draw — a quarter of the frame's
 /// recorded commands at high render distance, and thousands of tiny buffer
 /// objects for the driver and wgpu's submit-time resource tracker to carry.
@@ -10,7 +11,7 @@
 pub struct ColumnOrigins {
     buf: wgpu::Buffer,
     /// CPU mirror, so growing the buffer is one write of everything live.
-    values: Vec<[f32; 4]>,
+    values: Vec<[i32; 4]>,
     free: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
 }
 
@@ -36,6 +37,19 @@ impl Drop for ColumnOriginSlot {
         }
     }
 }
+
+/// The instance-step layout of one [`ColumnOrigins`] row, shared by every
+/// pipeline that draws a column's mesh-space streams.
+pub(crate) const COLUMN_ORIGIN_LAYOUT: wgpu::VertexBufferLayout<'static> =
+    wgpu::VertexBufferLayout {
+        array_stride: 16,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Sint32x4,
+            offset: 0,
+            shader_location: 5,
+        }],
+    };
 
 /// Rows the table starts with; it doubles from here.
 const COLUMN_ORIGIN_INITIAL: u32 = 2048;
@@ -71,7 +85,7 @@ impl ColumnOrigins {
         col_ox: i32,
         col_oz: i32,
     ) -> ColumnOriginSlot {
-        let value = [col_ox as f32, 0.0, col_oz as f32, 0.0];
+        let value = [col_ox, 0, col_oz, 0];
         let slot = match prev {
             Some(s) => s,
             None => {
@@ -92,7 +106,7 @@ impl ColumnOrigins {
         };
         let i = slot.index as usize;
         if i >= self.values.len() {
-            self.values.resize(i + 1, [0.0; 4]);
+            self.values.resize(i + 1, [0; 4]);
         }
         self.values[i] = value;
         let rows = (self.buf.size() / 16) as u32;

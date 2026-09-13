@@ -7,6 +7,7 @@
 #   make dev             -- build (debug) & run the native desktop binary
 #   make build           -- build the release native binary
 #   make clean           -- cargo clean
+#   make sweep           -- delete build artifacts unused for SWEEP_DAYS (default 3) days
 #   make gui-builder     -- build (release) & run the GUI builder tool
 #   make gui-builder-dev -- build (debug) & run the GUI builder tool
 #   make mods            -- build mods-src (wasm32) & install packs into mods/
@@ -39,7 +40,7 @@ RD    ?=
 # affects OpenGL/GLES. Override with `make run NV_OFFLOAD=` to use the Intel iGPU.
 NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
 
-.PHONY: run run-native run-release run-server dev build build-native clean gui-builder gui-builder-dev mods test fmt fmt-check clippy source-audit validate-assets profile smoke check
+.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods test fmt fmt-check clippy source-audit validate-assets profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -72,6 +73,12 @@ build-native:
 
 clean:
 	$(CARGO) clean
+
+# Delete build artifacts no build has used for SWEEP_DAYS days, across every
+# target dir in the repo. Needs `cargo install cargo-sweep`.
+SWEEP_DAYS ?= 3
+sweep:
+	CARGO="$(CARGO)" SWEEP_DAYS=$(SWEEP_DAYS) bash scripts/sweep.sh
 
 # Standalone data-driven GUI builder (separate crate in ./gui-builder).
 gui-builder:

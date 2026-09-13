@@ -4,7 +4,7 @@ use super::*;
 fn falls_and_lands_on_floor() {
     // Solid everywhere y < 64 (a thick floor), air above.
     let solid = |_x: i32, y: i32, _z: i32| y < 64;
-    let mut pl = p(Vec3::new(0.0, 70.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 70.0, 0.0));
     // Large downward sweep: must clamp feet to the top of cell 63 (y=64).
     let blocked = pl.sweep(Axis::Y, -20.0, &solid);
     assert!(blocked);
@@ -15,7 +15,7 @@ fn falls_and_lands_on_floor() {
 fn does_not_tunnel_through_one_block_floor() {
     // Only y == 0 is solid (a 1-block-thick platform).
     let solid = |_x: i32, y: i32, _z: i32| y == 0;
-    let mut pl = p(Vec3::new(0.0, 5.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 5.0, 0.0));
     let blocked = pl.sweep(Axis::Y, -20.0, &solid);
     assert!(blocked, "must not fall through a 1-thick floor");
     assert_eq!(pl.pos.y, 1.0, "feet rest on top of cell 0");
@@ -25,7 +25,7 @@ fn does_not_tunnel_through_one_block_floor() {
 fn stops_at_wall_moving_positive_x() {
     // Wall at x >= 5.
     let solid = |x: i32, _y: i32, _z: i32| x >= 5;
-    let mut pl = p(Vec3::new(4.0, 64.0, 0.0)); // max.x = 4.3
+    let mut pl = p(WorldPos::new(4.0, 64.0, 0.0)); // max.x = 4.3
     let blocked = pl.sweep(Axis::X, 2.0, &solid);
     assert!(blocked);
     // max.x clamped to 5.0 => centre at 4.7.
@@ -36,7 +36,7 @@ fn stops_at_wall_moving_positive_x() {
 fn stops_at_wall_moving_negative_x() {
     // Wall at x <= 1 (cells 1 and below solid).
     let solid = |x: i32, _y: i32, _z: i32| x <= 1;
-    let mut pl = p(Vec3::new(4.0, 64.0, 0.0)); // min.x = 3.7
+    let mut pl = p(WorldPos::new(4.0, 64.0, 0.0)); // min.x = 3.7
     let blocked = pl.sweep(Axis::X, -3.0, &solid);
     assert!(blocked);
     // min.x clamped to 2.0 (top of cell 1) => centre at 2.3.
@@ -46,7 +46,7 @@ fn stops_at_wall_moving_negative_x() {
 #[test]
 fn moves_freely_in_open_air() {
     let solid = |_x: i32, _y: i32, _z: i32| false;
-    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
     assert!(!pl.sweep(Axis::Z, 3.0, &solid));
     assert_eq!(pl.pos.z, 3.0);
 }
@@ -74,7 +74,7 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
             &[]
         }
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5)); // feet on the floor top, walking +X into the ledge
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5)); // feet on the floor top, walking +X into the ledge
     for _ in 0..180 {
         pl.simulate(1.0 / 60.0, &Surroundings::dry(&half_step), walk_x);
     }
@@ -98,7 +98,7 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
             &[]
         }
     };
-    let mut pl2 = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl2 = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..180 {
         pl2.simulate(1.0 / 60.0, &Surroundings::dry(&full_block), walk_x);
     }
@@ -118,14 +118,14 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
 /// solid cell? Shrinks the box by a symmetric tol on every side (so it is
 /// direction-agnostic by construction — any asymmetry in `sweep` shows up as
 /// a disagreement with this).
-fn ref_overlaps<F: Fn(i32, i32, i32) -> bool>(pos: Vec3, solid: &F) -> bool {
+fn ref_overlaps<F: Fn(i32, i32, i32) -> bool>(pos: WorldPos, solid: &F) -> bool {
     let t = 1e-4;
-    let x0 = (pos.x - HALF_W + t).floor() as i32;
-    let x1 = (pos.x + HALF_W - t).floor() as i32;
+    let x0 = (pos.x - f64::from(HALF_W) + t).floor() as i32;
+    let x1 = (pos.x + f64::from(HALF_W) - t).floor() as i32;
     let y0 = (pos.y + t).floor() as i32;
-    let y1 = (pos.y + HEIGHT - t).floor() as i32;
-    let z0 = (pos.z - HALF_W + t).floor() as i32;
-    let z1 = (pos.z + HALF_W - t).floor() as i32;
+    let y1 = (pos.y + f64::from(HEIGHT) - t).floor() as i32;
+    let z0 = (pos.z - f64::from(HALF_W) + t).floor() as i32;
+    let z1 = (pos.z + f64::from(HALF_W) - t).floor() as i32;
     for x in x0..=x1 {
         for y in y0..=y1 {
             for z in z0..=z1 {
@@ -142,7 +142,7 @@ fn ref_overlaps<F: Fn(i32, i32, i32) -> bool>(pos: Vec3, solid: &F) -> bool {
 /// ~0.5 mm micro-steps and stopping before the first overlap. Moves *exactly*
 /// `disp` in open space (the final sub-step takes up the remainder, so there
 /// is no rounding drift). Obviously correct; the slow oracle for `sweep`.
-fn ref_move<F: Fn(i32, i32, i32) -> bool>(mut pos: Vec3, disp: Vec3, solid: &F) -> Vec3 {
+fn ref_move<F: Fn(i32, i32, i32) -> bool>(mut pos: WorldPos, disp: Vec3, solid: &F) -> WorldPos {
     let step = 5e-4f32;
     for axis in [0, 1] {
         let d = if axis == 0 { disp.x } else { disp.z };
@@ -151,9 +151,9 @@ fn ref_move<F: Fn(i32, i32, i32) -> bool>(mut pos: Vec3, disp: Vec3, solid: &F) 
             let this = step.min(d.abs() - moved) * d.signum();
             let mut next = pos;
             if axis == 0 {
-                next.x += this;
+                next.x += f64::from(this);
             } else {
-                next.z += this;
+                next.z += f64::from(this);
             }
             if ref_overlaps(next, solid) {
                 break;
@@ -227,7 +227,8 @@ fn sweep_matches_reference_from_all_directions() {
                     y < 64 || cells_v.iter().any(|c| c.x == x && c.y == y && c.z == z)
                 }
             };
-            let centre = Vec3::new(10.5 + bx as f32, 64.0, 10.5 + bz as f32);
+            let centre =
+                petramond_math::world_pos::WorldPos::new(10.5 + bx as f64, 64.0, 10.5 + bz as f64);
             for (dx, dz, name) in dirs {
                 let len = (dx * dx + dz * dz).sqrt();
                 let wishdir = Vec3::new(dx / len, 0.0, dz / len);
@@ -295,47 +296,63 @@ fn sweep_does_not_skip_flush_wall_at_far_coordinates() {
         let wz = base + 20;
 
         let wall_x = |x: i32, y: i32, z: i32| x == wx && (64..=65).contains(&y) && z == wz;
-        let mut plus_x = p(Vec3::new(wx as f32 - HALF_W, 64.0, wz as f32 + 0.5));
+        let mut plus_x = p(WorldPos::new(
+            wx as f64 - f64::from(HALF_W),
+            64.0,
+            wz as f64 + 0.5,
+        ));
         assert!(
             plus_x.sweep(Axis::X, 0.1, &wall_x),
             "+X should still hit a flush wall at base {base}"
         );
         assert!(
-            (plus_x.pos.x - (wx as f32 - HALF_W)).abs() <= 0.001,
+            (plus_x.pos.x - (wx as f64 - f64::from(HALF_W))).abs() <= 0.001,
             "+X moved through flush wall at base {base}: x={}",
             plus_x.pos.x
         );
 
-        let mut minus_x = p(Vec3::new((wx + 1) as f32 + HALF_W, 64.0, wz as f32 + 0.5));
+        let mut minus_x = p(WorldPos::new(
+            (wx + 1) as f64 + f64::from(HALF_W),
+            64.0,
+            wz as f64 + 0.5,
+        ));
         assert!(
             minus_x.sweep(Axis::X, -0.1, &wall_x),
             "-X should still hit a flush wall at base {base}"
         );
         assert!(
-            (minus_x.pos.x - ((wx + 1) as f32 + HALF_W)).abs() <= 0.001,
+            (minus_x.pos.x - ((wx + 1) as f64 + f64::from(HALF_W))).abs() <= 0.001,
             "-X moved through flush wall at base {base}: x={}",
             minus_x.pos.x
         );
 
         let wall_z = |x: i32, y: i32, z: i32| x == wx && (64..=65).contains(&y) && z == wz;
-        let mut plus_z = p(Vec3::new(wx as f32 + 0.5, 64.0, wz as f32 - HALF_W));
+        let mut plus_z = p(WorldPos::new(
+            wx as f64 + 0.5,
+            64.0,
+            wz as f64 - f64::from(HALF_W),
+        ));
         assert!(
             plus_z.sweep(Axis::Z, 0.1, &wall_z),
             "+Z should still hit a flush wall at base {base}"
         );
         assert!(
-            (plus_z.pos.z - (wz as f32 - HALF_W)).abs() <= 0.001,
+            (plus_z.pos.z - (wz as f64 - f64::from(HALF_W))).abs() <= 0.001,
             "+Z moved through flush wall at base {base}: z={}",
             plus_z.pos.z
         );
 
-        let mut minus_z = p(Vec3::new(wx as f32 + 0.5, 64.0, (wz + 1) as f32 + HALF_W));
+        let mut minus_z = p(WorldPos::new(
+            wx as f64 + 0.5,
+            64.0,
+            (wz + 1) as f64 + f64::from(HALF_W),
+        ));
         assert!(
             minus_z.sweep(Axis::Z, -0.1, &wall_z),
             "-Z should still hit a flush wall at base {base}"
         );
         assert!(
-            (minus_z.pos.z - ((wz + 1) as f32 + HALF_W)).abs() <= 0.001,
+            (minus_z.pos.z - ((wz + 1) as f64 + f64::from(HALF_W))).abs() <= 0.001,
             "-Z moved through flush wall at base {base}: z={}",
             minus_z.pos.z
         );
@@ -357,7 +374,7 @@ fn chest_collides_as_its_inset_box() {
     let top = 64.0 + 14.0 / 16.0; // the chest's 14/16 collision top
 
     // Falling onto the chest lands the feet on its 14/16 top, not the full cell top.
-    let mut faller = p(Vec3::new(0.5, 66.0, 0.5));
+    let mut faller = p(WorldPos::new(0.5, 66.0, 0.5));
     assert!(
         faller.sweep_boxes(Axis::Y, -5.0, &boxes),
         "lands on the chest"
@@ -370,7 +387,7 @@ fn chest_collides_as_its_inset_box() {
 
     // Standing on the chest top, you can walk off it (no full-cell wall blocking the
     // body just because its feet share the chest's cell).
-    let mut on_top = p(Vec3::new(0.5, top, 0.5));
+    let mut on_top = p(WorldPos::new(0.5, top, 0.5));
     assert!(
         !on_top.sweep_boxes(Axis::X, 1.0, &boxes),
         "walking off the top is not blocked"
@@ -383,14 +400,14 @@ fn chest_collides_as_its_inset_box() {
 
     // At ground level beside the chest, walking into it stops at the 1/16 inset face,
     // not the cell boundary.
-    let mut walker = p(Vec3::new(-1.0, 64.0, 0.5));
+    let mut walker = p(WorldPos::new(-1.0, 64.0, 0.5));
     assert!(
         walker.sweep_boxes(Axis::X, 2.0, &boxes),
         "hits the chest side"
     );
     assert!(
-        (walker.aabb_max().x - 1.0 / 16.0).abs() < 1e-3,
+        (walker.aabb_max()[0] - 1.0 / 16.0).abs() < 1e-3,
         "stops at the inset -X face (1/16), got {}",
-        walker.aabb_max().x
+        walker.aabb_max()[0]
     );
 }

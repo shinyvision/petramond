@@ -25,7 +25,7 @@ struct Uniforms {
     fog: vec4<f32>,
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<f32>,
+    render_origin: vec4<i32>,
     atlas_layout: vec4<u32>,
     sky_color: vec4<f32>,
     sun_dir: vec4<f32>,
@@ -36,6 +36,7 @@ struct Uniforms {
 struct ContactIn {
     @location(0) pos:    vec3<f32>,
     @location(1) darken: f32,
+    @location(5) col_origin: vec4<i32>,
 };
 
 struct ContactOut {
@@ -48,7 +49,7 @@ struct ContactOut {
 @vertex
 fn vs_contact(in: ContactIn) -> ContactOut {
     var out: ContactOut;
-    let local_pos = in.pos - u.render_origin.xyz;
+    let local_pos = vec3<f32>(in.col_origin.xyz - u.render_origin.xyz) + in.pos;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.darken = in.darken;
     out.view = local_pos - u.cam_pos.xyz;
@@ -65,7 +66,7 @@ fn fs_contact(in: ContactOut) -> @location(0) vec4<f32> {
         fade = clamp((dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
     } else {
         // atmosphere_amount() is exactly 1.0 at fog_end — the identity contract.
-        fade = atmosphere_amount(dist, u.fog.x, u.fog.y, in.world_y, u.cam_pos.y + u.render_origin.y);
+        fade = atmosphere_amount(dist, u.fog.x, u.fog.y, in.world_y, u.cam_pos.y + f32(u.render_origin.y));
     }
     let m = mix(1.0 - in.darken, 1.0, fade);
     return vec4<f32>(m, m, m, 1.0);

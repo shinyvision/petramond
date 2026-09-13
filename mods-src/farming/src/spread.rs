@@ -99,9 +99,9 @@ fn try_spread(content: &Content, pos: [i32; 3], plant: BlockId) {
         emitter_burst(
             "farming:fertilize_burst",
             [
-                c.head[0] as f32 + 0.5,
-                c.head[1] as f32 + 0.3,
-                c.head[2] as f32 + 0.5,
+                c.head[0] as f64 + 0.5,
+                c.head[1] as f64 + 0.3,
+                c.head[2] as f64 + 0.5,
             ],
             1.0,
         );

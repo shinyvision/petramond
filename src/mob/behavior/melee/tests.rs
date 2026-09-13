@@ -1,13 +1,20 @@
 use super::*;
 use crate::mob::MobRng;
 use crate::world::World;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::ChunkPos;
 
 /// A ctx whose brain has the (default-id) player LOCKED — melee only
 /// strikes a published lock, so the classic strike tests provide one.
 /// The anchor slice is leaked: test-only, and `AiCtx` borrows it.
-fn ctx<'a>(world: &'a World, rng: &'a mut MobRng, pos: Vec3, yaw: f32, player: Vec3) -> AiCtx<'a> {
+fn ctx<'a>(
+    world: &'a World,
+    rng: &'a mut MobRng,
+    pos: WorldPos,
+    yaw: f32,
+    player: WorldPos,
+) -> AiCtx<'a> {
     let players: &'static [crate::mob::PlayerAnchor] =
         Box::leak(Box::new([crate::mob::PlayerAnchor {
             pos: player,
@@ -25,8 +32,12 @@ fn ctx<'a>(world: &'a World, rng: &'a mut MobRng, pos: Vec3, yaw: f32, player: V
 }
 
 /// A player one block in front of the mob's face (-Z), inside a 1.5 reach.
-fn in_reach() -> (Vec3, f32, Vec3) {
-    (Vec3::new(8.5, 64.0, 8.5), 0.0, Vec3::new(8.5, 64.9, 7.2))
+fn in_reach() -> (WorldPos, f32, WorldPos) {
+    (
+        WorldPos::new(8.5, 64.0, 8.5),
+        0.0,
+        WorldPos::new(8.5, 64.9, 7.2),
+    )
 }
 
 #[test]
@@ -132,17 +143,17 @@ fn out_of_reach_or_facing_away_lands_nothing() {
     let world = World::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
-    let pos = Vec3::new(8.5, 64.0, 8.5);
+    let pos = WorldPos::new(8.5, 64.0, 8.5);
 
     // 5 blocks away: out of reach.
-    let far = Vec3::new(8.5, 64.9, 3.5);
+    let far = WorldPos::new(8.5, 64.9, 3.5);
     assert!(ai
         .tick(&mut ctx(&world, &mut rng, pos, 0.0, far))
         .attack
         .is_none());
 
     // In reach at -Z but the mob faces +Z (yaw PI): squarely behind it.
-    let behind = Vec3::new(8.5, 64.9, 7.2);
+    let behind = WorldPos::new(8.5, 64.9, 7.2);
     assert!(
         ai.tick(&mut ctx(&world, &mut rng, pos, PI, behind))
             .attack
@@ -165,8 +176,8 @@ fn block_between_mob_and_player_prevents_strike_without_cooldown() {
     assert!(world.set_block_world(8, 64, 7, Block::Stone));
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(3.0, 2.0, 5.0, 10);
-    let pos = Vec3::new(8.5, 64.0, 8.5);
-    let player = Vec3::new(8.5, 64.9, 5.8);
+    let pos = WorldPos::new(8.5, 64.0, 8.5);
+    let player = WorldPos::new(8.5, 64.9, 5.8);
 
     assert!(
         ai.tick(&mut ctx(&world, &mut rng, pos, 0.0, player))
@@ -209,18 +220,18 @@ fn a_locked_mob_target_is_struck_and_a_vanished_one_fizzles() {
     let world = World::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 4.0, 5.0, 10);
-    let pos = Vec3::new(8.5, 64.0, 8.5);
+    let pos = WorldPos::new(8.5, 64.0, 8.5);
     // A victim mob one block in front of the striker's face (-Z), well
     // inside reach once its own half-width pads the gap. The player is far
     // away — a locked mob target must NOT fall back to the player.
     let victim = AiMob {
         id: 7,
         kind: crate::mob::Mob::Sheep,
-        pos: Vec3::new(8.5, 64.0, 7.2),
+        pos: WorldPos::new(8.5, 64.0, 7.2),
         active: true,
         tags: Default::default(),
     };
-    let far_player = Vec3::new(80.0, 64.9, 80.0);
+    let far_player = WorldPos::new(80.0, 64.9, 80.0);
 
     let mut c = ctx(&world, &mut rng, pos, 0.0, far_player);
     let mobs = [victim];

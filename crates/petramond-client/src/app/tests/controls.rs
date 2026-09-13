@@ -3,7 +3,7 @@ use crate::app::{App, CursorIcon, CursorPolicy};
 use petramond::net::protocol::{ClientToServer, ServerToClient};
 use petramond::player::PlayerMode;
 use petramond::save::WorldInfo;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_world::controls::{Control, Modifiers, TextKey, TextShortcut};
 use petramond_world::gui_state::PointerButton;
@@ -12,7 +12,7 @@ use petramond_world::sound_registry::Sound;
 
 #[test]
 fn app_starts_on_title_without_loading_a_game() {
-    let app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
 
     assert_eq!(app.screen, crate::app::AppScreen::Title);
     assert!(app.game.is_none(), "title screen does not preload a world");
@@ -32,7 +32,7 @@ fn app_starts_on_title_without_loading_a_game() {
 #[test]
 fn world_settings_requires_selection_and_hosts_the_delete_flow() {
     use petramond_world::gui_state::GuiKind;
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::WorldSelect;
     app.worlds = test_worlds(1);
     let screen = (1280, 720);
@@ -75,7 +75,7 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
 #[test]
 fn create_world_document_input_types_selects_and_uses_clipboard() {
     use petramond_world::gui_state::GuiKind;
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::CreateWorld;
     let screen = (1280, 720);
     let shared = std::rc::Rc::new(std::cell::RefCell::new(None::<String>));
@@ -156,7 +156,7 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
 #[test]
 fn document_shell_screens_flow_via_pointer_and_keys() {
     use petramond_world::gui_state::GuiKind;
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
     let click_id = click_doc_id;
 
@@ -196,7 +196,7 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
 #[test]
 fn shell_button_and_toggle_activations_play_ui_click_sound() {
     use petramond_world::gui_state::GuiKind;
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
 
     app.drive_doc_ui(GuiKind::Title, screen, 0.0);
@@ -235,7 +235,7 @@ fn play_after_rename_opens_the_original_save_directory() {
     petramond::save::write_world_metadata(dir_name).expect("create world dir");
     petramond::save::rename_world(dir_name, "Renamed Display Name").expect("rename");
 
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.refresh_worlds();
     let idx = app
         .worlds
@@ -269,7 +269,7 @@ fn play_after_rename_opens_the_original_save_directory() {
 fn world_settings_tabs_swap_pages() {
     use crate::app::shell::SettingsTab;
     use petramond_world::gui_state::GuiKind;
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::WorldSelect;
     app.worlds = test_worlds(1);
@@ -323,7 +323,7 @@ fn create_world_writes_buffered_settings_at_create() {
     let dir_name = petramond::save::dir_name_for(name);
     let _ = petramond::save::delete_world(&dir_name);
 
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::WorldSelect;
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.0);
@@ -646,7 +646,7 @@ pub(super) fn click_doc_id(app: &mut App, id: &str) {
 #[test]
 fn options_opens_from_title_and_esc_walks_back_out() {
     use petramond_world::gui_state::GuiKind;
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
 
     app.drive_doc_ui(GuiKind::Title, screen, 0.0);
@@ -735,7 +735,7 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     use petramond_world::gui_state::GuiKind;
     use petramond_world::keycode::KeyCode;
 
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::OptionsControls;
 

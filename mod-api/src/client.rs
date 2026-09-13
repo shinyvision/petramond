@@ -43,7 +43,7 @@ pub struct ClientSurfaceColumn {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ClientFrameData {
     pub dt: f32,
-    pub player_pos: [f32; 3],
+    pub player_pos: [f64; 3],
     pub yaw: f32,
     pub pitch: f32,
     pub screen: [u32; 2],

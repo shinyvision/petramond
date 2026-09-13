@@ -181,6 +181,21 @@ pub(super) fn finite3(v: [f32; 3], what: &str) -> Result<Vec3, HostRet> {
     }
 }
 
+/// A mod-supplied world position, rejected unless every component is finite.
+pub(super) fn finite_pos(
+    v: [f64; 3],
+    what: &str,
+) -> Result<petramond_math::world_pos::WorldPos, HostRet> {
+    if v.iter().all(|c| c.is_finite()) {
+        // Every mod world point lands inside the world border.
+        Ok(petramond_world::border::clamp(
+            petramond_math::world_pos::WorldPos::from_array(v),
+        ))
+    } else {
+        Err(HostRet::Error(format!("{what}: non-finite component")))
+    }
+}
+
 /// The runtime item registered under registry NAME `name` — the one
 /// mod-facing item identity. O(1) through the shared name index.
 pub(super) fn item_by_name(name: &str) -> Option<ItemType> {

@@ -85,7 +85,7 @@ pub struct MobSnapshot {
     /// [`HostCall::MobNames`]: crate::HostCall::MobNames
     pub kind: MobId,
     /// Feet position.
-    pub pos: [f32; 3],
+    pub pos: [f64; 3],
     pub health: f32,
     /// Stable session id for this live mob — THE mob address, held across
     /// ticks. It survives unrelated removals; it is not a species id and is
@@ -158,7 +158,7 @@ pub struct ItemEntityData {
     /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
     pub owner: Option<EntityRef>,
     /// Centre, world space.
-    pub pos: [f32; 3],
+    pub pos: [f64; 3],
     /// Velocity, m/s (zero once lodged).
     pub vel: [f32; 3],
     pub motion: ItemMotion,
@@ -233,7 +233,7 @@ pub enum MountTarget {
     /// anchor position the pose was pinned at.
     ///
     /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
-    Anchor([f32; 3]),
+    Anchor([f64; 3]),
 }
 
 /// Named actor-pose vocabulary for [`HostCall::PlayerPoseSet`] (`0` is
@@ -615,7 +615,7 @@ pub struct PlayerSnapshot {
     /// init, unit fixtures). On a CLIENT instance, always the local player.
     pub id: Option<PlayerId>,
     /// Feet position.
-    pub pos: [f32; 3],
+    pub pos: [f64; 3],
     pub vel: [f32; 3],
     /// Look direction, radians (yaw about +Y, pitch clamped short of vertical).
     pub yaw: f32,
@@ -667,11 +667,11 @@ pub struct PlayerSnapshot {
     /// read model for static seats: a consumer derives "is this seat taken"
     /// by comparing its own seat anchors against the roster — the engine's
     /// registry is always truth, so there is no mod-side bookkeeping to
-    /// desync. Anchors round-trip verbatim (`f32` bit-exact), so exact
+    /// desync. Anchors round-trip verbatim (`f64` bit-exact), so exact
     /// equality against the anchor a mod passed is sound.
     ///
     /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
-    pub pose_anchor: Option<[f32; 3]>,
+    pub pose_anchor: Option<[f64; 3]>,
     /// What this body's hands did with the action buttons this tick (client:
     /// this frame) — the swing facts a hand-animating mod keys its curves
     /// off. See [`HostCall::SetPlayerHandMotions`], the matching ownership
@@ -754,7 +754,7 @@ pub struct GuiViewerData {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HostileSpawnCandidate {
     /// Feet position, centered in the candidate cell.
-    pub pos: [f32; 3],
+    pub pos: [f64; 3],
     /// Feet cell.
     pub cell: [i32; 3],
     /// Cached light channels on the 6-bit `0..=63` scale.
@@ -1071,7 +1071,7 @@ pub struct AiNodeCtx {
     /// Stable id of the deciding mob — key per-mob guest state off it.
     pub mob_id: u64,
     /// Mob feet position (world space).
-    pub pos: [f32; 3],
+    pub pos: [f64; 3],
     /// Mob foothold voxel.
     pub cell: [i32; 3],
     /// Body facing (radians).
@@ -1084,7 +1084,7 @@ pub struct AiNodeCtx {
     /// in this snapshot describes.
     pub player_id: PlayerId,
     /// That player's body-centre (world space).
-    pub player_pos: [f32; 3],
+    pub player_pos: [f64; 3],
     /// True when the navigator has no active path ("the mob is idle").
     pub nav_idle: bool,
     /// The fluid the mob's body is in or resting on, if any.

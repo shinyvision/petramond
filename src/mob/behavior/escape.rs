@@ -6,7 +6,7 @@
 //! animal bolting rather than a body sliding to the horizon, and it keeps the
 //! mob out of the corner a straight retreat would pin it in.
 
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 
 use super::super::brain::{AiCtx, ChannelClaims, DecisionChannel};
 use super::super::nav;
@@ -117,10 +117,18 @@ impl EscapeRoute {
 
     /// The foothold to head for this tick while escaping `threat`, or `None`
     /// when no reachable leg exists right now (stand; try again shortly).
-    pub fn goal(&mut self, ctx: &mut AiCtx, threat: Vec3) -> Option<IVec3> {
+    pub fn goal(
+        &mut self,
+        ctx: &mut AiCtx,
+        threat: petramond_math::world_pos::WorldPos,
+    ) -> Option<IVec3> {
         self.ticks = self.ticks.saturating_sub(1);
         let safe_goal = self.goal.is_some_and(|g| {
-            let step = Vec3::new(g.x as f32 + 0.5, ctx.pos.y, g.z as f32 + 0.5);
+            let step = petramond_math::world_pos::WorldPos::new(
+                f64::from(g.x) + 0.5,
+                ctx.pos.y,
+                f64::from(g.z) + 0.5,
+            );
             horizontal_distance(step, threat) > horizontal_distance(ctx.pos, threat)
         });
         if self.ticks > 0 && safe_goal && !ctx.nav_idle {
@@ -153,14 +161,18 @@ impl EscapeRoute {
             let angle = away + sign * (LEG_ANGLE_MIN + ctx.rng.next_f32() * LEG_ANGLE_SPREAD);
             let distance =
                 LEG_MIN_DISTANCE + ctx.rng.next_f32() * (self.radius as f32 - LEG_MIN_DISTANCE);
-            let x = (ctx.pos.x + angle.sin() * distance).floor() as i32;
-            let z = (ctx.pos.z + angle.cos() * distance).floor() as i32;
+            let x = (ctx.pos.x + f64::from(angle.sin() * distance)).floor() as i32;
+            let z = (ctx.pos.z + f64::from(angle.cos() * distance)).floor() as i32;
             for dy in FOOTHOLD_DY {
                 let goal = IVec3::new(x, ctx.cell.y + dy, z);
                 if !is_navigation_foothold_with(goal, params, &solid, &support, &fluid) {
                     continue;
                 }
-                let end = Vec3::new(x as f32 + 0.5, ctx.pos.y, z as f32 + 0.5);
+                let end = petramond_math::world_pos::WorldPos::new(
+                    f64::from(x) + 0.5,
+                    ctx.pos.y,
+                    f64::from(z) + 0.5,
+                );
                 if horizontal_distance(end, threat)
                     <= horizontal_distance(ctx.pos, threat) + AWAY_MARGIN
                 {
@@ -196,6 +208,10 @@ impl EscapeRoute {
     }
 }
 
-fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
-    (a.x - b.x).hypot(a.z - b.z)
+fn horizontal_distance(
+    a: petramond_math::world_pos::WorldPos,
+    b: petramond_math::world_pos::WorldPos,
+) -> f32 {
+    let d = a - b;
+    d.x.hypot(d.z)
 }

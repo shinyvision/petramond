@@ -8,11 +8,13 @@ use mod_api::{
 
 use crate::entity::DroppedItem;
 use crate::events::{DamageSource, DeferredAction, PostEvent, SimCtx};
-use petramond_math::math::{Tilt, Vec3};
+use petramond_math::math::Tilt;
 use petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE;
 use petramond_world::item::{ItemStack, ItemType};
 
-use super::guards::{finite3, item_by_name, live_mob, sim_mutate, sim_mutating_query, sim_query};
+use super::guards::{
+    finite3, finite_pos, item_by_name, live_mob, sim_mutate, sim_mutating_query, sim_query,
+};
 use super::intern_mod_id;
 
 /// Maximum horizontal speed accepted from `MobDrive`, derived from the
@@ -127,7 +129,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             pos,
             yaw,
             checked,
-        } => match finite3(pos, "SpawnMob.pos") {
+        } => match finite_pos(pos, "SpawnMob.pos") {
             Err(e) => e,
             Ok(_) if !yaw.is_finite() => HostRet::Error("SpawnMob.yaw must be finite".into()),
             Ok(pos) => sim_mutating_query(|ctx| {
@@ -171,7 +173,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 petramond_math::math::IVec3::new(cell[0], cell[1], cell[2]),
             ))
         }),
-        HostCall::MobsInRadius { pos, radius } => match finite3(pos, "MobsInRadius.pos") {
+        HostCall::MobsInRadius { pos, radius } => match finite_pos(pos, "MobsInRadius.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
                 if !radius.is_finite() {
@@ -197,7 +199,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             origin,
             feedback,
             attacker,
-        } => match origin.map(|p| finite3(p, "DamageMob.origin")).transpose() {
+        } => match origin
+            .map(|p| finite_pos(p, "DamageMob.origin"))
+            .transpose()
+        {
             Err(e) => e,
             Ok(origin) => {
                 let mod_id = intern_mod_id(mod_id);
@@ -361,7 +366,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
-                let pos = Vec3::from(pos);
+                let pos = petramond_math::world_pos::WorldPos::from_array(pos);
                 match ctx
                     .world
                     .mobs_mut()
@@ -388,7 +393,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             yaw,
             pose,
         } => {
-            let anchor = match finite3(anchor, "PlayerPoseSet.anchor") {
+            let anchor = match finite_pos(anchor, "PlayerPoseSet.anchor") {
                 Ok(a) => a,
                 Err(e) => return e,
             };
@@ -466,7 +471,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             count,
             pos,
             data,
-        } => match finite3(pos, "SpawnItem.pos") {
+        } => match finite_pos(pos, "SpawnItem.pos") {
             Err(e) => e,
             Ok(pos) => {
                 let variant = match super::guards::intern_abi_data("SpawnItem", &data) {
@@ -493,7 +498,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             owner,
             data,
         } => match (
-            finite3(pos, "LaunchItem.pos"),
+            finite_pos(pos, "LaunchItem.pos"),
             finite3(vel, "LaunchItem.vel"),
         ) {
             (Err(e), _) | (_, Err(e)) => e,
@@ -518,7 +523,12 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             }
         },
         HostCall::ItemEntity { entity } => sim_query(|ctx| {
-            HostRet::ItemEntity(ctx.world.dropped_items().get(entity).map(item_entity_data))
+            HostRet::ItemEntity(
+                ctx.world
+                    .dropped_items()
+                    .get(entity)
+                    .map(|item| Box::new(item_entity_data(item))),
+            )
         }),
         other => HostRet::Error(format!(
             "non-entity call {other:?} mis-routed to handle_entity_call (host bug)"
@@ -533,10 +543,10 @@ fn spawn_item_stacks(
     ctx: &mut SimCtx<'_>,
     item: ItemType,
     count: u8,
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     variant: petramond_world::item::VariantId,
 ) {
-    let cell = petramond_math::math::voxel_at(pos);
+    let cell = pos.block();
     let sky = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
     let block = petramond_world::light::BlockLight6::from_x2(
         ctx.world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
@@ -557,10 +567,11 @@ fn spawn_item_stacks(
 
 /// Deterministic per-drop pop seed: a SplitMix64 finalizer over the tick, the
 /// spawn position bits, and the in-call index.
-fn drop_seed(tick: u64, pos: Vec3, i: u32) -> u32 {
+fn drop_seed(tick: u64, pos: petramond_math::world_pos::WorldPos, i: u32) -> u32 {
     let mut z = tick
-        ^ ((pos.x.to_bits() as u64) << 32 | pos.z.to_bits() as u64)
-        ^ ((pos.y.to_bits() as u64) << 16)
+        ^ pos.x.to_bits().rotate_left(32)
+        ^ pos.z.to_bits()
+        ^ pos.y.to_bits().rotate_left(16)
         ^ ((i as u64) << 1);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -589,7 +600,7 @@ fn fill_inventory(
     item: ItemType,
     count: u8,
     variant: petramond_world::item::VariantId,
-) -> (Vec<ItemStack>, petramond_math::math::Vec3) {
+) -> (Vec<ItemStack>, petramond_math::world_pos::WorldPos) {
     let mut leftovers = Vec::new();
     let mut remaining = count;
     while remaining > 0 {
@@ -608,12 +619,12 @@ fn fill_inventory(
 /// The world half of a give: drop what the inventory refused, at `at`.
 fn drop_leftovers(
     world: &mut crate::world::World,
-    at: petramond_math::math::Vec3,
+    at: petramond_math::world_pos::WorldPos,
     leftovers: Vec<ItemStack>,
 ) {
     for (i, leftover) in leftovers.into_iter().enumerate() {
         let seed = drop_seed(world.current_tick(), at, i as u32);
-        let cell = petramond_math::math::voxel_at(at);
+        let cell = at.block();
         let mut drop = DroppedItem::new(at, leftover, seed);
         drop.skylight = world.skylight6_at_world(cell.x, cell.y, cell.z);
         drop.blocklight = petramond_world::light::BlockLight6::from_x2(
@@ -647,6 +658,7 @@ mod tests {
         HostCall, HostRet, MobAnimStateData, MobRidersData, MAX_MOB_ANIM_NAME_BYTES,
         MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
     };
+    use petramond_math::world_pos::WorldPos;
 
     use crate::events::tick::TickEvents;
     use crate::events::{PostQueue, SimCtx};
@@ -654,7 +666,6 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
-    use petramond_math::math::Vec3;
     use petramond_world::chunk::{ChunkPos, SECTION_VOLUME};
 
     #[test]
@@ -668,7 +679,7 @@ mod tests {
         section.set_skylight(vec![0; SECTION_VOLUME].into());
         section.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
 
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -705,7 +716,7 @@ mod tests {
         let mut world = World::new(1, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         world.set_block_world(8, 64, 8, petramond_world::block::Block::Stone);
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -767,11 +778,11 @@ mod tests {
         let mut world = World::new(1, 1);
         assert!(world
             .mobs_mut()
-            .spawn(crate::mob::Mob::Owl, Vec3::new(1.0, 80.0, 1.0), 0.0));
+            .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
         assert!(world
             .mobs_mut()
-            .spawn(crate::mob::Mob::Owl, Vec3::new(2.0, 80.0, 2.0), 0.0));
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+            .spawn(crate::mob::Mob::Owl, WorldPos::new(2.0, 80.0, 2.0), 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -885,9 +896,9 @@ mod tests {
         let mut world = World::new(1, 1);
         assert!(world
             .mobs_mut()
-            .spawn(crate::mob::Mob::Owl, Vec3::new(1.0, 80.0, 1.0), 0.0));
+            .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
         let mob_id = world.mobs().instances()[0].id();
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -971,7 +982,7 @@ mod tests {
         let mut world = World::new(1, 1);
         assert!(world
             .mobs_mut()
-            .spawn(crate::mob::Mob::Owl, Vec3::new(1.0, 80.0, 1.0), 0.0));
+            .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
         let mob_id = world.mobs().instances()[0].id();
         assert!(world
             .mobs_mut()
@@ -986,7 +997,7 @@ mod tests {
             .is_some());
         assert!(world.mobs().instances()[0].is_dead());
 
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();

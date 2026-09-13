@@ -11,10 +11,10 @@ use crate::entity::{DroppedItem, Heading, Motion, Stuck};
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u16, put_u32, Reader};
 use petramond_math::math::{IVec3, Vec3};
 
-/// Bytes per serialized entity: pos(12) + vel(12) + slot(4, plain stack) +
+/// Bytes per serialized entity: pos(24) + vel(12) + slot(4, plain stack) +
 /// ticks_lived(4) + spin(4) + motion(1). Data-bearing stacks and lodged
 /// items append past this; the constant is only a reserve hint.
-const ENTITY_BYTES: usize = 37;
+const ENTITY_BYTES: usize = 49;
 
 petramond_math::wire_enum::wire_enum! {
     /// The persisted motion tag. A flight persists WITHOUT its owner (a
@@ -37,9 +37,9 @@ pub fn put_entities(buf: &mut Vec<u8>, items: &[DroppedItem]) {
     buf.reserve(2 + n * ENTITY_BYTES);
     put_u16(buf, n as u16);
     for it in &items[..n] {
-        put_f32(buf, it.pos.x);
-        put_f32(buf, it.pos.y);
-        put_f32(buf, it.pos.z);
+        crate::save::codec::put_f64(buf, it.pos.x);
+        crate::save::codec::put_f64(buf, it.pos.y);
+        crate::save::codec::put_f64(buf, it.pos.z);
         put_f32(buf, it.vel.x);
         put_f32(buf, it.vel.y);
         put_f32(buf, it.vel.z);
@@ -80,7 +80,7 @@ pub fn get_entities(r: &mut Reader) -> Option<Vec<DroppedItem>> {
     let n = r.u16()? as usize;
     let mut out = Vec::with_capacity(n.min(1024));
     for _ in 0..n {
-        let pos = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
+        let pos = petramond_math::world_pos::WorldPos::new(r.f64()?, r.f64()?, r.f64()?);
         let vel = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
         let slot = get_item_slot(r)?;
         let ticks_lived = r.u32()?;
@@ -109,12 +109,13 @@ pub fn get_entities(r: &mut Reader) -> Option<Vec<DroppedItem>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::item::{ItemStack, ItemType};
 
     #[test]
     fn entities_roundtrip_through_a_buffer() {
         let mut a = DroppedItem::new(
-            Vec3::new(1.0, 64.0, 2.0),
+            WorldPos::new(1.0, 64.0, 2.0),
             ItemStack::new(ItemType::Stone, 5),
             1,
         );
@@ -122,7 +123,7 @@ mod tests {
         a.ticks_lived = 3000;
         a.spin = 1.25;
         let b = DroppedItem::new(
-            Vec3::new(-3.0, 70.0, 8.0),
+            WorldPos::new(-3.0, 70.0, 8.0),
             ItemStack::new(ItemType::Dirt, 1),
             2,
         );
@@ -158,7 +159,7 @@ mod tests {
         };
         let anchor = IVec3::new(-3, 64, 7);
         let mut stuck = DroppedItem::new(
-            Vec3::new(1.0, 64.0, 2.0),
+            WorldPos::new(1.0, 64.0, 2.0),
             ItemStack::new(ItemType::Stone, 1),
             1,
         );
@@ -168,7 +169,7 @@ mod tests {
             verified: true,
         });
         let flying = DroppedItem::launched(
-            Vec3::new(1.0, 64.0, 2.0),
+            WorldPos::new(1.0, 64.0, 2.0),
             ItemStack::new(ItemType::Stone, 1),
             Vec3::new(3.0, 1.0, 0.0),
             Some(crate::mob::EntityRef::Player(crate::player::PlayerId(4))),
@@ -201,7 +202,7 @@ mod tests {
         m.insert("petramond:tint".into(), vec![1, 2, 3]);
         let v = variant::intern(&m).unwrap();
         let d = DroppedItem::new(
-            Vec3::new(0.0, 64.0, 0.0),
+            WorldPos::new(0.0, 64.0, 0.0),
             petramond_world::item::ItemStack::with_variant(ItemType::Stone, 2, v),
             1,
         );

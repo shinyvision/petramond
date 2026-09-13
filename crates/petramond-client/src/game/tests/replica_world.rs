@@ -9,13 +9,14 @@ use super::common::game;
 use crate::game::GameInput;
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
 /// A flat stone floor at y=64 in column (0,0) on the SERVER world, with the
 /// player (client + session) standing on it — the fixture the pipe then
 /// replicates.
-fn floored_game_at(feet: Vec3) -> super::common::TestGame {
+fn floored_game_at(feet: WorldPos) -> super::common::TestGame {
     let mut game = game();
     game.server.world.clear_world();
     let mut chunk = Chunk::new(0, 0);
@@ -31,7 +32,7 @@ fn floored_game_at(feet: Vec3) -> super::common::TestGame {
     game
 }
 
-fn place_player(game: &mut super::common::TestGame, feet: Vec3) {
+fn place_player(game: &mut super::common::TestGame, feet: WorldPos) {
     game.player.pos = feet;
     game.player.vel = Vec3::ZERO;
     game.server.sessions[0].player.pos = feet;
@@ -45,7 +46,7 @@ fn frame(game: &mut super::common::TestGame) {
 
 #[test]
 fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
-    let mut game = floored_game_at(Vec3::new(8.5, 65.0, 8.5));
+    let mut game = floored_game_at(WorldPos::new(8.5, 65.0, 8.5));
 
     // The first pumps stream the fixture into the replica. Sections ship only
     // once the server's light bake lands (the light-final ship gate); with the
@@ -110,7 +111,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
 
     // Terrain leaving the keep shape unloads from the replica (the far column
     // gets a ColumnUnload once the anchor moves away).
-    place_player(&mut game, Vec3::new(328.5, 65.0, 328.5));
+    place_player(&mut game, WorldPos::new(328.5, 65.0, 328.5));
     for _ in 0..3 {
         frame(&mut game);
     }
@@ -129,7 +130,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
 /// replica itself never marks light dirty or bakes.
 #[test]
 fn server_rebakes_replicate_as_light_data() {
-    let mut game = floored_game_at(Vec3::new(8.5, 65.0, 8.5));
+    let mut game = floored_game_at(WorldPos::new(8.5, 65.0, 8.5));
     let torch = IVec3::new(6, 65, 6);
 
     // Wait for the lit floor section to ship.
@@ -177,7 +178,7 @@ fn server_rebakes_replicate_as_light_data() {
 
 #[test]
 fn open_chest_state_replicates_and_drives_the_lid_target() {
-    let mut game = floored_game_at(Vec3::new(8.5, 65.0, 8.5));
+    let mut game = floored_game_at(WorldPos::new(8.5, 65.0, 8.5));
     let pos = IVec3::new(3, 65, 3);
     assert!(game
         .server

@@ -8,7 +8,7 @@ use super::super::vertex::{ContactShadowVertex, ModelVertex};
 
 /// Stream one bbmodel-block cell's geometry into the `model` buffers: copy the cell's
 /// startup-baked template (positions already taken through the cube rotation + placement
-/// facing) translated to the world base, carrying the cell's sky light and its
+/// facing) translated to its base in mesh space (relative to `anchor`), carrying the cell's sky light and its
 /// COLOURED block light separately so the world-model shader applies the
 /// day/night scale at draw time. No matrices / quaternions / face-bias work
 /// happens per remesh — it's all resolved once in [`block_model::ModelInstance`],
@@ -30,6 +30,7 @@ pub(super) fn emit_model_block(
     wx: i32,
     wy: i32,
     wz: i32,
+    anchor: IVec3,
     sky6: u32,
     block: petramond_world::light::BlockLight6,
     parts: u32,
@@ -44,7 +45,7 @@ pub(super) fn emit_model_block(
     // rotated footprint base. The template's vertices are baked relative to that base, so
     // placing the cell is one translate per vertex.
     let base = block_model::base_from_cell(IVec3::new(wx, wy, wz), kind, offset, facing);
-    let basef = Vec3::new(base.x as f32, base.y as f32, base.z as f32);
+    let basef = (base - anchor).as_vec3();
     let light = super::super::vertex::pack_model_light(sky6, block);
     emit_segments(
         tmpl,
@@ -135,7 +136,7 @@ fn copy_run(
 }
 
 /// Stream one bottom footprint cell's contact-shadow stamp: the startup-baked
-/// single-cell pieces translated to the world base, coincident with the top
+/// single-cell pieces translated to the base in mesh space, coincident with the top
 /// face of the supported floor (the contact pass's coplanar bias resolves the
 /// depth tie). Each piece — the cell's own floor AND its owned spill onto the
 /// dilation ring — is gated INDIVIDUALLY through `supports_stamp(x, z)` on the
@@ -151,6 +152,7 @@ pub(super) fn emit_model_contact(
     wx: i32,
     wy: i32,
     wz: i32,
+    anchor: IVec3,
     supports_stamp: impl Fn(i32, i32) -> bool,
 ) {
     let inst = block_model::instance(kind);
@@ -158,7 +160,7 @@ pub(super) fn emit_model_contact(
         return;
     };
     let base = block_model::base_from_cell(IVec3::new(wx, wy, wz), kind, offset, facing);
-    let basef = Vec3::new(base.x as f32, base.y as f32, base.z as f32);
+    let basef = (base - anchor).as_vec3();
     for piece in &tmpl.pieces {
         if !supports_stamp(wx + piece.cell_delta[0], wz + piece.cell_delta[1]) {
             continue;

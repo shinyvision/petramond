@@ -9,6 +9,7 @@ use crate::mob::EntityRef;
 use crate::player::RayFilter;
 use crate::world::World;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 
 use super::step::StepCtx;
 use super::ImpactTarget;
@@ -47,13 +48,21 @@ impl SweepBodies {
     /// crosses, grown by the bodies' reach, in instance order (the same
     /// candidates in the same order whatever the segment, so the nearest-hit
     /// rule stays deterministic).
-    fn near(&self, from: Vec3, to: Vec3) -> Vec<u32> {
+    fn near(&self, from: WorldPos, to: WorldPos) -> Vec<u32> {
         if self.buckets.is_empty() {
             return Vec::new();
         }
-        let margin = Vec3::splat(self.reach);
-        let lo = section_of(from.min(to) - margin);
-        let hi = section_of(from.max(to) + margin);
+        let m = f64::from(self.reach);
+        let lo = section_of(WorldPos::new(
+            from.x.min(to.x) - m,
+            from.y.min(to.y) - m,
+            from.z.min(to.z) - m,
+        ));
+        let hi = section_of(WorldPos::new(
+            from.x.max(to.x) + m,
+            from.y.max(to.y) + m,
+            from.z.max(to.z) + m,
+        ));
         let mut out = Vec::new();
         for sx in lo.x..=hi.x {
             for sy in lo.y..=hi.y {
@@ -71,7 +80,7 @@ impl SweepBodies {
 
 /// The section holding world position `p` (a plain floor-divide per axis;
 /// the vertical range is irrelevant to a bucket key).
-fn section_of(p: Vec3) -> IVec3 {
+fn section_of(p: WorldPos) -> IVec3 {
     IVec3::new(
         (p.x.floor() as i32) >> 4,
         (p.y.floor() as i32) >> 4,
@@ -87,10 +96,10 @@ fn section_of(p: Vec3) -> IVec3 {
 /// through the wall on the next tick, never the wall through the body.
 pub(super) fn sweep(
     ctx: &StepCtx,
-    from: Vec3,
+    from: WorldPos,
     motion: Vec3,
     spared: Option<EntityRef>,
-) -> Option<(ImpactTarget, Vec3)> {
+) -> Option<(ImpactTarget, WorldPos)> {
     let length = motion.length();
     if length <= 1e-6 {
         return None;
@@ -123,7 +132,14 @@ pub(super) fn sweep(
             continue;
         };
         let (lo, hi) = b.aabb();
-        if let Some(t) = crate::player::ray_vs_aabb(from, dir, lo, hi) {
+        let rel = |p: [f64; 3]| {
+            Vec3::new(
+                (p[0] - from.x) as f32,
+                (p[1] - from.y) as f32,
+                (p[2] - from.z) as f32,
+            )
+        };
+        if let Some(t) = crate::player::ray_vs_aabb(Vec3::ZERO, dir, rel(lo), rel(hi)) {
             consider(t, ImpactTarget::Player(anchor.id));
         }
     }
@@ -133,7 +149,7 @@ pub(super) fn sweep(
         // could reach the segment is tested — the flight's half-length plus
         // the body's own extent.
         let mid = from + dir * (limit * 0.5);
-        let near = |pos: Vec3, size: crate::mob::MobSize| {
+        let near = |pos: WorldPos, size: crate::mob::MobSize| {
             let reach =
                 limit * 0.5 + size.half_length.unwrap_or(0.0).max(size.half_width) + size.height;
             (pos - mid).length_squared() <= reach * reach

@@ -29,20 +29,26 @@ const Z_FRONT: f32 = 1.0;
 /// return the index count. The caller frustum-culls instances before calling.
 pub fn build_doors(
     instances: &[DoorInstance],
+    render_origin: glam::IVec3,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
     verts.clear();
     indices.clear();
     for inst in instances {
-        push_door_world(verts, indices, inst);
+        push_door_world(verts, indices, inst, render_origin);
     }
     indices.len() as u32
 }
 
 /// Append one placed door (lower + upper slab halves) for `inst`, swung by its angle,
 /// oriented to its `facing`, lit by its skylight, at the world lower-cell `pos`.
-fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorInstance) {
+fn push_door_world(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    inst: &DoorInstance,
+    render_origin: glam::IVec3,
+) {
     let sky = super::lighting::DynLight::new(inst.skylight, inst.blocklight);
     let start = verts.len();
     // Per-face tiles in `ALL_FACES` order [PosX, NegX, PosY, NegY, PosZ, NegZ]: the
@@ -112,7 +118,12 @@ fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorI
 
     // Orient the whole slab to `facing` (canonical = South) and translate to the world
     // lower-cell origin.
-    orient_faces_to_block(verts, start, inst.facing, inst.pos);
+    orient_faces_to_block(
+        verts,
+        start,
+        inst.facing,
+        (inst.pos - render_origin).as_vec3(),
+    );
 }
 
 #[cfg(test)]
@@ -122,7 +133,7 @@ mod tests {
 
     fn inst(facing: Facing, open01: f32) -> DoorInstance {
         DoorInstance {
-            pos: Vec3::new(10.0, 64.0, -5.0),
+            pos: glam::IVec3::new(10, 64, -5),
             facing,
             open01,
             bottom_tile: Tile::named("oak_door_bottom"),
@@ -139,6 +150,7 @@ mod tests {
         let mut i = Vec::new();
         let n = build_doors(
             std::slice::from_ref(&inst(Facing::South, 0.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -150,7 +162,10 @@ mod tests {
     fn empty_input_produces_no_geometry() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        assert_eq!(build_doors(&[], &mut v, &mut i), 0);
+        assert_eq!(
+            build_doors(&[], petramond_math::math::IVec3::ZERO, &mut v, &mut i),
+            0
+        );
         assert!(v.is_empty() && i.is_empty());
     }
 
@@ -160,6 +175,7 @@ mod tests {
         let mut i = Vec::new();
         build_doors(
             std::slice::from_ref(&inst(Facing::South, 0.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -183,6 +199,7 @@ mod tests {
         let mut i = Vec::new();
         build_doors(
             std::slice::from_ref(&inst(Facing::South, 0.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -206,12 +223,14 @@ mod tests {
         let mut closed = (Vec::new(), Vec::new());
         build_doors(
             std::slice::from_ref(&inst(Facing::South, 0.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut closed.0,
             &mut closed.1,
         );
         let mut open = (Vec::new(), Vec::new());
         build_doors(
             std::slice::from_ref(&inst(Facing::South, 1.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut open.0,
             &mut open.1,
         );

@@ -226,11 +226,12 @@ impl ServerGame {
         if victim.is_spectator() || victim.health() == 0 {
             return None; // spectators and the dead can't be attacked
         }
-        let eye = attacker.eye();
-        let lo = victim.pos - Vec3::new(player::HALF_W, 0.0, player::HALF_W);
-        let hi = victim.pos + Vec3::new(player::HALF_W, player::HEIGHT, player::HALF_W);
-        let closest = eye.clamp(lo, hi);
-        ((closest - eye).length() <= player::REACH + 1.0).then_some(t)
+        // In the attacker's eye frame: the closest point of the victim's body.
+        let rel = victim.pos - attacker.eye();
+        let lo = rel - Vec3::new(player::HALF_W, 0.0, player::HALF_W);
+        let hi = rel + Vec3::new(player::HALF_W, player::HEIGHT, player::HALF_W);
+        let closest = Vec3::ZERO.clamp(lo, hi);
+        (closest.length() <= player::REACH + 1.0).then_some(t)
     }
 
     /// PvP: one validated melee hit on session `t`, through the single
@@ -269,7 +270,12 @@ impl ServerGame {
     /// the mob strike's upward pop ratio, `scale`d by the weapon — what every
     /// applied player-on-player hit does, the engine's own and a mod's
     /// landed on a player's behalf alike.
-    pub(super) fn shove_player(&mut self, t: usize, from: Vec3, scale: f32) {
+    pub(super) fn shove_player(
+        &mut self,
+        t: usize,
+        from: petramond_math::world_pos::WorldPos,
+        scale: f32,
+    ) {
         let away = self.sessions[t].player.body_center() - from;
         let dir = Vec3::new(away.x, 0.0, away.z).normalize_or_zero();
         let impulse = (dir * PVP_ATTACK_KNOCKBACK

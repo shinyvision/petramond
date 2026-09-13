@@ -88,7 +88,7 @@ impl SceneCapture {
         let mut this = Self {
             world: World::new(seed, render_distance),
             renderer,
-            camera: Camera::new(Vec3::ZERO, aspect),
+            camera: Camera::new(petramond_math::world_pos::WorldPos::ZERO, aspect),
             shader_params: ShaderParamMap::new(),
             animation_time: 0.0,
             client_mods: petramond::modding::client::ClientModRuntime::load(
@@ -157,7 +157,7 @@ impl SceneCapture {
     /// (yaw 0 looks towards +Z, positive pitch looks up); `fov_y_degrees` is the
     /// vertical field of view. Aspect comes from the capture size.
     pub fn look_from(&mut self, pos: [f32; 3], yaw: f32, pitch: f32, fov_y_degrees: f32) {
-        self.camera.pos = Vec3::from(pos);
+        self.camera.pos = petramond_math::world_pos::WorldPos::from_array(pos.map(f64::from));
         self.camera.yaw = yaw;
         self.camera.pitch = pitch;
         self.camera.fov_y = fov_y_degrees.to_radians();

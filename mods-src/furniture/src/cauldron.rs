@@ -294,11 +294,11 @@ fn parse_dye(v: Vec<u8>) -> Option<[u8; 3]> {
     <[u8; 3]>::try_from(v.as_slice()).ok()
 }
 
-fn cell_center(pos: [i32; 3]) -> [f32; 3] {
+fn cell_center(pos: [i32; 3]) -> [f64; 3] {
     [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 0.5,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 0.5,
+        pos[2] as f64 + 0.5,
     ]
 }
 

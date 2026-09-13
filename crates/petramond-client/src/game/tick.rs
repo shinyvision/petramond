@@ -7,7 +7,7 @@ use super::Game;
 use petramond::net::protocol::{
     ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, SelfEvents, TargetRef,
 };
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
 pub use petramond::events::tick::TICK_DT;
@@ -94,7 +94,7 @@ pub enum WorldEvent {
     /// A player collected a drop at `pos`. `by_self` = the LOCAL player did
     /// (the app keeps its non-positional self pickup sound for that).
     ItemPickedUp {
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         by_self: bool,
     },
     /// A one-shot particle burst (a `particle_emitters.json` burst bundle by
@@ -102,7 +102,7 @@ pub enum WorldEvent {
     /// in. Every client spawns the burst into its own particle system.
     EmitterBurst {
         emitter: u8,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         intensity: f32,
     },
 }

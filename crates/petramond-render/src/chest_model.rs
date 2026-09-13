@@ -87,20 +87,26 @@ fn latch_faces() -> [Tile; 6] {
 /// return the index count. The caller frustum-culls instances before calling.
 pub fn build_chests(
     instances: &[ChestInstance],
+    render_origin: glam::IVec3,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
     verts.clear();
     indices.clear();
     for inst in instances {
-        push_chest_world(verts, indices, inst);
+        push_chest_world(verts, indices, inst, render_origin);
     }
     indices.len() as u32
 }
 
 /// Append one placed chest (body + hinged lid + latch) for `inst`, lit by its
 /// skylight, oriented to its `facing` at the world block `pos`.
-fn push_chest_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &ChestInstance) {
+fn push_chest_world(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    inst: &ChestInstance,
+    render_origin: glam::IVec3,
+) {
     let sky = super::lighting::DynLight::new(inst.skylight, inst.blocklight);
     let start = verts.len();
     push_box_faces_lit(verts, indices, body_faces(), BODY_MIN, BODY_MAX, sky);
@@ -122,7 +128,12 @@ fn push_chest_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &Ches
     }
 
     // Orient the whole model to `facing` and translate to the world block origin.
-    orient_faces_to_block(verts, start, inst.facing, inst.pos);
+    orient_faces_to_block(
+        verts,
+        start,
+        inst.facing,
+        (inst.pos - render_origin).as_vec3(),
+    );
 }
 
 /// Build a CLOSED chest (inset body + latch + lid) centred in the cube
@@ -192,7 +203,7 @@ mod tests {
 
     fn inst(facing: Facing, lid01: f32) -> ChestInstance {
         ChestInstance {
-            pos: Vec3::new(10.0, 64.0, -5.0),
+            pos: glam::IVec3::new(10, 64, -5),
             facing,
             lid01,
             skylight: super::super::lighting::FULL_SKYLIGHT,
@@ -206,6 +217,7 @@ mod tests {
         let mut i = Vec::new();
         let n = build_chests(
             std::slice::from_ref(&inst(Facing::North, 0.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -217,7 +229,10 @@ mod tests {
     fn empty_input_produces_no_geometry() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        assert_eq!(build_chests(&[], &mut v, &mut i), 0);
+        assert_eq!(
+            build_chests(&[], petramond_math::math::IVec3::ZERO, &mut v, &mut i),
+            0
+        );
         assert!(v.is_empty() && i.is_empty());
     }
 
@@ -227,6 +242,7 @@ mod tests {
         let mut i = Vec::new();
         build_chests(
             std::slice::from_ref(&inst(Facing::North, 0.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -244,6 +260,7 @@ mod tests {
         let mut closed_i = Vec::new();
         build_chests(
             std::slice::from_ref(&inst(Facing::North, 0.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut closed_v,
             &mut closed_i,
         );
@@ -253,6 +270,7 @@ mod tests {
         let mut open_i = Vec::new();
         build_chests(
             std::slice::from_ref(&inst(Facing::North, 1.0)),
+            petramond_math::math::IVec3::ZERO,
             &mut open_v,
             &mut open_i,
         );

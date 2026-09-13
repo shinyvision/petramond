@@ -18,7 +18,7 @@ pub fn player_facing_xz(yaw: f32) -> [f32; 2] {
 
 host_fn! {
     /// The player's current state (position, velocity, look, health, flags).
-    pub fn player_state() -> PlayerSnapshot => PlayerState => Player
+    pub fn player_state() -> Box<PlayerSnapshot> => PlayerState => Player
 }
 
 host_fn! {
@@ -124,7 +124,7 @@ host_fn! {
     pub fn damage_player(
         player: PlayerId,
         amount: i32,
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
         attacker: Option<EntityRef>,
     )
         => DamagePlayer { player, amount, origin, attacker }
@@ -209,7 +209,7 @@ host_fn! {
 host_fn! {
     /// Move the player's feet to `pos`; fall tracking is cleared so a teleport can
     /// never land as fall damage.
-    pub fn teleport(pos: [f32; 3]) => Teleport { pos }
+    pub fn teleport(pos: [f64; 3]) => Teleport { pos }
 }
 
 host_fn! {

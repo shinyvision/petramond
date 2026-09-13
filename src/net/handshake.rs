@@ -185,6 +185,7 @@ mod tests {
     use super::*;
     use crate::net::protocol::{NameTables, SelfRestore};
     use crate::player::PlayerId;
+    use petramond_math::world_pos::WorldPos;
 
     /// A scripted in-memory duplex: the pre-baked server replies are read in
     /// order; everything the client writes is captured for exact-sequence
@@ -240,7 +241,7 @@ mod tests {
             tables: NameTables::default(),
             self_restore: SelfRestore {
                 transform: crate::net::protocol::Transform {
-                    pos: petramond_math::math::Vec3::new(1.0, 70.0, 2.0),
+                    pos: WorldPos::new(1.0, 70.0, 2.0),
                     vel: petramond_math::math::Vec3::ZERO,
                     yaw: 0.5,
                     pitch: -0.25,

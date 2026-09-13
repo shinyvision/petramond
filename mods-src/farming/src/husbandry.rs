@@ -328,8 +328,12 @@ fn can_stand_by(a: &Animal, p: [i32; 3]) -> bool {
         .any(|d| mob_can_reach(a.snap.id, [p[0] + d[0], p[1], p[2] + d[1]]))
 }
 
-fn dist2(a: [f32; 3], b: [f32; 3]) -> f32 {
-    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+fn dist2(a: [f64; 3], b: [f64; 3]) -> f32 {
+    let d = [
+        (a[0] - b[0]) as f32,
+        (a[1] - b[1]) as f32,
+        (a[2] - b[2]) as f32,
+    ];
     d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
 }
 
@@ -547,9 +551,9 @@ fn roll_graze(content: &Content, def: &HusbandryDef, a: &mut Animal) {
 /// Horizontally within `range` of the cell's centre, feet within `dy_tol`
 /// of its base.
 fn near_cell(a: &Animal, cell: [i32; 3], range: f32, dy_tol: f32) -> bool {
-    let dx = a.snap.pos[0] - (cell[0] as f32 + 0.5);
-    let dz = a.snap.pos[2] - (cell[2] as f32 + 0.5);
-    let dy = a.snap.pos[1] - cell[1] as f32;
+    let dx = (a.snap.pos[0] - (cell[0] as f64 + 0.5)) as f32;
+    let dz = (a.snap.pos[2] - (cell[2] as f64 + 0.5)) as f32;
+    let dy = (a.snap.pos[1] - cell[1] as f64) as f32;
     dx * dx + dz * dz <= range * range && dy.abs() <= dy_tol
 }
 
@@ -564,8 +568,8 @@ fn wrap_angle(v: f32) -> f32 {
 /// the drive claims locomotion only for this tick and plays no walk).
 /// Standing ON the target cell (grazing underfoot) needs no facing.
 fn facing_or_turn(a: &Animal, cell: [i32; 3]) -> bool {
-    let dx = (cell[0] as f32 + 0.5) - a.snap.pos[0];
-    let dz = (cell[2] as f32 + 0.5) - a.snap.pos[2];
+    let dx = ((cell[0] as f64 + 0.5) - a.snap.pos[0]) as f32;
+    let dz = ((cell[2] as f64 + 0.5) - a.snap.pos[2]) as f32;
     if dx * dx + dz * dz < 0.36 {
         return true;
     }
@@ -951,8 +955,8 @@ pub fn decide(ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     }
     let goal_toward = |packed: i64, hold: f32| {
         let cell = unpack_cell(packed);
-        let dx = ctx.pos[0] - (cell[0] as f32 + 0.5);
-        let dz = ctx.pos[2] - (cell[2] as f32 + 0.5);
+        let dx = (ctx.pos[0] - (cell[0] as f64 + 0.5)) as f32;
+        let dz = (ctx.pos[2] - (cell[2] as f64 + 0.5)) as f32;
         let close = dx * dx + dz * dz <= hold * hold;
         Some(AiNodeDecision {
             goal: Some(if close { ctx.cell } else { cell }),

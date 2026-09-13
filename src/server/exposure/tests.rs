@@ -1,6 +1,6 @@
 use super::*;
 use crate::mob::{Mob, PlayerAnchor};
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::condition::ConditionId;
 use petramond_world::fluid::FluidDef;
@@ -53,7 +53,7 @@ fn server() -> ServerGame {
             .world
             .set_block_world(8, y, 8, if y == 64 { Block::Stone } else { Block::Air });
     }
-    server.sessions[0].player.pos = Vec3::new(8.5, 65.0, 8.5);
+    server.sessions[0].player.pos = WorldPos::new(8.5, 65.0, 8.5);
     server
 }
 
@@ -146,7 +146,7 @@ fn mob_tick(server: &mut ServerGame) {
         .mobs_mut()
         .set_mob_kinematic(
             0,
-            Vec3::new(8.5, 65.0, 8.5),
+            WorldPos::new(8.5, 65.0, 8.5),
             0.0,
             petramond_math::math::Tilt::LEVEL,
         )
@@ -154,7 +154,7 @@ fn mob_tick(server: &mut ServerGame) {
     let events = server.world.tick_mobs(
         crate::events::tick::TICK_DT,
         &[PlayerAnchor {
-            pos: Vec3::new(12.0, 65.0, 12.0),
+            pos: WorldPos::new(12.0, 65.0, 12.0),
             ..Default::default()
         }],
     );
@@ -167,7 +167,7 @@ fn a_mob_keeps_a_contact_condition_and_its_emitter_after_leaving_the_fluid() {
     server
         .world
         .mobs_mut()
-        .spawn(Mob::Sheep, Vec3::new(8.5, 65.0, 8.5), 0.0);
+        .spawn(Mob::Sheep, WorldPos::new(8.5, 65.0, 8.5), 0.0);
     let initial = server.world.mobs().instances()[0].health();
     server.world.set_block_world(8, 65, 8, hazard().block);
     mob_tick(&mut server);
@@ -199,7 +199,7 @@ fn touched_fluids_use_body_edges_and_actual_flow_height() {
         .section_at_world_mut_for_test(8, 65, 8)
         .unwrap()
         .set_fluid(8, 1, 8, fluid, 7);
-    let body = |x, y| petramond_world::body::Body::new(Vec3::new(x, y, 8.5), 0.3, 1.8).aabb();
+    let body = |x, y| petramond_world::body::Body::new(WorldPos::new(x, y, 8.5), 0.3, 1.8).aabb();
     let touched = |x, y| {
         crate::exposure::touched_fluids(&server.world, [body(x, y)])
             .map(|fluids| fluids.iter().map(|f| f.block).collect::<Vec<_>>())

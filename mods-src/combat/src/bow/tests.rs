@@ -308,7 +308,8 @@ fn the_arrow_leaves_beside_the_eye_and_converges_on_the_crosshair() {
     let mut a = actor(Some(BOW), true);
     a.pos = [1.0, 2.0, 3.0];
     let (from, dir) = nock(&a, None);
-    assert!(from[1] < 2.0 + a.eye_height && from[1] > 2.0 + a.eye_height - 0.5);
+    let eye = 2.0 + f64::from(a.eye_height);
+    assert!(from[1] < eye && from[1] > eye - 0.5);
     assert!(dir[2] > 0.99, "yaw 0 looks down +Z: {dir:?}");
     assert!(
         from[0] < 1.0 && (from[2] - 3.0).abs() < 1e-6,
@@ -320,13 +321,17 @@ fn the_arrow_leaves_beside_the_eye_and_converges_on_the_crosshair() {
     a.yaw = 0.0;
     let aim = Aim::of(&a);
     let target = 4.0;
-    let at = [aim.eye[0], aim.eye[1], aim.eye[2] + aim.forward[2] * target];
+    let at = [
+        aim.eye[0],
+        aim.eye[1],
+        aim.eye[2] + f64::from(aim.forward[2] * target),
+    ];
     let (from, dir) = nock(&a, Some(target));
-    let t = (at[2] - from[2]) / dir[2];
+    let t = ((at[2] - from[2]) / f64::from(dir[2])) as f32;
     let hit = [
-        from[0] + dir[0] * t,
-        from[1] + dir[1] * t,
-        from[2] + dir[2] * t,
+        from[0] + f64::from(dir[0] * t),
+        from[1] + f64::from(dir[1] * t),
+        from[2] + f64::from(dir[2] * t),
     ];
     for axis in 0..3 {
         assert!(

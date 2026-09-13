@@ -32,18 +32,18 @@ struct Minimap {
     /// Explored base/mip tile caches plus the async region loader.
     store: TileStore,
     waypoints: Vec<Waypoint>,
-    player: [f32; 3],
+    player: [f64; 3],
     yaw: f32,
     open_canvas: Option<String>,
     last_sample: Option<(i32, i32)>,
     frame: u64,
-    pan: [f32; 2],
+    pan: [f64; 2],
     /// Full-map zoom level, [`ZOOM_MIN`]..=[`ZOOM_MAX`] canvas-pixel-per-block
     /// steps around the 2 px/block default; kept across open/close.
     zoom: i8,
     /// Sub-notch wheel remainder (hi-res wheels emit fractional notches).
     scroll_accum: f32,
-    drag_start: Option<([f32; 2], [f32; 2])>,
+    drag_start: Option<([f32; 2], [f64; 2])>,
     dragged: bool,
     editor: Editor,
     draft: String,
@@ -54,7 +54,7 @@ struct Minimap {
     full_needed_stamp: Option<([i32; 4], i8)>,
     /// Pan at the last visible-request recompute — its delta picks the
     /// velocity-prefetch direction.
-    last_synced_pan: Option<[f32; 2]>,
+    last_synced_pan: Option<[f64; 2]>,
     waypoint_revision: u64,
     arrow_yaw_bits: Option<u32>,
     /// Bumps whenever any explored cell changes; part of the HUD stamp.

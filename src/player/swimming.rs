@@ -44,7 +44,13 @@ impl Player {
             self.jumping = true;
             return;
         }
-        self.vel.y = swim.vertical_velocity(self.vel.y, self.pos.y, Buoyancy::Swim, input.jump, dt);
+        self.vel.y = swim.vertical_velocity(
+            self.vel.y,
+            self.pos.y as f32,
+            Buoyancy::Swim,
+            input.jump,
+            dt,
+        );
         self.jumping = false;
     }
 }

@@ -10,12 +10,12 @@ fn detail_is_kept_while_it_covers_a_pixel_and_dropped_once_it_cannot() {
     let scale = 0.5 * 1080.0 / 35.0_f32.to_radians().tan();
     let view = ViewVolume::new(
         Frustum::permissive(),
-        Vec3::ZERO,
-        Vec3::ZERO,
+        IVec3::ZERO,
+        WorldPos::ZERO,
         f32::INFINITY,
         scale,
     );
-    let cell_at = |d: f32| (Vec3::new(d, 0.0, 0.0), Vec3::new(d + 1.0, 1.0, 1.0));
+    let cell_at = |d: f64| (WorldPos::new(d, 0.0, 0.0), WorldPos::new(d + 1.0, 1.0, 1.0));
 
     // A 7 cm ember: visible close by, gone long before the render distance.
     let (lo, hi) = cell_at(10.0);

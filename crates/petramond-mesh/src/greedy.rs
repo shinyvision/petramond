@@ -135,12 +135,11 @@ thread_local! {
 /// push them to the opaque buffers. For each direction and each 16-cell slice, it 2D-merges
 /// maximal rectangles of identical `FlatFace`s (extend width along U, then height along V),
 /// emitting one quad per rectangle with `(W-1, H-1)` packed so the shader tiles its layer.
+/// `origin` is the section's minimum corner in mesh space.
 pub(super) fn emit_greedy_quads(
     scratch: &mut GreedyScratch,
     opaque: &mut Vec<Vertex>,
-    ox: i32,
-    oy: i32,
-    oz: i32,
+    origin: glam::IVec3,
 ) {
     let cur = scratch.gen;
     let slice_counts = scratch.slice_counts;
@@ -209,14 +208,14 @@ pub(super) fn emit_greedy_quads(
                     lmin[va] = v as i32;
                     lmax[va] = (v + h) as i32;
                     let min = [
-                        (ox + lmin[0]) as f32,
-                        (oy + lmin[1]) as f32,
-                        (oz + lmin[2]) as f32,
+                        (origin.x + lmin[0]) as f32,
+                        (origin.y + lmin[1]) as f32,
+                        (origin.z + lmin[2]) as f32,
                     ];
                     let max = [
-                        (ox + lmax[0]) as f32,
-                        (oy + lmax[1]) as f32,
-                        (oz + lmax[2]) as f32,
+                        (origin.x + lmax[0]) as f32,
+                        (origin.y + lmax[1]) as f32,
+                        (origin.z + lmax[2]) as f32,
                     ];
                     push_greedy_quad(opaque, face, min, max, key, w as u32, h as u32);
                 }

@@ -202,7 +202,7 @@ fn a_partial_block_bridge_does_not_trip_the_live_guard() {
     assert_eq!(nav.path().last(), Some(&goal));
     let cursor = world.cursor();
     let floor_y = 64.0 + super::super::floor_top(&cursor, start - IVec3::Y);
-    let pos = Vec3::new(5.5, floor_y, 8.5);
+    let pos = WorldPos::new(5.5, f64::from(floor_y), 8.5);
     assert_eq!(
         nav.avoid_hazards(pos, 0.0, body(), Vec3::X, false, 0.2, &cursor),
         (Vec3::X, false)
@@ -214,7 +214,7 @@ fn a_live_hazard_stops_a_stale_route_and_forces_a_repath() {
     let start = IVec3::new(5, 64, 8);
     let goal = IVec3::new(13, 64, 8);
     let mut nav = route(&world, start, goal, 0.3, 1.8);
-    let pos = Vec3::new(5.5, 64.0, 8.5);
+    let pos = WorldPos::new(5.5, 64.0, 8.5);
     let (wish, jump) = nav.follow_steered(pos, true, &world);
     world.set_block_world(6, 63, 8, syrup());
     assert_eq!(
@@ -234,7 +234,7 @@ fn crowd_veer_and_jump_intents_cannot_bypass_live_hazards() {
     let start = IVec3::new(5, 64, 8);
     let goal = IVec3::new(13, 64, 8);
     let mut nav = route(&world, start, goal, 0.3, 1.8);
-    let pos = Vec3::new(5.5, 64.0, 8.5);
+    let pos = WorldPos::new(5.5, 64.0, 8.5);
     world.set_block_world(5, 64, 9, syrup());
     assert_eq!(
         nav.avoid_hazards(pos, 0.0, body(), Vec3::X, false, 0.2, &world.cursor()),
@@ -269,7 +269,7 @@ fn the_live_guard_allows_an_immersed_body_to_escape() {
         0.3,
         1.8,
     );
-    let pos = Vec3::new(5.5, 63.5, 8.5);
+    let pos = WorldPos::new(5.5, 63.5, 8.5);
     assert_eq!(
         nav.avoid_hazards(pos, 0.0, body(), Vec3::X, false, 0.2, &world.cursor()),
         (Vec3::X, false)
@@ -281,7 +281,7 @@ fn a_persistent_live_refusal_repaths_once_then_waits_for_the_interval() {
     let start = IVec3::new(5, 64, 8);
     let goal = IVec3::new(13, 64, 8);
     let mut nav = route(&world, start, goal, 0.3, 1.8);
-    let pos = Vec3::new(5.5, 64.0, 8.5);
+    let pos = WorldPos::new(5.5, 64.0, 8.5);
     world.set_block_world(5, 64, 9, syrup());
     let veered = Vec3::new(0.5, 0.0, 0.8660254);
     let before = nav.recomputes();
@@ -316,7 +316,7 @@ fn alternating_refusals_wait_for_the_interval_too() {
     let mut nav = route(&world, start, goal, 0.3, 1.8);
     world.set_block_world(6, 63, 8, syrup());
     world.set_block_world(5, 63, 9, syrup());
-    let pos = Vec3::new(5.5, 64.0, 8.5);
+    let pos = WorldPos::new(5.5, 64.0, 8.5);
     let refused = [
         (IVec3::new(6, 64, 8), Vec3::X),
         (IVec3::new(5, 64, 9), Vec3::Z),
@@ -349,7 +349,7 @@ fn every_segment_of_a_long_body_is_guarded() {
     let mut nav = route(&world, start, IVec3::new(8, 64, 12), 0.3, 1.0);
     nav.path = vec![start, IVec3::new(8, 64, 9)];
     nav.index = 1;
-    let pos = Vec3::new(8.5, 64.0, 8.5);
+    let pos = WorldPos::new(8.5, 64.0, 8.5);
     let along_x = std::f32::consts::FRAC_PI_2;
     let short = MobSize {
         half_width: 0.3,

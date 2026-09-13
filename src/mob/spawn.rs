@@ -27,6 +27,7 @@ use rustc_hash::FxHashSet;
 
 use crate::world::{World, VERTICAL_LOAD_RADIUS};
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::chunk::{
@@ -70,7 +71,7 @@ const HOSTILE_SPAWN_SALT: u64 = 0xA11C_0DE5_5A55_0001;
 /// A spawn the manager should perform: a species at a feet position, facing `yaw`.
 pub(super) struct Spawn {
     pub kind: Mob,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
 }
 
@@ -78,18 +79,18 @@ pub(super) struct Spawn {
 /// if a registered hostile spawner admits it.
 pub struct HostileSpawnSite {
     pub candidate: HostileSpawnCandidate,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
 }
 
 #[derive(Copy, Clone)]
 struct HostileSpawnAnchor {
-    pos: Vec3,
+    pos: WorldPos,
     chunk: ChunkPos,
 }
 
 impl HostileSpawnAnchor {
-    fn new(pos: Vec3) -> Self {
+    fn new(pos: WorldPos) -> Self {
         Self {
             pos,
             chunk: chunk_pos_at(pos),
@@ -114,7 +115,7 @@ pub struct HostileSpawnPlan {
 /// Returns the spawns to perform, or `None` if this tick's site/species didn't qualify.
 pub(super) fn attempt(
     world: &World,
-    player_pos: Vec3,
+    player_pos: WorldPos,
     rng: &mut MobRng,
     room_for: impl Fn(Mob) -> u32,
 ) -> Option<Vec<Spawn>> {
@@ -165,7 +166,7 @@ pub(super) fn spawn_with(
     wx: i32,
     wz: i32,
     rng: &mut MobRng,
-    site: &impl Fn(&World, Mob, i32, i32) -> Option<Vec3>,
+    site: &impl Fn(&World, Mob, i32, i32) -> Option<WorldPos>,
 ) -> Option<Spawn> {
     let pos = site(world, kind, wx, wz)?;
     let yaw = rng.next_f32() * std::f32::consts::TAU;
@@ -180,7 +181,13 @@ pub(super) fn spawn_with(
     Some(Spawn { kind, pos, yaw })
 }
 
-fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> Option<Vec3> {
+fn spawn_site(
+    world: &World,
+    player_pos: WorldPos,
+    kind: Mob,
+    wx: i32,
+    wz: i32,
+) -> Option<WorldPos> {
     let feet_pos = site_for(world, kind, wx, wz)?;
     // Natural spawns keep a distance band around the player; worldgen population
     // (`super::populate`) deliberately doesn't — its herds are "already there".
@@ -194,14 +201,14 @@ fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> O
 
 /// The player-independent site judgment: surface footing, body clearance (dry),
 /// then the species' own [`SpawnRule`](super::SpawnRule) (biome + ground block).
-pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<Vec3> {
+pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<WorldPos> {
     if let Some(band) = def(kind).spawn.y {
         return volume_site::find(world, kind, &def(kind).spawn, wx, wz, band);
     }
     // The surface to stand on, and the feet cell resting on top of it.
     let ground_y = world.surface_collision_y(wx, wz)?;
     let feet = IVec3::new(wx, ground_y + 1, wz);
-    let feet_pos = Vec3::new(wx as f32 + 0.5, feet.y as f32, wz as f32 + 0.5);
+    let feet_pos = WorldPos::block_min(feet) + Vec3::new(0.5, 0.0, 0.5);
 
     // The ground must have collision AND the body must fit (clearance above the
     // feet) — exactly what a foothold test asserts.
@@ -277,7 +284,7 @@ pub struct HostileSpawnCache {
 }
 
 impl HostileSpawnCache {
-    fn refresh(&mut self, world: &World, player_positions: &[Vec3]) {
+    fn refresh(&mut self, world: &World, player_positions: &[WorldPos]) {
         let anchor_chunks: Vec<ChunkPos> =
             player_positions.iter().map(|&p| chunk_pos_at(p)).collect();
         let key = (anchor_chunks, world.terrain_revision());
@@ -304,7 +311,7 @@ impl HostileSpawnCache {
 pub fn hostile_spawn_plan(
     world: &World,
     cache: &mut HostileSpawnCache,
-    player_positions: &[Vec3],
+    player_positions: &[WorldPos],
 ) -> Option<HostileSpawnPlan> {
     cache.refresh(world, player_positions);
     let anchors: Vec<HostileSpawnAnchor> = player_positions
@@ -350,7 +357,7 @@ pub fn hostile_spawn_plan(
     })
 }
 
-pub(super) fn mob_census_ready(world: &World, player_pos: Vec3) -> bool {
+pub(super) fn mob_census_ready(world: &World, player_pos: WorldPos) -> bool {
     let center = chunk_pos_at(player_pos);
     world.mob_census_loaded_around(center, MOB_CENSUS_CHUNK_RADIUS)
 }
@@ -451,7 +458,7 @@ fn hostile_scan_y_range(
     (lo <= hi).then_some(lo..=hi)
 }
 
-fn hostile_anchor_scan_y_range(player_pos: Vec3) -> Option<std::ops::RangeInclusive<i32>> {
+fn hostile_anchor_scan_y_range(player_pos: WorldPos) -> Option<std::ops::RangeInclusive<i32>> {
     let player_section = SectionPos::from_world(
         player_pos.x.floor() as i32,
         player_pos.y.floor() as i32,
@@ -471,7 +478,7 @@ fn hostile_candidate_at(
     y: i32,
     wz: i32,
 ) -> Option<HostileSpawnSite> {
-    let pos = Vec3::new(wx as f32 + 0.5, y as f32, wz as f32 + 0.5);
+    let pos = WorldPos::new(f64::from(wx) + 0.5, f64::from(y), f64::from(wz) + 0.5);
     let nearest = nearest_anchor_pos(&plan.anchors, pos)?;
     if too_close(nearest, pos, HOSTILE_MIN_SPAWN_DIST) || !too_close(nearest, pos, MAX_PLAYER_DIST)
     {
@@ -501,7 +508,7 @@ fn hostile_candidate_at(
     })
 }
 
-fn nearest_anchor_pos(anchors: &[HostileSpawnAnchor], pos: Vec3) -> Option<Vec3> {
+fn nearest_anchor_pos(anchors: &[HostileSpawnAnchor], pos: WorldPos) -> Option<WorldPos> {
     anchors
         .iter()
         .min_by(|a, b| {
@@ -572,13 +579,12 @@ fn scaled_mob_cap(base: u32, spawnable_chunks: u32) -> u32 {
     ((base as u64 * spawnable_chunks as u64) / HOSTILE_SPAWN_CHUNKS_PER_PLAYER as u64) as u32
 }
 
-fn chunk_pos_at(pos: Vec3) -> ChunkPos {
+fn chunk_pos_at(pos: WorldPos) -> ChunkPos {
     ChunkPos::new(pos.x.floor() as i32 >> 4, pos.z.floor() as i32 >> 4)
 }
 
-fn dist2(a: Vec3, b: Vec3) -> f32 {
-    let (dx, dy, dz) = (a.x - b.x, a.y - b.y, a.z - b.z);
-    dx * dx + dy * dy + dz * dz
+fn dist2(a: WorldPos, b: WorldPos) -> f64 {
+    a.distance_squared(b)
 }
 
 fn body_cell_open(world: &World, wx: i32, y: i32, wz: i32) -> bool {
@@ -588,9 +594,9 @@ fn body_cell_open(world: &World, wx: i32, y: i32, wz: i32) -> bool {
         && !block.has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
 }
 
-fn yaw_away_from_player(player_pos: Vec3, spawn_pos: Vec3) -> f32 {
-    let dx = player_pos.x - spawn_pos.x;
-    let dz = player_pos.z - spawn_pos.z;
+fn yaw_away_from_player(player_pos: WorldPos, spawn_pos: WorldPos) -> f32 {
+    let d = player_pos - spawn_pos;
+    let (dx, dz) = (d.x, d.z);
     (-dx).atan2(-dz)
 }
 
@@ -607,7 +613,7 @@ pub(super) fn nearby_spawn(
     origin: IVec3,
     existing: &[Spawn],
     rng: &mut MobRng,
-    site: &impl Fn(&World, Mob, i32, i32) -> Option<Vec3>,
+    site: &impl Fn(&World, Mob, i32, i32) -> Option<WorldPos>,
 ) -> Option<Spawn> {
     let r2 = GROUP_RADIUS * GROUP_RADIUS;
     for _ in 0..GROUP_MEMBER_TRIES {
@@ -628,13 +634,12 @@ pub(super) fn nearby_spawn(
     None
 }
 
-fn too_near_existing(kind: Mob, pos: Vec3, existing: &[Spawn]) -> bool {
+fn too_near_existing(kind: Mob, pos: WorldPos, existing: &[Spawn]) -> bool {
     let min_gap = (def(kind).size.half_width * 2.0).max(0.75);
     let min_gap2 = min_gap * min_gap;
     existing.iter().any(|s| {
-        let dx = s.pos.x - pos.x;
-        let dz = s.pos.z - pos.z;
-        dx * dx + dz * dz < min_gap2
+        let d = s.pos - pos;
+        d.x * d.x + d.z * d.z < min_gap2
     })
 }
 
@@ -659,9 +664,8 @@ fn cap_room(species: u32, species_cap: u32, category: u32, category_cap: u32) ->
 }
 
 /// Whether `feet` is within `min_dist` of the player (3-D), so a spawn is forbidden.
-fn too_close(player: Vec3, feet: Vec3, min_dist: f32) -> bool {
-    let (dx, dy, dz) = (player.x - feet.x, player.y - feet.y, player.z - feet.z);
-    dx * dx + dy * dy + dz * dz < min_dist * min_dist
+fn too_close(player: WorldPos, feet: WorldPos, min_dist: f32) -> bool {
+    player.distance_squared(feet) < f64::from(min_dist) * f64::from(min_dist)
 }
 
 /// A random world column `(wx, wz)` inside the loaded disc of chunk-radius `r` around
@@ -738,11 +742,11 @@ mod tests {
         world
     }
 
-    fn valid_spawn_distance_player() -> Vec3 {
-        Vec3::new(-60.0, 65.0, 8.0)
+    fn valid_spawn_distance_player() -> WorldPos {
+        WorldPos::new(-60.0, 65.0, 8.0)
     }
 
-    fn hostile_test_plan(player_pos: Vec3, chunk: ChunkPos) -> HostileSpawnPlan {
+    fn hostile_test_plan(player_pos: WorldPos, chunk: ChunkPos) -> HostileSpawnPlan {
         HostileSpawnPlan {
             anchors: vec![HostileSpawnAnchor::new(player_pos)],
             spawnable_chunks: vec![chunk],
@@ -779,13 +783,13 @@ mod tests {
 
     #[test]
     fn too_close_is_a_sphere_around_the_player() {
-        let player = Vec3::new(0.0, 0.0, 0.0);
+        let player = WorldPos::new(0.0, 0.0, 0.0);
         // Just inside 50 blocks → forbidden.
-        assert!(too_close(player, Vec3::new(49.0, 0.0, 0.0), 50.0));
+        assert!(too_close(player, WorldPos::new(49.0, 0.0, 0.0), 50.0));
         // Just outside → allowed.
-        assert!(!too_close(player, Vec3::new(51.0, 0.0, 0.0), 50.0));
+        assert!(!too_close(player, WorldPos::new(51.0, 0.0, 0.0), 50.0));
         // Distance is 3-D: 50 up is also too close.
-        assert!(too_close(player, Vec3::new(0.0, 49.0, 0.0), 50.0));
+        assert!(too_close(player, WorldPos::new(0.0, 49.0, 0.0), 50.0));
     }
 
     #[test]
@@ -822,7 +826,11 @@ mod tests {
         use crate::entity::fluid_fixture::{block, pool, CINDER, FLOOR_Y};
         let kind = crate::mob::by_key("bodyfluid:swim").unwrap();
         let feet = IVec3::new(8, FLOOR_Y, 8);
-        let near = Vec3::new(8.5 + HOSTILE_MIN_SPAWN_DIST + 1.0, FLOOR_Y as f32, 8.5);
+        let near = WorldPos::new(
+            f64::from(8.5 + HOSTILE_MIN_SPAWN_DIST + 1.0),
+            FLOOR_Y as f64,
+            8.5,
+        );
         let plan = hostile_test_plan(near, ChunkPos::new(0, 0));
         for (floor, safe) in [(Block::Stone, true), (block(CINDER), false)] {
             let mut world = pool(Block::Air, FLOOR_Y - 1);
@@ -839,7 +847,7 @@ mod tests {
     #[test]
     fn passive_spawn_sites_share_the_128_block_outer_limit() {
         let world = flat_grass_spawn_world(|_| {});
-        assert!(spawn_site(&world, Vec3::new(-200.0, 65.0, 8.0), Mob::Sheep, 8, 8).is_none());
+        assert!(spawn_site(&world, WorldPos::new(-200.0, 65.0, 8.0), Mob::Sheep, 8, 8).is_none());
     }
 
     #[test]
@@ -856,8 +864,8 @@ mod tests {
 
     #[test]
     fn hostile_spawnable_chunks_deduplicate_overlapping_players() {
-        let a = chunk_pos_at(Vec3::new(0.5, 64.0, 0.5));
-        let b = chunk_pos_at(Vec3::new(16.5, 64.0, 0.5));
+        let a = chunk_pos_at(WorldPos::new(0.5, 64.0, 0.5));
+        let b = chunk_pos_at(WorldPos::new(16.5, 64.0, 0.5));
 
         let solo = hostile_spawnable_chunks(&[a], |_| true);
         let together = hostile_spawnable_chunks(&[a, b], |_| true);
@@ -879,8 +887,8 @@ mod tests {
     #[test]
     fn hostile_plan_ignores_only_players_whose_local_census_is_still_loading() {
         let mut world = World::new(1, 1);
-        let ready = Vec3::new(0.5, 64.0, 0.5);
-        let loading = Vec3::new(160.5, 64.0, 0.5);
+        let ready = WorldPos::new(0.5, 64.0, 0.5);
+        let loading = WorldPos::new(160.5, 64.0, 0.5);
         for (dx, dz) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
             world.insert_empty_column_for_test(ChunkPos::new(dx, dz));
         }
@@ -894,8 +902,8 @@ mod tests {
     #[test]
     fn hostile_local_cap_allows_chunks_owned_by_any_player_with_room() {
         let cap = MobCategory::Hostile.cap();
-        let a = HostileSpawnAnchor::new(Vec3::new(0.5, 64.0, 0.5));
-        let b = HostileSpawnAnchor::new(Vec3::new(64.5, 64.0, 0.5));
+        let a = HostileSpawnAnchor::new(WorldPos::new(0.5, 64.0, 0.5));
+        let b = HostileSpawnAnchor::new(WorldPos::new(64.5, 64.0, 0.5));
         let anchors = [a, b];
 
         assert!(
@@ -921,7 +929,7 @@ mod tests {
             assert!(world.set_block_world(8, y, 8, Block::Grass));
         }
 
-        let plan = hostile_test_plan(Vec3::new(80.0, 64.0, 8.0), chunk);
+        let plan = hostile_test_plan(WorldPos::new(80.0, 64.0, 8.0), chunk);
         let candidates = hostile_column_candidates(&world, &plan, 8, 8);
 
         assert_eq!(
@@ -945,7 +953,7 @@ mod tests {
             ChunkPos::new(8, 8),
         ];
         let plan = HostileSpawnPlan {
-            anchors: vec![HostileSpawnAnchor::new(Vec3::new(0.5, 64.0, 0.5))],
+            anchors: vec![HostileSpawnAnchor::new(WorldPos::new(0.5, 64.0, 0.5))],
             spawnable_chunks: chunks.clone(),
             attempt_chunks: chunks.clone(),
             local_counts: vec![0],

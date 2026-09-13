@@ -116,9 +116,9 @@ fn come_down(d: &Dripstone, pos: [i32; 3], block: BlockId) {
         return;
     }
     let centre = [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 0.5,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 0.5,
+        pos[2] as f64 + 0.5,
     ];
     if d.run_of(block) == Some(Run::Hanging) {
         launch_item(POINTED_ITEM, centre, [0.0, -FALL_SPEED, 0.0], None, &[]);
@@ -375,7 +375,7 @@ mod tests {
         f(guard.get_or_insert_with(Fake::default))
     }
 
-    fn cell(p: [f32; 3]) -> [i32; 3] {
+    fn cell(p: [f64; 3]) -> [i32; 3] {
         [
             p[0].floor() as i32,
             p[1].floor() as i32,

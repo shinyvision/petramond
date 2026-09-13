@@ -10,7 +10,7 @@ struct Uniforms {
     // rgb = fog colour; w = sim-owned sky scale (1.0 = noon; mods dim it).
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<f32>,
+    render_origin: vec4<i32>,
     // w = atlas tile count (the dye-base layer offset); xyz reserved.
     atlas_layout: vec4<u32>,
     // rgb = sim-owned sky light COLOUR (white = identity; mods tint the night
@@ -72,14 +72,14 @@ struct VsIn {
 };
 
 // Packed-column terrain: column-local XZ + world Y as i16 fixed-point (1/64
-// block), plus the column's world XZ origin as an instance-step attribute.
+// block), plus the column's integer world XZ origin as an instance-step attribute.
 struct VsInTerrain {
     // xyz = fixed-point pos; w = padding (wgpu has no i16x3 vertex format).
     @location(0) pos_q: vec4<i32>,
     @location(1) tint: vec4<f32>,
     @location(2) packed: u32,
     @location(3) packed2: u32,
-    @location(4) col_origin: vec4<f32>,
+    @location(5) col_origin: vec4<i32>,
 };
 
 const TERRAIN_POS_SCALE_INV: f32 = 1.0 / 64.0;
@@ -96,7 +96,7 @@ struct VsOut {
     @location(3) tint: vec3<f32>,
     @location(4) uv2: vec2<f32>,
     @location(5) @interpolate(flat) overlay: u32,
-    @location(6) world_pos: vec3<f32>,
+    @location(6) world_y: f32,
     // Texture-array layers (tile ids): the base tile and the overlay tile. Flat.
     @location(7) @interpolate(flat) layer: u32,
     @location(8) @interpolate(flat) overlay_layer: u32,
@@ -156,9 +156,9 @@ fn block_light_rgb(packed: u32, packed2: u32, chroma_lo: f32) -> vec3<f32> {
     return vec3<f32>(f32(r), f32(g), f32(b)) / 63.0;
 }
 
-fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOut {
+// `local_pos` is relative to the render origin; `world_y` is the absolute height.
+fn vs_common(local_pos: vec3<f32>, world_y: f32, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOut {
     var out: VsOut;
-    let local_pos = pos - u.render_origin.xyz;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
 
     let tile = packed & 0x7FFu;
@@ -204,7 +204,7 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
             // slice of the texture instead of squishing/stretching the full tile.
             // v=0 at the cell top, v=1 at the bottom. A full-height top vertex lands on
             // an integer Y (fract 0), so treat that as height 1.
-            var lh = pos.y - floor(pos.y);
+            var lh = world_y - floor(world_y);
             if ((corner == 2u || corner == 3u) && lh < 0.001) { lh = 1.0; }
             uv.y = 1.0 - lh;
         }
@@ -323,23 +323,24 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
 
     out.view = local_pos - u.cam_pos.xyz;
     out.tint = tint.rgb;
-    out.world_pos = pos;
+    out.world_y = world_y;
     return out;
 }
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
-    return vs_common(in.pos, in.tint, in.packed, in.packed2);
+    // Dynamic bakes arrive relative to the render origin.
+    return vs_common(in.pos, in.pos.y + f32(u.render_origin.y), in.tint, in.packed, in.packed2);
 }
 
 @vertex
 fn vs_terrain(in: VsInTerrain) -> VsOut {
-    let pos = vec3<f32>(
-        f32(in.pos_q.x) * TERRAIN_POS_SCALE_INV + in.col_origin.x,
-        f32(in.pos_q.y) * TERRAIN_POS_SCALE_INV,
-        f32(in.pos_q.z) * TERRAIN_POS_SCALE_INV + in.col_origin.z,
-    );
-    return vs_common(pos + greedy_overlap_push(in.packed, in.packed2), in.tint, in.packed, in.packed2);
+    let mesh_pos = vec3<f32>(in.pos_q.xyz) * TERRAIN_POS_SCALE_INV
+        + greedy_overlap_push(in.packed, in.packed2);
+    // The column origin and the render origin are both integers: only their
+    // small difference becomes a float.
+    let anchor = vec3<f32>(in.col_origin.xyz - u.render_origin.xyz);
+    return vs_common(anchor + mesh_pos, mesh_pos.y, in.tint, in.packed, in.packed2);
 }
 
 // Sub-pixel tangent overlap for greedy-MERGED quads (1/1024 block). Their long
@@ -379,7 +380,7 @@ fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
 
 fn terrain_variant_layer(in: VsOut, layer: u32, donor: vec2<i32>) -> u32 {
     if (in.ncode == 0u || variation_count(layer, u.atlas_layout.w) <= 1u) { return layer; }
-    let cell = variation_cell(in.view + u.cam_pos.xyz, vec3<i32>(u.render_origin.xyz), face_normal(in.ncode))
+    let cell = variation_cell(in.view + u.cam_pos.xyz, u.render_origin.xyz, face_normal(in.ncode))
         + variation_donor_offset(donor, in.ncode);
     return block_variant_layer(layer, cell, u.atlas_layout.w);
 }
@@ -428,8 +429,8 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
         color,
         dist,
         vdir,
-        in.world_pos.y,
-        u.cam_pos.y + u.render_origin.y,
+        in.world_y,
+        u.cam_pos.y + f32(u.render_origin.y),
         u.fog.x,
         u.fog.y,
         u.fog_color.rgb,
@@ -465,8 +466,8 @@ fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
         color,
         dist,
         vdir,
-        in.world_pos.y,
-        u.cam_pos.y + u.render_origin.y,
+        in.world_y,
+        u.cam_pos.y + f32(u.render_origin.y),
         u.fog.x,
         u.fog.y,
         u.fog_color.rgb,

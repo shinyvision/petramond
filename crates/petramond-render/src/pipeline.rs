@@ -289,16 +289,6 @@ pub(super) fn create_pipeline_resources(
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &terrain_vbuf_attrs,
     };
-    let terrain_origin_attrs = [wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x4,
-        offset: 0,
-        shader_location: 4,
-    }];
-    let terrain_origin_layout = wgpu::VertexBufferLayout {
-        array_stride: 16,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &terrain_origin_attrs,
-    };
 
     // Vertex: pos (f32x3 @0) + uv (f32x2 @12) + shade (f32 @20) + tint (f32x3 @24)
     // = 36 bytes (matches `ItemVertex`).
@@ -338,7 +328,7 @@ pub(super) fn create_pipeline_resources(
             max_samples,
             &shader,
             &shared.array_layout,
-            &[terrain_vbuf_layout, terrain_origin_layout],
+            &[terrain_vbuf_layout, crate::resources::COLUMN_ORIGIN_LAYOUT],
         );
     // Absolute-pos opaque pipe for chests / doors / item entities (same FS as
     // terrain opaque; `vs_main` keeps world-space f32 positions).

@@ -168,7 +168,7 @@ impl Combat {
         &mut self,
         victim: PlayerId,
         state: &PlayerSnapshot,
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
     ) -> bool {
         let clocks = self.clocks.entry(victim).or_default();
         if !claims::compose(&self.rules, state, clocks).covers(state, origin) {
@@ -248,7 +248,11 @@ impl Combat {
             ProjectileTarget::Player(victim) => {
                 // The arrow came from back along its flight: that is the
                 // direction the guard has to be facing.
-                let came_from = [pos[0] - vel[0], pos[1] - vel[1], pos[2] - vel[2]];
+                let came_from = [
+                    pos[0] - f64::from(vel[0]),
+                    pos[1] - f64::from(vel[1]),
+                    pos[2] - f64::from(vel[2]),
+                ];
                 let blocked = players()
                     .into_iter()
                     .find(|entry| entry.id == *victim)

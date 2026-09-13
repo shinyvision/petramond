@@ -641,6 +641,7 @@ mod tests {
     use crate::net::protocol::{PlayerAction, TargetRef};
     use crate::player::Player;
     use petramond_math::math::{IVec3, Vec3};
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::item::{ItemStack, ItemType};
 
@@ -720,7 +721,7 @@ mod tests {
         }
         {
             let sess = &mut server.sessions[0];
-            let standing = Vec3::new(bx as f32 + 0.5, by as f32, bz as f32 + 0.5);
+            let standing = WorldPos::new(bx as f64 + 0.5, by as f64, bz as f64 + 0.5);
             sess.player.pos = standing;
             sess.player.vel = Vec3::ZERO;
             sess.claim_pos = standing;
@@ -770,7 +771,11 @@ mod tests {
             // clip the near containment wall on the way down — and at the
             // shore-hugging interior cell (right against the ring): the hull
             // does NOT fit there, so only the nudge search can place it.
-            let dir = (Vec3::new(wx as f32 - 3.0 + 0.5, wy as f32 + 0.95, wz as f32 + 0.5) - eye)
+            let dir = (petramond_math::world_pos::WorldPos::new(
+                wx as f64 - 3.0 + 0.5,
+                wy as f64 + 0.95,
+                wz as f64 + 0.5,
+            ) - eye)
                 .normalize();
             sess.player.pitch = dir.y.asin();
             sess.player.yaw = dir.x.atan2(dir.z);
@@ -813,7 +818,7 @@ mod tests {
         server.pump_tagged(0.06, &mut Vec::new(), &[]);
 
         let kind = crate::mob::by_key("vehicles:boat").expect("the boat species registered");
-        let hulls: Vec<Vec3> = server
+        let hulls: Vec<petramond_math::world_pos::WorldPos> = server
             .world
             .mobs()
             .instances()
@@ -823,7 +828,7 @@ mod tests {
             .collect();
         assert_eq!(hulls.len(), 1, "the click launched exactly one hull");
         assert!(
-            hulls[0].x > wx as f32 - 2.5,
+            hulls[0].x > wx as f64 - 2.5,
             "the hull was nudged toward open water, off the shore-hugging click"
         );
         assert_ne!(

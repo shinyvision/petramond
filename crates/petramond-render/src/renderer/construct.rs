@@ -147,7 +147,7 @@ pub(super) fn new_renderer_inner(
             fog: [default_fog.0, default_fog.1, 0.0, 0.0],
             fog_color: [0.60, 0.82, 1.00, 1.0],
             inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            render_origin: [0.0; 4],
+            render_origin: [0; 4],
             atlas_layout: crate::atlas::atlas_layout_uniform(),
             // White sky colour at init = identity; the icon-atlas bake reads
             // this buffer, so baked UI icons stay untinted.
@@ -532,8 +532,8 @@ pub(super) fn new_renderer_inner(
         },
         view: ViewState {
             frustum: Frustum::permissive(),
-            cam_pos: glam::Vec3::ZERO,
-            render_origin: glam::Vec3::ZERO,
+            cam_pos: petramond_math::world_pos::WorldPos::ZERO,
+            render_origin: glam::IVec3::ZERO,
             visual_time: 0.0,
             proj_y_scale: 1.0,
         },

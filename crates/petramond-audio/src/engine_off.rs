@@ -39,7 +39,7 @@ impl Audio {
         _volume: f32,
         _pitch: f32,
         _listener: SpatialListener,
-        _initial_position: petramond_math::math::Vec3,
+        _initial_position: petramond_math::world_pos::WorldPos,
     ) {
     }
 
@@ -49,7 +49,7 @@ impl Audio {
         _sound: Sound,
         _source: SpatialSoundSource,
         _listener: SpatialListener,
-        _initial_position: petramond_math::math::Vec3,
+        _initial_position: petramond_math::world_pos::WorldPos,
     ) {
     }
 
@@ -64,7 +64,7 @@ impl Audio {
     pub fn update_spatial(
         &mut self,
         _listener: SpatialListener,
-        _mobs: &[(u64, petramond_math::math::Vec3)],
+        _mobs: &[(u64, petramond_math::world_pos::WorldPos)],
     ) {
     }
 }

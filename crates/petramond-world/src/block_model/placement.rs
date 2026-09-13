@@ -21,17 +21,19 @@ pub fn placement_yaw(facing: Facing) -> f32 {
     }
 }
 
-/// Transform from authored FOOTPRINT space into world space for a model placed with the
-/// rotated footprint's minimum corner at `base`.
-pub fn placement_transform(base: IVec3, kind: BlockModelKind, facing: Facing) -> Mat4 {
-    placement_transform_fp(base, footprint(kind), facing)
+/// Transform from authored FOOTPRINT space into space relative to the rotated
+/// footprint's minimum corner (its base cell) for a model placed at `facing`. The
+/// base itself stays an integer anchor: add it as a cell, never as a float
+/// translation, so a model far from the origin keeps its sub-texel detail.
+pub fn placement_transform(kind: BlockModelKind, facing: Facing) -> Mat4 {
+    placement_transform_fp(footprint(kind), facing)
 }
 
 /// [`placement_transform`] with an explicit footprint instead of `footprint(kind)`. Used by
 /// `ModelInstance::build` to bake the render templates: that runs INSIDE the `INSTANCES`
 /// `LazyLock` init, so going through `footprint(kind)` (→ `instance(kind)`) would re-enter
 /// the half-built lock and deadlock. The footprint is already known locally there.
-pub fn placement_transform_fp(base: IVec3, fp: [u8; 3], facing: Facing) -> Mat4 {
+pub fn placement_transform_fp(fp: [u8; 3], facing: Facing) -> Mat4 {
     let sx = fp[0] as f32;
     let sz = fp[2] as f32;
     let shift = match facing {
@@ -40,8 +42,7 @@ pub fn placement_transform_fp(base: IVec3, fp: [u8; 3], facing: Facing) -> Mat4 
         Facing::East => Vec3::new(sz, 0.0, 0.0),
         Facing::West => Vec3::new(0.0, 0.0, sx),
     };
-    Mat4::from_translation(Vec3::new(base.x as f32, base.y as f32, base.z as f32) + shift)
-        * Mat4::from_rotation_y(placement_yaw(facing))
+    Mat4::from_translation(shift) * Mat4::from_rotation_y(placement_yaw(facing))
 }
 
 /// World cell occupied by authored `offset` for a model whose rotated footprint starts at

@@ -2,7 +2,7 @@ use super::App;
 use crate::game::Game;
 use petramond::server::game::ServerGame;
 use petramond::server::handle::LoopbackServer;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_world::gui_state::MenuSlot;
 use petramond_world::gui_state::PointerButton;
@@ -263,12 +263,12 @@ fn app_with_render_dist(render_dist: i32) -> TestApp {
     let (server, bootstrap) = crate::game::session::build_session_inline("", 1, render_dist);
     let (handle, pipe) = petramond::server::handle::ServerHandle::loopback();
     let game = Game::assemble(
-        Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0),
+        Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0),
         handle,
         bootstrap,
     );
     let mut app = App::new(
-        Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0),
+        Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0),
         render_dist,
     );
     app.adopt_game(game);

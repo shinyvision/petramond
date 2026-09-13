@@ -38,7 +38,7 @@ pub(super) struct HandMotion {
 
 #[derive(Clone, Copy)]
 pub(super) struct MotionSample {
-    pub position: Vec3,
+    pub position: petramond_math::world_pos::WorldPos,
     pub velocity: Vec3,
     pub yaw: f32,
     pub pitch: f32,
@@ -57,7 +57,9 @@ impl HandMotion {
         let Some(previous) = previous else {
             return;
         };
-        if sample.position.distance_squared(previous.position) > TELEPORT_DISTANCE.powi(2) {
+        if sample.position.distance_squared(previous.position)
+            > f64::from(TELEPORT_DISTANCE.powi(2))
+        {
             self.offset = Vec3::ZERO;
             self.velocity = Vec3::ZERO;
             return;

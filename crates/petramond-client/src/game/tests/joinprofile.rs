@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use crate::game::{Game, GameInput};
 use petramond::net::protocol::ClientToServer;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_world::chunk::ChunkPos;
 
@@ -46,7 +46,7 @@ fn join_profile() {
 
     let world = std::env::var("PETRAMOND_JOIN_WORLD").unwrap_or_else(|_| "joinprofile".into());
     let t_click = Instant::now();
-    let cam = Camera::new(Vec3::new(8.0, 90.0, 8.0), 16.0 / 9.0);
+    let cam = Camera::new(WorldPos::new(8.0, 90.0, 8.0), 16.0 / 9.0);
     let mut game = Game::new(cam, &world, 0x312, rd);
     let t_new = t_click.elapsed();
 
@@ -112,7 +112,7 @@ fn join_profile_sync() {
     let (mut server, bootstrap) = crate::game::session::build_session("joinprofile", 0x312, rd);
     let (handle, pipe) = petramond::server::handle::ServerHandle::loopback();
     let mut game = Game::assemble(
-        Camera::new(Vec3::new(8.0, 90.0, 8.0), 16.0 / 9.0),
+        Camera::new(WorldPos::new(8.0, 90.0, 8.0), 16.0 / 9.0),
         handle,
         bootstrap,
     );

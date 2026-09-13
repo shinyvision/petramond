@@ -1,7 +1,7 @@
 use crate::entity::DroppedItem;
 use crate::events::{DamageSource, MobDamagePre, Outcome, PostEvent};
 use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, MobSoundCategory};
-use petramond_math::math::{voxel_at, Vec3};
+use petramond_math::math::Vec3;
 
 /// Falls shorter than this into a fluid make no splash — walking or a one-block
 /// step-down stays quiet; a real fall throws the burst.
@@ -37,7 +37,7 @@ impl ServerGame {
         idx: usize,
         amount: f32,
         source: DamageSource,
-        origin: Option<Vec3>,
+        origin: Option<petramond_math::world_pos::WorldPos>,
         feedback: Option<crate::mob::MobDamageFeedback>,
         events: &mut TickEvents,
     ) -> bool {
@@ -226,11 +226,16 @@ impl ServerGame {
     /// (blocks) is the burst intensity: harder falls throw more particles.
     /// Falls below [`SPLASH_MIN_FALL`] stay quiet, so wading never splashes,
     /// and a fluid without a `splash` row enters silently.
-    pub fn push_fluid_splash(&mut self, feet: Vec3, fall: f32, events: &mut TickEvents) {
+    pub fn push_fluid_splash(
+        &mut self,
+        feet: petramond_math::world_pos::WorldPos,
+        fall: f32,
+        events: &mut TickEvents,
+    ) {
         if fall < SPLASH_MIN_FALL {
             return;
         }
-        let cell = voxel_at(feet);
+        let cell = feet.block();
         let Some(surface) = self.world.fluid_surface_at(cell).or_else(|| {
             self.world
                 .fluid_surface_at(cell - petramond_math::math::IVec3::Y)
@@ -241,7 +246,11 @@ impl ServerGame {
             return;
         };
         // The burst throws from the top face of the surface cell.
-        let pos = Vec3::new(feet.x, surface.surface_y.floor() + 1.02, feet.z);
+        let pos = petramond_math::world_pos::WorldPos::new(
+            feet.x,
+            f64::from(surface.surface_y.floor() + 1.02),
+            feet.z,
+        );
         events.world.emitter_bursts.push((splash.burst, pos, fall));
         let sound = if fall >= SPLASH_BIG_FALL {
             splash.sound_big
@@ -265,7 +274,7 @@ impl ServerGame {
         kind: crate::mob::NoiseKind,
     ) {
         self.world.push_noise(crate::mob::Noise {
-            pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5),
+            pos: petramond_math::world_pos::WorldPos::block_center(pos),
             kind,
             source: crate::mob::EntityRef::Player(self.sessions[s].id),
         });
@@ -384,7 +393,7 @@ fn queue_mob_sound(
     mob_id: u64,
     kind: crate::mob::Mob,
     category: MobSoundCategory,
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
 ) {
     if crate::mob::def(kind).sound_for(category).is_some() {
         events
@@ -402,7 +411,10 @@ fn queue_mob_sound(
 /// The two 6-bit light channels `(sky6, block)` for dynamic geometry at a world
 /// position, so the held item, particles, and dropped items are lit — and
 /// coloured — by nearby emitters just like the static blocks around them.
-pub fn light_at_pos(world: &World, pos: Vec3) -> (u8, petramond_world::light::BlockLight6) {
-    let c = voxel_at(pos);
+pub fn light_at_pos(
+    world: &World,
+    pos: petramond_math::world_pos::WorldPos,
+) -> (u8, petramond_world::light::BlockLight6) {
+    let c = pos.block();
     world.dynamic_light_at_world(c.x, c.y, c.z)
 }

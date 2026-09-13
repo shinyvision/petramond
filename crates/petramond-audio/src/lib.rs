@@ -39,13 +39,13 @@ pub use engine::Audio;
 /// current camera every frame.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SpatialListener {
-    pub pos: petramond_math::math::Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub right: petramond_math::math::Vec3,
 }
 
 /// Where an active spatial sound gets its emitter position.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SpatialSoundSource {
-    Fixed(petramond_math::math::Vec3),
+    Fixed(petramond_math::world_pos::WorldPos),
     Mob(u64),
 }

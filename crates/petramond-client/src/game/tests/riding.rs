@@ -2,13 +2,13 @@
 
 use super::common::{game, game_on_empty_chunk};
 use petramond::mob::Mob;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 
 #[test]
 fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_rider() {
     let mut game = game_on_empty_chunk();
-    let seat = Vec3::new(8.0, 80.0, 8.0);
+    let seat = WorldPos::new(8.0, 80.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, seat, 0.0));
     let mob_id = game.server.world.mobs().instances()[0].id();
     let player_id = game.server.sessions[0].id.0;
@@ -39,7 +39,7 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     let ordinary = probes.into_inner();
     assert_eq!(ordinary.len(), 8);
     for feet in ordinary.iter().copied().chain(std::iter::once(seat)) {
-        let c = petramond_math::math::voxel_at(feet);
+        let c = feet.block();
         assert!(game
             .server
             .world
@@ -113,7 +113,7 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
 fn mounted_snapshot_defers_when_no_terrain_state_is_known() {
     let mut game = game();
     game.server.world.clear_world();
-    let seat = Vec3::new(8.0, 80.0, 8.0);
+    let seat = WorldPos::new(8.0, 80.0, 8.0);
     let player_id = game.server.sessions[0].id.0;
     game.server.sessions[0].player.teleport(seat);
     assert!(game.server.world.riding_mut().mount(

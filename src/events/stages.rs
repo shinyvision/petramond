@@ -127,7 +127,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
 
     #[test]
     fn systems_in_one_slot_run_in_priority_then_registration_order() {
@@ -144,7 +144,7 @@ mod tests {
         assert!(systems.is_empty_at(Attach::After(Stage::Mining)));
 
         let mut world = World::new(1, 1);
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();

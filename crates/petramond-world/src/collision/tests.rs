@@ -340,3 +340,27 @@ fn point_in_solid_respects_the_inset_margin() {
     // A point in an empty cell is never solid.
     assert!(!point_in_solid([0.5, 5.5, 0.5], one_cell(INSET)));
 }
+
+#[test]
+fn a_far_body_resolves_exactly_like_one_at_the_origin() {
+    // At 2^29 an f32 coordinate cannot even hold the 0.3 offsets below.
+    let run = |base: i32| {
+        let o = f64::from(base);
+        let floor = move |x: i32, y: i32, z: i32| {
+            if (x, y, z) == (base, 0, base) {
+                FULL
+            } else {
+                &[][..]
+            }
+        };
+        resolve_body(
+            [o + 0.3, 1.4, o + 0.3],
+            [o + 0.7, 2.0, o + 0.7],
+            [0.05, -5.0, 0.0],
+            0.1,
+            0.0,
+            floor,
+        )
+    };
+    assert_eq!(run(0), run(1 << 29));
+}

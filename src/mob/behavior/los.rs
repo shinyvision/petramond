@@ -9,11 +9,12 @@
 
 use crate::world::World;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 
 const LOS_EPS: f32 = 0.001;
 
 /// Whether the straight line `from → to` crosses no world collision box.
-pub(super) fn line_clear(world: &World, from: Vec3, to: Vec3) -> bool {
+pub(super) fn line_clear(world: &World, from: WorldPos, to: WorldPos) -> bool {
     let delta = to - from;
     let dist = delta.length();
     if dist <= f32::EPSILON {
@@ -22,7 +23,7 @@ pub(super) fn line_clear(world: &World, from: Vec3, to: Vec3) -> bool {
     !ray_hits_collision(world, from, delta / dist, dist)
 }
 
-fn ray_hits_collision(world: &World, eye: Vec3, dir: Vec3, max_t: f32) -> bool {
+fn ray_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32) -> bool {
     let mut ix = eye.x.floor() as i32;
     let mut iy = eye.y.floor() as i32;
     let mut iz = eye.z.floor() as i32;
@@ -65,15 +66,17 @@ fn ray_hits_collision(world: &World, eye: Vec3, dir: Vec3, max_t: f32) -> bool {
     }
 }
 
-fn cell_hits_collision(world: &World, eye: Vec3, dir: Vec3, max_t: f32, cell: IVec3) -> bool {
-    let base = Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32);
+fn cell_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32, cell: IVec3) -> bool {
+    // In the eye's frame: the cell is within the ray's reach of it.
+    let base = WorldPos::block_min(cell) - eye;
     world
         .collision_boxes_at(cell.x, cell.y, cell.z)
         .iter()
         .any(|b| {
             let min = base + Vec3::from(b.min);
             let max = base + Vec3::from(b.max);
-            ray_vs_aabb(eye, dir, min, max).is_some_and(|t| t > LOS_EPS && t < max_t - LOS_EPS)
+            ray_vs_aabb(Vec3::ZERO, dir, min, max)
+                .is_some_and(|t| t > LOS_EPS && t < max_t - LOS_EPS)
         })
 }
 
@@ -126,11 +129,12 @@ fn inv_abs(v: f32) -> f32 {
     }
 }
 
-fn boundary_t(coord: f32, dir: f32) -> f32 {
+fn boundary_t(coord: f64, dir: f32) -> f32 {
+    let frac = (coord - coord.floor()) as f32;
     if dir > 0.0 {
-        (coord.floor() + 1.0 - coord) / dir
+        (1.0 - frac) / dir
     } else if dir < 0.0 {
-        (coord - coord.floor()) / -dir
+        frac / -dir
     } else {
         f32::INFINITY
     }

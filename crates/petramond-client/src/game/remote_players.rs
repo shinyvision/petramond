@@ -24,8 +24,6 @@
 
 use std::collections::BTreeMap;
 
-use glam::Vec3;
-
 use petramond::net::protocol::{PlayerActionKind, PlayerStateRow};
 use petramond::player::PlayerId;
 use petramond_render::{HeldItemAnimator, HeldItemFrame, HeldItemView};
@@ -206,7 +204,12 @@ impl RemotePlayers {
     /// from the interpolated speed/yaw at `alpha`, the held-item animator from
     /// the replicated flags + consumed one-shot latches, the hurt-flash and
     /// eat ramps. Runs in `Game::tick_receive` after the batches applied.
-    pub fn advance(&mut self, dt: f32, alpha: f32, medium: impl Fn(Vec3) -> MovementMedium) {
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        alpha: f32,
+        medium: impl Fn(petramond_math::world_pos::WorldPos) -> MovementMedium,
+    ) {
         for p in self.map.values_mut() {
             if p.curr.sleeping {
                 // Lying body: head toward the pillow, walk cycle rested —
@@ -328,7 +331,11 @@ impl RemotePlayers {
 /// Interpolate a remote's transform between two batches: position lerps,
 /// yaw takes the shortest arc, pitch lerps. A `snap` row was applied with
 /// prev == curr, so this is the identity across a teleport.
-pub fn interpolate(prev: &PlayerStateRow, curr: &PlayerStateRow, alpha: f32) -> (Vec3, f32, f32) {
+pub fn interpolate(
+    prev: &PlayerStateRow,
+    curr: &PlayerStateRow,
+    alpha: f32,
+) -> (petramond_math::world_pos::WorldPos, f32, f32) {
     let (p, c) = (&prev.transform, &curr.transform);
     (
         p.pos.lerp(c.pos, alpha),

@@ -1,6 +1,7 @@
 use super::*;
 use crate::entity::{Heading, Stuck};
 use petramond_math::math::IVec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::{Chunk, ChunkPos};
 use petramond_world::item::{ItemStack, ItemType};
 
@@ -13,7 +14,7 @@ fn world() -> World {
 
 fn spawn(world: &mut World, x: f32) -> u64 {
     let mut item = DroppedItem::new(
-        Vec3::new(x, 64.5, 4.5),
+        WorldPos::new(f64::from(x), 64.5, 4.5),
         ItemStack::new(ItemType::Dirt, 3),
         1,
     );
@@ -29,7 +30,7 @@ fn nearest_query_is_bounded_and_breaks_ties_by_identity() {
     let right = spawn(&mut world, 5.5);
     spawn(&mut world, 8.5);
     spawn(&mut world, 32.5);
-    let origin = Vec3::new(4.5, 64.5, 4.5);
+    let origin = WorldPos::new(4.5, 64.5, 4.5);
     world.item_entities_mut().reverse();
     let ids = |limit| {
         world

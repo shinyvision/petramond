@@ -21,7 +21,7 @@ const MESH_COLUMN_UPLOADS_PER_FRAME: usize = 24;
 const MESH_COLUMN_UPLOAD_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_750);
 const MESH_UPLOAD_QUIET_FRAMES: u64 = 1;
 const MESH_UPLOAD_MAX_WAIT_FRAMES: u64 = 4;
-const RENDER_ORIGIN_GRID: f32 = 16.0;
+const RENDER_ORIGIN_GRID: i32 = 16;
 
 /// Tilt of the sun/moon arc out of the east–west vertical plane. Mirror of
 /// `ARC_TILT` in `assets/shaders/daynight_sky.wgsl` — keep in sync, or the
@@ -65,13 +65,15 @@ fn fill_shader_params(
 }
 
 #[inline]
-fn render_origin_for_camera(pos: glam::Vec3) -> glam::Vec3 {
-    (pos / RENDER_ORIGIN_GRID).floor() * RENDER_ORIGIN_GRID
+fn render_origin_for_camera(pos: petramond_math::world_pos::WorldPos) -> glam::IVec3 {
+    let cell = pos.block();
+    let snap = |v: i32| v.div_euclid(RENDER_ORIGIN_GRID) * RENDER_ORIGIN_GRID;
+    glam::IVec3::new(snap(cell.x), snap(cell.y), snap(cell.z))
 }
 
 #[inline]
-fn relative_view_proj(cam: &Camera, render_origin: glam::Vec3) -> glam::Mat4 {
-    let local_pos = cam.pos - render_origin;
+fn relative_view_proj(cam: &Camera, render_origin: glam::IVec3) -> glam::Mat4 {
+    let local_pos = cam.pos.relative_to(render_origin);
     cam.proj() * glam::Mat4::look_at_rh(local_pos, local_pos + cam.forward(), glam::Vec3::Y)
 }
 
@@ -88,7 +90,7 @@ impl Renderer {
             .and_then(petramond_world::block::Block::fluid_def)
             .map(|def| &def.medium);
         let render_origin = render_origin_for_camera(cam.pos);
-        let local_cam = cam.pos - render_origin;
+        let local_cam = cam.pos.relative_to(render_origin);
         let view_proj = relative_view_proj(cam, render_origin);
         let inv_view_proj = view_proj.inverse();
         // Refresh the culling frustum from the same matrix the GPU will use.
@@ -130,7 +132,7 @@ impl Renderer {
         };
         self.terrain.view_key = TerrainViewKey {
             view_proj: view_proj.to_cols_array().map(f32::to_bits),
-            cam: cam.pos.to_array().map(f32::to_bits),
+            cam: cam.pos.to_array().map(f64::to_bits),
             fog: self.terrain_cull_dist().to_bits(),
         };
         let u = Uniforms {
@@ -145,7 +147,7 @@ impl Renderer {
                 effective_sky_scale,
             ],
             inv_view_proj: inv_view_proj.to_cols_array_2d(),
-            render_origin: [render_origin.x, render_origin.y, render_origin.z, 0.0],
+            render_origin: [render_origin.x, render_origin.y, render_origin.z, 0],
             atlas_layout: crate::atlas::atlas_layout_uniform(),
             sky_color: [
                 effective_sky_color[0],
@@ -395,28 +397,22 @@ impl Renderer {
             self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
         }
 
-        let cam = self.view.cam_pos;
         let frustum = self.view.frustum;
         let render_origin = self.view.render_origin;
+        // Render-local, like the frustum.
+        let cam = self.view.cam_pos.relative_to(render_origin);
         let fog = self.terrain_cull_dist();
         let priority = |column: ChunkPos| {
-            let min = glam::Vec3::new(
-                (column.cx * 16) as f32,
-                petramond_world::chunk::WORLD_MIN_Y as f32,
-                (column.cz * 16) as f32,
+            let (lo_y, hi_y) = (
+                petramond_world::chunk::WORLD_MIN_Y,
+                petramond_world::chunk::WORLD_MAX_Y,
             );
-            let max = glam::Vec3::new(
-                (column.cx * 16 + 16) as f32,
-                petramond_world::chunk::WORLD_MAX_Y as f32,
-                (column.cz * 16 + 16) as f32,
-            );
-            let visible_soon = frustum.aabb_visible(min - render_origin, max - render_origin)
-                && aabb_distance_sq(cam, min, max) <= fog * fog;
-            let center = glam::Vec3::new(
-                column.cx as f32 * 16.0 + 8.0,
-                cam.y,
-                column.cz as f32 * 16.0 + 8.0,
-            );
+            let corner = glam::IVec3::new(column.cx * 16, lo_y, column.cz * 16) - render_origin;
+            let min = corner.as_vec3();
+            let max = min + glam::Vec3::new(16.0, (hi_y - lo_y) as f32, 16.0);
+            let visible_soon =
+                frustum.aabb_visible(min, max) && aabb_distance_sq(cam, min, max) <= fog * fog;
+            let center = glam::Vec3::new(min.x + 8.0, cam.y, min.z + 8.0);
             (
                 u8::from(!visible_soon),
                 (cam - center).length_squared().to_bits(),

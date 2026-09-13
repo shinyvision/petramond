@@ -82,7 +82,7 @@ pub struct BodyPose {
     pub sneak_weight: f32,
     pub locomotion: petramond_render::views::LocomotionBlend,
     was_grounded: Option<bool>,
-    previous_position: Option<glam::Vec3>,
+    previous_position: Option<petramond_math::world_pos::WorldPos>,
     fall_speed: f32,
     landing_time: f32,
     landing_strength: f32,
@@ -90,7 +90,7 @@ pub struct BodyPose {
 
 /// Movement facts sampled by either the predicted player or a remote replica.
 pub struct MotionFrame {
-    pub position: glam::Vec3,
+    pub position: petramond_math::world_pos::WorldPos,
     pub velocity: glam::Vec3,
     pub yaw: f32,
     pub grounded: bool,
@@ -108,7 +108,7 @@ pub enum MovementMedium {
 
 pub(super) fn movement_medium(
     world: &petramond_world::world::WorldData,
-    pos: glam::Vec3,
+    pos: petramond_math::world_pos::WorldPos,
 ) -> MovementMedium {
     let x = pos.x.floor() as i32;
     let z = pos.z.floor() as i32;
@@ -130,7 +130,10 @@ pub(super) fn movement_medium(
     }
 }
 
-pub(super) fn land_motion(world: &petramond_world::world::WorldData, pos: glam::Vec3) -> bool {
+pub(super) fn land_motion(
+    world: &petramond_world::world::WorldData,
+    pos: petramond_math::world_pos::WorldPos,
+) -> bool {
     movement_medium(world, pos) == MovementMedium::Land
 }
 
@@ -142,7 +145,7 @@ impl BodyPose {
             return;
         }
         if self.previous_position.is_some_and(|pos| {
-            pos.distance_squared(frame.position) > TELEPORT_DISTANCE * TELEPORT_DISTANCE
+            pos.distance_squared(frame.position) > f64::from(TELEPORT_DISTANCE * TELEPORT_DISTANCE)
         }) {
             self.reset_facing(frame.yaw);
         }

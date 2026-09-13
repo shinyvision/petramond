@@ -9,9 +9,10 @@ use petramond::entity::DroppedItem;
 use petramond::mob::Mob;
 use petramond::net::protocol::MobStateRow;
 use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::item::{ItemStack, ItemType};
 
-fn mob_row(id: u64, pos: Vec3, hurt_timer: f32) -> MobStateRow {
+fn mob_row(id: u64, pos: WorldPos, hurt_timer: f32) -> MobStateRow {
     MobStateRow {
         id,
         kind_id: Mob::Owl.0,
@@ -42,7 +43,7 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
     let bundles = ["petramond:burn_great", "petramond:torch_flame"]
         .map(|key| petramond_world::particle_emitters::by_key(key).unwrap());
     let expected = bundles.iter().map(|b| b.body_self_lit).fold(0.0, f32::max);
-    let mut row = mob_row(7, Vec3::new(4.0, 65.0, 4.0), 0.0);
+    let mut row = mob_row(7, WorldPos::new(4.0, 65.0, 4.0), 0.0);
     row.emitters = bundles.iter().map(|b| b.id).collect();
     for dead in [false, true] {
         row.dead = dead;
@@ -67,8 +68,8 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
 #[test]
 fn replicated_store_pairs_consecutive_batches_and_drops_absent_ids() {
     let mut store = crate::game::replicated::ReplicatedMobs::default();
-    let p1 = Vec3::new(1.0, 70.0, 1.0);
-    let p2 = Vec3::new(1.5, 69.0, 1.0);
+    let p1 = WorldPos::new(1.0, 70.0, 1.0);
+    let p2 = WorldPos::new(1.5, 69.0, 1.0);
 
     store.apply(vec![mob_row(7, p1, 0.3), mob_row(9, p1, 0.0)]);
     let fresh = store.iter().find(|e| e.curr.id == 7).expect("stored");
@@ -94,7 +95,7 @@ fn burst_before_a_boundary_does_not_shift_the_committed_pair() {
     let mut game = game();
     let update = |tick: u64, x: f32| TickUpdate {
         tick,
-        mobs: vec![mob_row(7, Vec3::new(x, 70.0, 0.0), 0.0)],
+        mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)],
         ..Default::default()
     };
 
@@ -157,13 +158,13 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         let x = tick as f32;
         TickUpdate {
             tick,
-            mobs: vec![mob_row(7, Vec3::new(x, 70.0, 0.0), 0.0)],
+            mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)],
             items: vec![ItemStateRow {
                 id: 9,
                 item_id: ItemType::Dirt.0,
                 count: 1,
                 data: None,
-                pos: Vec3::new(x, 69.0, 0.0),
+                pos: WorldPos::new(f64::from(x), 69.0, 0.0),
                 spin: 0.0,
                 flight: None,
             }],
@@ -171,7 +172,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 conditions: Vec::new(),
                 id: remote_id,
                 transform: petramond::net::protocol::Transform {
-                    pos: Vec3::new(x, 68.0, 0.0),
+                    pos: WorldPos::new(f64::from(x), 68.0, 0.0),
                     vel: Vec3::ZERO,
                     yaw: 0.0,
                     pitch: 0.0,
@@ -238,7 +239,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         "actions from every collapsed batch survive in arrival order"
     );
     let resync_tick = burst_len as u64 + 1;
-    let resync_x = resync_tick as f32;
+    let resync_x = resync_tick as f64;
     assert_eq!(
         game.game.staged_rows.front().unwrap().mobs[0].pos.x,
         resync_x,
@@ -277,7 +278,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
     let mob = game.game.replicated_mobs.get(7).unwrap();
     assert_eq!(
         (mob.prev.pos.x, mob.curr.pos.x),
-        (next_tick as f32, (next_tick + 1) as f32),
+        (next_tick as f64, (next_tick + 1) as f64),
         "two crossed boundaries catch up two consecutive queued snapshots"
     );
     assert!(game.game.staged_rows.is_empty());
@@ -330,7 +331,7 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
                 tick: applied,
                 mobs: vec![mob_row(
                     7,
-                    Vec3::new(applied as f32 * speed, 70.0, 0.0),
+                    WorldPos::new(f64::from(applied as f32 * speed), 70.0, 0.0),
                     0.0,
                 )],
                 ..Default::default()
@@ -344,7 +345,7 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
     // Past the ratchet warm-up, every frame advances BOTH sample sequences by
     // exactly one frame's worth of server motion — no stalls, no snaps.
     for (name, positions) in [("camera", camera), ("presentation", presentation)] {
-        let steps: Vec<f32> = positions.windows(2).map(|w| w[1] - w[0]).collect();
+        let steps: Vec<f32> = positions.windows(2).map(|w| (w[1] - w[0]) as f32).collect();
         for (i, s) in steps.iter().enumerate().skip(20) {
             assert!(
                 (*s - nominal).abs() < nominal * 0.05,
@@ -360,13 +361,13 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
 #[test]
 fn pumped_mob_batches_become_interpolated_presentation_rows() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
     // An owl in free fall right above the player: gravity guarantees its
     // position differs between consecutive ticks.
     assert!(game
         .server
         .world
-        .spawn_mob(Mob::Owl, Vec3::new(8.5, 70.0, 8.5), 0.0)
+        .spawn_mob(Mob::Owl, WorldPos::new(8.5, 70.0, 8.5), 0.0)
         .is_some());
     let id = game.server.world.mobs().instances()[0].id();
 
@@ -412,11 +413,11 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
 #[test]
 fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
     assert!(game
         .server
         .world
-        .spawn_mob(Mob::Owl, Vec3::new(8.5, 70.0, 8.5), 0.0)
+        .spawn_mob(Mob::Owl, WorldPos::new(8.5, 70.0, 8.5), 0.0)
         .is_some());
     let id = game.server.world.mobs().instances()[0].id();
 
@@ -460,7 +461,7 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     // Far from the player so no pickup interferes; above the floor so it moves
     // (falls) between ticks.
     let mut drop = DroppedItem::new(
-        Vec3::new(2.5, 70.0, 2.5),
+        WorldPos::new(2.5, 70.0, 2.5),
         ItemStack::new(ItemType::Dirt, 3),
         1,
     );

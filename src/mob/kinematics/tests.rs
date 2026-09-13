@@ -1,6 +1,7 @@
 use super::*;
 use crate::mob::{def, Mob, MobDamageFeedback};
 use petramond_math::math::IVec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 
 fn floor_at_zero(p: IVec3) -> bool {
@@ -21,7 +22,7 @@ fn sheep_def() -> &'static MobDef {
 
 #[test]
 fn gravity_settles_the_mob_on_the_floor() {
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 5.0, 0.5), 0.0, 1);
     for _ in 0..600 {
         owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     }
@@ -45,7 +46,7 @@ fn zero_gravity_preserves_vertical_drive_but_still_collides() {
     let text = rows.to_string();
     let table = crate::mob::load::parse_layers(&[&text]).unwrap();
     let d = table.defs.iter().find(|d| d.mob == Mob::Owl).unwrap();
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 5.0, 0.5), 0.0, 1);
     owl.vel.y = -1.0;
     owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero);
     assert!((owl.vel.y + 1.0).abs() < 1e-6);
@@ -74,7 +75,7 @@ fn a_body_embedded_in_a_grown_column_slides_out_sideways_without_bobbing() {
             &[][..]
         }
     };
-    let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.4, 0.0, 0.5), 0.0, 1);
+    let mut sheep = Instance::new(Mob::Sheep, WorldPos::new(0.4, 0.0, 0.5), 0.0, 1);
     let mut peak = 0.0f32;
     for _ in 0..40 {
         sheep.integrate_locomotion(
@@ -87,11 +88,11 @@ fn a_body_embedded_in_a_grown_column_slides_out_sideways_without_bobbing() {
             },
             &Surroundings::dry(&boxes),
         );
-        peak = peak.max(sheep.pos.y);
+        peak = peak.max(sheep.pos.y as f32);
     }
     let hw = sheep_def().size.half_width;
     assert!(
-        sheep.pos.x + hw <= 0.0 + 1e-3 || sheep.pos.x - hw >= 1.0 - 1e-3,
+        sheep.pos.x + f64::from(hw) <= 0.0 + 1e-3 || sheep.pos.x - f64::from(hw) >= 1.0 - 1e-3,
         "the body left the column sideways: x {}",
         sheep.pos.x
     );
@@ -112,7 +113,7 @@ fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
         "the chest box must be inset (top {chest_top})"
     );
     let boxes = |_x: i32, y: i32, _z: i32| if y == 0 { chest } else { &[][..] };
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 5.0, 0.5), 0.0, 1);
     for _ in 0..600 {
         owl.integrate_locomotion(
             1.0 / 60.0,
@@ -127,7 +128,7 @@ fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
     }
     assert!(owl.on_ground(), "mob should be grounded on the chest");
     assert!(
-        (owl.pos.y - chest_top).abs() < 0.02,
+        (owl.pos.y - f64::from(chest_top)).abs() < 0.02,
         "mob feet should rest on the chest top {chest_top}, got {}",
         owl.pos.y
     );
@@ -150,7 +151,7 @@ fn grounded_mob_auto_steps_up_a_half_block() {
         }
     };
     let wish = Vec3::new(1.0, 0.0, 0.0);
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 1.0, 0.5), 0.0, 1);
     for _ in 0..180 {
         owl.integrate_locomotion(
             1.0 / 60.0,
@@ -179,7 +180,7 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
     // velocity and the jump stalls at the face.
     let solid = |c: IVec3| c.y < 1 || (c.x >= 1 && c.y < 2);
     let wish = Vec3::new(1.0, 0.0, 0.0);
-    let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
+    let mut sheep = Instance::new(Mob::Sheep, WorldPos::new(0.5, 1.0, 0.5), 0.0, 1);
 
     sheep.integrate_locomotion(
         0.05,
@@ -220,7 +221,7 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
         sheep.pos
     );
     assert!(
-        sheep.pos.x + sheep_def().size.half_width > 1.0,
+        sheep.pos.x + f64::from(sheep_def().size.half_width) > 1.0,
         "mob footprint should cross onto the step, pos {:?}",
         sheep.pos
     );
@@ -228,7 +229,7 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
 
 #[test]
 fn wish_direction_drives_horizontal_motion_and_facing() {
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     // Settle on the ground first.
     owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     let x0 = owl.pos.x;
@@ -260,7 +261,7 @@ fn wish_direction_drives_horizontal_motion_and_facing() {
 fn airborne_sheep_carries_velocity_without_walk_steering() {
     let empty_boxes =
         |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
-    let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
+    let mut sheep = Instance::new(Mob::Sheep, WorldPos::new(0.5, 5.0, 0.5), 0.0, 1);
     sheep.vel.x = 1.0;
 
     sheep.integrate_locomotion(
@@ -294,7 +295,7 @@ fn airborne_sheep_carries_velocity_without_walk_steering() {
 fn an_airborne_drive_cannot_replace_carry_or_yaw() {
     let empty_boxes =
         |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.25, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 5.0, 0.5), 0.25, 1);
     owl.vel.x = 1.0;
     assert!(owl.set_drive(DriveIntent {
         horizontal: Some([-5.0, 0.0]),
@@ -321,7 +322,7 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
 
 #[test]
 fn jump_impulse_lifts_a_grounded_mob() {
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     assert!(owl.on_ground());
     owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, true, &floor_at_zero);
@@ -331,7 +332,7 @@ fn jump_impulse_lifts_a_grounded_mob() {
 
 #[test]
 fn idle_mob_is_not_moving() {
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..10 {
         owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     }
@@ -347,7 +348,7 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
     // tick it was issued: the mob moves at the driven velocity with its
     // yaw set, does not read as walking, and — like the brain's wish —
     // the intent must be re-issued or the next tick's overwrite parks it.
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_drive(DriveIntent {
         horizontal: Some([2.0, 0.0]),
         vertical: None,
@@ -377,8 +378,8 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
 fn knockback_stagger_overrides_a_drive_intent() {
     // A punched vehicle takes its knockback: the decaying knockback owns
     // horizontal velocity for the stagger, the drive is consumed unused.
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-    let from = Vec3::new(2.0, 0.0, 0.5); // hit from +X: knockback pushes -X
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
+    let from = WorldPos::new(2.0, 0.0, 0.5); // hit from +X: knockback pushes -X
     owl.damage(1.0, Some(from), true, None, &default_feedback());
     assert!(owl.set_drive(DriveIntent {
         horizontal: Some([5.0, 0.0]),
@@ -398,7 +399,7 @@ fn knockback_stagger_overrides_a_drive_intent() {
 
 #[test]
 fn knockback_pushes_away_and_overrides_the_wish() {
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     // Settle on the floor first.
     owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     let x0 = owl.pos.x;
@@ -406,7 +407,7 @@ fn knockback_pushes_away_and_overrides_the_wish() {
     // knockback survives `integrate`'s per-tick wish-velocity overwrite.
     assert!(!owl.damage(
         1.0,
-        Some(Vec3::new(5.0, 0.0, 0.5)),
+        Some(WorldPos::new(5.0, 0.0, 0.5)),
         true,
         None,
         &default_feedback()
@@ -444,7 +445,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         looping: true,
     }];
     let dt = 1.0 / 60.0;
-    let mut mob = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut mob = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
 
     // Walk +X under the real steering gate, issuing the launch the way a mod
     // does: a vertical-only drive latched whenever the LAST tick ended
@@ -519,7 +520,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     // A navigation step jump keeps priority over the vertical drive on the
     // tick both fire: launched at the full jump_speed, which clears the
     // one-block ledge the route depends on.
-    let mut jumper = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut jumper = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         jumper.integrate(dt, d, Vec3::ZERO, false, &solid);
     }
@@ -538,7 +539,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     );
 
     // A HORIZONTAL drive keeps its vehicle semantics: driven is not walking.
-    let mut driven = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut driven = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         driven.integrate(dt, d, Vec3::ZERO, false, &solid);
     }
@@ -562,7 +563,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
 #[test]
 fn a_shoved_mob_moves_without_reading_as_walking() {
     let d = owl_def();
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     }
@@ -592,7 +593,7 @@ fn a_shoved_mob_moves_without_reading_as_walking() {
 #[test]
 fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
     let d = owl_def();
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     }
@@ -632,7 +633,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
     );
 
     // An UNGATED intent stays unconditional (a startle jump from standstill).
-    let mut idle = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut idle = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     }
@@ -656,16 +657,16 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
     // implied velocity survives it — so a body the mod stops placing keeps
     // that velocity into the engine's own integration instead of being
     // zeroed as a standing body's would be.
-    let mut cart = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut cart = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     let dt = 1.0 / 20.0;
     assert!(cart.set_kinematic(KinematicPose {
-        pos: Vec3::new(0.9, 0.0, 0.5),
+        pos: WorldPos::new(0.9, 0.0, 0.5),
         yaw: 1.0,
         tilt: Tilt::new(0.4, -0.5),
     }));
     let pose = cart.kinematic.take().expect("latched");
     cart.place_kinematic(dt, pose);
-    assert_eq!(cart.pos, Vec3::new(0.9, 0.0, 0.5));
+    assert_eq!(cart.pos, WorldPos::new(0.9, 0.0, 0.5));
     assert_eq!((cart.yaw, cart.tilt), (1.0, Tilt::new(0.4, -0.5)));
     assert!(
         (cart.vel.x - 0.4 / dt).abs() < 1e-3,
@@ -717,9 +718,9 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
 
 #[test]
 fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_kinematic(KinematicPose {
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         yaw: 0.0,
         tilt: Tilt::LEVEL
     }));
@@ -727,7 +728,7 @@ fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
     assert!(owl.kinematic.is_none(), "a frozen tick discards the pose");
     owl.damage(100.0, None, true, None, &default_feedback());
     assert!(!owl.set_kinematic(KinematicPose {
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         yaw: 0.0,
         tilt: Tilt::LEVEL
     }));
@@ -735,7 +736,7 @@ fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
 
 #[test]
 fn brain_speed_scale_changes_horizontal_travel_and_gait_together() {
-    let mut normal = Instance::new(Mob::Sheep, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    let mut normal = Instance::new(Mob::Sheep, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     let mut hurried = Instance::new(Mob::Sheep, normal.pos, 0.0, 1);
     normal.on_ground = true;
     hurried.on_ground = true;

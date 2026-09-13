@@ -17,7 +17,7 @@ use crate::rail::{add, link, Dir, Rail, RailMap};
 use crate::track::{dot2, grade, xz, yaw_facing, Path, RAIL_TOP};
 
 /// A world-space axis-aligned box as `(min, max)` corners.
-pub type Aabb = ([f32; 3], [f32; 3]);
+pub type Aabb = ([f64; 3], [f64; 3]);
 
 /// Whether two boxes overlap with positive volume.
 pub fn overlaps(a: Aabb, b: Aabb) -> bool {
@@ -26,7 +26,7 @@ pub fn overlaps(a: Aabb, b: Aabb) -> bool {
 
 /// The whole box of a cell.
 pub fn cell_box(cell: [i32; 3]) -> Aabb {
-    let min = [cell[0] as f32, cell[1] as f32, cell[2] as f32];
+    let min = [cell[0] as f64, cell[1] as f64, cell[2] as f64];
     (min, [min[0] + 1.0, min[1] + 1.0, min[2] + 1.0])
 }
 
@@ -86,7 +86,7 @@ const MAX_CELLS_PER_TICK: usize = 6;
 /// A cart's authoritative state: feet pose plus its signed speed.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Cart {
-    pub pos: [f32; 3],
+    pub pos: [f64; 3],
     /// Mob convention: yaw 0 faces `-Z`.
     pub yaw: f32,
     /// Body tilt, positive nose-up.
@@ -115,18 +115,11 @@ impl Body {
     /// upper half, because on a slope the cart leans into the hill: its
     /// lower front corner is legitimately inside the block that carries the
     /// next rail, while anything meeting the body above its axle is a wall.
-    pub fn upper_half(self, pos: [f32; 3]) -> Aabb {
+    pub fn upper_half(self, pos: [f64; 3]) -> Aabb {
+        let (hw, height) = (f64::from(self.half_width), f64::from(self.height));
         (
-            [
-                pos[0] - self.half_width,
-                pos[1] + self.height * 0.5,
-                pos[2] - self.half_width,
-            ],
-            [
-                pos[0] + self.half_width,
-                pos[1] + self.height,
-                pos[2] + self.half_width,
-            ],
+            [pos[0] - hw, pos[1] + height * 0.5, pos[2] - hw],
+            [pos[0] + hw, pos[1] + height, pos[2] + hw],
         )
     }
 }
@@ -153,7 +146,7 @@ pub fn facing_xz(yaw: f32) -> [f32; 2] {
 /// The rail cell a cart at `pos` rides: the cell its feet are in, or the one
 /// below — a cart topping a slope is a hair into the cell above, and a
 /// derailed cart standing on the block under a rail is in the rail's cell.
-pub fn rail_cell(map: &impl RailMap, pos: [f32; 3]) -> Option<([i32; 3], Rail)> {
+pub fn rail_cell(map: &impl RailMap, pos: [f64; 3]) -> Option<([i32; 3], Rail)> {
     let x = pos[0].floor() as i32;
     let z = pos[2].floor() as i32;
     let y = (pos[1] + 0.02).floor() as i32;
@@ -179,7 +172,10 @@ pub fn step(
         return Step::Off;
     };
     let mut path = Path::of(rail.form);
-    let mut s = path.project([cart.pos[0] - cell[0] as f32, cart.pos[2] - cell[2] as f32]);
+    let mut s = path.project([
+        (cart.pos[0] - cell[0] as f64) as f32,
+        (cart.pos[2] - cell[2] as f64) as f32,
+    ]);
 
     // Which way along the path the cart FACES: +1 when its nose points
     // toward increasing `s`. A cart dropped crosswise onto a rail picks +1.
@@ -268,15 +264,15 @@ pub fn step(
     let p = path.point(s);
     let t = path.tangent(s);
     let mut pos = [
-        cell[0] as f32 + p[0],
-        cell[1] as f32 + p[1] + RAIL_TOP,
-        cell[2] as f32 + p[2],
+        cell[0] as f64 + f64::from(p[0]),
+        cell[1] as f64 + f64::from(p[1] + RAIL_TOP),
+        cell[2] as f64 + f64::from(p[2]),
     ];
     if derailed {
         // Carry the unspent motion past the end of the track, level, so the
         // engine inherits exactly the speed the cart left the rails with.
-        pos[0] += t[0] * dir * remaining;
-        pos[2] += t[2] * dir * remaining;
+        pos[0] += f64::from(t[0] * dir * remaining);
+        pos[2] += f64::from(t[2] * dir * remaining);
     }
     let nose = [t[0] * faces_forward, t[2] * faces_forward];
     let yaw = if dot2(nose, nose) > 1e-8 {
@@ -347,7 +343,10 @@ pub fn collide(cart: &Cart, other: &Cart) -> Option<Contact> {
     if (cart.pos[1] - other.pos[1]).abs() > 1.0 {
         return None;
     }
-    let d = [cart.pos[0] - other.pos[0], cart.pos[2] - other.pos[2]];
+    let d = [
+        (cart.pos[0] - other.pos[0]) as f32,
+        (cart.pos[2] - other.pos[2]) as f32,
+    ];
     let dist = dot2(d, d).sqrt();
     if !(1e-4..CART_LENGTH).contains(&dist) {
         return None;
@@ -393,8 +392,11 @@ pub fn resolve_contacts<'a>(cart: &Cart, others: impl Iterator<Item = &'a Cart>)
 
 /// The signed speed a punch from `origin` gives the cart: away from the
 /// puncher, along the facing.
-pub fn punch(cart: &Cart, origin: [f32; 3]) -> f32 {
-    let d = [cart.pos[0] - origin[0], cart.pos[2] - origin[2]];
+pub fn punch(cart: &Cart, origin: [f64; 3]) -> f32 {
+    let d = [
+        (cart.pos[0] - origin[0]) as f32,
+        (cart.pos[2] - origin[2]) as f32,
+    ];
     if dot2(d, facing_xz(cart.yaw)) >= 0.0 {
         PUNCH_SPEED
     } else {
@@ -469,7 +471,7 @@ mod tests {
 
     fn at(x: f32, y: f32, z: f32, yaw: f32, speed: f32) -> Cart {
         Cart {
-            pos: [x, y + RAIL_TOP, z],
+            pos: [f64::from(x), f64::from(y + RAIL_TOP), f64::from(z)],
             yaw,
             pitch: 0.0,
             speed,
@@ -523,7 +525,7 @@ mod tests {
         ]);
         // Parked halfway up, facing north (uphill).
         let start = Cart {
-            pos: [0.5, 0.5 + RAIL_TOP, 1.5],
+            pos: [0.5, 0.5 + f64::from(RAIL_TOP), 1.5],
             yaw: 0.0,
             pitch: 0.0,
             speed: 0.0,
@@ -604,7 +606,7 @@ mod tests {
         };
         assert!(c.pos[2] > 2.0, "carried past the end: {:?}", c.pos);
         assert!(
-            (c.pos[2] - (1.8 + 8.0 * DT)).abs() < 0.01,
+            (c.pos[2] - f64::from(1.8 + 8.0 * DT)).abs() < 0.01,
             "at rail speed: {:?}",
             c.pos
         );
@@ -740,7 +742,7 @@ mod tests {
         ]);
         let hill = block_at([0, 0, 0]);
         let mut c = Cart {
-            pos: [0.5, 0.3 + RAIL_TOP, 1.7],
+            pos: [0.5, 0.3 + f64::from(RAIL_TOP), 1.7],
             yaw: 0.0,
             pitch: 0.0,
             speed: 6.0,

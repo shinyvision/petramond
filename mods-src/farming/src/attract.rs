@@ -68,8 +68,8 @@ pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
     if rest::resting(pos) {
         return;
     }
-    let field = [pos[0] as f32 + 0.5, pos[1] as f32, pos[2] as f32 + 0.5];
-    let anchors: Vec<[f32; 3]> = players().iter().map(|p| p.state.pos).collect();
+    let field = [pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5];
+    let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
     // Standing over your own field is the common case, and no site within
     // reach of this crop could clear the band from there — settle it once,
     // against the crop, before paying for the headcount or any site probe.
@@ -99,7 +99,7 @@ pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
         if (feet[1] - pos[1]).abs() > SITE_DY {
             continue;
         }
-        let at = [x as f32 + 0.5, feet[1] as f32, z as f32 + 0.5];
+        let at = [x as f64 + 0.5, feet[1] as f64, z as f64 + 0.5];
         if anchors.iter().any(|p| near(*p, at, MIN_PLAYER_DIST)) {
             continue;
         }
@@ -116,7 +116,11 @@ pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
     }
 }
 
-fn near(a: [f32; 3], b: [f32; 3], range: f32) -> bool {
-    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+fn near(a: [f64; 3], b: [f64; 3], range: f32) -> bool {
+    let d = [
+        (a[0] - b[0]) as f32,
+        (a[1] - b[1]) as f32,
+        (a[2] - b[2]) as f32,
+    ];
     d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < range * range
 }

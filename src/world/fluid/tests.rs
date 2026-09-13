@@ -1,7 +1,7 @@
 use super::*;
-use petramond_math::math::Vec3;
 // Source/flow tests place water at y>=65, above flat_world's stone floor.
 use crate::world::testutil::flat_world;
+use petramond_math::world_pos::WorldPos;
 
 fn water_flow_delay() -> u64 {
     Block::Water.fluid_def().unwrap().delay
@@ -79,19 +79,19 @@ fn flow_at_a_point_stops_above_the_fluid_surface() {
     assert!(w.set_fluid_world(IVec3::new(2, 65, 8), Block::Water, 0));
     assert!(w.set_fluid_world(IVec3::new(3, 65, 8), Block::Water, flowing(4)));
 
-    let submerged = w.fluid_current_at(Vec3::new(3.5, 65.2, 8.5));
+    let submerged = w.fluid_current_at(WorldPos::new(3.5, 65.2, 8.5));
     assert!(
         submerged.velocity.x > 0.0,
         "a submerged probe drifts: {submerged:?}"
     );
     // 15/16 = 0.9375, above even a full source's 8/9 surface.
-    let skimming = w.fluid_current_at(Vec3::new(3.5, 65.9375, 8.5));
+    let skimming = w.fluid_current_at(WorldPos::new(3.5, 65.9375, 8.5));
     assert_eq!(
         skimming,
         petramond_world::fluid::FluidCurrent::NONE,
         "above the surface there is no water"
     );
-    let source_top = w.fluid_current_at(Vec3::new(2.5, 65.9375, 8.5));
+    let source_top = w.fluid_current_at(WorldPos::new(2.5, 65.9375, 8.5));
     assert_eq!(
         source_top,
         petramond_world::fluid::FluidCurrent::NONE,
@@ -99,7 +99,7 @@ fn flow_at_a_point_stops_above_the_fluid_surface() {
     );
     // A capped cell fills to the brim and pushes through its whole height.
     assert!(w.set_fluid_world(IVec3::new(3, 66, 8), Block::Water, flowing(1)));
-    let capped = w.fluid_current_at(Vec3::new(3.5, 65.9375, 8.5));
+    let capped = w.fluid_current_at(WorldPos::new(3.5, 65.9375, 8.5));
     assert!(
         capped.velocity.length_squared() > 0.0,
         "water above caps the cell full: {capped:?}"
@@ -763,7 +763,7 @@ fn lava_is_insulated_from_water_flow_probes() {
     assert!(w.set_fluid_world(IVec3::new(2, 65, 2), Block::Lava, 0));
     // Lava pushes no current: bodies are not conveyed by it.
     assert_eq!(
-        w.fluid_current_at(Vec3::new(2.5, 65.2, 2.5)),
+        w.fluid_current_at(WorldPos::new(2.5, 65.2, 2.5)),
         petramond_world::fluid::FluidCurrent::NONE,
         "lava is a hazard, not a conveyor"
     );

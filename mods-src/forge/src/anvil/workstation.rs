@@ -38,9 +38,9 @@ fn give_stack_to(player: PlayerId, stack: &ItemStackData) -> bool {
 /// nobody is left to hand it to. Contents are never destroyed for nothing.
 fn spill_stack(pos: [i32; 3], stack: &ItemStackData) {
     let at = [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 1.2,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 1.2,
+        pos[2] as f64 + 0.5,
     ];
     let data: Vec<(&str, &[u8])> = stack
         .data

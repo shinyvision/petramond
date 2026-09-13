@@ -7,6 +7,7 @@ use super::{
     *,
 };
 use petramond_math::math::{IVec3, SelectionShape, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::fluid::Buoyancy;
 
@@ -22,6 +23,6 @@ mod sneaking;
 mod sweep;
 mod targeting;
 
-fn p(feet: Vec3) -> Player {
+fn p(feet: WorldPos) -> Player {
     Player::new(feet)
 }

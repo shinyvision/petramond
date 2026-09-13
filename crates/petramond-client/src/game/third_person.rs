@@ -86,12 +86,11 @@ impl Game {
             let mut cam = self.cam.clone();
             cam.yaw = head_yaw;
             cam.pitch = SLEEP_CAM_PITCH;
-            let pos = self.player.pos;
-            let target = Vec3::new(pos.x, pos.y + 0.5, pos.z);
+            let target = self.player.pos + Vec3::new(0.0, 0.5, 0.0);
             let back = -cam.forward();
             let world = &self.replica;
             let dist = petramond_world::collision::clamp_padded_segment(
-                [target.x, target.y, target.z],
+                target.to_array(),
                 [back.x, back.y, back.z],
                 BOOM_DIST,
                 CAM_PAD,

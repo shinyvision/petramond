@@ -26,20 +26,20 @@ const CONVERGE_FAR: f32 = 48.0;
 /// the crosshair rests on — `target` blocks along the look, the first body
 /// or block there, or [`CONVERGE_FAR`] with nothing under it — so a shot
 /// at a zombie a few blocks off lands on the zombie, not beside it.
-pub fn nock(state: &PlayerSnapshot, target: Option<f32>) -> ([f32; 3], [f32; 3]) {
+pub fn nock(state: &PlayerSnapshot, target: Option<f32>) -> ([f64; 3], [f32; 3]) {
     let aim = Aim::of(state);
-    let from = [
-        aim.eye[0] - aim.across[0] * NOCK_RIGHT,
-        aim.eye[1] - NOCK_DROP,
-        aim.eye[2] - aim.across[2] * NOCK_RIGHT,
+    let nock = [
+        -aim.across[0] * NOCK_RIGHT,
+        -NOCK_DROP,
+        -aim.across[2] * NOCK_RIGHT,
     ];
     let reach = target.unwrap_or(CONVERGE_FAR).max(1.0);
-    let at = [
-        aim.eye[0] + aim.forward[0] * reach,
-        aim.eye[1] + aim.forward[1] * reach,
-        aim.eye[2] + aim.forward[2] * reach,
+    let to = [
+        aim.forward[0] * reach - nock[0],
+        aim.forward[1] * reach - nock[1],
+        aim.forward[2] * reach - nock[2],
     ];
-    let to = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
+    let from = strike::offset_by(aim.eye, nock);
     let len = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2])
         .sqrt()
         .max(1e-6);
@@ -48,7 +48,9 @@ pub fn nock(state: &PlayerSnapshot, target: Option<f32>) -> ([f32; 3], [f32; 3])
 
 /// Where a ray from `from` along unit `dir` enters the box `(min, max)`:
 /// the distance, or `None` for a miss (a start inside counts at 0).
-pub fn ray_box(from: [f32; 3], dir: [f32; 3], (min, max): strike::Box3) -> Option<f32> {
+pub fn ray_box(from: [f64; 3], dir: [f32; 3], (min, max): strike::Box3) -> Option<f32> {
+    let (min, max) = (strike::relative(min, from), strike::relative(max, from));
+    let from = [0.0f32; 3];
     let (mut near, mut far) = (0.0f32, f32::INFINITY);
     for axis in 0..3 {
         if dir[axis].abs() < 1e-9 {

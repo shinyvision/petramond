@@ -2,7 +2,8 @@
 //! (streaming, draws, emitters) and the renderer. Pure math over the loaded
 //! world — no camera state, no GPU types.
 
-use crate::mathh::{Mat4, Vec3, Vec4};
+use crate::mathh::{IVec3, Mat4, Vec3, Vec4};
+use petramond_math::world_pos::WorldPos;
 
 #[cfg(test)]
 mod tests;
@@ -106,10 +107,11 @@ pub fn aabb_distance_sq(p: Vec3, min: Vec3, max: Vec3) -> f32 {
 #[derive(Copy, Clone, Debug)]
 pub struct ViewVolume {
     frustum: Frustum,
-    /// The frustum's planes are expressed relative to this origin — the
-    /// renderer keeps view coordinates small for float precision, so boxes
-    /// have to be rebased the same way before testing.
-    origin: Vec3,
+    /// The frustum's planes are expressed relative to this integer origin —
+    /// the renderer keeps view coordinates small for float precision, so
+    /// boxes are rebased the same way before testing.
+    origin: IVec3,
+    /// The camera, relative to `origin`.
     eye: Vec3,
     cull_dist_sq: f32,
     /// Presented pixels one world block spans at one block of distance —
@@ -122,15 +124,15 @@ pub struct ViewVolume {
 impl ViewVolume {
     pub fn new(
         frustum: Frustum,
-        origin: Vec3,
-        eye: Vec3,
+        origin: IVec3,
+        eye: WorldPos,
         cull_dist: f32,
         pixel_scale: f32,
     ) -> Self {
         Self {
             frustum,
             origin,
-            eye,
+            eye: eye.relative_to(origin),
             cull_dist_sq: cull_dist * cull_dist,
             pixel_scale,
         }
@@ -141,8 +143,8 @@ impl ViewVolume {
     pub fn unbounded() -> Self {
         Self::new(
             Frustum::permissive(),
-            Vec3::ZERO,
-            Vec3::ZERO,
+            IVec3::ZERO,
+            WorldPos::ZERO,
             f32::INFINITY,
             f32::MAX,
         )
@@ -150,16 +152,15 @@ impl ViewVolume {
 
     /// The camera position, for distance ordering by the same callers that cull.
     #[inline]
-    pub fn eye(&self) -> Vec3 {
-        self.eye
+    pub fn eye(&self) -> WorldPos {
+        WorldPos::block_min(self.origin) + self.eye
     }
 
     /// Is any part of the world-space box `[min,max]` drawn this frame?
     #[inline]
-    pub fn aabb_visible(&self, min: Vec3, max: Vec3) -> bool {
-        self.frustum
-            .aabb_visible(min - self.origin, max - self.origin)
-            && aabb_distance_sq(self.eye, min, max) <= self.cull_dist_sq
+    pub fn aabb_visible(&self, min: WorldPos, max: WorldPos) -> bool {
+        let (lo, hi) = (min.relative_to(self.origin), max.relative_to(self.origin));
+        self.frustum.aabb_visible(lo, hi) && aabb_distance_sq(self.eye, lo, hi) <= self.cull_dist_sq
     }
 
     /// Could a detail of world-space size `size` sitting inside `[min,max]`
@@ -173,8 +174,9 @@ impl ViewVolume {
     /// — anti-aliasing exists to smooth what is drawn, not to reveal specks
     /// the display cannot resolve.
     #[inline]
-    pub fn covers_a_pixel(&self, min: Vec3, max: Vec3, size: f32) -> bool {
+    pub fn covers_a_pixel(&self, min: WorldPos, max: WorldPos, size: f32) -> bool {
         let reach = size * self.pixel_scale;
-        aabb_distance_sq(self.eye, min, max) <= reach * reach
+        let (lo, hi) = (min.relative_to(self.origin), max.relative_to(self.origin));
+        aabb_distance_sq(self.eye, lo, hi) <= reach * reach
     }
 }

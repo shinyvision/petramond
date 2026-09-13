@@ -81,7 +81,7 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
 
     // Both sessions sample from the same pinned spot, so their explored sets
     // overlap fully and a byte diff is meaningful.
-    let home = petramond_math::math::Vec3::new(100.5, 90.0, 100.5);
+    let home = WorldPos::new(100.5, 90.0, 100.5);
     let session = || {
         let mut app = app_with_render_dist(4);
         app.app.game.as_mut().unwrap().place_player_for_test(home);
@@ -156,7 +156,7 @@ fn present_full_tiles(app: &TestApp) -> usize {
 
 /// Visible full-map tile count for a pan/zoom, mirroring the mod's
 /// `full_tile_bounds` (800 px canvas, fixed 160 px tile images).
-fn expected_full_tiles(pan: [f32; 2], zoom: i8) -> usize {
+fn expected_full_tiles(pan: [f64; 2], zoom: i8) -> usize {
     let (cell_blocks, cell_px) = match zoom {
         i8::MIN..=-2 => (2, 1),
         -1 => (1, 1),
@@ -166,10 +166,10 @@ fn expected_full_tiles(pan: [f32; 2], zoom: i8) -> usize {
     };
     let bpp = cell_blocks as f64 / cell_px as f64;
     let tile_blocks = (160 / cell_px * cell_blocks) as f64;
-    let axis = |center: f32| {
+    let axis = |center: f64| {
         let half_blocks = 800.0 * bpp * 0.5;
-        let min = ((center as f64 - half_blocks) / tile_blocks).floor() as i64;
-        let max = ((center as f64 + half_blocks) / tile_blocks).ceil() as i64 - 1;
+        let min = ((center - half_blocks) / tile_blocks).floor() as i64;
+        let max = ((center + half_blocks) / tile_blocks).ceil() as i64 - 1;
         (max - min + 1) as usize
     };
     axis(pan[0]) * axis(pan[1])
@@ -244,7 +244,7 @@ fn world_map_drag_fill_latency() {
     // The mod snapped its pan to the player position on open (zoom 0 grid).
     let zoom0 = 0i8;
     let mut pan = [(eye.x / 0.5).round() * 0.5, (eye.z / 0.5).round() * 0.5];
-    let fill = |app: &mut TestApp, pan: [f32; 2], zoom: i8, label: &str| {
+    let fill = |app: &mut TestApp, pan: [f64; 2], zoom: i8, label: &str| {
         let expected = expected_full_tiles(pan, zoom);
         let started = Instant::now();
         let mut frames = 0u32;
@@ -278,7 +278,7 @@ fn world_map_drag_fill_latency() {
 
     // Four fast right-to-left strokes: each pans +1440 blocks at −2. Track
     // the per-frame present/expected deficit — blank tiles the player sees.
-    let bpp = 2.0f32;
+    let bpp = 2.0f64;
     let mut deficit_frames = 0u32;
     let mut deficit_sum = 0u64;
     let mut deficit_max = 0usize;
@@ -293,7 +293,7 @@ fn world_map_drag_fill_latency() {
         for step in 1..=24 {
             let x = start[0] - step as f32 * 30.0;
             app.app.set_cursor_position(x, start[1]);
-            pan = [pan0[0] - (x - start[0]).round() * bpp, pan0[1]];
+            pan = [pan0[0] - f64::from((x - start[0]).round()) * bpp, pan0[1]];
             frame(&mut app);
             drag_frames += 1;
             let expected = expected_full_tiles(pan, zoom);

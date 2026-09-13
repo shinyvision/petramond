@@ -1,6 +1,6 @@
 use super::Mobs;
 use crate::mob::MobTagValue;
-use petramond_math::math::{Tilt, Vec3};
+use petramond_math::math::Tilt;
 
 impl Mobs {
     pub(crate) fn exposure_mut(
@@ -93,7 +93,7 @@ impl Mobs {
     pub fn set_mob_kinematic(
         &mut self,
         index: usize,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         yaw: f32,
         tilt: Tilt,
     ) -> Result<bool, f32> {

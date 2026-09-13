@@ -7,6 +7,7 @@ use super::common::{game, game_on_empty_chunk, hit};
 use crate::game::tick::PlacePrediction;
 use petramond::events::tick::TickEvents;
 use petramond_math::math::IVec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::gui_state::{MenuSlot, PointerButton};
 use petramond_world::inventory::Inventory;
@@ -206,7 +207,7 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     // Park the body clear of the place cell so the body gate cannot refuse.
-    game.game.player.pos = petramond_math::math::Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     game.server.sessions[0].player.inventory = hands(
         Some(ItemStack::new(stick(), 1)),
         Some(ItemStack::new(ItemType::Dirt, 3)),

@@ -5,13 +5,13 @@
 use super::*;
 
 impl Renderer {
-    /// Is this section mesh's bounding box inside the current view frustum?
+    /// Is this render-local bounding box inside the current view frustum?
+    /// `cam_pos` is render-local too.
     #[inline]
     fn aabb_visible(
         min: glam::Vec3,
         max: glam::Vec3,
         frustum: Frustum,
-        render_origin: glam::Vec3,
         cam_pos: glam::Vec3,
         fog: f32,
     ) -> bool {
@@ -19,7 +19,7 @@ impl Renderer {
         let margin = glam::Vec3::splat(petramond_mesh::FOLIAGE_OVERHANG);
         let min = min - margin;
         let max = max + margin;
-        if !frustum.aabb_visible(min - render_origin, max - render_origin) {
+        if !frustum.aabb_visible(min, max) {
             return false;
         }
         aabb_distance_sq(cam_pos, min, max) <= fog * fog
@@ -29,14 +29,14 @@ impl Renderer {
     fn section_visible(
         section: &GpuSectionMesh,
         frustum: Frustum,
-        render_origin: glam::Vec3,
+        render_origin: glam::IVec3,
         cam_pos: glam::Vec3,
         fog: f32,
     ) -> bool {
         let (ox, oy, oz) = section.origin;
-        let min = glam::Vec3::new(ox as f32, oy as f32, oz as f32);
-        let max = glam::Vec3::new((ox + 16) as f32, (oy + 16) as f32, (oz + 16) as f32);
-        Self::aabb_visible(min, max, frustum, render_origin, cam_pos, fog)
+        let min = (glam::IVec3::new(ox, oy, oz) - render_origin).as_vec3();
+        let max = min + glam::Vec3::splat(16.0);
+        Self::aabb_visible(min, max, frustum, cam_pos, fog)
     }
 
     /// Whole-column AABB covering every installed section. Rejecting here is
@@ -48,7 +48,7 @@ impl Renderer {
         column: &GpuColumnMesh,
         column_pos: ChunkPos,
         frustum: Frustum,
-        render_origin: glam::Vec3,
+        render_origin: glam::IVec3,
         cam_pos: glam::Vec3,
         fog: f32,
     ) -> bool {
@@ -56,15 +56,10 @@ impl Renderer {
         if min_cy > max_cy {
             return false;
         }
-        let ox = column_pos.cx * 16;
-        let oz = column_pos.cz * 16;
-        let min = glam::Vec3::new(ox as f32, (min_cy * 16) as f32, oz as f32);
-        let max = glam::Vec3::new(
-            (ox + 16) as f32,
-            ((max_cy + 1) * 16) as f32,
-            (oz + 16) as f32,
-        );
-        Self::aabb_visible(min, max, frustum, render_origin, cam_pos, fog)
+        let corner = glam::IVec3::new(column_pos.cx * 16, min_cy * 16, column_pos.cz * 16);
+        let min = (corner - render_origin).as_vec3();
+        let max = min + glam::Vec3::new(16.0, ((max_cy - min_cy + 1) * 16) as f32, 16.0);
+        Self::aabb_visible(min, max, frustum, cam_pos, fog)
     }
 
     /// Frustum-cull + depth-sort the visible chunks into `order`, returning this
@@ -88,9 +83,10 @@ impl Renderer {
         // Cull + depth-sort the visible sections once. The opaque pass draws nearest-first
         // so the GPU's early-Z rejects occluded fragments before the fragment shader runs;
         // the transparent pass draws farthest-first for correct back-to-front alpha.
-        let cam = self.view.cam_pos;
         let frustum = self.view.frustum;
         let render_origin = self.view.render_origin;
+        // Cull and sort in render-local space, like the GPU draws.
+        let cam = self.view.cam_pos.relative_to(render_origin);
         let fog = self.terrain_cull_dist();
         let terrain_columns = &self.terrain.columns;
         let far_leaf_lod_state = &mut self.terrain.far_leaf_lod_state;
@@ -115,7 +111,8 @@ impl Renderer {
                     continue;
                 }
                 let (ox, oy, oz) = section.origin;
-                let c = glam::Vec3::new(ox as f32 + 8.0, oy as f32 + 8.0, oz as f32 + 8.0);
+                let c = (glam::IVec3::new(ox, oy, oz) - render_origin).as_vec3()
+                    + glam::Vec3::splat(8.0);
                 let dist_sq = (cam - c).length_squared();
                 column_dist_sq = column_dist_sq.min(dist_sq);
                 column_has_opaque |= section.opaque_vertex_count > 0;

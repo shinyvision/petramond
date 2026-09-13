@@ -1,5 +1,5 @@
 use crate::mob::MobSize;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 use super::{
     arc_component_bounds, body_boxes, segment_centre, segment_offsets, wrap_angle, WorldBox,
@@ -16,7 +16,7 @@ const EMBEDDED_ESCAPE_STEP: f32 = 0.1;
 /// so peer solving cannot roll it back into grown terrain.
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_body_motion<F>(
-    pos: Vec3,
+    pos: WorldPos,
     yaw: f32,
     size: MobSize,
     vel: [f32; 3],
@@ -32,9 +32,9 @@ where
     F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     if size.body_segments() <= 1 {
-        let hw = size.half_width;
+        let hw = f64::from(size.half_width);
         let mut min = [pos.x - hw, pos.y, pos.z - hw];
-        let mut max = [pos.x + hw, pos.y + size.height, pos.z + hw];
+        let mut max = [pos.x + hw, pos.y + f64::from(size.height), pos.z + hw];
         // A body embedded past the heal's reach slides out sideways (see
         // `collision::embedded_escape`) and is NOT lifted — the lift is what
         // bobs it. Capped per tick so it reads as being squeezed out.
@@ -51,10 +51,10 @@ where
             let s = (EMBEDDED_ESCAPE_STEP / len).min(1.0);
             [escape[0] * s, escape[1] * s]
         };
-        min[0] += escape[0];
-        max[0] += escape[0];
-        min[2] += escape[1];
-        max[2] += escape[1];
+        min[0] += f64::from(escape[0]);
+        max[0] += f64::from(escape[0]);
+        min[2] += f64::from(escape[1]);
+        max[2] += f64::from(escape[1]);
         let healed = if escape == [0.0; 2] {
             petramond_world::collision::depenetrate_up_dyn(
                 min,
@@ -67,8 +67,8 @@ where
         } else {
             0.0
         };
-        min[1] += healed;
-        max[1] += healed;
+        min[1] += f64::from(healed);
+        max[1] += f64::from(healed);
         let (mut moved, grounded, hit) =
             petramond_world::collision::resolve_body_dyn_from_depenetrated(
                 min,
@@ -87,9 +87,7 @@ where
         return (moved, grounded, hit, healed);
     }
 
-    let body: Vec<WorldBox> = body_boxes(pos, yaw, size)
-        .map(|(min, max)| (min.to_array(), max.to_array()))
-        .collect();
+    let body: Vec<WorldBox> = body_boxes(pos, yaw, size).collect();
     let mut moved = [0.0; 3];
     let mut hit = [false; 3];
 
@@ -201,8 +199,8 @@ where
     let mut travel = delta;
     for &(mut min, mut max) in body {
         for i in 0..3 {
-            min[i] += offset[i];
-            max[i] += offset[i];
+            min[i] += f64::from(offset[i]);
+            max[i] += f64::from(offset[i]);
         }
         let allowed = petramond_world::collision::sweep_axis_dyn(
             min, max, axis, delta, boxes_fn, dyn_boxes, ignore,
@@ -222,15 +220,15 @@ where
 #[derive(Copy, Clone, Debug)]
 pub struct BodyMotion {
     pub id: u64,
-    pub start_pos: Vec3,
+    pub start_pos: petramond_math::world_pos::WorldPos,
     pub start_yaw: f32,
-    pub end_pos: Vec3,
+    pub end_pos: petramond_math::world_pos::WorldPos,
     pub end_yaw: f32,
     pub size: MobSize,
 }
 
 impl BodyMotion {
-    pub fn pose_at(self, fraction: f32) -> (Vec3, f32) {
+    pub fn pose_at(self, fraction: f32) -> (WorldPos, f32) {
         let fraction = fraction.clamp(0.0, 1.0);
         (self.pos_at(fraction), self.yaw_at(fraction))
     }
@@ -239,7 +237,7 @@ impl BodyMotion {
         wrap_angle(self.end_yaw - self.start_yaw)
     }
 
-    fn translation_delta(self) -> Vec3 {
+    fn translation_delta(self) -> petramond_math::math::Vec3 {
         self.end_pos - self.start_pos
     }
 
@@ -268,7 +266,7 @@ impl BodyMotion {
         wrap_angle(self.start_yaw + self.yaw_delta() * progress)
     }
 
-    fn pos_at(self, fraction: f32) -> Vec3 {
+    fn pos_at(self, fraction: f32) -> WorldPos {
         let start = self.yaw_stage_end();
         if !self.has_translation() {
             return self.start_pos;
@@ -278,11 +276,11 @@ impl BodyMotion {
     }
 
     pub fn moves_down(self) -> bool {
-        self.end_pos.y < self.start_pos.y - TOI_TIME_EPS
+        self.end_pos.y < self.start_pos.y - f64::from(TOI_TIME_EPS)
     }
 
     fn swept_bounds(self) -> MotionBounds {
-        let radius = self.size.half_length.unwrap_or(self.size.half_width);
+        let radius = f64::from(self.size.half_length.unwrap_or(self.size.half_width));
         MotionBounds {
             min: [
                 self.start_pos.x.min(self.end_pos.x) - radius,
@@ -291,7 +289,7 @@ impl BodyMotion {
             ],
             max: [
                 self.start_pos.x.max(self.end_pos.x) + radius,
-                self.start_pos.y.max(self.end_pos.y) + self.size.height,
+                self.start_pos.y.max(self.end_pos.y) + f64::from(self.size.height),
                 self.start_pos.z.max(self.end_pos.z) + radius,
             ],
         }
@@ -300,8 +298,8 @@ impl BodyMotion {
 
 #[derive(Copy, Clone)]
 struct MotionBounds {
-    min: [f32; 3],
-    max: [f32; 3],
+    min: [f64; 3],
+    max: [f64; 3],
 }
 
 impl MotionBounds {
@@ -456,7 +454,11 @@ fn translating_body_toi(
     first.map(|toi| (toi - TOI_TIME_EPS).max(0.0))
 }
 
-fn swept_point_toi(start: Vec3, delta: Vec3, ranges: [(f32, f32); 3]) -> Option<f32> {
+fn swept_point_toi(
+    start: petramond_math::math::Vec3,
+    delta: petramond_math::math::Vec3,
+    ranges: [(f32, f32); 3],
+) -> Option<f32> {
     let start = start.to_array();
     let delta = delta.to_array();
     let mut enter = 0.0f32;
@@ -566,9 +568,11 @@ fn relative_segment_range(
     let bq1 = b_fraction * hi;
     let a_translation = position_component_range(a, axis, aq0, aq1);
     let b_translation = position_component_range(b, axis, bq0, bq1);
+    // The difference of two absolute ranges, taken in double precision
+    // before it narrows to the relative frame.
     let translation = (
-        a_translation.0.min(a_translation.1) - b_translation.0.max(b_translation.1),
-        a_translation.0.max(a_translation.1) - b_translation.0.min(b_translation.1),
+        (a_translation.0.min(a_translation.1) - b_translation.0.max(b_translation.1)) as f32,
+        (a_translation.0.max(a_translation.1) - b_translation.0.min(b_translation.1)) as f32,
     );
     if axis == 1 {
         return translation;
@@ -600,9 +604,9 @@ fn offset_component_range(
     }
 }
 
-fn position_component_range(motion: BodyMotion, axis: usize, lo: f32, hi: f32) -> (f32, f32) {
-    let a = motion.pos_at(lo)[axis];
-    let b = motion.pos_at(hi)[axis];
+fn position_component_range(motion: BodyMotion, axis: usize, lo: f32, hi: f32) -> (f64, f64) {
+    let a = motion.pos_at(lo).to_array()[axis];
+    let b = motion.pos_at(hi).to_array()[axis];
     (a.min(b), a.max(b))
 }
 
@@ -658,16 +662,9 @@ where
         let x = motion_segment_component_range(motion, offset, 0, lo, hi);
         let y = motion_segment_component_range(motion, offset, 1, lo, hi);
         let z = motion_segment_component_range(motion, offset, 2, lo, hi);
-        let min = [
-            x.0 - motion.size.half_width,
-            y.0,
-            z.0 - motion.size.half_width,
-        ];
-        let max = [
-            x.1 + motion.size.half_width,
-            y.1 + motion.size.height,
-            z.1 + motion.size.half_width,
-        ];
+        let hw = f64::from(motion.size.half_width);
+        let min = [x.0 - hw, y.0, z.0 - hw];
+        let max = [x.1 + hw, y.1 + f64::from(motion.size.height), z.1 + hw];
         petramond_world::collision::aabb_hits_cells(min, max, boxes_fn)
     })
 }
@@ -678,13 +675,16 @@ fn motion_segment_component_range(
     axis: usize,
     lo: f32,
     hi: f32,
-) -> (f32, f32) {
+) -> (f64, f64) {
     let translation = position_component_range(motion, axis, lo, hi);
     if axis == 1 {
         return translation;
     }
     let rotation = offset_component_range(motion, offset, axis, lo, hi);
-    (translation.0 + rotation.0, translation.1 + rotation.1)
+    (
+        translation.0 + f64::from(rotation.0),
+        translation.1 + f64::from(rotation.1),
+    )
 }
 
 fn ranges_overlap(a: (f32, f32), b: (f32, f32)) -> bool {

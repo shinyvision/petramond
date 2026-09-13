@@ -8,7 +8,7 @@
 //! chunk section to show it.
 //!
 //! Prims are authored in the BLOCK'S OWN space and carried into the world by
-//! one matrix per instance (`BlockDrawInstance::transform`) — for a model
+//! one frame per instance (`BlockDrawInstance::frame`) — for a model
 //! block, its footprint space turned by the placed facing. That is what lets a
 //! mod compute geometry against the model it can see without knowing where its
 //! machine was placed or which way it faces.
@@ -33,6 +33,8 @@ use super::lighting::{DynLight, LightEnv};
 pub struct VisibleDraws<'a> {
     pub all: &'a [BlockDrawInstance],
     pub visible: &'a [u32],
+    /// The render origin the baked vertices are relative to.
+    pub origin: glam::IVec3,
 }
 
 impl<'a> VisibleDraws<'a> {
@@ -57,8 +59,10 @@ fn prim_light(inst: &BlockDrawInstance, emissive: bool) -> DynLight {
 /// space — for a model block, the footprint space its `.bbmodel` is authored
 /// in, turned by the placed facing — which is what lets a mod compute geometry
 /// against the model it can see and have it land right at any placement.
-fn at(inst: &BlockDrawInstance, p: [f32; 3]) -> Vec3 {
-    inst.transform.transform_point3(Vec3::from(p))
+fn at(inst: &BlockDrawInstance, origin: glam::IVec3, p: [f32; 3]) -> Vec3 {
+    inst.frame
+        .relative_to(origin)
+        .transform_point3(Vec3::from(p))
 }
 
 /// Append every instance's cuboid prims, plus the BLOCK-CUBE half of its item
@@ -105,11 +109,9 @@ pub fn build_block_draws(draws: VisibleDraws<'_>, verts: &mut Vec<Vertex>, indic
                             light,
                         );
                     }
+                    let to_render = inst.frame.relative_to(draws.origin);
                     for v in verts[start..].iter_mut() {
-                        v.pos = inst
-                            .transform
-                            .transform_point3(Vec3::from(v.pos))
-                            .to_array();
+                        v.pos = to_render.transform_point3(Vec3::from(v.pos)).to_array();
                     }
                     multiply_tint(&mut verts[start..], *tint);
                 }
@@ -125,7 +127,7 @@ pub fn build_block_draws(draws: VisibleDraws<'_>, verts: &mut Vec<Vertex>, indic
                         continue;
                     };
                     let start = verts.len();
-                    let centre = at(inst, *local);
+                    let centre = at(inst, draws.origin, *local);
                     push_block_item_cube_lit(
                         verts,
                         indices,
@@ -187,7 +189,7 @@ pub fn build_block_draw_sprites(
             if count == 0 {
                 continue;
             }
-            let centre = at(inst, *local);
+            let centre = at(inst, draws.origin, *local);
             let m = Mat4::from_translation(centre)
                 * block_rotation(inst)
                 * Mat4::from_rotation_y(*yaw)
@@ -230,7 +232,7 @@ pub fn build_block_draw_models(
             let ItemRenderKind::Model(kind) = item.render_kind() else {
                 continue;
             };
-            let transform = Mat4::from_translation(at(inst, *local))
+            let transform = Mat4::from_translation(at(inst, draws.origin, *local))
                 * block_rotation(inst)
                 * Mat4::from_rotation_y(*yaw)
                 * Mat4::from_rotation_x(*pitch)
@@ -257,7 +259,7 @@ pub fn build_block_draw_models(
 /// placed by `at()` and then TURNED by this, so it follows the model it sits
 /// in instead of the world axes.
 fn block_rotation(inst: &BlockDrawInstance) -> Mat4 {
-    let mut m = inst.transform;
+    let mut m = inst.frame.transform;
     m.w_axis = glam::Vec4::new(0.0, 0.0, 0.0, 1.0);
     m
 }

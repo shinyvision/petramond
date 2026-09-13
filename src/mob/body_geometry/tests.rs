@@ -9,36 +9,31 @@ fn long_body() -> MobSize {
 }
 
 fn bodies_overlap(
-    a_pos: Vec3,
+    a_pos: WorldPos,
     a_yaw: f32,
     a_size: MobSize,
-    b_pos: Vec3,
+    b_pos: WorldPos,
     b_yaw: f32,
     b_size: MobSize,
 ) -> bool {
     let mut b_boxes = Vec::new();
     super::super::solid_boxes(2, b_pos, b_yaw, b_size, &mut b_boxes);
-    body_boxes(a_pos, a_yaw, a_size).any(|(min, max)| {
-        petramond_world::collision::aabb_hits_dynamic(min.to_array(), max.to_array(), &b_boxes, 1)
-    })
+    body_boxes(a_pos, a_yaw, a_size)
+        .any(|(min, max)| petramond_world::collision::aabb_hits_dynamic(min, max, &b_boxes, 1))
 }
 
 #[test]
 fn a_long_body_does_not_fill_its_enclosing_square_corners() {
     let size = long_body();
-    let pos = Vec3::ZERO;
-    let eye = Vec3::new(1.0, 0.5, 3.0);
+    let pos = WorldPos::ZERO;
+    let eye = WorldPos::new(1.0, 0.5, 3.0);
     let dir = -Vec3::Z;
     let enclosing_extent = size.half_length.unwrap();
-    let enclosing_min = Vec3::new(pos.x - enclosing_extent, pos.y, pos.z - enclosing_extent);
-    let enclosing_max = Vec3::new(
-        pos.x + enclosing_extent,
-        pos.y + size.height,
-        pos.z + enclosing_extent,
-    );
+    let enclosing_min = Vec3::new(-enclosing_extent, 0.0, -enclosing_extent);
+    let enclosing_max = Vec3::new(enclosing_extent, size.height, enclosing_extent);
 
     assert!(
-        crate::player::ray_vs_aabb(eye, dir, enclosing_min, enclosing_max).is_some(),
+        crate::player::ray_vs_aabb(eye - pos, dir, enclosing_min, enclosing_max).is_some(),
         "the former enclosing square would select this empty corner"
     );
     assert_eq!(
@@ -51,7 +46,7 @@ fn a_long_body_does_not_fill_its_enclosing_square_corners() {
 #[test]
 fn a_long_body_blocks_placement_at_its_bow_and_stern() {
     let size = long_body();
-    let pos = Vec3::ZERO;
+    let pos = WorldPos::ZERO;
     let bow_cell = petramond_math::math::IVec3::new(0, 0, -2);
     let full = petramond_world::block::Block::Stone.collision_boxes();
 
@@ -84,8 +79,8 @@ fn a_bow_only_soft_contact_produces_one_compound_shove() {
         height: 0.8,
         half_length: None,
     };
-    let hull_pos = Vec3::ZERO;
-    let soft_pos = Vec3::new(0.0, 0.0, -1.6);
+    let hull_pos = WorldPos::ZERO;
+    let soft_pos = WorldPos::new(0.0, 0.0, -1.6);
 
     assert!(
         petramond_world::body::separation(
@@ -125,7 +120,15 @@ fn diagonal_square_contact_survives_the_push_broadphase() {
         half_length: None,
     };
     assert!(
-        body_separation(Vec3::ZERO, 0.0, size, Vec3::new(0.9, 0.0, 0.9), 0.0, size,).is_some(),
+        body_separation(
+            WorldPos::ZERO,
+            0.0,
+            size,
+            WorldPos::new(0.9, 0.0, 0.9),
+            0.0,
+            size,
+        )
+        .is_some(),
         "overlapping square corners cannot be culled by a circular broadphase"
     );
 }
@@ -134,8 +137,8 @@ fn diagonal_square_contact_survives_the_push_broadphase() {
 fn two_driven_long_solids_share_toi_and_never_pass_through_on_later_ticks() {
     let size = long_body();
     let yaw = -std::f32::consts::FRAC_PI_2;
-    let mut a_pos = Vec3::new(-3.0, 0.0, 0.0);
-    let mut b_pos = Vec3::new(3.0, 0.0, 0.0);
+    let mut a_pos = WorldPos::new(-3.0, 0.0, 0.0);
+    let mut b_pos = WorldPos::new(3.0, 0.0, 0.0);
     let mut solver = SolidMotionSolver::default();
 
     let first = [
@@ -199,17 +202,17 @@ fn two_turning_long_solids_stop_before_their_bows_overlap() {
     let motions = [
         BodyMotion {
             id: 10,
-            start_pos: Vec3::new(-1.4, 0.0, 0.0),
+            start_pos: WorldPos::new(-1.4, 0.0, 0.0),
             start_yaw: 0.0,
-            end_pos: Vec3::new(-1.4, 0.0, 0.0),
+            end_pos: WorldPos::new(-1.4, 0.0, 0.0),
             end_yaw: -std::f32::consts::FRAC_PI_2,
             size,
         },
         BodyMotion {
             id: 20,
-            start_pos: Vec3::new(1.4, 0.0, 0.0),
+            start_pos: WorldPos::new(1.4, 0.0, 0.0),
             start_yaw: 0.0,
-            end_pos: Vec3::new(1.4, 0.0, 0.0),
+            end_pos: WorldPos::new(1.4, 0.0, 0.0),
             end_yaw: std::f32::consts::FRAC_PI_2,
             size,
         },
@@ -245,7 +248,7 @@ fn a_peer_truncated_turn_and_translation_stays_clear_of_shore() {
             petramond_world::block::Block::Air.collision_boxes()
         }
     };
-    let start = Vec3::ZERO;
+    let start = WorldPos::ZERO;
     let requested_yaw = -std::f32::consts::FRAC_PI_2;
     let end_yaw = clamp_body_yaw(start, 0.0, requested_yaw, size, &shore, &[], 10);
     assert!(
@@ -276,9 +279,9 @@ fn a_peer_truncated_turn_and_translation_stays_clear_of_shore() {
     };
     let peer = BodyMotion {
         id: 20,
-        start_pos: Vec3::new(2.6, 0.0, -0.4),
+        start_pos: WorldPos::new(2.6, 0.0, -0.4),
         start_yaw: 0.0,
-        end_pos: Vec3::new(2.6, 0.0, -0.4),
+        end_pos: WorldPos::new(2.6, 0.0, -0.4),
         end_yaw: 0.0,
         size: square,
     };
@@ -325,7 +328,7 @@ fn a_peer_truncated_axis_slide_is_clamped_before_its_terrain_corner() {
             petramond_world::block::Block::Air.collision_boxes()
         }
     };
-    let start = Vec3::new(0.5, 0.0, 0.5);
+    let start = WorldPos::new(0.5, 0.0, 0.5);
     let (moved, _, _, _) = resolve_body_motion(
         start,
         0.0,
@@ -389,7 +392,7 @@ fn a_peer_truncated_axis_slide_is_clamped_before_its_terrain_corner() {
 #[test]
 fn checked_body_fit_rejects_shore_and_solid_entity_overlap() {
     let size = long_body();
-    let pos = Vec3::ZERO;
+    let pos = WorldPos::ZERO;
     let known = |_: i32, _: i32, _: i32| true;
     let shore = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (0, 0, -2) {
@@ -417,7 +420,7 @@ fn checked_body_fit_rejects_shore_and_solid_entity_overlap() {
 
     let face_touch_is_not_covered = |x: i32, _: i32, _: i32| x != 1;
     assert!(body_pose_fits(
-        Vec3::new(0.5, 0.0, 0.0),
+        WorldPos::new(0.5, 0.0, 0.0),
         0.0,
         size,
         &air,
@@ -429,8 +432,8 @@ fn checked_body_fit_rejects_shore_and_solid_entity_overlap() {
 #[test]
 fn equal_distance_ray_hits_choose_the_lower_stable_id_in_any_input_order() {
     let size = long_body();
-    let pos = Vec3::ZERO;
-    let eye = Vec3::new(0.0, 0.5, 3.0);
+    let pos = WorldPos::ZERO;
+    let eye = WorldPos::new(0.0, 0.5, 3.0);
     let dir = -Vec3::Z;
 
     let forward = closest_body_ray_hit(
@@ -464,7 +467,7 @@ fn a_long_body_bow_stops_at_shore_before_its_centre_box_arrives() {
     // half a block before the shore at x=2; the old centre square would
     // have travelled 1.5 blocks before noticing it.
     let (moved, _, hit, _) = resolve_body_motion(
-        Vec3::ZERO,
+        WorldPos::ZERO,
         -std::f32::consts::FRAC_PI_2,
         size,
         [2.0, 0.0, 0.0],
@@ -495,21 +498,19 @@ fn a_long_body_cannot_rotate_its_bow_through_shore() {
             &[]
         }
     };
-    let pos = Vec3::ZERO;
+    let pos = WorldPos::ZERO;
     let requested = -std::f32::consts::FRAC_PI_2;
     assert!(
-        body_boxes(pos, requested, size).any(|(min, max)| {
-            petramond_world::collision::aabb_hits_cells(min.to_array(), max.to_array(), boxes)
-        }),
+        body_boxes(pos, requested, size)
+            .any(|(min, max)| { petramond_world::collision::aabb_hits_cells(min, max, boxes) }),
         "the unvalidated quarter-turn would put the bow in shore"
     );
 
     let accepted = clamp_body_yaw(pos, 0.0, requested, size, &boxes, &[], 1);
     assert_ne!(accepted, requested, "the clipping rotation is clamped");
     assert!(
-        body_boxes(pos, accepted, size).all(|(min, max)| {
-            !petramond_world::collision::aabb_hits_cells(min.to_array(), max.to_array(), boxes)
-        }),
+        body_boxes(pos, accepted, size)
+            .all(|(min, max)| { !petramond_world::collision::aabb_hits_cells(min, max, boxes) }),
         "every accepted body segment remains outside terrain"
     );
 }
@@ -524,7 +525,7 @@ fn a_long_body_touching_shore_can_rotate_away() {
             &[]
         }
     };
-    let pos = Vec3::new(0.5, 0.0, 0.0);
+    let pos = WorldPos::new(0.5, 0.0, 0.0);
     let current = -std::f32::consts::FRAC_PI_2;
     let accepted = clamp_body_yaw(pos, current, 0.0, size, &boxes, &[], 1);
 

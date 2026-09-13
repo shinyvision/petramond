@@ -32,7 +32,7 @@ const DISMOUNT_RISE: i32 = 1;
 /// (vocabulary: `mod_api::pose`; unknown values render the rest pose).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PoseAnchor {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
     pub pose: u8,
 }
@@ -66,7 +66,12 @@ pub struct Mount {
 /// carries, and the anchor hangs straight below it — rotating the anchor
 /// itself would swing the upright body's hips toward the nose. Both
 /// authoritative slaving and client presentation use this exact transform.
-pub fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, mob_tilt: Tilt, seat: [f32; 3]) -> Vec3 {
+pub fn seat_world_pos(
+    mob_pos: petramond_math::world_pos::WorldPos,
+    mob_yaw: f32,
+    mob_tilt: Tilt,
+    seat: [f32; 3],
+) -> petramond_math::world_pos::WorldPos {
     // The seat's `z` runs along the facing, which is the body frame's -Z.
     let hip = Vec3::new(seat[0], seat[1] + PLAYER_HIP_HEIGHT, -seat[2]);
     mob_pos + mob_tilt.body_frame(mob_yaw).transform_vector3(hip) - Vec3::Y * PLAYER_HIP_HEIGHT
@@ -77,11 +82,11 @@ pub fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, mob_tilt: Tilt, seat: [f32; 3
 /// footing (see [`dismount_footing_safe`]). Pure over its probes so server
 /// authority and client prediction agree.
 pub fn dismount_spot(
-    base: Vec3,
+    base: petramond_math::world_pos::WorldPos,
     yaw: f32,
-    body_free: impl Fn(Vec3) -> bool,
-    safe: impl Fn(Vec3) -> bool,
-) -> Option<Vec3> {
+    body_free: impl Fn(petramond_math::world_pos::WorldPos) -> bool,
+    safe: impl Fn(petramond_math::world_pos::WorldPos) -> bool,
+) -> Option<petramond_math::world_pos::WorldPos> {
     let (sy, cy) = yaw.sin_cos();
     let right = Vec3::new(-cy, 0.0, sy);
     let forward = Vec3::new(sy, 0.0, cy);
@@ -107,7 +112,10 @@ pub fn dismount_spot(
 /// lands on: the first layer with collision within [`DISMOUNT_RISE`] below
 /// the feet. No ground within that drop is not safe. Server placement and
 /// client prediction share it so both pick the same spot.
-pub fn dismount_footing_safe(world: &crate::world::World, feet: Vec3) -> bool {
+pub fn dismount_footing_safe(
+    world: &crate::world::World,
+    feet: petramond_math::world_pos::WorldPos,
+) -> bool {
     let (min, max) = player_body_aabb(feet);
     let footprint = |y: i32| {
         (min[0].floor() as i32..=max[0].floor() as i32).flat_map(move |x| {
@@ -139,7 +147,7 @@ pub fn dismount_footing_safe(world: &crate::world::World, feet: Vec3) -> bool {
 /// nor a dynamic solid body. Fluid is not collision; callers rank dryness.
 pub fn player_body_free(
     world: &crate::world::World,
-    feet: Vec3,
+    feet: petramond_math::world_pos::WorldPos,
     obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
     let (min, max) = player_body_aabb(feet);
@@ -159,7 +167,7 @@ pub fn player_body_free(
 /// open air while a mounted player's detached snapshot is chosen.
 pub fn player_body_known_free(
     world: &crate::world::World,
-    feet: Vec3,
+    feet: petramond_math::world_pos::WorldPos,
     obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
     if !feet.is_finite() {
@@ -179,18 +187,11 @@ pub fn player_body_known_free(
 }
 
 #[inline]
-fn player_body_aabb(feet: Vec3) -> ([f32; 3], [f32; 3]) {
+fn player_body_aabb(feet: petramond_math::world_pos::WorldPos) -> ([f64; 3], [f64; 3]) {
+    let (hw, height) = (f64::from(player::HALF_W), f64::from(player::HEIGHT));
     (
-        [
-            feet.x - player::HALF_W,
-            feet.y + 0.01,
-            feet.z - player::HALF_W,
-        ],
-        [
-            feet.x + player::HALF_W,
-            feet.y + player::HEIGHT - 0.01,
-            feet.z + player::HALF_W,
-        ],
+        [feet.x - hw, feet.y + 0.01, feet.z - hw],
+        [feet.x + hw, feet.y + height - 0.01, feet.z + hw],
     )
 }
 
@@ -265,6 +266,7 @@ impl Riding {
 mod tests {
     use super::*;
     use crate::entity::fluid_fixture::{self, block, pool, BRINE, CINDER, FLOOR_Y, SYRUP};
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
 
     #[test]
@@ -276,7 +278,7 @@ mod tests {
     #[test]
     #[ignore = "child of dismounts_prefer_footing_clear_of_fluids_and_hazards"]
     fn dismount_footing_inner() {
-        let feet = Vec3::new(8.5, FLOOR_Y as f32, 8.5);
+        let feet = WorldPos::new(8.5, FLOOR_Y as f64, 8.5);
         let floor = FLOOR_Y - 1;
         let cases: [(&str, i32, i32, bool); 5] = [
             ("petramond:stone", 8, floor, true),
@@ -317,7 +319,7 @@ mod tests {
         let mut r = Riding::default();
         let boat = MountTarget::Mob(77);
         let chair = MountTarget::Anchor(PoseAnchor {
-            pos: Vec3::new(1.5, 2.0, 3.5),
+            pos: WorldPos::new(1.5, 2.0, 3.5),
             yaw: 0.0,
             pose: 1,
         });
@@ -356,15 +358,15 @@ mod tests {
 
     #[test]
     fn seat_offsets_rotate_with_the_mob_facing() {
-        let pos = Vec3::new(10.0, 5.0, 10.0);
+        let pos = WorldPos::new(10.0, 5.0, 10.0);
         let bow = seat_world_pos(pos, 0.0, Tilt::LEVEL, [0.0, 0.25, 1.0]);
         assert!(
-            (bow - Vec3::new(10.0, 5.25, 9.0)).length() < 1e-5,
+            (bow - WorldPos::new(10.0, 5.25, 9.0)).length() < 1e-5,
             "{bow:?}"
         );
         let bow = seat_world_pos(pos, std::f32::consts::PI, Tilt::LEVEL, [0.0, 0.25, 1.0]);
         assert!(
-            (bow - Vec3::new(10.0, 5.25, 11.0)).length() < 1e-4,
+            (bow - WorldPos::new(10.0, 5.25, 11.0)).length() < 1e-4,
             "{bow:?}"
         );
         let side = seat_world_pos(
@@ -374,7 +376,7 @@ mod tests {
             [1.0, 0.0, 0.0],
         );
         assert!(
-            (side - Vec3::new(10.0, 5.0, 9.0)).length() < 1e-4,
+            (side - WorldPos::new(10.0, 5.0, 9.0)).length() < 1e-4,
             "{side:?}"
         );
     }
@@ -387,36 +389,36 @@ mod tests {
     /// above the origin.
     #[test]
     fn seat_offsets_follow_the_body_tilt_at_the_hips() {
-        let pos = Vec3::new(10.0, 5.0, 10.0);
+        let pos = WorldPos::new(10.0, 5.0, 10.0);
         let nose_up = Tilt::new(std::f32::consts::FRAC_PI_2, 0.0);
         let hips = |tilt: Tilt, seat: [f32; 3]| {
             seat_world_pos(pos, 0.0, tilt, seat) + Vec3::Y * PLAYER_HIP_HEIGHT
         };
         let ahead = hips(nose_up, [0.0, -PLAYER_HIP_HEIGHT, 1.0]);
         assert!(
-            (ahead - Vec3::new(10.0, 6.0, 10.0)).length() < 1e-4,
+            (ahead - WorldPos::new(10.0, 6.0, 10.0)).length() < 1e-4,
             "{ahead:?}"
         );
         let above = hips(nose_up, [0.0, 1.0 - PLAYER_HIP_HEIGHT, 0.0]);
         assert!(
-            (above - Vec3::new(10.0, 5.0, 11.0)).length() < 1e-4,
+            (above - WorldPos::new(10.0, 5.0, 11.0)).length() < 1e-4,
             "{above:?}"
         );
         let side = hips(nose_up, [1.0, -PLAYER_HIP_HEIGHT, 0.0]);
         assert!(
-            (side - Vec3::new(11.0, 5.0, 10.0)).length() < 1e-4,
+            (side - WorldPos::new(11.0, 5.0, 10.0)).length() < 1e-4,
             "{side:?}"
         );
         let right_up = Tilt::new(0.0, std::f32::consts::FRAC_PI_2);
         let rolled = hips(right_up, [1.0, -PLAYER_HIP_HEIGHT, 0.0]);
         assert!(
-            (rolled - Vec3::new(10.0, 6.0, 10.0)).length() < 1e-4,
+            (rolled - WorldPos::new(10.0, 6.0, 10.0)).length() < 1e-4,
             "{rolled:?}"
         );
         // Level, the hip correction cancels: the seat IS the anchor.
         let level = seat_world_pos(pos, 0.0, Tilt::LEVEL, [0.0, -0.35, 0.0]);
         assert!(
-            (level - Vec3::new(10.0, 4.65, 10.0)).length() < 1e-5,
+            (level - WorldPos::new(10.0, 4.65, 10.0)).length() < 1e-5,
             "{level:?}"
         );
     }
@@ -426,7 +428,7 @@ mod tests {
         let mut r = Riding::default();
         let anchor = |pose| {
             MountTarget::Anchor(PoseAnchor {
-                pos: Vec3::new(4.5, 64.0, -2.6),
+                pos: WorldPos::new(4.5, 64.0, -2.6),
                 yaw: 1.0,
                 pose,
             })
@@ -437,7 +439,7 @@ mod tests {
             "an occupied anchor refuses a second body"
         );
         let nearby = MountTarget::Anchor(PoseAnchor {
-            pos: Vec3::new(4.5, 64.0, -2.4),
+            pos: WorldPos::new(4.5, 64.0, -2.4),
             yaw: 1.0,
             pose: 1,
         });

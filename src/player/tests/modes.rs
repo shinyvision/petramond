@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn spectator_clips_through_solids_and_flies_in_3d() {
     let solid_wall_and_ceiling = |x: i32, y: i32, _z: i32| x >= 1 || y >= 65;
-    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
     pl.set_mode(PlayerMode::Spectator);
 
     let input = Input {
@@ -27,7 +27,7 @@ fn spectator_clips_through_solids_and_flies_in_3d() {
 
 #[test]
 fn switching_modes_resets_motion_state() {
-    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
     pl.vel = Vec3::new(3.0, -7.0, 1.0);
     pl.on_ground = true;
     pl.jumping = true;

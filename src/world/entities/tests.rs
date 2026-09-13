@@ -1,5 +1,6 @@
 use super::*;
 use crate::mob::EntityRef;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::item::ItemType;
 
 /// The single test player's id — most tests exercise one requester.
@@ -7,7 +8,7 @@ const P0: PlayerId = PlayerId(0);
 
 /// A bodiless magnet anchor: the item tests want the pull, not a body
 /// for a flight to strike.
-fn anchor(id: PlayerId, pos: Vec3) -> PlayerAnchor {
+fn anchor(id: PlayerId, pos: WorldPos) -> PlayerAnchor {
     PlayerAnchor {
         id,
         pos,
@@ -16,7 +17,11 @@ fn anchor(id: PlayerId, pos: Vec3) -> PlayerAnchor {
 }
 
 fn drop_at(x: f32, z: f32) -> DroppedItem {
-    DroppedItem::new(Vec3::new(x, 64.0, z), ItemStack::new(ItemType::Dirt, 1), 1)
+    DroppedItem::new(
+        WorldPos::new(f64::from(x), 64.0, f64::from(z)),
+        ItemStack::new(ItemType::Dirt, 1),
+        1,
+    )
 }
 
 /// The dropped-item environmental reaction seam (`items.json`
@@ -79,10 +84,10 @@ fn dropped_reaction_inner() {
     w.set_block_world(2, 64, 2, petramond_world::block::Block::Water);
     w.set_block_world(4, 63, 4, petramond_world::block::Block::Stone);
 
-    let mut wet = DroppedItem::new(Vec3::new(2.5, 64.5, 2.5), ItemStack::new(flour, 7), 1);
+    let mut wet = DroppedItem::new(WorldPos::new(2.5, 64.5, 2.5), ItemStack::new(flour, 7), 1);
     wet.vel = Vec3::ZERO;
     wet.ticks_lived = 123;
-    let mut dry = DroppedItem::new(Vec3::new(4.5, 64.2, 4.5), ItemStack::new(flour, 3), 2);
+    let mut dry = DroppedItem::new(WorldPos::new(4.5, 64.2, 4.5), ItemStack::new(flour, 3), 2);
     dry.vel = Vec3::ZERO;
     w.spawn_item(wet);
     w.spawn_item(dry);
@@ -118,7 +123,7 @@ fn open_world() -> World {
     w
 }
 
-fn launched(pos: Vec3, vel: Vec3, owner: Option<EntityRef>) -> DroppedItem {
+fn launched(pos: WorldPos, vel: Vec3, owner: Option<EntityRef>) -> DroppedItem {
     DroppedItem::launched(pos, ItemStack::new(ItemType::Dirt, 1), vel, owner)
 }
 
@@ -131,10 +136,10 @@ fn a_flight_strikes_the_first_body_on_its_path_and_stops_there() {
     let mut w = open_world();
     assert!(w
         .mobs_mut()
-        .spawn(crate::mob::Mob::Owl, Vec3::new(5.5, 64.0, 5.5), 0.0));
+        .spawn(crate::mob::Mob::Owl, WorldPos::new(5.5, 64.0, 5.5), 0.0));
     let owl = w.mobs().instances()[0].id();
     w.spawn_item(launched(
-        Vec3::new(0.5, 64.2, 5.5),
+        WorldPos::new(0.5, 64.2, 5.5),
         Vec3::new(200.0, 0.0, 0.0),
         None,
     ));
@@ -145,7 +150,7 @@ fn a_flight_strikes_the_first_body_on_its_path_and_stops_there() {
     let it = &w.item_entities()[0];
     assert!(
         it.pos.x < 5.5,
-        "seated at the body, not flown through: {}",
+        "seated at the body, not flown through: {:?}",
         it.pos
     );
     assert!(
@@ -160,7 +165,7 @@ fn a_flight_stops_at_collidable_terrain_and_reports_the_face() {
     let mut w = open_world();
     w.set_block_world(5, 64, 5, petramond_world::block::Block::Stone);
     w.spawn_item(launched(
-        Vec3::new(0.5, 64.5, 5.5),
+        WorldPos::new(0.5, 64.5, 5.5),
         Vec3::new(200.0, 0.0, 0.0),
         None,
     ));
@@ -184,7 +189,7 @@ fn a_flight_stops_at_collidable_terrain_and_reports_the_face() {
 fn a_flight_spares_its_launcher_only_until_it_has_left_the_body() {
     let mut w = open_world();
     let me = PlayerId(3);
-    let feet = Vec3::new(2.5, 64.0, 2.5);
+    let feet = WorldPos::new(2.5, 64.0, 2.5);
     let launcher = PlayerAnchor {
         id: me,
         pos: feet + Vec3::Y,
@@ -265,7 +270,11 @@ fn a_flight_spares_its_launcher_only_until_it_has_left_the_body() {
 fn a_restored_lodged_item_reverifies_its_anchor_once_loaded() {
     let mut w = open_world();
     let restored = |x: f32, anchor: IVec3| {
-        let mut it = launched(Vec3::new(x, 64.5, 5.5), Vec3::new(10.0, 0.0, 0.0), None);
+        let mut it = launched(
+            WorldPos::new(f64::from(x), 64.5, 5.5),
+            Vec3::new(10.0, 0.0, 0.0),
+            None,
+        );
         it.lodge(anchor);
         it.vel = Vec3::ZERO;
         let Motion::Stuck(stuck) = &mut it.motion else {
@@ -301,7 +310,11 @@ fn a_restored_lodged_item_reverifies_its_anchor_once_loaded() {
 fn a_lodged_item_holds_until_its_block_goes_then_drops_loose() {
     let mut w = open_world();
     w.set_block_world(5, 64, 5, petramond_world::block::Block::Stone);
-    let mut it = launched(Vec3::new(4.8, 64.5, 5.5), Vec3::new(10.0, 0.0, 0.0), None);
+    let mut it = launched(
+        WorldPos::new(4.8, 64.5, 5.5),
+        Vec3::new(10.0, 0.0, 0.0),
+        None,
+    );
     it.lodge(IVec3::new(5, 64, 5));
     assert!(matches!(it.motion, Motion::Stuck(_)));
     w.spawn_item(it);
@@ -311,7 +324,7 @@ fn a_lodged_item_holds_until_its_block_goes_then_drops_loose() {
     assert!(matches!(held.motion, Motion::Stuck(_)));
     assert_eq!(
         held.pos,
-        Vec3::new(4.8, 64.5, 5.5),
+        WorldPos::new(4.8, 64.5, 5.5),
         "held exactly where it lodged"
     );
     assert!(held.collectable(), "a lodged item can be pulled out");
@@ -340,7 +353,7 @@ fn lifetime_advances_and_despawns_at_the_limit() {
 #[test]
 fn pickup_waits_out_the_delay_then_collects() {
     let mut w = World::new(0, 0);
-    let player = Vec3::new(0.5, 64.0, 0.5);
+    let player = WorldPos::new(0.5, 64.0, 0.5);
     w.spawn_item(drop_at(0.5, 0.5)); // ticks_lived 0: inside the delay window
     let mut collected = 0u32;
     w.dropped_items_mut()
@@ -372,7 +385,7 @@ fn pickup_waits_out_the_delay_then_collects() {
 #[test]
 fn pickup_splits_off_only_the_part_that_fits() {
     let mut w = World::new(0, 0);
-    let player = Vec3::new(0.5, 64.0, 0.5);
+    let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
     item.ticks_lived = 1234; // past the delay, with a partly-elapsed despawn timer
     let origin_pos = item.pos;
@@ -421,7 +434,7 @@ fn pickup_splits_off_only_the_part_that_fits() {
 #[test]
 fn pickup_replans_existing_request_before_splitting_more() {
     let mut w = World::new(0, 0);
-    let player = Vec3::new(0.5, 64.0, 0.5);
+    let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     w.spawn_item(item);
@@ -468,20 +481,20 @@ fn a_split_drop_tracks_the_original_instead_of_drifting() {
     // landed apart. Cloning the physics state keeps them locked together.
     let mut w = World::new(0, 0);
     let mut item = DroppedItem::new(
-        Vec3::new(0.5, 80.0, 0.5),
+        WorldPos::new(0.5, 80.0, 0.5),
         ItemStack::new(ItemType::Dirt, 10),
         7,
     );
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     item.vel = Vec3::new(3.0, 0.0, 1.0); // sideways drift a position-only split would lose
-    let player = Vec3::new(0.5, 80.0, 0.5);
+    let player = WorldPos::new(0.5, 80.0, 0.5);
     w.spawn_item(item);
     w.dropped_items_mut().request_pickups(P0, player, |_| 6);
     assert_eq!(w.item_entities().len(), 2);
 
     // Free physics with the magnet target far away (no pull): both drops must
     // follow the same arc and stay in the exact same place.
-    let far = Vec3::new(1000.0, 80.0, 0.5);
+    let far = WorldPos::new(1000.0, 80.0, 0.5);
     for _ in 0..30 {
         w.tick_item_physics(1.0 / 60.0, &[anchor(P0, far)]);
     }
@@ -493,7 +506,7 @@ fn a_split_drop_tracks_the_original_instead_of_drifting() {
 #[test]
 fn pickup_leaves_a_drop_with_no_room() {
     let mut w = World::new(0, 0);
-    let player = Vec3::new(0.5, 64.0, 0.5);
+    let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     w.spawn_item(item);
@@ -518,9 +531,9 @@ fn pickup_leaves_a_drop_with_no_room() {
 #[test]
 fn magnet_skips_a_drop_that_was_not_requested() {
     let mut w = World::new(0, 0);
-    let target = Vec3::new(0.5, 65.0, 0.5);
+    let target = WorldPos::new(0.5, 65.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
-    item.pos = Vec3::new(0.5, 64.5, 0.5); // 0.5 below the target, within attract range
+    item.pos = WorldPos::new(0.5, 64.5, 0.5); // 0.5 below the target, within attract range
     item.vel = Vec3::ZERO;
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // past the pickup delay
     w.spawn_item(item);
@@ -539,9 +552,9 @@ fn magnet_skips_a_drop_that_was_not_requested() {
 #[test]
 fn magnet_pulls_a_requested_drop() {
     let mut w = World::new(0, 0);
-    let target = Vec3::new(0.5, 65.0, 0.5);
+    let target = WorldPos::new(0.5, 65.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
-    item.pos = Vec3::new(0.5, 64.5, 0.5);
+    item.pos = WorldPos::new(0.5, 64.5, 0.5);
     item.vel = Vec3::ZERO;
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     w.spawn_item(item);
@@ -565,10 +578,10 @@ fn magnet_pulls_a_requested_drop() {
 fn magnet_pulls_toward_the_requester_not_the_nearest_player() {
     let p1 = PlayerId(1);
     let mut w = World::new(0, 0);
-    let p0_pos = Vec3::new(1.2, 64.0, 0.5); // inside attract, farther
-    let p1_pos = Vec3::new(0.1, 64.0, 0.5); // inside attract, nearer
+    let p0_pos = WorldPos::new(1.2, 64.0, 0.5); // inside attract, farther
+    let p1_pos = WorldPos::new(0.1, 64.0, 0.5); // inside attract, nearer
     let mut item = drop_at(0.5, 0.5);
-    item.pos = Vec3::new(0.5, 64.0, 0.5);
+    item.pos = WorldPos::new(0.5, 64.0, 0.5);
     item.vel = Vec3::ZERO;
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     w.spawn_item(item);
@@ -590,7 +603,7 @@ fn magnet_pulls_toward_the_requester_not_the_nearest_player() {
 #[test]
 fn stale_requests_release_when_the_requester_is_gone() {
     let mut w = World::new(0, 0);
-    let player = Vec3::new(0.5, 64.0, 0.5);
+    let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     w.spawn_item(item);

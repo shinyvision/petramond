@@ -14,11 +14,11 @@ use petramond_world::item::ItemStack;
 
 /// The one supported player-file version. Only the CURRENT version decodes —
 /// no legacy ladders. Bump this and let old dev players respawn fresh.
-const VERSION: u32 = 6;
+const VERSION: u32 = 7;
 
 /// Decoded `players/<name>.dat` contents.
 pub struct PlayerData {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub vel: Vec3,
     /// Look direction, radians (see `player::Player::yaw` / `pitch`).
     pub yaw: f32,
@@ -47,7 +47,7 @@ pub struct PlayerData {
 pub fn encode(player: &Player) -> Vec<u8> {
     let mut b = Vec::new();
     put_u32(&mut b, VERSION);
-    put_vec3(&mut b, player.pos);
+    put_world_pos(&mut b, player.pos);
     put_vec3(&mut b, player.vel);
     put_f32(&mut b, player.yaw);
     put_f32(&mut b, player.pitch);
@@ -125,7 +125,7 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
     if r.u32()? != VERSION {
         return None;
     }
-    let pos = get_vec3(&mut r)?;
+    let pos = get_world_pos(&mut r)?;
     let vel = get_vec3(&mut r)?;
     let (yaw, pitch) = (r.f32()?, r.f32()?);
     let mode = match r.u8()? {
@@ -214,6 +214,20 @@ impl PlayerData {
     }
 }
 
+fn put_world_pos(b: &mut Vec<u8>, p: petramond_math::world_pos::WorldPos) {
+    crate::save::codec::put_f64(b, p.x);
+    crate::save::codec::put_f64(b, p.y);
+    crate::save::codec::put_f64(b, p.z);
+}
+
+fn get_world_pos(r: &mut Reader) -> Option<petramond_math::world_pos::WorldPos> {
+    Some(petramond_math::world_pos::WorldPos::new(
+        r.f64()?,
+        r.f64()?,
+        r.f64()?,
+    ))
+}
+
 fn put_vec3(b: &mut Vec<u8>, v: Vec3) {
     put_f32(b, v.x);
     put_f32(b, v.y);
@@ -241,10 +255,11 @@ fn get_ivec3(r: &mut Reader) -> Option<IVec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::world_pos::WorldPos;
 
     #[test]
     fn player_file_roundtrips() {
-        let mut player = Player::new(Vec3::new(10.0, 72.0, -4.0));
+        let mut player = Player::new(WorldPos::new(10.0, 72.0, -4.0));
         player.set_mode(PlayerMode::Spectator);
         player.vel = Vec3::new(0.0, -1.5, 0.25); // after set_mode, which zeroes vel
         player.yaw = 1.25;
@@ -273,7 +288,7 @@ mod tests {
         let bytes = encode(&player);
         let got = decode(&bytes).expect("decodes");
 
-        assert_eq!(got.pos, Vec3::new(10.0, 72.0, -4.0));
+        assert_eq!(got.pos, WorldPos::new(10.0, 72.0, -4.0));
         assert_eq!(got.vel, Vec3::new(0.0, -1.5, 0.25));
         assert_eq!(got.yaw, 1.25);
         assert_eq!(got.pitch, -0.5);
@@ -335,7 +350,7 @@ mod tests {
         // Only the current version loads (project rule: no legacy decode
         // paths; bump + wipe dev players instead). A stale blob must return
         // None so the player respawns fresh.
-        let mut bytes = encode(&Player::new(Vec3::new(1.0, 2.0, 3.0)));
+        let mut bytes = encode(&Player::new(WorldPos::new(1.0, 2.0, 3.0)));
         bytes[0..4].copy_from_slice(&(VERSION + 1).to_le_bytes());
         assert!(decode(&bytes).is_none(), "future version rejected");
     }
@@ -344,7 +359,7 @@ mod tests {
     fn restore_drops_unknown_effect_names_and_keeps_known_ones() {
         // A removed/disabled mod's effect must not error the whole restore —
         // it is dropped (with a warning) while known effects still apply.
-        let mut player = Player::new(Vec3::new(0.0, 70.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 70.0, 0.0));
         player.apply_effect(petramond_world::effect::Effect::Regeneration, 400);
         let mut data = decode(&encode(&player)).expect("decodes");
         data.effects

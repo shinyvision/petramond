@@ -112,9 +112,9 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         return tags_only(tags);
     }
     let [dx, dy, dz] = [
-        ctx.player_pos[0] - ctx.pos[0],
-        ctx.player_pos[1] - ctx.pos[1],
-        ctx.player_pos[2] - ctx.pos[2],
+        (ctx.player_pos[0] - ctx.pos[0]) as f32,
+        (ctx.player_pos[1] - ctx.pos[1]) as f32,
+        (ctx.player_pos[2] - ctx.pos[2]) as f32,
     ];
     let dist2 = dx * dx + dy * dy + dz * dz;
     if dist2 > FOLLOW_RADIUS * FOLLOW_RADIUS {

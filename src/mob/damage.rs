@@ -54,7 +54,7 @@ impl Instance {
     pub fn damage(
         &mut self,
         amount: f32,
-        origin: Option<Vec3>,
+        origin: Option<petramond_math::world_pos::WorldPos>,
         attack: bool,
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
@@ -242,8 +242,14 @@ impl Instance {
             return;
         };
         if rag.is_initialized() {
-            let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
-            rag.step(dt, d.scale, pos, yaw, &solid);
+            // The corpse simulates in a frame anchored at the cell it died in,
+            // so its corner sweeps stay exact far from the origin.
+            let anchor = pos.block();
+            let solid = |c: IVec3| {
+                let w = c + anchor;
+                world.blocks_movement_at(w.x, w.y, w.z)
+            };
+            rag.step(dt, d.scale, pos.relative_to(anchor), yaw, &solid);
         } else {
             rag.init(skeleton, d.scale, vel, yaw);
         }
@@ -254,6 +260,7 @@ impl Instance {
 mod tests {
     use super::*;
     use crate::mob::{def, Mob};
+    use petramond_math::world_pos::WorldPos;
 
     fn floor_at_zero(p: IVec3) -> bool {
         p.y < 0
@@ -269,7 +276,7 @@ mod tests {
 
     #[test]
     fn lethal_damage_discards_a_pending_drive_intent() {
-        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(owl.set_drive(crate::mob::kinematics::DriveIntent {
             horizontal: Some([2.0, 0.0]),
             vertical: None,
@@ -279,7 +286,7 @@ mod tests {
         assert!(owl.drive_pending());
         assert!(owl.damage(
             100.0,
-            Some(Vec3::new(2.0, 0.0, 0.5)),
+            Some(WorldPos::new(2.0, 0.0, 0.5)),
             true,
             None,
             &default_feedback()
@@ -290,8 +297,8 @@ mod tests {
     #[test]
     fn damage_reduces_health_and_dies_at_zero() {
         // A 4-health owl: three 1-damage hits don't kill; the fourth does.
-        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        let from = Vec3::new(5.0, 0.0, 0.5);
+        let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
+        let from = WorldPos::new(5.0, 0.0, 0.5);
         for _ in 0..3 {
             assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
             for _ in 0..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
@@ -308,14 +315,14 @@ mod tests {
 
     #[test]
     fn empty_damage_feedback_does_nothing() {
-        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
         let health = owl.health();
         let x0 = owl.pos.x;
 
         assert!(!owl.damage(
             100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
             true,
             None,
             &MobDamageFeedback::none()
@@ -334,17 +341,23 @@ mod tests {
 
     #[test]
     fn ragdoll_feedback_is_death_gated() {
-        let mut ragdoll_only = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut ragdoll_only = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         let ragdoll = MobDamageFeedback {
             components: vec![MobDamageFeedbackComponent::Ragdoll],
         };
-        assert!(!ragdoll_only.damage(100.0, Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &ragdoll));
+        assert!(!ragdoll_only.damage(
+            100.0,
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
+            true,
+            None,
+            &ragdoll
+        ));
         assert!(
             !ragdoll_only.is_dead(),
             "ragdoll alone cannot kill without health feedback"
         );
 
-        let mut dead_with_ragdoll = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut dead_with_ragdoll = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         let health_and_ragdoll = MobDamageFeedback {
             components: vec![
                 MobDamageFeedbackComponent::DecreaseHealth,
@@ -353,7 +366,7 @@ mod tests {
         };
         assert!(dead_with_ragdoll.damage(
             100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
             true,
             None,
             &health_and_ragdoll
@@ -364,13 +377,14 @@ mod tests {
             "ragdoll presentation keeps the corpse until the ragdoll finishes"
         );
 
-        let mut dead_without_ragdoll = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut dead_without_ragdoll =
+            Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         let health_only = MobDamageFeedback {
             components: vec![MobDamageFeedbackComponent::DecreaseHealth],
         };
         assert!(dead_without_ragdoll.damage(
             100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
             true,
             None,
             &health_only
@@ -384,11 +398,11 @@ mod tests {
 
     #[test]
     fn a_dead_mob_ignores_further_damage() {
-        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(
             owl.damage(
                 100.0,
-                Some(Vec3::new(5.0, 0.0, 0.5)),
+                Some(WorldPos::new(5.0, 0.0, 0.5)),
                 true,
                 None,
                 &default_feedback()
@@ -398,7 +412,7 @@ mod tests {
         // A corpse takes no more damage and reports no further lethal hits.
         assert!(!owl.damage(
             100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
             true,
             None,
             &default_feedback()
@@ -408,12 +422,12 @@ mod tests {
 
     #[test]
     fn non_attack_damage_does_not_apply_default_knockback() {
-        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
         let x0 = owl.pos.x;
         assert!(!owl.damage(
             1.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
             false,
             None,
             &default_feedback()
@@ -428,10 +442,10 @@ mod tests {
 
     #[test]
     fn every_hit_flashes_red_including_the_kill() {
-        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         owl.damage(
             1.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
             true,
             None,
             &default_feedback(),
@@ -439,10 +453,10 @@ mod tests {
         assert!(owl.hurt_flash(1.0) > 0.0, "a non-lethal hit flashes red");
 
         // The killing blow flashes red too (so it looks like any other hit).
-        let mut dead = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let mut dead = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(dead.damage(
             100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
+            Some(WorldPos::new(5.0, 0.0, 0.5)),
             true,
             None,
             &default_feedback()

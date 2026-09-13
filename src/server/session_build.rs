@@ -358,11 +358,7 @@ pub fn player_for_session(save: Option<&WorldSave>, name: &str, seed: u32) -> Pl
 /// local session and a remote join with no `players/<name>.dat` yet.
 pub fn spawn_player(seed: u32) -> Player {
     let surface = petramond_worldgen::spawn::find_spawn(seed);
-    let feet = Vec3::new(
-        surface.x as f32 + 0.5,
-        (surface.y + 1) as f32,
-        surface.z as f32 + 0.5,
-    );
+    let feet = petramond_math::world_pos::WorldPos::block_min(surface) + Vec3::new(0.5, 1.0, 0.5);
     Player::new(feet)
 }
 

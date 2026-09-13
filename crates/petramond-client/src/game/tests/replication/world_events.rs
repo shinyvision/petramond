@@ -3,7 +3,7 @@
 
 use super::common::{filled_inventory, game};
 use crate::game::tick::TICK_DT;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 /// An UNPREDICTED placement (oriented model, replace-in-place, slab stack,
 /// frozen ledger) never presented client-side, so the initiator's own
@@ -16,7 +16,7 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
     use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
     let floor = IVec3::new(3, 63, 3);
     game.server
         .world
@@ -62,7 +62,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
     let floor = IVec3::new(3, 63, 3);
     game.server
         .world
@@ -70,7 +70,9 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     game.server.sessions[0].player.inventory = filled_inventory(); // Dirt in slot 0
     let observer = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            2.5, 64.0, 2.5,
+        )));
 
     // Place: a latched use click against the floor's top face.
     game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));

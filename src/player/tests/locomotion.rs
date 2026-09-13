@@ -8,7 +8,7 @@ use super::*;
 /// of `speed_scale` (a fresh player's is 1) rather than a registry fixture.
 #[test]
 fn mode_keys_select_nothing_without_a_wish() {
-    let pl = p(Vec3::ZERO);
+    let pl = p(WorldPos::ZERO);
     let still = |sneak: bool, sprint: bool| Input {
         wishdir: Vec3::ZERO,
         jump: false,
@@ -32,7 +32,7 @@ fn mode_keys_select_nothing_without_a_wish() {
 /// client's predicted player) walks at the answer it was handed.
 #[test]
 fn the_mod_body_scale_multiplies_the_wished_land_speed() {
-    let mut pl = p(Vec3::ZERO);
+    let mut pl = p(WorldPos::ZERO);
     let walk = Input {
         wishdir: Vec3::new(1.0, 0.0, 0.0),
         jump: false,
@@ -91,13 +91,13 @@ fn air_decays_slower_than_ground() {
     // share — both a slide, ground just firmer.
     let dt = FRICTION_REF_DT; // at the reference frame, retain == 1 - friction
     let open = |_x: i32, _y: i32, _z: i32| false;
-    let mut air = p(Vec3::new(0.0, 128.0, 0.0));
+    let mut air = p(WorldPos::new(0.0, 128.0, 0.0));
     air.vel = Vec3::new(WALK, 5.0, 0.0); // gliding +x, rising
     air.on_ground = false;
     air.update_core(dt, &open, Input::default());
 
     let floor = |_x: i32, y: i32, _z: i32| y < 64;
-    let mut gnd = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut gnd = p(WorldPos::new(0.0, 64.0, 0.0));
     gnd.vel = Vec3::new(WALK, 0.0, 0.0);
     gnd.on_ground = true;
     gnd.update_core(dt, &floor, Input::default());
@@ -134,7 +134,7 @@ fn ground_accelerates_faster_than_air() {
     // ground acceleration (GROUND_ACCEL·dt, still well below WALK so it is not
     // yet clamped) — a few frames to top speed, so the ground feels snappy.
     let floor = |_x: i32, y: i32, _z: i32| y < 64;
-    let mut g = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut g = p(WorldPos::new(0.0, 64.0, 0.0));
     g.on_ground = true;
     g.update_core(dt, &floor, input);
     assert!(
@@ -146,7 +146,7 @@ fn ground_accelerates_faster_than_air() {
     // In the air from rest, the same input ramps far more slowly — gentle
     // steering, not a snap to speed.
     let open = |_x: i32, _y: i32, _z: i32| false;
-    let mut a = p(Vec3::new(0.0, 128.0, 0.0));
+    let mut a = p(WorldPos::new(0.0, 128.0, 0.0));
     a.on_ground = false;
     a.update_core(dt, &open, input);
     assert!(
@@ -174,7 +174,7 @@ fn air_input_does_not_brake_momentum() {
         sprint: false,
         sneak: false,
     };
-    let mut a = p(Vec3::new(0.0, 128.0, 0.0));
+    let mut a = p(WorldPos::new(0.0, 128.0, 0.0));
     a.on_ground = false;
     a.vel = Vec3::new(SPRINT, 0.0, 0.0); // gliding +x faster than WALK
     a.update_core(FRICTION_REF_DT, &open, input);
@@ -198,7 +198,7 @@ fn air_steering_redirects_without_inflating_speed() {
         sprint: false,
         sneak: false,
     };
-    let mut a = p(Vec3::new(0.0, 128.0, 0.0));
+    let mut a = p(WorldPos::new(0.0, 128.0, 0.0));
     a.on_ground = false;
     a.vel = Vec3::new(WALK, 0.0, 0.0);
     a.update_core(FRICTION_REF_DT, &open, input);
@@ -224,7 +224,7 @@ fn jumping_into_wall_does_not_pump_sideways_speed() {
     // long you scrape the wall.
     let wall_x = 6;
     let solid = move |x: i32, _y: i32, _z: i32| x >= wall_x;
-    let mut a = p(Vec3::new(wall_x as f32 - 1.0, 128.0, 0.0));
+    let mut a = p(WorldPos::new(wall_x as f64 - 1.0, 128.0, 0.0));
     a.on_ground = false; // open below: stays airborne the whole run
     let wishdir = Vec3::new(0.98, 0.0, 0.2).normalize();
     let input = Input {
@@ -252,10 +252,10 @@ fn air_out_coasts_ground() {
     // only assumes the design invariant AIR_FRICTION < GROUND_FRICTION).
     let open = |_x: i32, _y: i32, _z: i32| false;
     let floor = |_x: i32, y: i32, _z: i32| y < 64;
-    let mut air = p(Vec3::new(0.0, 1024.0, 0.0)); // open below: airborne the whole run
+    let mut air = p(WorldPos::new(0.0, 1024.0, 0.0)); // open below: airborne the whole run
     air.on_ground = false;
     air.vel = Vec3::new(WALK, 0.0, 0.0);
-    let mut gnd = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut gnd = p(WorldPos::new(0.0, 64.0, 0.0));
     gnd.on_ground = true;
     gnd.vel = Vec3::new(WALK, 0.0, 0.0);
     let steps = 30; // ~half a second at the reference step
@@ -326,7 +326,7 @@ fn friction_is_framerate_independent() {
 fn gravity_eases_near_apex() {
     let open = |_x: i32, _y: i32, _z: i32| false;
     // In a jump, inside the apex band: reduced gravity loses less speed.
-    let mut near = p(Vec3::new(0.0, 128.0, 0.0));
+    let mut near = p(WorldPos::new(0.0, 128.0, 0.0));
     near.vel = Vec3::new(0.0, 1.0, 0.0);
     near.on_ground = false;
     near.jumping = true;
@@ -334,7 +334,7 @@ fn gravity_eases_near_apex() {
     let near_drop = 1.0 - near.vel.y;
 
     // In a jump, outside the band: full gravity.
-    let mut fast = p(Vec3::new(0.0, 128.0, 0.0));
+    let mut fast = p(WorldPos::new(0.0, 128.0, 0.0));
     fast.vel = Vec3::new(0.0, 20.0, 0.0);
     fast.on_ground = false;
     fast.jumping = true;
@@ -357,7 +357,7 @@ fn no_apex_easing_when_not_jumping() {
     // full gravity even though vel.y is briefly inside the apex band — the
     // easing is reserved for real jump arcs, so the world never feels floaty.
     let open = |_x: i32, _y: i32, _z: i32| false;
-    let mut pl = p(Vec3::new(0.0, 128.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 128.0, 0.0));
     pl.vel = Vec3::new(0.0, 1.0, 0.0); // small downward-bound speed, no jump
     pl.on_ground = false;
     pl.jumping = false;

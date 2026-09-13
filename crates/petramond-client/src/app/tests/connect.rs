@@ -12,6 +12,7 @@ use petramond::net::protocol::{JoinData, ModEntry, SelfRestore};
 use petramond::player::PlayerId;
 use petramond::server::handle::ServerHandle;
 use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_ui::UiValue;
 use petramond_world::controls::{Control, TextKey, TextShortcut};
@@ -20,7 +21,7 @@ use petramond_world::gui_state::GuiKind;
 const SCREEN: (u32, u32) = (1280, 720);
 
 fn shell_app() -> App {
-    App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1)
+    App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1)
 }
 
 /// A minimal remote join, the shape `client_handshake` returns (health > 0 so
@@ -33,7 +34,7 @@ fn join_data() -> Box<JoinData> {
         tables: petramond::net::remap::local_name_tables(),
         self_restore: SelfRestore {
             transform: petramond::net::protocol::Transform {
-                pos: Vec3::new(2.5, 80.0, 2.5),
+                pos: WorldPos::new(2.5, 80.0, 2.5),
                 vel: Vec3::ZERO,
                 yaw: 0.0,
                 pitch: 0.0,
@@ -212,7 +213,7 @@ fn pause_menu_shows_lan_controls_for_host() {
 #[test]
 fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
     let (handle, _pipe) = ServerHandle::loopback();
-    let cam = Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0);
+    let cam = Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0);
     let game = Game::new_remote(
         cam,
         join_data(),

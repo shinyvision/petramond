@@ -114,7 +114,7 @@ pub(super) fn create_world_model_pipeline(
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &world_model_vbuf_attrs,
     };
-    let world_model_pipe = world_pipeline(
+    world_pipeline(
         device,
         if blended {
             "world model blend pipe"
@@ -129,7 +129,10 @@ pub(super) fn create_world_model_pipeline(
         } else {
             "fs_world_model"
         },
-        std::slice::from_ref(&world_model_vbuf_layout),
+        &[
+            world_model_vbuf_layout,
+            crate::resources::COLUMN_ORIGIN_LAYOUT,
+        ],
         &targets,
         // Back-face CULLED: every solid-cube face bakes with its outward CCW
         // winding, and culling stops the far side of a cube ghosting through
@@ -143,6 +146,5 @@ pub(super) fn create_world_model_pipeline(
         },
         Some(DepthPreset::WriteLess),
         max_samples,
-    );
-    world_model_pipe
+    )
 }

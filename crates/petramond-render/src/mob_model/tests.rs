@@ -1,5 +1,6 @@
 use super::*;
 use petramond::mob::Mob;
+use petramond_math::world_pos::WorldPos;
 
 fn owl_model() -> Model {
     let src = include_str!(concat!(
@@ -12,7 +13,7 @@ fn owl_model() -> Model {
 fn instance(anim_time: f32, moving: bool) -> MobRenderInstance {
     MobRenderInstance {
         kind: Mob::Owl,
-        pos: Vec3::new(10.0, 64.0, -5.0),
+        pos: WorldPos::new(10.0, 64.0, -5.0),
         yaw: 0.0,
         tilt: petramond_math::math::Tilt::LEVEL,
         anim_time,
@@ -37,7 +38,15 @@ fn empty_instances_produce_no_geometry() {
     let mut v = Vec::new();
     let mut i = Vec::new();
     assert_eq!(
-        build_mob_instances(&m, 0.25, LightEnv::IDENTITY, &[], &mut v, &mut i),
+        build_mob_instances(
+            &m,
+            0.25,
+            LightEnv::IDENTITY,
+            &[],
+            petramond_math::math::IVec3::ZERO,
+            &mut v,
+            &mut i
+        ),
         0
     );
     assert!(v.is_empty() && i.is_empty());
@@ -53,6 +62,7 @@ fn self_lit_mobs_and_ragdolls_keep_their_tints_in_darkness() {
             0.25,
             env,
             std::slice::from_ref(inst),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -113,6 +123,7 @@ fn one_mob_bakes_quads_with_matched_indices() {
         0.25,
         LightEnv::IDENTITY,
         std::slice::from_ref(&instance(0.0, true)),
+        petramond_math::math::IVec3::ZERO,
         &mut v,
         &mut i,
     );
@@ -133,6 +144,7 @@ fn scale_sizes_the_baked_model() {
         0.25,
         LightEnv::IDENTITY,
         std::slice::from_ref(&instance(0.0, false)),
+        petramond_math::math::IVec3::ZERO,
         &mut v1,
         &mut i1,
     );
@@ -141,6 +153,7 @@ fn scale_sizes_the_baked_model() {
         0.5,
         LightEnv::IDENTITY,
         std::slice::from_ref(&instance(0.0, false)),
+        petramond_math::math::IVec3::ZERO,
         &mut v2,
         &mut i2,
     );
@@ -165,6 +178,7 @@ fn moving_plays_walk_idle_uses_rest_pose() {
             0.25,
             LightEnv::IDENTITY,
             std::slice::from_ref(&instance(t, moving)),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -210,6 +224,7 @@ fn shorn_hides_exactly_the_wool_named_cubes() {
             0.0625,
             LightEnv::IDENTITY,
             std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );
@@ -249,6 +264,7 @@ fn head_look_rotates_the_head_when_idle() {
             0.25,
             LightEnv::IDENTITY,
             std::slice::from_ref(&inst),
+            petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
         );

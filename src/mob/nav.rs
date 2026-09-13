@@ -102,7 +102,7 @@ pub struct Navigator {
     /// the whole-cell head count.
     height: f32,
     stuck: u32,
-    last_pos: Vec3,
+    last_pos: petramond_math::world_pos::WorldPos,
     /// Best horizontal distance to the held goal achieved so far, and the
     /// steered ticks since it last improved — the [`GOAL_STALL_CALLS`]
     /// liveness signal. Reset on goal change only; deliberately NOT on
@@ -134,7 +134,7 @@ impl Navigator {
             half_width,
             height,
             stuck: 0,
-            last_pos: Vec3::ZERO,
+            last_pos: petramond_math::world_pos::WorldPos::ZERO,
             goal_best: f32::INFINITY,
             goal_stall: 0,
             since_path: 0,
@@ -316,7 +316,12 @@ impl Navigator {
     /// to free it. The deflection never fires on the final approach (the probe
     /// is capped at the remaining distance) nor when the plan wants a step-up
     /// jump (the ledge face ahead IS the route).
-    pub fn follow_steered(&mut self, pos: Vec3, on_ground: bool, world: &World) -> (Vec3, bool) {
+    pub fn follow_steered(
+        &mut self,
+        pos: petramond_math::world_pos::WorldPos,
+        on_ground: bool,
+        world: &World,
+    ) -> (Vec3, bool) {
         let (wish, jump) = self.follow(pos, on_ground);
         if jump || wish == Vec3::ZERO || self.index >= self.path.len() {
             return (wish, jump);
@@ -324,10 +329,10 @@ impl Navigator {
         let wp = self.path[self.index];
         // A step-up approach must keep pressing toward the ledge face so the
         // jump trigger and the climb keep working exactly as before.
-        if wp.y as f32 > pos.y + 0.5 {
+        if f64::from(wp.y) > pos.y + 0.5 {
             return (wish, jump);
         }
-        let (dx, dz) = (wp.x as f32 + 0.5 - pos.x, wp.z as f32 + 0.5 - pos.z);
+        let (dx, dz) = cell_centre_offset(wp, pos);
         let remaining = (dx * dx + dz * dz).sqrt();
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         (
@@ -363,7 +368,7 @@ impl Navigator {
     /// (as the whole bookkeeping) while steering is suspended — a hop's
     /// descent, a fall, a knockback flight — because a ballistic arc passes
     /// waypoints between steered ticks.
-    pub fn advance_cursor(&mut self, pos: Vec3) {
+    pub fn advance_cursor(&mut self, pos: petramond_math::world_pos::WorldPos) {
         // Passing: scan the lookahead window; the farthest passed wins.
         let end = self
             .path
@@ -375,7 +380,7 @@ impl Navigator {
             if j == 0 {
                 continue;
             }
-            let level_ok = |cell: IVec3| (pos.y - cell.y as f32).abs() <= ARRIVE_Y;
+            let level_ok = |cell: IVec3| ((pos.y - f64::from(cell.y)) as f32).abs() <= ARRIVE_Y;
             // Overrun of the incoming segment: projection beyond its far end.
             let (t_in, lat_in, len_in) = project_horizontal(pos, self.path[j - 1], self.path[j]);
             let over_in = t_in > len_in + PASS_EPS
@@ -399,9 +404,9 @@ impl Navigator {
         let arrive_xz = self.arrive_xz();
         while self.index < self.path.len() {
             let wp = self.path[self.index];
-            let (dx, dz) = (wp.x as f32 + 0.5 - pos.x, wp.z as f32 + 0.5 - pos.z);
+            let (dx, dz) = cell_centre_offset(wp, pos);
             let horiz = (dx * dx + dz * dz).sqrt();
-            let dy = (pos.y - wp.y as f32).abs();
+            let dy = ((pos.y - f64::from(wp.y)) as f32).abs();
             if horiz <= arrive_xz && dy <= ARRIVE_Y {
                 self.index += 1;
             } else {
@@ -413,17 +418,20 @@ impl Navigator {
     /// This tick's locomotion: a unit horizontal `wish` direction toward the current
     /// waypoint, and whether to jump. Consumes waypoints as they're reached and
     /// abandons the path if the mob stalls.
-    pub fn follow(&mut self, pos: Vec3, on_ground: bool) -> (Vec3, bool) {
+    pub fn follow(
+        &mut self,
+        pos: petramond_math::world_pos::WorldPos,
+        on_ground: bool,
+    ) -> (Vec3, bool) {
         self.advance_cursor(pos);
         if self.index < self.path.len() {
             let wp = self.path[self.index];
-            let (tx, tz) = (wp.x as f32 + 0.5, wp.z as f32 + 0.5);
-            let (dx, dz) = (tx - pos.x, tz - pos.z);
+            let (dx, dz) = cell_centre_offset(wp, pos);
             let horiz = (dx * dx + dz * dz).sqrt();
 
             // Progress / stuck tracking.
-            let progress_dx = pos.x - self.last_pos.x;
-            let progress_dz = pos.z - self.last_pos.z;
+            let progress = pos - self.last_pos;
+            let (progress_dx, progress_dz) = (progress.x, progress.z);
             if progress_dx * progress_dx + progress_dz * progress_dz < STUCK_EPS_SQ {
                 self.stuck += 1;
             } else {
@@ -438,7 +446,7 @@ impl Navigator {
             // not going somewhere — abandon a route whose best-achieved
             // distance to the goal has stopped improving.
             if let Some(goal) = self.goal {
-                let (gx, gz) = (goal.x as f32 + 0.5 - pos.x, goal.z as f32 + 0.5 - pos.z);
+                let (gx, gz) = cell_centre_offset(goal, pos);
                 let goal_dist = (gx * gx + gz * gz).sqrt();
                 if goal_dist + 1e-3 < self.goal_best {
                     self.goal_best = goal_dist;
@@ -459,7 +467,7 @@ impl Navigator {
             };
             // Jump when the next waypoint is a step up and we're grounded + close to
             // the edge, so forward speed carries the mob onto the higher block.
-            let step_up = wp.y as f32 > pos.y + 0.5;
+            let step_up = f64::from(wp.y) > pos.y + 0.5;
             let jump = on_ground && step_up && horiz <= self.half_width + JUMP_TRIGGER_FRONT_XZ;
             return (dir, jump);
         }
@@ -481,16 +489,28 @@ impl Navigator {
     }
 }
 
+/// The horizontal offset from `pos` to the centre of `cell`, taken in double
+/// precision before it narrows to the local frame.
+fn cell_centre_offset(cell: IVec3, pos: petramond_math::world_pos::WorldPos) -> (f32, f32) {
+    (
+        (f64::from(cell.x) + 0.5 - pos.x) as f32,
+        (f64::from(cell.z) + 0.5 - pos.z) as f32,
+    )
+}
+
 /// Horizontal projection of `pos` onto the route segment between cell centres
 /// `a` and `b`: (signed distance along the segment direction from `a` in
 /// metres — may be negative or beyond the length — the perpendicular distance
 /// from the segment's line, and the segment's length).
-fn project_horizontal(pos: Vec3, a: IVec3, b: IVec3) -> (f32, f32, f32) {
-    let (ax, az) = (a.x as f32 + 0.5, a.z as f32 + 0.5);
-    let (bx, bz) = (b.x as f32 + 0.5, b.z as f32 + 0.5);
-    let (dx, dz) = (bx - ax, bz - az);
+fn project_horizontal(
+    pos: petramond_math::world_pos::WorldPos,
+    a: IVec3,
+    b: IVec3,
+) -> (f32, f32, f32) {
+    let (dx, dz) = ((b.x - a.x) as f32, (b.z - a.z) as f32);
     let len = (dx * dx + dz * dz).sqrt();
-    let (px, pz) = (pos.x - ax, pos.z - az);
+    let (ax, az) = cell_centre_offset(a, pos);
+    let (px, pz) = (-ax, -az);
     if len <= 1e-6 {
         return (0.0, (px * px + pz * pz).sqrt(), 0.0);
     }
@@ -511,7 +531,7 @@ const STEER_LOOKAHEAD: f32 = 0.4;
 /// doesn't produce from a centred pose) keeps the original wish — the shared
 /// resolver still slides, and the stuck tally + repath remain the backstop.
 fn deflect_wish(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     height: f32,
     wish: Vec3,
@@ -522,11 +542,11 @@ fn deflect_wish(
     if lookahead <= 1e-3 {
         return wish;
     }
-    let hw = half_width.max(0.0);
+    let hw = f64::from(half_width.max(0.0));
     // A hair above the feet so the floor being rested on never reads as a
     // cross-axis overlap under float noise.
     let min = [pos.x - hw, pos.y + 1e-3, pos.z - hw];
-    let max = [pos.x + hw, pos.y + height.max(0.5), pos.z + hw];
+    let max = [pos.x + hw, pos.y + f64::from(height.max(0.5)), pos.z + hw];
     let (dx, dz) = (wish.x * lookahead, wish.z * lookahead);
     // The same step allowance walking uses: something the body would simply
     // step onto is not an obstacle worth deflecting around.
@@ -657,7 +677,7 @@ impl Unstick {
     pub(super) fn steer(
         &mut self,
         wish: Vec3,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         self_id: u64,
         half_width: f32,
         contacts: &[EntityRef],
@@ -698,7 +718,7 @@ impl Unstick {
 /// when nothing ahead is pressed against.
 fn blocking_bearing(
     wish: Vec3,
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
     contacts: &[EntityRef],
     target: Option<EntityRef>,
@@ -706,7 +726,7 @@ fn blocking_bearing(
     players: &[PlayerAnchor],
 ) -> Option<Vec3> {
     let mut best: Option<(Vec3, f32)> = None;
-    let mut consider = |other: Vec3| {
+    let mut consider = |other: petramond_math::world_pos::WorldPos| {
         let d = other - pos;
         let dist2 = d.x * d.x + d.z * d.z;
         if best.is_none_or(|(_, bd)| dist2 < bd) {
@@ -829,8 +849,11 @@ pub(super) fn nav_fluid_fn<'c, 'w>(
 /// the one below. This is navigation footing, deliberately wider than physical
 /// immersion — a swimmer bobbing clear of its probe still routes from the
 /// fluid surface.
-pub(super) fn fluid_footing(cur: &SectionCursor<'_>, pos: Vec3) -> Option<Block> {
-    let feet = petramond_math::math::voxel_at(pos);
+pub(super) fn fluid_footing(
+    cur: &SectionCursor<'_>,
+    pos: petramond_math::world_pos::WorldPos,
+) -> Option<Block> {
+    let feet = pos.block();
     cur.physics_block(feet)
         .fluid()
         .or_else(|| cur.physics_block(feet - IVec3::Y).fluid())
@@ -998,7 +1021,7 @@ pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool 
         &support,
         &fluid,
     )
-    .unwrap_or_else(|| petramond_math::math::voxel_at(mob.pos));
+    .unwrap_or_else(|| mob.pos.block());
     // The mod ABI shares the tick's probe budget (a husbandry sweep can ask
     // for dozens of probes in one tick); a refusal reads as "not reachable",
     // which is what the asking policies already do with a spot they cannot
@@ -1159,11 +1182,12 @@ pub(super) fn navigation_step_gate<'c, 'w>(
 
         // Accurate sweep: the body starts standing at `from` (feet on the real
         // floor top) and must travel the full horizontal move.
-        let feet = (from.y - 1) as f32 + floor_top(cur, from - IVec3::Y);
-        let cx = from.x as f32 + 0.5;
-        let cz = from.z as f32 + 0.5;
-        let min = [cx - half_width, feet, cz - half_width];
-        let max = [cx + half_width, feet + height, cz + half_width];
+        let (hw, h) = (f64::from(half_width), f64::from(height));
+        let feet = f64::from(from.y - 1) + f64::from(floor_top(cur, from - IVec3::Y));
+        let cx = f64::from(from.x) + 0.5;
+        let cz = f64::from(from.z) + 0.5;
+        let min = [cx - hw, feet, cz - hw];
+        let max = [cx + hw, feet + h, cz + hw];
         let (moved, _, _) =
             collision::step_horizontal(min, max, dx, dz, collision::STEP_HEIGHT, boxes_at);
         if (moved[0] - dx).abs() >= 1e-3 || (moved[2] - dz).abs() >= 1e-3 {
@@ -1173,11 +1197,11 @@ pub(super) fn navigation_step_gate<'c, 'w>(
         // Destination pose: standing at `to` must not intersect a partial shape
         // (the sweep runs at `from`'s level, so a jump-up's landing pose needs
         // its own check).
-        let dest_feet = (to.y - 1) as f32 + floor_top(cur, to - IVec3::Y);
-        let tx = to.x as f32 + 0.5;
-        let tz = to.z as f32 + 0.5;
-        let dmin = [tx - half_width, dest_feet + 1e-3, tz - half_width];
-        let dmax = [tx + half_width, dest_feet + height, tz + half_width];
+        let dest_feet = f64::from(to.y - 1) + f64::from(floor_top(cur, to - IVec3::Y));
+        let tx = f64::from(to.x) + 0.5;
+        let tz = f64::from(to.z) + 0.5;
+        let dmin = [tx - hw, dest_feet + 1e-3, tz - hw];
+        let dmax = [tx + hw, dest_feet + h, tz + hw];
         !collision::aabb_hits_cells(dmin, dmax, boxes_at)
     }
 }
@@ -1220,16 +1244,16 @@ impl NavObstacles<'static> {
 /// bodies stack, so the middle of a herd costs more than its edge.
 fn entity_cell_costs(avoid: &NavObstacles, start: IVec3) -> FxHashMap<IVec3, u32> {
     let mut costs: FxHashMap<IVec3, u32> = FxHashMap::default();
-    let origin = Vec3::new(start.x as f32 + 0.5, start.y as f32, start.z as f32 + 0.5);
-    let mut mark = |min: Vec3, max: Vec3| {
-        let centre = (min + max) * 0.5;
-        let (ddx, ddz) = (centre.x - origin.x, centre.z - origin.z);
+    let (ox, oz) = (f64::from(start.x) + 0.5, f64::from(start.z) + 0.5);
+    let mut mark = |min: [f64; 3], max: [f64; 3]| {
+        let ddx = ((min[0] + max[0]) * 0.5 - ox) as f32;
+        let ddz = ((min[2] + max[2]) * 0.5 - oz) as f32;
         if ddx * ddx + ddz * ddz > ENTITY_AVOID_RANGE * ENTITY_AVOID_RANGE {
             return;
         }
-        for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
-            for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
-                for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
+        for x in (min[0].floor() as i32)..=(max[0].floor() as i32) {
+            for y in (min[1].floor() as i32)..=(max[1].floor() as i32) {
+                for z in (min[2].floor() as i32)..=(max[2].floor() as i32) {
                     let slot = costs.entry(IVec3::new(x, y, z)).or_insert(0);
                     *slot = slot.saturating_add(ENTITY_CELL_COST);
                 }
@@ -1243,10 +1267,14 @@ fn entity_cell_costs(avoid: &NavObstacles, start: IVec3) -> FxHashMap<IVec3, u32
         let s = def(m.kind).size;
         // A long body (a boat) marks its enclosing square — conservative, and
         // its rigid hull is a real obstacle a route should bend around.
-        let half = s.half_length.unwrap_or(s.half_width).max(s.half_width);
+        let half = f64::from(s.half_length.unwrap_or(s.half_width).max(s.half_width));
         mark(
-            m.pos - Vec3::new(half, 0.0, half),
-            m.pos + Vec3::new(half, s.height, half),
+            [m.pos.x - half, m.pos.y, m.pos.z - half],
+            [
+                m.pos.x + half,
+                m.pos.y + f64::from(s.height),
+                m.pos.z + half,
+            ],
         );
     }
     for p in avoid.players {
@@ -1266,6 +1294,7 @@ fn entity_cell_costs(avoid: &NavObstacles, start: IVec3) -> FxHashMap<IVec3, u32
 mod tests {
     use super::*;
     use petramond_math::facing::Facing;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
 
     #[test]
@@ -1283,7 +1312,7 @@ mod tests {
         nav.goal = Some(IVec3::new(1, 1, 0));
         nav.path_reaches_goal = true;
         // Standing on the waypoint: it's consumed and the nav goes idle.
-        let on_wp = Vec3::new(1.5, 1.0, 0.5);
+        let on_wp = WorldPos::new(1.5, 1.0, 0.5);
         let (wish, jump) = nav.follow(on_wp, true);
         assert_eq!(wish, Vec3::ZERO);
         assert!(!jump);
@@ -1296,7 +1325,7 @@ mod tests {
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(5, 1, 0)];
         nav.index = 1;
         nav.goal = Some(IVec3::new(5, 1, 0));
-        let (wish, jump) = nav.follow(Vec3::new(0.5, 1.0, 0.5), true);
+        let (wish, jump) = nav.follow(WorldPos::new(0.5, 1.0, 0.5), true);
         assert!(wish.x > 0.9, "heads +X toward the waypoint: {wish:?}");
         assert!(!jump, "flat move needs no jump");
     }
@@ -1308,10 +1337,10 @@ mod tests {
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 2, 0)];
         nav.index = 1;
         nav.goal = Some(IVec3::new(1, 2, 0));
-        let (_wish, jump) = nav.follow(Vec3::new(0.7, 1.0, 0.5), true);
+        let (_wish, jump) = nav.follow(WorldPos::new(0.7, 1.0, 0.5), true);
         assert!(jump, "should jump for a nearby one-block step up");
         // But not while airborne.
-        let (_w2, jump_air) = nav.follow(Vec3::new(0.7, 1.0, 0.5), false);
+        let (_w2, jump_air) = nav.follow(WorldPos::new(0.7, 1.0, 0.5), false);
         assert!(!jump_air, "no jump while off the ground");
     }
 
@@ -1334,15 +1363,15 @@ mod tests {
         nav.goal = Some(IVec3::new(3, 1, 0));
         nav.path_reaches_goal = true;
 
-        let (wish, _) = nav.follow(Vec3::new(0.6, 1.0, 0.5), true);
+        let (wish, _) = nav.follow(WorldPos::new(0.6, 1.0, 0.5), true);
         assert!(wish.x > 0.9, "heads toward the waypoint: {wish:?}");
         // The arc carries the body past TWO waypoint centres, unsteered,
         // landing far outside any arrive window.
         for x in [0.9, 1.4, 2.0, 2.6] {
-            nav.advance_cursor(Vec3::new(x, 1.3, 0.5));
+            nav.advance_cursor(WorldPos::new(x, 1.3, 0.5));
         }
         // Steering resumes well past both — the wish must aim FORWARD.
-        let (wish, _) = nav.follow(Vec3::new(2.7, 1.0, 0.5), true);
+        let (wish, _) = nav.follow(WorldPos::new(2.7, 1.0, 0.5), true);
         assert!(
             wish.x > 0.9,
             "passed waypoints were consumed mid-flight; no turning back: {wish:?}"
@@ -1360,9 +1389,9 @@ mod tests {
         nav.index = 1;
         nav.goal = Some(IVec3::new(2, 1, 0));
         nav.path_reaches_goal = true;
-        let (wish, _) = nav.follow(Vec3::new(1.2, 1.0, 0.5), true);
+        let (wish, _) = nav.follow(WorldPos::new(1.2, 1.0, 0.5), true);
         assert!(wish.x > 0.9, "closing in: {wish:?}");
-        let (wish, _) = nav.follow(Vec3::new(1.9, 1.0, 0.5), true);
+        let (wish, _) = nav.follow(WorldPos::new(1.9, 1.0, 0.5), true);
         assert!(
             wish.x > 0.9,
             "a big step past the centre keeps aiming forward: {wish:?}"
@@ -1387,7 +1416,7 @@ mod tests {
                 break;
             }
             let x = if call % 2 == 0 { 0.5 } else { 1.5 };
-            nav.follow(Vec3::new(x, 1.0, 0.5), true);
+            nav.follow(WorldPos::new(x, 1.0, 0.5), true);
         }
         assert!(
             nav.is_idle(),
@@ -1403,7 +1432,7 @@ mod tests {
         nav.path_reaches_goal = true;
         for call in 0..3 * GOAL_STALL_CALLS {
             let x = 0.5 + call as f32 * 0.05;
-            nav.follow(Vec3::new(x, 1.0, 0.5), true);
+            nav.follow(WorldPos::new(f64::from(x), 1.0, 0.5), true);
         }
         assert!(
             !nav.is_idle(),
@@ -1417,11 +1446,11 @@ mod tests {
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(5, 1, 0)];
         nav.index = 1;
         nav.goal = Some(IVec3::new(5, 1, 0));
-        nav.last_pos = Vec3::new(0.5, 1.0, 0.5);
+        nav.last_pos = petramond_math::world_pos::WorldPos::new(0.5, 1.0, 0.5);
 
         for tick in 0..STUCK_TICKS {
             let y = 1.0 + if tick % 2 == 0 { 0.2 } else { -0.2 };
-            let (wish, _jump) = nav.follow(Vec3::new(0.5, y, 0.5), false);
+            let (wish, _jump) = nav.follow(WorldPos::new(0.5, y, 0.5), false);
             if tick + 1 < STUCK_TICKS {
                 assert!(wish.x > 0.9, "still trying to move horizontally");
                 assert!(!nav.is_idle(), "not abandoned before the stuck limit");
@@ -1443,7 +1472,7 @@ mod tests {
         nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 2, 0)];
         nav.index = 1;
         nav.goal = Some(IVec3::new(1, 2, 0));
-        let (_wish, jump) = nav.follow(Vec3::new(0.5, 1.0, 0.5), true);
+        let (_wish, jump) = nav.follow(WorldPos::new(0.5, 1.0, 0.5), true);
         assert!(
             jump,
             "wider bodies jump before colliding with the step face"
@@ -1463,7 +1492,7 @@ mod tests {
         ];
         nav.index = 1;
         nav.goal = Some(IVec3::new(1, 1, 1));
-        let (wish, jump) = nav.follow(Vec3::new(1.25, 1.0, 0.5), true);
+        let (wish, jump) = nav.follow(WorldPos::new(1.25, 1.0, 0.5), true);
         assert!(
             wish.x > 0.9 && wish.z.abs() < 0.1,
             "wide mob should keep clearing the corner before turning: {wish:?}"
@@ -1620,12 +1649,12 @@ mod tests {
 
     #[test]
     fn a_touching_body_ahead_veers_the_wish_to_a_side() {
-        let pos = Vec3::new(0.5, 64.0, 0.5);
+        let pos = WorldPos::new(0.5, 64.0, 0.5);
         let wish = Vec3::new(1.0, 0.0, 0.0);
         let blocking = [AiMob {
             id: 2,
             kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(1.4, 64.0, 0.5),
+            pos: WorldPos::new(1.4, 64.0, 0.5),
             active: true,
             tags: Default::default(),
         }];
@@ -1661,7 +1690,7 @@ mod tests {
         let behind = [AiMob {
             id: 2,
             kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(-0.4, 64.0, 0.5),
+            pos: WorldPos::new(-0.4, 64.0, 0.5),
             active: true,
             tags: Default::default(),
         }];
@@ -1678,12 +1707,12 @@ mod tests {
         // rounding the peer on the SAME side while the commitment runs down —
         // the stateless version snapped straight, re-pressed, and wagged the
         // wish (and the body facing) every other tick.
-        let pos = Vec3::new(0.5, 64.0, 0.5);
+        let pos = WorldPos::new(0.5, 64.0, 0.5);
         let wish = Vec3::new(1.0, 0.0, 0.0);
         let blocking = [AiMob {
             id: 2,
             kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(1.4, 64.0, 0.5),
+            pos: WorldPos::new(1.4, 64.0, 0.5),
             active: true,
             tags: Default::default(),
         }];
@@ -1713,7 +1742,7 @@ mod tests {
         let mut latch = Unstick::default();
         let first = latch.steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
         let other_side = [AiMob {
-            pos: Vec3::new(1.3, 64.0, 0.4 - first.z.signum() * 0.2),
+            pos: WorldPos::new(1.3, 64.0, f64::from(0.4 - first.z.signum() * 0.2)),
             ..blocking[0].clone()
         }];
         let second = latch.steer(wish, pos, 1, 0.45, &contacts, None, &other_side, &[]);
@@ -1785,8 +1814,12 @@ mod tests {
         for x in 0..12 {
             world.set_block_world(x, 64, 1, Block::OakFence);
         }
-        let mob =
-            crate::mob::Instance::new(crate::mob::Mob::Sheep, Vec3::new(4.5, 64.0, 0.5), 0.0, 1);
+        let mob = crate::mob::Instance::new(
+            crate::mob::Mob::Sheep,
+            WorldPos::new(4.5, 64.0, 0.5),
+            0.0,
+            1,
+        );
         assert!(
             !mob_can_reach(&world, &mob, IVec3::new(4, 64, 2)),
             "grass beyond the fence is not a reachable destination"
@@ -1840,7 +1873,7 @@ mod tests {
         nav.path_reaches_goal = true;
         // Body centre at z = 0.95: its 0.9-wide body overlaps the chest's
         // row, so heading straight east grinds into the chest's west face.
-        let pos = Vec3::new(3.5, 64.0, 0.95);
+        let pos = WorldPos::new(3.5, 64.0, 0.95);
 
         let (raw, _) = nav.follow(pos, true);
         assert!(
@@ -1874,7 +1907,7 @@ mod tests {
         nav.index = 1;
         nav.goal = Some(IVec3::new(4, 64, 0));
         nav.path_reaches_goal = true;
-        let (wish, _) = nav.follow_steered(Vec3::new(4.42, 64.0, 0.5), true, &world);
+        let (wish, _) = nav.follow_steered(WorldPos::new(4.42, 64.0, 0.5), true, &world);
         assert!(
             wish.x > 0.9,
             "the final approach keeps closing on the wall-adjacent centre: {wish:?}"
@@ -1913,7 +1946,7 @@ mod tests {
         let mobs = [AiMob {
             id: 7,
             kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(4.5, 64.0, 1.5),
+            pos: WorldPos::new(4.5, 64.0, 1.5),
             active: true,
             tags: Default::default(),
         }];
@@ -1952,7 +1985,7 @@ mod tests {
         let mobs = [AiMob {
             id: 7,
             kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(4.5, 64.0, 1.5),
+            pos: WorldPos::new(4.5, 64.0, 1.5),
             active: true,
             tags: Default::default(),
         }];
@@ -1987,7 +2020,7 @@ mod tests {
         let mobs = [AiMob {
             id: 7,
             kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(4.5, 64.0, 1.5),
+            pos: WorldPos::new(4.5, 64.0, 1.5),
             active: true,
             tags: Default::default(),
         }];
@@ -2018,7 +2051,7 @@ mod tests {
         let mobs = [AiMob {
             id: 7,
             kind: crate::mob::Mob::Sheep,
-            pos: Vec3::new(4.5, 64.0, 1.5),
+            pos: WorldPos::new(4.5, 64.0, 1.5),
             active: true,
             tags: Default::default(),
         }];
@@ -2045,7 +2078,7 @@ mod tests {
         let player_cell = IVec3::new(4, 64, 1);
         let anchor = PlayerAnchor {
             body: Some(petramond_world::body::Body::new(
-                Vec3::new(4.5, 64.0, 1.5),
+                WorldPos::new(4.5, 64.0, 1.5),
                 0.3,
                 1.8,
             )),
@@ -2147,7 +2180,7 @@ mod tests {
         nav.path_reaches_goal = true;
 
         let step = 4.8 * 0.05; // hushjaw speed × tick dt
-        let mut pos = Vec3::new(0.5, 1.0, 0.5);
+        let mut pos = WorldPos::new(0.5, 1.0, 0.5);
         let mut last_dir: Option<Vec3> = None;
         let mut reversals = 0;
         for _ in 0..200 {
@@ -2190,7 +2223,7 @@ mod tests {
         // Two approaching ticks toward the corner waypoint (1,1,0): both must
         // keep steering east at it, not consume it early.
         for x in [1.1_f32, 1.25] {
-            let (wish, _) = nav.follow(Vec3::new(x, 1.0, 0.5), true);
+            let (wish, _) = nav.follow(WorldPos::new(f64::from(x), 1.0, 0.5), true);
             assert!(
                 wish.x > 0.9 && wish.z.abs() < 0.1,
                 "still clearing the corner at x={x}: {wish:?}"
@@ -2477,7 +2510,7 @@ mod tests {
 
         // Drive enough held ticks to cross several re-path intervals AND the stuck limit,
         // following from a fixed position each tick so no progress is ever made.
-        let wedged = Vec3::new(1.5, 64.0, 1.5);
+        let wedged = WorldPos::new(1.5, 64.0, 1.5);
         let mut gave_up = false;
         for _ in 0..STUCK_TICKS + REPATH_TICKS {
             nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());

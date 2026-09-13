@@ -4,9 +4,10 @@ use petramond_world::light::BlockLight6;
 /// Per-face directional shade factors, mirrored in `block.wgsl`.
 pub use petramond_world::shade::SHADES;
 
-/// GPU vertex for dynamic bakes (item entities, chests, doors, break overlay):
-/// 24 bytes with absolute world `pos` as `f32`. Terrain packed columns use
-/// [`TerrainVertex`] instead (column-local fixed-point `pos`).
+/// The CPU block vertex: 24 bytes. A section mesh emits `pos` in MESH space —
+/// column-local X/Z, world Y — so no absolute coordinate is ever rounded to
+/// `f32`; packed columns quantize it into [`TerrainVertex`]. Dynamic bakes
+/// (item entities, chests, doors, break overlay) upload it directly.
 ///
 /// `tint` is LINEAR RGB packed unorm8 ([`pack_tint`]; the GPU reads it as
 /// `Unorm8x4` — linear values in a linear-interpreted format, so no sRGB OETF
@@ -35,11 +36,12 @@ pub struct Vertex {
 /// applied in `vs_terrain` (`greedy_overlap_push`), never baked into vertices.
 pub const TERRAIN_POS_SCALE: f32 = 64.0;
 
-/// Packed-column terrain vertex: **20 bytes**. `pos` is column-local XZ + world Y
-/// in [`TERRAIN_POS_SCALE`] fixed point (`i16`); the draw binds the column's
-/// world XZ origin as an instance-step attribute and the terrain VS reconstructs
-/// absolute world position. CPU meshes still use [`Vertex`]; conversion happens
-/// at upload / patch time.
+/// Packed-column terrain vertex: **20 bytes**. `pos` is the mesh-space position
+/// (column-local XZ + world Y) in [`TERRAIN_POS_SCALE`] fixed point (`i16`);
+/// the draw binds the column's integer world origin as an instance-step
+/// attribute, and the terrain VS offsets by that origin minus the render
+/// origin in integers, so the large part never reaches a float. CPU meshes
+/// still use [`Vertex`]; conversion happens at upload / patch time.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TerrainVertex {
@@ -52,18 +54,14 @@ pub struct TerrainVertex {
 
 impl TerrainVertex {
     #[inline]
-    pub fn from_world(v: &Vertex, col_ox: i32, col_oz: i32) -> Self {
-        let q = |world: f32, origin: f32| {
-            ((world - origin) * TERRAIN_POS_SCALE)
+    pub fn from_mesh(v: &Vertex) -> Self {
+        let q = |p: f32| {
+            (p * TERRAIN_POS_SCALE)
                 .round()
                 .clamp(i16::MIN as f32, i16::MAX as f32) as i16
         };
         Self {
-            pos: [
-                q(v.pos[0], col_ox as f32),
-                q(v.pos[1], 0.0),
-                q(v.pos[2], col_oz as f32),
-            ],
+            pos: v.pos.map(q),
             _pad: 0,
             tint: v.tint,
             packed: v.packed,
@@ -71,14 +69,10 @@ impl TerrainVertex {
         }
     }
 
-    /// Inverse of [`from_world`] for tests (round-trip within 1/64 block).
+    /// Inverse of [`from_mesh`](Self::from_mesh) for tests (round-trip within 1/64 block).
     #[cfg(test)]
-    pub fn to_world(self, col_ox: i32, col_oz: i32) -> [f32; 3] {
-        [
-            self.pos[0] as f32 / TERRAIN_POS_SCALE + col_ox as f32,
-            self.pos[1] as f32 / TERRAIN_POS_SCALE,
-            self.pos[2] as f32 / TERRAIN_POS_SCALE + col_oz as f32,
-        ]
+    pub fn to_mesh(self) -> [f32; 3] {
+        self.pos.map(|p| p as f32 / TERRAIN_POS_SCALE)
     }
 }
 
@@ -89,13 +83,13 @@ mod terrain_vertex_tests {
     #[test]
     fn terrain_pos_quantizes_within_half_unit() {
         let v = Vertex {
-            pos: [16.0 + 3.125, 64.5, -32.0 + 0.0625],
+            pos: [3.125, 64.5, 0.0625],
             tint: 0xFF00_00FF,
             packed: 1,
             packed2: 2,
         };
-        let t = TerrainVertex::from_world(&v, 16, -32);
-        let back = t.to_world(16, -32);
+        let t = TerrainVertex::from_mesh(&v);
+        let back = t.to_mesh();
         for i in 0..3 {
             assert!(
                 (back[i] - v.pos[i]).abs() <= 0.5 / TERRAIN_POS_SCALE + f32::EPSILON,
@@ -751,7 +745,8 @@ pub const UV_MODE_THIN_V: u32 = 2;
 /// The vertex carries an explicit tile-local UV in `packed2` (see [`pack_cell_uv`]).
 pub const UV_MODE_CELL_LOCAL: u32 = 3;
 
-/// GPU vertex for the chunk's bbmodel-block geometry: EXPLICIT attributes
+/// GPU vertex for the chunk's bbmodel-block geometry, `pos` in mesh space like
+/// [`Vertex`]'s: EXPLICIT attributes
 /// (not the packed tile word), because a `.bbmodel` face carries an arbitrary
 /// sub-rectangle UV into the model atlas that the tile-packed [`Vertex`] can't express.
 /// `shade` is the directional face shade only and `light` carries the cell's

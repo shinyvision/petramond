@@ -30,9 +30,9 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, natural
         "farming:wheat_seeds",
         1,
         [
-            pos[0] as f32 + 0.5,
-            pos[1] as f32 + 0.3,
-            pos[2] as f32 + 0.5,
+            pos[0] as f64 + 0.5,
+            pos[1] as f64 + 0.3,
+            pos[2] as f64 + 0.5,
         ],
     );
 }

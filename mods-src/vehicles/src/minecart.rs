@@ -39,6 +39,9 @@ use crate::cart::{self, overlaps, Aabb, Body, Cart, Controls, Step};
 use crate::rail::{resolve_placement, Form, Rail, RailMap};
 use crate::track::{dot2, xz, yaw_facing, Path, RAIL_TOP};
 
+/// A block collision box in its own cell space.
+type LocalBox = ([f32; 3], [f32; 3]);
+
 const CART_KEY: &str = "vehicles:minecart";
 /// Spawn tag on the cart row: what the tick enumerates.
 const CART_TAG: &str = "vehicles:cart";
@@ -125,7 +128,7 @@ pub struct Minecarts {
     /// cached per id, so the wall test costs no host call once a block has
     /// been seen. Empty for anything a body passes through (air, plants, a
     /// rail).
-    collision: BTreeMap<u16, Vec<Aabb>>,
+    collision: BTreeMap<u16, Vec<LocalBox>>,
 }
 
 impl Minecarts {
@@ -213,9 +216,9 @@ impl Minecarts {
         };
         let yaw = yaw_facing([t[0] * away, t[1] * away]);
         let pos = [
-            cell[0] as f32 + p[0],
-            cell[1] as f32 + p[1] + RAIL_TOP,
-            cell[2] as f32 + p[2],
+            cell[0] as f64 + f64::from(p[0]),
+            cell[1] as f64 + f64::from(p[1] + RAIL_TOP),
+            cell[2] as f64 + f64::from(p[2]),
         ];
         if !consume_held(item, 1) {
             return Outcome::Continue;
@@ -236,7 +239,7 @@ impl Minecarts {
 
     /// A hit on a cart shoves it away from the puncher along its rail; the
     /// damage itself still lands (six punches break a cart into its item).
-    pub fn on_mob_damage(&mut self, mob_id: u64, kind: MobId, origin: Option<[f32; 3]>) {
+    pub fn on_mob_damage(&mut self, mob_id: u64, kind: MobId, origin: Option<[f64; 3]>) {
         if !self.is_cart(kind) {
             return;
         }
@@ -383,7 +386,7 @@ impl Minecarts {
 
 /// Ask the registry, once per block id, for the collision of every block the
 /// batched read holds — so the closures over the read never cross the ABI.
-fn learn_collision(collision: &mut BTreeMap<u16, Vec<Aabb>>, map: &RailBox) {
+fn learn_collision(collision: &mut BTreeMap<u16, Vec<LocalBox>>, map: &RailBox) {
     for block in map.blocks.iter().flatten() {
         if block.0 == BlockId::AIR.0 || collision.contains_key(&block.0) {
             continue;
@@ -396,7 +399,7 @@ fn learn_collision(collision: &mut BTreeMap<u16, Vec<Aabb>>, map: &RailBox) {
 /// Whether any terrain collision overlaps the world-space `probe` — from
 /// the batched read and the learnt per-id boxes; unloaded and unknown cells
 /// read as open.
-fn blocked_by(collision: &BTreeMap<u16, Vec<Aabb>>, map: &RailBox, probe: Aabb) -> bool {
+fn blocked_by(collision: &BTreeMap<u16, Vec<LocalBox>>, map: &RailBox, probe: Aabb) -> bool {
     let (lo, hi) = probe;
     let span = |i: usize| (lo[i].floor() as i32)..=((hi[i] - 1e-4).floor() as i32);
     span(1).any(|y| {
@@ -407,8 +410,13 @@ fn blocked_by(collision: &BTreeMap<u16, Vec<Aabb>>, map: &RailBox, probe: Aabb) 
                     .and_then(|b| collision.get(&b.0))
                     .is_some_and(|boxes| {
                         boxes.iter().any(|(mn, mx)| {
-                            let at =
-                                |c: [f32; 3]| [c[0] + x as f32, c[1] + y as f32, c[2] + z as f32];
+                            let at = |c: [f32; 3]| {
+                                [
+                                    f64::from(c[0]) + x as f64,
+                                    f64::from(c[1]) + y as f64,
+                                    f64::from(c[2]) + z as f64,
+                                ]
+                            };
                             overlaps(probe, (at(*mn), at(*mx)))
                         })
                     })
@@ -447,7 +455,7 @@ fn write_speed(mob_id: u64, speed: f32) {
     mob_tag_set(mob_id, SPEED_TAG, MobTagValue::F64(speed as f64));
 }
 
-fn cell_of(pos: [f32; 3]) -> [i32; 3] {
+fn cell_of(pos: [f64; 3]) -> [i32; 3] {
     [
         pos[0].floor() as i32,
         pos[1].floor() as i32,

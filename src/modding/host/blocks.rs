@@ -175,13 +175,13 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 if stream_final_cell(ctx, p).is_err() {
                     return HostRet::Points(None);
                 }
-                let to_world = ctx.world.block_local_transform(p);
+                let frame = ctx.world.block_local_frame(p);
                 HostRet::Points(Some(
                     points
                         .iter()
                         .map(|&q| {
-                            to_world
-                                .transform_point3(petramond_math::math::Vec3::from(q))
+                            frame
+                                .to_world(petramond_math::math::Vec3::from(q))
                                 .to_array()
                         })
                         .collect(),
@@ -265,7 +265,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             max,
             filter,
         } => {
-            let from = match finite3(from, "Raycast.from") {
+            let from = match super::guards::finite_pos(from, "Raycast.from") {
                 Ok(v) => v,
                 Err(e) => return e,
             };
@@ -424,13 +424,13 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::chunk::ChunkPos;
 
     /// Publish a SimCtx over `world` and run `f`, as if inside a dispatch.
     fn with_world_ctx(world: &mut World, f: impl FnOnce()) {
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -823,7 +823,7 @@ mod tests {
         // the right answer.
         let local = [size[0] * 0.8, size[1] * 0.2, size[2] * 0.9];
 
-        let mut seen: Vec<[f32; 3]> = Vec::new();
+        let mut seen: Vec<[f64; 3]> = Vec::new();
         for facing in [Facing::North, Facing::East, Facing::South, Facing::West] {
             let mut world = World::new(1, 4);
             world.clear_world();
@@ -849,7 +849,7 @@ mod tests {
                 let inside = cells.iter().any(|c| {
                     (0..3).all(|a| {
                         let lo = [c.x, c.y, c.z][a] as f32;
-                        got[a] >= lo && got[a] <= lo + 1.0
+                        got[a] >= f64::from(lo) && got[a] <= f64::from(lo + 1.0)
                     })
                 });
                 assert!(inside, "{facing:?}: {got:?} fell outside {cells:?}");

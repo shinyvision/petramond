@@ -87,8 +87,8 @@ pub struct DoorPresentation {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct DroppedItemPresentation {
-    pub prev_pos: Vec3,
-    pub pos: Vec3,
+    pub prev_pos: petramond_math::world_pos::WorldPos,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub item: ItemType,
     pub variant: petramond_world::item::VariantId,
     pub count: u8,
@@ -117,7 +117,7 @@ pub struct ParticlePresentation {
     /// Textured, double-sided quad half-axes; None keeps the ordinary cube.
     pub quad_axes: Option<[Vec3; 2]>,
     pub atlas: ParticleAtlas,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub uv_min: [f32; 2],
     pub uv_size: [f32; 2],
     pub tint: [f32; 3],
@@ -134,8 +134,8 @@ pub struct ParticlePresentation {
 pub struct MobPresentation {
     pub id: u64,
     pub kind: Mob,
-    pub prev_pos: Vec3,
-    pub pos: Vec3,
+    pub prev_pos: petramond_math::world_pos::WorldPos,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub prev_yaw: f32,
     pub yaw: f32,
     /// Body tilt inside the yaw, previous and current tick, blended like the
@@ -206,7 +206,7 @@ pub struct PlayerPresentation {
     /// Body self-lighting from the active bundles (`0..=1`, strongest wins).
     pub emitter_self_lit: f32,
     /// Feet centre (model `y=0`).
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// Body facing yaw (engine yaw space).
     pub body_yaw: f32,
     /// Head yaw relative to the body (radians) and look pitch.
@@ -250,7 +250,7 @@ pub struct FootstepSource {
     pub id: u64,
     /// Feet centre — where the sound plays, so a remote's steps arrive from
     /// their body and attenuate with distance like any other world sound.
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     /// The block being walked on, or `None` when this body is not making
     /// footsteps at all: standing still, SNEAKING, airborne (the cell below is
     /// air), seated, asleep, or over an unloaded cell. `App` never re-decides
@@ -273,7 +273,7 @@ pub struct FootstepSource {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EntityShadow {
     /// Decal centre: the entity's x/z, `y` = the ground top surface under it.
-    pub center: Vec3,
+    pub center: petramond_math::world_pos::WorldPos,
     /// World-space half-size of the square decal.
     pub radius: f32,
     /// Peak darkening at the centre (`0..=1`; 1 = fully black).

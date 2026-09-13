@@ -1,4 +1,5 @@
 use super::*;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::item::ItemType;
 
 #[test]
@@ -1070,7 +1071,7 @@ fn render_held_pose_preview() {
         let inst = crate::PlayerRenderInstance {
             emitter_tint: [1.0; 3],
             emitter_self_lit: 0.0,
-            pos: Vec3::ZERO,
+            pos: WorldPos::ZERO,
             body_yaw: 0.0,
             head_yaw: 0.0,
             head_pitch: 0.0,
@@ -1100,6 +1101,7 @@ fn render_held_pose_preview() {
             model,
             LightEnv::IDENTITY,
             &inst,
+            petramond_math::math::IVec3::ZERO,
             bones,
             &view,
             &view,
@@ -1388,7 +1390,7 @@ fn an_off_hand_pose_is_the_mirror_of_the_main_hands() {
         let inst = crate::PlayerRenderInstance {
             emitter_tint: [1.0; 3],
             emitter_self_lit: 0.0,
-            pos: Vec3::ZERO,
+            pos: WorldPos::ZERO,
             body_yaw: 0.0,
             head_yaw: 0.0,
             head_pitch: 0.0,
@@ -1416,6 +1418,7 @@ fn an_off_hand_pose_is_the_mirror_of_the_main_hands() {
             model,
             LightEnv::IDENTITY,
             &inst,
+            petramond_math::math::IVec3::ZERO,
             &bones,
             &view,
             &view,

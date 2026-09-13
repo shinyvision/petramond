@@ -7,6 +7,7 @@ use petramond::net::protocol::{ItemSlotWire, JoinData, SelfRestore, ServerToClie
 use petramond::player::PlayerId;
 use petramond::server::handle::ServerHandle;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::item::ItemType;
 
 fn join_data() -> Box<JoinData> {
@@ -23,7 +24,7 @@ fn join_data() -> Box<JoinData> {
         tables: petramond::net::remap::local_name_tables(),
         self_restore: SelfRestore {
             transform: petramond::net::protocol::Transform {
-                pos: Vec3::new(4.5, 90.0, -7.5),
+                pos: WorldPos::new(4.5, 90.0, -7.5),
                 vel: Vec3::ZERO,
                 yaw: 1.5,
                 pitch: -0.25,
@@ -48,7 +49,7 @@ fn join_data() -> Box<JoinData> {
 #[test]
 fn new_remote_seeds_the_client_from_join_data() {
     let (handle, _pipe) = ServerHandle::loopback();
-    let cam = petramond_render::camera::Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0);
+    let cam = petramond_render::camera::Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0);
     let mut game = Game::new_remote(
         cam,
         join_data(),
@@ -61,7 +62,7 @@ fn new_remote_seeds_the_client_from_join_data() {
 
     // The locally-predicted player mirrors the restore (the wire twin of
     // `PlayerData::restore`).
-    assert_eq!(game.player.pos, Vec3::new(4.5, 90.0, -7.5));
+    assert_eq!(game.player.pos, WorldPos::new(4.5, 90.0, -7.5));
     assert_eq!(game.player.yaw, 1.5);
     assert_eq!(game.player.health(), 13);
     assert_eq!(

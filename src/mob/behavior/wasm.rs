@@ -66,10 +66,12 @@ impl AiBehavior for WasmNodeAi {
             // is useless and the cells stay unread.
             player_foothold: (self.inputs.player_foothold
                 && ctx.pos.distance_squared(ctx.player_pos)
-                    <= crate::mob::PLAYER_REACTIVE_RANGE * crate::mob::PLAYER_REACTIVE_RANGE)
-                .then(|| super::chase::goal_cell_near(ctx, ctx.player_pos))
-                .flatten()
-                .map(|c| c.to_array()),
+                    <= f64::from(
+                        crate::mob::PLAYER_REACTIVE_RANGE * crate::mob::PLAYER_REACTIVE_RANGE,
+                    ))
+            .then(|| super::chase::goal_cell_near(ctx, ctx.player_pos))
+            .flatten()
+            .map(|c| c.to_array()),
             // The mob's own tag map — baseline own-state, so a node persists
             // per-mob state through decision tag writes instead of keying a
             // guest-side map off mob_id.

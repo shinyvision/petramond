@@ -176,9 +176,9 @@ pub fn on_interact(
         return Outcome::Continue;
     }
     let center = [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 0.4,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 0.4,
+        pos[2] as f64 + 0.5,
     ];
     // Fertility read ONCE per interaction (a get_block crossing): it gates
     // the harvest bonus roll and shortens the re-arm delay below.
@@ -249,7 +249,7 @@ fn mature_yield(def: &CropDef, fertile: bool, taking: Taking) -> Vec<(&'static s
 }
 
 /// Drop a yield list at `center`, skipping the empty entries a roll can produce.
-fn spawn_all(items: Vec<(&'static str, u8)>, center: [f32; 3]) {
+fn spawn_all(items: Vec<(&'static str, u8)>, center: [f64; 3]) {
     for (item, count) in items {
         if count > 0 {
             spawn_item(item, count, center);
@@ -275,9 +275,9 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, harvest
         return;
     }
     let center = [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 0.3,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 0.3,
+        pos[2] as f64 + 0.5,
     ];
     if stage < 3 {
         // An unripe plant is worth exactly what was put into it.
@@ -400,9 +400,9 @@ fn pop_planting_stock(growth: &mut Growth, def: &CropDef, pos: [i32; 3]) {
         def.planting_stock,
         1,
         [
-            pos[0] as f32 + 0.5,
-            pos[1] as f32 + 0.3,
-            pos[2] as f32 + 0.5,
+            pos[0] as f64 + 0.5,
+            pos[1] as f64 + 0.3,
+            pos[2] as f64 + 0.5,
         ],
     );
     growth.pending.remove(&pos);

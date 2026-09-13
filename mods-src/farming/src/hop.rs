@@ -49,7 +49,7 @@ const STALL: &str = "farming:hop_stall";
 const CALM_UNTIL: &str = "farming:hop_calm_until";
 const LAST_LAUNCH: &str = "farming:hop_last";
 
-fn packed_cell(pos: [f32; 3]) -> i64 {
+fn packed_cell(pos: [f64; 3]) -> i64 {
     let (x, z) = (pos[0].floor() as i64, pos[2].floor() as i64);
     (x << 32) | (z & 0xffff_ffff)
 }

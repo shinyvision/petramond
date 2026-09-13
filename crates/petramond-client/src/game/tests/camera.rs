@@ -1,17 +1,18 @@
 use super::common::game;
 use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn camera_eases_grounded_step_up_to_the_player_eye() {
     // The camera mirrors the CLIENT's predicted player.
     let mut game = game();
-    game.player.pos = Vec3::new(0.0, 64.0, 0.0);
+    game.player.pos = WorldPos::new(0.0, 64.0, 0.0);
     game.player.vel = Vec3::ZERO;
     game.player.on_ground = true;
     game.sync_camera_to_player_eye(1.0 / 60.0);
 
     let old_eye_y = game.player.eye().y;
-    let stepped_feet_y = game.player.pos.y + petramond_world::collision::STEP_HEIGHT;
+    let stepped_feet_y = game.player.pos.y + f64::from(petramond_world::collision::STEP_HEIGHT);
     game.player.pos.y = stepped_feet_y;
     game.player.vel.y = 0.0;
     game.player.on_ground = true;
@@ -42,7 +43,7 @@ fn camera_eases_grounded_step_up_to_the_player_eye() {
 #[test]
 fn view_bob_sways_the_first_person_eye_and_never_the_third_person_boom() {
     let mut game = game();
-    game.player.pos = Vec3::new(0.0, 64.0, 0.0);
+    game.player.pos = WorldPos::new(0.0, 64.0, 0.0);
     game.player.on_ground = true;
     game.player.yaw = 0.0;
     game.cam.yaw = 0.0;
@@ -54,8 +55,8 @@ fn view_bob_sways_the_first_person_eye_and_never_the_third_person_boom() {
         for _ in 0..frames {
             game.player.vel = Vec3::new(4.3, 0.0, 0.0);
             game.sync_camera_to_player_eye(1.0 / 60.0);
-            sway = sway.max((game.cam.pos.x - game.player.pos.x).abs());
-            rise = rise.max((game.cam.pos.y - game.player.eye().y).abs());
+            sway = sway.max(((game.cam.pos.x - game.player.pos.x).abs()) as f32);
+            rise = rise.max(((game.cam.pos.y - game.player.eye().y).abs()) as f32);
         }
         (sway, rise)
     };
@@ -80,7 +81,7 @@ fn view_bob_sways_the_first_person_eye_and_never_the_third_person_boom() {
 #[test]
 fn a_seat_rising_up_a_slope_is_not_a_step_the_body_glides_behind() {
     let mut game = game();
-    game.player.pos = Vec3::new(0.0, 64.0, 0.0);
+    game.player.pos = WorldPos::new(0.0, 64.0, 0.0);
     game.player.vel = Vec3::ZERO;
     game.player.on_ground = true;
     game.sync_camera_to_player_eye(1.0 / 60.0);

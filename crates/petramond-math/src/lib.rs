@@ -11,3 +11,4 @@ pub mod noise;
 pub mod pose;
 pub mod random;
 pub mod wire_enum;
+pub mod world_pos;

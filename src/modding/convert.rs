@@ -291,7 +291,7 @@ pub(super) fn projectile_hit(ev: &ProjectileHit) -> api::EventPayload {
                 face: ivec(face),
             },
         },
-        pos: vec(ev.pos),
+        pos: ev.pos.to_array(),
         vel: vec(ev.vel),
         fate: fate_out(ev.fate),
     }
@@ -328,7 +328,7 @@ pub(super) fn mob_damage_pre(ev: &MobDamagePre) -> api::EventPayload {
         kind: api::MobId(ev.kind.id()),
         amount: ev.amount,
         source: damage_source(ev.source),
-        origin: ev.origin.map(vec),
+        origin: ev.origin.map(|p| p.to_array()),
         feedback: api::MobDamageFeedback {
             components: ev
                 .feedback
@@ -371,7 +371,7 @@ pub(super) fn player_damage_pre(ev: &PlayerDamagePre) -> api::EventPayload {
     api::EventPayload::PlayerDamagePre {
         amount: ev.amount,
         source: damage_source(ev.source),
-        origin: ev.origin.map(vec),
+        origin: ev.origin.map(|p| p.to_array()),
     }
 }
 
@@ -404,12 +404,12 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
         PostEvent::MobDied { id, kind, pos } => api::EventPayload::MobDied {
             id,
             kind: api::MobId(kind.id()),
-            pos: vec(pos),
+            pos: pos.to_array(),
         },
         PostEvent::MobSpawned { id, kind, pos } => api::EventPayload::MobSpawned {
             id,
             kind: api::MobId(kind.id()),
-            pos: vec(pos),
+            pos: pos.to_array(),
         },
         PostEvent::PlayerDamaged { amount, new_health } => {
             api::EventPayload::PlayerDamaged { amount, new_health }
@@ -467,7 +467,7 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             player: api::PlayerId(player.0),
             item: api::ItemId(item.id()),
             count,
-            pos: vec(pos),
+            pos: pos.to_array(),
         },
         PostEvent::ItemObtained { player, item } => api::EventPayload::ItemObtained {
             player: api::PlayerId(player.0),

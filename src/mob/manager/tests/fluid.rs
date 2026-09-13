@@ -1,5 +1,6 @@
 use super::*;
 use crate::entity::fluid_fixture::{self, block, flowing_brine, pool, BRINE, FLOOR_Y, SYRUP};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::exposure::ExposureSource;
 use petramond_world::fluid::Buoyancy;
@@ -10,7 +11,7 @@ fn fluid_rows_drive_players_and_mobs_through_the_world() {
     crate::modding::tests::run_child_test(&root, "mob::manager::tests::fluid::fluid_bodies_inner");
 }
 
-fn body(name: &str, pos: Vec3) -> Mobs {
+fn body(name: &str, pos: WorldPos) -> Mobs {
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(
         crate::mob::by_key(&format!("bodyfluid:{name}")).unwrap(),
@@ -30,7 +31,7 @@ fn step(
         0.05,
         world,
         &[PlayerAnchor {
-            pos: Vec3::new(8.5, 76.0, 8.5),
+            pos: WorldPos::new(8.5, 76.0, 8.5),
             ..Default::default()
         }],
         false,
@@ -52,7 +53,7 @@ fn fluid_bodies_inner() {
 
 fn a_current_carries_an_idle_mob() {
     let world = flowing_brine();
-    let start = Vec3::new(7.5, FLOOR_Y as f32, 8.5);
+    let start = WorldPos::new(7.5, FLOOR_Y as f64, 8.5);
     let mut mobs = body("swim", start);
     for _ in 0..20 {
         step(&mut mobs, &world, [0.0, 0.0]);
@@ -65,7 +66,7 @@ fn a_current_carries_an_idle_mob() {
 }
 
 fn equal_intent_gets_equal_response(name: &str, world: &World) {
-    let start = Vec3::new(5.5, 70.0, 8.5);
+    let start = WorldPos::new(5.5, 70.0, 8.5);
     let mut mobs = body("swim", start);
     let mut player = crate::player::Player::new(start);
     for _ in 0..20 {
@@ -99,7 +100,7 @@ fn equal_intent_gets_equal_response(name: &str, world: &World) {
 }
 
 fn swimmers_bob_and_floaters_settle(name: &str, world: &World) {
-    let mut mobs = body("swim", Vec3::new(8.5, 74.5, 8.5));
+    let mut mobs = body("swim", WorldPos::new(8.5, 74.5, 8.5));
     let (mut up, mut down) = (false, false);
     for tick in 0..200 {
         let before = mobs.instances()[0].pos.y;
@@ -121,7 +122,7 @@ fn swimmers_bob_and_floaters_settle(name: &str, world: &World) {
     }
     assert!(up && down, "{name}: swimmers bob through the surface");
 
-    let start = Vec3::new(5.5, 70.0, 8.5);
+    let start = WorldPos::new(5.5, 70.0, 8.5);
     let mut neutral = body("neutral", start);
     for _ in 0..20 {
         step(&mut neutral, world, [0.0, 0.0]);
@@ -131,7 +132,7 @@ fn swimmers_bob_and_floaters_settle(name: &str, world: &World) {
         "{name}: neutral buoyancy has no automatic stroke"
     );
 
-    let mut hull = body("surface", Vec3::new(8.5, 74.5, 8.5));
+    let mut hull = body("surface", WorldPos::new(8.5, 74.5, 8.5));
     for _ in 0..200 {
         step(&mut hull, world, [0.0, 0.0]);
     }
@@ -147,7 +148,7 @@ fn swimmers_bob_and_floaters_settle(name: &str, world: &World) {
         .body_fluid(hull.instances()[0].pos, 1.8, Buoyancy::Surface)
         .is_some());
 
-    let mut dropped = body("surface", Vec3::new(8.5, 90.0, 8.5));
+    let mut dropped = body("surface", WorldPos::new(8.5, 90.0, 8.5));
     step(&mut dropped, world, [0.0, 0.0]);
     let falling = dropped.instances()[0].vel().y;
     step(&mut dropped, world, [0.0, 0.0]);
@@ -163,7 +164,7 @@ fn swimmers_bob_and_floaters_settle(name: &str, world: &World) {
 fn soak(name: &str) -> (bool, bool, bool) {
     let burning = petramond_world::condition::by_name("petramond:burning").unwrap();
     let world = pool(block(SYRUP), 75);
-    let mut mobs = body(name, Vec3::new(8.5, 70.0, 8.5));
+    let mut mobs = body(name, WorldPos::new(8.5, 70.0, 8.5));
     let (mut hit, mut burned, mut held) = (false, false, false);
     for _ in 0..40 {
         let events = step(&mut mobs, &world, [0.0, 0.0]);

@@ -111,7 +111,7 @@ mod tests {
     use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::World;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
@@ -130,7 +130,7 @@ mod tests {
     fn ctx<'a>(
         world: &'a World,
         rng: &'a mut MobRng,
-        pos: Vec3,
+        pos: WorldPos,
         players: &'a [PlayerAnchor],
         contacts: &'a [EntityRef],
         mobs: &'a [AiMob],
@@ -138,7 +138,7 @@ mod tests {
         let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
         c.half_width = 0.45;
         c.player_id = players.first().map(|a| a.id).unwrap_or_default();
-        c.player_pos = players.first().map(|a| a.pos).unwrap_or(Vec3::ZERO);
+        c.player_pos = players.first().map(|a| a.pos).unwrap_or(WorldPos::ZERO);
         c.players = players;
         c.contacts = contacts;
         c.mobs = mobs;
@@ -150,12 +150,12 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChaseContactAi::new(40);
-        let mob = Vec3::new(8.5, 64.0, 8.5);
+        let mob = WorldPos::new(8.5, 64.0, 8.5);
         // A sneaking player pressed against the mob: no noise exists anywhere,
         // only the touch.
         let players = [PlayerAnchor {
             id: PlayerId(3),
-            pos: Vec3::new(9.1, 64.9, 8.5),
+            pos: WorldPos::new(9.1, 64.9, 8.5),
             sneaking: true,
             ..Default::default()
         }];
@@ -179,13 +179,13 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChaseContactAi::new(40);
-        let mob = Vec3::new(8.5, 64.0, 8.5);
+        let mob = WorldPos::new(8.5, 64.0, 8.5);
         // A sheep (not on any whitelist — contact needs none) pressed into it,
         // plus a bogus self-contact which must never lock.
         let mobs = [AiMob {
             id: 9,
             kind: Mob::Sheep,
-            pos: Vec3::new(9.2, 64.0, 8.5),
+            pos: WorldPos::new(9.2, 64.0, 8.5),
             active: true,
             tags: Default::default(),
         }];
@@ -203,16 +203,16 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChaseContactAi::new(40);
-        let mob = Vec3::new(8.5, 64.0, 8.5);
+        let mob = WorldPos::new(8.5, 64.0, 8.5);
         let players = [
             PlayerAnchor {
                 id: PlayerId(3),
-                pos: Vec3::new(9.1, 64.9, 8.5),
+                pos: WorldPos::new(9.1, 64.9, 8.5),
                 ..Default::default()
             },
             PlayerAnchor {
                 id: PlayerId(4),
-                pos: Vec3::new(8.5, 64.9, 9.0), // nearer than the locked target
+                pos: WorldPos::new(8.5, 64.9, 9.0), // nearer than the locked target
                 ..Default::default()
             },
         ];

@@ -23,8 +23,6 @@
 
 use serde::Deserialize;
 
-use petramond_math::math::Vec3;
-
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::{EntityRef, Mob, MobDef};
 use super::chase::goal_cell_near;
@@ -111,7 +109,8 @@ impl ChaseSoundAi {
     /// per-tick chance roll (drawn once, only when an eligible one was heard).
     fn acquire(&mut self, ctx: &mut AiCtx) {
         let r2 = self.radius * self.radius;
-        let audible = |pos: Vec3| (pos - ctx.pos).length_squared() <= r2;
+        let audible =
+            |pos: petramond_math::world_pos::WorldPos| (pos - ctx.pos).length_squared() <= r2;
 
         let nearest_player = ctx
             .noises
@@ -206,6 +205,7 @@ mod tests {
     use crate::mob::{brain::AiMob, MobRng, Noise, NoiseKind, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::World;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
@@ -221,7 +221,7 @@ mod tests {
         world
     }
 
-    fn anchor(id: u8, pos: Vec3) -> PlayerAnchor {
+    fn anchor(id: u8, pos: WorldPos) -> PlayerAnchor {
         PlayerAnchor {
             id: PlayerId(id),
             pos,
@@ -229,7 +229,7 @@ mod tests {
         }
     }
 
-    fn step(pos: Vec3, source: EntityRef) -> Noise {
+    fn step(pos: WorldPos, source: EntityRef) -> Noise {
         Noise {
             pos,
             kind: NoiseKind::Step,
@@ -240,7 +240,7 @@ mod tests {
     fn ctx<'a>(
         world: &'a World,
         rng: &'a mut MobRng,
-        pos: Vec3,
+        pos: WorldPos,
         players: &'a [PlayerAnchor],
         noises: &'a [Noise],
         mobs: &'a [AiMob],
@@ -248,7 +248,7 @@ mod tests {
         let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
         c.half_width = 0.22;
         c.player_id = players.first().map(|a| a.id).unwrap_or_default();
-        c.player_pos = players.first().map(|a| a.pos).unwrap_or(Vec3::ZERO);
+        c.player_pos = players.first().map(|a| a.pos).unwrap_or(WorldPos::ZERO);
         c.players = players;
         c.noises = noises;
         c.mobs = mobs;
@@ -260,8 +260,8 @@ mod tests {
         let mut world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChaseSoundAi::new(12.0, 40, 0.0, Vec::new());
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let player = Vec3::new(9.5, 64.9, 2.5); // 7 blocks: audible
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let player = WorldPos::new(9.5, 64.9, 2.5); // 7 blocks: audible
         let players = [anchor(3, player)];
 
         // A solid wall between them — sight-based chase would refuse; hearing
@@ -291,8 +291,8 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChaseSoundAi::new(12.0, 40, 0.0, Vec::new());
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let player = Vec3::new(9.5, 64.9, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let player = WorldPos::new(9.5, 64.9, 2.5);
         let players = [anchor(3, player)];
         let noise = [step(player, EntityRef::Player(PlayerId(3)))];
 
@@ -330,8 +330,8 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChaseSoundAi::new(12.0, 40, 0.0, Vec::new());
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let far = Vec3::new(20.5, 64.9, 2.5); // 18 blocks: out of hearing
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let far = WorldPos::new(20.5, 64.9, 2.5); // 18 blocks: out of hearing
         let players = [anchor(3, far)];
         let noises = [step(far, EntityRef::Player(PlayerId(3)))];
 
@@ -345,7 +345,7 @@ mod tests {
         // Lock from an in-range noise, then move the player out of hearing:
         // their far noises no longer refresh, and the lock times out even
         // though they keep stomping.
-        let near = Vec3::new(9.5, 64.9, 2.5);
+        let near = WorldPos::new(9.5, 64.9, 2.5);
         let near_players = [anchor(3, near)];
         let near_noise = [step(near, EntityRef::Player(PlayerId(3)))];
         assert!(ai
@@ -375,9 +375,9 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChaseSoundAi::new(12.0, 40, 0.0, Vec::new());
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let a = Vec3::new(9.5, 64.9, 2.5);
-        let b = Vec3::new(4.5, 64.9, 2.5); // B is NEARER than A
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let a = WorldPos::new(9.5, 64.9, 2.5);
+        let b = WorldPos::new(4.5, 64.9, 2.5); // B is NEARER than A
         let players = [anchor(3, a), anchor(4, b)];
 
         let only_a = [step(a, EntityRef::Player(PlayerId(3)))];
@@ -401,8 +401,8 @@ mod tests {
     fn mob_noises_need_whitelist_and_chance_and_never_self() {
         let world = flat_world();
         let mut rng = MobRng::new(1);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let prey_pos = Vec3::new(7.5, 64.0, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let prey_pos = WorldPos::new(7.5, 64.0, 2.5);
         let mobs = [
             AiMob {
                 id: 1, // the listener itself
@@ -445,9 +445,9 @@ mod tests {
     fn a_player_noise_outranks_a_mob_noise_at_acquisition() {
         let world = flat_world();
         let mut rng = MobRng::new(1);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let prey_pos = Vec3::new(4.5, 64.0, 2.5); // mob noise NEARER
-        let player = Vec3::new(9.5, 64.9, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let prey_pos = WorldPos::new(4.5, 64.0, 2.5); // mob noise NEARER
+        let player = WorldPos::new(9.5, 64.9, 2.5);
         let players = [anchor(3, player)];
         let mobs = [AiMob {
             id: 9,
@@ -473,8 +473,8 @@ mod tests {
     fn a_dead_target_unlocks_immediately() {
         let world = flat_world();
         let mut rng = MobRng::new(1);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let prey_pos = Vec3::new(7.5, 64.0, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let prey_pos = WorldPos::new(7.5, 64.0, 2.5);
         let alive = [AiMob {
             id: 9,
             kind: Mob::Sheep,

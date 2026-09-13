@@ -8,7 +8,7 @@
 use std::sync::LazyLock;
 
 use petramond_math::facing::Facing;
-use petramond_math::math::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::{Block, ParticleEmitter, ParticleEmitterAnchor, ShapeFamily};
 use petramond_world::block_model::{self, BlockModelKind};
 use petramond_world::chunk::{section_local, SectionPos, SECTION_SIZE};
@@ -29,7 +29,7 @@ use super::store::World;
 /// whole emitter path speaks.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PlacedEmitter {
-    pub origin: Vec3,
+    pub origin: petramond_math::world_pos::WorldPos,
     pub emitter: ParticleEmitter,
     pub seed: u64,
     pub skylight: u8,
@@ -173,11 +173,11 @@ impl World {
             // before the store is even looked up — at a render distance most
             // of this index is far away, and the distance compare is the
             // cheapest thing here.
-            let origin = Vec3::new(
-                (sp.cx * sec) as f32,
-                (sp.cy * sec) as f32,
-                (sp.cz * sec) as f32,
-            );
+            let origin = petramond_math::world_pos::WorldPos::block_min(IVec3::new(
+                sp.cx * sec,
+                sp.cy * sec,
+                sp.cz * sec,
+            ));
             let (lo, hi) = (origin - reach, origin + span + reach);
             if !view.covers_a_pixel(lo, hi, biggest) || !view.aabb_visible(lo, hi) {
                 continue;
@@ -226,7 +226,7 @@ impl World {
                         model_emitter_origin(emitter, kind, cell, facing)
                     } else {
                         let local = emitter_anchor_local(emitter, block, section, lx, ly, lz);
-                        Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32) + local
+                        petramond_math::world_pos::WorldPos::block_min(cell) + local
                     };
                     let envelope = emitter_envelope(&emitter);
                     let (lo, hi) = (origin - envelope, origin + envelope);
@@ -235,7 +235,7 @@ impl World {
                     {
                         continue;
                     }
-                    let sample = voxel_at(origin);
+                    let sample = origin.block();
                     let (sky, block_light) =
                         self.dynamic_light_at_world(sample.x, sample.y, sample.z);
                     let floor_y = if emitter.lands {
@@ -264,10 +264,14 @@ impl World {
     /// reach (drift plus fall), or `NEG_INFINITY`. The scan starts one cell
     /// under the anchor's own so a tip hanging inside its cell does not land
     /// on itself.
-    fn emitter_floor_y(&self, origin: Vec3, e: &ParticleEmitter) -> f32 {
+    fn emitter_floor_y(
+        &self,
+        origin: petramond_math::world_pos::WorldPos,
+        e: &ParticleEmitter,
+    ) -> f32 {
         let max_life = e.lifetime[1].max(e.lifetime[0]);
         let reach = (e.velocity[1].abs() + e.velocity_jitter[1]) * max_life + fall_reach(e);
-        let top = voxel_at(origin);
+        let top = origin.block();
         let bottom = top.y - reach.ceil() as i32 - 1;
         for y in (bottom..top.y).rev() {
             if Block::from_id(self.chunk_block(top.x, y, top.z)).blocks_movement() {
@@ -288,7 +292,7 @@ fn model_emitter_origin(
     kind: BlockModelKind,
     origin_cell: IVec3,
     facing: Facing,
-) -> Vec3 {
+) -> petramond_math::world_pos::WorldPos {
     let fp = block_model::def(kind).cells;
     let (fx, fy, fz) = (fp[0] as f32, fp[1] as f32, fp[2] as f32);
     let anchor = match emitter.anchor {
@@ -300,8 +304,9 @@ fn model_emitter_origin(
         }
     };
     let base = block_model::base_from_cell(origin_cell, kind, [0, 0, 0], facing);
-    let m = block_model::placement_transform(base, kind, facing);
-    m.transform_point3(anchor + Vec3::from_array(emitter.offset))
+    let m = block_model::placement_transform(kind, facing);
+    petramond_math::world_pos::WorldPos::block_min(base)
+        + m.transform_point3(anchor + Vec3::from_array(emitter.offset))
 }
 
 fn emitter_anchor_local(
@@ -344,6 +349,7 @@ fn emitter_seed(sp: SectionPos, local_idx: u16, block: Block) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::chunk::{Chunk, ChunkPos};
 
     fn drip() -> ParticleEmitter {
@@ -373,7 +379,7 @@ mod tests {
     fn a_landing_emitter_finds_the_first_floor_under_its_anchor() {
         let mut w = World::new(1, 1);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
-        let origin = Vec3::new(4.5, 80.0, 4.5);
+        let origin = WorldPos::new(4.5, 80.0, 4.5);
         let e = drip();
         assert_eq!(w.emitter_floor_y(origin, &e), f32::NEG_INFINITY, "open air");
         w.set_block_world(4, 76, 4, Block::ShortGrass);

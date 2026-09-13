@@ -104,7 +104,7 @@ impl std::ops::DerefMut for FullTileSlots {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct FullSceneStamp {
     pub(crate) bounds: [i32; 4],
-    pub(crate) player: [u32; 2],
+    pub(crate) player: [u64; 2],
     pub(crate) zoom: i8,
     /// Which visible grid positions have a rastered tile (budgeted rasters
     /// and progressive loads complete across frames).
@@ -210,7 +210,7 @@ impl Minimap {
         }
         let tb = full_tile_blocks(zoom);
         let bpp = blocks_per_pixel(zoom);
-        let origin = [(bounds[0] * tb) as f32, (bounds[2] * tb) as f32];
+        let origin = [f64::from(bounds[0] * tb), f64::from(bounds[2] * tb)];
         let scene_stamp = FullSceneStamp {
             bounds,
             player: [self.player[0].to_bits(), self.player[2].to_bits()],
@@ -240,18 +240,18 @@ impl Minimap {
             elements.push(ClientCanvasElement::Sprite {
                 image_key: PLAYER_ARROW_IMAGE.into(),
                 center: [
-                    (self.player[0] - origin[0]) / bpp,
-                    (self.player[2] - origin[1]) / bpp,
+                    ((self.player[0] - origin[0]) / f64::from(bpp)) as f32,
+                    ((self.player[2] - origin[1]) / f64::from(bpp)) as f32,
                 ],
             });
             client_canvas_scene_set(FULL_CANVAS, elements);
             self.full_scene_stamp = Some(scene_stamp);
         }
 
-        let half = FULL_SIZE as f32 * 0.5;
+        let half = FULL_SIZE as f64 * 0.5;
         let offset = [
-            (half - (self.pan[0] - origin[0]) / bpp).round(),
-            (half - (self.pan[1] - origin[1]) / bpp).round(),
+            (half - (self.pan[0] - origin[0]) / f64::from(bpp)).round() as f32,
+            (half - (self.pan[1] - origin[1]) / f64::from(bpp)).round() as f32,
         ];
         let view_bits = [offset[0].to_bits(), offset[1].to_bits()];
         if self.full_view_bits != Some(view_bits) {
@@ -703,7 +703,10 @@ impl Minimap {
                     self.dragged = true;
                 }
                 let bpp = blocks_per_pixel(self.zoom);
-                let next = [pan[0] - dx.round() * bpp, pan[1] - dy.round() * bpp];
+                let next = [
+                    pan[0] - f64::from(dx.round() * bpp),
+                    pan[1] - f64::from(dy.round() * bpp),
+                ];
                 if self.pan != next {
                     self.pan = next;
                     self.sync_full_canvas();
@@ -719,12 +722,12 @@ impl Minimap {
     }
 }
 
-fn full_tile_bounds(pan: [f32; 2], zoom: i8) -> [i32; 4] {
-    let axis = |center: f32| {
+fn full_tile_bounds(pan: [f64; 2], zoom: i8) -> [i32; 4] {
+    let axis = |center: f64| {
         let half_blocks = FULL_SIZE as f64 * blocks_per_pixel(zoom) as f64 * 0.5;
         let tile_blocks = full_tile_blocks(zoom) as f64;
-        let min = ((center as f64 - half_blocks) / tile_blocks).floor() as i32;
-        let max = ((center as f64 + half_blocks) / tile_blocks).ceil() as i32 - 1;
+        let min = ((center - half_blocks) / tile_blocks).floor() as i32;
+        let max = ((center + half_blocks) / tile_blocks).ceil() as i32 - 1;
         (min, max)
     };
     let (min_x, max_x) = axis(pan[0]);
@@ -754,19 +757,19 @@ fn align_rect_to_cells(rect: [i32; 4], zoom: i8) -> [i32; 4] {
     ]
 }
 
-pub(crate) fn snap_to_source_pixel(value: f32, zoom: i8) -> f32 {
-    let bpp = blocks_per_pixel(zoom);
+pub(crate) fn snap_to_source_pixel(value: f64, zoom: i8) -> f64 {
+    let bpp = f64::from(blocks_per_pixel(zoom));
     (value / bpp).round() * bpp
 }
 
 /// The pan that keeps the world point under canvas pixel (`x`, `y`) fixed
 /// across a zoom change, snapped to the target zoom's source-pixel grid.
-pub(crate) fn zoomed_pan(pan: [f32; 2], from: i8, to: i8, x: f32, y: f32) -> [f32; 2] {
+pub(crate) fn zoomed_pan(pan: [f64; 2], from: i8, to: i8, x: f32, y: f32) -> [f64; 2] {
     let half = FULL_SIZE as f32 * 0.5;
     let shift = blocks_per_pixel(from) - blocks_per_pixel(to);
     [
-        snap_to_source_pixel(pan[0] + (x - half) * shift, to),
-        snap_to_source_pixel(pan[1] + (y - half) * shift, to),
+        snap_to_source_pixel(pan[0] + f64::from((x - half) * shift), to),
+        snap_to_source_pixel(pan[1] + f64::from((y - half) * shift), to),
     ]
 }
 
@@ -804,7 +807,7 @@ mod tests {
         for zoom in ZOOM_MIN..=ZOOM_MAX {
             let bpp = blocks_per_pixel(zoom);
             for half_steps in -2000..=2000 {
-                let pan = half_steps as f32 * bpp;
+                let pan = f64::from(half_steps) * f64::from(bpp);
                 let bounds = full_tile_bounds([pan, -pan], zoom);
                 assert!(bounds[1] - bounds[0] < FULL_TILE_GRID);
                 assert!(bounds[3] - bounds[2] < FULL_TILE_GRID);
@@ -949,24 +952,27 @@ mod tests {
     #[test]
     fn zoom_keeps_the_point_under_the_cursor_fixed() {
         let half = FULL_SIZE as f32 * 0.5;
+        // Far from the origin too: an f32 pan cannot hold a source pixel there.
+        let pans = [[37.5, -1204.0], [1.0e9 + 37.5, -1.0e9 - 1204.0]];
         for (from, to) in [(0i8, 1i8), (1, 2), (0, -1), (-1, -2), (-2, 2), (2, -2)] {
-            let pan = [37.5f32, -1204.0];
-            let (x, y) = (123.0f32, 456.0f32);
-            let world = [
-                pan[0] + (x - half) * blocks_per_pixel(from),
-                pan[1] + (y - half) * blocks_per_pixel(from),
-            ];
-            let next = zoomed_pan(pan, from, to, x, y);
-            let world_after = [
-                next[0] + (x - half) * blocks_per_pixel(to),
-                next[1] + (y - half) * blocks_per_pixel(to),
-            ];
-            let tolerance = blocks_per_pixel(to);
-            assert!(
-                (world[0] - world_after[0]).abs() <= tolerance
-                    && (world[1] - world_after[1]).abs() <= tolerance,
-                "{from}->{to}: {world:?} vs {world_after:?}"
-            );
+            for pan in pans {
+                let (x, y) = (123.0f32, 456.0f32);
+                let world = [
+                    pan[0] + f64::from((x - half) * blocks_per_pixel(from)),
+                    pan[1] + f64::from((y - half) * blocks_per_pixel(from)),
+                ];
+                let next = zoomed_pan(pan, from, to, x, y);
+                let world_after = [
+                    next[0] + f64::from((x - half) * blocks_per_pixel(to)),
+                    next[1] + f64::from((y - half) * blocks_per_pixel(to)),
+                ];
+                let tolerance = f64::from(blocks_per_pixel(to));
+                assert!(
+                    (world[0] - world_after[0]).abs() <= tolerance
+                        && (world[1] - world_after[1]).abs() <= tolerance,
+                    "{from}->{to}: {world:?} vs {world_after:?}"
+                );
+            }
         }
     }
 

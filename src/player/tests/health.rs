@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn health_damage_and_restore_clamp_to_the_valid_range() {
     use petramond_world::damage::Immunity;
-    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
     assert_eq!(pl.health(), MAX_HEALTH, "starts at full health");
     assert!(pl.apply_damage(3, Immunity::PLAYER));
     assert_eq!(pl.health(), MAX_HEALTH - 3);
@@ -30,7 +30,7 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
 #[test]
 fn damage_over_time_neither_checks_nor_grants_the_immunity_window() {
     use petramond_world::damage::Immunity;
-    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
     assert!(
         pl.apply_damage(2, Immunity::PLAYER),
         "the ordinary hit opens a window"
@@ -70,7 +70,7 @@ fn status_effects_fire_on_interval_boundaries_and_expire() {
     // The player owns WHEN a behavior fires (Game applies the consequences,
     // so damage can route through its funnel): boundaries land every
     // `interval` ticks, including one at expiry.
-    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
     pl.apply_effect(Effect::Regeneration, interval * 2);
     let mut fired = 0;
     for _ in 0..interval {

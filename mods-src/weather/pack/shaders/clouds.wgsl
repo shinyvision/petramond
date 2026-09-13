@@ -20,7 +20,7 @@ struct Uniforms {
     fog: vec4<f32>,        // (start, end, time, underwater)
     fog_color: vec4<f32>,  // rgb = haze color (night-dimmed); w = sky scale
     inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<f32>,
+    render_origin: vec4<i32>,
     water_anim: vec4<u32>,
     sky_color: vec4<f32>,  // rgb = sky-light tint
     sun_dir: vec4<f32>,    // xyz = unit sun direction; w = daylight [0,1]
@@ -311,7 +311,14 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
     let near_p = near_h.xyz / near_h.w;
     let far_p = far_h.xyz / far_h.w;
     let dir = normalize(far_p - near_p);
-    let cam_world = u.render_origin.xyz + u.cam_pos.xyz;
+    // The origin enters WRAPPED: every lattice this pass samples tiles WRAP,
+    // so dropping whole periods changes nothing and keeps the float small
+    // however far out the camera is.
+    let cam_world = vec3<f32>(
+        f32(u.render_origin.x % i32(WRAP)),
+        f32(u.render_origin.y),
+        f32(u.render_origin.z % i32(WRAP)),
+    ) + u.cam_pos.xyz;
 
     let pixel = vec2<u32>(in.pos.xy);
     let scene_depth = textureLoad(depth_tex, vec2<i32>(pixel), 0);

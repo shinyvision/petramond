@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use crate::mob::{populate, spawn, Instance, Mob, SavedMob};
 use crate::world::World;
-use petramond_math::math::{voxel_at, Vec3};
+use petramond_math::math::Vec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use super::Mobs;
 
 impl Mobs {
     /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`.
-    pub fn spawn(&mut self, kind: Mob, pos: Vec3, yaw: f32) -> bool {
+    pub fn spawn(&mut self, kind: Mob, pos: petramond_math::world_pos::WorldPos, yaw: f32) -> bool {
         self.spawn_lit(
             kind,
             pos,
@@ -23,7 +23,7 @@ impl Mobs {
     pub fn spawn_lit(
         &mut self,
         kind: Mob,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         yaw: f32,
         skylight: u8,
         blocklight: petramond_world::light::BlockLight6,
@@ -54,7 +54,11 @@ impl Mobs {
     /// the spawn-relevant area is actually loaded. While saved records within the
     /// nine-chunk census neighborhood are still streaming back in, the attempt holds
     /// off, or every join would refill the caps before those nearby mobs restore.
-    pub fn spawn_tick(&mut self, world: &World, player_pos: Vec3) -> Vec<(u64, Mob, Vec3)> {
+    pub fn spawn_tick(
+        &mut self,
+        world: &World,
+        player_pos: petramond_math::world_pos::WorldPos,
+    ) -> Vec<(u64, Mob, petramond_math::world_pos::WorldPos)> {
         // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
         let list = &self.list;
         let chosen = spawn::attempt(world, player_pos, &mut self.rng, |kind| {
@@ -63,7 +67,7 @@ impl Mobs {
         let mut spawned = Vec::new();
         if let Some(spawns) = chosen {
             for s in spawns {
-                let c = petramond_math::math::voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
+                let c = (s.pos + Vec3::new(0.0, 0.3, 0.0)).block();
                 let sky = world.skylight6_at_world(c.x, c.y, c.z);
                 let block = petramond_world::light::BlockLight6::from_x2(
                     world.blocklight_rgb_at_world(c.x, c.y, c.z),
@@ -86,15 +90,18 @@ impl Mobs {
     pub fn populate_tick(
         &mut self,
         world: &World,
-        player_pos: Vec3,
-    ) -> (Vec<(u64, Mob, Vec3)>, Vec<ChunkPos>) {
+        player_pos: petramond_math::world_pos::WorldPos,
+    ) -> (
+        Vec<(u64, Mob, petramond_math::world_pos::WorldPos)>,
+        Vec<ChunkPos>,
+    ) {
         let herds = populate::attempt(world, player_pos, &mut self.populate_checked);
         let mut spawned = Vec::new();
         let mut populated = Vec::new();
         for herd in herds {
             let mut any = false;
             for s in herd.spawns {
-                let c = voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
+                let c = (s.pos + Vec3::new(0.0, 0.3, 0.0)).block();
                 let sky = world.skylight6_at_world(c.x, c.y, c.z);
                 let block = petramond_world::light::BlockLight6::from_x2(
                     world.blocklight_rgb_at_world(c.x, c.y, c.z),
@@ -120,7 +127,7 @@ impl Mobs {
         let mut i = self.list.len();
         while i > 0 {
             i -= 1;
-            let c = voxel_at(self.list[i].pos);
+            let c = self.list[i].pos.block();
             if SectionPos::from_world(c.x, c.y, c.z) == Some(pos) {
                 let mob = self.list.swap_remove(i);
                 if !mob.is_dead() {
@@ -142,7 +149,7 @@ impl Mobs {
             if m.is_dead() {
                 continue;
             }
-            let c = voxel_at(m.pos);
+            let c = m.pos.block();
             if let Some(pos) = SectionPos::from_world(c.x, c.y, c.z) {
                 map.entry(pos).or_default().push(SavedMob::of(m));
             }

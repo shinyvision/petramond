@@ -28,7 +28,7 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-[profile.playtest]
+[profile.fasttest]
 inherits = "dev"
 opt-level = 1
 

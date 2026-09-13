@@ -43,11 +43,14 @@ impl Renderer {
             self.chrome.crosshair_drawn_size = (self.config.width, self.config.height);
         }
 
-        // Refresh the outline vertex buffer only when the target changed.
-        if self.chrome.selection != self.chrome.selection_drawn {
+        // Refresh the outline vertex buffer only when the target (or the render
+        // origin its vertices are relative to) changed.
+        let origin = self.view.render_origin;
+        let wanted = self.chrome.selection.map(|shape| (shape, origin));
+        if wanted != self.chrome.selection_drawn {
             self.chrome.outline_vertex_count = 0;
             if let Some(shape) = self.chrome.selection {
-                let outline = outline_vertices(shape);
+                let outline = outline_vertices(shape, origin);
                 self.chrome.outline_vertex_count = outline.count();
                 if outline.count() > 0 {
                     super::dynamic_draw::upload(
@@ -60,7 +63,7 @@ impl Renderer {
                     );
                 }
             }
-            self.chrome.selection_drawn = self.chrome.selection;
+            self.chrome.selection_drawn = wanted;
         }
     }
 
@@ -267,11 +270,13 @@ impl Renderer {
     /// shared item-entity scratch. Extracted verbatim from `render`.
     pub(super) fn bake_world_instances(&mut self) {
         let render_origin = self.view.render_origin;
-        let visible_world_aabb = |min: glam::Vec3, max: glam::Vec3| {
-            self.view
-                .frustum
-                .aabb_visible(min - render_origin, max - render_origin)
-        };
+        let visible_world_aabb =
+            |min: petramond_math::world_pos::WorldPos, max: petramond_math::world_pos::WorldPos| {
+                self.view.frustum.aabb_visible(
+                    min.relative_to(render_origin),
+                    max.relative_to(render_origin),
+                )
+            };
         // Bake the dynamic world subsystems. Item-entity, chest, and break-overlay
         // each clear-and-refill the SAME shared CPU scratch (`item_entity_verts` /
         // `item_entity_indices`) in this exact order — `bake` (clear count → build
@@ -313,8 +318,8 @@ impl Renderer {
                 .filter(|(_, d)| match d.set.bounds {
                     None => false,
                     Some((lo, hi)) => {
-                        let (mn, mx) = petramond::world::draw::world_bounds(&d.transform, lo, hi);
-                        visible_world_aabb(mn.into(), mx.into())
+                        let (mn, mx) = petramond::world::draw::world_bounds(&d.frame, lo, hi);
+                        visible_world_aabb(mn, mx)
                     }
                 })
                 .map(|(i, _)| i as u32),
@@ -322,6 +327,7 @@ impl Renderer {
         let draws = crate::block_draw::VisibleDraws {
             all: &self.item_entity.block_draws,
             visible: &visible_draws,
+            origin: render_origin,
         };
         let visible = &self.item_entity.visible;
         self.item_entity.draw.bake(
@@ -335,7 +341,7 @@ impl Renderer {
                 // A second producer means the closure's index count is the
                 // BUFFER's length, not the first builder's return — the
                 // builders each report only their own share.
-                build_item_entities(visible, verts, indices);
+                build_item_entities(visible, render_origin, verts, indices);
                 crate::block_draw::build_block_draws(draws, verts, indices);
                 indices.len() as u32
             },
@@ -350,7 +356,13 @@ impl Renderer {
             &mut self.item_entity.model_indices,
             |verts, indices| {
                 // Two producers: the count is the buffer's (see above).
-                crate::item_entity::build_item_model_entities(visible, env, verts, indices);
+                crate::item_entity::build_item_model_entities(
+                    visible,
+                    render_origin,
+                    env,
+                    verts,
+                    indices,
+                );
                 crate::block_draw::build_block_draw_models(draws, env, verts, indices);
                 indices.len() as u32
             },
@@ -368,6 +380,7 @@ impl Renderer {
                 // Two producers: the count is the buffer's (see above).
                 crate::item_entity::build_item_sprite_entities(
                     visible,
+                    render_origin,
                     env,
                     &mut sprite_scratch,
                     verts,
@@ -391,8 +404,8 @@ impl Renderer {
         self.block_entity.chest_visible.clear();
         for inst in &self.block_entity.chests {
             // Cull box: the block cell, expanded upward to include the open lid.
-            let min = inst.pos;
-            let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
+            let min = petramond_math::world_pos::WorldPos::block_min(inst.pos);
+            let max = min + glam::Vec3::new(1.0, 2.0, 1.0);
             if visible_world_aabb(min, max) {
                 self.block_entity.chest_visible.push(*inst);
             }
@@ -403,7 +416,7 @@ impl Renderer {
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
-            |verts, indices| build_chests(chest_visible, verts, indices),
+            |verts, indices| build_chests(chest_visible, render_origin, verts, indices),
         );
 
         // Doors (2-tall hinged slab), frustum-culled and baked exactly like chests,
@@ -411,8 +424,8 @@ impl Renderer {
         self.block_entity.door_visible.clear();
         for inst in &self.block_entity.doors {
             // Cull box: the door's two-cell column (its swung slab stays within it).
-            let min = inst.pos;
-            let max = inst.pos + glam::Vec3::new(1.0, 2.0, 1.0);
+            let min = petramond_math::world_pos::WorldPos::block_min(inst.pos);
+            let max = min + glam::Vec3::new(1.0, 2.0, 1.0);
             if visible_world_aabb(min, max) {
                 self.block_entity.door_visible.push(*inst);
             }
@@ -423,7 +436,7 @@ impl Renderer {
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
-            |verts, indices| build_doors(door_visible, verts, indices),
+            |verts, indices| build_doors(door_visible, render_origin, verts, indices),
         );
 
         // Mobs (animated entity models), grouped by species and frustum-culled, baked
@@ -465,7 +478,9 @@ impl Renderer {
                 queue,
                 &mut g.verts,
                 &mut g.indices,
-                |verts, indices| build_mob_instances(model, scale, env, visible, verts, indices),
+                |verts, indices| {
+                    build_mob_instances(model, scale, env, visible, render_origin, verts, indices)
+                },
             );
         }
 
@@ -524,6 +539,7 @@ impl Renderer {
                 model,
                 env,
                 inst,
+                render_origin,
                 inst.bones.of(&self.actor.bone_offsets),
                 held,
                 off,
@@ -678,7 +694,7 @@ impl Renderer {
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
-            |verts, indices| build_break_overlays(&break_overlays, verts, indices),
+            |verts, indices| build_break_overlays(&break_overlays, render_origin, verts, indices),
         );
         self.hand.break_overlays = break_overlays;
 
@@ -693,7 +709,8 @@ impl Renderer {
             &self.queue,
             &mut self.particle.verts,
             |verts| {
-                let (total, nb) = build_particles_split(particles, model_particles, env, verts);
+                let (total, nb) =
+                    build_particles_split(particles, model_particles, env, render_origin, verts);
                 block_v = nb;
                 total
             },
@@ -728,7 +745,8 @@ impl Renderer {
                     emitters,
                     solids,
                     time,
-                    cam_pos,
+                    render_origin,
+                    cam_pos.relative_to(render_origin),
                     env,
                     density,
                     verts,
@@ -743,7 +761,7 @@ impl Renderer {
         self.shadow
             .draw
             .bake(&self.device, &self.queue, &mut self.shadow.verts, |verts| {
-                build_entity_shadows(&shadows, verts)
+                build_entity_shadows(&shadows, render_origin, verts)
             });
         self.shadow.instances = shadows;
     }

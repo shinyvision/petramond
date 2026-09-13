@@ -86,7 +86,7 @@ pub fn on_mob_damage(d: &Dripstone, payload: &mut EventPayload) -> Outcome {
 
 /// Whether the cell under a body standing at `feet` is a stalagmite. The
 /// probe sits just below the feet plane, which rests ON the block's top.
-fn spike_under(d: &Dripstone, feet: [f32; 3]) -> bool {
+fn spike_under(d: &Dripstone, feet: [f64; 3]) -> bool {
     let c = [
         feet[0].floor() as i32,
         (feet[1] - 0.05).floor() as i32,

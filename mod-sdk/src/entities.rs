@@ -19,7 +19,7 @@ host_fn! {
     /// Nearest live item entities in a sphere, by distance then stable id.
     /// `radius` is in `0..=64`, `limit` at most [`crate::SIM_BATCH_MAX`].
     /// Terrain-frozen entities are omitted; zero limit returns nothing.
-    pub fn item_entities_in_radius(pos: [f32; 3], radius: f32, limit: u32) -> Vec<mod_api::ItemEntityData>
+    pub fn item_entities_in_radius(pos: [f64; 3], radius: f32, limit: u32) -> Vec<mod_api::ItemEntityData>
         => ItemEntitiesInRadius { pos, radius, limit } => ItemEntities
 }
 
@@ -37,7 +37,7 @@ host_fn! {
     /// (site fitness is your business — see [`spawn_mob_checked`]). Returns the
     /// newborn's STABLE id — tag/configure it immediately through the ordinary
     /// mob calls. `None` = unknown species or the mob cap is reached.
-    pub fn spawn_mob(key: &str, pos: [f32; 3], yaw: f32) -> Option<u64>
+    pub fn spawn_mob(key: &str, pos: [f64; 3], yaw: f32) -> Option<u64>
         => SpawnMob { key: key.into(), pos, yaw, checked: false } => SpawnedMob
 }
 
@@ -48,7 +48,7 @@ host_fn! {
     /// species and the mob cap.
     /// Use this for player-placed vehicles and other solid entities; a failed call
     /// mutates nothing, so the caller can safely retain or refund its item.
-    pub fn spawn_mob_checked(key: &str, pos: [f32; 3], yaw: f32) -> Option<u64>
+    pub fn spawn_mob_checked(key: &str, pos: [f64; 3], yaw: f32) -> Option<u64>
         => SpawnMob { key: key.into(), pos, yaw, checked: true } => SpawnedMob
 }
 
@@ -56,7 +56,7 @@ host_fn! {
     /// Snapshot the live mobs within `radius` of `pos` (3-D, feet positions), in
     /// the deterministic live-set storage order. Address a mob by its stable
     /// `id`; the snapshot `index` is only an intra-tick join key.
-    pub fn mobs_in_radius(pos: [f32; 3], radius: f32) -> Vec<MobSnapshot>
+    pub fn mobs_in_radius(pos: [f64; 3], radius: f32) -> Vec<MobSnapshot>
         => MobsInRadius { pos, radius } => Mobs
 }
 
@@ -111,7 +111,7 @@ host_fn! {
     pub fn damage_mob(
         mob_id: u64,
         amount: f32,
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
         attacker: Option<EntityRef>,
     )
         => DamageMob { mob_id, amount, origin, feedback: None, attacker }
@@ -125,7 +125,7 @@ host_fn! {
     pub fn damage_mob_with_feedback(
         mob_id: u64,
         amount: f32,
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
         feedback: crate::MobDamageFeedback,
         attacker: Option<EntityRef>,
     )
@@ -149,7 +149,7 @@ host_fn! {
     /// included). `intensity` scales the particle count through the bundle's
     /// `count_per_intensity`. Fire-and-forget presentation for every client, like
     /// `emit_sound`. `false` = unknown key or not a burst bundle.
-    pub fn emitter_burst(key: &str, pos: [f32; 3], intensity: f32) -> bool
+    pub fn emitter_burst(key: &str, pos: [f64; 3], intensity: f32) -> bool
         => EmitterBurst { key: key.into(), pos, intensity } => Bool
 }
 
@@ -227,7 +227,7 @@ host_fn! {
     /// tick; a body left unplaced is airborne with the velocity its
     /// placements implied, falls by the engine's own physics and eases back
     /// to level. `false` = unknown or dead mob.
-    pub fn mob_kinematic(mob_id: u64, pos: [f32; 3], yaw: f32, pitch: f32, roll: f32) -> bool
+    pub fn mob_kinematic(mob_id: u64, pos: [f64; 3], yaw: f32, pitch: f32, roll: f32) -> bool
         => MobKinematic { mob_id, pos, yaw, pitch, roll } => Bool
 }
 
@@ -276,7 +276,7 @@ host_fn! {
     /// Poses are transient and not tied to any block — release sitters
     /// yourself when your furniture breaks ([`mob_dismount`]). Pose
     /// vocabulary: [`mod_api::pose`].
-    pub fn player_pose_set(player_id: PlayerId, anchor: [f32; 3], yaw: f32, pose: u8) -> bool
+    pub fn player_pose_set(player_id: PlayerId, anchor: [f64; 3], yaw: f32, pose: u8) -> bool
         => PlayerPoseSet { player_id, anchor, yaw, pose } => Bool
 }
 
@@ -304,7 +304,7 @@ pub fn footprint_local_to_world(
     footprint: [u8; 3],
     facing: Facing,
     local: [f32; 3],
-) -> [f32; 3] {
+) -> [f64; 3] {
     let (sx, sz) = (footprint[0] as f32, footprint[2] as f32);
     let [x, y, z] = local;
     let (rx, rz) = match facing {
@@ -313,7 +313,11 @@ pub fn footprint_local_to_world(
         Facing::East => (sz - z, x),
         Facing::West => (z, sx - x),
     };
-    [base[0] as f32 + rx, base[1] as f32 + y, base[2] as f32 + rz]
+    [
+        f64::from(base[0]) + f64::from(rx),
+        f64::from(base[1]) + f64::from(y),
+        f64::from(base[2]) + f64::from(rz),
+    ]
 }
 
 /// The PLAYER-convention body yaw (yaw `0` faces `+Z`) that faces the same
@@ -370,7 +374,7 @@ host_fn! {
 host_fn! {
     /// Spawn `count` of an item (by registry NAME) as a dropped-item entity at
     /// `pos`. `false` = unknown name or zero count.
-    pub fn spawn_item(item: &str, count: u8, pos: [f32; 3]) -> bool
+    pub fn spawn_item(item: &str, count: u8, pos: [f64; 3]) -> bool
         => SpawnItem { item: item.into(), count, pos, data: Vec::new() } => Bool
 }
 
@@ -386,7 +390,7 @@ host_fn! {
     /// entity's stable id (`0` = unknown item).
     pub fn launch_item(
         item: &str,
-        pos: [f32; 3],
+        pos: [f64; 3],
         vel: [f32; 3],
         owner: Option<mod_api::EntityRef>,
         data: &[(&str, &[u8])],
@@ -405,14 +409,14 @@ host_fn! {
     /// handler reads to learn what struck (the stack, its data, who launched
     /// it), or any rule tracking a drop it spawned. `None` = no such live
     /// entity.
-    pub fn item_entity(entity: u64) -> Option<mod_api::ItemEntityData>
+    pub fn item_entity(entity: u64) -> Option<Box<mod_api::ItemEntityData>>
         => ItemEntity { entity } => ItemEntity
 }
 
 host_fn! {
     /// [`spawn_item`] carrying per-stack instance data (same rules as
     /// `give_item_data`).
-    pub fn spawn_item_data(item: &str, count: u8, pos: [f32; 3], data: &[(&str, &[u8])]) -> bool
+    pub fn spawn_item_data(item: &str, count: u8, pos: [f64; 3], data: &[(&str, &[u8])]) -> bool
         => SpawnItem {
             item: item.into(),
             count,

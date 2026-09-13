@@ -5,6 +5,7 @@ use petramond::entity::DroppedItem;
 use petramond::net::protocol::ThrowAmount;
 use petramond::world::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
@@ -725,10 +726,12 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
 fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    game.server.sessions[0].player.pos = Vec3::new(0.5, 64.0, 0.5);
+    game.server.sessions[0].player.pos = WorldPos::new(0.5, 64.0, 0.5);
     let other = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(20.5, 64.0, 0.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            20.5, 64.0, 0.5,
+        )));
     for s in [0, other] {
         let centre = game.server.sessions[s].player.body_center();
         let mut drop = DroppedItem::new(centre, ItemStack::new(item, 1), s as u32 + 1);
@@ -761,14 +764,17 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
 fn a_single_drop_between_two_players_goes_to_exactly_one() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    game.server.sessions[0].player.pos = Vec3::new(0.0, 64.0, 0.5);
+    game.server.sessions[0].player.pos = WorldPos::new(0.0, 64.0, 0.5);
     let other = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(1.0, 64.0, 0.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            1.0, 64.0, 0.5,
+        )));
     // Midway between the two body centres: within the absorb radius of both.
-    let mid = (game.server.sessions[0].player.body_center()
-        + game.server.sessions[other].player.body_center())
-        * 0.5;
+    let mid = game.server.sessions[0]
+        .player
+        .body_center()
+        .lerp(game.server.sessions[other].player.body_center(), 0.5);
     let mut drop = DroppedItem::new(mid, ItemStack::new(item, 1), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     game.server.world.spawn_item(drop);

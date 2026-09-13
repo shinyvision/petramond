@@ -1,5 +1,4 @@
 use crate::mob::{EntityRef, Mob, MobDamageFeedback};
-use petramond_math::math::Vec3;
 
 use super::Mobs;
 
@@ -8,7 +7,7 @@ use super::Mobs;
 #[derive(Copy, Clone, Debug)]
 pub struct DeathDrop {
     pub kind: Mob,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
 }
@@ -20,7 +19,7 @@ pub struct DeathDrop {
 pub struct ShearDrop {
     pub item: petramond_world::item::ItemType,
     pub count: u8,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
 }
@@ -34,7 +33,7 @@ impl Mobs {
         &mut self,
         index: usize,
         amount: f32,
-        origin: Option<Vec3>,
+        origin: Option<petramond_math::world_pos::WorldPos>,
         attack: bool,
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,

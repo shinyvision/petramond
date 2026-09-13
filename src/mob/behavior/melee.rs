@@ -198,8 +198,13 @@ impl AiBehavior for MeleeAttackAi {
 
 /// Rough facing check: the target sits within [`MAX_FACING_OFF`] of the mob's body
 /// yaw. A target directly on top of the mob (no horizontal offset) always counts.
-fn facing_target(yaw: f32, pos: Vec3, player: Vec3) -> bool {
-    let (dx, dz) = (player.x - pos.x, player.z - pos.z);
+fn facing_target(
+    yaw: f32,
+    pos: petramond_math::world_pos::WorldPos,
+    player: petramond_math::world_pos::WorldPos,
+) -> bool {
+    let d = player - pos;
+    let (dx, dz) = (d.x, d.z);
     if dx * dx + dz * dz <= 1e-6 {
         return true;
     }

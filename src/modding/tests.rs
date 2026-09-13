@@ -15,6 +15,7 @@ use petramond_math::math::Vec3;
 
 use super::instance::ModInstance;
 use super::ModHost;
+use petramond_math::world_pos::WorldPos;
 
 mod conditions;
 
@@ -31,7 +32,7 @@ impl Sim {
     fn new() -> Self {
         Self {
             world: World::new(1, 1),
-            player: Player::new(Vec3::new(0.0, 80.0, 0.0)),
+            player: Player::new(WorldPos::new(0.0, 80.0, 0.0)),
             gui_state: petramond_world::gui_state::empty_gui_state(),
             feed: TickEvents::default(),
             bus: EventBus::default(),
@@ -103,7 +104,7 @@ fn disabled_packs_contribute_no_wasm_instance() {
     assert_eq!(ids, ["alpha"], "the disabled pack's wasm is never selected");
 }
 
-/// Build a `mods-src/` crate for test with the `playtest` profile and return
+/// Build a `mods-src/` crate for test with the `fasttest` profile and return
 /// the wasm path, or `None` (with a visible message) when the wasm target
 /// isn't installed so plain `cargo test` never hard-fails on machines without
 /// it. Shipped `make mods` builds remain release-profile work, never tests.
@@ -117,7 +118,7 @@ pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
         .args([
             "build",
             "--profile",
-            "playtest",
+            "fasttest",
             "--target",
             "wasm32-unknown-unknown",
             "-p",
@@ -137,7 +138,7 @@ pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
         panic!("building the '{krate}' mod failed:\n{stderr}");
     }
     Some(mods_src.join(format!(
-        "target/wasm32-unknown-unknown/playtest/{krate}.wasm"
+        "target/wasm32-unknown-unknown/fasttest/{krate}.wasm"
     )))
 }
 
@@ -733,7 +734,7 @@ fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
         entity: 9,
         owner: None,
         target: ImpactTarget::Mob(7),
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         vel: Vec3::ZERO,
         fate: Fate::Lodge,
     };

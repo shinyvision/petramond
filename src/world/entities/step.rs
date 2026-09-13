@@ -9,6 +9,7 @@ use crate::entity::{DroppedItem, Motion};
 use crate::mob::{EntityRef, PlayerAnchor};
 use crate::world::World;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 
 use super::sweep::{sweep, SweepBodies};
 use super::ItemImpact;
@@ -66,8 +67,17 @@ impl StepCtx<'_> {
     /// Whether the segment `from → from + motion` meets `body`'s box —
     /// starts inside it, or crosses it. A body that is gone (a spectator, a
     /// departed session, a dead or unloaded mob) meets nothing.
-    fn segment_meets_body(&self, body: EntityRef, from: Vec3, motion: Vec3) -> bool {
-        let meets = |lo: Vec3, hi: Vec3| segment_meets_box(from, motion, lo, hi);
+    fn segment_meets_body(&self, body: EntityRef, from: WorldPos, motion: Vec3) -> bool {
+        // In the segment's own frame, so the test stays exact far out.
+        let rel = |p: [f64; 3]| {
+            Vec3::new(
+                (p[0] - from.x) as f32,
+                (p[1] - from.y) as f32,
+                (p[2] - from.z) as f32,
+            )
+        };
+        let meets =
+            |lo: [f64; 3], hi: [f64; 3]| segment_meets_box(Vec3::ZERO, motion, rel(lo), rel(hi));
         match body {
             EntityRef::Player(id) => self
                 .anchors
@@ -94,7 +104,7 @@ impl StepCtx<'_> {
     /// The body centre a requested drop magnets toward: ITS requester's —
     /// never someone else's, so two players vacuuming side by side each
     /// pull their own reservations.
-    fn magnet_for(&self, item: &DroppedItem) -> Option<Vec3> {
+    fn magnet_for(&self, item: &DroppedItem) -> Option<WorldPos> {
         let by = item.pickup_requested?;
         self.anchors.iter().find(|a| a.id == by).map(|a| a.pos)
     }

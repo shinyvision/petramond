@@ -2,7 +2,7 @@ use super::*;
 use crate::mob::{MobRng, PlayerAnchor};
 use crate::player::PlayerId;
 use crate::world::World;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
@@ -26,17 +26,17 @@ fn flees_the_actual_archer_with_varied_reachable_legs_and_then_calms() {
     let players = [
         PlayerAnchor {
             id: PlayerId(1),
-            pos: Vec3::new(9.0, 64.9, 8.5),
+            pos: WorldPos::new(9.0, 64.9, 8.5),
             ..Default::default()
         },
         PlayerAnchor {
             id: PlayerId(7),
-            pos: Vec3::new(2.5, 64.9, 8.5),
+            pos: WorldPos::new(2.5, 64.9, 8.5),
             ..Default::default()
         },
     ];
     let mut ctx =
-        crate::mob::behavior::test_support::ctx_at(&world, &mut rng, Vec3::new(8.5, 64.0, 8.5));
+        crate::mob::behavior::test_support::ctx_at(&world, &mut rng, WorldPos::new(8.5, 64.0, 8.5));
     ctx.players = &players;
     ctx.player_pos = players[0].pos;
     ctx.attacker = Some((EntityRef::Player(PlayerId(7)), 0));
@@ -73,12 +73,12 @@ fn an_escape_leg_is_held_while_navigation_follows_it() {
     let mut rng = MobRng::new(9);
     let players = [PlayerAnchor {
         id: PlayerId(7),
-        pos: Vec3::new(2.5, 64.9, 8.5),
+        pos: WorldPos::new(2.5, 64.9, 8.5),
         ..Default::default()
     }];
     let mut ai = PanicAi::from_params(&serde_json::json!({})).unwrap();
     let mut ctx =
-        crate::mob::behavior::test_support::ctx_at(&world, &mut rng, Vec3::new(8.5, 64.0, 8.5));
+        crate::mob::behavior::test_support::ctx_at(&world, &mut rng, WorldPos::new(8.5, 64.0, 8.5));
     ctx.players = &players;
     ctx.attacker = Some((EntityRef::Player(PlayerId(7)), 0));
     let first = ai.tick(&mut ctx).goal.unwrap();
@@ -117,12 +117,12 @@ fn boxed_in_panic_does_not_choose_an_unreachable_escape() {
     let mut rng = MobRng::new(13);
     let players = [PlayerAnchor {
         id: PlayerId(7),
-        pos: Vec3::new(2.5, 64.9, 8.5),
+        pos: WorldPos::new(2.5, 64.9, 8.5),
         ..Default::default()
     }];
     let mut ai = PanicAi::from_params(&serde_json::json!({})).unwrap();
     let mut ctx =
-        crate::mob::behavior::test_support::ctx_at(&world, &mut rng, Vec3::new(8.5, 64.0, 8.5));
+        crate::mob::behavior::test_support::ctx_at(&world, &mut rng, WorldPos::new(8.5, 64.0, 8.5));
     ctx.players = &players;
     ctx.attacker = Some((EntityRef::Player(PlayerId(7)), 0));
     let out = ai.tick(&mut ctx);

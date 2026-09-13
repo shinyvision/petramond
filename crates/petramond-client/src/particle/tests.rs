@@ -1,7 +1,7 @@
 use super::*;
 
 /// No solid surfaces (particles never hit ground).
-fn empty(_p: Vec3) -> bool {
+fn empty(_p: petramond_math::world_pos::WorldPos) -> bool {
     false
 }
 
@@ -23,7 +23,7 @@ fn atlas_uv_stays_strictly_inside_the_tile_rect() {
         for m in [0.0, 1.0 - PATCH_FRAC] {
             for dyed in [false, true] {
                 let p = Particle {
-                    pos: Vec3::ZERO,
+                    pos: WorldPos::ZERO,
                     vel: Vec3::ZERO,
                     skylight: 63,
                     blocklight: petramond_world::light::BlockLight6::DARK,
@@ -66,7 +66,7 @@ fn atlas_uv_stays_strictly_inside_the_tile_rect() {
 #[test]
 fn alpha_fades_at_end_of_life() {
     let mut p = Particle {
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         vel: Vec3::ZERO,
         skylight: 63,
         blocklight: petramond_world::light::BlockLight6::DARK,
@@ -98,7 +98,7 @@ fn alpha_fades_at_end_of_life() {
 #[test]
 fn render_size_shrinks_during_fade() {
     let mut p = Particle {
-        pos: Vec3::ZERO,
+        pos: WorldPos::ZERO,
         vel: Vec3::ZERO,
         skylight: 63,
         blocklight: petramond_world::light::BlockLight6::DARK,
@@ -163,8 +163,8 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
     // the real shape (`point_in_solid` / `World::point_blocked`), not the full cell.
     let chest = Block::Chest.collision_boxes(); // inset: x/z in [1/16, 15/16]
     let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
-    let blocked = |p: Vec3| {
-        petramond_world::collision::point_in_solid([p.x, p.y, p.z], |_x, y, _z| {
+    let blocked = |p: petramond_math::world_pos::WorldPos| {
+        petramond_world::collision::point_in_solid(p.to_array(), |_x, y, _z| {
             if y == 0 {
                 chest
             } else {
@@ -172,7 +172,7 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
             }
         })
     };
-    let fleck = |pos: Vec3, vel: Vec3| Particle {
+    let fleck = |pos: WorldPos, vel: Vec3| Particle {
         pos,
         vel,
         skylight: 63,
@@ -191,7 +191,10 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
     };
     // In the 1/16 side margin (x = 0.02, left of the inset face at 1/16): falls through.
     let mut sys = ParticleSystem::new();
-    sys.push(fleck(Vec3::new(0.02, 0.5, 0.5), Vec3::new(0.0, -1.0, 0.0)));
+    sys.push(fleck(
+        WorldPos::new(0.02, 0.5, 0.5),
+        Vec3::new(0.0, -1.0, 0.0),
+    ));
     let y0 = sys.particles()[0].pos.y;
     sys.tick_with(0.05, &blocked, &empty);
     assert!(
@@ -201,7 +204,7 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
     // Centred, dropping just into the box top: stops dead on the surface.
     let mut hit = ParticleSystem::new();
     hit.push(fleck(
-        Vec3::new(0.5, chest_top + 0.02, 0.5),
+        WorldPos::new(0.5, f64::from(chest_top + 0.02), 0.5),
         Vec3::new(0.0, -1.0, 0.0),
     ));
     hit.tick_with(0.05, &blocked, &empty);
@@ -270,7 +273,7 @@ fn emitter_burst_count_scales_with_intensity_and_caps() {
     let mut small = ParticleSystem::new();
     small.spawn_emitter_burst(
         &spec,
-        Vec3::ZERO,
+        WorldPos::ZERO,
         2.0,
         63,
         petramond_world::light::BlockLight6::DARK,
@@ -279,7 +282,7 @@ fn emitter_burst_count_scales_with_intensity_and_caps() {
     let mut big = ParticleSystem::new();
     big.spawn_emitter_burst(
         &spec,
-        Vec3::ZERO,
+        WorldPos::ZERO,
         100.0,
         63,
         petramond_world::light::BlockLight6::DARK,
@@ -303,7 +306,7 @@ fn burst_color_bias_favors_the_first_endpoint() {
     for _ in 0..10 {
         sys.spawn_emitter_burst(
             &spec,
-            Vec3::ZERO,
+            WorldPos::ZERO,
             5.0,
             63,
             petramond_world::light::BlockLight6::DARK,
@@ -321,16 +324,16 @@ fn burst_color_bias_favors_the_first_endpoint() {
 #[test]
 fn die_on_contact_particles_vanish_on_blocks_and_water() {
     let spec = splash_spec();
-    let floor = |p: Vec3| p.y < 0.0;
-    let pool = |p: Vec3| p.y < 0.0;
-    let none = |_: Vec3| false;
+    let floor = |p: petramond_math::world_pos::WorldPos| p.y < 0.0;
+    let pool = |p: petramond_math::world_pos::WorldPos| p.y < 0.0;
+    let none = |_: petramond_math::world_pos::WorldPos| false;
 
     // Falling onto a solid: a contact-dying droplet is culled, while an
     // ordinary fleck would have settled (velocity zeroed, still alive).
     let mut sys = ParticleSystem::new();
     sys.spawn_emitter_burst(
         &spec,
-        Vec3::new(0.0, 0.05, 0.0),
+        WorldPos::new(0.0, 0.05, 0.0),
         1.0,
         63,
         petramond_world::light::BlockLight6::DARK,
@@ -345,7 +348,7 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
     let mut wet = ParticleSystem::new();
     wet.spawn_emitter_burst(
         &spec,
-        Vec3::new(0.0, 0.05, 0.0),
+        WorldPos::new(0.0, 0.05, 0.0),
         1.0,
         63,
         petramond_world::light::BlockLight6::DARK,
@@ -360,7 +363,7 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
     let mut dust = ParticleSystem::new();
     dust.spawn_break_burst(IVec3::new(0, 0, 0), Block::Stone);
     for p in &mut dust.particles {
-        p.pos = Vec3::new(0.0, 0.05, 0.0);
+        p.pos = WorldPos::new(0.0, 0.05, 0.0);
         p.vel = Vec3::new(0.0, -2.0, 0.0);
     }
     dust.tick_with(0.1, &floor, &pool);
@@ -404,11 +407,13 @@ fn the_pool_keeps_every_live_particle() {
 fn particles_fall_under_gravity() {
     let mut sys = ParticleSystem::new();
     sys.spawn_break_burst(IVec3::new(0, 100, 0), Block::Dirt);
-    let y_before: f32 = sys.particles().iter().map(|p| p.pos.y).sum::<f32>() / sys.len() as f32;
+    let y_before: f32 =
+        sys.particles().iter().map(|p| p.pos.y as f32).sum::<f32>() / sys.len() as f32;
     for _ in 0..30 {
         sys.tick_with(1.0 / 60.0, &empty, &empty);
     }
-    let y_after: f32 = sys.particles().iter().map(|p| p.pos.y).sum::<f32>() / sys.len() as f32;
+    let y_after: f32 =
+        sys.particles().iter().map(|p| p.pos.y as f32).sum::<f32>() / sys.len() as f32;
     assert!(
         y_after < y_before,
         "gravity should lower particles on average"

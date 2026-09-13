@@ -16,14 +16,13 @@
 
 use crate::mob::{Mob, MobTagValue, SavedMob};
 use crate::save::codec::{put_f32, put_f64, put_i64, put_u16, put_u8, Reader};
-use petramond_math::math::Vec3;
 
-/// Fixed bytes per serialized mob: kind(1) + pos(12) + yaw(4);
+/// Fixed bytes per serialized mob: kind(1) + pos(24) + yaw(4);
 /// the variable-length tag map follows. Tag KEYS repeat across
 /// mobs (every penned mob carries `petramond:confined`), so one per-list
 /// string table holds each distinct key once and every tag stores a u16 index
 /// into it instead of the full string.
-const MOB_FIXED_BYTES: usize = 17;
+const MOB_FIXED_BYTES: usize = 29;
 
 /// Tag type discriminators for the mob tag map wire encoding.
 const TAG_BOOL: u8 = 0;
@@ -90,9 +89,9 @@ pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob]) {
     }
     for (m, disk) in saved {
         put_u8(buf, disk);
-        put_f32(buf, m.pos.x);
-        put_f32(buf, m.pos.y);
-        put_f32(buf, m.pos.z);
+        put_f64(buf, m.pos.x);
+        put_f64(buf, m.pos.y);
+        put_f64(buf, m.pos.z);
         put_f32(buf, m.yaw);
         put_mob_tags(buf, &m.tags, &index_of);
     }
@@ -182,7 +181,7 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
     let mut out = Vec::with_capacity(n.min(1024));
     for _ in 0..n {
         let disk = r.u8()?;
-        let pos = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
+        let pos = petramond_math::world_pos::WorldPos::new(r.f64()?, r.f64()?, r.f64()?);
         let yaw = r.f32()?;
         let tags = get_mob_tags(r, &table)?;
         // Resolve the species AFTER consuming the record bytes, so a skip can't
@@ -211,19 +210,20 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
 mod tests {
     use super::*;
     use crate::mob::Mob;
+    use petramond_math::world_pos::WorldPos;
     use std::collections::BTreeMap;
 
     #[test]
     fn mobs_roundtrip_through_a_buffer() {
         let a = SavedMob {
             kind: Mob::Owl,
-            pos: Vec3::new(1.0, 64.0, 2.0),
+            pos: WorldPos::new(1.0, 64.0, 2.0),
             yaw: 1.5,
             tags: BTreeMap::new(),
         };
         let b = SavedMob {
             kind: Mob::Sheep,
-            pos: Vec3::new(-3.0, 70.0, 8.0),
+            pos: WorldPos::new(-3.0, 70.0, 8.0),
             yaw: -0.25,
             tags: BTreeMap::from([
                 (
@@ -268,12 +268,13 @@ mod tests {
         let key = "strange:mod";
         put_u16(&mut buf, key.len() as u16);
         buf.extend_from_slice(key.as_bytes());
-        for (kind, x) in [(Mob::Owl.id(), 1.0f32), (200, 2.0), (Mob::Sheep.id(), 3.0)] {
+        for (kind, x) in [(Mob::Owl.id(), 1.0f64), (200, 2.0), (Mob::Sheep.id(), 3.0)] {
             assert!(kind == 200 || kind < known);
             put_u8(&mut buf, kind);
-            for v in [x, 64.0, 2.0, 0.5] {
-                put_f32(&mut buf, v);
+            for v in [x, 64.0, 2.0] {
+                put_f64(&mut buf, v);
             }
+            put_f32(&mut buf, 0.5);
             put_u16(&mut buf, 1); // one tag...
             put_u16(&mut buf, 0); // ...keying the shared table
             put_u8(&mut buf, TAG_INT);
@@ -306,7 +307,7 @@ mod tests {
         let key = crate::mob::tags::CONFINED;
         let penned = |x| SavedMob {
             kind: Mob::Sheep,
-            pos: Vec3::new(x, 64.0, 2.0),
+            pos: WorldPos::new(x, 64.0, 2.0),
             yaw: 0.0,
             tags: BTreeMap::from([(key.to_owned(), MobTagValue::Bool(true))]),
         };

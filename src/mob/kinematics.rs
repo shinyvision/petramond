@@ -77,7 +77,7 @@ impl<'a> Surroundings<'a> {
 /// own motion runs for it that tick.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct KinematicPose {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
     pub tilt: Tilt,
 }
@@ -215,14 +215,14 @@ impl Instance {
             // The un-latched drop at the first wet tick is the fall INTO the
             // fluid; while swimming the per-tick re-anchor keeps it near zero
             // (the splash threshold filters the bobbing).
-            let drop = self.fall_peak_y - self.pos.y;
+            let drop = (self.fall_peak_y - self.pos.y) as f32;
             if sample.fluid.splash.is_some() && drop > 0.0 {
                 self.splash_drop = self.splash_drop.max(drop);
             }
             self.fall_peak_y = self.pos.y;
         } else if self.on_ground {
             if !was_on_ground {
-                let dist = self.fall_peak_y - self.pos.y;
+                let dist = (self.fall_peak_y - self.pos.y) as f32;
                 if dist > self.fall_distance {
                     self.fall_distance = dist;
                 }
@@ -431,7 +431,8 @@ impl Instance {
         if let Some(ShoreClimb::Launch(speed)) = shore {
             self.vel.y = self.vel.y.max(speed);
         } else {
-            self.vel.y = sample.vertical_velocity(self.vel.y, self.pos.y, d.buoyancy, true, dt);
+            self.vel.y =
+                sample.vertical_velocity(self.vel.y, self.pos.y as f32, d.buoyancy, true, dt);
         }
         shore
     }

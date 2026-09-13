@@ -1,4 +1,5 @@
 use super::*;
+use petramond_math::world_pos::WorldPos;
 
 /// DDA target selection: full cubes stop the ray on cell entry with the
 /// entered face's normal (zero when the eye starts inside one), precise
@@ -9,7 +10,7 @@ use super::*;
 fn raycast_target_selection_cases() {
     struct Case {
         label: &'static str,
-        eye: Vec3,
+        eye: petramond_math::world_pos::WorldPos,
         /// Normalized before the cast.
         dir: Vec3,
         blocks: fn(i32, i32, i32) -> Block,
@@ -25,7 +26,7 @@ fn raycast_target_selection_cases() {
             // from the eye — within REACH (4.0). (A block at x=5 would be 4.5
             // away → a miss.)
             label: "solid block ahead hits with the face-toward-eye normal",
-            eye: Vec3::new(0.5, 64.5, 0.5),
+            eye: WorldPos::new(0.5, 64.5, 0.5),
             dir: Vec3::new(1.0, 0.0, 0.0),
             blocks: |x, y, z| {
                 if (x, y, z) == (4, 64, 0) {
@@ -39,7 +40,7 @@ fn raycast_target_selection_cases() {
         },
         Case {
             label: "solid block out of reach misses",
-            eye: Vec3::new(0.5, 64.5, 0.5),
+            eye: WorldPos::new(0.5, 64.5, 0.5),
             dir: Vec3::new(1.0, 0.0, 0.0),
             blocks: |x, _, _| if x == 100 { Block::Stone } else { Block::Air },
             precise: false,
@@ -47,7 +48,7 @@ fn raycast_target_selection_cases() {
         },
         Case {
             label: "eye inside solid hits its own cell with a zero normal",
-            eye: Vec3::new(0.5, 64.5, 0.5),
+            eye: WorldPos::new(0.5, 64.5, 0.5),
             dir: Vec3::new(1.0, 0.0, 0.0),
             blocks: |_, _, _| Block::Stone,
             precise: false,
@@ -56,7 +57,7 @@ fn raycast_target_selection_cases() {
         Case {
             // Placement should use the slab top face, not the full voxel side.
             label: "precise shape reports the shape surface normal",
-            eye: Vec3::new(1.9, 64.75, 0.5),
+            eye: WorldPos::new(1.9, 64.75, 0.5),
             dir: Vec3::new(1.0, -0.5, 0.0),
             blocks: |x, y, z| {
                 if (x, y, z) == (2, 64, 0) {
@@ -72,7 +73,7 @@ fn raycast_target_selection_cases() {
             // The plant's selection box is trimmed to the sprite: a ray near
             // the cell's top passes clean over it.
             label: "ray over a short plant box misses it",
-            eye: Vec3::new(0.5, 64.95, 0.5),
+            eye: WorldPos::new(0.5, 64.95, 0.5),
             dir: Vec3::new(1.0, 0.0, 0.0),
             blocks: |x, y, z| {
                 if (x, y, z) == (2, 64, 0) {
@@ -86,7 +87,7 @@ fn raycast_target_selection_cases() {
         },
         Case {
             label: "ray over a short plant box hits the block behind",
-            eye: Vec3::new(0.5, 64.95, 0.5),
+            eye: WorldPos::new(0.5, 64.95, 0.5),
             dir: Vec3::new(1.0, 0.0, 0.0),
             blocks: |x, y, z| match (x, y, z) {
                 (2, 64, 0) => Block::Poppy,
@@ -101,12 +102,11 @@ fn raycast_target_selection_cases() {
     for case in cases {
         let dir = case.dir.normalize();
         let result = if case.precise {
-            Player::raycast_blocks_core(case.eye, dir, REACH, &case.blocks, &|e, d, pos, block| {
+            Player::raycast_blocks_core(case.eye, dir, REACH, &case.blocks, &|e, d, _, block| {
                 if block != Block::DirtSlab {
                     return None;
                 }
-                let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-                interaction::ray_vs_aabb_hit(e, d, base, base + Vec3::new(1.0, 0.5, 1.0))
+                interaction::ray_vs_aabb_hit(e, d, Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))
             })
         } else {
             Player::raycast_blocks_core(case.eye, dir, REACH, &case.blocks, &|_, _, _, _| None)
@@ -140,15 +140,14 @@ fn raycast_targets_a_walk_through_cover_by_its_visible_box() {
     );
     // What `precise_shape_hit` does for a shape that is not a box SET: test
     // the family's own visible box.
-    let precise = |e, d, pos: IVec3, block: Block| {
+    let precise = |e, d, _: IVec3, block: Block| {
         let (mn, mx) = block.visual_aabb()?;
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        interaction::ray_vs_aabb_hit(e, d, base + Vec3::from(mn), base + Vec3::from(mx))
+        interaction::ray_vs_aabb_hit(e, d, Vec3::from(mn), Vec3::from(mx))
     };
 
     // Just above the floor, inside the 1/16 cover: a hit on the cover's cell.
     let (hit, _) = Player::raycast_blocks_core(
-        Vec3::new(0.5, 64.03, 0.5),
+        WorldPos::new(0.5, 64.03, 0.5),
         Vec3::new(1.0, 0.0, 0.0),
         REACH,
         &blocks,
@@ -160,7 +159,7 @@ fn raycast_targets_a_walk_through_cover_by_its_visible_box() {
     // Above the cover's box: the ray passes clean over it.
     assert!(
         Player::raycast_blocks_core(
-            Vec3::new(0.5, 64.5, 0.5),
+            WorldPos::new(0.5, 64.5, 0.5),
             Vec3::new(1.0, 0.0, 0.0),
             REACH,
             &blocks,
@@ -182,7 +181,7 @@ fn raycast_hits_a_plants_selection_box_without_pixel_precision() {
     };
     // z = 0.5 crosses the cell centre where the sparse poppy art may well be
     // transparent — a BOX hitbox must select it anyway.
-    let eye = Vec3::new(0.5, 64.25, 0.5);
+    let eye = WorldPos::new(0.5, 64.25, 0.5);
     let (hit, _) = Player::raycast_blocks_core(
         eye,
         Vec3::new(1.0, 0.0, 0.0),
@@ -196,12 +195,13 @@ fn raycast_hits_a_plants_selection_box_without_pixel_precision() {
     // The outline is the SAME square box the ray hit, trimmed to the art —
     // shorter than the cell (a ray can pass above it) and pulled in from the
     // cell walls.
-    let SelectionShape::Box { min, max } = hit.outline else {
+    let SelectionShape::Box { origin, min, max } = hit.outline else {
         panic!("plant outlines are square, got {:?}", hit.outline);
     };
-    assert!(max.y < 65.0, "trims to the sprite's height, got {}", max.y);
+    assert_eq!(origin, IVec3::new(2, 64, 0));
+    assert!(max.y < 1.0, "trims to the sprite's height, got {}", max.y);
     assert!(
-        min.x > 2.0 && max.x < 3.0,
+        min.x > 0.0 && max.x < 1.0,
         "pulls in from the cell walls, got {}..{}",
         min.x,
         max.x
@@ -215,9 +215,9 @@ fn intersects_block_consistent_with_sweep_when_flush() {
     // `sweep` (lo = floor(min+EPS)) treats the cell beside you as free; the
     // place-gate must agree, or you can't build into a cell you clearly fit
     // next to.
-    let pl = p(Vec3::new(1.3, 64.0, 0.5)); // min.x = 1.3 - 0.3 = 0.99999994
+    let pl = p(WorldPos::new(1.3, 64.0, 0.5)); // min.x = 1.3 - 0.3 = 0.99999994
     assert!(
-        pl.aabb_min().x < 1.0,
+        pl.aabb_min()[0] < 1.0,
         "precondition: float pulls min.x below 1.0"
     );
     assert!(
@@ -230,7 +230,7 @@ fn intersects_block_consistent_with_sweep_when_flush() {
 
 #[test]
 fn intersects_block_strict_faces() {
-    let pl = p(Vec3::new(0.5, 64.0, 0.5));
+    let pl = p(WorldPos::new(0.5, 64.0, 0.5));
     // The cell the feet stand in overlaps.
     assert!(pl.intersects_block(IVec3::new(0, 64, 0)));
     // A block flush against +x face (player max.x = 0.8 < 1.0) does not.
@@ -269,16 +269,16 @@ fn a_multi_cell_model_block_outlines_its_whole_model_from_every_cell() {
     for cell in cells {
         // Look along +X at the cell's own centre from outside the model, so
         // the DDA lands on THAT cell rather than a neighbour.
-        let eye = Vec3::new(
-            base.x as f32 - 2.0,
-            cell.y as f32 + 0.5,
-            cell.z as f32 + 0.5,
+        let eye = WorldPos::new(
+            base.x as f64 - 2.0,
+            cell.y as f64 + 0.5,
+            cell.z as f64 + 0.5,
         );
         let Some((hit, _)) = Player::raycast_with_dist(eye, Vec3::new(1.0, 0.0, 0.0), &world)
         else {
             continue;
         };
-        let SelectionShape::Box { min, max } = hit.outline else {
+        let SelectionShape::Box { min, max, .. } = hit.outline else {
             panic!("a model block outlines as one box, got {:?}", hit.outline);
         };
         let span = max - min;

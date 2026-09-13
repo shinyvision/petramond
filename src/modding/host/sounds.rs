@@ -3,9 +3,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use petramond_math::math::Vec3;
-
-use super::guards::{finite3, sim_call, sim_query};
+use super::guards::{sim_call, sim_query};
 
 /// Sound calls (one-shots plus the handle-based spatial commands; the sim
 /// never touches audio — everything rides `TickEvents` to the app layer).
@@ -17,7 +15,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             key,
             pos,
             intensity,
-        } => match finite3(pos, "EmitterBurst.pos") {
+        } => match super::guards::finite_pos(pos, "EmitterBurst.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
                 if !intensity.is_finite() {
@@ -47,7 +45,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             // queue on `TickEvents` and the app layer plays it next frame.
             ctx.feed.world.sounds.push(crate::events::tick::SoundEvent {
                 sound,
-                pos: pos.map(Vec3::from),
+                pos: pos.map(petramond_math::world_pos::WorldPos::from_array),
             });
             HostRet::Bool(true)
         }),
@@ -72,7 +70,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 .push(crate::events::tick::SpatialSoundCommand::PlayAt {
                     handle,
                     sound,
-                    pos: pos.into(),
+                    pos: petramond_math::world_pos::WorldPos::from_array(pos),
                     volume,
                     pitch,
                 });
@@ -153,7 +151,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
     }
 }
 
-fn spatial_sound_params_ok(pos: [f32; 3], volume: f32, pitch: f32) -> bool {
+fn spatial_sound_params_ok(pos: [f64; 3], volume: f32, pitch: f32) -> bool {
     pos.iter().all(|c| c.is_finite()) && spatial_sound_scalar_params_ok(volume, pitch)
 }
 
@@ -171,7 +169,7 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
 
     /// `EmitSound` feeds the NON-lossy tick queue (never audio directly) and
     /// an unknown key reports failure without disabling anything.
@@ -179,7 +177,7 @@ mod tests {
     fn emit_sound_rides_the_tick_feed() {
         let mut data = ModStoreData::new("alpha", 1);
         let mut world = World::new(1, 1);
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -213,7 +211,10 @@ mod tests {
             );
         });
         assert_eq!(feed.world.sounds.len(), 1, "one resolved sound queued");
-        assert_eq!(feed.world.sounds[0].pos, Some(Vec3::new(1.0, 64.0, 1.0)));
+        assert_eq!(
+            feed.world.sounds[0].pos,
+            Some(WorldPos::new(1.0, 64.0, 1.0))
+        );
     }
 
     #[test]
@@ -221,11 +222,13 @@ mod tests {
         fn run_once() -> (u64, u64, Vec<crate::events::tick::SpatialSoundCommand>) {
             let mut data = ModStoreData::new("alpha", 1);
             let mut world = World::new(1, 1);
-            assert!(world
-                .mobs_mut()
-                .spawn(crate::mob::Mob::Owl, Vec3::new(2.0, 80.0, 3.0), 0.0));
+            assert!(world.mobs_mut().spawn(
+                crate::mob::Mob::Owl,
+                WorldPos::new(2.0, 80.0, 3.0),
+                0.0
+            ));
             let mob_id = world.mobs().instances()[0].id();
-            let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+            let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
             let mut feed = TickEvents::default();
             let mut queue = PostQueue::default();
             let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -300,7 +303,7 @@ mod tests {
             crate::events::tick::SpatialSoundCommand::PlayAt {
                 handle: first.0,
                 sound,
-                pos: Vec3::new(1.0, 81.0, 1.0),
+                pos: WorldPos::new(1.0, 81.0, 1.0),
                 volume: 0.5,
                 pitch: 1.25,
             }
@@ -319,7 +322,7 @@ mod tests {
                 assert_ne!(mob_id, 0);
                 assert_eq!(volume, 0.75);
                 assert_eq!(pitch, 0.9);
-                assert_eq!(last_pos, Vec3::new(2.0, 80.0, 3.0));
+                assert_eq!(last_pos, WorldPos::new(2.0, 80.0, 3.0));
             }
             other => panic!("expected mob-pinned sound command, got {other:?}"),
         }

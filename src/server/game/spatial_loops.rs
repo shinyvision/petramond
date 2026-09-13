@@ -122,7 +122,7 @@ impl ServerGame {
 mod tests {
     use super::*;
     use crate::net::protocol::ServerToClient;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
 
     const LOOP_ROW: u8 = 200;
     const ONE_SHOT_ROW: u8 = 201;
@@ -134,7 +134,7 @@ mod tests {
             mob_id,
             volume: 0.5,
             pitch: 1.0,
-            last_pos: Vec3::ZERO,
+            last_pos: WorldPos::ZERO,
         })
     }
 
@@ -196,7 +196,7 @@ mod tests {
         let restart = SpatialSoundMsg::PlayAt {
             handle: 7,
             sound_id: 0,
-            pos: Vec3::new(1.0, 64.0, 1.0),
+            pos: WorldPos::new(1.0, 64.0, 1.0),
             volume: 0.3,
             pitch: 1.0,
         };

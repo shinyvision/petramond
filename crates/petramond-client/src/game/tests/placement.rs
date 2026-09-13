@@ -3,6 +3,7 @@ use petramond::events::tick::TickEvents;
 use petramond::server::placement::facing_from_forward;
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::block_state::{
     HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState,
@@ -181,7 +182,7 @@ fn placing_into_replaceable_grass_overwrites_it_with_no_drop() {
     let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
     game.server.sessions[0].player.inventory.set_active(0);
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of the cell
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of the cell
 
     let g = IVec3::new(8, 100, 8);
     game.server
@@ -228,7 +229,7 @@ fn placing_a_replaceable_block_on_itself_is_refused() {
     // the rewrite would be invisible yet still eat one item off the hotbar.
     let mut game = game_on_empty_chunk();
     give(&mut game, ItemType::ShortGrass, 64);
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of the cell
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of the cell
 
     let g = IVec3::new(8, 100, 8);
     // Real ground below, so the refusal comes from the same-block rule and
@@ -290,7 +291,7 @@ fn rooted_plants_place_only_on_their_required_ground() {
     }
 
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of every cell
 
     // A flower (Dandelion) roots in soil only.
     assert!(
@@ -364,8 +365,8 @@ fn a_full_cube_substrate_is_required_by_the_server_and_the_predictor() {
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
-    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
 
     // Column 4: a whole stone cube. Column 6: a stone TOP slab — complete top
     // face, shaped body.
@@ -424,7 +425,7 @@ fn a_full_cube_substrate_is_required_by_the_server_and_the_predictor() {
 #[test]
 fn rotating_held_stair_places_top_half() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, ItemType::OakStairs, 1);
     game.toggle_held_block_rotation();
 
@@ -441,7 +442,7 @@ fn rotating_held_stair_places_top_half() {
 #[test]
 fn slabs_stack_horizontally_with_mixed_materials() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
     give(&mut game, ItemType::DirtSlab, 1);
@@ -480,7 +481,7 @@ fn slabs_stack_horizontally_with_mixed_materials() {
 #[test]
 fn slabs_stack_vertically_with_mixed_materials() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
     let support = IVec3::new(3, 64, 4);
     let p = support + IVec3::X;
     game.server
@@ -591,7 +592,7 @@ fn torch_support_face_cases() {
 
     for case in cases {
         let mut game = game_on_empty_chunk();
-        game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+        game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
         let support = IVec3::new(4, 64, 4);
         assert!(
             (case.setup)(&mut game, support),
@@ -629,7 +630,7 @@ fn torch_support_face_cases() {
 #[test]
 fn slab_side_clicks_build_into_the_adjacent_cell_not_the_hit_cell() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
     give(&mut game, ItemType::DirtSlab, 2);
@@ -657,7 +658,7 @@ fn slab_side_clicks_build_into_the_adjacent_cell_not_the_hit_cell() {
 #[test]
 fn held_rotation_does_not_leak_across_item_swaps() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
     // Rotate a held stair, then swap the ACTIVE SLOT's content to a slab (an
@@ -679,7 +680,7 @@ fn held_rotation_does_not_leak_across_item_swaps() {
 #[test]
 fn rotating_held_log_places_horizontal_axis() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, ItemType::OakLog, 1);
 
     let vertical = IVec3::new(4, 64, 4);
@@ -732,7 +733,7 @@ fn model_placement_orientation_spans_across_or_away() {
     // The default camera (yaw 0) looks south (+Z).
     let place = |item: ItemType, target: IVec3| -> super::common::TestGame {
         let mut game = game_on_empty_chunk();
-        game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of every cell
+        game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of every cell
         give(&mut game, item, 1);
         game.server.sessions[0].look = Some(hit(target - IVec3::new(0, 1, 0), IVec3::Y));
         assert!(game.server.try_place_for_test(), "{item:?} should place");
@@ -801,7 +802,7 @@ fn stacking_a_slab_keeps_the_sitting_layers_data() {
     use petramond_world::block::{part_kv_key, TINT_KV_KEY};
 
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.pos = WorldPos::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
     give(&mut game, ItemType::WoolSlab, 1);

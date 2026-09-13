@@ -18,7 +18,7 @@ struct Uniforms {
     fog:       vec4<f32>,
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<f32>,
+    render_origin: vec4<i32>,
     atlas_layout: vec4<u32>,
     sky_color: vec4<f32>,
     // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
@@ -58,14 +58,14 @@ struct VsOut {
 @vertex
 fn vs_particle(in: VsIn) -> VsOut {
     var out: VsOut;
-    let local_pos = in.pos - u.render_origin.xyz;
+    let local_pos = in.pos;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.uv = in.uv;
     out.tint = in.tint;
     out.shade = in.shade;
     out.alpha = in.alpha;
     out.view = local_pos - u.cam_pos.xyz;
-    out.world_y = in.pos.y;
+    out.world_y = in.pos.y + f32(u.render_origin.y);
     return out;
 }
 
@@ -93,7 +93,7 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
         color,
         in.view,
         in.world_y,
-        u.cam_pos.y + u.render_origin.y,
+        u.cam_pos.y + f32(u.render_origin.y),
         u.fog.x,
         u.fog.y,
         u.fog_color.rgb,
@@ -115,7 +115,7 @@ fn fs_particle_transparent(in: VsOut) -> @location(0) vec4<f32> {
         color,
         in.view,
         in.world_y,
-        u.cam_pos.y + u.render_origin.y,
+        u.cam_pos.y + f32(u.render_origin.y),
         u.fog.x,
         u.fog.y,
         u.fog_color.rgb,

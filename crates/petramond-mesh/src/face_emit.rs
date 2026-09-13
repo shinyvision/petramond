@@ -162,7 +162,7 @@ where
         pad_stride(vx, vy, vz),
     );
     // The pad path meshes cube faces only, always on the voxel boundary.
-    let plane = super::builder::boundary_plane(face, wf);
+    let plane = super::builder::boundary_plane(face);
     let front_half = {
         let (dx, dy, dz) = face.dir();
         (dx + dy + dz < 0) as usize
@@ -229,7 +229,7 @@ where
             || (probe_cell[1][iv] && !s2)
             || (probe_cell[iu][iv] && !c)
         {
-            let pk = super::builder::corner_cast_probes(face, wf, su, sv, plane);
+            let pk = super::builder::corner_cast_probes(face, su, sv, plane);
             let cell_of = |s_u: i32, s_v: i32| {
                 (
                     wf.0 + s_u * ux + s_v * vx,
@@ -238,7 +238,11 @@ where
                 )
             };
             let local = |p: [f32; 3], cl: (i32, i32, i32)| {
-                [p[0] - cl.0 as f32, p[1] - cl.1 as f32, p[2] - cl.2 as f32]
+                [
+                    p[0] - (cl.0 - wf.0) as f32,
+                    p[1] - (cl.1 - wf.1) as f32,
+                    p[2] - (cl.2 - wf.2) as f32,
+                ]
             };
             if probe_cell[iu][1] && !s1 {
                 let cl = cell_of(su, 0);

@@ -1,5 +1,6 @@
 use crate::mob::{Mob, MobDamageFeedback, MobTagValue, SavedMob};
 use crate::world::World;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::body::Body;
 use petramond_world::chunk::SectionPos;
 
@@ -10,22 +11,22 @@ fn mobs_anchor_on_the_nearest_player() {
     use super::PlayerAnchor;
     let a = PlayerAnchor {
         id: crate::player::PlayerId(0),
-        pos: Vec3::new(0.0, 64.0, 0.0),
+        pos: WorldPos::new(0.0, 64.0, 0.0),
         ..Default::default()
     };
     let b = PlayerAnchor {
         id: crate::player::PlayerId(1),
-        pos: Vec3::new(10.0, 64.0, 0.0),
+        pos: WorldPos::new(10.0, 64.0, 0.0),
         ..Default::default()
     };
-    let near_b = Vec3::new(8.0, 64.0, 0.0);
+    let near_b = WorldPos::new(8.0, 64.0, 0.0);
     assert_eq!(super::nearest_anchor(&[a, b], near_b).id.0, 1);
     assert_eq!(
         super::nearest_anchor(&[b, a], near_b).id.0,
         1,
         "order-independent"
     );
-    let near_a = Vec3::new(1.0, 64.0, 0.0);
+    let near_a = WorldPos::new(1.0, 64.0, 0.0);
     assert_eq!(super::nearest_anchor(&[a, b], near_a).id.0, 0);
 }
 
@@ -33,7 +34,7 @@ fn mobs_anchor_on_the_nearest_player() {
 fn a_frozen_tick_discards_its_drive_intent() {
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     assert!(mobs.set_mob_drive(0, Some([2.0, 0.0]), None, Some(1.0), false));
     assert!(mobs.instances()[0].drive_pending());
 
@@ -41,7 +42,7 @@ fn a_frozen_tick_discards_its_drive_intent() {
         0.05,
         &world,
         &[PlayerAnchor {
-            pos: Vec3::new(0.0, 64.0, 0.0),
+            pos: WorldPos::new(0.0, 64.0, 0.0),
             ..Default::default()
         }],
         true,
@@ -58,13 +59,13 @@ use super::*;
 fn take_in_section_harvests_only_that_sections_mobs() {
     let mut mobs = Mobs::new(0);
     // y=64 → cy 4. x 2.5 → cx 0; x 20.5 → cx 1.
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.5)); // section (0,4,0)
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 1.0)); // section (1,4,0)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.5)); // section (0,4,0)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.5, 64.0, 2.5), 1.0)); // section (1,4,0)
 
     let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
     assert_eq!(taken.len(), 1, "only the (0,4,0) owl is harvested");
     assert_eq!(taken[0].kind, Mob::Owl);
-    assert_eq!(taken[0].pos, Vec3::new(2.5, 64.0, 2.5));
+    assert_eq!(taken[0].pos, WorldPos::new(2.5, 64.0, 2.5));
     assert_eq!(taken[0].yaw, 0.5, "facing is captured");
     assert_eq!(mobs.len(), 1, "the (1,4,0) owl stays live");
 }
@@ -72,9 +73,9 @@ fn take_in_section_harvests_only_that_sections_mobs() {
 #[test]
 fn saved_by_section_groups_live_mobs_without_removing_them() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0)); // (0,4,0)
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(5.5, 64.0, 9.5), 0.0)); // (0,4,0)
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(20.5, 64.0, 2.5), 0.0)); // (1,4,0)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.0)); // (0,4,0)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(5.5, 64.0, 9.5), 0.0)); // (0,4,0)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.5, 64.0, 2.5), 0.0)); // (1,4,0)
 
     let map = mobs.saved_by_section();
     assert_eq!(map[&SectionPos::new(0, 4, 0)].len(), 2);
@@ -88,13 +89,13 @@ fn restore_respawns_saved_mobs_with_their_pose() {
     mobs.restore([
         SavedMob {
             kind: Mob::Owl,
-            pos: Vec3::new(8.5, 70.0, 8.5),
+            pos: WorldPos::new(8.5, 70.0, 8.5),
             yaw: 1.25,
             tags: Default::default(),
         },
         SavedMob {
             kind: Mob::Sheep,
-            pos: Vec3::new(9.5, 70.0, 8.5),
+            pos: WorldPos::new(9.5, 70.0, 8.5),
             yaw: -0.5,
             tags: std::collections::BTreeMap::from([(
                 crate::mob::tags::SHEAR_REGROW.to_owned(),
@@ -103,13 +104,13 @@ fn restore_respawns_saved_mobs_with_their_pose() {
         },
     ]);
     assert_eq!(mobs.len(), 2);
-    let poses: Vec<(Vec3, f32)> = mobs.instances().iter().map(|m| (m.pos, m.yaw)).collect();
+    let poses: Vec<(WorldPos, f32)> = mobs.instances().iter().map(|m| (m.pos, m.yaw)).collect();
     assert!(
-        poses.contains(&(Vec3::new(8.5, 70.0, 8.5), 1.25)),
+        poses.contains(&(WorldPos::new(8.5, 70.0, 8.5), 1.25)),
         "first mob restored in place"
     );
     assert!(
-        poses.contains(&(Vec3::new(9.5, 70.0, 8.5), -0.5)),
+        poses.contains(&(WorldPos::new(9.5, 70.0, 8.5), -0.5)),
         "second mob restored in place"
     );
     let shorn: Vec<bool> = mobs.instances().iter().map(Instance::is_shorn).collect();
@@ -125,7 +126,7 @@ fn mob_tags_survive_section_unload_and_reload() {
     // set on a live mob rides its SavedMob projection and is back on the
     // restored instance (the on-disk byte layer is covered by `save::mobs`).
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.5));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.5));
     assert!(mobs.set_mob_tag(0, "zombies:anger".into(), MobTagValue::Int(31)));
 
     let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
@@ -153,7 +154,7 @@ fn a_wounded_mob_saves_and_restores_wounded() {
     // Health is a tag now, so it persists: a mob hurt to 1.0 must not come
     // back from a section unload at full spawn health (the pre-tag behavior).
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Sheep, Vec3::new(2.5, 64.0, 2.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, WorldPos::new(2.5, 64.0, 2.5), 0.0));
     let spawn_health = crate::mob::def(Mob::Sheep).spawn_health();
     assert_eq!(mobs.instances()[0].health(), spawn_health);
     let drop = mobs.damage_mob(
@@ -181,7 +182,7 @@ fn a_wounded_mob_saves_and_restores_wounded() {
 fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     let spec = crate::mob::def(Mob::Sheep)
         .shear
         .expect("sheep are shearable");
@@ -227,7 +228,7 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
 #[test]
 fn a_species_without_a_shear_spec_cannot_be_shorn() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     assert!(mobs.shear_mob(0).is_none());
     assert!(!mobs.instances()[0].is_shorn());
 }
@@ -235,12 +236,12 @@ fn a_species_without_a_shear_spec_cannot_be_shorn() {
 #[test]
 fn a_corpse_cannot_be_shorn() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     assert!(mobs
         .damage_mob(
             0,
             100.0,
-            Some(Vec3::new(5.0, 64.0, 8.5)),
+            Some(WorldPos::new(5.0, 64.0, 8.5)),
             true,
             None,
             &MobDamageFeedback::default()
@@ -256,13 +257,13 @@ fn a_corpse_cannot_be_shorn() {
 fn horizontal_gap(mobs: &Mobs) -> f32 {
     let p = mobs.instances();
     let (a, b) = (p[0].pos, p[1].pos);
-    ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt()
+    (((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt()) as f32
 }
 
 /// A point far from the origin — used as a parked player anchor / body so a tick
 /// exercises only mob↔mob pushing.
-fn far() -> Vec3 {
-    Vec3::new(1000.0, 64.0, 1000.0)
+fn far() -> WorldPos {
+    WorldPos::new(1000.0, 64.0, 1000.0)
 }
 
 #[test]
@@ -274,8 +275,8 @@ fn overlapping_mobs_drift_apart_smoothly() {
     // player body this tick.
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.05, 64.0, 8.0), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.05, 64.0, 8.0), 0.0));
     let reach = 2.0 * crate::mob::def(Mob::Owl).size.half_width;
 
     let gap0 = horizontal_gap(&mobs);
@@ -329,15 +330,15 @@ fn the_push_pass_records_touch_contacts_both_ways() {
     // distant mob records nothing.
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.1, 64.0, 8.0), 0.0)); // overlapping
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(20.0, 64.0, 8.0), 0.0)); // far away
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.1, 64.0, 8.0), 0.0)); // overlapping
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.0, 64.0, 8.0), 0.0)); // far away
     let ids: Vec<u64> = mobs.instances().iter().map(Instance::id).collect();
 
     let player = crate::mob::PlayerAnchor {
         id: crate::player::PlayerId(3),
-        pos: Vec3::new(8.0, 64.9, 8.1),
-        body: Some(Body::new(Vec3::new(8.0, 64.0, 8.1), 0.3, 1.8)),
+        pos: WorldPos::new(8.0, 64.9, 8.1),
+        body: Some(Body::new(WorldPos::new(8.0, 64.0, 8.1), 0.3, 1.8)),
         sneaking: true, // touch is felt, not heard — sneak is irrelevant
         ..Default::default()
     };
@@ -366,8 +367,8 @@ fn a_mob_overlapping_the_player_pushes_it_away() {
     // not the tick, so the player drifts out smoothly. It points away from the owl.
     let mut mobs = Mobs::new(0);
     // Owl just east (+X) of the player's column, footprints overlapping.
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.2, 64.0, 8.0), 0.0));
-    let player_body = Body::new(Vec3::new(8.0, 64.0, 8.0), 0.3, 1.8);
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.2, 64.0, 8.0), 0.0));
+    let player_body = Body::new(WorldPos::new(8.0, 64.0, 8.0), 0.3, 1.8);
     let push = mobs.push_on_player(player_body);
     assert!(
         push.x < 0.0,
@@ -380,7 +381,7 @@ fn a_mob_overlapping_the_player_pushes_it_away() {
 fn a_distant_mob_does_not_push_the_player() {
     // No overlap, no push — a mob across the world leaves the player be.
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.0, 64.0, 8.0), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let player_body = Body::new(far(), 0.3, 1.8);
     assert_eq!(
         mobs.push_on_player(player_body),
@@ -396,7 +397,7 @@ fn a_bodiless_player_does_not_shove_mobs() {
     // per-frame mob→player push for a spectator).
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
-    let spot = Vec3::new(8.0, 64.0, 8.0);
+    let spot = WorldPos::new(8.0, 64.0, 8.0);
     assert!(mobs.spawn(Mob::Owl, spot, 0.0));
     let before = mobs.instances()[0].pos;
     mobs.tick(
@@ -419,14 +420,14 @@ fn a_bodiless_player_does_not_shove_mobs() {
 #[test]
 fn a_harvested_corpse_is_dropped_not_saved() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.0));
     // Kill it: now a ragdolling corpse. Harvesting its section removes it but does not
     // persist it (its loot already fell when it died).
     assert!(mobs
         .damage_mob(
             0,
             100.0,
-            Some(Vec3::new(5.0, 64.0, 2.5)),
+            Some(WorldPos::new(5.0, 64.0, 2.5)),
             true,
             None,
             &MobDamageFeedback::default()
@@ -440,7 +441,7 @@ fn a_harvested_corpse_is_dropped_not_saved() {
 #[test]
 fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0)); // body in cell (8,64,8)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0)); // body in cell (8,64,8)
     let here = IVec3::new(8, 64, 8);
     let away = IVec3::new(20, 64, 8);
 
@@ -465,7 +466,7 @@ fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
         .damage_mob(
             0,
             100.0,
-            Some(Vec3::new(9.0, 64.0, 8.5)),
+            Some(WorldPos::new(9.0, 64.0, 8.5)),
             true,
             None,
             &MobDamageFeedback::default()
@@ -480,7 +481,7 @@ fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
 #[test]
 fn the_tag_cap_refuses_new_keys_but_never_replacements() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     // The mob is born with its row's spawn tags (health at least), so only
     // the remaining slots take new keys.
     let spawn_tags = mobs.instances()[0].tags().len();
@@ -510,9 +511,9 @@ fn the_tag_cap_refuses_new_keys_but_never_replacements() {
 #[test]
 fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
-    assert!(mobs.spawn(Mob::Sheep, Vec3::new(9.5, 64.0, 8.5), 0.0));
-    assert!(mobs.spawn(Mob::Sheep, Vec3::new(10.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, WorldPos::new(8.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, WorldPos::new(9.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, WorldPos::new(10.5, 64.0, 8.5), 0.0));
     assert!(mobs.set_mob_tag(0, "farm:quality".into(), MobTagValue::Int(1)));
     assert!(mobs.set_mob_tag(1, "farm:quality".into(), MobTagValue::Int(2)));
 
@@ -541,7 +542,7 @@ fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
         .damage_mob(
             0,
             100.0,
-            Some(Vec3::new(5.0, 64.0, 8.5)),
+            Some(WorldPos::new(5.0, 64.0, 8.5)),
             true,
             None,
             &MobDamageFeedback::default()
@@ -579,10 +580,10 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
         }
     }
     let id = world
-        .spawn_mob(Mob::Sheep, Vec3::new(24.5, 64.0, 24.5), 0.0)
+        .spawn_mob(Mob::Sheep, WorldPos::new(24.5, 64.0, 24.5), 0.0)
         .expect("spawned");
     let anchors = [PlayerAnchor {
-        pos: Vec3::new(24.5, 64.0, 30.5),
+        pos: WorldPos::new(24.5, 64.0, 30.5),
         ..Default::default()
     }];
     let confined = |world: &World| {
@@ -610,7 +611,6 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
 #[test]
 fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
     use crate::mob::{def, Mob};
-    use petramond_math::math::Vec3;
 
     let kinds: Vec<Mob> = crate::mob::defs().iter().map(|d| d.mob).collect();
     let mut rng = 0x1234_5678_9abc_def0u64;
@@ -626,10 +626,10 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
             let kind = kinds[i % kinds.len()];
             let size = def(kind).size;
             let spread = if i % 3 == 0 { 3.0 } else { 40.0 };
-            let pos = Vec3::new(
-                (next() - 0.5) * spread,
-                (next() - 0.5) * 4.0,
-                (next() - 0.5) * spread,
+            let pos = WorldPos::new(
+                f64::from((next() - 0.5) * spread),
+                f64::from((next() - 0.5) * 4.0),
+                f64::from((next() - 0.5) * spread),
             );
             Some(super::simulation::push_body_for_test(
                 pos,

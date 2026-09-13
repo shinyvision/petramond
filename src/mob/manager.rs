@@ -35,12 +35,15 @@ pub use simulation::{MobAttack, MobExposureDamage, MobFall, MobTickEvents, Playe
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
 /// exists.
-fn nearest_anchor(anchors: &[PlayerAnchor], pos: Vec3) -> &PlayerAnchor {
+fn nearest_anchor(
+    anchors: &[PlayerAnchor],
+    pos: petramond_math::world_pos::WorldPos,
+) -> &PlayerAnchor {
     debug_assert!(!anchors.is_empty(), "at least the local session anchors");
     let mut best = &anchors[0];
-    let mut best_d = (best.pos - pos).length_squared();
+    let mut best_d = best.pos.distance_squared(pos);
     for a in &anchors[1..] {
-        let d = (a.pos - pos).length_squared();
+        let d = a.pos.distance_squared(pos);
         if d < best_d {
             best = a;
             best_d = d;
@@ -69,13 +72,13 @@ pub struct Mobs {
     push_order_scratch: Vec<usize>,
     /// Broadphase scratch for [`super::simulation`]'s push pass: the
     /// x-sorted sweep list and the candidate pairs it yields.
-    push_sweep_scratch: Vec<(f32, u32)>,
+    push_sweep_scratch: Vec<(f64, u32)>,
     push_pair_scratch: Vec<(u32, u32)>,
     /// Whether an instance actually ran this tick (frozen instances do not).
     ticked_scratch: Vec<bool>,
     /// Pre-integration ground state and post-healing peer-motion start for
     /// instances whose live body moved.
-    motion_finish_scratch: Vec<Option<(bool, Vec3)>>,
+    motion_finish_scratch: Vec<Option<(bool, petramond_math::world_pos::WorldPos)>>,
     /// Terrain-resolved solid-body proposals, stable-id sorted before the
     /// pair solver runs.
     solid_motion_scratch: Vec<super::BodyMotion>,

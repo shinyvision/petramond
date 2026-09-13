@@ -20,7 +20,7 @@ fn payload_roundtrip_preserves_geometry_and_lighting() {
         assert_eq!(v.tint >> 24, before.tint >> 24);
         assert_eq!(v.pos, before.pos);
         assert_eq!(Transition::decode(&v), Some(Transition { set, grid }));
-        let gpu = TerrainVertex::from_world(&v, -16, 16);
+        let gpu = TerrainVertex::from_mesh(&v);
         assert_eq!(
             (gpu.packed, gpu.packed2, gpu.tint),
             (v.packed, v.packed2, v.tint)

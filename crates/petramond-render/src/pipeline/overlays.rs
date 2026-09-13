@@ -264,7 +264,7 @@ pub(super) fn create_contact_pipeline(
         &contact_shader,
         "vs_contact",
         "fs_contact",
-        std::slice::from_ref(&contact_vbuf_layout),
+        &[contact_vbuf_layout, crate::resources::COLUMN_ORIGIN_LAYOUT],
         &contact_targets,
         wgpu::PrimitiveState::default(),
         Some(DepthPreset::ReadLessEqualContactBiased),

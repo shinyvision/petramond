@@ -208,7 +208,7 @@ fn site_species(
     species: Species,
     ground: &dyn Fn() -> Option<BlockId>,
     claim_roll: &dyn Fn() -> u64,
-    nearby: &dyn Fn([f32; 3], f32) -> Vec<MobSnapshot>,
+    nearby: &dyn Fn([f64; 3], f32) -> Vec<MobSnapshot>,
 ) -> Option<&'static str> {
     if effective_light(candidate.sky_light, candidate.block_light, daylight)
         >= SPAWN_LIGHT_THRESHOLD
@@ -239,7 +239,7 @@ fn ground_cell(cell: [i32; 3]) -> [i32; 3] {
 fn zombie_admits(
     candidate: &HostileSpawnCandidate,
     species: Species,
-    nearby: &dyn Fn([f32; 3], f32) -> Vec<MobSnapshot>,
+    nearby: &dyn Fn([f64; 3], f32) -> Vec<MobSnapshot>,
 ) -> bool {
     nearby(candidate.pos, ZOMBIE_CROWD_RADIUS)
         .iter()
@@ -257,7 +257,7 @@ fn hushjaw_admits(
     candidate: &HostileSpawnCandidate,
     species: Species,
     claim_roll: &dyn Fn() -> u64,
-    nearby: &dyn Fn([f32; 3], f32) -> Vec<MobSnapshot>,
+    nearby: &dyn Fn([f64; 3], f32) -> Vec<MobSnapshot>,
 ) -> bool {
     if candidate.cell[1] >= HUSHJAW_BELOW_Y {
         return false;
@@ -354,7 +354,7 @@ impl Monsters {
     }
 }
 
-fn cell_of(pos: [f32; 3]) -> [i32; 3] {
+fn cell_of(pos: [f64; 3]) -> [i32; 3] {
     [
         pos[0].floor() as i32,
         pos[1].floor() as i32,
@@ -369,7 +369,7 @@ fn sky_light(cell: [i32; 3]) -> Option<f32> {
 }
 
 /// Rain intensity of the weather field at the mob's column; 0 with no field.
-fn rain_at(field: Option<&FieldParams>, pos: [f32; 3]) -> f32 {
+fn rain_at(field: Option<&FieldParams>, pos: [f64; 3]) -> f32 {
     field.map_or(0.0, |p| weather_core::rain(pos[0], pos[2], p))
 }
 
@@ -434,7 +434,7 @@ mod tests {
     }
 
     /// An empty neighbourhood: no crowd, no rival hushjaw.
-    fn alone(_pos: [f32; 3], _radius: f32) -> Vec<MobSnapshot> {
+    fn alone(_pos: [f64; 3], _radius: f32) -> Vec<MobSnapshot> {
         Vec::new()
     }
 

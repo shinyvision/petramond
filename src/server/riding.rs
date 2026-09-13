@@ -265,7 +265,7 @@ impl ServerGame {
         &self,
         player: &Player,
         obstacles: &[petramond_world::collision::DynBox],
-    ) -> Option<Vec3> {
+    ) -> Option<petramond_math::world_pos::WorldPos> {
         dismount_spot(
             player.pos,
             player.yaw,
@@ -283,10 +283,12 @@ impl ServerGame {
         &self,
         player: &Player,
         obstacles: &[petramond_world::collision::DynBox],
-    ) -> Option<Vec3> {
-        let known_free = |feet| player_body_known_free(&self.world, feet, obstacles);
-        let safe = |feet| {
-            let c = petramond_math::math::voxel_at(feet);
+    ) -> Option<petramond_math::world_pos::WorldPos> {
+        let known_free = |feet: petramond_math::world_pos::WorldPos| {
+            player_body_known_free(&self.world, feet, obstacles)
+        };
+        let safe = |feet: petramond_math::world_pos::WorldPos| {
+            let c = feet.block();
             self.world.physics_cell_final_at(c.x, c.y - 1, c.z)
                 && dismount_footing_safe(&self.world, feet)
         };
@@ -297,7 +299,7 @@ impl ServerGame {
             return None;
         }
 
-        let origin = petramond_math::math::voxel_at(player.pos);
+        let origin = player.pos.block();
         for radius in 1..=SAVE_DISMOUNT_RADIUS {
             let mut unsafe_spot = None;
             for dy in SAVE_DISMOUNT_DY {
@@ -306,10 +308,10 @@ impl ServerGame {
                         if dx.abs().max(dz.abs()) != radius {
                             continue;
                         }
-                        let feet = Vec3::new(
-                            (origin.x + dx) as f32 + 0.5,
-                            player.pos.y + dy as f32,
-                            (origin.z + dz) as f32 + 0.5,
+                        let feet = petramond_math::world_pos::WorldPos::new(
+                            f64::from(origin.x + dx) + 0.5,
+                            player.pos.y + f64::from(dy),
+                            f64::from(origin.z + dz) + 0.5,
                         );
                         if !known_free(feet) {
                             continue;

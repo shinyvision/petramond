@@ -49,8 +49,8 @@ pub const SKY_FOG_BLEND_SPAN_BLOCKS: i32 = 10;
 /// single border crossfades gradually and multi-biome intersections naturally
 /// become a weighted mix of every biome near the camera.
 pub fn blended_fog_color(
-    x: f32,
-    z: f32,
+    x: f64,
+    z: f64,
     mut biome_at_column: impl FnMut(i32, i32) -> Biome,
 ) -> [f32; 3] {
     let center_x = x.floor() as i32;
@@ -64,8 +64,8 @@ pub fn blended_fog_color(
 
     for wz in center_z - radius_i..=center_z + radius_i {
         for wx in center_x - radius_i..=center_x + radius_i {
-            let dx = wx as f32 + 0.5 - x;
-            let dz = wz as f32 + 0.5 - z;
+            let dx = (f64::from(wx) + 0.5 - x) as f32;
+            let dz = (f64::from(wz) + 0.5 - z) as f32;
             let dist2 = dx * dx + dz * dz;
             if dist2 > radius2 {
                 continue;

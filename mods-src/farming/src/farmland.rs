@@ -79,7 +79,7 @@ fn rained_on(pos: [i32; 3]) -> bool {
     let Some(params) = weather_core::fresh_params(&row, clock) else {
         return false;
     };
-    if weather_core::rain(pos[0] as f32 + 0.5, pos[2] as f32 + 0.5, &params) <= 0.0 {
+    if weather_core::rain(pos[0] as f64 + 0.5, pos[2] as f64 + 0.5, &params) <= 0.0 {
         return false;
     }
     let above = [pos[0], pos[1] + 1, pos[2]];

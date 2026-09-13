@@ -5,7 +5,7 @@
 //! these values.
 
 use crate::player::PlayerId;
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
 /// Fixed simulation timestep: 20 game ticks per second, independent of frame
@@ -21,7 +21,7 @@ pub const TICK_DT: f32 = 0.05;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SoundEvent {
     pub sound: petramond_world::sound_registry::Sound,
-    pub pos: Option<petramond_math::math::Vec3>,
+    pub pos: Option<petramond_math::world_pos::WorldPos>,
 }
 
 /// A semantic mob sound event produced by gameplay. The app resolves the
@@ -31,7 +31,7 @@ pub struct MobSoundEvent {
     pub mob_id: u64,
     pub kind: crate::mob::Mob,
     pub category: crate::mob::MobSoundCategory,
-    pub pos: petramond_math::math::Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
 }
 
 /// A deterministic presentation command produced by the spatial sound HostCalls.
@@ -42,7 +42,7 @@ pub enum SpatialSoundCommand {
     PlayAt {
         handle: u64,
         sound: petramond_world::sound_registry::Sound,
-        pos: petramond_math::math::Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         volume: f32,
         pitch: f32,
     },
@@ -54,7 +54,7 @@ pub enum SpatialSoundCommand {
         pitch: f32,
         /// The mob position when the command was emitted. If the mob despawns
         /// before the app sees a frame snapshot, playback starts and finishes here.
-        last_pos: petramond_math::math::Vec3,
+        last_pos: petramond_math::world_pos::WorldPos,
     },
     Stop {
         handle: u64,
@@ -155,10 +155,10 @@ pub struct WorldEvents {
     /// A chest's viewer count crossed 0↔1: (chest cell, now open).
     pub chest_changed: Vec<(IVec3, bool)>,
     /// A player collected at least one drop: (their body centre, player id).
-    pub item_picked_up: Vec<(Vec3, PlayerId)>,
+    pub item_picked_up: Vec<(petramond_math::world_pos::WorldPos, PlayerId)>,
     /// One-shot particle bursts (catalog id, world position, producer-defined
     /// intensity — the water splash passes blocks fallen).
-    pub emitter_bursts: Vec<(u8, Vec3, f32)>,
+    pub emitter_bursts: Vec<(u8, petramond_math::world_pos::WorldPos, f32)>,
     next_spatial_sound_handle: u64,
 }
 

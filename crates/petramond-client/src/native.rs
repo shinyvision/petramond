@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 
 use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
 use crate::keymap::{key_code, mouse_button, text_key_from_named};
-use petramond_math::math::Vec3;
 use petramond_render::camera::Camera;
 use petramond_render::{new_renderer_from_target, Renderer};
 use petramond_world::controls::Modifiers;
@@ -178,7 +177,7 @@ impl ApplicationHandler for NativeHost {
             new_renderer_from_target(window.clone(), size.width, size.height).await
         });
         let cam = Camera::new(
-            Vec3::new(8.0, 90.0, 8.0),
+            petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
             size.width as f32 / size.height.max(1) as f32,
         );
         let mut app = App::new(cam, self.render_dist);

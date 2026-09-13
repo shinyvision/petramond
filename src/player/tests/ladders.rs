@@ -41,7 +41,7 @@ fn walking_into_a_ladder_climbs_at_the_climb_speed_sprint_or_not() {
             sprint,
             sneak: false,
         };
-        let mut pl = p(Vec3::new(1.5, 64.0, 0.5));
+        let mut pl = p(WorldPos::new(1.5, 64.0, 0.5));
         pl.on_ground = true;
         for _ in 0..120 {
             pl.update_core_climb(1.0 / 60.0, &solid, &ladder, input);
@@ -78,7 +78,7 @@ fn jump_on_a_ladder_climbs_instead_of_jumping() {
         sprint: false,
         sneak: false,
     };
-    let mut pl = p(Vec3::new(1.5, 64.0, 0.5));
+    let mut pl = p(WorldPos::new(1.5, 64.0, 0.5));
     pl.on_ground = true;
     let mut max_vy = f32::NEG_INFINITY;
     for _ in 0..120 {
@@ -107,7 +107,7 @@ fn sideways_movement_on_a_ladder_is_halved_and_grips() {
         sprint: false,
         sneak: false,
     };
-    let mut pl = p(Vec3::new(1.5, 64.0, 0.5));
+    let mut pl = p(WorldPos::new(1.5, 64.0, 0.5));
     pl.on_ground = true;
     let mut max_lateral = 0.0f32;
     for _ in 0..120 {
@@ -137,7 +137,7 @@ fn a_ladder_catches_a_fall_and_lowers_it_gently() {
     use ladder_fixture::{ladder, solid};
     // Free-fall from above the ladder column: the grab clamps the descent to the
     // climb speed and the landing measures no meaningful fall.
-    let mut pl = p(Vec3::new(1.5, 74.0, 0.5));
+    let mut pl = p(WorldPos::new(1.5, 74.0, 0.5));
     let mut min_vy_on_ladder = f32::INFINITY;
     for _ in 0..600 {
         // The grab clamps on frames that START on the ladder (the probe runs
@@ -174,7 +174,7 @@ fn a_free_hanging_climbable_ascends_on_jump_and_on_no_other_input() {
             sprint: false,
             sneak: false,
         };
-        let mut pl = p(Vec3::new(1.5, 65.0, 0.5));
+        let mut pl = p(WorldPos::new(1.5, 65.0, 0.5));
         for _ in 0..120 {
             pl.update_core_climb(1.0 / 60.0, &ground, &vine, input);
         }

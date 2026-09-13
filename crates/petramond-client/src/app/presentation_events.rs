@@ -1,6 +1,7 @@
 use super::App;
 use crate::game::{GameEvents, WorldEvent};
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::{Block, BlockSoundAction};
 use petramond_world::sound_registry::Sound;
 
@@ -96,12 +97,12 @@ impl App {
     }
 }
 
-fn positional_sound_gain(sound: Sound, pos: Vec3, ear: Vec3) -> f32 {
+fn positional_sound_gain(sound: Sound, pos: WorldPos, ear: WorldPos) -> f32 {
     let dist = (pos - ear).length();
     sound.distance_gain(dist)
 }
 
 /// A cell's audible centre.
-fn cell_centre(pos: IVec3) -> Vec3 {
-    Vec3::new(pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5)
+fn cell_centre(pos: IVec3) -> WorldPos {
+    WorldPos::block_center(pos)
 }

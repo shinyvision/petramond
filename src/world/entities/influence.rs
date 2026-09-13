@@ -13,7 +13,7 @@ impl World {
     /// Nearest active item entities over terrain ready for simulation.
     pub(crate) fn nearest_item_entities(
         &self,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         radius: f32,
         limit: usize,
     ) -> Vec<&DroppedItem> {

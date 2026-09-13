@@ -122,12 +122,12 @@ impl PendingUseClick {
 /// and without those contacts the staircase would measure as one tall fall.
 #[derive(Clone, Debug)]
 pub struct FallTracker {
-    peak_y: f32,
+    peak_y: f64,
     airborne: bool,
 }
 
 impl FallTracker {
-    pub fn new(y: f32) -> Self {
+    pub fn new(y: f64) -> Self {
         Self {
             peak_y: y,
             airborne: false,
@@ -136,7 +136,7 @@ impl FallTracker {
 
     /// Re-anchor at `y` and drop any airborne state — teleports and mode
     /// switches are never falls (mirrors `Player::teleport`/`set_mode`).
-    pub fn reset(&mut self, y: f32) {
+    pub fn reset(&mut self, y: f64) {
         self.peak_y = y;
         self.airborne = false;
     }
@@ -145,17 +145,17 @@ impl FallTracker {
     /// landing (airborne → grounded) with its fall distance, or a water entry
     /// (airborne → in water) with the distance fallen into the surface —
     /// walking into water arrives grounded/level and reports nothing.
-    pub fn observe(&mut self, y: f32, on_ground: bool, in_water: bool) -> Option<FallOutcome> {
+    pub fn observe(&mut self, y: f64, on_ground: bool, in_water: bool) -> Option<FallOutcome> {
         if in_water {
             let was_airborne = self.airborne;
-            let dist = self.peak_y - y;
+            let dist = (self.peak_y - y) as f32;
             self.peak_y = y;
             self.airborne = !on_ground;
             return (was_airborne && dist > 0.0).then_some(FallOutcome::Splashed(dist));
         }
         if on_ground {
             let landed = self.airborne;
-            let dist = self.peak_y - y;
+            let dist = (self.peak_y - y) as f32;
             self.peak_y = y;
             self.airborne = false;
             return (landed && dist > 0.0).then_some(FallOutcome::Landed(dist));
@@ -284,7 +284,7 @@ pub struct ConnectedPlayer {
     /// Player position when this frame's fixed ticks began — a tick-side
     /// position change is a teleport, which re-anchors [`fall`](Self::fall)
     /// (see `ServerGame::pump`).
-    pub pos_before_ticks: petramond_math::math::Vec3,
+    pub pos_before_ticks: petramond_math::world_pos::WorldPos,
     /// Whether the LAST tick window teleported this player (the drift check
     /// over [`pos_before_ticks`](Self::pos_before_ticks)) — replicated as
     /// `PlayerStateRow::snap` so observers skip interpolating across the
@@ -341,7 +341,7 @@ pub struct ConnectedPlayer {
     /// edge state; see `ConnectedPlayer::sneaking`).
     pub prev_sneak: bool,
     /// Client-predicted transform from the latest `PlayerUpdate` (F1 soft accept).
-    pub claim_pos: petramond_math::math::Vec3,
+    pub claim_pos: petramond_math::world_pos::WorldPos,
     pub claim_vel: petramond_math::math::Vec3,
     pub claim_on_ground: bool,
     /// Set by `PlayerUpdate`; cleared after `tick_movement` consumes the claim.

@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use crate::mob::{Mobs, SavedMob};
-use petramond_math::math::{voxel_at, Vec3};
+use petramond_math::math::Vec3;
 use petramond_world::chunk::ChunkPos;
 
 use super::store::World;
@@ -26,7 +26,12 @@ impl World {
     /// Spawn a mob and initialize its cached render light immediately, so a mob
     /// created after the mob tick does not render full-bright until the next tick.
     /// Returns the newborn's stable session id.
-    pub fn spawn_mob(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> Option<u64> {
+    pub fn spawn_mob(
+        &mut self,
+        kind: crate::mob::Mob,
+        pos: petramond_math::world_pos::WorldPos,
+        yaw: f32,
+    ) -> Option<u64> {
         let (sky, block) = self.mob_render_light_at(pos);
         self.mobs.spawn_lit(kind, pos, yaw, sky, block)
     }
@@ -36,14 +41,24 @@ impl World {
     /// This is the programmatic-placement counterpart to `spawn_mob`: mods
     /// can create vehicles and other player-placed solid entities without a
     /// racy centre-cell approximation.
-    pub fn spawn_mob_checked(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> Option<u64> {
+    pub fn spawn_mob_checked(
+        &mut self,
+        kind: crate::mob::Mob,
+        pos: petramond_math::world_pos::WorldPos,
+        yaw: f32,
+    ) -> Option<u64> {
         if !self.mob_spawn_pose_clear(kind, pos, yaw) {
             return None;
         }
         self.spawn_mob(kind, pos, yaw)
     }
 
-    pub fn mob_spawn_pose_clear(&self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
+    pub fn mob_spawn_pose_clear(
+        &self,
+        kind: crate::mob::Mob,
+        pos: petramond_math::world_pos::WorldPos,
+        yaw: f32,
+    ) -> bool {
         let obstacles = self.mobs.solid_obstacles();
         crate::mob::body_pose_fits(
             pos,
@@ -62,8 +77,11 @@ impl World {
         }
     }
 
-    fn mob_render_light_at(&self, pos: Vec3) -> (u8, petramond_world::light::BlockLight6) {
-        let c = voxel_at(pos + Vec3::new(0.0, 0.3, 0.0));
+    fn mob_render_light_at(
+        &self,
+        pos: petramond_math::world_pos::WorldPos,
+    ) -> (u8, petramond_world::light::BlockLight6) {
+        let c = (pos + Vec3::new(0.0, 0.3, 0.0)).block();
         let sky = self.skylight6_at_world(c.x, c.y, c.z);
         let block = petramond_world::light::BlockLight6::from_x2(
             self.blocklight_rgb_at_world(c.x, c.y, c.z),
@@ -152,7 +170,10 @@ impl World {
     /// Run one natural mob-spawn attempt (the passive backfill trickle; the
     /// caller owns the cadence). Returns the mobs actually spawned, for the
     /// caller to report as `mob_spawned` events.
-    pub fn spawn_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(u64, crate::mob::Mob, Vec3)> {
+    pub fn spawn_mobs_tick(
+        &mut self,
+        player_pos: petramond_math::world_pos::WorldPos,
+    ) -> Vec<(u64, crate::mob::Mob, petramond_math::world_pos::WorldPos)> {
         let mut mobs = std::mem::take(&mut self.mobs);
         let spawned = mobs.spawn_tick(self, player_pos);
         self.mobs = mobs;
@@ -163,7 +184,10 @@ impl World {
     /// place the one-time herds of nearby chunks whose deterministic roll says so,
     /// and record the chunks that spawned in the persisted populated set. Returns
     /// the mobs spawned, for the caller's `mob_spawned` events.
-    pub fn populate_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(u64, crate::mob::Mob, Vec3)> {
+    pub fn populate_mobs_tick(
+        &mut self,
+        player_pos: petramond_math::world_pos::WorldPos,
+    ) -> Vec<(u64, crate::mob::Mob, petramond_math::world_pos::WorldPos)> {
         let mut mobs = std::mem::take(&mut self.mobs);
         let (spawned, populated) = mobs.populate_tick(self, player_pos);
         self.mobs = mobs;

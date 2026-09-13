@@ -82,11 +82,11 @@ const SOUND_CAST: &str = "forge:cast_free";
 /// none of them needs to be more precise than the block: the attenuation
 /// distances in `sounds.json` are all an order of magnitude wider than the
 /// footprint.
-fn at(pos: [i32; 3]) -> [f32; 3] {
+fn at(pos: [i32; 3]) -> [f64; 3] {
     [
-        pos[0] as f32 + 0.5,
-        pos[1] as f32 + 0.5,
-        pos[2] as f32 + 0.5,
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + 0.5,
+        pos[2] as f64 + 0.5,
     ]
 }
 

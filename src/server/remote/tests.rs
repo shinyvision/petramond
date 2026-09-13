@@ -6,6 +6,7 @@ use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
 use crate::server::handle::ServerHandle;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_util::test_time::TEST_HARD_DEADLINE;
 use petramond_world::block::Block;
 use petramond_world::chunk::SectionPos;
@@ -159,10 +160,10 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // where it actually stands) + dirt to place (a fresh spawn would be
     // empty-handed).
     let spawn = petramond_worldgen::spawn::find_spawn(7);
-    let visitor_feet = Vec3::new(
-        spawn.x as f32 + 0.5,
-        (spawn.y + 1) as f32,
-        spawn.z as f32 + 0.5,
+    let visitor_feet = WorldPos::new(
+        spawn.x as f64 + 0.5,
+        (spawn.y + 1) as f64,
+        spawn.z as f64 + 0.5,
     );
     let mut visitor = crate::player::Player::new(visitor_feet);
     visitor.inventory.add(ItemStack::new(ItemType::Dirt, 64));

@@ -19,6 +19,7 @@ pub mod block;
 pub mod block_model;
 pub mod block_state;
 pub mod body;
+pub mod border;
 pub mod chunk;
 pub mod collision;
 pub mod column;

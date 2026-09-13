@@ -546,7 +546,8 @@ mod tests {
 
     use super::super::payload::*;
     use super::*;
-    use petramond_math::math::{IVec3, Vec3};
+    use petramond_math::math::IVec3;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::item::ItemType;
 
@@ -558,7 +559,7 @@ mod tests {
     ) {
         (
             World::new(1, 1),
-            Player::new(Vec3::new(0.0, 80.0, 0.0)),
+            Player::new(WorldPos::new(0.0, 80.0, 0.0)),
             petramond_world::gui_state::empty_gui_state(),
             TickEvents::default(),
         )
@@ -573,7 +574,7 @@ mod tests {
         use crate::player::PlayerId;
 
         let (mut world, mut acting, mut gui, mut feed) = sim();
-        let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
+        let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
         let mut queue = PostQueue::default();
 
         // No roster published: anonymous single-session context.

@@ -5,6 +5,7 @@
 //! shortest way out.
 
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::{Block, BlockTag};
 use petramond_world::fluid_math::fluid_height;
 
@@ -12,7 +13,7 @@ use crate::mob::path::{self, PathParams};
 use crate::mob::{body_boxes, MobSize};
 use crate::world::SectionCursor;
 
-const EPS: f32 = 1e-4;
+const EPS: f64 = 1e-4;
 
 fn hazardous(block: Block, tolerated: &[Block]) -> bool {
     let hazard = |b: Block| b.has_tag(BlockTag::NAV_HAZARD) && !tolerated.contains(&b);
@@ -33,13 +34,13 @@ pub(in crate::mob) fn foothold_in_hazard(
     } else {
         floor.y as f32 + super::floor_top(cur, floor)
     };
-    let half = Vec3::new(params.half_width, 0.0, params.half_width);
-    let centre = Vec3::new(cell.x as f32 + 0.5, feet_y, cell.z as f32 + 0.5);
-    let top = Vec3::Y * (cell.y + params.head_cells()) as f32;
+    let hw = f64::from(params.half_width);
+    let (cx, cz) = (f64::from(cell.x) + 0.5, f64::from(cell.z) + 0.5);
+    let top = f64::from(cell.y + params.head_cells());
     body_in_hazard(
         cur,
-        centre - half,
-        Vec3::new(centre.x, 0.0, centre.z) + half + top,
+        [cx - hw, f64::from(feet_y), cz - hw],
+        [cx + hw, top, cz + hw],
         params.tolerated,
     )
 }
@@ -57,19 +58,27 @@ pub(super) fn step_gate<'c, 'w>(
         if footholds.get(from, |c| foothold_in_hazard(cur, c, params)) {
             return true;
         }
-        let half = Vec3::new(params.half_width, 0.0, params.half_width);
-        let offset = Vec3::new(0.5, 0.0, 0.5);
-        let min = from.min(to).as_vec3() + offset - half - Vec3::Y;
-        let max = from.max(to).as_vec3() + offset + half + Vec3::Y * params.head_cells() as f32;
+        let hw = f64::from(params.half_width);
+        let (lo, hi) = (from.min(to), from.max(to));
+        let min = [
+            f64::from(lo.x) + 0.5 - hw,
+            f64::from(lo.y) - 1.0,
+            f64::from(lo.z) + 0.5 - hw,
+        ];
+        let max = [
+            f64::from(hi.x) + 0.5 + hw,
+            f64::from(hi.y + params.head_cells()),
+            f64::from(hi.z) + 0.5 + hw,
+        ];
         !any_cell(min, max, |c| {
             cells.get(c, |c| hazardous(cur.physics_block(c), params.tolerated))
         })
     }
 }
 
-fn any_cell(min: Vec3, max: Vec3, mut test: impl FnMut(IVec3) -> bool) -> bool {
-    let lo = (min + Vec3::splat(EPS)).floor().as_ivec3();
-    let hi = (max - Vec3::splat(EPS)).floor().as_ivec3();
+fn any_cell(min: [f64; 3], max: [f64; 3], mut test: impl FnMut(IVec3) -> bool) -> bool {
+    let lo = IVec3::from(min.map(|v| (v + EPS).floor() as i32));
+    let hi = IVec3::from(max.map(|v| (v - EPS).floor() as i32));
     for y in lo.y..=hi.y {
         for z in lo.z..=hi.z {
             for x in lo.x..=hi.x {
@@ -84,8 +93,13 @@ fn any_cell(min: Vec3, max: Vec3, mut test: impl FnMut(IVec3) -> bool) -> bool {
 
 /// Whether a body box touches a hazard: resting on one counts, and a fluid
 /// only counts below its real surface.
-fn body_in_hazard(cur: &SectionCursor<'_>, min: Vec3, max: Vec3, tolerated: &[Block]) -> bool {
-    any_cell(min - Vec3::Y * 2.0 * EPS, max, |c| {
+fn body_in_hazard(
+    cur: &SectionCursor<'_>,
+    min: [f64; 3],
+    max: [f64; 3],
+    tolerated: &[Block],
+) -> bool {
+    any_cell([min[0], min[1] - 2.0 * EPS, min[2]], max, |c| {
         let block = cur.physics_block(c);
         if !hazardous(block, tolerated) {
             return false;
@@ -95,14 +109,15 @@ fn body_in_hazard(cur: &SectionCursor<'_>, min: Vec3, max: Vec3, tolerated: &[Bl
         };
         let surface =
             c.y as f32 + fluid_height(cur.fluid_meta(c), cur.physics_block(c + IVec3::Y), fluid);
-        min.y + EPS < surface
+        min[1] + EPS < f64::from(surface)
     })
 }
 
-fn horizontal_overlap(min: Vec3, max: Vec3, cell: IVec3) -> f32 {
-    let x = (max.x.min(cell.x as f32 + 1.0) - min.x.max(cell.x as f32)).max(0.0);
-    let z = (max.z.min(cell.z as f32 + 1.0) - min.z.max(cell.z as f32)).max(0.0);
-    x * z
+fn horizontal_overlap(min: [f64; 3], max: [f64; 3], cell: IVec3) -> f32 {
+    let (cx, cz) = (f64::from(cell.x), f64::from(cell.z));
+    let x = (max[0].min(cx + 1.0) - min[0].max(cx)).max(0.0);
+    let z = (max[2].min(cz + 1.0) - min[2].max(cz)).max(0.0);
+    (x * z) as f32
 }
 
 /// Route-cost surcharge for every hazardous foothold an escape crosses, in
@@ -166,7 +181,7 @@ impl super::Navigator {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::mob) fn avoid_hazards(
         &mut self,
-        pos: Vec3,
+        pos: petramond_math::world_pos::WorldPos,
         yaw: f32,
         size: MobSize,
         wish: Vec3,
@@ -188,14 +203,18 @@ impl super::Navigator {
         let (delta, landing_y) = match waypoint {
             Some(wp) => {
                 let remaining =
-                    (Vec3::new(wp.x as f32 + 0.5, pos.y, wp.z as f32 + 0.5) - pos).length();
+                    (WorldPos::new(f64::from(wp.x) + 0.5, pos.y, f64::from(wp.z) + 0.5) - pos)
+                        .length();
                 let reach = super::STEER_LOOKAHEAD
                     .max(max_step)
                     .min(remaining.max(max_step));
                 let floor = wp - IVec3::Y;
                 (wish * reach, floor.y as f32 + super::floor_top(cur, floor))
             }
-            None => (wish * super::STEER_LOOKAHEAD.max(max_step), pos.y - 1.0),
+            None => (
+                wish * super::STEER_LOOKAHEAD.max(max_step),
+                (pos.y - 1.0) as f32,
+            ),
         };
         let entering = body_boxes(pos, yaw, size).any(|(min, max)| {
             segment_enters_hazard(cur, pos, min, max, delta, landing_y, tolerated)
@@ -214,20 +233,24 @@ impl super::Navigator {
 /// hazard cells, or more overlap with one it already overhangs.
 fn segment_enters_hazard(
     cur: &SectionCursor<'_>,
-    pos: Vec3,
-    min: Vec3,
-    max: Vec3,
+    pos: WorldPos,
+    min: [f64; 3],
+    max: [f64; 3],
     delta: Vec3,
     landing_y: f32,
     tolerated: &[Block],
 ) -> bool {
-    let height = max.y - min.y;
-    let mut sweep_min = min.min(min + delta);
-    let mut sweep_max = max.max(max + delta);
+    let height = max[1] - min[1];
+    let delta = delta.to_array().map(f64::from);
+    let moved_min: [f64; 3] = std::array::from_fn(|i| min[i] + delta[i]);
+    let moved_max: [f64; 3] = std::array::from_fn(|i| max[i] + delta[i]);
+    let mut sweep_min: [f64; 3] = std::array::from_fn(|i| min[i].min(moved_min[i]));
+    let mut sweep_max: [f64; 3] = std::array::from_fn(|i| max[i].max(moved_max[i]));
     // A fluid surface is navigable footing, but can be unsafe, so the landing
     // column counts; so does the headroom a jump rises through.
-    sweep_min.y = pos.y.min(landing_y) - 2.0 * EPS;
-    sweep_max.y = sweep_max.y.max(landing_y + height);
+    let landing = f64::from(landing_y);
+    sweep_min[1] = pos.y.min(landing) - 2.0 * EPS;
+    sweep_max[1] = sweep_max[1].max(landing + height);
     any_cell(sweep_min, sweep_max, |c| {
         if !hazardous(cur.physics_block(c), tolerated) {
             return false;
@@ -235,12 +258,13 @@ fn segment_enters_hazard(
         // Climbing ashore can ground the leading edge while the rest of the
         // body still overhangs the pool. Permit clearing that overlap, but
         // never increasing it or sweeping into another hazardous cell.
-        let before = if c.y as f32 >= max.y || (c.y + 1) as f32 <= pos.y - 2.0 * EPS {
+        let before = if f64::from(c.y) >= max[1] || f64::from(c.y + 1) <= pos.y - 2.0 * EPS {
             0.0
         } else {
             horizontal_overlap(min, max, c)
         };
-        before <= EPS || horizontal_overlap(min + delta, max + delta, c) > before + EPS
+        let eps = EPS as f32;
+        before <= eps || horizontal_overlap(moved_min, moved_max, c) > before + eps
     })
 }
 

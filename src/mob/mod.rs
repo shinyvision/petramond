@@ -62,7 +62,6 @@ pub use spawn::{
 use petramond_world::fluid::Buoyancy;
 use std::sync::LazyLock;
 
-use petramond_math::math::Vec3;
 use petramond_world::bbmodel::Model;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
@@ -630,7 +629,7 @@ pub struct ShearSpec {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedMob {
     pub kind: Mob,
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
     /// Engine- and mod-owned tags attached to this mob instance. The engine
     /// reserves the `petramond:` namespace (e.g., `petramond:confined`).
@@ -843,17 +842,13 @@ pub enum MobCollision {
 /// instances and the client's interpolated rows produce identical geometry.
 pub fn solid_boxes(
     id: u64,
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     yaw: f32,
     size: MobSize,
     out: &mut Vec<petramond_world::collision::DynBox>,
 ) {
     for (min, max) in body_boxes(pos, yaw, size) {
-        out.push(petramond_world::collision::DynBox {
-            id,
-            min: min.to_array(),
-            max: max.to_array(),
-        });
+        out.push(petramond_world::collision::DynBox { id, min, max });
     }
 }
 

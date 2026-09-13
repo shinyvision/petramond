@@ -2,6 +2,7 @@ use super::*;
 use crate::entity::fluid_fixture::{self, FLOOR_Y};
 use crate::events::{with_sessions_scope, PostQueue, SessionPlayerRef, SimCtx};
 use mod_api::{ConditionId, EntityRef, HostRet, PlayerId};
+use petramond_math::world_pos::WorldPos;
 
 fn run_with_other(sim: &mut Sim, other: &mut Player) {
     let mut other_gui = petramond_world::gui_state::empty_gui_state();
@@ -25,10 +26,10 @@ fn a_guest_applies_and_cools_a_condition_on_the_addressed_player_and_mob() {
     let strongest = (def.stages.len() - 1) as u8;
     let condition = ConditionId(burning.0);
     let mut sim = Sim::new();
-    let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
+    let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
     let mob = sim
         .world
-        .spawn_mob(crate::mob::Mob::Owl, Vec3::new(8.0, 80.0, 0.0), 0.0)
+        .spawn_mob(crate::mob::Mob::Owl, WorldPos::new(8.0, 80.0, 0.0), 0.0)
         .unwrap();
     let mut host = ModHost::from_instances(vec![calling_guest(
         "condition_test",
@@ -115,11 +116,11 @@ fn doused_grant_inner() {
     let hot = petramond_world::condition::by_name(HOT).unwrap();
     let douse = fluid_fixture::block(DOUSE);
     let mut world = fluid_fixture::pool(douse, FLOOR_Y + 2);
-    let feet = Vec3::new(8.5, FLOOR_Y as f32, 8.5);
+    let feet = WorldPos::new(8.5, FLOOR_Y as f64, 8.5);
     let mob = world.spawn_mob(crate::mob::Mob::Sheep, feet, 0.0).unwrap();
     let mut store = super::super::host::ModStoreData::new("condfix", 1);
     let mut grant = |world: &mut World| {
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let (mut feed, mut queue) = (TickEvents::default(), PostQueue::default());
         let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {

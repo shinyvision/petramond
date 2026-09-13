@@ -9,7 +9,7 @@ fn sneaking_halves_land_speed_and_overrides_sprint() {
         sprint: false,
         sneak: true,
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..120 {
         pl.update_core(1.0 / 60.0, &solid, sneak_walk);
     }
@@ -24,7 +24,7 @@ fn sneaking_halves_land_speed_and_overrides_sprint() {
         sprint: true,
         ..sneak_walk
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..120 {
         pl.update_core(1.0 / 60.0, &solid, both);
     }
@@ -45,14 +45,14 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
         sprint: false,
         sneak: true,
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
         pl.update_core(1.0 / 60.0, &solid, sneak_walk);
     }
     assert!(pl.on_ground, "the sneaker never leaves the plateau");
     assert_eq!(pl.pos.y, 1.0, "feet stay on the plateau top");
     assert!(
-        pl.pos.x < 1.0 + HALF_W,
+        pl.pos.x < f64::from(1.0 + HALF_W),
         "stopped hanging at the lip, not past it: x={}",
         pl.pos.x
     );
@@ -62,7 +62,7 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
         sneak: false,
         ..sneak_walk
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
         pl.update_core(1.0 / 60.0, &solid, plain);
     }
@@ -73,12 +73,12 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
         jump: true,
         ..sneak_walk
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
         pl.update_core(1.0 / 60.0, &solid, hop);
     }
     assert!(
-        pl.pos.x > 1.0 + HALF_W,
+        pl.pos.x > f64::from(1.0 + HALF_W),
         "a sneak jump still leaves the plateau: x={}",
         pl.pos.x
     );
@@ -108,7 +108,7 @@ fn sneaking_still_steps_down_a_half_block() {
         sprint: false,
         sneak: true,
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
         pl.simulate(1.0 / 60.0, &Surroundings::dry(&step_down), sneak_walk);
     }
@@ -159,12 +159,12 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
         sprint: false,
         sneak: true,
     };
-    let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     let mut min_y = f32::MAX;
     let mut airborne_frames = 0;
     for i in 0..600 {
         pl.simulate(1.0 / 60.0, &Surroundings::dry(&world), diag);
-        min_y = min_y.min(pl.pos.y);
+        min_y = min_y.min(pl.pos.y as f32);
         // Skip the first frames: a fresh Player spawns with on_ground unset.
         if i > 2 && !pl.on_ground {
             airborne_frames += 1;
@@ -184,7 +184,7 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
         pl.pos.y
     );
     assert!(
-        pl.pos.x < 2.0 + HALF_W,
+        pl.pos.x < f64::from(2.0 + HALF_W),
         "hangs at the strip's far lip, never past it: x={}",
         pl.pos.x
     );

@@ -89,9 +89,12 @@ impl SelectionBoxes {
     }
 }
 
+/// A selection outline, anchored at an integer cell: every variant's geometry
+/// is local to `origin`, so the outline stays exact however far out it is.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SelectionShape {
     Box {
+        origin: IVec3,
         min: Vec3,
         max: Vec3,
     },
@@ -104,9 +107,10 @@ pub enum SelectionShape {
         origin: IVec3,
         transform: Mat4,
     },
-    /// A shape made from a small fixed list of world-space boxes. Used for stairs so
-    /// the outline traces the solid stair volume instead of a full block cube.
+    /// A shape made from a small fixed list of boxes local to `origin`. Used for
+    /// stairs so the outline traces the solid stair volume instead of a full block cube.
     Boxes {
+        origin: IVec3,
         boxes: SelectionBoxes,
     },
 }
@@ -114,12 +118,9 @@ pub enum SelectionShape {
 impl SelectionShape {
     pub fn full_block(block: IVec3) -> Self {
         Self::Box {
-            min: Vec3::new(block.x as f32, block.y as f32, block.z as f32),
-            max: Vec3::new(
-                block.x as f32 + 1.0,
-                block.y as f32 + 1.0,
-                block.z as f32 + 1.0,
-            ),
+            origin: block,
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
         }
     }
 }

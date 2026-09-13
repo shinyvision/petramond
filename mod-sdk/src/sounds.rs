@@ -10,7 +10,7 @@ use crate::__rt::host_fn;
 host_fn! {
     /// Play a sound by `sounds.json` key. `pos` attenuates by the sound row's
     /// `attenuation_distance`; `None` plays at full volume. `false` = unknown key.
-    pub fn emit_sound(key: &str, pos: Option<[f32; 3]>) -> bool
+    pub fn emit_sound(key: &str, pos: Option<[f64; 3]>) -> bool
         => EmitSound { key: key.into(), pos } => Bool
 }
 
@@ -18,7 +18,7 @@ host_fn! {
     /// Start a spatial sound at a fixed world position. Returns a deterministic
     /// session handle, or `0` if the key/parameters were rejected. Travel distance
     /// comes from the sound row's `attenuation_distance`.
-    pub fn sound_play_at(key: &str, pos: [f32; 3], volume: f32, pitch: f32) -> u64
+    pub fn sound_play_at(key: &str, pos: [f64; 3], volume: f32, pitch: f32) -> u64
         => SoundPlayAt { key: key.into(), pos, volume, pitch } => U64
 }
 

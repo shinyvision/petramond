@@ -468,6 +468,7 @@ fn remap_block_cube(cube: &mut SectionBlocks, f: impl Fn(u16) -> u16) {
 mod tests {
     use super::*;
     use petramond_math::math::IVec3;
+    use petramond_math::world_pos::WorldPos;
 
     /// A two-layer slab state: a meta byte plus two two-byte BLOCK IDS — the
     /// only engine shape carrying id-masked bytes, and therefore the guard
@@ -686,7 +687,7 @@ mod tests {
         let mob_row = |kind_id: u8| MobStateRow {
             id: kind_id as u64,
             kind_id,
-            pos: petramond_math::math::Vec3::ZERO,
+            pos: WorldPos::ZERO,
             yaw: 0.0,
             tilt: petramond_math::math::Tilt::LEVEL,
             anim_time: 0.0,
@@ -707,7 +708,7 @@ mod tests {
             item_id,
             count: 1,
             data: None,
-            pos: petramond_math::math::Vec3::ZERO,
+            pos: WorldPos::ZERO,
             spin: 0.0,
             flight: None,
         };
@@ -715,7 +716,7 @@ mod tests {
             conditions: Vec::new(),
             id: crate::player::PlayerId(1),
             transform: crate::net::protocol::Transform {
-                pos: petramond_math::math::Vec3::ZERO,
+                pos: WorldPos::ZERO,
                 vel: petramond_math::math::Vec3::ZERO,
                 yaw: 0.0,
                 pitch: 0.0,

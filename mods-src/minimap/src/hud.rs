@@ -18,8 +18,8 @@ const HUD_PLAYER_ARROW_HEIGHT: usize = 22;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct HudStamp {
     yaw: u32,
-    x: u32,
-    z: u32,
+    x: u64,
+    z: u64,
     explored: u64,
     waypoints: u64,
 }
@@ -51,10 +51,10 @@ impl Minimap {
                     if radius <= HUD_TERRAIN_RADIUS {
                         let up = -sy * HUD_BLOCKS_PER_PIXEL;
                         let side = sx * HUD_BLOCKS_PER_PIXEL;
-                        let wx =
-                            (self.player[0] + side * right[0] + up * forward[0]).floor() as i32;
-                        let wz =
-                            (self.player[2] + side * right[1] + up * forward[1]).floor() as i32;
+                        let wx = (self.player[0] + f64::from(side * right[0] + up * forward[0]))
+                            .floor() as i32;
+                        let wz = (self.player[2] + f64::from(side * right[1] + up * forward[1]))
+                            .floor() as i32;
                         set_pixel(
                             &mut rgba,
                             HUD_SIZE,
@@ -102,8 +102,8 @@ impl Minimap {
                 (waypoint.pos, waypoint.color, waypoint.name.chars().next())
             };
             let delta = [
-                pos[0] as f32 + 0.5 - self.player[0],
-                pos[2] as f32 + 0.5 - self.player[2],
+                (f64::from(pos[0]) + 0.5 - self.player[0]) as f32,
+                (f64::from(pos[2]) + 0.5 - self.player[2]) as f32,
             ];
             let sx = (delta[0] * right[0] + delta[1] * right[1]) / HUD_BLOCKS_PER_PIXEL;
             let sy = -(delta[0] * forward[0] + delta[1] * forward[1]) / HUD_BLOCKS_PER_PIXEL;

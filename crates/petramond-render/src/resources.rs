@@ -10,7 +10,7 @@ mod quad_index;
 mod textures;
 
 use super::geometry_arena::{GeometryArena, LayerAlloc};
-pub(crate) use column_origins::{ColumnOriginSlot, ColumnOrigins};
+pub(crate) use column_origins::{ColumnOriginSlot, ColumnOrigins, COLUMN_ORIGIN_LAYOUT};
 pub(crate) use incremental::TerrainUploadBatch;
 use patch::{section_index_hash, try_patch_column_verts};
 use petramond_mesh::{ChunkMesh, ContactShadowVertex, ModelVertex, TerrainVertex, Vertex};
@@ -245,18 +245,9 @@ fn append_indexed_layer<V: Copy>(
 /// the vertices travel, and the draw reads the shared quad index buffer with
 /// the section's vertex start as `base_vertex`. Returns
 /// `(vertex_start, vertex_count)`.
-fn append_quad_layer(
-    verts: &mut Vec<TerrainVertex>,
-    src_verts: &[Vertex],
-    col_ox: i32,
-    col_oz: i32,
-) -> (u32, u32) {
+fn append_quad_layer(verts: &mut Vec<TerrainVertex>, src_verts: &[Vertex]) -> (u32, u32) {
     let vertex_start = verts.len() as u32;
-    verts.extend(
-        src_verts
-            .iter()
-            .map(|v| TerrainVertex::from_world(v, col_ox, col_oz)),
-    );
+    verts.extend(src_verts.iter().map(TerrainVertex::from_mesh));
     (vertex_start, src_verts.len() as u32)
 }
 
@@ -302,19 +293,17 @@ pub(super) fn upload_column_mesh(
 
     for &(sp, mesh) in meshes {
         let (opaque_vertex_start, opaque_vertex_count) =
-            append_quad_layer(&mut scratch.opaque, &mesh.opaque, col_ox, col_oz);
+            append_quad_layer(&mut scratch.opaque, &mesh.opaque);
         let (far_opaque_vertex_start, far_opaque_vertex_count) =
-            append_quad_layer(&mut scratch.far_opaque, &mesh.far_opaque, col_ox, col_oz);
+            append_quad_layer(&mut scratch.far_opaque, &mesh.far_opaque);
         let (transparent_vertex_start, transparent_vertex_count) =
-            append_quad_layer(&mut scratch.transparent, &mesh.transparent, col_ox, col_oz);
+            append_quad_layer(&mut scratch.transparent, &mesh.transparent);
         let (transparent_ts_vertex_start, transparent_ts_vertex_count) = append_quad_layer(
             &mut scratch.transparent_two_sided,
             &mesh.transparent_two_sided,
-            col_ox,
-            col_oz,
         );
         let (translucent_vertex_start, translucent_vertex_count) =
-            append_quad_layer(&mut scratch.translucent, &mesh.translucent, col_ox, col_oz);
+            append_quad_layer(&mut scratch.translucent, &mesh.translucent);
         let (model_index_start, model_idx_count, model_vertex_start, model_vertex_count) =
             append_indexed_layer(
                 &mut scratch.model,

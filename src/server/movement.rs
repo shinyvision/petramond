@@ -279,17 +279,18 @@ pub fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -> bool 
 /// the authoritative body holds still; the client's claims (which gate on its
 /// own replica the same way) take over the moment terrain is real.
 fn body_terrain_final(player: &crate::player::Player, world: &crate::world::World) -> bool {
+    let (hw, height) = (f64::from(player::HALF_W), f64::from(player::HEIGHT));
     let (x0, x1) = (
-        (player.pos.x - player::HALF_W).floor() as i32,
-        (player.pos.x + player::HALF_W).floor() as i32,
+        (player.pos.x - hw).floor() as i32,
+        (player.pos.x + hw).floor() as i32,
     );
     let (z0, z1) = (
-        (player.pos.z - player::HALF_W).floor() as i32,
-        (player.pos.z + player::HALF_W).floor() as i32,
+        (player.pos.z - hw).floor() as i32,
+        (player.pos.z + hw).floor() as i32,
     );
     let (y0, y1) = (
         (player.pos.y - 1.0).floor() as i32,
-        (player.pos.y + player::HEIGHT).floor() as i32,
+        (player.pos.y + height).floor() as i32,
     );
     for y in y0..=y1 {
         for z in z0..=z1 {
@@ -310,7 +311,9 @@ fn body_terrain_final(player: &crate::player::Player, world: &crate::world::Worl
 /// and a `SelfTransform` correction is in flight), so reach never tightens
 /// for real clients — but a fabricated far-away claim no longer grants
 /// remote reach over mining, placement, and interaction.
-pub fn reach_eye(sess: &crate::server::player::ConnectedPlayer) -> Vec3 {
+pub fn reach_eye(
+    sess: &crate::server::player::ConnectedPlayer,
+) -> petramond_math::world_pos::WorldPos {
     let delta = sess.claim_pos - sess.player.pos;
     let base = if claim_within_drift(sess.player.is_spectator(), sess.ticks_since_claim, delta) {
         sess.claim_pos
@@ -332,7 +335,7 @@ pub fn vel_correction_eps(gap_ticks: u32) -> f32 {
 /// than [`PENETRATION_TOL`] — the anti-noclip check, over every cell the
 /// player AABB spans.
 fn claim_not_deeply_penetrating(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     world: &crate::world::World,
     obstacles: &[petramond_world::collision::DynBox],
     spectator: bool,
@@ -340,20 +343,14 @@ fn claim_not_deeply_penetrating(
     if spectator {
         return true;
     }
-    let min = Vec3::new(
-        pos.x - player::HALF_W + PENETRATION_TOL,
-        pos.y + PENETRATION_TOL,
-        pos.z - player::HALF_W + PENETRATION_TOL,
-    );
-    let max = Vec3::new(
-        pos.x + player::HALF_W - PENETRATION_TOL,
-        pos.y + player::HEIGHT - PENETRATION_TOL,
-        pos.z + player::HALF_W - PENETRATION_TOL,
-    );
+    let (hw, height) = (f64::from(player::HALF_W), f64::from(player::HEIGHT));
+    let tol = f64::from(PENETRATION_TOL);
+    let min = [pos.x - hw + tol, pos.y + tol, pos.z - hw + tol];
+    let max = [pos.x + hw - tol, pos.y + height - tol, pos.z + hw - tol];
     !aabb_hits_collision(world, min, max)
         && !petramond_world::collision::aabb_hits_dynamic(
-            min.to_array(),
-            max.to_array(),
+            min,
+            max,
             obstacles,
             petramond_world::collision::NOT_AN_ENTITY,
         )
@@ -370,24 +367,21 @@ const GROUND_PROBE_UP: f32 = 0.05;
 /// verification behind an accepted claim's `on_ground` flag (fall
 /// measurement only; the flag itself is still adopted for physics).
 fn feet_supported(
-    pos: Vec3,
+    pos: petramond_math::world_pos::WorldPos,
     world: &crate::world::World,
     obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
-    let min = Vec3::new(
-        pos.x - player::HALF_W,
-        pos.y - GROUND_PROBE_DEPTH,
-        pos.z - player::HALF_W,
-    );
-    let max = Vec3::new(
-        pos.x + player::HALF_W,
-        pos.y + GROUND_PROBE_UP,
-        pos.z + player::HALF_W,
-    );
+    let hw = f64::from(player::HALF_W);
+    let min = [
+        pos.x - hw,
+        pos.y - f64::from(GROUND_PROBE_DEPTH),
+        pos.z - hw,
+    ];
+    let max = [pos.x + hw, pos.y + f64::from(GROUND_PROBE_UP), pos.z + hw];
     aabb_hits_collision(world, min, max)
         || petramond_world::collision::aabb_hits_dynamic(
-            min.to_array(),
-            max.to_array(),
+            min,
+            max,
             obstacles,
             petramond_world::collision::NOT_AN_ENTITY,
         )
@@ -395,8 +389,8 @@ fn feet_supported(
 
 /// Whether the world AABB `[min, max]` overlaps any collision box of any cell
 /// it spans.
-pub fn aabb_hits_collision(world: &crate::world::World, min: Vec3, max: Vec3) -> bool {
-    petramond_world::collision::aabb_hits_cells(min.to_array(), max.to_array(), |x, y, z| {
+pub fn aabb_hits_collision(world: &crate::world::World, min: [f64; 3], max: [f64; 3]) -> bool {
+    petramond_world::collision::aabb_hits_cells(min, max, |x, y, z| {
         world.collision_boxes_at(x, y, z)
     })
 }

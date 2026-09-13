@@ -211,9 +211,10 @@ pub fn storm(clock_ticks: u64, seed: u32) -> f32 {
 /// One cloud sheet: epoch-morphed fbm remapped by the storm bias to a
 /// [0, 1] coverage. `salt` separates the sheet's hash stream, `advect`
 /// scales the wind offset (INTEGER multiples only — wrap-exactness).
-fn sheet(x: f32, z: f32, p: &FieldParams, salt: u32, feature: f32, advect: f32) -> f32 {
-    let qx = x.rem_euclid(WRAP) / feature;
-    let qz = z.rem_euclid(WRAP) / feature;
+fn sheet(x: f64, z: f64, p: &FieldParams, salt: u32, feature: f32, advect: f32) -> f32 {
+    // Wrapped in f64: an f32 world coordinate is too coarse far out.
+    let qx = x.rem_euclid(f64::from(WRAP)) as f32 / feature;
+    let qz = z.rem_euclid(f64::from(WRAP)) as f32 / feature;
     let ox = advect * p.off[0] / feature;
     let oz = advect * p.off[1] / feature;
     let seed_a = p.seed ^ fmix32(p.epoch) ^ salt;
@@ -235,7 +236,7 @@ fn sheet(x: f32, z: f32, p: &FieldParams, salt: u32, feature: f32, advect: f32) 
 /// where the sheets slide into alignment the sum climbs through the rain
 /// band into storm — fronts FORM by convergence and dissolve again, instead
 /// of one static pattern deciding the weather (rebalance 2026-07-17).
-pub fn coverage(x: f32, z: f32, p: &FieldParams) -> f32 {
+pub fn coverage(x: f64, z: f64, p: &FieldParams) -> f32 {
     let ca = sheet(x, z, p, 0, FEATURE_SIZE, 1.0);
     let cb = sheet(x, z, p, SHEET_B_SALT, SHEET_B_FEATURE, SHEET_B_ADVECT);
     saturate(ca + cb)
@@ -249,7 +250,7 @@ pub fn rain_from_coverage(cov: f32) -> f32 {
 }
 
 /// Convenience: rain intensity at world xz.
-pub fn rain(x: f32, z: f32, p: &FieldParams) -> f32 {
+pub fn rain(x: f64, z: f64, p: &FieldParams) -> f32 {
     rain_from_coverage(coverage(x, z, p))
 }
 
@@ -389,8 +390,8 @@ mod tests {
     fn coverage_and_rain_stay_in_unit_range() {
         let p = params([123.4, 9876.5], 0.6);
         for i in 0..500 {
-            let x = (i as f32) * 731.7 - 100_000.0;
-            let z = (i as f32) * -211.3 + 5_000.0;
+            let x = (i as f64) * 731.7 - 100_000.0;
+            let z = (i as f64) * -211.3 + 5_000.0;
             let c = coverage(x, z, &p);
             assert!((0.0..=1.0).contains(&c), "coverage {c} at {x},{z}");
             let r = rain_from_coverage(c);
@@ -410,10 +411,10 @@ mod tests {
     fn field_is_periodic_in_wrap() {
         let p = params([777.0, 3333.0], 0.55);
         for i in 0..64 {
-            let x = i as f32 * 917.3;
-            let z = i as f32 * 391.9;
+            let x = i as f64 * 917.3;
+            let z = i as f64 * 391.9;
             let a = coverage(x, z, &p);
-            let b = coverage(x + WRAP, z - 2.0 * WRAP, &p);
+            let b = coverage(x + f64::from(WRAP), z - 2.0 * f64::from(WRAP), &p);
             assert!((a - b).abs() < 1e-4, "period broken at {x},{z}: {a} vs {b}");
         }
     }
@@ -432,8 +433,8 @@ mod tests {
         shifted.off = [base.off[0] + 37.0, base.off[1] + 61.0];
         let mut moved = 0;
         for i in 0..64 {
-            let x = i as f32 * 137.0;
-            let z = i as f32 * 89.0;
+            let x = i as f64 * 137.0;
+            let z = i as f64 * 89.0;
             let a = coverage(x, z, &base);
             assert!(
                 (a - coverage(x, z, &wrapped)).abs() < 1e-4,
@@ -451,9 +452,9 @@ mod tests {
         let p = params([0.0, 0.0], 0.6);
         // Walk across several base-lattice boundaries in small steps; the
         // field must never jump more than the local slope allows.
-        let mut prev = coverage(FEATURE_SIZE - 2.0, 100.0, &p);
-        let mut x = FEATURE_SIZE - 2.0;
-        while x < FEATURE_SIZE + 2.0 {
+        let mut prev = coverage(f64::from(FEATURE_SIZE) - 2.0, 100.0, &p);
+        let mut x = f64::from(FEATURE_SIZE) - 2.0;
+        while x < f64::from(FEATURE_SIZE) + 2.0 {
             x += 0.05;
             let c = coverage(x, 100.0, &p);
             assert!(
@@ -470,8 +471,8 @@ mod tests {
         let stormy = params([50.0, 60.0], 0.74);
         let mut widened = 0;
         for i in 0..200 {
-            let x = i as f32 * 419.1;
-            let z = i as f32 * 267.7;
+            let x = i as f64 * 419.1;
+            let z = i as f64 * 267.7;
             let a = coverage(x, z, &calm);
             let b = coverage(x, z, &stormy);
             assert!(b >= a - 1e-6, "storm bias must never shrink coverage");
@@ -510,8 +511,8 @@ mod tests {
         b.epoch = 10;
         b.epoch_frac = 0.0;
         for i in 0..64 {
-            let x = i as f32 * 173.3;
-            let z = i as f32 * 91.7;
+            let x = i as f64 * 173.3;
+            let z = i as f64 * 91.7;
             let ca = coverage(x, z, &a);
             let cb = coverage(x, z, &b);
             assert!(

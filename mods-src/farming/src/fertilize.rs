@@ -142,7 +142,11 @@ fn apply(pos: [i32; 3], item: ItemId, action: Target) -> Outcome {
 }
 
 fn feedback(pos: [i32; 3], y: f32) {
-    let center = [pos[0] as f32 + 0.5, pos[1] as f32 + y, pos[2] as f32 + 0.5];
+    let center = [
+        pos[0] as f64 + 0.5,
+        pos[1] as f64 + f64::from(y),
+        pos[2] as f64 + 0.5,
+    ];
     emit_sound("farming:till", Some(center));
     emitter_burst("farming:fertilize_burst", center, 1.0);
 }

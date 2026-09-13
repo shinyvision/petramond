@@ -5,7 +5,7 @@ use super::common::{count_item, filled_inventory, game, game_on_empty_chunk};
 use super::pump_one_tick;
 use petramond::entity::DroppedItem;
 use petramond::events::tick::{TickEvents, TICK_DT};
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::gui_state::MenuSlot;
 use petramond_world::gui_state::PointerButton;
 use petramond_world::item::{ItemStack, ItemType};
@@ -35,7 +35,7 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
     let rev = |game: &super::common::TestGame| game.server.sessions[0].player.inventory.revision();
 
     // Pickup: an eligible drop at the body centre is collected in one tick.
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
     let mut drop = DroppedItem::new(
         game.server.sessions[0].player.body_center(),
         ItemStack::new(ItemType::Dirt, 2),
@@ -124,7 +124,9 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
         ));
     let remote = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            2.5, 64.0, 2.5,
+        )));
     game.server.sessions[0]
         .player
         .inventory
@@ -257,7 +259,9 @@ fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     let s1 = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            2.5, 64.0, 2.5,
+        )));
 
     let mut ev = TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
@@ -292,7 +296,9 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     let s1 = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            2.5, 64.0, 2.5,
+        )));
 
     // Session 1 right-clicked the chest (latched edge + look, as its
     // PlayerUpdate/UseClick messages would leave them).
@@ -471,7 +477,9 @@ fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
     game.set_mods_for_test(petramond::modding::ModHost::test_unit_guest_host("kitchen"));
     let remote = game
         .server
-        .add_session_for_test(petramond::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
+        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
+            2.5, 64.0, 2.5,
+        )));
     let kind = petramond_world::gui_state::intern_kind("kitchen:oven").expect("mod kind registers");
     let pos = petramond_math::math::IVec3::new(4, 64, 4);
 

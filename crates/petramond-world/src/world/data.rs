@@ -401,6 +401,10 @@ impl WorldData {
     /// unknown absent sections still read as air here so unloaded terrain does not become
     /// an invisible wall.
     pub fn physics_block(&self, wx: i32, wy: i32, wz: i32) -> Block {
+        // Beyond the border is a wall, whatever terrain streamed in there.
+        if !crate::border::contains_column(wx, wz) {
+            return Block::Stone;
+        }
         if let Some((section, lx, ly, lz)) = self.chunk_at_world(wx, wy, wz) {
             return section.block(lx, ly, lz);
         }

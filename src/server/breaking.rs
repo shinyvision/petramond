@@ -1,7 +1,7 @@
 use crate::entity::DroppedItem;
 use crate::events::{BlockBreakPre, Outcome, PostEvent};
 use crate::world::World;
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 use petramond_world::block::{Block, ShapeFamily};
 use petramond_world::item::ItemStack;
 use petramond_world::mining::{BreakEvent, MiningState};
@@ -578,7 +578,7 @@ impl ServerGame {
         (sky, blk): (u8, petramond_world::light::BlockLight6),
         carry_variant: petramond_world::item::VariantId,
     ) {
-        let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
+        let centre = petramond_math::world_pos::WorldPos::block_center(pos);
         for d in block.drop_spec().drops {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
             // Probabilistic drops (chance < 1, e.g. a leaf's 10% sapling) roll first;
@@ -622,7 +622,7 @@ impl ServerGame {
         if stack.is_empty() {
             return;
         }
-        let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
+        let centre = petramond_math::world_pos::WorldPos::block_center(pos);
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
         drop.skylight = sky;

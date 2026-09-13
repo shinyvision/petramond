@@ -15,17 +15,18 @@ use super::common::{game, TestGame};
 use crate::game::GameInput;
 use petramond::net::protocol::{SectionCacheClaim, SectionPayload, ServerToClient};
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 /// Wall-clock give-up bound for the pump loops (`TestGame` uses an inline
 /// pool, so waits are compute-bound; this is only a hard fail reporting cap).
 const DEADLINE: std::time::Duration = petramond_util::test_time::TEST_HARD_DEADLINE;
 
-const HOME: Vec3 = Vec3::new(8.5, 80.0, 8.5);
-const FAR: Vec3 = Vec3::new(328.5, 80.0, 328.5);
+const HOME: WorldPos = WorldPos::new(8.5, 80.0, 8.5);
+const FAR: WorldPos = WorldPos::new(328.5, 80.0, 328.5);
 const HOME_COLUMN: ChunkPos = ChunkPos { cx: 0, cz: 0 };
 
-fn place_player(game: &mut TestGame, feet: Vec3) {
+fn place_player(game: &mut TestGame, feet: WorldPos) {
     game.player.pos = feet;
     game.player.vel = Vec3::ZERO;
     game.server.sessions[0].player.pos = feet;

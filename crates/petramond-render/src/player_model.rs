@@ -86,12 +86,14 @@ pub(super) fn build_player_body(
     model: &Model,
     env: LightEnv,
     inst: &PlayerRenderInstance,
+    render_origin: glam::IVec3,
     bones: &[crate::BoneOffset],
     held: &crate::HeldItemView,
     off: &crate::HeldItemView,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> (u32, Mat4, Mat4) {
+    let pos = inst.pos.relative_to(render_origin);
     let (swing, swing_scale, eat, eat_bob) = (held.swing, held.swing_scale, held.eat, held.eat_bob);
     verts.clear();
     indices.clear();
@@ -108,7 +110,7 @@ pub(super) fn build_player_body(
     // head toward `body_yaw`, floated onto the mattress. Head-look and the arm
     // swing rest with it.
     if inst.sleeping {
-        let global = Mat4::from_translation(inst.pos + Vec3::new(0.0, LIE_LIFT, 0.0))
+        let global = Mat4::from_translation(pos + Vec3::new(0.0, LIE_LIFT, 0.0))
             * Mat4::from_rotation_y(inst.body_yaw)
             * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
             * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
@@ -248,7 +250,7 @@ pub(super) fn build_player_body(
     } else {
         Mat4::IDENTITY
     };
-    let global = Mat4::from_translation(inst.pos)
+    let global = Mat4::from_translation(pos)
         * Mat4::from_rotation_y(inst.body_yaw + std::f32::consts::PI)
         * lean
         * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));

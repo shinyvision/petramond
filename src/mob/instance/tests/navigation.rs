@@ -1,6 +1,7 @@
 use super::*;
 use crate::entity::fluid_fixture;
 use crate::mob::brain::AiBehavior;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, SectionPos};
 use petramond_world::section::Section;
@@ -43,10 +44,10 @@ fn a_walking_mob_detours_around_a_hazard_and_stops_when_it_cuts_off_the_route() 
         world.set_block_world(7, 63, z, syrup);
     }
     let goal = IVec3::new(13, 64, 8);
-    let mut mob = Instance::new(swimmer(), Vec3::new(2.5, 64.0, 8.5), 0.0, 1);
+    let mut mob = Instance::new(swimmer(), WorldPos::new(2.5, 64.0, 8.5), 0.0, 1);
     mob.brain = Brain::new().with_boxed(0, Box::new(Goal(goal)));
     let anchors = [PlayerAnchor {
-        pos: Vec3::new(8.5, 66.0, 8.5),
+        pos: WorldPos::new(8.5, 66.0, 8.5),
         ..Default::default()
     }];
     let mut regions = confined::RegionCache::default();
@@ -93,10 +94,10 @@ fn a_mob_in_a_hazard_keeps_swimming_until_it_reaches_the_shore() {
             world.set_block_world(x, 63, z, syrup);
         }
     }
-    let mut mob = Instance::new(swimmer(), Vec3::new(6.5, 63.4, 8.5), 0.0, 1);
+    let mut mob = Instance::new(swimmer(), WorldPos::new(6.5, 63.4, 8.5), 0.0, 1);
     mob.brain = Brain::new().with_boxed(0, Box::new(Goal(IVec3::new(13, 64, 8))));
     let anchors = [PlayerAnchor {
-        pos: Vec3::new(8.5, 66.0, 8.5),
+        pos: WorldPos::new(8.5, 66.0, 8.5),
         ..Default::default()
     }];
     let mut regions = confined::RegionCache::default();
@@ -132,8 +133,8 @@ fn shore_climb_inner() {
             let mut world = fluid_fixture::pool(fluid_fixture::block(name), TOP);
             fluid_fixture::bank(&mut world, BANK_X, TOP + rise);
             let stand_y = (TOP + rise + 1) as f32;
-            let ashore = |pos: Vec3, on_ground: bool| {
-                on_ground && pos.x > BANK_X as f32 && pos.y >= stand_y - 1e-3
+            let ashore = |pos: WorldPos, on_ground: bool| {
+                on_ground && pos.x > BANK_X as f64 && pos.y >= f64::from(stand_y - 1e-3)
             };
             let start = fluid_fixture::beside_bank(BANK_X, TOP);
 
@@ -141,7 +142,7 @@ fn shore_climb_inner() {
             let mut mob = Instance::new(dweller, start, 0.0, 1);
             mob.brain = Brain::new().with_boxed(0, Box::new(Goal(goal)));
             let anchors = [PlayerAnchor {
-                pos: Vec3::new(8.5, stand_y, 8.5),
+                pos: WorldPos::new(8.5, f64::from(stand_y), 8.5),
                 ..Default::default()
             }];
             let mut regions = confined::RegionCache::default();

@@ -200,7 +200,7 @@ impl Boats {
             {
                 return None;
             }
-            let feet = [c[0] as f32 + 0.5, c[1] as f32 + 0.9, c[2] as f32 + 0.5];
+            let feet = [c[0] as f64 + 0.5, c[1] as f64 + 0.9, c[2] as f64 + 0.5];
             spawn_mob_checked(BOAT_KEY, feet, yaw)
         });
         if spawned.is_none() {

@@ -1,7 +1,7 @@
 use super::worlds::delete_world_at;
 use super::*;
 use crate::player::Player;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::item::{ItemStack, ItemType};
 
@@ -49,7 +49,7 @@ fn save_reopen_roundtrips_section_level_entities() {
         section.set_fluid(3, 1, 7, Block::Water, 0x12);
         let mut snap = SectionSnapshot::from_section(&section);
         let mut drop = DroppedItem::new(
-            Vec3::new(80.5, 70.0, -39.5),
+            WorldPos::new(80.5, 70.0, -39.5),
             ItemStack::new(ItemType::Dirt, 9),
             1,
         );
@@ -66,7 +66,7 @@ fn save_reopen_roundtrips_section_level_entities() {
 
         // The player rides its own file, keyed by SANITIZED name — the
         // display name may contain anything.
-        let mut plr = Player::new(Vec3::new(80.0, 70.0, -40.0));
+        let mut plr = Player::new(WorldPos::new(80.0, 70.0, -40.0));
         plr.inventory.set_active(4);
         opened.save.save_player("Rachel S!", player::encode(&plr));
 
@@ -85,7 +85,7 @@ fn save_reopen_roundtrips_section_level_entities() {
             .load_player("Rachel S!")
             .and_then(|b| player::decode(&b))
             .expect("player file restored under the same (sanitized) name");
-        assert_eq!(restored.pos, Vec3::new(80.0, 70.0, -40.0));
+        assert_eq!(restored.pos, WorldPos::new(80.0, 70.0, -40.0));
         assert_eq!(restored.inventory.active_slot(), 4);
 
         assert!(opened.saved.contains(pos), "manifest sees saved section");
@@ -205,7 +205,7 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
     section.set_block(1, 0, 1, Block::Stone);
     let mut snap = SectionSnapshot::from_section(&section);
     snap.entities.push(DroppedItem::new(
-        Vec3::new(33.0, 65.0, -63.0),
+        WorldPos::new(33.0, 65.0, -63.0),
         ItemStack::new(ItemType::Dirt, 3),
         1,
     ));
@@ -259,7 +259,7 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
     let mut snap = SectionSnapshot::from_section(&section);
     snap.mobs.push(crate::mob::SavedMob {
         kind: crate::mob::Mob::Owl,
-        pos: Vec3::new(-100.5, 65.0, 56.5),
+        pos: WorldPos::new(-100.5, 65.0, 56.5),
         yaw: 0.5,
         tags: Default::default(),
     });

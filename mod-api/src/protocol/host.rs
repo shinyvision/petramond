@@ -172,7 +172,7 @@ pub enum HostCall {
     /// → [`HostRet::SpawnedMob`].
     SpawnMob {
         key: String,
-        pos: [f32; 3],
+        pos: [f64; 3],
         yaw: f32,
         checked: bool,
     },
@@ -181,7 +181,7 @@ pub enum HostCall {
     /// perturbed only by removals). Dead (ragdolling) mobs are excluded.
     /// → [`HostRet::Mobs`].
     MobsInRadius {
-        pos: [f32; 3],
+        pos: [f64; 3],
         radius: f32,
     },
     /// Damage the live mob `mob_id` through its global engine-owned i-frames
@@ -213,7 +213,7 @@ pub enum HostCall {
     DamageMob {
         mob_id: u64,
         amount: f32,
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
         feedback: Option<crate::events::MobDamageFeedback>,
         attacker: Option<EntityRef>,
     },
@@ -231,7 +231,7 @@ pub enum HostCall {
     SpawnItem {
         item: String,
         count: u8,
-        pos: [f32; 3],
+        pos: [f64; 3],
         data: Vec<(String, Vec<u8>)>,
     },
 
@@ -260,7 +260,7 @@ pub enum HostCall {
     DamagePlayer {
         player: PlayerId,
         amount: i32,
-        origin: Option<[f32; 3]>,
+        origin: Option<[f64; 3]>,
         attacker: Option<EntityRef>,
     },
     /// Add a knockback impulse to the player's velocity on the tick (spectator
@@ -289,7 +289,7 @@ pub enum HostCall {
     /// teleport can never land as fall damage. Non-finite components are
     /// rejected with [`HostRet::Error`]. → [`HostRet::Unit`].
     Teleport {
-        pos: [f32; 3],
+        pos: [f64; 3],
     },
 
     // --- sound ----------------------------------------------------------------
@@ -299,7 +299,7 @@ pub enum HostCall {
     /// plays at full volume. `false` = unknown key. → [`HostRet::Bool`].
     EmitSound {
         key: String,
-        pos: Option<[f32; 3]>,
+        pos: Option<[f64; 3]>,
     },
 
     // --- persistent KV --------------------------------------------------------
@@ -451,7 +451,7 @@ pub enum HostCall {
     /// → [`HostRet::U64`].
     SoundPlayAt {
         key: String,
-        pos: [f32; 3],
+        pos: [f64; 3],
         volume: f32,
         pitch: f32,
     },
@@ -638,7 +638,7 @@ pub enum HostCall {
     /// [`HostRet::Bool`] (`false` = unknown key or not a burst bundle).
     EmitterBurst {
         key: String,
-        pos: [f32; 3],
+        pos: [f64; 3],
         intensity: f32,
     },
 
@@ -1169,7 +1169,7 @@ pub enum HostCall {
     /// pose `0`, or a non-finite anchor/yaw. → [`HostRet::Bool`].
     PlayerPoseSet {
         player_id: PlayerId,
-        anchor: [f32; 3],
+        anchor: [f64; 3],
         yaw: f32,
         pose: u8,
     },
@@ -1751,7 +1751,7 @@ pub enum HostCall {
     /// an AI's sightline. `None` = nothing within `max`.
     /// → [`HostRet::Raycast`].
     Raycast {
-        from: [f32; 3],
+        from: [f64; 3],
         dir: [f32; 3],
         max: f32,
         filter: RayFilter,
@@ -1776,7 +1776,7 @@ pub enum HostCall {
     /// [`EventKind::ProjectileHit`]: crate::EventKind::ProjectileHit
     LaunchItem {
         item: String,
-        pos: [f32; 3],
+        pos: [f64; 3],
         vel: [f32; 3],
         owner: Option<EntityRef>,
         data: Vec<(String, Vec<u8>)>,
@@ -1878,7 +1878,7 @@ pub enum HostCall {
     /// [`MobDrive`]: Self::MobDrive
     MobKinematic {
         mob_id: u64,
-        pos: [f32; 3],
+        pos: [f64; 3],
         yaw: f32,
         pitch: f32,
         roll: f32,
@@ -1916,7 +1916,7 @@ pub enum HostCall {
     /// returns nothing. Radius must be finite and within `0..=64`.
     /// Frozen terrain is omitted. → [`HostRet::ItemEntities`].
     ItemEntitiesInRadius {
-        pos: [f32; 3],
+        pos: [f64; 3],
         radius: f32,
         limit: u32,
     },
@@ -2083,7 +2083,7 @@ pub enum HostRet {
     /// [`HostCall::MobsInRadius`] / [`HostCall::MobsWithTag`].
     Mobs(Vec<MobSnapshot>),
     /// [`HostCall::PlayerState`].
-    Player(PlayerSnapshot),
+    Player(Box<PlayerSnapshot>),
     /// The KV gets: `None` = key absent (or target unloaded/missing).
     Bytes(#[serde(with = "serde_bytes")] Option<Vec<u8>>),
     /// [`HostCall::MobTagGet`]: the lookup outcome — a missing mob is told
@@ -2167,7 +2167,7 @@ pub enum HostRet {
     Mob(Option<MobSnapshot>),
     /// [`HostCall::ItemEntity`]: the item entity's snapshot; `None` = no
     /// such live entity.
-    ItemEntity(Option<ItemEntityData>),
+    ItemEntity(Option<Box<ItemEntityData>>),
     /// [`HostCall::ClientCellKvAt`]: one value per requested cell, parallel
     /// to the request (`None` = absent / cell unknown).
     BytesMany(Vec<Option<Vec<u8>>>),
@@ -2188,7 +2188,7 @@ pub enum HostRet {
     SurfaceBiomes(#[serde(with = "serde_bytes")] Vec<u8>),
     /// [`HostCall::BlockLocalToWorld`]: one world point per requested point,
     /// in order. `None` = the addressed cell is unloaded or not stream-final.
-    Points(Option<Vec<[f32; 3]>>),
+    Points(Option<Vec<[f64; 3]>>),
     /// The batched WRITE replies ([`HostCall::SetBlockDraws`],
     /// [`HostCall::SetModelPartsMany`], [`HostCall::SectionKvSetMany`]):
     /// one flag per requested entry, in order, meaning exactly what the

@@ -31,7 +31,7 @@ pub use petramond_world::view_volume::{aabb_distance_sq, Frustum, ViewVolume};
 
 #[derive(Clone)]
 pub struct Camera {
-    pub pos: Vec3,
+    pub pos: petramond_math::world_pos::WorldPos,
     // Orientation mirrored from the player's look each frame — `player::Player`
     // owns the authoritative yaw/pitch (and the pitch clamp). Radians.
     pub yaw: f32,   // around +Y
@@ -43,7 +43,7 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(pos: Vec3, aspect: f32) -> Self {
+    pub fn new(pos: petramond_math::world_pos::WorldPos, aspect: f32) -> Self {
         Self {
             pos,
             // Overwritten each frame by the player's look (see the field docs);
@@ -79,9 +79,8 @@ impl Camera {
     /// camera-relative equivalent in the renderer instead.
     #[cfg(test)]
     pub fn view(&self) -> Mat4 {
-        let fwd = self.forward();
-        let target = self.pos + fwd;
-        Mat4::look_at_rh(self.pos, target, Vec3::Y)
+        let eye = self.pos.relative_to(glam::IVec3::ZERO);
+        Mat4::look_at_rh(eye, eye + self.forward(), Vec3::Y)
     }
 
     #[cfg(test)]
@@ -93,11 +92,12 @@ impl Camera {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_math::world_pos::WorldPos;
 
     #[test]
     fn frustum_keeps_front_culls_behind_and_sides() {
         // Camera at origin-ish, looking toward +Z (forward at yaw=0,pitch=0).
-        let mut cam = Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0);
+        let mut cam = Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0);
         cam.yaw = 0.0;
         cam.pitch = 0.0;
         let f = Frustum::from_view_proj(cam.view_proj());

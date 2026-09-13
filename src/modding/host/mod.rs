@@ -415,7 +415,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
     // by the prediction dispatch — never the sim query path below.
     if data.side == RuntimeSide::Client && matches!(call, HostCall::PlayerState) {
         return match super::client::scope::active_actor() {
-            Some(actor) => HostRet::Player(actor),
+            Some(actor) => HostRet::Player(Box::new(actor)),
             None => HostRet::Error(
                 "PlayerState on a client instance is available during prediction dispatches only"
                     .into(),

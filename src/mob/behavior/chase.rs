@@ -161,7 +161,10 @@ impl AiBehavior for ChasePlayerAi {
 /// over deep fluid). Reuses the pathfinder's foothold test so the emitted goal is
 /// always a cell `find_path` accepts. Shared by every chase-like node
 /// (`chase_player`, `chase_sound`, `retaliate`).
-pub(super) fn goal_cell_near(ctx: &AiCtx, pos: Vec3) -> Option<IVec3> {
+pub(super) fn goal_cell_near(
+    ctx: &AiCtx,
+    pos: petramond_math::world_pos::WorldPos,
+) -> Option<IVec3> {
     let cursor = ctx.world.cursor();
     let solid = super::super::nav::nav_solid_fn(&cursor);
     let support = super::super::nav::nav_support_fn(&cursor, ctx.half_width);
@@ -188,7 +191,7 @@ mod tests {
     use super::*;
     use crate::mob::MobRng;
     use crate::world::World;
-    use petramond_math::math::Vec3;
+    use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
@@ -204,7 +207,12 @@ mod tests {
         world
     }
 
-    fn ctx<'a>(world: &'a World, rng: &'a mut MobRng, pos: Vec3, player: Vec3) -> AiCtx<'a> {
+    fn ctx<'a>(
+        world: &'a World,
+        rng: &'a mut MobRng,
+        pos: WorldPos,
+        player: WorldPos,
+    ) -> AiCtx<'a> {
         let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
         c.half_width = 0.22;
         c.player_pos = player;
@@ -217,8 +225,8 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(10.0, 14.0);
         // Player 5 blocks away, standing on the floor (body centre at feet + 0.9).
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let player = Vec3::new(7.5, 64.9, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let player = WorldPos::new(7.5, 64.9, 2.5);
         let goal = ai
             .tick(&mut ctx(&world, &mut rng, mob, player))
             .goal
@@ -235,8 +243,8 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(4.0, 6.0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let player = Vec3::new(12.5, 64.9, 2.5); // 10 blocks: outside radius 4
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let player = WorldPos::new(12.5, 64.9, 2.5); // 10 blocks: outside radius 4
         assert_eq!(ai.tick(&mut ctx(&world, &mut rng, mob, player)).goal, None);
     }
 
@@ -245,16 +253,16 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(4.0, 9.0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
 
         // Engage inside `radius`...
-        let near = Vec3::new(5.5, 64.9, 2.5); // 3 blocks
+        let near = WorldPos::new(5.5, 64.9, 2.5); // 3 blocks
         assert!(ai
             .tick(&mut ctx(&world, &mut rng, mob, near))
             .goal
             .is_some());
         // ...keep chasing in the hysteresis band (past radius, short of give_up)...
-        let band = Vec3::new(9.5, 64.9, 2.5); // 7 blocks
+        let band = WorldPos::new(9.5, 64.9, 2.5); // 7 blocks
         assert!(
             ai.tick(&mut ctx(&world, &mut rng, mob, band))
                 .goal
@@ -262,7 +270,7 @@ mod tests {
             "an engaged chase persists inside the give_up band"
         );
         // ...and break it past `give_up_radius`.
-        let far = Vec3::new(13.5, 64.9, 2.5); // 11 blocks
+        let far = WorldPos::new(13.5, 64.9, 2.5); // 11 blocks
         assert_eq!(ai.tick(&mut ctx(&world, &mut rng, mob, far)).goal, None);
         // Back in the band WITHOUT re-entering `radius`: no re-engage (hysteresis).
         assert_eq!(
@@ -277,9 +285,9 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(30.0, 40.0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
         // Player floating far above the floor: no foothold within the scan.
-        let airborne = Vec3::new(7.5, 80.0, 2.5);
+        let airborne = WorldPos::new(7.5, 80.0, 2.5);
         assert_eq!(
             ai.tick(&mut ctx(&world, &mut rng, mob, airborne)).goal,
             None,
@@ -292,8 +300,8 @@ mod tests {
         let mut world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(10.0, 14.0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
-        let player = Vec3::new(7.5, 64.9, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
+        let player = WorldPos::new(7.5, 64.9, 2.5);
 
         // A colliding wall (leaves — sight is collision, not opacity) between them.
         for y in 64..=66 {
@@ -338,9 +346,9 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::with_sneak_penalty(10.0, 14.0, 5.0);
-        let mob = Vec3::new(2.5, 64.0, 2.5);
+        let mob = WorldPos::new(2.5, 64.0, 2.5);
         // 7 blocks away: inside the normal radius (10), outside the sneaking one (5).
-        let player = Vec3::new(9.5, 64.9, 2.5);
+        let player = WorldPos::new(9.5, 64.9, 2.5);
 
         let mut c = ctx(&world, &mut rng, mob, player);
         c.player_sneaking = true;
@@ -366,7 +374,7 @@ mod tests {
 
         // A sneaking player inside the shrunk radius is still detected.
         let mut ai = ChasePlayerAi::with_sneak_penalty(10.0, 14.0, 5.0);
-        let near = Vec3::new(6.5, 64.9, 2.5); // 4 blocks < 10 - 5
+        let near = WorldPos::new(6.5, 64.9, 2.5); // 4 blocks < 10 - 5
         let mut c = ctx(&world, &mut rng, mob, near);
         c.player_sneaking = true;
         assert!(ai.tick(&mut c).goal.is_some());

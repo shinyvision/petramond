@@ -88,7 +88,7 @@ impl ServerGame {
         s: usize,
         amount: i32,
         source: DamageSource,
-        origin: Option<petramond_math::math::Vec3>,
+        origin: Option<petramond_math::world_pos::WorldPos>,
         events: &mut TickEvents,
     ) -> bool {
         self.damage_player_through_funnel(s, amount, source, origin, Immunity::PLAYER, events)
@@ -115,7 +115,7 @@ impl ServerGame {
         s: usize,
         amount: i32,
         source: DamageSource,
-        origin: Option<petramond_math::math::Vec3>,
+        origin: Option<petramond_math::world_pos::WorldPos>,
         immunity: Immunity,
         events: &mut TickEvents,
     ) -> bool {

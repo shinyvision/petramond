@@ -8,7 +8,8 @@ use petramond::events::tick::TickEvents;
 use petramond::mob::Mob;
 use petramond::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, TargetRef};
 use petramond::server::health::fall_damage_health;
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::gui_state::MenuSlot;
 use petramond_world::item::{ItemStack, ItemType};
@@ -44,9 +45,9 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     // Player standing at (8, 64, 8); a target within reach latches. The
     // session anchors at the claim — the reach eye is bounded by the F1
     // drift ring of the server's own integration.
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
     let mut u = common::player_update(&game, true);
-    u.transform.pos = Vec3::new(8.5, 64.0, 8.5);
+    u.transform.pos = WorldPos::new(8.5, 64.0, 8.5);
     u.target = Some(TargetRef {
         block: IVec3::new(8, 63, 8),
         normal: IVec3::Y,
@@ -58,9 +59,9 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     );
 
     // The same target reported from far away is silently dropped...
-    game.server.sessions[0].player.pos = Vec3::new(20.0, 64.0, 20.0);
+    game.server.sessions[0].player.pos = WorldPos::new(20.0, 64.0, 20.0);
     let mut far = common::player_update(&game, true);
-    far.transform.pos = Vec3::new(20.0, 64.0, 20.0);
+    far.transform.pos = WorldPos::new(20.0, 64.0, 20.0);
     far.target = Some(TargetRef {
         block: IVec3::new(8, 63, 8),
         normal: IVec3::Y,
@@ -122,14 +123,14 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     game.server.world.set_block_world(8, 79, 8, Block::Stone);
     game.server.world.set_block_world(9, 69, 8, Block::Stone);
     game.server.world.set_block_world(10, 69, 8, Block::Stone);
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 80.0, 8.5);
     let h0 = game.server.sessions[0].player.health();
 
     // Grounded on the ledge at y=80, a step off the edge, airborne down to a
     // landing at y=70 one column over: a 10-block fall.
     let at = |game: &super::common::TestGame, x: f32, y: f32, on_ground: bool| {
         let mut u = common::player_update(game, true);
-        u.transform.pos = Vec3::new(x, y, 8.5);
+        u.transform.pos = WorldPos::new(f64::from(x), f64::from(y), 8.5);
         u.on_ground = on_ground;
         u
     };
@@ -166,12 +167,12 @@ fn landing_in_water_resets_the_fall_and_deals_no_damage() {
     // A pool at the landing point: the swim probe (feet + 0.6) reads water.
     game.server.world.set_block_world(8, 70, 8, Block::Water);
     // Anchor at the drop point so every claim passes the F1 closeness bound.
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
+    game.server.sessions[0].player.pos = WorldPos::new(8.5, 80.0, 8.5);
     let h0 = game.server.sessions[0].player.health();
 
     let at = |game: &super::common::TestGame, y: f32, on_ground: bool| {
         let mut u = common::player_update(game, true);
-        u.transform.pos = Vec3::new(8.5, y, 8.5);
+        u.transform.pos = WorldPos::new(8.5, f64::from(y), 8.5);
         u.on_ground = on_ground;
         u
     };
@@ -201,8 +202,8 @@ fn landing_in_water_resets_the_fall_and_deals_no_damage() {
 fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
     let mut game = game_on_empty_chunk();
     let mobs = game.server.world.mobs_mut();
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(4.0, 64.0, 4.0), 0.0));
-    assert!(mobs.spawn(Mob::Owl, Vec3::new(10.0, 64.0, 10.0), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(4.0, 64.0, 4.0), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(10.0, 64.0, 10.0), 0.0));
     let second_id = mobs.instances()[1].id();
     let h_before = mobs.instances()[1].health();
     common::aim_server_at_mob(&mut game, 1);

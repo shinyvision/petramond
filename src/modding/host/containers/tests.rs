@@ -6,7 +6,7 @@ use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
 use crate::player::Player;
 use crate::world::World;
-use petramond_math::math::Vec3;
+use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::ChunkPos;
 
 /// Container host calls canonicalize any footprint cell of a multi-cell
@@ -33,7 +33,7 @@ fn container_calls_canonicalize_to_the_group_anchor() {
     // caller's own namespace, so the test store impersonates the engine
     // namespace — this keeps the test off the heavy WASM fixture.
     let mut store = ModStoreData::new(petramond_world::registry::ENGINE_NAMESPACE, 1);
-    let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
     let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -94,7 +94,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
     world.set_block_world(chest.x, chest.y, chest.z, Block::Chest);
     world.take_container(chest);
     let mut store = ModStoreData::new("transfer_test", 1);
-    let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
     let mut gui = petramond_world::gui_state::empty_gui_state();

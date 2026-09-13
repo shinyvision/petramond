@@ -120,13 +120,16 @@ pub(super) struct FluidStreams<'m> {
 /// Emit every visible face of the `fluid` cell at `pos`. `resident` = the cell's
 /// block IS the fluid and owns the cell's meta; otherwise the fluid is contained
 /// in a host block and always renders a stationary surface. `cell_tint` is the
-/// cell's `petramond:tint` multiply.
+/// cell's `petramond:tint` multiply. Face positions are emitted relative to the
+/// mesh-space origin `anchor`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_fluid_cell<B, M, N, C, F>(
     nbh: &FluidNeighbourhood<'_, '_, B, M, N, C, F>,
     out: FluidStreams<'_>,
     fluid: Block,
     resident: bool,
     pos: IVec3,
+    anchor: IVec3,
     tint_of: impl Fn(Option<TileTint>) -> [f32; 3],
     cell_tint: Option<[f32; 3]>,
 ) where
@@ -196,7 +199,7 @@ pub(super) fn emit_fluid_cell<B, M, N, C, F>(
         transparent,
         transparent_two_sided,
     } = out;
-    let base = pos.as_vec3();
+    let base = (pos - anchor).as_vec3();
 
     for face in FACES {
         let (dx, dy, dz) = face.dir();

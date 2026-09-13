@@ -1,6 +1,7 @@
 use super::state::Player;
 use crate::world::World;
 use petramond_math::math::{IVec3, SelectionBoxes, SelectionShape, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::{Block, ShapeFamily};
 use petramond_world::item::UseRay;
 use petramond_world::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
@@ -14,10 +15,10 @@ const EPS: f32 = 1.0e-5;
 /// point of cell `block` within `REACH` (+1 slack for latency between the
 /// claimed eye and the resolving tick) of `eye`. The one rule every
 /// server-side block-reach check shares (look latch, `BreakFinished`).
-pub fn block_within_reach(eye: Vec3, block: IVec3) -> bool {
-    let lo = Vec3::new(block.x as f32, block.y as f32, block.z as f32);
-    let closest = eye.clamp(lo, lo + Vec3::ONE);
-    (closest - eye).length() <= REACH + 1.0
+pub fn block_within_reach(eye: WorldPos, block: IVec3) -> bool {
+    let lo = WorldPos::block_min(block) - eye;
+    let closest = Vec3::ZERO.clamp(lo, lo + Vec3::ONE);
+    closest.length() <= REACH + 1.0
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -71,7 +72,7 @@ impl Player {
     /// at a mob interrupts block selection). Voxel DDA (Amanatides & Woo), with
     /// plant-shaped blocks tested against their square selection box (see
     /// `plant_selection_aabb`).
-    pub fn raycast_with_dist(eye: Vec3, dir: Vec3, world: &World) -> Option<(RaycastHit, f32)> {
+    pub fn raycast_with_dist(eye: WorldPos, dir: Vec3, world: &World) -> Option<(RaycastHit, f32)> {
         let (mut hit, dist) = Self::raycast_blocks_core(
             eye,
             dir,
@@ -95,8 +96,9 @@ impl Player {
             // A bbmodel block outlines its WHOLE-MODEL bounding box (baked from geometry),
             // drawn as one box hugging the model's real extent across all its cells — not
             // a per-cell cube. (The DDA still TARGETS per cell, above.)
-            if let Some((mn, mx)) = world.model_outline_box(hit.block) {
+            if let Some((base, mn, mx)) = world.model_outline_box(hit.block) {
                 hit.outline = SelectionShape::Box {
+                    origin: base,
                     min: Vec3::from(mn),
                     max: Vec3::from(mx),
                 };
@@ -118,14 +120,14 @@ impl Player {
                 .filter_map(|b| b.bounds().clipped_to_cell())
                 .collect();
             let boxes = &boxes[..];
-            let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
             if boxes.is_empty() {
                 // Nothing resolved (an unbaked custom-shape cell, a connection row
                 // missing its params): keep the row's default outline rather
                 // than drawing an empty wireframe.
             } else if boxes.len() <= petramond_math::math::MAX_SELECTION_BOXES {
-                let (boxes, len) = petramond_world::connect::world_boxes(hit.block, boxes);
+                let (boxes, len) = petramond_world::connect::local_boxes(boxes);
                 hit.outline = SelectionShape::Boxes {
+                    origin: hit.block,
                     boxes: SelectionBoxes { boxes, len },
                 };
             } else {
@@ -138,8 +140,9 @@ impl Player {
                     }
                 }
                 hit.outline = SelectionShape::Box {
-                    min: base + Vec3::from(mn),
-                    max: base + Vec3::from(mx),
+                    origin: hit.block,
+                    min: Vec3::from(mn),
+                    max: Vec3::from(mx),
                 };
             }
         } else if let Some((mn, mx)) = world.selection_box_at(hit.block.x, hit.block.y, hit.block.z)
@@ -151,10 +154,10 @@ impl Player {
             // seam is a no-op for every shape that has no state to read, and
             // the only thing that keeps a stateful shape's wireframe on the
             // geometry it actually drew.
-            let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
             hit.outline = SelectionShape::Box {
-                min: base + Vec3::from(mn),
-                max: base + Vec3::from(mx),
+                origin: hit.block,
+                min: Vec3::from(mn),
+                max: Vec3::from(mx),
             };
         }
         Some((hit, dist))
@@ -167,7 +170,7 @@ impl Player {
     /// so the ray passes plants, walk-through covers and fluids the way a
     /// body does; what it does stop on is still tested by its precise shape.
     pub fn raycast_filtered(
-        eye: Vec3,
+        eye: WorldPos,
         dir: Vec3,
         max: f32,
         filter: RayFilter,
@@ -205,7 +208,7 @@ impl Player {
     /// a fluid surface (the boat) must target that surface itself. Solids still
     /// stop the ray first. The caller inspects the hit cell's real block.
     pub fn raycast_use_ray(
-        eye: Vec3,
+        eye: WorldPos,
         dir: Vec3,
         world: &World,
         ray: UseRay,
@@ -219,7 +222,7 @@ impl Player {
     /// at a pond lands on the pond's surface instead of reading through the
     /// water to the pond floor.
     pub fn raycast_including_any_fluid(
-        eye: Vec3,
+        eye: WorldPos,
         dir: Vec3,
         world: &World,
     ) -> Option<(RaycastHit, f32)> {
@@ -233,7 +236,7 @@ impl Player {
     /// never shadow the source beneath or behind it: the ray reads through
     /// them to the source the player is actually aiming at.
     pub fn raycast_fluid_sources(
-        eye: Vec3,
+        eye: WorldPos,
         dir: Vec3,
         world: &World,
         scoops: impl Fn(Block) -> bool,
@@ -249,7 +252,7 @@ impl Player {
     /// including a shape with fluid in its gaps — behaves exactly as in normal
     /// selection.
     fn raycast_fluid_stopping<W: Fn(IVec3, Block) -> bool>(
-        eye: Vec3,
+        eye: WorldPos,
         dir: Vec3,
         world: &World,
         stops: W,
@@ -278,8 +281,12 @@ impl Player {
     /// The DDA core, returning the hit and its distance from `eye` (the entry
     /// parameter — `t_enter` for a full cube, the precise crossing `t` for a
     /// custom-shaped block / cross-plant), looking at most `max` along `dir`.
+    ///
+    /// `shape_hit` tests a cell in that cell's own frame: it is handed the eye
+    /// relative to the cell's minimum corner, so every precise shape test is
+    /// exact however far from the origin the ray is cast.
     pub(super) fn raycast_blocks_core<F, S>(
-        eye: Vec3,
+        eye: WorldPos,
         dir: Vec3,
         max: f32,
         block_at: &F,
@@ -332,21 +339,23 @@ impl Player {
                 if shape_box.is_none() && !precise_only {
                     return Some((hit(pos, entry_normal, block), t_enter));
                 }
-                if let Some(shape) = shape_hit(eye, dir, pos, block) {
+                let local_eye = eye - WorldPos::block_min(pos);
+                if let Some(shape) = shape_hit(local_eye, dir, pos, block) {
                     let t = shape.t;
-                    if t <= max && hit_in_cell(eye, dir, t, pos) {
+                    if t <= max && hit_in_cell(local_eye, dir, t) {
                         return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
-            } else if let Some((mn, mx)) = plant_selection_aabb(pos, block) {
+            } else if let Some((mn, mx)) = plant_selection_aabb(block) {
                 // Plants target as their square selection box — the same box
                 // the outline draws, so "aim inside the outline" is exactly
                 // "hit". No pixel precision, but the box is trimmed to the
                 // art, so the ray still passes above short grass to the
                 // blocks behind/below it.
-                if let Some(shape) = ray_vs_aabb_hit(eye, dir, mn, mx) {
+                let local_eye = eye - WorldPos::block_min(pos);
+                if let Some(shape) = ray_vs_aabb_hit(local_eye, dir, mn, mx) {
                     let t = shape.t;
-                    if t <= max && hit_in_cell(eye, dir, t, pos) {
+                    if t <= max && hit_in_cell(local_eye, dir, t) {
                         return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
@@ -396,38 +405,38 @@ fn hit(block_pos: IVec3, normal: IVec3, block: Block) -> RaycastHit {
 }
 
 fn outline_shape(block_pos: IVec3, block: Block) -> SelectionShape {
-    // Non-full-cube blocks (the chest) outline their inset visual box.
-    if let Some((mn, mx)) = block.visual_aabb() {
-        let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
-        return SelectionShape::Box {
-            min: base + Vec3::from(mn),
-            max: base + Vec3::from(mx),
-        };
+    // Non-full-cube blocks (the chest) outline their inset visual box;
+    // plant shapes outline the same square box the raycast targets.
+    let local = block
+        .visual_aabb()
+        .map(|(mn, mx)| (Vec3::from(mn), Vec3::from(mx)))
+        .or_else(|| plant_selection_aabb(block));
+    match local {
+        Some((min, max)) => SelectionShape::Box {
+            origin: block_pos,
+            min,
+            max,
+        },
+        None => SelectionShape::full_block(block_pos),
     }
-    // Plant shapes outline the same square box the raycast targets.
-    if let Some((min, max)) = plant_selection_aabb(block_pos, block) {
-        return SelectionShape::Box { min, max };
-    }
-    SelectionShape::full_block(block_pos)
 }
 
 /// The square selection box a plant-shaped block (`Cross`, `Crop`) presents
-/// to the crosshair — ONE AABB shared by targeting and the outline, so "aim
-/// inside the outline" is exactly "hit". Derived from the art's opaque
-/// bounds: trimmed to the sprite's height and horizontal extent, so the ray
-/// still passes over short grass to the block behind/below it. Dense art
-/// (or art without bounds) reads as the full cell. `None` for every other
-/// shape — solids, models, and torches keep their precise ray tests, which
-/// is what lets a ray aim past a chest or a bbmodel block's empty parts.
-fn plant_selection_aabb(block_pos: IVec3, block: Block) -> Option<(Vec3, Vec3)> {
+/// to the crosshair, local to its cell — ONE AABB shared by targeting and the
+/// outline, so "aim inside the outline" is exactly "hit". Derived from the
+/// art's opaque bounds: trimmed to the sprite's height and horizontal extent,
+/// so the ray still passes over short grass to the block behind/below it.
+/// Dense art (or art without bounds) reads as the full cell. `None` for every
+/// other shape — solids, models, and torches keep their precise ray tests,
+/// which is what lets a ray aim past a chest or a bbmodel block's empty parts.
+fn plant_selection_aabb(block: Block) -> Option<(Vec3, Vec3)> {
     let shape = block.shape_family();
     if !matches!(shape, ShapeFamily::Cross | ShapeFamily::Crop) {
         return None;
     }
-    let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
     let trimmed = tile_alpha_bounds(block.tiles()[0]).filter(|b| !should_outline_as_full_block(*b));
     let Some(b) = trimmed else {
-        return Some((base, base + Vec3::ONE));
+        return Some((Vec3::ZERO, Vec3::ONE));
     };
     Some(match shape {
         // The lattice's flanks are inset; the box hangs 1/16 below the cell,
@@ -436,8 +445,8 @@ fn plant_selection_aabb(block_pos: IVec3, block: Block) -> Option<(Vec3, Vec3)> 
             let inset = petramond_world::block::CROP_PLANE_INSET;
             let drop = petramond_world::block::CROP_PLANE_DROP;
             (
-                base + Vec3::new(inset, b.v_min - drop, inset),
-                base + Vec3::new(1.0 - inset, b.v_max - drop, 1.0 - inset),
+                Vec3::new(inset, b.v_min - drop, inset),
+                Vec3::new(1.0 - inset, b.v_max - drop, 1.0 - inset),
             )
         }
         // An X sprite: the art's opaque extent, mirrored across the cell
@@ -445,10 +454,7 @@ fn plant_selection_aabb(block_pos: IVec3, block: Block) -> Option<(Vec3, Vec3)> 
         _ => {
             let lo = b.u_min.min(1.0 - b.u_max);
             let hi = b.u_max.max(1.0 - b.u_min);
-            (
-                base + Vec3::new(lo, b.v_min, lo),
-                base + Vec3::new(hi, b.v_max, hi),
-            )
+            (Vec3::new(lo, b.v_min, lo), Vec3::new(hi, b.v_max, hi))
         }
     })
 }
@@ -462,7 +468,8 @@ fn should_outline_as_full_block(bounds: TileAlphaBounds) -> bool {
 /// Distance along the ray to the first crossing of a block's PRECISE shape — the
 /// inset chest body, or the torch pole — or `None` if the ray misses it. Full cubes
 /// never reach here (they stop the ray on cell entry); this is what lets selection
-/// ignore the empty parts of an inset/thin block's cell.
+/// ignore the empty parts of an inset/thin block's cell. `eye` is relative to the
+/// cell `pos`.
 fn precise_shape_hit(
     eye: Vec3,
     dir: Vec3,
@@ -471,7 +478,7 @@ fn precise_shape_hit(
     world: &World,
 ) -> Option<ShapeHit> {
     if block.shape_family() == ShapeFamily::Torch {
-        return ray_vs_torch(eye, dir, pos, world.torch_placement(pos));
+        return ray_vs_torch(eye, dir, world.torch_placement(pos));
     }
     // A bbmodel block is picked PIXEL-PERFECT: the ray is tested against the actual
     // posed cubes of the whole model (in footprint space) with the entry face alpha-
@@ -482,20 +489,18 @@ fn precise_shape_hit(
         let off = world.model_offset_at(pos.x, pos.y, pos.z);
         let facing = world.model_facing_at(pos.x, pos.y, pos.z);
         let base = petramond_world::block_model::base_from_cell(pos, kind, off, facing);
-        let inv = petramond_world::block_model::placement_transform(base, kind, facing).inverse();
+        let inv = petramond_world::block_model::placement_transform(kind, facing).inverse();
+        // Everything below is relative to the model's base cell.
+        let cell = (pos - base).as_vec3();
         // Restrict crossings to THIS cell (in footprint space): a `fit: native`
         // model's overhang lives outside every footprint cell, so a global
         // first crossing on it would veto the in-cell geometry behind it and
         // let the ray select the block beyond the machine. The placement
         // transform is a 90° yaw + translation, so the cell stays a box.
-        let ca = inv.transform_point3(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32));
-        let cb = inv.transform_point3(Vec3::new(
-            pos.x as f32 + 1.0,
-            pos.y as f32 + 1.0,
-            pos.z as f32 + 1.0,
-        ));
+        let ca = inv.transform_point3(cell);
+        let cb = inv.transform_point3(cell + Vec3::ONE);
         return petramond_world::block_model::ray_vs_model_within(
-            inv.transform_point3(eye),
+            inv.transform_point3(eye + cell),
             inv.transform_vector3(dir),
             kind,
             ca.min(cb),
@@ -511,8 +516,7 @@ fn precise_shape_hit(
         ShapeFamily::Door | ShapeFamily::Ladder
     ) {
         let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
+        return ray_vs_aabb_hit(eye, dir, Vec3::from(mn), Vec3::from(mx));
     }
     // Every family whose real form is a BOX SET is picked against its resolved
     // TARGET boxes: a stair's corner steps, a slab's layers, a pane's / fence's
@@ -523,24 +527,18 @@ fn precise_shape_hit(
     // misses by construction. (A cache miss on a WASM shape bake reads the
     // row's static fallback, so a custom shape is always aimable somewhere.)
     if block.picks_by_boxes() {
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         let mut targets = Vec::new();
         world.target_boxes_at(pos.x, pos.y, pos.z, &mut targets);
         return targets
             .iter()
             .filter_map(|b| match b.pose {
-                None => ray_vs_aabb_hit(
-                    eye,
-                    dir,
-                    base + Vec3::from(b.aabb.min),
-                    base + Vec3::from(b.aabb.max),
-                ),
+                None => ray_vs_aabb_hit(eye, dir, Vec3::from(b.aabb.min), Vec3::from(b.aabb.max)),
                 // A posed box is tested in its own frame; the crossed face's
                 // normal comes back rotated and is snapped to the axis it
                 // leans most toward, which is what placement against a
                 // tilted plate wants.
                 Some(pose) => pose
-                    .ray_hit(eye - base, dir, b.aabb.min, b.aabb.max)
+                    .ray_hit(eye, dir, b.aabb.min, b.aabb.max)
                     .map(|(t, n)| ShapeHit::with_normal(t, dominant_axis(n))),
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
@@ -549,8 +547,7 @@ fn precise_shape_hit(
     // through the world seam, so what the ray tests is what the wireframe drew
     // even when the shape reads per-cell state (a turned box set).
     let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
-    let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx))
+    ray_vs_aabb_hit(eye, dir, Vec3::from(mn), Vec3::from(mx))
 }
 
 /// The unit axis a world direction leans most toward.
@@ -568,11 +565,11 @@ fn dominant_axis(n: Vec3) -> IVec3 {
 /// First-crossing distance of the ray through the torch's pole box. The pole is a
 /// thin, possibly-tilted box, so transform the ray into the torch's local model
 /// space (the inverse of its placement transform — a rigid rotate+translate, so
-/// distances along the ray are preserved) and test the upright local box.
-fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> Option<ShapeHit> {
-    let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+/// distances along the ray are preserved) and test the upright local box. `eye`
+/// is relative to the torch's cell.
+fn ray_vs_torch(eye: Vec3, dir: Vec3, placement: TorchPlacement) -> Option<ShapeHit> {
     let inv = placement.model_transform().inverse();
-    let ol = inv.transform_point3(eye - base);
+    let ol = inv.transform_point3(eye);
     let dl = inv.transform_vector3(dir);
     ray_vs_aabb(
         ol,
@@ -585,7 +582,8 @@ fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> 
 
 /// Ray vs axis-aligned box (slab method): the entry distance `t >= 0`, or `None`
 /// when the ray misses the box or it lies entirely behind the eye. Shared with mob
-/// targeting (a mob is an AABB) — that's why it's crate-visible.
+/// targeting (a mob is an AABB) — that's why it's crate-visible. `eye`, `min` and
+/// `max` share one local frame.
 pub fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     ray_vs_aabb_hit(eye, dir, min, max).map(|hit| hit.t)
 }
@@ -670,36 +668,34 @@ fn inv_abs(v: f32) -> f32 {
 
 /// Distance along the ray from `p` to the first voxel boundary in direction `d`.
 #[inline]
-fn boundary_t(p: f32, d: f32) -> f32 {
+fn boundary_t(p: f64, d: f32) -> f32 {
     if d == 0.0 {
         return f32::INFINITY;
     }
-    let cell = p.floor();
+    let frac = (p - p.floor()) as f32;
     if d > 0.0 {
-        (cell + 1.0 - p) / d
+        (1.0 - frac) / d
     } else {
-        (p - cell) / -d
+        frac / -d
     }
 }
 
-/// Whether a precise pick's hit point belongs to cell `pos`: inside the cell's
-/// box, or a seam's width outside it. Comparing the pick's `t` against the
-/// DDA's entry/exit times instead rejects a face lying EXACTLY on a cell seam:
-/// the boundary times accumulate float error cell by cell, so the face lands
-/// in the crack between one cell's exit and the next cell's entry and both
-/// cells reject it — the ray sails straight through solid geometry (the
-/// forging furnace's hood face sits exactly on its footprint's z-seam). The
-/// hit point comes from the pick's own `t`, and an inflated box accepts a seam
-/// face in the first tested cell that touches it — which is never a phantom
-/// hit, only ever the face's own cell or its seam neighbour.
+/// Whether a precise pick's hit point belongs to its cell: inside the cell's
+/// box, or a seam's width outside it. `eye` is relative to the cell.
+/// Comparing the pick's `t` against the DDA's entry/exit times instead
+/// rejects a face lying EXACTLY on a cell seam: the boundary times accumulate
+/// float error cell by cell, so the face lands in the crack between one
+/// cell's exit and the next cell's entry and both cells reject it — the ray
+/// sails straight through solid geometry (the forging furnace's hood face sits
+/// exactly on its footprint's z-seam). The hit point comes from the pick's own
+/// `t`, and an inflated box accepts a seam face in the first tested cell that
+/// touches it — which is never a phantom hit, only ever the face's own cell or
+/// its seam neighbour.
 #[inline]
-fn hit_in_cell(eye: Vec3, dir: Vec3, t: f32, pos: IVec3) -> bool {
+fn hit_in_cell(eye: Vec3, dir: Vec3, t: f32) -> bool {
     const SEAM: f32 = 1e-3;
     let p = eye + dir * t;
-    for (v, c) in [(p.x, pos.x), (p.y, pos.y), (p.z, pos.z)] {
-        if v < c as f32 - SEAM || v > c as f32 + 1.0 + SEAM {
-            return false;
-        }
-    }
-    true
+    p.to_array()
+        .iter()
+        .all(|&v| (-SEAM..=1.0 + SEAM).contains(&v))
 }

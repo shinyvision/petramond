@@ -65,8 +65,8 @@ pub(super) fn orbit_ground(
     flight: &FlightSpec,
     act: &Activation,
     world: &World,
-    x: f32,
-    z: f32,
+    x: f64,
+    z: f64,
     roll: f32,
 ) -> Option<f32> {
     // A wing corner reaches farther along a world axis when the body turns
@@ -74,6 +74,7 @@ pub(super) fn orbit_ground(
     let reach = spec.size[1] * FRAC_1_SQRT_2;
     let (rx, rz) = (flight.orbit[0] + reach, flight.orbit[1] + reach);
     let mut highest = f32::NEG_INFINITY;
+    let (rx, rz) = (f64::from(rx), f64::from(rz));
     for wz in (z - rz).floor() as i32..=(z + rz).floor() as i32 {
         for wx in (x - rx).floor() as i32..=(x + rx).floor() as i32 {
             let biome = world.biome_at_world(wx, wz)?;
@@ -104,10 +105,11 @@ pub(super) fn cell_seed(act: &Activation, gx: i32, gz: i32) -> u64 {
 /// A cell's anchor: a fixed point inside the cell, so flight stays continuous
 /// through every camera movement, jumps included.
 #[inline]
-pub(super) fn cell_anchor(flight: &FlightSpec, seed: u64, gx: i32, gz: i32) -> (f32, f32) {
+pub(super) fn cell_anchor(flight: &FlightSpec, seed: u64, gx: i32, gz: i32) -> (f64, f64) {
+    let spacing = f64::from(flight.spacing);
     (
-        (gx as f32 + hash01(seed ^ 1)) * flight.spacing,
-        (gz as f32 + hash01(seed ^ 2)) * flight.spacing,
+        (f64::from(gx) + f64::from(hash01(seed ^ 1))) * spacing,
+        (f64::from(gz) + f64::from(hash01(seed ^ 2))) * spacing,
     )
 }
 
@@ -123,8 +125,8 @@ pub(super) fn derive_flight(
     }
     let (world, cam, time) = (view.world, view.cam, view.time);
     let sprite = flight.sprite_tile.map(petramond_render::atlas::tile_uv);
-    let cx = (cam.x / flight.spacing).floor() as i32;
-    let cz = (cam.z / flight.spacing).floor() as i32;
+    let cx = (cam.x / f64::from(flight.spacing)).floor() as i32;
+    let cz = (cam.z / f64::from(flight.spacing)).floor() as i32;
     let reach =
         ((spec.radius + flight.orbit[0].max(flight.orbit[1])) / flight.spacing).ceil() as i32;
     for gz in cz - reach..=cz + reach {
@@ -132,8 +134,8 @@ pub(super) fn derive_flight(
             let seed = cell_seed(act, gx, gz);
             let (x, z) = cell_anchor(flight, seed, gx, gz);
             let (offset, heading) = orbit(flight, seed, time);
-            let (px, pz) = (x + offset.x, z + offset.z);
-            let distance = Vec3::new(px - cam.x, 0.0, pz - cam.z).length();
+            let (px, pz) = (x + f64::from(offset.x), z + f64::from(offset.z));
+            let distance = (px - cam.x).hypot(pz - cam.z) as f32;
             if distance >= spec.radius {
                 continue;
             }
@@ -147,8 +149,9 @@ pub(super) fn derive_flight(
             let Some(ground) = orbit_ground(spec, flight, act, world, x, z, roll) else {
                 continue;
             };
-            let pos = Vec3::new(px, ground + offset.y, pz);
-            let dy = pos.y - cam.y;
+            let pos =
+                petramond_math::world_pos::WorldPos::new(px, f64::from(ground + offset.y), pz);
+            let dy = (pos.y - cam.y) as f32;
             if dy < -spec.height[0] || dy > spec.height[1] {
                 continue;
             }

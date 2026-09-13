@@ -163,6 +163,7 @@ mod tests {
     use mod_api::{HostCall, HostRet};
 
     use crate::events::{PostQueue, SimCtx};
+    use petramond_math::world_pos::WorldPos;
 
     /// The tick clock is legal in the detached AI-dispatch scope: with no sim
     /// scope active it reads the dispatcher's published tick instead of
@@ -197,7 +198,6 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
-    use petramond_math::math::Vec3;
 
     /// Shader params are the visual environment surface mods use for sky
     /// shaders and other pack-owned effects: own namespace or engine `petramond:*`,
@@ -207,7 +207,7 @@ mod tests {
         let mut alpha = ModStoreData::new("alpha", 1);
         let mut beta = ModStoreData::new("beta", 1);
         let mut world = World::new(1, 1);
-        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();

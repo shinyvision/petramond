@@ -47,10 +47,11 @@ pub struct Uniforms {
     /// the held item, and the sky-gradient zenith at draw time.
     pub fog_color: [f32; 4],
     pub inv_view_proj: [[f32; 4]; 4],
-    /// World-space origin subtracted by world shaders before applying `view_proj`.
-    /// Keeps GPU transform math camera-local while simulation/render data remains
-    /// in absolute world coordinates.
-    pub render_origin: [f32; 4],
+    /// The integer world origin `view_proj` is relative to (`xyz`; `w` = 0).
+    /// Integer so a far-out position reaches a shader only as the difference
+    /// of two integers plus a small float: world shaders offset each draw's
+    /// anchor by it before applying `view_proj`.
+    pub render_origin: [i32; 4],
     /// Atlas layout for the block shader: `w` is the atlas TILE COUNT — the
     /// texture-array layer offset from any tile to its dye-base twin for dyed
     /// vertices (packed2 bit 19). `xyz` are reserved (0).
@@ -204,7 +205,7 @@ mod tests {
                 let (field, ty) = (field.trim(), ty.trim().trim_end_matches(','));
                 let size = match ty {
                     "mat4x4<f32>" => 64,
-                    "vec4<f32>" | "vec4<u32>" => 16,
+                    "vec4<f32>" | "vec4<u32>" | "vec4<i32>" => 16,
                     other => panic!("{name}: unhandled uniform field type `{other}`"),
                 };
                 let want = rust_offset(field)
