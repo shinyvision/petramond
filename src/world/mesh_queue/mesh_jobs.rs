@@ -72,7 +72,7 @@ impl World {
                         .get(&SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
                         .map(|s| NeighborSnap {
                             blocks: s.block_cube(),
-                            water: s.water_arc(),
+                            fluid: s.fluid_arc(),
                             skylight: s.skylight_arc(),
                             blocklight: s.blocklight_arc(),
                             cell_states: sparse_state_snapshot(s.cell_states()),
@@ -89,7 +89,7 @@ impl World {
                                     == petramond_world::section::SectionSummary::Empty)
                                 .then(|| NeighborSnap {
                                     blocks: petramond_world::section::BlockCube::uniform(0),
-                                    water: None,
+                                    fluid: None,
                                     skylight: None,
                                     blocklight: None,
                                     cell_states: None,

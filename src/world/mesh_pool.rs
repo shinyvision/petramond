@@ -54,13 +54,13 @@ pub(super) fn biome_pad_idx(x: usize, z: usize) -> usize {
 }
 
 /// Cheap field-`Arc` snapshot of one neighbour section's voxel buffers — all the mesher
-/// reads of a neighbour (block ids for face culling, water/light for sampling). Cloning it
+/// reads of a neighbour (block ids for face culling, fluid/light for sampling). Cloning it
 /// is four `Arc` refcount bumps and zero allocations, and it does NOT share the world's
 /// `Arc<Section>`, so streaming edits never copy-on-write a section because a mesh job holds
 /// it. Absent (`None`) buffers fall back exactly like [`Section`]'s accessors.
 pub(super) struct NeighborSnap {
     pub blocks: petramond_world::section::BlockCube,
-    pub water: Option<std::sync::Arc<[u8]>>,
+    pub fluid: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
     pub blocklight: Option<std::sync::Arc<[petramond_world::light::LightRgb]>>,
     /// The section's unified per-cell state entries (opaque; the mesher's
@@ -192,11 +192,11 @@ impl crate::world::World {
 }
 
 /// The assembled one-cell-padded neighbourhood buffers a section mesh reads (18³ each):
-/// block ids, water/light state, per-cell stair facing, and a loaded flag. Reads beyond
+/// block ids, fluid/light state, per-cell stair facing, and a loaded flag. Reads beyond
 /// the pad fall back exactly as the live world's accessors do (air / open sky / not-loaded).
 struct Pad {
     blocks: Box<[u16]>,
-    water: Box<[u8]>,
+    fluid: Box<[u8]>,
     skylight: Box<[u8]>,
     blocklight: Box<[petramond_world::light::LightRgb]>,
     cell_states: Box<[petramond_world::block::ShapeState]>,
@@ -208,7 +208,7 @@ impl Pad {
     fn new() -> Self {
         Self {
             blocks: vec![0u16; PAD_VOL].into_boxed_slice(),
-            water: vec![0u8; PAD_VOL].into_boxed_slice(),
+            fluid: vec![0u8; PAD_VOL].into_boxed_slice(),
             skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
             blocklight: vec![petramond_world::light::LightRgb::ZERO; PAD_VOL].into_boxed_slice(),
             cell_states: vec![petramond_world::block::ShapeState::NONE; PAD_VOL].into_boxed_slice(),
@@ -217,11 +217,11 @@ impl Pad {
         }
     }
 
-    /// Restore the freshly-allocated defaults (air / no water / full sky / no block
+    /// Restore the freshly-allocated defaults (air / no fluid / full sky / no block
     /// light / no cell state / not loaded) so a reused pad assembles byte-identically.
     fn reset(&mut self) {
         self.blocks.fill(0);
-        self.water.fill(0);
+        self.fluid.fill(0);
         self.skylight.fill(SKY_FULL);
         self.blocklight.fill(petramond_world::light::LightRgb::ZERO);
         self.cell_states
@@ -253,7 +253,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
     pad.reset();
     let Pad {
         blocks,
-        water,
+        fluid,
         skylight,
         blocklight,
         cell_states,
@@ -274,8 +274,8 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                 Some(s) => {
                     s.blocks
                         .expand_row_into(src, &mut blocks[base..base + SECTION_SIZE]);
-                    if let Some(w) = s.water.as_ref() {
-                        water[base..base + SECTION_SIZE]
+                    if let Some(w) = s.fluid.as_ref() {
+                        fluid[base..base + SECTION_SIZE]
                             .copy_from_slice(&w[src..src + SECTION_SIZE]);
                     }
                     // skylight buffer starts full sky, so a `None` (uncomputed) neighbour
@@ -314,7 +314,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                 match nbhd[nbhd_idx27(ddx, ddy, ddz)].as_ref() {
                     Some(s) => {
                         blocks[pi] = s.blocks.get(li);
-                        water[pi] = s.water.as_ref().map_or(0, |w| w[li]);
+                        fluid[pi] = s.fluid.as_ref().map_or(0, |w| w[li]);
                         skylight[pi] = s.skylight.as_ref().map_or(SKY_FULL, |s| s[li]);
                         blocklight[pi] = s
                             .blocklight
@@ -459,7 +459,7 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
             pos,
             SectionMeshPad {
                 blocks: &pad.blocks,
-                water: &pad.water,
+                fluid: &pad.fluid,
                 skylight: &pad.skylight,
                 blocklight: &pad.blocklight,
                 cell_states: &pad.cell_states,

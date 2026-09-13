@@ -22,7 +22,7 @@
 //! A grounded player auto-steps up a half-block ledge (a slab / a bbmodel block's low
 //! edge) via the shared `collision::step_horizontal` (`STEP_HEIGHT = 0.5`); a full block
 //! is still a jump-to-climb wall (`JUMP_V0` clears ~1.26 blocks). Step-up is gated on being
-//! grounded, so it never lifts a falling/jumping player.
+//! solid or fluid support; freely falling bodies cannot step.
 
 mod collision;
 mod interaction;
@@ -48,6 +48,7 @@ pub mod model;
 mod movement;
 mod progression;
 mod state;
+mod swimming;
 
 #[cfg(test)]
 mod tests;
@@ -59,13 +60,10 @@ pub use body_claims::{
 pub use interaction::block_within_reach;
 pub use interaction::ray_vs_aabb;
 pub use interaction::{RayFilter, RaycastHit, REACH};
-/// The swim probe height above the feet — also what the server-side fall
-/// tracker samples to mirror `track_fall`'s water reset from reported positions.
-pub use movement::WATER_PROBE_Y;
 /// Speed caps used by server movement validation (F1): horizontal sprint
 /// speeds plus the vertical envelope (jump take-off up, terminal fall down)
 /// and gravity (correction deadband scaling).
-pub use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL, WALK};
+pub use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, SWIM_SPEED, TERMINAL, WALK};
 pub use progression::Progression;
 pub use state::UseGesture;
 pub use state::{

@@ -591,8 +591,8 @@ impl World {
         self.deferred_rechecks.extend(affected.iter().copied());
         self.flush_settled_deferred_if_needed(target);
 
-        // 7. Kick generated/overlaid water that now has somewhere to flow.
-        self.queue_loaded_section_water_updates(&ingested);
+        // 7. Kick generated/overlaid fluid that now has somewhere to flow.
+        self.queue_loaded_section_fluid_updates(&ingested);
         if !self.missing_columns_settled && self.extra_load_targets.is_empty() {
             self.request_missing_columns(target);
         }

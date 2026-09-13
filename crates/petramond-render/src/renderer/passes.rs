@@ -578,10 +578,11 @@ impl Renderer {
                 );
             }
         }
-        // TRANSPARENT (WATER) PASS: far→near back-to-front, depth test only
-        // (water must never occlude terrain behind it). Translucent BLOCKS
-        // drew earlier (their own depth-writing pass, before the break
-        // overlay), so water behind ice depth-fails against the ice's written
+        // TRANSPARENT (TRANSLUCENT FLUID) PASS: far→near back-to-front, depth
+        // test only (a see-through fluid must never occlude terrain behind
+        // it; an opaque fluid drew with the opaque terrain). Translucent
+        // BLOCKS drew earlier (their own depth-writing pass, before the break
+        // overlay), so fluid behind ice depth-fails against the ice's written
         // depth instead of double-blending over it.
         if any_transparent_visible {
             let mut pass = color_depth_pass(
@@ -599,7 +600,7 @@ impl Renderer {
             // origin row with `first_instance`.
             pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
             pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
-            // Water side faces cull their backs, water TOPS do not (they must
+            // Fluid side faces cull their backs, fluid TOPS do not (they must
             // stay visible from underneath). Sections almost never carry both,
             // so tracking the bound pipeline keeps this at one switch per pass
             // in practice. `None` until the first draw binds one: a render pass

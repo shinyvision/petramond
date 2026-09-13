@@ -6,7 +6,7 @@ fn fall_distance_measures_the_drop_height() {
     let solid = |_x: i32, y: i32, _z: i32| y < 64;
     let mut pl = p(Vec3::new(0.5, 68.0, 0.5));
     for _ in 0..240 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, Input::default());
+        pl.update_core(1.0 / 60.0, &solid, Input::default());
     }
     assert!(pl.on_ground, "player has landed");
     assert!((pl.pos.y - 64.0).abs() < 1e-3, "feet on the floor top");
@@ -32,7 +32,7 @@ fn walking_off_a_low_ledge_measures_a_short_fall() {
     };
     let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
     for _ in 0..240 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, walk);
+        pl.update_core(1.0 / 60.0, &solid, walk);
     }
     assert!(pl.on_ground);
     let dist = pl.take_fall_distance();
@@ -43,19 +43,28 @@ fn walking_off_a_low_ledge_measures_a_short_fall() {
 }
 
 #[test]
-fn water_cancels_the_fall() {
-    // Deep water column (y in 60..=71) over a floor top at y=60. A 10-block plunge that
-    // would badly hurt on land measures ~0 because water breaks the fall.
-    let solid = |_x: i32, y: i32, _z: i32| y < 60;
-    let water = |_x: i32, y: i32, _z: i32| (60..=71).contains(&y);
-    let mut pl = p(Vec3::new(0.5, 70.0, 0.5));
+fn a_fluid_cancels_the_fall() {
+    // A deep fluid column (y in 60..=71) over a floor top at y=60. A 10-block plunge
+    // that would badly hurt on land measures ~0 because immersion breaks the fall.
+    let mut chunk = petramond_world::chunk::Chunk::new(0, 0);
+    for z in 0..16 {
+        for x in 0..16 {
+            chunk.set_block(x, 59, z, Block::Stone);
+            for y in 60..=71 {
+                chunk.set_block(x, y, z, Block::Water);
+            }
+        }
+    }
+    let mut world = crate::world::World::new(0, 1);
+    world.insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), chunk);
+    let mut pl = p(Vec3::new(8.5, 70.0, 8.5));
     for _ in 0..1200 {
-        pl.update_core(1.0 / 60.0, &solid, &water, Input::default());
+        pl.update(1.0 / 60.0, &world, Input::default());
     }
     let dist = pl.take_fall_distance();
     assert!(
         dist < 3.0,
-        "water should break the fall (no damage), measured {dist}"
+        "immersion should break the fall (no damage), measured {dist}"
     );
 }
 
@@ -65,7 +74,7 @@ fn mode_switch_drops_a_pending_fall() {
     let solid = |_x: i32, y: i32, _z: i32| y < 64;
     let mut pl = p(Vec3::new(0.5, 70.0, 0.5));
     for _ in 0..240 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, Input::default());
+        pl.update_core(1.0 / 60.0, &solid, Input::default());
     }
     pl.toggle_mode(); // -> spectator, re-anchors the fall
     assert_eq!(

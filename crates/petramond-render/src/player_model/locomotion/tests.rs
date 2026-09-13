@@ -20,17 +20,17 @@ fn weights_of(
 #[test]
 fn layer_weights_are_products_of_named_factors() {
     let table = LocomotionTable::parse_layers(&[r#"{
-        "derived": [{"name": "ground", "factors": ["!water", {"not": "landing", "by": 0.5}]}],
+        "derived": [{"name": "ground", "factors": ["!swim", {"not": "landing", "by": 0.5}]}],
         "layers": [
             {"id": "a", "clip": "walk", "phase": "stride", "factors": ["walking", "ground", "!run"]},
-            {"id": "b", "clip": "tread", "phase": "swim", "factors": ["water"]},
+            {"id": "b", "clip": "tread", "phase": "swim", "factors": ["swim"]},
             {"id": "c", "clip": "land", "phase": "rest", "factors": ["landing"]}
         ]}"#])
     .unwrap();
     let inputs = Inputs {
         walking: 0.8,
         run: 0.25,
-        water: 0.0,
+        swim: 0.0,
         landing: 0.4,
         ..Default::default()
     };
@@ -93,13 +93,13 @@ fn requires_folds_missing_clips_back_into_the_base_layer() {
 #[test]
 fn pack_layers_override_by_id_and_append() {
     let base = r#"{
-        "derived": [{"name": "ground", "factors": ["!water"]}],
+        "derived": [{"name": "ground", "factors": ["!swim"]}],
         "layers": [
             {"id": "walk", "clip": "walk", "phase": "stride", "factors": ["walking", "ground"]},
             {"id": "run", "clip": "run", "phase": "stride", "factors": ["run"]}
         ]}"#;
     let pack = r#"{
-        "derived": [{"name": "ground", "factors": ["!water", "!airborne"]}],
+        "derived": [{"name": "ground", "factors": ["!swim", "!airborne"]}],
         "layers": [
             {"id": "run", "clip": "run", "phase": "stride", "factors": ["run"], "enabled": false},
             {"id": "skip", "clip": "skip", "phase": "stride", "factors": ["walking", "ground"]}

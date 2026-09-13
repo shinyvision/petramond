@@ -5,8 +5,8 @@ use std::collections::{HashMap, VecDeque};
 
 use super::{batched, highest_floor, Candidate, ANCHOR_LATTICE, PROBE_PER_CANDIDATE};
 use mod_sdk::{
-    memo_get_many, memo_put, terrain_solid_at, underground_biome_at, ByteReader, ByteWriter,
-    SIM_BATCH_MAX,
+    memo_get_many, memo_put, terrain_space_at, underground_biome_at, ByteReader, ByteWriter,
+    TerrainSpace, SIM_BATCH_MAX,
 };
 
 type Root = [i32; 3];
@@ -149,14 +149,14 @@ fn probe_roots(ours: u8, cands: &[&Candidate]) -> Option<Vec<Option<Root>>> {
         }
     }
     let want = probe.len();
-    let solid = batched(probe, terrain_solid_at);
-    if solid.len() != want {
+    let space = batched(probe, terrain_space_at);
+    if space.len() != want {
         return None;
     }
     let mut rooted: Vec<(usize, [i32; 3])> = Vec::new();
     for &(i, start) in &spans {
         let c = &cands[i];
-        if let Some(k) = highest_floor(&solid[start..start + PROBE_PER_CANDIDATE]) {
+        if let Some(k) = highest_floor(&space[start..start + PROBE_PER_CANDIDATE]) {
             rooted.push((i, [c.x, c.cell_floor_y - 1 + k as i32, c.z]));
         }
     }
@@ -170,14 +170,18 @@ fn probe_roots(ours: u8, cands: &[&Candidate]) -> Option<Vec<Option<Root>>> {
         });
     }
     let want = probe.len();
-    let solid = batched(probe, terrain_solid_at);
-    if solid.len() != want {
+    let space = batched(probe, terrain_space_at);
+    if space.len() != want {
         return None;
     }
     let mut viable = vec![None; cands.len()];
     for (k, &(i, root)) in rooted.iter().enumerate() {
-        let end = fit_at.get(k + 1).copied().unwrap_or(solid.len());
-        if solid[fit_at[k]..end].iter().all(|&s| !s) {
+        let end = fit_at.get(k + 1).copied().unwrap_or(space.len());
+        // Every cell the body fills must be free ROOM; a fluid is not room.
+        if space[fit_at[k]..end]
+            .iter()
+            .all(|&s| s == TerrainSpace::Air)
+        {
             viable[i] = Some(root);
         }
     }

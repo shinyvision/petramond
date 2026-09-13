@@ -4,11 +4,12 @@
 use serde::{Deserialize, Serialize};
 
 /// Occupancy left by positional terrain generation, before feature stages.
+/// `Fluid` covers every fluid block, so a pack's new fluid needs no variant.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TerrainSpace {
     Air,
-    Water,
+    Fluid,
     Solid,
 }
 

@@ -59,6 +59,7 @@ impl CaveField {
                     biome: false,
                     excavations: true,
                     positioned: true,
+                    fluids: false,
                 },
             ));
             tiles.borrow_mut()[slot] = Some((key, Arc::clone(&value)));

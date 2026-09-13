@@ -99,7 +99,7 @@
       "sprite": "farming:flour",
       "tags": [],
       "dropped_reaction": {
-        "environment": "water",
+        "fluid": "petramond:water",
         "result": "farming:dough",
         "burst": "farming:flour_poof",
         "sound": "petramond:water_splash_small"

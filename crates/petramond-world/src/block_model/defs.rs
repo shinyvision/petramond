@@ -40,6 +40,7 @@ const ENGINE_MODEL_KEYS: &[&str] = &[
     "petramond:bucket",
     "petramond:water_bucket",
     "petramond:bed",
+    "petramond:lava_bucket",
 ];
 
 impl std::fmt::Debug for BlockModelKind {

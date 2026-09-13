@@ -11,7 +11,7 @@ fn sneaking_halves_land_speed_and_overrides_sprint() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..120 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, sneak_walk);
+        pl.update_core(1.0 / 60.0, &solid, sneak_walk);
     }
     assert!(
         (pl.vel.x - WALK * 0.5).abs() < 0.01,
@@ -26,7 +26,7 @@ fn sneaking_halves_land_speed_and_overrides_sprint() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..120 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, both);
+        pl.update_core(1.0 / 60.0, &solid, both);
     }
     assert!(
         (pl.vel.x - WALK * 0.5).abs() < 0.01,
@@ -47,7 +47,7 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, sneak_walk);
+        pl.update_core(1.0 / 60.0, &solid, sneak_walk);
     }
     assert!(pl.on_ground, "the sneaker never leaves the plateau");
     assert_eq!(pl.pos.y, 1.0, "feet stay on the plateau top");
@@ -64,7 +64,7 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, plain);
+        pl.update_core(1.0 / 60.0, &solid, plain);
     }
     assert!(pl.pos.y < 1.0, "an ordinary walk falls off the ledge");
 
@@ -75,7 +75,7 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
-        pl.update_core(1.0 / 60.0, &solid, &dry, hop);
+        pl.update_core(1.0 / 60.0, &solid, hop);
     }
     assert!(
         pl.pos.x > 1.0 + HALF_W,
@@ -87,7 +87,6 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
 #[test]
 fn sneaking_still_steps_down_a_half_block() {
     use petramond_world::block::Aabb;
-    let still = |_: Vec3| Vec3::ZERO;
     // A full floor for x<=0, a half-height slab (top y=0.5) for x>=1: a
     // step DOWN of exactly the step height, which sneaking must allow.
     const SLAB: &[Aabb] = &[Aabb {
@@ -111,16 +110,7 @@ fn sneaking_still_steps_down_a_half_block() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
-        pl.update_core_with_current(
-            1.0 / 60.0,
-            &step_down,
-            &dry,
-            &still,
-            &no_ladder,
-            &no_slip,
-            sneak_walk,
-            &[],
-        );
+        pl.simulate(1.0 / 60.0, &Surroundings::dry(&step_down), sneak_walk);
     }
     assert!(
         pl.pos.x > 1.5,
@@ -138,7 +128,6 @@ fn sneaking_still_steps_down_a_half_block() {
 #[test]
 fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
     use petramond_world::block::Aabb;
-    let still = |_: Vec3| Vec3::ZERO;
     // A plateau (x<=0, top y=1), a ONE-block-wide slab strip beside it (x==1,
     // top y=0.5 — a legal step-down), and void beyond and below. Sneaking
     // diagonally (+X+Z) must step onto the strip and then slide along its far
@@ -174,16 +163,7 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
     let mut min_y = f32::MAX;
     let mut airborne_frames = 0;
     for i in 0..600 {
-        pl.update_core_with_current(
-            1.0 / 60.0,
-            &world,
-            &dry,
-            &still,
-            &no_ladder,
-            &no_slip,
-            diag,
-            &[],
-        );
+        pl.simulate(1.0 / 60.0, &Surroundings::dry(&world), diag);
         min_y = min_y.min(pl.pos.y);
         // Skip the first frames: a fresh Player spawns with on_ground unset.
         if i > 2 && !pl.on_ground {

@@ -239,6 +239,10 @@ impl Block {
     pub const Hemp: Block = Block(140);
     pub const FallenBranch2: Block = Block(141);
     pub const FallenBranch3: Block = Block(142);
+    /// Molten rock: the second simulated fluid. Sources sit still like
+    /// worldgen water until disturbed; flowing cells quench to stone on
+    /// contact with water.
+    pub const Lava: Block = Block(143);
 }
 
 impl std::fmt::Debug for Block {

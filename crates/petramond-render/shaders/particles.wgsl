@@ -19,15 +19,13 @@ struct Uniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    atlas_anim: vec4<u32>,
+    atlas_layout: vec4<u32>,
     sky_color: vec4<f32>,
     // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
     sun_dir: vec4<f32>,
+    // rgb = the eye fluid's volume tint (white in air).
+    volume_tint: vec4<f32>,
 };
-
-// Underwater multiply tint — kept in sync with block.wgsl so dust submerged with
-// the player reads the same blue darkening as the terrain around it.
-const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // Unused by particles (uv is absolute, per-vertex) but declared so this pipeline
@@ -83,11 +81,11 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     // shade = per-face directional shading; tint multiplies the atlas colour
     // (white = no change; foliage-green greens a grass/leaf fleck).
     var color = tex.rgb * in.tint * in.shade;
-    // Submerged with the player: blue darkening + tight murk fog to match the
-    // underwater terrain; in air, the same atmosphere as the terrain, so a break
+    // Inside a fluid with the player: the eye medium's tint + murk fog to match the
+    // murky terrain; in air, the same atmosphere as the terrain, so a break
     // burst hazes out with the surrounding blocks instead of staying crisp.
     if (u.fog.w > 0.5) {
-        color = color * WATER_TINT;
+        color = color * u.volume_tint.rgb;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
@@ -109,7 +107,7 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
 fn fs_particle_transparent(in: VsOut) -> @location(0) vec4<f32> {
     var color = in.tint * in.shade;
     if (u.fog.w > 0.5) {
-        color = color * WATER_TINT;
+        color = color * u.volume_tint.rgb;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), clamp(in.alpha, 0.0, 1.0));
     }

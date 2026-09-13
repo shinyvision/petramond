@@ -15,7 +15,8 @@
 
 use crate::events::PostEvent;
 use crate::mob::riding::{
-    dismount_spot, player_body_free, player_body_known_free, seat_world_pos, Mount, MountTarget,
+    dismount_footing_safe, dismount_spot, player_body_free, player_body_known_free, seat_world_pos,
+    Mount, MountTarget,
 };
 use crate::player::{Player, PlayerInputSnapshot};
 use petramond_math::math::Vec3;
@@ -88,6 +89,7 @@ impl ServerGame {
                     mining: sess.mining.overlay().is_some(),
                     ..std::mem::take(&mut sess.swing_events)
                 },
+                conditions: crate::exposure::condition_data(sess.player.conditions()),
             })
             .collect();
         roster.sort_by_key(|p| p.id);
@@ -243,7 +245,7 @@ impl ServerGame {
 
     /// Stand a freshly dismounted player somewhere sensible: the first
     /// collision-free spot beside where they sat (right, left, behind, ahead
-    /// of the facing, at seat height or one block up), preferring dry feet;
+    /// of the facing, at seat height or one block up), preferring safe footing;
     /// nowhere free = stay put (they'll swim or stand where the mount was).
     /// Dead/spectator riders skip placement (respawn/noclip owns them).
     fn place_dismounted_player(&mut self, s: usize) {
@@ -268,11 +270,7 @@ impl ServerGame {
             player.pos,
             player.yaw,
             |feet| player_body_free(&self.world, feet, obstacles),
-            |feet| {
-                let c = petramond_math::math::voxel_at(feet);
-                !self.world.water_cell_at(c.x, c.y, c.z)
-                    && !self.world.water_cell_at(c.x, c.y - 1, c.z)
-            },
+            |feet| dismount_footing_safe(&self.world, feet),
         )
     }
 
@@ -287,14 +285,12 @@ impl ServerGame {
         obstacles: &[petramond_world::collision::DynBox],
     ) -> Option<Vec3> {
         let known_free = |feet| player_body_known_free(&self.world, feet, obstacles);
-        let dry = |feet| {
+        let safe = |feet| {
             let c = petramond_math::math::voxel_at(feet);
-            self.world.physics_cell_final_at(c.x, c.y, c.z)
-                && self.world.physics_cell_final_at(c.x, c.y - 1, c.z)
-                && !self.world.water_cell_at(c.x, c.y, c.z)
-                && !self.world.water_cell_at(c.x, c.y - 1, c.z)
+            self.world.physics_cell_final_at(c.x, c.y - 1, c.z)
+                && dismount_footing_safe(&self.world, feet)
         };
-        if let Some(feet) = dismount_spot(player.pos, player.yaw, known_free, dry) {
+        if let Some(feet) = dismount_spot(player.pos, player.yaw, known_free, safe) {
             return Some(feet);
         }
         if !player.pos.is_finite() {
@@ -303,7 +299,7 @@ impl ServerGame {
 
         let origin = petramond_math::math::voxel_at(player.pos);
         for radius in 1..=SAVE_DISMOUNT_RADIUS {
-            let mut wet = None;
+            let mut unsafe_spot = None;
             for dy in SAVE_DISMOUNT_DY {
                 for dx in -radius..=radius {
                     for dz in -radius..=radius {
@@ -318,15 +314,15 @@ impl ServerGame {
                         if !known_free(feet) {
                             continue;
                         }
-                        if dry(feet) {
+                        if safe(feet) {
                             return Some(feet);
                         }
-                        wet.get_or_insert(feet);
+                        unsafe_spot.get_or_insert(feet);
                     }
                 }
             }
-            if wet.is_some() {
-                return wet;
+            if unsafe_spot.is_some() {
+                return unsafe_spot;
             }
         }
         None

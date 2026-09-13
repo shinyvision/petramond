@@ -29,13 +29,13 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "climbable",
     "snow_cover",
     "slippery",
-    "melts",
     "sapling",
     "bed",
     "merges_with_self",
     "snow_bedded",
     "rock",
     "canopy",
+    "nav_hazard",
 ]);
 
 impl BlockTag {
@@ -116,11 +116,6 @@ impl BlockTag {
     /// idle friction and directional snap both drop (the feel constants live
     /// in `player::movement`, never per-block, like the climb feel).
     pub const SLIPPERY: BlockTag = BlockTag(14);
-    /// Frozen water — plain ice, NOT packed ice. Breaking it leaves a water
-    /// source behind when something below can hold it (see
-    /// `Block::break_residue`), so mining the frozen sea never leaves a dry
-    /// pocket the water sim cannot refill.
-    pub const MELTS: BlockTag = BlockTag(15);
     /// A planted tree-to-be — every growth-stage row of the sapling behaviour
     /// (stages are distinct block rows chained by `next_stage`; the final row
     /// carries `grows_into`). Tag and behaviour are ONE membership: the loader
@@ -128,7 +123,7 @@ impl BlockTag {
     /// so what mods enumerate through `BlocksByTag` and what actually grows can
     /// never diverge. Consumers: the farming pack's fertilizer boost, and its
     /// vegetation spread's sapling exclusion.
-    pub const SAPLING: BlockTag = BlockTag(16);
+    pub const SAPLING: BlockTag = BlockTag(15);
     /// A bed — the block the server's bed-spawn bookkeeping recognises: a
     /// sleep interaction on it SETS the player's spawn point, respawn verifies
     /// the bed still stands, and breaking it clears the spawn. This is the
@@ -138,13 +133,13 @@ impl BlockTag {
     /// `bed`-tagged row to be a sleepable model block (see `load::convert`) —
     /// the bookkeeping resolves the bed through its model group, and a spawn
     /// is only ever set by a sleep click.
-    pub const BED: BlockTag = BlockTag(17);
+    pub const BED: BlockTag = BlockTag(16);
     /// A see-through block whose faces AGAINST ITSELF are never drawn, so a
     /// run of it reads as one volume rather than stacked panes — glass and
     /// ice. The opposite choice is deliberate for leaves, whose interior faces
     /// are what give a canopy depth, so this is a row opt-in rather than
     /// anything derived from the render pass.
-    pub const MERGES_WITH_SELF: BlockTag = BlockTag(18);
+    pub const MERGES_WITH_SELF: BlockTag = BlockTag(17);
     /// Ground decoration that is drawn STANDING IN the snow blanket its cell
     /// would otherwise have held — the dual of [`SNOW_COVER`](Self::SNOW_COVER),
     /// and the answer to the same problem from the other side.
@@ -156,7 +151,7 @@ impl BlockTag {
     /// own boxes in this cell underneath the decoration's geometry. Derived
     /// from the neighbours at mesh time and never stored per cell, exactly like
     /// the snowy-grass side swap, so it heals the moment snow is placed or dug.
-    pub const SNOW_BEDDED: BlockTag = BlockTag(19);
+    pub const SNOW_BEDDED: BlockTag = BlockTag(18);
     /// Bare rocky ground — natural stone-family blocks (stone, the ores,
     /// marble; packs opt their own in by listing the tag): the floor of
     /// caves and peaks rather than living surface. Consumed as
@@ -166,12 +161,15 @@ impl BlockTag {
     /// cave block joins by editing its row. Deliberately NOT carried by
     /// crafted stone (cobblestone, bricks, stairs): a player-built stone
     /// path or floor should not repel animals.
-    pub const ROCK: BlockTag = BlockTag(20);
+    pub const ROCK: BlockTag = BlockTag(19);
     /// Reads as a soft foliage crown: the mesher insets a cell's convex
     /// canopy corners and sprouts small leaf sprays from its air-facing
     /// surfaces. Pure presentation — decay and support come from `leaves`;
     /// a pack's vines or flowering canopy opts in (or out) by tagging its row.
-    pub const CANOPY: BlockTag = BlockTag(21);
+    pub const CANOPY: BlockTag = BlockTag(20);
+
+    /// Dangerous terrain that walking navigation must not enter from safety.
+    pub const NAV_HAZARD: BlockTag = BlockTag(21);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub fn resolve(name: &str) -> Result<BlockTag, String> {

@@ -102,7 +102,7 @@ pub struct MotionFrame {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MovementMedium {
     Land,
-    Water,
+    Swimming,
     Climbing,
 }
 
@@ -112,12 +112,15 @@ pub(super) fn movement_medium(
 ) -> MovementMedium {
     let x = pos.x.floor() as i32;
     let z = pos.z.floor() as i32;
-    if world.water_cell_at(
-        x,
-        (pos.y + petramond::player::WATER_PROBE_Y).floor() as i32,
-        z,
-    ) {
-        MovementMedium::Water
+    if world
+        .body_fluid(
+            pos,
+            petramond::player::HEIGHT,
+            petramond_world::fluid::Buoyancy::Swim,
+        )
+        .is_some()
+    {
+        MovementMedium::Swimming
     } else if petramond_world::block::Block::from_id(world.chunk_block(x, pos.y.floor() as i32, z))
         .is_climbable()
     {
@@ -163,7 +166,7 @@ impl BodyPose {
             return;
         }
         self.advance_swimming(dt, &frame);
-        if frame.medium == MovementMedium::Water {
+        if frame.medium == MovementMedium::Swimming {
             self.was_grounded = None;
             self.fall_speed = 0.0;
             self.landing_strength = 0.0;

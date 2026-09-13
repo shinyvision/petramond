@@ -167,7 +167,7 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
         },
         blocks: SectionBlocks(Arc::from(blocks.into_boxed_slice())),
         metrics: Default::default(),
-        water: None,
+        fluid: None,
         skylight: None,
         blocklight: Some(crate::net::protocol::SectionLight(Arc::from(
             light.into_boxed_slice(),
@@ -210,14 +210,14 @@ fn tick_updates_roundtrip() {
             BlockDelta {
                 pos: IVec3::new(-8, 70, 3),
                 block_id: 9,
-                water: Some(0x87),
+                fluid: Some(0x87),
                 state: None,
                 cell_kv: vec![("furniture:dye".into(), vec![200, 30, 40])],
             },
             BlockDelta {
                 pos: IVec3::new(4, 65, 4),
                 block_id: 12,
-                water: None,
+                fluid: None,
                 state: Some(petramond_world::block::ShapeState::with_ids(
                     &[1, 12, 0],
                     0b110,
@@ -227,7 +227,7 @@ fn tick_updates_roundtrip() {
             BlockDelta {
                 pos: IVec3::new(5, 65, 4),
                 block_id: 30,
-                water: None,
+                fluid: None,
                 state: Some(petramond_world::block::ShapeState::new(&[1, 0, 0, 3])),
                 cell_kv: vec![],
             },
@@ -270,6 +270,7 @@ fn tick_updates_roundtrip() {
             dead: false,
             shorn: true,
             emitters: vec![1],
+            conditions: vec![(0, 1)],
             anims: Vec::new(),
             ragdoll: Some(vec![([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0])]),
         }],
@@ -283,6 +284,7 @@ fn tick_updates_roundtrip() {
             flight: None,
         }],
         players: vec![PlayerStateRow {
+            conditions: Vec::new(),
             id: PlayerId(1),
             transform: Transform {
                 pos: Vec3::new(4.5, 71.0, -2.25),
@@ -328,6 +330,7 @@ fn tick_updates_roundtrip() {
             (PlayerId(0), PlayerActionKind::AteFinished),
         ],
         self_state: Some(SelfState {
+            conditions: Vec::new(),
             health: 14,
             mode: 0,
             effects: vec![(0, 900)],
@@ -453,7 +456,7 @@ fn wire_block_cubes_carry_ids_past_one_byte() {
             },
             blocks: SectionBlocks(Arc::from(cells.clone().into_boxed_slice())),
             metrics: Default::default(),
-            water: None,
+            fluid: None,
             skylight: None,
             blocklight: None,
             states: Default::default(),

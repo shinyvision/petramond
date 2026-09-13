@@ -89,13 +89,12 @@ impl PendingUseClick {
     }
 
     /// The item that selects the click's RAY: the first hand (main, then off)
-    /// holding a `use_ray: water` item, else the main-hand item. The off-hand
-    /// boat needs the water target for the ladder's second pass.
+    /// holding an item whose `use_ray` sees fluid, else the main-hand item. The
+    /// off-hand boat needs the water target for the ladder's second pass.
     pub fn ray_item(self) -> Option<ItemType> {
-        use petramond_world::item::UseRay;
-        let water = |item: Option<ItemType>| item.filter(|i| i.use_ray() == UseRay::Water);
-        water(self.held_item)
-            .or_else(|| water(self.off_hand_item))
+        let fluid_ray = |item: Option<ItemType>| item.filter(|i| i.use_ray().sees_fluid());
+        fluid_ray(self.held_item)
+            .or_else(|| fluid_ray(self.off_hand_item))
             .or(self.held_item)
     }
 
@@ -279,8 +278,8 @@ pub struct ConnectedPlayer {
     /// Hardest landing (blocks) since the tick last consumed it, measured by
     /// [`fall`](Self::fall) — `tick_fall_damage` converts it into damage.
     pub pending_fall: f32,
-    /// Hardest fall INTO WATER (blocks) since the tick last consumed it —
-    /// `tick_water_splash` converts it into the `petramond:water_splash` burst.
+    /// Hardest fall INTO a splashing fluid (blocks) since the tick last
+    /// consumed it — `tick_fluid_splash` converts it into that fluid's splash.
     pub pending_splash: f32,
     /// Player position when this frame's fixed ticks began — a tick-side
     /// position change is a teleport, which re-anchors [`fall`](Self::fall)

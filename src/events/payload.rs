@@ -168,6 +168,10 @@ pub enum DamageSource {
     /// (interned for the process lifetime — see `modding::host`), so handlers
     /// can filter by origin.
     Mod(&'static str),
+    /// Contact with a fluid whose row deals contact damage.
+    Fluid(petramond_world::block::Block),
+    /// A pulse of an active body condition.
+    Condition(petramond_world::condition::ConditionId),
 }
 
 impl DamageSource {
@@ -184,7 +188,7 @@ impl DamageSource {
         match self {
             Self::PlayerAttack(pid) => Some(crate::mob::EntityRef::Player(pid)),
             Self::MobAttack { id, .. } => Some(crate::mob::EntityRef::Mob(id)),
-            Self::Fall | Self::Mod(_) => None,
+            Self::Fall | Self::Fluid(_) | Self::Condition(_) | Self::Mod(_) => None,
         }
     }
 }

@@ -253,6 +253,7 @@ fn block_named(name: &str) -> Result<Block, String> {
 /// A material's face composition, or why the block cannot be one.
 fn faces_of(block: Block, name: &str) -> Result<[FaceMaterial; 3], String> {
     if !block.is_opaque()
+        || block.is_fluid()
         || block.shape_family() != ShapeFamily::Cube
         || block.is_log()
         || block.front_tile().is_some()

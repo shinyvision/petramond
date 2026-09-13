@@ -91,6 +91,20 @@ host_fn! {
 }
 
 host_fn! {
+    /// Resolve a `conditions.json` key (`"petramond:burning"`) to its row: the
+    /// session [`ConditionId`](mod_api::ConditionId) plus its stage names —
+    /// resolve once at init and address stages by index.
+    pub fn resolve_condition(key: &str) -> Option<mod_api::ConditionInfoData>
+        => ResolveCondition { key: key.into() } => Condition
+}
+
+host_fn! {
+    /// Condition ids back to their keys, parallel to `conditions`.
+    pub fn condition_names(conditions: Vec<mod_api::ConditionId>) -> Vec<Option<String>>
+        => ConditionNames { conditions } => Names
+}
+
+host_fn! {
     /// Every registered block carrying `tag`, in id order — engine tags as
     /// `"petramond:<name>"` (e.g. `"petramond:leaves"`), pack tags as their
     /// `"mod_id:name"`. A name nothing lists is an empty set; a query never
@@ -151,6 +165,15 @@ pub fn resolve_mob_logged(name: &str) -> Option<MobId> {
     id
 }
 
+/// [`resolve_condition`], logging an unregistered key.
+pub fn resolve_condition_logged(key: &str) -> Option<mod_api::ConditionInfoData> {
+    let info = resolve_condition(key);
+    if info.is_none() {
+        crate::log(&format!("condition '{key}' is not registered"));
+    }
+    info
+}
+
 /// [`resolve_item`] that also logs a "not registered" line on `None` — the
 /// item twin of [`resolve_block_logged`].
 pub fn resolve_item_logged(name: &str) -> Option<ItemId> {
@@ -206,4 +229,13 @@ host_fn! {
     /// [`item_info`]: crate::item_info
     pub fn block_info(block: BlockId) -> Option<Box<mod_api::BlockInfoData>>
         => BlockInfo { block } => BlockInfo
+}
+
+host_fn! {
+    /// [`block_info`] for many ids in one crossing, parallel to `blocks`
+    /// (`None` = unregistered id; at most [`mod_api::SIM_BATCH_MAX`] ids per
+    /// call). How a consumer classifies the whole block registry once at
+    /// init. Registry-only, legal on any instance.
+    pub fn block_infos(blocks: Vec<BlockId>) -> Vec<Option<mod_api::BlockInfoData>>
+        => BlockInfos { blocks } => BlockInfos
 }

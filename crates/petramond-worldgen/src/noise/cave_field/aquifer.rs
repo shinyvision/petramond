@@ -21,13 +21,25 @@ impl CaveField {
         (y <= aquifer.level).then_some(aquifer)
     }
 
+    /// The block an OPEN cell at `pos` generates as: a habitat aquifer's
+    /// fluid, a pool's fluid, air otherwise. Positional, so a barrier
+    /// decision can read its neighbours across box edges.
+    #[inline]
+    pub(super) fn open_fill(&self, lat: &CaveLattice, pos: [i32; 3]) -> u16 {
+        match self.aquifer_at(lat, pos) {
+            Some(aquifer) => aquifer.fluid,
+            None => lat.pools.fluid_at(pos),
+        }
+    }
+
     pub(super) fn cut_from_col(&self, c: &mut Col, y: i32, gate: bool, interior: bool) -> CaveCut {
         let treatment = c.lat.volumes.at([c.x, y, c.z]);
         self.cut_from_col_treated(c, y, gate, interior, treatment)
     }
 
     /// [`Self::cut_from_col`] with the cell's positioned-field treatment
-    /// already looked up.
+    /// already looked up. An open cell holding a fluid answers
+    /// `CaveCut::Fill`, or the aquifer barrier sealing it.
     pub(super) fn cut_from_col_treated(
         &self,
         c: &mut Col,
@@ -46,16 +58,11 @@ impl CaveField {
             }
         }
         let cut = self.cut_unsealed(c, y, gate, interior);
+        let aquifer = cut.is_air().then(|| self.aquifer_at_col(c, y)).flatten();
         // The block the cave alone would leave here, for a field's filters.
-        let natural = match cut {
-            CaveCut::Open => {
-                if self.aquifer_at_col(c, y).is_some() {
-                    Block::Water.id()
-                } else {
-                    Block::Air.id()
-                }
-            }
-            CaveCut::Barrier(block) => block,
+        let natural = match (cut, aquifer) {
+            (CaveCut::Air, Some(aquifer)) => aquifer.fluid,
+            (CaveCut::Air, None) => c.lat.pools.fluid_at([c.x, y, c.z]),
             _ => Block::Stone.id(),
         };
         match treatment {
@@ -76,23 +83,23 @@ impl CaveField {
             }
             Cell::Untouched => {}
         }
-        if cut != CaveCut::Open {
+        if !cut.is_air() || natural == Block::Air.id() {
             return cut;
         }
-        let pos = [c.x, y, c.z];
-        let Some(aquifer) = self.aquifer_at_col(c, y) else {
-            return cut;
-        };
-        if needs_barrier(pos, |neighbor| self.aquifer_at(c.lat, neighbor).is_some()) {
-            CaveCut::Barrier(aquifer.barrier)
-        } else {
-            cut
+        // An aquifer is a LEVEL laid over the cave, so it is sealed wherever it
+        // crosses open rock; a pool is sealed by the very rock that chose it.
+        if let Some(aquifer) = aquifer {
+            let pos = [c.x, y, c.z];
+            if needs_barrier(pos, |n| self.open_fill(c.lat, n) == aquifer.fluid) {
+                return CaveCut::Barrier(aquifer.barrier);
+            }
         }
+        CaveCut::Fill(natural)
     }
 }
 
-// Water propagates laterally and downward; the open top remains its surface.
-fn needs_barrier([x, y, z]: [i32; 3], wet: impl Fn([i32; 3]) -> bool) -> bool {
+// A fluid propagates laterally and downward; the open top remains its surface.
+pub(super) fn needs_barrier([x, y, z]: [i32; 3], wet: impl Fn([i32; 3]) -> bool) -> bool {
     [
         [x - 1, y, z],
         [x + 1, y, z],

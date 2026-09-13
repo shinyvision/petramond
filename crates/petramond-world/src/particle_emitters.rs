@@ -4,15 +4,15 @@
 //!
 //! A BUNDLE is one named visual effect: one or more particle rows (the shared
 //! [`ParticleEmitter`] schema blocks use) plus an
-//! optional multiply body tint. Engine bundles own the low ids in the frozen
+//! optional body tint and self-lighting. Engine bundles own the low ids in the frozen
 //! const order below; a mod pack ADDS a bundle with a namespaced
 //! (`mod_id:name`) key, which registers a fresh id in load order.
 //!
 //! Consumers reference bundles BY KEY, cross-namespace (the same interop rule
 //! as effects): a block row's `particle_emitter` may name a bundle instead of
 //! carrying an inline row, and mods attach bundles to live mobs through the
-//! `MobEmitterSet` HostCall. Tint applies to mob bodies only; a block
-//! referencing a tinted bundle just shows its particles.
+//! `MobEmitterSet` HostCall. Body appearance applies to attached entities; a block
+//! referencing a bundle just shows its particles.
 //!
 //! Ids are session-scoped: nothing persists them, and the wire ships the key
 //! table at join for remapping (like sounds/effects).
@@ -31,6 +31,13 @@ use serde::Deserialize;
 use crate::block::{BlockTag, ParticleEmitter};
 use crate::tile::Tile;
 
+/// The biggest cube a row can spawn — the size every visibility cull compares
+/// against a pixel, whichever way round the row authored its range.
+#[inline]
+pub fn particle_size(e: &ParticleEmitter) -> f32 {
+    e.size[0].max(e.size[1])
+}
+
 /// Engine bundle keys in frozen id order; the completeness oracle
 /// `particle_emitters.json` is validated against.
 const ENGINE_EMITTER_NAMES: &[&str] = &[
@@ -39,11 +46,8 @@ const ENGINE_EMITTER_NAMES: &[&str] = &[
     "petramond:burn_great",
     "petramond:water_splash",
     "petramond:butterfly",
+    "petramond:lava_embers",
 ];
-
-/// The engine water-splash burst bundle, emitted by core physics when a player
-/// or mob FALLS into water (see `ServerGame::push_water_splash`).
-pub const WATER_SPLASH_KEY: &str = "petramond:water_splash";
 
 /// Most particle rows one bundle may declare.
 const MAX_BUNDLE_ROWS: usize = 4;
@@ -58,9 +62,13 @@ pub struct EmitterBundle {
     pub id: u8,
     /// The registry key (`"petramond:burn_light"`, `"mod_id:sparkle"`).
     pub key: &'static str,
-    /// Optional multiply body tint shown while attached to a mob (RGB
+    /// Optional multiply body tint shown while attached to an entity (RGB
     /// `0..=1`). Ignored by block references.
     pub tint: Option<[f32; 3]>,
+    /// Authored body dimensions; attached rows scale to their wearer when set.
+    pub body_size: Option<[f32; 3]>,
+    /// Body light mixed toward full brightness (`0..=1`); attachments compose by max.
+    pub body_self_lit: f32,
     /// The looping particle rows, all shown together while the bundle is
     /// active. Empty for a burst or ambient bundle.
     pub rows: &'static [ParticleEmitter],
@@ -341,6 +349,10 @@ struct RawBundle {
     #[serde(default)]
     tint: Option<[f32; 3]>,
     #[serde(default)]
+    body_size: Option<[f32; 3]>,
+    #[serde(default)]
+    body_self_lit: f32,
+    #[serde(default)]
     particles: Vec<ParticleEmitter>,
     #[serde(default)]
     burst: Option<BurstSpec>,
@@ -490,6 +502,14 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
                     resolve_flight(&r.emitter, flight)?;
                 }
             }
+            if let Some(size) = r.body_size {
+                if r.particles.is_empty() || size.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+                    return Err(format!(
+                        "emitter '{}': body_size requires looping rows and positive dimensions",
+                        r.emitter
+                    ));
+                }
+            }
             if let Some(tint) = r.tint {
                 for channel in tint {
                     if !channel.is_finite() || !(0.0..=1.0).contains(&channel) {
@@ -500,6 +520,12 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
                     }
                 }
             }
+            if !r.body_self_lit.is_finite() || !(0.0..=1.0).contains(&r.body_self_lit) {
+                return Err(format!(
+                    "emitter '{}': body_self_lit must be in 0..=1",
+                    r.emitter
+                ));
+            }
             for particle in &r.particles {
                 crate::block::validate_particle_emitter(particle)
                     .map_err(|e| format!("emitter '{}': {e}", r.emitter))?;
@@ -508,6 +534,8 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
                 id: id as u8,
                 key: names.name(id).expect("id resolved from this table"),
                 tint: r.tint,
+                body_size: r.body_size,
+                body_self_lit: r.body_self_lit,
                 rows: Box::leak(r.particles.into_boxed_slice()),
                 burst: r.burst,
                 ambient: r.ambient,

@@ -46,11 +46,11 @@ impl WorldData {
         Some(c.block(lx, ly, lz))
     }
 
-    /// Water-flow metadata at a world voxel (0 where the cell is not flowing
-    /// water or its chunk is unloaded). See `world::water` for the encoding.
-    pub fn water_meta_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+    /// Fluid-flow metadata at a world voxel (0 where the cell is not flowing
+    /// fluid or its chunk is unloaded). See [`crate::fluid_math`] for the encoding.
+    pub fn fluid_meta_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
         match self.chunk_at_world(wx, wy, wz) {
-            Some((c, lx, ly, lz)) => c.water_meta(lx, ly, lz),
+            Some((c, lx, ly, lz)) => c.fluid_meta(lx, ly, lz),
             None => 0,
         }
     }
@@ -169,7 +169,7 @@ impl WorldData {
         }
         match self.section_summary(pos) {
             SectionSummary::Empty => true,
-            SectionSummary::FullWater => Block::Water.is_replaceable(),
+            full @ SectionSummary::FullWater => full.virtual_block().is_replaceable(),
             SectionSummary::Unknown => self.absent_cell_above_known_surface(c, pos),
             SectionSummary::FullOpaque | SectionSummary::Mixed => false,
         }
@@ -214,7 +214,7 @@ impl WorldData {
     }
 
     /// The Y of the topmost cell precipitation lands on in the loaded column
-    /// at `(wx, wz)` — the first movement-blocking OR water cell scanning
+    /// at `(wx, wz)` — the first movement-blocking OR fluid cell scanning
     /// down from the column top — or `None` if the chunk is unloaded or the
     /// column is all air. Walk-through cover (tall grass, snow layers,
     /// flowers) lets rain fall THROUGH to the ground under it, while a lake
@@ -226,7 +226,7 @@ impl WorldData {
             self.blocks_movement_at(wx, y, wz)
                 || self
                     .block_if_loaded(wx, y, wz)
-                    .is_some_and(|b| b.is_water())
+                    .is_some_and(|b| b.is_fluid())
         })
     }
 
@@ -238,7 +238,7 @@ impl WorldData {
         let Some(block) = self.block_if_loaded(wx, wy, wz) else {
             return false;
         };
-        if block.is_water() || block.is_leaves() {
+        if block.is_fluid() || block.is_leaves() {
             return false;
         }
         full_unit_cube(self.collision_boxes_at(wx, wy, wz))

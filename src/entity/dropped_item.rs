@@ -16,6 +16,7 @@
 
 use crate::world::World;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_world::fluid::{Buoyancy, FluidCurrent, Immersion};
 use petramond_world::item::ItemStack;
 
 use super::{hash01, hash_signed};
@@ -46,10 +47,6 @@ const MAGNET_RAMP_SPEED: f32 = 10.0;
 const GROUND_DAMP_PER_SEC: f32 = 6.0;
 /// Air drag applied to horizontal velocity each second (mild).
 const AIR_DAMP_PER_SEC: f32 = 0.8;
-/// Target horizontal drift speed from flowing water for item entities.
-const WATER_CURRENT_SPEED: f32 = 0.65;
-/// How quickly water current contributes its drift speed to item entities.
-const WATER_CURRENT_ACCEL: f32 = 8.0;
 /// Angular speed of the idle spin, in radians/second.
 const SPIN_SPEED: f32 = 2.0;
 
@@ -345,8 +342,10 @@ impl DroppedItem {
         // The shared, model-aware box source — the item collides with a bbmodel block's
         // real legs/top, exactly like the player/mob bodies (all via `collision_boxes_at`).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
-        let flow_at = |p: Vec3| world.water_flow_at_point(p);
-        self.integrate_with_flow(dt, magnet_target, &boxes, &flow_at);
+        let feet = self.pos - Vec3::Y * ITEM_HALF_EXTENT;
+        let immersion = world.body_fluid(feet, 2.0 * ITEM_HALF_EXTENT, Buoyancy::Swim);
+        let current = world.fluid_current_at(self.pos);
+        self.integrate_with_flow(dt, magnet_target, &boxes, immersion, current);
     }
 
     /// Advance a FLIGHT's velocity by `dt` without moving it: gravity and
@@ -386,8 +385,7 @@ impl DroppedItem {
                 &[][..]
             }
         };
-        let still_water = |_: Vec3| Vec3::ZERO;
-        self.integrate_with_flow(dt, magnet_target, &boxes, &still_water);
+        self.integrate_with_flow(dt, magnet_target, &boxes, None, FluidCurrent::NONE);
     }
 
     fn integrate_with_flow(
@@ -395,7 +393,8 @@ impl DroppedItem {
         dt: f32,
         magnet_target: Option<Vec3>,
         boxes: &impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
-        flow_at: &impl Fn(Vec3) -> Vec3,
+        immersion: Option<Immersion>,
+        current: FluidCurrent,
     ) {
         // Snapshot the pre-tick pose so the renderer can interpolate this tick's motion
         // (physics runs on the fixed game tick; frames in between blend prev → current).
@@ -429,15 +428,22 @@ impl DroppedItem {
             }
         }
 
-        self.vel = add_flow_push(
-            self.vel,
-            flow_at(self.pos),
-            WATER_CURRENT_SPEED,
-            WATER_CURRENT_ACCEL * dt,
-        );
-
-        // Gravity.
-        self.vel.y += GRAVITY * dt;
+        if let Some(sample) = immersion {
+            self.vel = sample
+                .fluid
+                .motion
+                .horizontal_velocity(self.vel, Vec3::ZERO, dt);
+            self.vel.y = sample.vertical_velocity(
+                self.vel.y,
+                self.pos.y - ITEM_HALF_EXTENT,
+                Buoyancy::Swim,
+                false,
+                dt,
+            );
+        } else {
+            self.vel.y += GRAVITY * dt;
+        }
+        self.vel = current.apply(self.vel, dt);
 
         // Axis-resolved movement via the shared swept-AABB resolver (same one the player
         // and mobs use): slides along each axis against the block's real collision shape. An
@@ -489,19 +495,6 @@ impl DroppedItem {
         let d = self.pos - player_pos;
         d.length_squared() <= ATTRACT_RADIUS * ATTRACT_RADIUS
     }
-}
-
-fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec3 {
-    let len_sq = dir.x * dir.x + dir.z * dir.z;
-    if len_sq <= 1e-12 || target_speed <= 0.0 || max_delta <= 0.0 {
-        return vel;
-    }
-    let inv_len = len_sq.sqrt().recip();
-    let nx = dir.x * inv_len;
-    let nz = dir.z * inv_len;
-    let along = vel.x * nx + vel.z * nz;
-    let add = (target_speed - along).clamp(0.0, max_delta);
-    Vec3::new(vel.x + nx * add, vel.y, vel.z + nz * add)
 }
 
 #[cfg(test)]
@@ -577,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn flowing_water_pushes_item_entities_along_current() {
+    fn a_current_pushes_item_entities_along() {
         let mut d = DroppedItem::new(Vec3::new(0.5, 1.5, 0.5), stack(), 15);
         d.vel = Vec3::ZERO;
         let flow = |p: Vec3| {
@@ -588,7 +581,16 @@ mod tests {
             }
         };
 
-        d.integrate_with_flow(0.1, None, &boxes_of(empty), &flow);
+        d.integrate_with_flow(
+            0.1,
+            None,
+            &boxes_of(empty),
+            None,
+            FluidCurrent {
+                velocity: flow(d.pos),
+                accel: 9.0,
+            },
+        );
 
         assert!(d.vel.z > 0.0, "current should add +Z velocity: {}", d.vel.z);
         assert!(d.pos.z > 0.5, "current should move the item: {}", d.pos.z);
@@ -629,11 +631,10 @@ mod tests {
             "the chest box must actually be inset (top {chest_top})"
         );
         let boxes = |_x: i32, y: i32, _z: i32| if y == 0 { chest } else { &[][..] };
-        let still = |_: Vec3| Vec3::ZERO;
         let mut d = DroppedItem::new(Vec3::new(0.5, 3.0, 0.5), stack(), 1);
         d.vel = Vec3::ZERO;
         for _ in 0..300 {
-            d.integrate_with_flow(1.0 / 60.0, None, &boxes, &still);
+            d.integrate_with_flow(1.0 / 60.0, None, &boxes, None, FluidCurrent::NONE);
         }
         // The item bottom rests on the chest top.
         assert!(

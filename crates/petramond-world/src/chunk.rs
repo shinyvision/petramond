@@ -6,7 +6,7 @@
 //!
 //! - **Worldgen transfer format**: `worldgen::driver::generate_surface` and the
 //!   staged pipeline behind `worldgen::generate_chunk` fill a whole column at
-//!   once (blocks, water metadata, heightmap, biome — never block entities),
+//!   once (blocks, fluid metadata, heightmap, biome — never block entities),
 //!   consumed by the worldgen bins/audit tooling (`genmap`, `genparity`,
 //!   `genfeature`) and by worldgen parity tests.
 //! - **Test fixture**: column-era tests hand-build a `Chunk` and install it via
@@ -83,20 +83,17 @@ pub fn section_local(idx: usize) -> (usize, usize, usize) {
 }
 
 /// A legacy voxel column: the worldgen transfer format + column-era test
-/// fixture (see the module doc). Blocks stored as `Box<[u16; VOLUME]>`. Carries only what worldgen produces — blocks, water
+/// fixture (see the module doc). Blocks stored as `Box<[u16; VOLUME]>`. Carries only what worldgen produces — blocks, fluid
 /// metadata, heightmap, biome — never block entities. Live world storage is
 /// [`crate::section::Section`].
 pub struct Chunk {
     pub cx: i32,
     pub cz: i32,
     blocks: Box<[u16]>,
-    /// Per-block water state, parallel to `blocks`, only meaningful where the
-    /// block is `Water`. Encodes the flow `falloff` (0 = source/full, 1..=8 =
-    /// distance from a source) plus a `FALLING` bit (see `world::water`).
-    /// `None` until the column first holds non-source flowing water — generated
-    /// water is all-source (meta 0), so worldgen output never allocates it;
-    /// only test fixtures with flowing water do.
-    water: Option<Box<[u8]>>,
+    /// Per-block fluid state, parallel to `blocks`, meaningful for simulated
+    /// fluids only. Stores a level (0 = source, 1..=7 = flowing) and a FALLING
+    /// bit (see [`crate::fluid_math`]). Absent until a cell holds nonzero meta.
+    fluid: Option<Box<[u8]>>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
@@ -120,7 +117,7 @@ impl Chunk {
             cx,
             cz,
             blocks,
-            water: None,
+            fluid: None,
             random_tick_count: 0,
             heightmap,
             biomes,
@@ -142,7 +139,7 @@ impl Chunk {
         self.blocks[idx(x, y, z)]
     }
 
-    /// Test-fixture setter with full bookkeeping (heightmap, water meta, random-tick
+    /// Test-fixture setter with full bookkeeping (heightmap, fluid meta, random-tick
     /// count). Worldgen writes via [`set_block_raw`](Self::set_block_raw) /
     /// `blocks_slice_mut`.
     #[cfg(any(test, feature = "test-support"))]
@@ -155,56 +152,53 @@ impl Chunk {
         let old = self.blocks[i];
         self.blocks[i] = id;
         self.adjust_random_tick_count(old, id);
-        self.clear_water_meta(i);
+        self.clear_fluid_meta(i);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
         self.mark_light_dirty();
     }
 
-    /// Water-flow metadata at a local voxel (0 where the cell is not flowing
-    /// water or the column has never held flowing water). See `world::water`.
-    /// Generated water is all-source (meta 0); only fixtures ever store meta.
+    /// Fluid-flow metadata at a local voxel (0 where the cell is not flowing
+    /// fluid or the column has never held flowing fluid). See [`crate::fluid_math`].
     #[cfg(any(test, feature = "test-support"))]
     #[inline]
-    pub fn water_meta(&self, x: usize, y: usize, z: usize) -> u8 {
-        match &self.water {
+    pub fn fluid_meta(&self, x: usize, y: usize, z: usize) -> u8 {
+        match &self.fluid {
             Some(w) => w[idx(x, y, z)],
             None => 0,
         }
     }
 
-    /// Set a water cell (block + flow meta) WITHOUT marking skylight dirty: water
-    /// is transparent and never changes the skylight band, so flow updates only
-    /// need a remesh. Marks the chunk mesh-dirty. `meta` is ignored (treated as
-    /// 0) when `b` is not water.
+    /// Set a fluid cell (block + flow meta) without marking skylight dirty.
+    /// Marks the chunk mesh-dirty. `meta` is treated as 0 for non-fluid blocks.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_water(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
+    pub fn set_fluid(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
         let i = idx(x, y, z);
         let id = b.id();
         let old = self.blocks[i];
         self.blocks[i] = id;
         self.adjust_random_tick_count(old, id);
-        let meta = if b == Block::Water { meta } else { 0 };
-        self.store_water_meta(i, meta);
+        let meta = if b.is_fluid() { meta } else { 0 };
+        self.store_fluid_meta(i, meta);
         self.update_heightmap_after_set(x, y, z, id);
         self.dirty = true;
     }
 
     #[inline]
-    fn clear_water_meta(&mut self, i: usize) {
-        if let Some(w) = self.water.as_mut() {
+    fn clear_fluid_meta(&mut self, i: usize) {
+        if let Some(w) = self.fluid.as_mut() {
             w[i] = 0;
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     #[inline]
-    fn store_water_meta(&mut self, i: usize, meta: u8) {
+    fn store_fluid_meta(&mut self, i: usize, meta: u8) {
         if meta == 0 {
-            self.clear_water_meta(i);
+            self.clear_fluid_meta(i);
             return;
         }
-        self.water
+        self.fluid
             .get_or_insert_with(|| vec![0u8; VOLUME].into_boxed_slice())[i] = meta;
     }
 

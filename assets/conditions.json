@@ -1,0 +1,27 @@
+{
+  "conditions": [
+    {
+      "condition": "petramond:burning",
+      "stages": [
+        {
+          "stage": "light",
+          "damage": {
+            "amount": 1,
+            "interval": 10
+          },
+          "emitter": "petramond:burn_light"
+        },
+        {
+          "stage": "great",
+          "damage": {
+            "amount": 1,
+            "interval": 10
+          },
+          "emitter": "petramond:burn_great",
+          "cools_to": "light",
+          "cools_after": 0.5
+        }
+      ]
+    }
+  ]
+}

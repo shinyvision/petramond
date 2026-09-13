@@ -126,7 +126,7 @@ mod tests {
             pos: petramond_world::chunk::SectionPos::new(1, 4, -2),
             blocks: SectionBlocks(std::sync::Arc::from(blocks.into_boxed_slice())),
             metrics: Default::default(),
-            water: None,
+            fluid: None,
             skylight: None,
             blocklight: None,
             states: Default::default(),

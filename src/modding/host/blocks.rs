@@ -614,8 +614,7 @@ mod tests {
     }
 
     /// `CollisionShapeAt` is generic geometry: one full unit cube = `Full`,
-    /// stairs = `Partial`, air and water = `Empty` (which is why footing
-    /// policy needs its own water check), unloaded = `None`.
+    /// stairs = `Partial`, air and any fluid = `Empty`, unloaded = `None`.
     #[test]
     fn collision_shape_classifies_geometry_and_gates_unloaded() {
         let mut store = ModStoreData::new("alpha", 1);

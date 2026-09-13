@@ -34,6 +34,7 @@ impl ServerGame {
                 dead: m.is_dead(),
                 shorn: m.is_shorn(),
                 emitters: m.active_emitters().to_vec(),
+                conditions: condition_stages(m.exposure().conditions()),
                 anims: m
                     .active_anims()
                     .iter()
@@ -73,6 +74,7 @@ impl ServerGame {
             .map(|(s, sess)| {
                 let alive = sess.player.health() > 0;
                 PlayerStateRow {
+                    conditions: condition_stages(sess.player.conditions()),
                     id: sess.id,
                     transform: Transform {
                         pos: sess.player.pos,
@@ -418,6 +420,7 @@ impl ServerGame {
         sess.last_sent_inventory_revision = Some(revision);
         SelfState {
             health: player.health(),
+            conditions: condition_stages(player.conditions()),
             mode: match player.mode() {
                 crate::player::PlayerMode::Survival => 0,
                 crate::player::PlayerMode::Spectator => 1,
@@ -640,4 +643,13 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
         }));
     }
     out
+}
+
+/// A body's replicated condition stages: `(condition id, stage)` in id order.
+fn condition_stages(conditions: &petramond_world::condition::BodyConditions) -> Vec<(u8, u8)> {
+    conditions
+        .active()
+        .iter()
+        .map(|c| (c.condition.0, c.stage()))
+        .collect()
 }

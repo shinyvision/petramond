@@ -15,7 +15,7 @@
 // background.
 //
 // Fog: the multiplier eases back to WHITE by the same atmosphere amount the
-// terrain fogs with (linear murk underwater), reaching EXACT identity at the
+// terrain fogs with (linear murk inside a fluid), reaching EXACT identity at the
 // terminal fog distance — a shadow that survived into the haze would tint the
 // fog and pop at the terrain cull boundary.
 
@@ -27,7 +27,7 @@ struct Uniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    atlas_anim: vec4<u32>,
+    atlas_layout: vec4<u32>,
     sky_color: vec4<f32>,
     sun_dir: vec4<f32>,
 };

@@ -173,6 +173,12 @@ fn damage_source(s: events::DamageSource) -> api::DamageSource {
         events::DamageSource::Mod(mod_id) => api::DamageSource::Mod {
             mod_id: mod_id.to_owned(),
         },
+        events::DamageSource::Fluid(block) => api::DamageSource::FluidContact {
+            block: api::BlockId(block.id()),
+        },
+        events::DamageSource::Condition(condition) => api::DamageSource::Condition {
+            condition: api::ConditionId(condition.0),
+        },
     }
 }
 

@@ -256,8 +256,8 @@ pub struct SectionPayload {
     /// Block-derived counters and boundary planes. The replica adopts these
     /// with the shared buffers instead of rescanning the section on its frame.
     pub metrics: petramond_world::section::SectionMetrics,
-    /// 4096 water meta bytes, present when any cell holds water.
-    pub water: Option<SectionBytes>,
+    /// 4096 fluid meta bytes, present when any fluid cell is mid-flow.
+    pub fluid: Option<SectionBytes>,
     /// Server-baked light. The ship gate (`plan_terrain_send`) holds a section
     /// back until its light is final, so this is `None` ONLY for sections that
     /// never bake (fully opaque). Replica ingest does no light work of its own;

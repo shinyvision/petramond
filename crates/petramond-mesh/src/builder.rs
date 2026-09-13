@@ -11,6 +11,7 @@ use super::vertex::ChunkMesh;
 mod cell_class;
 mod cube_face;
 mod exposed_masks;
+mod fluid_faces;
 mod foliage;
 mod geometry;
 mod model_block;
@@ -66,7 +67,7 @@ pub fn build_section_mesh(
     rules: &petramond_world::texture_transition::Rules,
     neighbour_block: impl Fn(i32, i32, i32) -> u16,
     neighbour_cell_state: impl Fn(i32, i32, i32) -> ShapeState,
-    neighbour_water: impl Fn(i32, i32, i32) -> u8,
+    neighbour_fluid_meta: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_blocklight: impl Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
@@ -90,7 +91,7 @@ pub fn build_section_mesh(
         pos,
         &neighbour_block,
         &neighbour_cell_state,
-        &neighbour_water,
+        &neighbour_fluid_meta,
         &neighbour_light,
         &neighbour_blocklight,
         &neighbour_loaded,
@@ -109,7 +110,7 @@ pub fn build_section_mesh(
         pos,
         &neighbour_block,
         &neighbour_cell_state,
-        &neighbour_water,
+        &neighbour_fluid_meta,
         &neighbour_light,
         &neighbour_blocklight,
         &neighbour_loaded,
@@ -151,7 +152,7 @@ pub fn build_section_mesh_cancellable(
     let (ox, oy, oz) = pos.origin_world();
     let nb_block = |wx, wy, wz| pad.block_world(ox, oy, oz, wx, wy, wz);
     let nb_cell_state = |wx, wy, wz| pad.cell_state_world(ox, oy, oz, wx, wy, wz);
-    let nb_water = |wx, wy, wz| pad.water_world(ox, oy, oz, wx, wy, wz);
+    let nb_fluid_meta = |wx, wy, wz| pad.fluid_meta_world(ox, oy, oz, wx, wy, wz);
     let nb_biome = |wx, wz| pad.biome_world(ox, oz, wx, wz);
     let nb_skylight = |wx, wy, wz| pad.skylight_world(ox, oy, oz, wx, wy, wz);
     let nb_blocklight = |wx, wy, wz| pad.blocklight_world(ox, oy, oz, wx, wy, wz);
@@ -164,7 +165,7 @@ pub fn build_section_mesh_cancellable(
         pos,
         nb_block,
         nb_cell_state,
-        nb_water,
+        nb_fluid_meta,
         nb_skylight,
         nb_blocklight,
         nb_loaded,
@@ -186,7 +187,7 @@ pub fn build_section_mesh_cancellable(
         pos,
         nb_block,
         nb_cell_state,
-        nb_water,
+        nb_fluid_meta,
         nb_skylight,
         nb_blocklight,
         nb_loaded,

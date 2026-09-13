@@ -19,7 +19,7 @@ pub(crate) trait SectionPayloadExt {
 
 impl SectionPayloadExt for Section {
     /// Snapshot this section as its wire payload: `Arc` refcount bumps for the
-    /// block/water/light buffers (no copies) plus the sparse state maps,
+    /// block/fluid/light buffers (no copies) plus the sparse state maps,
     /// encoded losslessly. Baked light rides along on EVERY transport — the
     /// ship gate (`section_light_final`) guarantees it is present unless the
     /// section never bakes (fully opaque); replica INGEST does no light work.
@@ -39,7 +39,7 @@ impl SectionPayloadExt for Section {
             pos: SectionPos::new(self.cx, self.cy, self.cz),
             blocks: SectionBlocks(self.blocks_iter().collect()),
             metrics: self.stream_metrics(),
-            water: self.water_arc().map(SectionBytes),
+            fluid: self.fluid_arc().map(SectionBytes),
             skylight: self.skylight_arc().map(SectionBytes),
             blocklight: self.blocklight_arc().map(SectionLight),
             states: SectionStatesPayload {

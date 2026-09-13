@@ -97,19 +97,13 @@ impl SurfaceDensitySystem {
     }
 
     pub fn surface_heights(&self, x0: i32, z0: i32, w: usize, h: usize) -> Vec<i32> {
-        let bounds = DensityLatticeBounds::new(x0, 0, z0, w, CHUNK_SY, h);
-        let lattice = self.master_density_lattice(bounds);
-        lattice
-            .top_solid_surfaces()
-            .into_iter()
-            .map(|surf| surf.unwrap_or(-1))
-            .collect()
+        surface_heights(&self.density, x0, z0, w, h)
     }
 
     #[cfg(test)]
     pub fn fill_chunk(&self, proto: &mut ProtoChunk, region: &RegionCells) {
         let bounds = DensityLatticeBounds::chunk(proto.cx(), proto.cz());
-        let lattice = self.master_density_lattice(bounds);
+        let lattice = master_density_lattice(&self.density, bounds);
         let (ox, oz) = proto.chunk_origin_world();
         let mut cells = self.climate_cells();
 
@@ -141,7 +135,7 @@ impl SurfaceDensitySystem {
     #[cfg(test)]
     pub fn fill_chunk_direct(&self, proto: &mut ProtoChunk) {
         let bounds = DensityLatticeBounds::chunk(proto.cx(), proto.cz());
-        let lattice = self.master_density_lattice(bounds);
+        let lattice = master_density_lattice(&self.density, bounds);
         let (ox, oz) = proto.chunk_origin_world();
         let mut cells = self.climate_cells();
 
@@ -497,16 +491,41 @@ impl SurfaceDensitySystem {
             false
         })
     }
+}
 
-    fn master_density_lattice(&self, bounds: DensityLatticeBounds) -> DensityLattice {
-        DensityLattice::sample_channel(
-            self.density.graph(),
-            channels::MASTER_DENSITY,
-            bounds,
-            DensityLatticeCellSize::default(),
-        )
-        .expect("surface density graph must expose master_density")
-    }
+/// The lowest surface a column reports: the search starts at y 0, and a
+/// column with no solid cell there answers one below it. Every cell under it
+/// is filled, whatever the landform.
+pub(crate) const SURFACE_FLOOR_Y: i32 = -1;
+
+/// The highest solid density cell of each column, `z * w + x`: the surface
+/// the terrain fill lays everything at or under, and air or the sea above.
+pub(crate) fn surface_heights(
+    density: &TerrainDensityGraph,
+    x0: i32,
+    z0: i32,
+    w: usize,
+    h: usize,
+) -> Vec<i32> {
+    let bounds = DensityLatticeBounds::new(x0, 0, z0, w, CHUNK_SY, h);
+    master_density_lattice(density, bounds)
+        .top_solid_surfaces()
+        .into_iter()
+        .map(|surf| surf.unwrap_or(SURFACE_FLOOR_Y))
+        .collect()
+}
+
+fn master_density_lattice(
+    density: &TerrainDensityGraph,
+    bounds: DensityLatticeBounds,
+) -> DensityLattice {
+    DensityLattice::sample_channel(
+        density.graph(),
+        channels::MASTER_DENSITY,
+        bounds,
+        DensityLatticeCellSize::default(),
+    )
+    .expect("surface density graph must expose master_density")
 }
 
 fn is_ocean_biome(biome: Biome) -> bool {

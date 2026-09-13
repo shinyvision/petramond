@@ -36,6 +36,8 @@ pub struct NameTables {
     pub effects: Vec<String>,
     /// `particle_emitters.json` bundle keys, in server-id order.
     pub emitters: Vec<String>,
+    /// `conditions.json` keys, in server-id order.
+    pub conditions: Vec<String>,
 }
 
 /// The joining player's own restored state.

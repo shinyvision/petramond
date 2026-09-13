@@ -3,6 +3,13 @@ use crate::mob::MobTagValue;
 use petramond_math::math::{Tilt, Vec3};
 
 impl Mobs {
+    pub(crate) fn exposure_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut petramond_world::exposure::BodyExposure> {
+        Some(self.mob_mut(index)?.exposure_mut())
+    }
+
     /// Toggle the particle-emitter bundle registered under `key` (a
     /// `particle_emitters.json` row, any namespace) on the mob at `index`.
     /// `false` for a bad index, an unregistered key, or an activation past the

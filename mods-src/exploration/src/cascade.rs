@@ -53,18 +53,19 @@
 //! conservative model of the fluid sim. One step past the probed domain
 //! rejects; every pool must actually receive inflow or the chain is scenery.
 //!
-//! The model leans on four facts of `src/world/water.rs`, all load-bearing:
-//! water never moves upward; a falling cell pours straight down and never
-//! spreads sideways while it can; a flowing cell suspended over water never
-//! spreads sideways (only sources spread across the top of water); and a fall
-//! landing in source water stops dead, while one landing on solid spreads a
-//! full-strength ring. Everywhere else the model over-approximates.
+//! The model leans on four facts of `crates/petramond-world/src/fluid.rs`,
+//! all load-bearing: water never moves upward; a falling cell pours straight
+//! down and never spreads sideways while it can; a flowing cell suspended
+//! over water never spreads sideways (only sources spread across the top of
+//! water); and a fall landing in source water stops dead, while one landing
+//! on solid spreads a full-strength ring. Everywhere else the model
+//! over-approximates.
 //!
 //! # Which read may decide
 //!
 //! A cascade spans sections, so accept/reject must be unanimous. Every input
 //! is positional: the rarity roll is `GenRng::positional` on lattice
-//! coordinates, every terrain read is `terrain_solid_at`, and the giants
+//! coordinates, every terrain read is `terrain_space_at`, and the giants
 //! folded into the model are re-derived from their own positional rolls.
 //! Nothing consults the dispatching section's snapshot, so the sections a
 //! cascade straddles cannot disagree about whether it exists — which for
@@ -375,7 +376,7 @@ impl Cell {
     ///
     /// The scoring is the inversion that matters: nothing here fits a shape
     /// or rolls a centre. The terrain's longest rolling edge is the site.
-    pub fn traces(&self, solid: &[bool]) -> Vec<Trace> {
+    pub fn traces(&self, rock: &[bool], free: &[bool]) -> Vec<Trace> {
         let rows = (LATTICE_Y - 2) as usize;
         let n = NSAMP as usize;
         // Top floor per sample column, inside the vertical pads that leave
@@ -384,12 +385,14 @@ impl Cell {
         for kz in 0..n {
             for kx in 0..n {
                 let base = (kz * n + kx) * rows;
-                let col = &solid[base..base + rows];
+                let (floor, air) = (&rock[base..base + rows], &free[base..base + rows]);
                 // row r is world y = by + 1 + r
                 let lo = (ADOPT_MAX + MAX_STEP) as usize;
                 let hi = rows - 1 - HEADROOM as usize;
                 for r in (lo..=hi).rev() {
-                    if col[r - 1] && (0..HEADROOM as usize).all(|k| !col[r + k]) {
+                    // ROCK under, ROOM over: a fluid surface is neither, so a
+                    // basin is never sited on one.
+                    if floor[r - 1] && (0..HEADROOM as usize).all(|k| air[r + k]) {
                         h[kz * n + kx] = Some(self.by() + 1 + r as i32);
                         break;
                     }
@@ -1468,7 +1471,8 @@ mod tests {
     fn run_built(c: &Cell, terrain: fn([i32; 3]) -> bool) -> Option<(Built, HashSet<[i32; 3]>)> {
         let mut coarse = Vec::new();
         c.coarse_plan(|p| coarse.push(terrain(p)));
-        for t in c.traces(&coarse) {
+        let free: Vec<bool> = coarse.iter().map(|s| !s).collect();
+        for t in c.traces(&coarse, &free) {
             let mut probed = HashSet::new();
             t.plan(|p| {
                 probed.insert(p);
@@ -1497,7 +1501,8 @@ mod tests {
         for c in rolled(0xC0FFEE, 4000) {
             let mut coarse = Vec::new();
             c.coarse_plan(|p| coarse.push(flat(p)));
-            if !c.traces(&coarse).is_empty() {
+            let free: Vec<bool> = coarse.iter().map(|s| !s).collect();
+            if !c.traces(&coarse, &free).is_empty() {
                 sited += 1;
             }
         }
@@ -1630,7 +1635,8 @@ mod tests {
             assert_eq!(n, COARSE_PROBE);
             let mut coarse = Vec::new();
             c.coarse_plan(|p| coarse.push(terraced(p)));
-            for t in c.traces(&coarse) {
+            let free: Vec<bool> = coarse.iter().map(|s| !s).collect();
+            for t in c.traces(&coarse, &free) {
                 let mut m = 0usize;
                 t.plan(|_| m += 1);
                 assert!(

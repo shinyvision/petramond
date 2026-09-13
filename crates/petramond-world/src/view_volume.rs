@@ -4,6 +4,9 @@
 
 use crate::mathh::{Mat4, Vec3, Vec4};
 
+#[cfg(test)]
+mod tests;
+
 /// View frustum as 6 inward-facing planes, for viewspace (frustum) culling.
 /// Each plane is `(a,b,c,d)` with the convention `a·x + b·y + c·z + d >= 0`
 /// inside. Extracted from a view-projection matrix (Gribb–Hartmann).
@@ -109,22 +112,40 @@ pub struct ViewVolume {
     origin: Vec3,
     eye: Vec3,
     cull_dist_sq: f32,
+    /// Presented pixels one world block spans at one block of distance —
+    /// `0.5 * screen_height / tan(fov_y / 2)`. Divided by a distance it gives
+    /// the on-screen size of anything out there, which is how a gather of
+    /// SMALL things decides what is too far to be seen at all.
+    pixel_scale: f32,
 }
 
 impl ViewVolume {
-    pub fn new(frustum: Frustum, origin: Vec3, eye: Vec3, cull_dist: f32) -> Self {
+    pub fn new(
+        frustum: Frustum,
+        origin: Vec3,
+        eye: Vec3,
+        cull_dist: f32,
+        pixel_scale: f32,
+    ) -> Self {
         Self {
             frustum,
             origin,
             eye,
             cull_dist_sq: cull_dist * cull_dist,
+            pixel_scale,
         }
     }
 
     /// Admits everything, for callers that have no camera (headless tools,
     /// tests) or none yet.
     pub fn unbounded() -> Self {
-        Self::new(Frustum::permissive(), Vec3::ZERO, Vec3::ZERO, f32::INFINITY)
+        Self::new(
+            Frustum::permissive(),
+            Vec3::ZERO,
+            Vec3::ZERO,
+            f32::INFINITY,
+            f32::MAX,
+        )
     }
 
     /// The camera position, for distance ordering by the same callers that cull.
@@ -139,5 +160,21 @@ impl ViewVolume {
         self.frustum
             .aabb_visible(min - self.origin, max - self.origin)
             && aabb_distance_sq(self.eye, min, max) <= self.cull_dist_sq
+    }
+
+    /// Could a detail of world-space size `size` sitting inside `[min,max]`
+    /// cover a whole presented pixel? A gather that produces detail far below
+    /// a cell in size (particles) rejects on this FIRST: sub-pixel detail is
+    /// invisible at any resolution, so building it is pure cost, and testing
+    /// the box a whole section's worth of it lives in rejects thousands of
+    /// candidates on one distance compare.
+    ///
+    /// This deliberately counts PRESENTED pixels, not the supersampled scene's
+    /// — anti-aliasing exists to smooth what is drawn, not to reveal specks
+    /// the display cannot resolve.
+    #[inline]
+    pub fn covers_a_pixel(&self, min: Vec3, max: Vec3, size: f32) -> bool {
+        let reach = size * self.pixel_scale;
+        aabb_distance_sq(self.eye, min, max) <= reach * reach
     }
 }

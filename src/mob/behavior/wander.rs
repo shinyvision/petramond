@@ -5,8 +5,8 @@
 //! hands it to the navigator. While the navigator is still walking the mob there,
 //! wander simply keeps requesting that same destination (so the brain doesn't repath
 //! every tick). When the mob arrives (or the navigator gives up), wander goes quiet
-//! until its next random roll. Water-averse mobs that are already in water skip the
-//! random roll and immediately look for a dry exit, falling back to water-surface
+//! until its next random roll. Fluid-averse mobs that are already in fluid skip the
+//! random roll and immediately look for a dry exit, falling back to fluid-surface
 //! wandering if no dry destination is sampled.
 //!
 //! Destinations are filtered by the species' [`Habitat`]: avoided biomes are never
@@ -72,25 +72,25 @@ fn backoff_radius(radius: i32, steps: u8) -> i32 {
 /// isn't frozen, it just settles for the best it can reach.
 const AVOID_ESCAPE: u32 = 5;
 
-/// Same idea for water (for a water-averse species): re-roll a water destination this
-/// many times, then accept a wet one rather than refuse to move. Crossing water on
+/// Same idea for fluid (for a fluid-averse species): re-roll a fluid destination this
+/// many times, then accept a wet one rather than refuse to move. Crossing fluid on
 /// the way to a dry destination is unaffected — that's the pathfinder's call.
-const WATER_ESCAPE: u32 = 3;
+const FLUID_ESCAPE: u32 = 3;
 
 /// Same idea for avoided GROUND (`WanderTuning::avoid_ground` — the
 /// cave-mouth rule: surface animals steering off stone/ore/marble floors):
 /// re-roll a destination whose floor is avoided this many times, then accept
 /// one rather than refuse to move — a mob standing amid avoided ground (it
 /// fell into a cave) must still wander, including back out. Crossing such
-/// ground en route is unaffected, like water.
+/// ground en route is unaffected, like fluid.
 const GROUND_ESCAPE: u32 = 5;
 
 pub struct WanderAi {
     tuning: WanderTuning,
     /// The species' biome affinity, consulted when choosing a destination.
     habitat: &'static Habitat,
-    /// Whether to steer destinations away from water (with the bounded re-roll above).
-    avoid_water: bool,
+    /// Whether to steer destinations away from fluid (with the bounded re-roll above).
+    avoid_fluids: bool,
     /// The destination currently being walked to (if any).
     current: Option<IVec3>,
     /// Consecutive picks that exhausted their reachability probes — drives
@@ -99,11 +99,11 @@ pub struct WanderAi {
 }
 
 impl WanderAi {
-    pub fn new(tuning: WanderTuning, habitat: &'static Habitat, avoid_water: bool) -> Self {
+    pub fn new(tuning: WanderTuning, habitat: &'static Habitat, avoid_fluids: bool) -> Self {
         WanderAi {
             tuning,
             habitat,
-            avoid_water,
+            avoid_fluids,
             current: None,
             exhausted_picks: 0,
         }
@@ -119,11 +119,11 @@ impl AiBehavior for WanderAi {
             // Idle (arrived / gave up / never had one): drop the old target, and on
             // the occasional roll pick a fresh standable destination.
             self.current = None;
-            let escape_water = self.avoid_water && ctx.in_water;
-            if escape_water || ctx.rng.next_f32() < self.tuning.chance_per_tick {
+            let escape_fluid = self.avoid_fluids && ctx.in_fluid.is_some();
+            if escape_fluid || ctx.rng.next_f32() < self.tuning.chance_per_tick {
                 let mut tuning = self.tuning;
                 tuning.radius = backoff_radius(tuning.radius, self.exhausted_picks);
-                let pick = pick_destination(ctx, tuning, self.habitat, self.avoid_water);
+                let pick = pick_destination(ctx, tuning, self.habitat, self.avoid_fluids);
                 self.current = pick.goal;
                 if pick.goal.is_some() {
                     self.exhausted_picks = 0;
@@ -157,32 +157,32 @@ fn pick_destination(
     ctx: &mut AiCtx,
     tuning: WanderTuning,
     habitat: &Habitat,
-    avoid_water: bool,
+    avoid_fluids: bool,
 ) -> Pick {
     // A confined mob's world IS its region: pick from the cells it can
     // actually reach instead of sampling (and pathing toward) open ground
     // beyond the walls. Region picks never probe, so they never exhaust.
     if let Some(region) = ctx.confined_region {
         return Pick {
-            goal: pick_region_destination(ctx, tuning, habitat, avoid_water, region),
+            goal: pick_region_destination(ctx, tuning, habitat, avoid_fluids, region),
             exhausted: false,
         };
     }
     let cursor = ctx.world.cursor();
     let solid = super::super::nav::nav_solid_fn(&cursor);
     let support = super::super::nav::nav_support_fn(&cursor, ctx.half_width);
-    let water = super::super::nav::nav_water_fn(&cursor);
+    let fluid = super::super::nav::nav_fluid_fn(&cursor);
     let radius = tuning.radius;
     let r2 = radius * radius;
-    let path_params = PathParams::for_body(ctx.head, ctx.half_width);
+    let path_params = ctx.path_params();
     let cohesion = tuning.cohesion.map(|rule| {
         (
             rule,
             companion_within(ctx, rule, ctx.pos, rule.search_radius(radius)),
         )
     });
-    let escape_water = avoid_water && ctx.in_water;
-    let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
+    let escape_fluid = avoid_fluids && ctx.in_fluid.is_some();
+    let mut picker = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
     let mut wet_fallback = None;
     let mut unreachable_seen = 0u32;
     for _ in 0..PICK_ATTEMPTS {
@@ -211,7 +211,7 @@ fn pick_destination(
             path_params,
             &solid,
             &support,
-            &water,
+            &fluid,
         ) else {
             continue;
         };
@@ -222,11 +222,11 @@ fn pick_destination(
         if body_occupied(ctx, dest) {
             continue;
         }
-        let wet = body_or_floor_touches(dest, path_params, &water);
-        // For a water-averse species (not currently escaping water), re-roll a
-        // destination that sits in water — up to the escape hatch, after which
+        let wet = body_or_floor_touches(dest, path_params, &fluid);
+        // For a fluid-averse species (not currently escaping fluid), re-roll a
+        // destination that sits in fluid — up to the escape hatch, after which
         // a wet spot is accepted rather than refusing.
-        if avoid_water && !escape_water && picker.reject_water(wet) {
+        if avoid_fluids && !escape_fluid && picker.reject_fluid(wet) {
             continue;
         }
         // Avoided ground (the cave-mouth rule): re-roll a destination whose
@@ -267,7 +267,7 @@ fn pick_destination(
             }
             Some(true) => {}
         }
-        if escape_water && wet {
+        if escape_fluid && wet {
             wet_fallback.get_or_insert(dest);
             continue;
         }
@@ -280,7 +280,7 @@ fn pick_destination(
     }
     // No preferred foothold turned up: fall back to the first allowed one we saw (a
     // neutral biome, or — once an escape hatch tripped — an avoided / wet one). If
-    // the mob is actively escaping water and sampled no dry target, use the first
+    // the mob is actively escaping fluid and sampled no dry target, use the first
     // wet surface so it still swims instead of idling in place.
     let goal = picker.into_fallback().or(wet_fallback);
     Pick {
@@ -291,7 +291,7 @@ fn pick_destination(
 
 /// Pick a wander destination for a CONFINED mob: sample straight from the
 /// region's reachable cells — never beyond the walls, and no pathfinding
-/// probes needed (membership IS reachability). The species' biome and water
+/// probes needed (membership IS reachability). The species' biome and fluid
 /// preferences still apply through the shared [`Picker`]; herd cohesion does
 /// not (the pen is the herd's whole world, and chasing a companion beyond the
 /// fence would just re-create the fence-hugging this branch removes). A
@@ -300,19 +300,19 @@ fn pick_region_destination(
     ctx: &mut AiCtx,
     tuning: WanderTuning,
     habitat: &Habitat,
-    avoid_water: bool,
+    avoid_fluids: bool,
     region: &ConfinedRegion,
 ) -> Option<IVec3> {
     if region.cells.len() < MIN_REGION_WANDER_CELLS {
         return None;
     }
     let cursor = ctx.world.cursor();
-    let water = super::super::nav::nav_water_fn(&cursor);
+    let fluid = super::super::nav::nav_fluid_fn(&cursor);
     let radius = tuning.radius;
     let r2 = radius * radius;
-    let path_params = PathParams::for_body(ctx.head, ctx.half_width);
-    let escape_water = avoid_water && ctx.in_water;
-    let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
+    let path_params = ctx.path_params();
+    let escape_fluid = avoid_fluids && ctx.in_fluid.is_some();
+    let mut picker = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
     let mut wet_fallback = None;
     for _ in 0..PICK_ATTEMPTS {
         let roll = ctx.rng.next_range(0, region.cells.len() as i32 - 1);
@@ -331,13 +331,13 @@ fn pick_region_destination(
         if body_occupied(ctx, dest) {
             continue;
         }
-        let wet = body_or_floor_touches(dest, path_params, &water);
-        if avoid_water {
-            if escape_water && wet {
+        let wet = body_or_floor_touches(dest, path_params, &fluid);
+        if avoid_fluids {
+            if escape_fluid && wet {
                 wet_fallback.get_or_insert(dest);
                 continue;
             }
-            if picker.reject_water(wet) {
+            if picker.reject_fluid(wet) {
                 continue;
             }
         }
@@ -364,7 +364,7 @@ fn floor_avoided(ctx: &AiCtx, avoid: &[Block], dest: IVec3) -> bool {
 
 /// The navigation foothold Y in column `(x, z)` closest to `y0`, scanning outward
 /// up to `radius` cells either way, or `None` if the column has no foothold in
-/// range. Water surface cells count here, matching the pathfinder.
+/// range. Fluid surface cells count here, matching the pathfinder.
 #[allow(clippy::too_many_arguments)]
 fn nearest_navigation_foothold_y(
     x: i32,
@@ -374,11 +374,11 @@ fn nearest_navigation_foothold_y(
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
     support: &impl Fn(IVec3) -> bool,
-    water: &impl Fn(IVec3) -> bool,
+    fluid: &impl Fn(IVec3) -> bool,
 ) -> Option<i32> {
     for d in 0..=radius {
         for y in [y0 - d, y0 + d] {
-            if is_navigation_foothold_with(IVec3::new(x, y, z), params, solid, support, water) {
+            if is_navigation_foothold_with(IVec3::new(x, y, z), params, solid, support, fluid) {
                 return Some(y);
             }
         }
@@ -473,29 +473,29 @@ fn classify_biome(biome: Biome, habitat: &Habitat) -> BiomeFit {
 /// Turns the stream of footholds wander samples into one chosen destination, encoding
 /// the destination policy: a preferred-biome foothold is taken at once; the first
 /// allowed-but-unpreferred one is held as a fallback; avoided-biome and (for a
-/// water-averse mob) in-water spots are skipped until their respective escape hatches
+/// fluid-averse mob) in-fluid spots are skipped until their respective escape hatches
 /// have been passed over enough times, after which the rule lifts (so a mob boxed in
-/// by avoided terrain or water still gets to move).
+/// by avoided terrain or fluid still gets to move).
 ///
 /// Pure (no world / RNG), so the policy is unit-tested directly; the caller feeds it
 /// the candidates it samples from the world.
 struct Picker {
     avoid_escape: u32,
     avoided_seen: u32,
-    water_escape: u32,
-    water_seen: u32,
+    fluid_escape: u32,
+    fluid_seen: u32,
     ground_escape: u32,
     ground_seen: u32,
     fallback: Option<IVec3>,
 }
 
 impl Picker {
-    fn new(avoid_escape: u32, water_escape: u32, ground_escape: u32) -> Self {
+    fn new(avoid_escape: u32, fluid_escape: u32, ground_escape: u32) -> Self {
         Picker {
             avoid_escape,
             avoided_seen: 0,
-            water_escape,
-            water_seen: 0,
+            fluid_escape,
+            fluid_seen: 0,
             ground_escape,
             ground_seen: 0,
             fallback: None,
@@ -514,12 +514,12 @@ impl Picker {
         }
     }
 
-    /// Should this candidate be skipped for being in water? Counts the skip toward the
-    /// water escape hatch; once `water_escape` are counted the rule lifts and wet spots
-    /// become fallback-eligible. Only consulted for water-averse species.
-    fn reject_water(&mut self, in_water: bool) -> bool {
-        if in_water && self.water_seen < self.water_escape {
-            self.water_seen += 1;
+    /// Should this candidate be skipped for being in fluid? Counts the skip toward the
+    /// fluid escape hatch; once `fluid_escape` are counted the rule lifts and wet spots
+    /// become fallback-eligible. Only consulted for fluid-averse species.
+    fn reject_fluid(&mut self, in_fluid: bool) -> bool {
+        if in_fluid && self.fluid_seen < self.fluid_escape {
+            self.fluid_seen += 1;
             true
         } else {
             false
@@ -633,7 +633,7 @@ mod tests {
 
     #[test]
     fn picker_takes_a_preferred_candidate_immediately() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
         let neutral = IVec3::new(1, 0, 0);
         let preferred = IVec3::new(2, 0, 0);
         // A neutral spot is only remembered, not taken...
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn picker_falls_back_to_the_first_neutral_when_no_preferred() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
         let first = IVec3::new(1, 0, 0);
         assert_eq!(p.offer(first, BiomeFit::Neutral), None);
         assert_eq!(p.offer(IVec3::new(2, 0, 0), BiomeFit::Neutral), None);
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn picker_rejects_avoided_until_the_escape_hatch_lifts_it() {
-        let mut p = Picker::new(3, WATER_ESCAPE, GROUND_ESCAPE);
+        let mut p = Picker::new(3, FLUID_ESCAPE, GROUND_ESCAPE);
         // The first 3 avoided candidates are rejected (counting toward the hatch)...
         for _ in 0..3 {
             assert!(p.reject_avoided(BiomeFit::Avoided));
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn picker_never_rejects_neutral_or_preferred() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
         assert!(!p.reject_avoided(BiomeFit::Neutral));
         assert!(!p.reject_avoided(BiomeFit::Preferred));
     }
@@ -887,11 +887,11 @@ mod tests {
         let cursor = world.cursor();
         let solid = crate::mob::nav::nav_solid_fn(&cursor);
         let support = crate::mob::nav::nav_support_fn(&cursor, 0.45);
-        let water = crate::mob::nav::nav_water_fn(&cursor);
-        let step = crate::mob::nav::partial_step_gate(&cursor, params, 1.4);
+        let fluid = crate::mob::nav::nav_fluid_fn(&cursor);
+        let step = crate::mob::nav::navigation_step_gate(&cursor, params, 1.4);
         let loaded = crate::mob::nav::nav_loaded_fn(&cursor);
         crate::mob::confined::confined_region(
-            start, params, &solid, &support, &water, &step, &loaded,
+            start, params, &solid, &support, &fluid, &step, &loaded,
         )
         .expect("test area should read as confined")
     }
@@ -1040,26 +1040,26 @@ mod tests {
     }
 
     #[test]
-    fn picker_rejects_water_until_the_escape_hatch_lifts_it() {
+    fn picker_rejects_fluid_until_the_escape_hatch_lifts_it() {
         let mut p = Picker::new(AVOID_ESCAPE, 3, GROUND_ESCAPE);
         // The first 3 wet candidates are rejected (counting toward the hatch)...
         for _ in 0..3 {
-            assert!(p.reject_water(true));
+            assert!(p.reject_fluid(true));
         }
-        // ...after which water stops being rejected and a wet spot is fallback-eligible.
-        assert!(!p.reject_water(true));
+        // ...after which fluid stops being rejected and a wet spot is fallback-eligible.
+        assert!(!p.reject_fluid(true));
         let wet = IVec3::new(4, 0, 0);
         assert_eq!(p.offer(wet, BiomeFit::Neutral), None);
         assert_eq!(
             p.into_fallback(),
             Some(wet),
-            "settles for water after the escape hatch"
+            "settles for a fluid after the escape hatch"
         );
     }
 
     #[test]
     fn picker_rejects_avoided_ground_until_the_escape_hatch_lifts_it() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, 3);
+        let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, 3);
         for _ in 0..3 {
             assert!(p.reject_ground(true));
         }
@@ -1070,7 +1070,7 @@ mod tests {
         assert_eq!(p.offer(rocky, BiomeFit::Neutral), None);
         assert_eq!(p.into_fallback(), Some(rocky));
         // A clear floor is never rejected.
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
         assert!(!p.reject_ground(false));
     }
 
@@ -1137,19 +1137,19 @@ mod tests {
 
     #[test]
     fn picker_never_rejects_a_dry_candidate() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
-        assert!(!p.reject_water(false));
+        let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
+        assert!(!p.reject_fluid(false));
     }
 
     #[test]
-    fn water_averse_mob_in_water_picks_without_waiting_for_wander_roll() {
+    fn fluid_averse_mob_in_fluid_picks_without_waiting_for_wander_roll() {
         let world = flat_grass_world(|chunk| {
-            chunk.set_water(8, 65, 8, Block::Water, 0);
+            chunk.set_fluid(8, 65, 8, Block::Water, 0);
         });
         let mut rng = MobRng::new(1);
         let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.2, 8.5));
         ctx.cell = IVec3::new(8, 66, 8);
-        ctx.in_water = true;
+        ctx.in_fluid = Some(Block::Water);
         let mut ai = WanderAi::new(
             WanderTuning {
                 chance_per_tick: 0.0,
@@ -1161,27 +1161,27 @@ mod tests {
             true,
         );
 
-        let goal = ai.tick(&mut ctx).goal.expect("water escape goal");
-        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+        let goal = ai.tick(&mut ctx).goal.expect("fluid escape goal");
+        let fluid = |c: IVec3| world.fluid_cell_at(c.x, c.y, c.z);
         assert!(
-            !body_or_floor_touches(goal, PathParams::for_body(ctx.head, ctx.half_width), &water),
+            !body_or_floor_touches(goal, ctx.path_params(), &fluid),
             "dry land is preferred when it is available: {goal:?}"
         );
     }
 
     #[test]
-    fn water_escape_falls_back_to_swimming_when_no_dry_target_is_sampled() {
+    fn fluid_escape_falls_back_to_swimming_when_no_dry_target_is_sampled() {
         let world = flat_grass_world(|chunk| {
             for z in 0..CHUNK_SZ {
                 for x in 0..CHUNK_SX {
-                    chunk.set_water(x, 65, z, Block::Water, 0);
+                    chunk.set_fluid(x, 65, z, Block::Water, 0);
                 }
             }
         });
         let mut rng = MobRng::new(1);
         let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.2, 8.5));
         ctx.cell = IVec3::new(8, 66, 8);
-        ctx.in_water = true;
+        ctx.in_fluid = Some(Block::Water);
         let mut ai = WanderAi::new(
             WanderTuning {
                 chance_per_tick: 0.0,
@@ -1193,11 +1193,11 @@ mod tests {
             true,
         );
 
-        let goal = ai.tick(&mut ctx).goal.expect("water-surface fallback");
-        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+        let goal = ai.tick(&mut ctx).goal.expect("fluid-surface fallback");
+        let fluid = |c: IVec3| world.fluid_cell_at(c.x, c.y, c.z);
         assert!(
-            body_or_floor_touches(goal, PathParams::for_body(ctx.head, ctx.half_width), &water),
-            "without dry land, the mob should still swim to another water surface: {goal:?}"
+            body_or_floor_touches(goal, ctx.path_params(), &fluid),
+            "without dry land, the mob should still swim to another fluid surface: {goal:?}"
         );
     }
 }

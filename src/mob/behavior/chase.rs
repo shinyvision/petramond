@@ -20,7 +20,7 @@
 //!
 //! The goal is a *valid mob foothold* near the player (the same navigation-foothold
 //! test the pathfinder uses), scanned vertically around the player's feet. A player
-//! with no standable cell nearby (flying, deep water) yields no goal, and the merge
+//! with no standable cell nearby (flying, deep fluid) yields no goal, and the merge
 //! falls through to lower-priority locomotion.
 
 use serde::Deserialize;
@@ -28,7 +28,7 @@ use serde::Deserialize;
 use petramond_math::math::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
-use super::super::path::{is_navigation_foothold_with, PathParams};
+use super::super::path::is_navigation_foothold_with;
 use super::los;
 
 /// How many cells above/below the player's feet cell to scan for a mob-standable
@@ -158,15 +158,15 @@ impl AiBehavior for ChasePlayerAi {
 
 /// The navigation-foothold cell nearest `pos` that THIS mob can stand in, or
 /// `None` when no standable cell sits within the vertical scan (target airborne /
-/// over deep water). Reuses the pathfinder's foothold test so the emitted goal is
+/// over deep fluid). Reuses the pathfinder's foothold test so the emitted goal is
 /// always a cell `find_path` accepts. Shared by every chase-like node
 /// (`chase_player`, `chase_sound`, `retaliate`).
 pub(super) fn goal_cell_near(ctx: &AiCtx, pos: Vec3) -> Option<IVec3> {
     let cursor = ctx.world.cursor();
     let solid = super::super::nav::nav_solid_fn(&cursor);
     let support = super::super::nav::nav_support_fn(&cursor, ctx.half_width);
-    let water = super::super::nav::nav_water_fn(&cursor);
-    let params = PathParams::for_body(ctx.head, ctx.half_width);
+    let fluid = super::super::nav::nav_fluid_fn(&cursor);
+    let params = ctx.path_params();
     let x = pos.x.floor() as i32;
     let z = pos.z.floor() as i32;
     // `pos` is a body centre (feet + roughly half a body), so its floor is the
@@ -175,7 +175,7 @@ pub(super) fn goal_cell_near(ctx: &AiCtx, pos: Vec3) -> Option<IVec3> {
     for d in 0..=GOAL_SCAN_CELLS {
         for y in [y0 - d, y0 + d] {
             let c = IVec3::new(x, y, z);
-            if is_navigation_foothold_with(c, params, &solid, &support, &water) {
+            if is_navigation_foothold_with(c, params, &solid, &support, &fluid) {
                 return Some(c);
             }
         }

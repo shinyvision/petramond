@@ -19,6 +19,9 @@ use petramond_world::tile::Tile;
 use super::remote_players;
 use super::Game;
 
+mod entity_emitters;
+use entity_emitters::{body_emitters, emitter_self_lit, emitter_tint};
+
 pub use petramond_render::views::{
     BreakOverlayView, ChestPresentation, CrackBox, CrackBoxes, DoorPresentation,
     DroppedItemPresentation, EntityShadow, FootstepSource, GamePresentation, MobPresentation,
@@ -116,12 +119,17 @@ impl GamePresentationScratch {
         self.collect_block_draws(game, view);
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
-        self.collect_mob_emitters(tick_alpha, view);
+        if game.particles.count_scale() > 0.0 {
+            self.collect_mob_emitters(tick_alpha, view);
+        }
         self.bone_offsets.clear();
-        self.collect_remote_players(game, tick_alpha);
+        self.collect_remote_players(game, tick_alpha, view);
         self.collect_footsteps(game, tick_alpha);
         self.collect_break_overlays(game);
         let player = collect_player(game, &mut self.bone_offsets);
+        if game.particles.count_scale() > 0.0 {
+            self.collect_local_player_emitters(game, player.as_ref(), view);
+        }
         self.collect_entity_shadows(game, view, tick_alpha, player);
 
         GamePresentation {
@@ -278,6 +286,7 @@ impl GamePresentationScratch {
         self.mobs.extend(game.replicated_mobs.iter().map(|entry| {
             let (prev, curr) = (&entry.prev, &entry.curr);
             let c = petramond_math::math::voxel_at(curr.pos + Vec3::new(0.0, 0.3, 0.0));
+            let emitters = body_emitters(&curr.emitters, &curr.conditions);
             MobPresentation {
                 id: curr.id,
                 kind: Mob(curr.kind_id),
@@ -306,8 +315,9 @@ impl GamePresentationScratch {
                 ),
                 dead: curr.dead,
                 shorn: curr.shorn,
-                emitters: curr.emitters.clone(),
-                emitter_tint: emitter_tint(&curr.emitters),
+                emitter_tint: emitter_tint(emitters.iter().copied()),
+                emitter_self_lit: emitter_self_lit(emitters.iter().copied()),
+                emitters,
                 // Each layer at its tick-interpolated phase (prev→curr by
                 // name; fading-out layers hold the blend's last phase).
                 anims: entry
@@ -331,52 +341,6 @@ impl GamePresentationScratch {
                 }),
             }
         }));
-    }
-
-    /// Mobs emit particles exactly like emitter blocks: each ACTIVE bundle id
-    /// resolves to its `particle_emitters.json` rows and feeds the same
-    /// transient-particle pipeline, anchored to the mob's interpolated feet each
-    /// frame (the whole particle column rides along — the effect stays ON the
-    /// mob; a row's `offset` raises it into the body). Appends to the
-    /// block-emitter list collected earlier this frame, after `collect_mobs` so
-    /// it reads the replicated ids. A ragdolling corpse keeps its ids, so a mob
-    /// that burned to death keeps burning through its ragdoll.
-    fn collect_mob_emitters(&mut self, tick_alpha: f32, view: &ViewVolume) {
-        if self.mobs.is_empty() {
-            return;
-        }
-        for m in &self.mobs {
-            if m.emitters.is_empty() {
-                continue;
-            }
-            let feet = m.prev_pos.lerp(m.pos, tick_alpha);
-            let mut stream = 0u64;
-            for &id in &m.emitters {
-                let Some(bundle) = petramond_world::particle_emitters::def(id) else {
-                    continue;
-                };
-                for emitter in bundle.rows {
-                    stream += 1;
-                    let origin = feet + Vec3::from_array(emitter.offset);
-                    let envelope = petramond::world::emitter_envelope(emitter);
-                    if !view.aabb_visible(origin - envelope, origin + envelope) {
-                        continue;
-                    }
-                    self.particle_emitters.push(PlacedEmitter {
-                        origin,
-                        emitter: *emitter,
-                        // Distinct deterministic stream per mob and per row, so
-                        // sibling rows' schedules don't pulse in lockstep.
-                        seed: m.id ^ stream.wrapping_mul(0x9E37_79B9_7F4A_7C15),
-                        skylight: m.skylight,
-                        blocklight: m.blocklight,
-                        // A mob's rows anchor at its feet and follow it; a
-                        // floor under a moving body is not a fixed surface.
-                        floor_y: f32::NEG_INFINITY,
-                    });
-                }
-            }
-        }
     }
 
     /// One footstep row per body — the local player plus every visible remote
@@ -448,7 +412,7 @@ impl GamePresentationScratch {
     /// `tick_alpha`, the shared body pose + per-remote held-item view read
     /// from the store (advanced once per frame in `Game::tick_receive`),
     /// light client-sampled from the replica at the interpolated body.
-    fn collect_remote_players(&mut self, game: &Game, tick_alpha: f32) {
+    fn collect_remote_players(&mut self, game: &Game, tick_alpha: f32, view: &ViewVolume) {
         self.remote_players.clear();
         let world = &game.replica;
         for p in game.remote_players.iter() {
@@ -489,8 +453,11 @@ impl GamePresentationScratch {
             }
             // Sample light at the body's torso cell (~mid-height).
             let c = petramond_math::math::voxel_at(pos + Vec3::new(0.0, 0.9, 0.0));
+            let emitters = body_emitters(&[], &p.curr.conditions);
             self.remote_players.push(RemotePlayerRender {
                 body: PlayerRenderInstance {
+                    emitter_tint: emitter_tint(emitters.iter().copied()),
+                    emitter_self_lit: emitter_self_lit(emitters.iter().copied()),
                     pos,
                     body_yaw,
                     // Walking bodies: the follow rule keeps `yaw - body_yaw`
@@ -515,6 +482,17 @@ impl GamePresentationScratch {
                 held: p.view,
                 held_off: p.off_view,
             });
+            if game.particles.count_scale() > 0.0 {
+                let body = self.remote_players.last().unwrap().body;
+                let body = entity_emitters::EmitterBody::player(
+                    body.pos,
+                    body.body_yaw,
+                    body.skylight,
+                    body.blocklight,
+                    p.curr.id.0 as u64 + 1,
+                );
+                self.append_player_emitters(&p.curr.conditions, &body, view);
+            }
         }
     }
 
@@ -604,21 +582,6 @@ impl GamePresentationScratch {
     }
 }
 
-/// The third-person body row, when the view is active. The body-yaw follow rule
-/// keeps `yaw - body_yaw` within the head limit, so the relative head yaw needs
-/// no re-wrapping here.
-/// The multiply body tint for a mob's active emitter-bundle ids: the product of
-/// every active bundle's declared `tint` (white when none declare one).
-fn emitter_tint(ids: &[u8]) -> [f32; 3] {
-    let mut tint = [1.0, 1.0, 1.0];
-    for &id in ids {
-        if let Some(t) = petramond_world::particle_emitters::def(id).and_then(|b| b.tint) {
-            tint = [tint[0] * t[0], tint[1] * t[1], tint[2] * t[2]];
-        }
-    }
-    tint
-}
-
 /// How far a SEATED body's head may swivel off the seat facing (radians).
 /// The body itself sits square in the seat (its yaw is the mount's), so the
 /// look must not drag it around — and an unclamped relative head yaw would
@@ -675,6 +638,13 @@ fn mount_renders_seated(mount: petramond::net::protocol::PlayerMount) -> bool {
     }
 }
 
+/// The local body's facing as presented: square in its seat when mounted,
+/// else the third-person follow pose.
+fn local_body_yaw(game: &Game) -> f32 {
+    game.self_mount_pose()
+        .map_or(game.third_person.pose.body_yaw, |mount| mount.body_yaw)
+}
+
 fn collect_player(
     game: &Game,
     arena: &mut Vec<petramond_render::BoneOffset>,
@@ -706,18 +676,16 @@ fn collect_player(
     // clamped.
     let seated = game.self_mount.is_some_and(mount_renders_seated);
     let mount = game.self_mount_pose();
-    let (body_yaw, head_yaw) = match mount {
-        Some(mount) => (
-            mount.body_yaw,
-            petramond_math::math::wrap_angle(game.player.yaw - mount.body_yaw)
-                .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT),
-        ),
-        None => (
-            game.third_person.pose.body_yaw,
-            game.player.yaw - game.third_person.pose.body_yaw,
-        ),
+    let body_yaw = local_body_yaw(game);
+    let head_yaw = match mount {
+        Some(_) => petramond_math::math::wrap_angle(game.player.yaw - body_yaw)
+            .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT),
+        None => game.player.yaw - body_yaw,
     };
+    let emitters = body_emitters(&[], &game.self_view.conditions);
     Some(PlayerPresentation {
+        emitter_tint: emitter_tint(emitters.iter().copied()),
+        emitter_self_lit: emitter_self_lit(emitters.iter().copied()),
         pos,
         body_yaw,
         head_yaw,

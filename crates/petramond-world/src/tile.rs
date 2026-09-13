@@ -206,13 +206,12 @@ pub fn map_rgb(tile: Tile) -> [u8; 3] {
         .unwrap_or([32, 32, 32])
 }
 
-/// Tiles the ENGINE itself references (shader uniforms, the custom chest model,
-/// the grass-side compositing, the break-overlay stages) — resolved once at
-/// registry load. Content tiles flow through block/item data rows instead; a
-/// tile belongs here only when engine CODE, not data, needs it.
+/// Tiles the ENGINE itself references (the custom chest model, the grass-side
+/// compositing, the break-overlay stages) — resolved once at registry load.
+/// Content tiles flow through block/item data rows instead (a fluid's still and
+/// flow strips are its row's `tiles` and `flow_tile`); a tile belongs here only
+/// when engine CODE, not data, needs it.
 pub struct EngineTiles {
-    pub water_still: Tile,
-    pub water_flow: Tile,
     /// The grass-block side compositing set: an untinted `dirt` base with the
     /// biome-tinted grayscale `grass_side_overlay` on top, applied wherever the
     /// mesher (or the out-of-world item renderer) meets `grass_side`.
@@ -240,6 +239,9 @@ pub fn engine() -> &'static EngineTiles {
     &data().engine
 }
 
+/// The game tick rate a flipbook's `frame_ticks` count in.
+pub const TICKS_PER_SECOND: f32 = 20.0;
+
 /// One tile id's source cell: which manifest file feeds it, and which frame of
 /// that file when the row is an animated strip. The atlas pixel composer
 /// consumes these; identity consumers never touch `file`/`frame`.
@@ -250,7 +252,9 @@ pub struct CellMeta {
     pub frame: u32,
     /// On the BASE frame of an animated tile: total frames. 0 otherwise.
     pub anim_frames: u32,
-    pub frame_ticks: u16,
+    /// Game ticks each frame shows ([`TICKS_PER_SECOND`]` / frame_ticks`
+    /// fps); fractional, so a row authored in `fps` runs at exactly that rate.
+    pub frame_ticks: f32,
     pub interpolate: bool,
     /// Consecutive static alternatives, including this base. 1 on alternatives.
     pub variation_count: u16,
@@ -281,8 +285,12 @@ struct RawTile {
     /// A vertical strip of square frames, expanded into consecutive tiles.
     #[serde(default)]
     anim: bool,
-    #[serde(default = "default_frame_ticks")]
-    frame_ticks: u16,
+    /// Game ticks per frame. Exclusive with `fps`; absent both = 1 tick.
+    #[serde(default)]
+    frame_ticks: Option<f32>,
+    /// Frames per second, for rates a tick count cannot spell exactly.
+    #[serde(default)]
+    fps: Option<f32>,
     #[serde(default)]
     interpolate: bool,
     #[serde(default)]
@@ -299,8 +307,22 @@ struct RawTile {
     variation: Option<VariationSelect>,
 }
 
-fn default_frame_ticks() -> u16 {
-    1
+impl RawTile {
+    /// Game ticks each frame shows, from whichever rate the row authors.
+    fn frame_ticks(&self) -> Result<f32, String> {
+        let positive = |v: f32| v.is_finite() && v > 0.0;
+        match (self.frame_ticks, self.fps) {
+            (Some(_), Some(_)) => Err(format!(
+                "tile '{}' declares both frame_ticks and fps",
+                self.name
+            )),
+            (Some(ticks), None) if positive(ticks) => Ok(ticks),
+            (Some(_), None) => Err(format!("tile '{}' frame_ticks must be positive", self.name)),
+            (None, Some(fps)) if positive(fps) => Ok(TICKS_PER_SECOND / fps),
+            (None, Some(_)) => Err(format!("tile '{}' fps must be positive", self.name)),
+            (None, None) => Ok(1.0),
+        }
+    }
 }
 
 struct TileData {
@@ -368,9 +390,7 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
     // contribute one cell per frame).
     let mut cells: Vec<CellMeta> = Vec::new();
     for t in &rows {
-        if t.frame_ticks == 0 {
-            return Err(format!("tile '{}' frame_ticks must be positive", t.name));
-        }
+        let frame_ticks = t.frame_ticks()?;
         if t.variation.is_some() && t.variants.is_empty() {
             return Err(format!(
                 "tile '{}' declares a variation selector without variants",
@@ -397,7 +417,7 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
                     file: file.clone(),
                     frame: 0,
                     anim_frames: 0,
-                    frame_ticks: 1,
+                    frame_ticks: 1.0,
                     interpolate: false,
                     variation_count: if i == 0 {
                         (t.variants.len() + 1) as u16
@@ -430,7 +450,7 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
                 file: t.file.clone(),
                 frame: i,
                 anim_frames: if i == 0 { frames } else { 0 },
-                frame_ticks: t.frame_ticks,
+                frame_ticks,
                 interpolate: t.interpolate,
                 variation_count: 1,
                 variation: None,
@@ -475,8 +495,6 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
         *slot = need(&format!("destroy_stage_{i}"))?;
     }
     let engine = EngineTiles {
-        water_still: need("water_still")?,
-        water_flow: need("water_flow")?,
         grass_side: need("grass_side")?,
         grass_side_overlay: need("grass_side_overlay")?,
         dirt: need("dirt")?,
@@ -505,16 +523,14 @@ mod tests {
 
     #[test]
     fn manifest_loads_and_engine_tiles_resolve() {
-        // Forces the LazyLock: a bad manifest set panics right here.
+        // Forces the LazyLock (engine tiles included): a bad manifest set
+        // panics right here.
         let d = data();
         assert!(!d.cells.is_empty() && d.cells.len() <= MAX_TILES);
         // Names round-trip.
         for tile in Tile::all() {
             assert_eq!(Tile::from_name(tile.name()), Some(tile));
         }
-        // Water animates; the two bases resolve.
-        assert!(engine().water_still.anim_frames() > 0);
-        assert!(engine().water_flow.anim_frames() > 0);
     }
 
     #[test]

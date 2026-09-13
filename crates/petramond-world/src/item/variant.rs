@@ -172,6 +172,17 @@ pub fn intern_blob(bytes: &[u8]) -> Option<VariantId> {
     intern(&decode(bytes)?)
 }
 
+/// Whether this exact map is already interned, without allocating a variant row.
+#[cfg(any(test, feature = "test-support"))]
+pub fn is_interned_for_test(data: &VariantMap) -> bool {
+    let blob = encode(data);
+    table()
+        .read()
+        .expect("variant table lock")
+        .by_blob
+        .contains_key(&blob)
+}
+
 /// The interned map for `id` (`None` for `NONE` or an unknown id).
 pub fn get(id: VariantId) -> Option<Arc<VariantMap>> {
     if id.is_none() {

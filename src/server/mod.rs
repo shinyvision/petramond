@@ -18,6 +18,7 @@ pub mod daynight;
 pub mod deferred_actions;
 pub mod drops;
 pub mod entities;
+mod exposure;
 pub mod game;
 pub mod handle;
 pub mod health;

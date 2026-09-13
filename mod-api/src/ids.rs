@@ -42,3 +42,15 @@ pub struct MobId(pub u8);
 /// [`HostCall::MobMount`]: crate::HostCall::MobMount
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PlayerId(pub u8);
+
+/// A runtime body CONDITION id (`conditions.json`, e.g. `"petramond:burning"`) —
+/// same contract as [`BlockId`]. Bridge keys and ids with
+/// [`HostCall::ResolveCondition`] / [`HostCall::ConditionNames`]; a condition's
+/// stages are addressed by their index in the row, named by
+/// [`ConditionInfoData::stages`].
+///
+/// [`HostCall::ResolveCondition`]: crate::HostCall::ResolveCondition
+/// [`HostCall::ConditionNames`]: crate::HostCall::ConditionNames
+/// [`ConditionInfoData::stages`]: crate::ConditionInfoData::stages
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ConditionId(pub u8);

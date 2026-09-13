@@ -5,14 +5,14 @@ use petramond_math::math::{IVec3, Tilt, Vec3};
 
 use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 
-/// A world cell changed. `block_id` is a wire block id; `water` the water meta
-/// byte when the cell holds water. Coalesced latest-wins per cell per tick,
-/// sent only for sections in the recipient's sent set.
+/// A world cell changed. `block_id` is a wire block id; `fluid` the fluid meta
+/// byte when the cell holds a simulated fluid. Coalesced latest-wins per cell
+/// per tick, sent only for sections in the recipient's sent set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockDelta {
     pub pos: IVec3,
     pub block_id: u16,
-    pub water: Option<u8>,
+    pub fluid: Option<u8>,
     /// The cell's opaque per-cell block state after the change, `None` when
     /// the cell carries none (the replica then CLEARS any stale state,
     /// mirroring `clear_on_block_change` server-side). Verbatim store bytes;
@@ -79,11 +79,14 @@ pub struct MobStateRow {
     pub hurt_timer: f32,
     pub dead: bool,
     pub shorn: bool,
-    /// ACTIVE particle-emitter bundle ids (wire `particle_emitters.json`
-    /// catalog ids, `Instance::active_emitters`, ≤ 4). The client derives the
-    /// particle rows and any body tint from its own catalog after the remap,
-    /// so a few bytes replicate the whole effect.
+    /// ATTACHED particle-emitter bundle ids (wire `particle_emitters.json`
+    /// catalog ids, up to four). The client derives the particle rows and any
+    /// body tint from its own catalog after the remap, so a few bytes
+    /// replicate the whole effect.
     pub emitters: Vec<u8>,
+    /// Active body-condition stages `(condition id, stage)` in id order, the
+    /// same shape a player row ships; the client resolves their emitters.
+    pub conditions: Vec<(u8, u8)>,
     /// ACTIVE named model animations as `(name, phase)` pairs
     /// (`Instance::active_anims`, ≤ 4, sorted by name): each layer's phase is
     /// SELF-CLOCKED server-side (mods drive the rate), so a paused oar's
@@ -124,6 +127,9 @@ pub struct ItemStateRow {
 /// is client-sampled at `pos`, like mobs and items.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerStateRow {
+    /// Visible body-condition stages `(condition id, stage)`, independent of
+    /// status effects.
+    pub conditions: Vec<(u8, u8)>,
     pub id: PlayerId,
     /// `pos` is the feet position (the body model's `y = 0`).
     pub transform: Transform,
@@ -265,6 +271,8 @@ pub struct SelfTransform {
 /// (and always on the first update after join).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SelfState {
+    /// Active body-condition stages `(condition id, stage)`.
+    pub conditions: Vec<(u8, u8)>,
     /// Health in half-heart points.
     pub health: i32,
     /// `PlayerMode` as its discriminant (0 = survival, 1 = spectator).

@@ -76,6 +76,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 half_width: crate::player::HALF_W,
                 height: crate::player::HEIGHT,
                 eye_height: crate::player::EYE,
+                conditions: crate::exposure::condition_data(p.conditions()),
             })
         }),
         HostCall::Players => sim_query(|ctx| {
@@ -105,6 +106,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                             half_width: crate::player::HALF_W,
                             height: crate::player::HEIGHT,
                             eye_height: crate::player::EYE,
+                            conditions: p.conditions.clone(),
                         },
                     })
                     .collect(),
@@ -638,7 +640,8 @@ mod tests {
     fn take_item_spends_one_variant_and_interns_nothing() {
         use petramond_world::item::{variant, ItemStack, ItemType};
 
-        let stamp = |n: u8| variant::VariantMap::from([("m:cond".to_owned(), vec![n])]);
+        let stamp =
+            |n: u8| variant::VariantMap::from([("test:take_item_variant".to_owned(), vec![n])]);
         let abi = |m: &variant::VariantMap| -> Vec<(String, Vec<u8>)> {
             m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
@@ -661,9 +664,9 @@ mod tests {
         *acting.inventory.slot_mut(0).expect("slot") = Some(ItemStack::new(ItemType::Stick, 2));
         *acting.inventory.slot_mut(1).expect("slot") =
             Some(ItemStack::with_variant(ItemType::Stick, 3, tinted));
-        // The table's top before the calls: anything minted after shows up
-        // as the next id.
-        let top = variant::intern(&stamp(200)).expect("sentinel interns");
+        let rejected = stamp(9);
+        assert!(variant::is_interned_for_test(&stamp(2)));
+        assert!(!variant::is_interned_for_test(&rejected));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
@@ -678,12 +681,12 @@ mod tests {
             };
             scope::enter(&mut ctx, || {
                 assert_eq!(
-                    take(&mut data, 1, Some(&stamp(9))),
+                    take(&mut data, 1, Some(&rejected)),
                     HostRet::ItemStack(None),
                     "a filter nothing carries takes nothing"
                 );
                 assert!(
-                    variant::get(petramond_world::item::VariantId(top.0 + 1)).is_none(),
+                    !variant::is_interned_for_test(&rejected),
                     "the losing filter minted a variant row"
                 );
                 let HostRet::ItemStack(Some(took)) = take(&mut data, 3, Some(&stamp(2))) else {

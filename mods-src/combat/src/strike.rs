@@ -466,6 +466,7 @@ mod tests {
     #[test]
     fn a_long_body_is_struck_along_its_whole_length() {
         let hull = MobSnapshot {
+            conditions: Vec::new(),
             index: 0,
             kind: MobId(0),
             pos: [0.0, 0.0, 2.0],
@@ -493,6 +494,7 @@ mod tests {
             "{bow} {stern}"
         );
         let square = mob_boxes(&MobSnapshot {
+            conditions: Vec::new(),
             half_length: 0.4,
             ..hull
         });

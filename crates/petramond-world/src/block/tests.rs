@@ -320,21 +320,28 @@ fn preferred_tool_pairs_pickaxe_axe_shovel_with_their_materials() {
     assert!(crate::mining::harvests(Block::Poppy, None));
 }
 
-/// The melt rule: broken ice leaves water wherever something below can
-/// hold it, air over a void; nothing else ever leaves residue. Mining the
-/// frozen sea must refill (water cannot flow back upward into the hole).
+/// The melt rule: a broken `melts_to` block leaves its fluid wherever something
+/// below can hold it and air over a void; a block without the field never
+/// leaves residue.
 #[test]
-fn broken_ice_melts_to_water_only_over_support() {
-    assert_eq!(Block::Ice.break_residue(Block::Water), Block::Water);
-    assert_eq!(Block::Ice.break_residue(Block::Stone), Block::Water);
+fn a_melting_block_leaves_its_fluid_only_over_support() {
+    let (melting, fluid) = Block::all()
+        .iter()
+        .find_map(|&b| Some((b, b.melts_to()?)))
+        .expect("a shipped row melts");
+    let solid = Block::all()
+        .iter()
+        .copied()
+        .find(|b| b.is_solid() && b.melts_to().is_none())
+        .unwrap();
+    assert_eq!(melting.break_residue(fluid), fluid);
+    assert_eq!(melting.break_residue(solid), fluid);
     assert_eq!(
-        Block::Ice.break_residue(Block::Air),
+        melting.break_residue(Block::Air),
         Block::Air,
-        "no floating water over a void"
+        "no floating source over a void"
     );
-    // Packed ice is a crafted building block: it breaks clean.
-    assert_eq!(Block::PackedIce.break_residue(Block::Water), Block::Air);
-    assert_eq!(Block::Stone.break_residue(Block::Water), Block::Air);
+    assert_eq!(solid.break_residue(fluid), Block::Air);
 }
 
 #[test]

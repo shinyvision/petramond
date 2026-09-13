@@ -7,6 +7,12 @@ use petramond_world::section::{Section, SectionSummary};
 use super::World;
 
 impl World {
+    /// Test shorthand for [`World::is_fluid_source_world`] on water.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_water_source_world(&self, pos: petramond_math::math::IVec3) -> bool {
+        self.is_fluid_source_world(pos, petramond_world::block::Block::Water)
+    }
+
     /// Install a section for a test, mirroring the streamer's per-section install.
     #[cfg(any(test, feature = "test-support"))]
     pub fn insert_section_for_test(&mut self, pos: SectionPos, section: Section) {

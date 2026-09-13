@@ -16,13 +16,15 @@ impl Renderer {
         // after ALL depth-writing world geometry so each shader can occlude
         // itself per-fragment against the frame depth, which it SAMPLES
         // (group 0 binding 2) — the pass attaches no depth, which is what
-        // makes sampling it legal. Drawn AFTER the water pass: water writes no
-        // depth, so paint order is the only thing keeping a cloud in front of
-        // a lake (camera on a peak inside the deck, lake below punched a hole
-        // through the cloud when water drew last). The reverse case — a lake
-        // in FRONT of a cloudy horizon — needs no paint-order help: the march
-        // clamps at the sampled depth, and the lakeBED behind the surface is
-        // always nearer than any cloud behind the lake. Drawn BEFORE the
+        // makes sampling it legal. Drawn AFTER the fluid pass: a fluid
+        // SURFACE writes no depth, so paint order is the only thing keeping a
+        // cloud in front of a lake (camera on a peak inside the deck, lake
+        // below punched a hole through the cloud when water drew last). The
+        // reverse case — a lake in FRONT of a cloudy horizon — needs no
+        // paint-order help: the march clamps at the sampled depth, and the
+        // lakeBED behind a see-through surface is always nearer than any cloud
+        // behind the lake (an opaque fluid writes its own depth with the
+        // terrain). Drawn BEFORE the
         // emitter particles so rain/snow volumes (no depth write) still streak
         // over the deck.
         //

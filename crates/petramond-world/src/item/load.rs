@@ -67,13 +67,14 @@ pub(super) struct RawItemDef {
     pub block: Option<String>,
     /// Engine use handler (see [`ItemUse`]): a bare name for parameterless
     /// handlers (`"use": "shear"`) or a tagged object whose params ride inside
-    /// (`"use": {"bucket_fill": {"becomes": "petramond:water_bucket"}}`).
+    /// (`"use": {"bucket_pour": {"becomes": "petramond:wooden_bucket", "fluid":
+    /// "petramond:water"}}`).
     #[serde(default, rename = "use", skip_serializing_if = "Option::is_none")]
     pub use_: Option<RawItemUse>,
     /// Which raycast this item's use click targets with (see
-    /// [`UseRay`](super::UseRay)); absent = the normal water-transparent ray.
-    #[serde(default, skip_serializing_if = "is_default_use_ray")]
-    pub use_ray: super::UseRay,
+    /// [`UseRay`](super::UseRay)); absent = the normal fluid-transparent ray.
+    #[serde(default, skip_serializing_if = "RawUseRay::is_solid")]
+    pub use_ray: RawUseRay,
     /// Namespaced consumer-data entries (`"ns:key": <any JSON>`): the item
     /// interop surface. A key names a CONSUMING system's vocabulary — engine
     /// consumers (`petramond:fuel`, `petramond:tool`) and mod consumers
@@ -107,28 +108,52 @@ pub(super) enum RawItemUse {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RawTaggedUse {
-    BucketFill(RawBucketUse),
-    BucketPour(RawBucketUse),
+    BucketFill(RawBucketFill),
+    BucketPour(RawBucketPour),
 }
 
-/// A bucket handler's row params: which item the held one becomes on success
-/// (the row-owned empty↔filled pair — fill declares the filled item, pour the
-/// empty one).
+/// A fill handler's row params: per fluid the bucket scoops, the item the
+/// held one becomes — keyed by the fluid BLOCK's registry name
+/// (`{"petramond:water": "petramond:water_bucket", "petramond:lava": ...}`).
+/// The keys are the whole restriction: list every fluid for the universal
+/// bucket, one for a bucket that only takes that fluid. A key that is not a
+/// fluid block is a load error, so a typo can never ship a bucket that
+/// quietly scoops nothing.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct RawBucketUse {
-    /// Registry name of the resulting item.
-    pub becomes: String,
+pub(super) struct RawBucketFill {
+    pub becomes: std::collections::BTreeMap<String, String>,
 }
 
-/// A dropped-reaction declaration in `items.json`: the environment predicate,
+/// A pour handler's row params: the fluid block this bucket pours and the
+/// (empty) item the held one becomes.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawBucketPour {
+    /// Registry name of the resulting item.
+    pub becomes: String,
+    /// Registry name of the fluid block poured.
+    pub fluid: String,
+}
+
+/// A bucket row's fluid block name to its block: any registered block whose
+/// row makes it a fluid, never a fixed list of fluid names.
+fn resolve_bucket_fluid(names: &ContentNames, name: &str) -> Result<crate::block::Block, String> {
+    names
+        .blocks
+        .id(name)
+        .map(crate::block::Block)
+        .filter(|b| b.is_fluid())
+        .ok_or_else(|| format!("bucket fluid '{name}' is not a fluid block"))
+}
+
+/// A dropped-reaction declaration in `items.json`: the fluid it reacts in,
 /// what the stack becomes, and the optional per-entity presentation.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawDroppedReaction {
-    /// Environment name (snake_case — see
-    /// [`ReactionEnvironment`](super::ReactionEnvironment)).
-    pub environment: super::ReactionEnvironment,
+    /// Registry name of the fluid block the entity must be inside.
+    pub fluid: String,
     /// Registry name of the item the whole stack becomes.
     pub result: String,
     /// A one-shot burst bundle key (`particle_emitters.json`).
@@ -165,8 +190,31 @@ fn default_eat_ticks() -> u32 {
     60
 }
 
-fn is_default_use_ray(v: &super::UseRay) -> bool {
-    *v == super::UseRay::default()
+/// A row's `use_ray`: `"solid"` or `{"fluids": [block names]}`.
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum RawUseRay {
+    #[default]
+    Solid,
+    Fluids(Vec<Block>),
+}
+
+impl RawUseRay {
+    fn is_solid(&self) -> bool {
+        matches!(self, RawUseRay::Solid)
+    }
+
+    fn resolve(self) -> Result<super::UseRay, String> {
+        Ok(match self {
+            RawUseRay::Solid => super::UseRay::Solid,
+            RawUseRay::Fluids(fluids) => {
+                if let Some(bad) = fluids.iter().find(|b| !b.is_fluid()) {
+                    return Err(format!("use_ray fluid '{bad:?}' is not a fluid block"));
+                }
+                super::UseRay::Fluids(Box::leak(fluids.into_boxed_slice()))
+            }
+        })
+    }
 }
 
 /// The `petramond:tool` data entry: family, harvest gate, and — optionally —
@@ -344,11 +392,24 @@ fn convert(
             }
         }),
         Some(RawItemUse::Tagged(tagged)) => Some(match tagged {
-            RawTaggedUse::BucketFill(b) => ItemUse::BucketFill {
-                becomes: becomes_item(&b.becomes)?,
-            },
+            RawTaggedUse::BucketFill(b) => {
+                if b.becomes.is_empty() {
+                    return Err("bucket_fill: `becomes` names no fluid to scoop".into());
+                }
+                let fills = b
+                    .becomes
+                    .iter()
+                    .map(|(fluid, item)| {
+                        Ok((resolve_bucket_fluid(names, fluid)?, becomes_item(item)?))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                ItemUse::BucketFill {
+                    fills: Box::leak(fills.into_boxed_slice()),
+                }
+            }
             RawTaggedUse::BucketPour(b) => ItemUse::BucketPour {
                 becomes: becomes_item(&b.becomes)?,
+                fluid: resolve_bucket_fluid(names, &b.fluid)?,
             },
         }),
     };
@@ -463,6 +524,14 @@ fn convert(
     };
     let dropped_reaction = match &r.dropped_reaction {
         Some(dr) => {
+            let fluid = names
+                .blocks
+                .id(&dr.fluid)
+                .map(crate::block::Block)
+                .filter(|b| b.is_fluid())
+                .ok_or_else(|| {
+                    format!("dropped_reaction fluid '{}' is not a fluid block", dr.fluid)
+                })?;
             let result =
                 names.items.id(&dr.result).map(ItemType).ok_or_else(|| {
                     format!("unknown dropped_reaction result item '{}'", dr.result)
@@ -489,7 +558,7 @@ fn convert(
                 None => None,
             };
             Some(super::DroppedReaction {
-                environment: dr.environment,
+                fluid,
                 result,
                 burst,
                 sound,
@@ -514,7 +583,7 @@ fn convert(
         tags: Box::leak(tags.into_boxed_slice()),
         block,
         item_use,
-        use_ray: r.use_ray,
+        use_ray: r.use_ray.resolve()?,
         fuel_burn_ticks,
         tool,
         food,
@@ -574,7 +643,7 @@ mod tests {
         // the pack's counterpart, never a hardcoded engine item.
         let layer = r#"{"items": [
             {"item": "mymod:filled_gadget", "key": "mymod:filled_gadget", "name": "Filled Gadget", "max_stack_size": 1, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
-            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "petramond:stone", "use": {"bucket_fill": {"becomes": "mymod:filled_gadget"}}}
+            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "petramond:stone", "use": {"bucket_fill": {"becomes": {"petramond:water": "mymod:filled_gadget"}}}}
         ]}"#;
         let defs = parse_test_layers(&[&base, layer]).expect("dynamic rows load");
         let engine = crate::item::ENGINE_ITEM_NAMES.len();
@@ -583,10 +652,10 @@ mod tests {
         let gadget = &defs[engine + 1];
         assert_eq!(gadget.item, ItemType((engine + 1) as u16));
         assert_eq!(gadget.block, Some(crate::block::Block::Stone));
-        assert_eq!(
-            gadget.item_use,
-            Some(ItemUse::BucketFill { becomes: filled })
-        );
+        let Some(ItemUse::BucketFill { fills }) = gadget.item_use else {
+            panic!("the gadget carries its fill use: {:?}", gadget.item_use);
+        };
+        assert_eq!(fills, [(crate::block::Block::Water, filled)]);
         // Engine rows are untouched.
         assert_eq!(defs[ItemType::Stone.id() as usize].item, ItemType::Stone);
     }
@@ -610,9 +679,14 @@ mod tests {
         let err = parse_test_layers(&[&base, bare_bucket]).expect_err("bare bucket use refused");
         assert!(err.contains("becomes"), "{err}");
         // A declared `becomes` naming an unknown item is a load error.
-        let bad_becomes = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": {"bucket_pour": {"becomes": "mymod:nope"}}}]}"#;
+        let bad_becomes = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": {"bucket_pour": {"becomes": "mymod:nope", "fluid": "petramond:water"}}}]}"#;
         let err = parse_test_layers(&[&base, bad_becomes]).expect_err("unknown becomes refused");
         assert!(err.contains("becomes"), "{err}");
+        // A fill keyed by a block that is not a fluid is a load error — a
+        // typo would otherwise ship a bucket that scoops nothing.
+        let bad_fluid = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": {"bucket_fill": {"becomes": {"petramond:stone": "mymod:g"}}}}]}"#;
+        let err = parse_test_layers(&[&base, bad_fluid]).expect_err("non-fluid key refused");
+        assert!(err.contains("fluid"), "{err}");
         // An unknown block link is a load error.
         let bad_block = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "bogus_block"}]}"#;
         let err = parse_test_layers(&[&base, bad_block]).expect_err("unknown block refused");

@@ -192,10 +192,10 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(2, 1, 2, Block::Grass);
     section.set_block(3, 1, 2, Block::OakLeaves);
     section.set_block(4, 1, 2, Block::ShortGrass);
-    section.set_water(5, 1, 2, Block::Water, 4);
+    section.set_fluid(5, 1, 2, Block::Water, 4);
     // Top-of-section water: the pad-local fill probe reads the neighbour
     // ABOVE (one past the top pad face for that neighbour) — must not OOB.
-    section.set_water(5, SECTION_SIZE - 1, 2, Block::Water, 0);
+    section.set_fluid(5, SECTION_SIZE - 1, 2, Block::Water, 0);
     // A BURNING furnace is the `furnace_lit` row; the machine state rides
     // along as it does in the live world (the mesher only reads the row).
     section.set_block(6, 1, 2, Block::FurnaceLit);
@@ -279,9 +279,9 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             Block::Air.id()
         }
     };
-    let water_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+    let fluid_at = |wx: i32, wy: i32, wz: i32| -> u8 {
         if in_section(wx, wy, wz) {
-            section.water_meta(wx as usize, wy as usize, wz as usize)
+            section.fluid_meta(wx as usize, wy as usize, wz as usize)
         } else {
             0
         }
@@ -322,7 +322,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         test_rules(),
         block_at,
         cell_state_at,
-        water_at,
+        fluid_at,
         biome_at,
         sky_at,
         blocklight_at,
@@ -351,7 +351,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     );
 
     let mut blocks = vec![0u16; PAD_VOL];
-    let mut water = vec![0u8; PAD_VOL];
+    let mut fluid = vec![0u8; PAD_VOL];
     let mut skylight = vec![SKY_FULL; PAD_VOL];
     let mut blocklight = vec![petramond_world::light::LightRgb::ZERO; PAD_VOL];
     let mut cell_states = vec![petramond_world::block::ShapeState::NONE; PAD_VOL];
@@ -368,7 +368,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
                         Block::from_id(block_at(p.x, p.y, p.z))
                     })
                     .is_some();
-                water[i] = water_at(wx, wy, wz);
+                fluid[i] = fluid_at(wx, wy, wz);
                 skylight[i] = sky_at(wx, wy, wz);
                 blocklight[i] = blocklight_at(wx, wy, wz);
                 cell_states[i] = cell_state_at(wx, wy, wz);
@@ -388,7 +388,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         pos,
         SectionMeshPad {
             blocks: &blocks,
-            water: &water,
+            fluid: &fluid,
             skylight: &skylight,
             blocklight: &blocklight,
             cell_states: &cell_states,

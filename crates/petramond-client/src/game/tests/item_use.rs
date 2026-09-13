@@ -420,3 +420,151 @@ fn shearing_needs_the_shears_in_hand() {
         "a bare right-click leaves the coat alone"
     );
 }
+
+/// A walled two-deep pool of `fluid` (still sources) on a stone floor: the
+/// surface layer at [`POOL_TOP`], a second layer beneath it. Pouring the
+/// OTHER fluid at it must act on the surface cell, never inside the pool.
+fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
+    for x in 4..=12 {
+        for z in 4..=12 {
+            game.server.world.set_block_world(x, 64, z, Block::Stone);
+            let wall = x == 4 || x == 12 || z == 4 || z == 12;
+            for y in 65..=66 {
+                let b = if wall { Block::Stone } else { fluid };
+                assert!(game.server.world.set_block_world(x, y, z, b));
+            }
+        }
+    }
+}
+
+/// The surface cell over the middle of [`walled_pool`].
+const POOL_TOP: IVec3 = IVec3::new(8, 66, 8);
+
+fn block_at(game: &super::common::TestGame, p: IVec3) -> Block {
+    Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z))
+}
+
+#[test]
+fn filling_the_empty_bucket_from_a_lava_source_yields_the_lava_bucket() {
+    let mut game = game_on_empty_chunk();
+    game.server.sessions[0].player.inventory = holding(ItemType::WoodenBucket);
+
+    // The empty bucket takes either fluid; the result item follows the
+    // fluid actually scooped.
+    let p = IVec3::new(0, 78, 0);
+    assert!(game
+        .server
+        .world
+        .set_block_world(p.x, p.y, p.z, Block::Lava));
+    aim_down_at(&mut game, p);
+
+    let events = right_click(&mut game);
+
+    assert!(
+        events.player_at(0).used_item,
+        "fill should report an item use"
+    );
+    assert_eq!(block_at(&game, p), Block::Air, "the lava source is scooped");
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .unwrap()
+            .item,
+        ItemType::by_name("petramond:lava_bucket").unwrap()
+    );
+}
+
+#[test]
+fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
+    let mut game = game_on_empty_chunk();
+    game.server.sessions[0].player.inventory =
+        holding(ItemType::by_name("petramond:lava_bucket").unwrap());
+    walled_pool(&mut game, Block::Water);
+    let below = POOL_TOP - IVec3::Y;
+    aim_down_at(&mut game, POOL_TOP);
+
+    let events = right_click(&mut game);
+
+    // The pour ray stops at the water surface: the surface cell is what the
+    // lava swaps into, the pond beneath it is untouched.
+    assert!(
+        events.player_at(0).used_item,
+        "pouring onto water must work"
+    );
+    assert_eq!(
+        block_at(&game, POOL_TOP),
+        Block::Lava,
+        "lava lands in the surface cell"
+    );
+    assert!(
+        game.server.world.is_water_source_world(below),
+        "the cell beneath stays water"
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .unwrap()
+            .item,
+        ItemType::WoodenBucket
+    );
+
+    // Contact resolves in the placement's block-update batch.
+    run_water_ticks(&mut game, 1);
+    assert_eq!(
+        block_at(&game, POOL_TOP),
+        Block::Stone,
+        "the poured lava cools at the surface"
+    );
+    assert!(
+        game.server.world.is_water_source_world(below),
+        "the pond floor is still water"
+    );
+}
+
+#[test]
+fn pouring_water_at_a_lava_sea_surface_cools_the_surface_not_the_floor() {
+    let mut game = game_on_empty_chunk();
+    game.server.sessions[0].player.inventory = holding(ItemType::WaterBucket);
+    walled_pool(&mut game, Block::Lava);
+    let below = POOL_TOP - IVec3::Y;
+    aim_down_at(&mut game, POOL_TOP);
+
+    let events = right_click(&mut game);
+
+    assert!(events.player_at(0).used_item, "pouring onto lava must work");
+    assert!(
+        game.server.world.is_water_source_world(POOL_TOP),
+        "water lands in the surface cell"
+    );
+    assert_eq!(
+        block_at(&game, below),
+        Block::Lava,
+        "the lava beneath is not the target"
+    );
+
+    run_water_ticks(&mut game, 1);
+    assert!(
+        game.server.world.is_water_source_world(POOL_TOP),
+        "the water survives the contact"
+    );
+    assert_eq!(
+        block_at(&game, below),
+        Block::Stone,
+        "the lava source under the water quenches to stone"
+    );
+    assert_eq!(
+        block_at(&game, POOL_TOP + IVec3::X),
+        Block::Stone,
+        "so does the lava beside it"
+    );
+    let far = IVec3::new(10, 65, 10);
+    assert_eq!(
+        block_at(&game, far),
+        Block::Lava,
+        "lava out of contact stays lava"
+    );
+}

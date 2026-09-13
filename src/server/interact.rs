@@ -782,7 +782,8 @@ mod tests {
                 sess.player.forward(),
             )
         };
-        let (hit, _) = Player::raycast_including_water(eye, fwd, &server.world)
+        let ray = petramond_world::item::UseRay::Fluids(&[Block::Water]);
+        let (hit, _) = Player::raycast_use_ray(eye, fwd, &server.world, ray)
             .expect("the aim ray reaches the pool");
         assert_eq!(
             hit.block,

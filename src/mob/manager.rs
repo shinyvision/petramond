@@ -31,7 +31,7 @@ mod tests;
 
 pub use drops::{DeathDrop, ShearDrop};
 use simulation::PushBody;
-pub use simulation::{MobAttack, MobFall, MobTickEvents, PlayerAnchor};
+pub use simulation::{MobAttack, MobExposureDamage, MobFall, MobTickEvents, PlayerAnchor};
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
 /// exists.
@@ -89,6 +89,8 @@ pub struct Mobs {
     id_scratch: Vec<u64>,
     /// Index-aligned touch contacts, reused across ticks.
     contact_scratch: Vec<Vec<super::EntityRef>>,
+    /// Reused buffers for every mob's exposure tick.
+    exposure_scratch: crate::exposure::ExposureScratch,
     /// Gameplay noises accumulated since the last mob tick (player/block noises
     /// pushed by the game's earlier stages this tick, plus mob footsteps from
     /// the previous mob tick). Swapped into [`heard`](Self::heard) at the start
@@ -140,6 +142,7 @@ impl Mobs {
             solid_motion_solver: super::SolidMotionSolver::default(),
             id_scratch: Vec::new(),
             contact_scratch: Vec::new(),
+            exposure_scratch: Default::default(),
             pending_noises: Vec::new(),
             heard: Vec::new(),
             populate_checked: FxHashSet::default(),

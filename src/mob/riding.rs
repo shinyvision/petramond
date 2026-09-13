@@ -23,6 +23,9 @@ use crate::player::model::PLAYER_HIP_HEIGHT;
 use petramond_math::math::{Tilt, Vec3};
 
 const DISMOUNT_CLEARANCE: f32 = 0.45;
+/// Cells above the seat a dismount candidate may stand, and so how far it may
+/// drop to the ground it lands on.
+const DISMOUNT_RISE: i32 = 1;
 
 /// A static world-space actor pose: the anchor the body pins at, the body
 /// yaw (player convention: yaw 0 faces `+Z`), and the named pose it holds
@@ -70,13 +73,14 @@ pub fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, mob_tilt: Tilt, seat: [f32; 3
 }
 
 /// Pick the first collision-free dismount candidate beside `base` (right,
-/// left, behind, ahead; base height then one block up), preferring dry feet.
-/// Pure over its probes so server authority and client prediction agree.
+/// left, behind, ahead; base height then up to [`DISMOUNT_RISE`]), preferring safe
+/// footing (see [`dismount_footing_safe`]). Pure over its probes so server
+/// authority and client prediction agree.
 pub fn dismount_spot(
     base: Vec3,
     yaw: f32,
     body_free: impl Fn(Vec3) -> bool,
-    dry: impl Fn(Vec3) -> bool,
+    safe: impl Fn(Vec3) -> bool,
 ) -> Option<Vec3> {
     let (sy, cy) = yaw.sin_cos();
     let right = Vec3::new(-cy, 0.0, sy);
@@ -84,12 +88,12 @@ pub fn dismount_spot(
     let step = 2.0 * player::HALF_W + DISMOUNT_CLEARANCE;
     let mut fallback = None;
     for dir in [right, -right, -forward, forward] {
-        for dy in [0.0, 1.0] {
-            let feet = base + dir * step + Vec3::new(0.0, dy, 0.0);
+        for dy in 0..=DISMOUNT_RISE {
+            let feet = base + dir * step + Vec3::new(0.0, dy as f32, 0.0);
             if !body_free(feet) {
                 continue;
             }
-            if dry(feet) {
+            if safe(feet) {
                 return Some(feet);
             }
             fallback.get_or_insert(feet);
@@ -98,8 +102,41 @@ pub fn dismount_spot(
     fallback
 }
 
+/// Whether a player body at `feet` keeps clear of every fluid and every
+/// navigation hazard under its footprint, from its head down to the ground it
+/// lands on: the first layer with collision within [`DISMOUNT_RISE`] below
+/// the feet. No ground within that drop is not safe. Server placement and
+/// client prediction share it so both pick the same spot.
+pub fn dismount_footing_safe(world: &crate::world::World, feet: Vec3) -> bool {
+    let (min, max) = player_body_aabb(feet);
+    let footprint = |y: i32| {
+        (min[0].floor() as i32..=max[0].floor() as i32).flat_map(move |x| {
+            (min[2].floor() as i32..=max[2].floor() as i32).map(move |z| (x, y, z))
+        })
+    };
+    let layer_safe = |y: i32| {
+        footprint(y).all(|(x, y, z)| {
+            let block = world.physics_block(x, y, z);
+            block.fluid().is_none() && !block.has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
+        })
+    };
+    let ground = min[1].floor() as i32;
+    if !(ground + 1..=max[1].floor() as i32).all(layer_safe) {
+        return false;
+    }
+    for y in (ground - DISMOUNT_RISE..=ground).rev() {
+        if !layer_safe(y) {
+            return false;
+        }
+        if footprint(y).any(|(x, y, z)| !world.collision_boxes_at(x, y, z).is_empty()) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether a standing player body at `feet` overlaps neither cell collision
-/// nor a dynamic solid body. Water is not collision; callers rank dryness.
+/// nor a dynamic solid body. Fluid is not collision; callers rank dryness.
 pub fn player_body_free(
     world: &crate::world::World,
     feet: Vec3,
@@ -227,6 +264,53 @@ impl Riding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entity::fluid_fixture::{self, block, pool, BRINE, CINDER, FLOOR_Y, SYRUP};
+    use petramond_world::block::Block;
+
+    #[test]
+    fn dismounts_prefer_footing_clear_of_fluids_and_hazards() {
+        let root = fluid_fixture::stage("dismount-footing");
+        crate::modding::tests::run_child_test(&root, "mob::riding::tests::dismount_footing_inner");
+    }
+
+    #[test]
+    #[ignore = "child of dismounts_prefer_footing_clear_of_fluids_and_hazards"]
+    fn dismount_footing_inner() {
+        let feet = Vec3::new(8.5, FLOOR_Y as f32, 8.5);
+        let floor = FLOOR_Y - 1;
+        let cases: [(&str, i32, i32, bool); 5] = [
+            ("petramond:stone", 8, floor, true),
+            (BRINE, 8, FLOOR_Y, false),
+            (SYRUP, 8, floor, false),
+            (CINDER, 8, floor, false),
+            (CINDER, 9, floor, true),
+        ];
+        for (name, x, y, safe) in cases {
+            let mut world = pool(Block::Air, floor);
+            world.set_block_world(x, y, 8, block(name));
+            assert_eq!(
+                dismount_footing_safe(&world, feet),
+                safe,
+                "{name} at ({x}, {y})"
+            );
+        }
+
+        let mut world = pool(Block::Air, floor);
+        for z in 0..16 {
+            world.set_block_world(7, floor, z, block(CINDER));
+        }
+        let spot = dismount_spot(
+            feet,
+            0.0,
+            |at| player_body_free(&world, at, &[]),
+            |at| dismount_footing_safe(&world, at),
+        )
+        .expect("a free spot");
+        assert!(
+            spot.x > feet.x,
+            "the hazardous right side loses to the safe left: {spot:?}"
+        );
+    }
 
     #[test]
     fn one_seat_one_rider_one_mount_per_player() {

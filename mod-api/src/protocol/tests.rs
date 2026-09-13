@@ -431,7 +431,7 @@ fn abi_roundtrip_host_and_guest_calls() {
             player_id: PlayerId(1),
             player_pos: [8.0, 65.0, 8.0],
             nav_idle: true,
-            in_water: false,
+            in_fluid: None,
             target: Some(EntityRef::Mob(9)),
             attacker: Some((EntityRef::Player(PlayerId(1)), 12)),
             player_held: Some(ItemId(3)),
@@ -505,6 +505,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     })));
     roundtrip(HostRet::Light(None));
     roundtrip(HostRet::Mobs(vec![MobSnapshot {
+        conditions: Vec::new(),
         index: 0,
         kind: MobId(0),
         pos: [1.5, 64.0, -3.5],
@@ -544,6 +545,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        conditions: Vec::new(),
     }));
     roundtrip(HostRet::Bytes(Some(vec![1, 2, 3])));
     roundtrip(GuestRet::Event {

@@ -40,6 +40,8 @@ fn swimming_gaze_stays_on_target_through_torso_rotation() {
 
 fn instance() -> PlayerRenderInstance {
     PlayerRenderInstance {
+        emitter_tint: [1.0; 3],
+        emitter_self_lit: 0.0,
         pos: Vec3::new(4.0, 70.0, -3.0),
         body_yaw: 0.0,
         head_yaw: 0.0,
@@ -80,6 +82,43 @@ fn bake(inst: &PlayerRenderInstance, swing: f32) -> Vec<ItemVertex> {
     );
     assert_eq!(n as usize, i.len());
     v
+}
+
+#[test]
+fn self_lit_players_keep_fire_and_hurt_tints_in_darkness() {
+    let mut inst = instance();
+    inst.emitter_tint = [1.0, 0.7, 0.4];
+    inst.hurt = 0.5;
+    let daylight = bake(&inst, 0.0);
+    inst.skylight = 0;
+    let dark = bake(&inst, 0.0);
+    inst.emitter_self_lit = 1.0;
+    let (mut lit, mut indices) = (Vec::new(), Vec::new());
+    build_player_body(
+        player_model(),
+        LightEnv {
+            sky_scale: 0.0,
+            sky_color: [0.6, 0.7, 1.0],
+        },
+        &inst,
+        &[],
+        &swing_view(0.0),
+        &crate::HeldItemView::default(),
+        &mut lit,
+        &mut indices,
+    );
+    assert!(!lit.is_empty());
+    for ((day, lit), dark) in daylight.iter().zip(&lit).zip(&dark) {
+        assert_eq!(
+            lit.tint, day.tint,
+            "body light preserves fire tint and hurt flash"
+        );
+        assert_eq!(lit.shade, day.shade);
+        assert!(
+            dark.tint[0] < lit.tint[0],
+            "ordinary bodies still follow world light"
+        );
+    }
 }
 
 fn hand(inst: &PlayerRenderInstance, swing: f32) -> Mat4 {

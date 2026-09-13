@@ -163,6 +163,7 @@ pub const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:hemp",
     "petramond:fallen_branch_2",
     "petramond:fallen_branch_3",
+    "petramond:lava",
 ];
 
 /// The JSON-loaded block table. Loads exactly once, on first access from any

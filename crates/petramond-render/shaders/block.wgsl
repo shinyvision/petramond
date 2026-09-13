@@ -1,27 +1,26 @@
 // Block vertex/fragment shader with atmosphere haze + directional face shading.
-// Shared cel, atmosphere and water helpers are prepended by the pipeline.
+// The pipeline prepends the generated tables (lanes, transitions, variation,
+// flipbooks, the fluid medium table) and the shared cel, atmosphere and sheen
+// helpers.
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
     cam_pos:   vec4<f32>,
-    fog:       vec4<f32>, // (start, end, time, underwater)
+    fog:       vec4<f32>, // (start, end, time, eye fluid medium + 1 or 0)
     // rgb = fog colour; w = sim-owned sky scale (1.0 = noon; mods dim it).
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    // Animated-water flipbook: (still_base_tile, flow_base_tile, frame_count, _).
-    atlas_anim: vec4<u32>,
+    // w = atlas tile count (the dye-base layer offset); xyz reserved.
+    atlas_layout: vec4<u32>,
     // rgb = sim-owned sky light COLOUR (white = identity; mods tint the night
     // subtly blue). Applied to the SKY term only — torch light keeps its warmth.
     sky_color: vec4<f32>,
     // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
     sun_dir: vec4<f32>,
+    // rgb = the eye fluid's volume tint (white in air).
+    volume_tint: vec4<f32>,
 };
-
-// Flipbook playback speed (frames/second) for still vs flowing water. Flowing
-// water reads a touch faster so it visibly streams.
-const WATER_STILL_FPS: f32 = 8.0;
-const WATER_FLOW_FPS: f32 = 12.0;
 
 // Skylight floor: a fully sky-occluded surface fades to this fraction of its lit
 // value rather than to black. FINAL_MIN is the absolute darkest pixel ("very
@@ -32,10 +31,6 @@ const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
 // Steepness of the light->dark falloff: higher = more of the range reads dark.
 const SKY_GAMMA: f32 = 3.0;
-
-// Underwater look: a multiply tint (darker + blue) applied to everything seen
-// while submerged.
-const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 
 // Packed UV modes (bits 23..26; the UV_MODE_* constants are generated from
 // the mesher's definitions):
@@ -113,7 +108,8 @@ struct VsOut {
     // untouched.
     @location(10) cel_drive: f32,
     @location(11) sky_exposure: f32,
-    @location(12) @interpolate(flat) water: u32,
+    // The face's fluid medium index + 1 (packed2 bits 6..15); 0 = not a fluid.
+    @location(12) @interpolate(flat) fluid: u32,
 };
 
 // Keep light hue and contact shading while softly grouping bright tones.
@@ -179,13 +175,17 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
     if (transition) { shade_idx = face_shade_idx(ncode); }
 
     let atile = tile;
+    // A fluid face is always UV mode NONE; the cell-local uv lane then carries
+    // its medium + 1 and bit 15 whether it shows the flow strip.
+    let fluid = select(0u, (packed2 >> 6u) & 0x1FFu, uv_mode == UV_MODE_NONE);
+    let flow_strip = fluid != 0u && ((packed2 >> 15u) & 0x1u) == 1u;
 
     // Tile-LOCAL uv in [0,1]; the array layer selects the tile.
     var uv = corner_local(corner);
-    // The flow tile carries shader-side data in `overlay_tile` (no grass overlay
-    // on water): top faces rotate toward the flow heading; side faces crop to the
-    // water height. Still-water tops/bottoms are not the flow tile, so untouched.
-    if (!transition && tile == u.atlas_anim.y) {
+    // A flow-strip face carries shader-side data in `overlay_tile` (no grass
+    // overlay on a fluid): top faces rotate toward the flow heading; side faces
+    // crop to the fluid height. Still faces are untouched.
+    if (flow_strip) {
         if (shade_idx == 0u) {
             // TOP: rotate the tile about its centre by the flow heading so a cell
             // streaming into a corner points diagonally, not snapped to a cardinal.
@@ -224,11 +224,11 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
     } else {
         // uv_mode == NONE: plain cube face. A greedy-merged quad packs (W-1, H-1) into
         // packed2 bits 20..28 so its layer tiles W×H across the merge under the REPEAT sampler;
-        // a normal 1×1 face has 0 there → ×(1,1), a no-op. Water tops/sides (flow
+        // a normal 1×1 face has 0 there → ×(1,1), a no-op. Fluid tops (flow
         // heading) and grass-side overlays reuse those bits for other data, so exclude
         // them (they are never greedy-merged by the mesher).
         let has_overlay = (packed >> 26u) & 0x1u;
-        if (!transition && has_overlay == 0u && tile != u.atlas_anim.x && tile != u.atlas_anim.y) {
+        if (has_overlay == 0u && fluid == 0u) {
             let gw = f32(((packed2 >> 20u) & 0xFu) + 1u);
             let gh = f32(((packed2 >> 24u) & 0xFu) + 1u);
             uv = corner_local(corner) * vec2<f32>(gw, gh);
@@ -237,13 +237,13 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
     out.uv = uv;
     // Dyed vertices (packed2 bit 19) sample the tile's dye-base twin: the
     // desaturated, brightness-normalized layers appended after the base set
-    // (offset = tile count, carried in atlas_anim.w). The overlay layer
+    // (offset = tile count, carried in atlas_layout.w). The overlay layer
     // shifts with it so a dyed overlay-bearing face (a tinted grass side)
     // resolves WHOLLY in the dye-base domain — one primitive, no half-dyed
     // composite.
-    let dyed_off = ((packed2 >> 19u) & 0x1u) * u.atlas_anim.w;
+    let dyed_off = ((packed2 >> 19u) & 0x1u) * u.atlas_layout.w;
     out.layer = atile + dyed_off;
-    out.water = select(0u, 1u, tile == u.atlas_anim.x || tile == u.atlas_anim.y);
+    out.fluid = fluid;
     // Overlay uv: only grass sides (full cube faces) composite an overlay, so the
     // plain corner uv is always correct here.
     out.uv2 = corner_local(corner);
@@ -256,7 +256,6 @@ fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOu
         out.layer = data.lo;
         out.overlay_layer = data.hi | (data.set_id << 4u);
         out.overlay = FACE_TRANSITION;
-        out.water = 0u;
         out.uv = corner_local(corner);
     }
 
@@ -350,15 +349,14 @@ fn vs_terrain(in: VsInTerrain) -> VsOut {
 // grid is 1/64 block: baking the overlap either rounds it away (cracks return
 // as bright speckles) or forces a full 1/64 skirt (visible wrap fringes +
 // coplanar z-fighting). The gate mirrors the W×H tiling decode in vs_common:
-// uv-mode NONE, no overlay, not a water tile — and a nonzero (W-1, H-1) field,
+// uv-mode NONE, no overlay, not a fluid face — and a nonzero (W-1, H-1) field,
 // so 1×1 faces (which never form T-junctions) stay mathematically exact.
 fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
     let uv_mode = (packed >> 23u) & 0x7u;
     let has_overlay = (packed >> 26u) & 0x1u;
-    let tile = packed & 0x7FFu;
     let whf = (packed2 >> 20u) & 0xFFu;
     if (uv_mode != 0u || has_overlay == 1u || whf == 0u
-        || tile == u.atlas_anim.x || tile == u.atlas_anim.y) {
+        || ((packed2 >> 6u) & 0x1FFu) != 0u) {
         return vec3<f32>(0.0);
     }
     // corner_local -> {-1,+1} per tangent axis; du/dv map (u,v) quad space to
@@ -380,16 +378,16 @@ fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
 }
 
 fn terrain_variant_layer(in: VsOut, layer: u32, donor: vec2<i32>) -> u32 {
-    if (in.ncode == 0u || variation_count(layer, u.atlas_anim.w) <= 1u) { return layer; }
+    if (in.ncode == 0u || variation_count(layer, u.atlas_layout.w) <= 1u) { return layer; }
     let cell = variation_cell(in.view + u.cam_pos.xyz, vec3<i32>(u.render_origin.xyz), face_normal(in.ncode))
         + variation_donor_offset(donor, in.ncode);
-    return block_variant_layer(layer, cell, u.atlas_anim.w);
+    return block_variant_layer(layer, cell, u.atlas_layout.w);
 }
 
 @fragment
 fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
     // One view length/direction per fragment, shared by the rim, the
-    // underwater murk, and the atmosphere.
+    // fluid murk, and the atmosphere.
     let dist = length(in.view);
     let vdir = in.view / max(dist, 1e-4);
     let grad_x = dpdx(in.uv);
@@ -408,7 +406,7 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
             // vertex tint (which folded the dye in at mesh time) applies uniformly.
             let ov = textureSample(atlas, samp, in.uv2, i32(in.overlay_layer));
             var b = base.rgb;
-            if (in.layer >= u.atlas_anim.w) { b = b * in.tint; }
+            if (in.layer >= u.atlas_layout.w) { b = b * in.tint; }
             rgb = mix(b, ov.rgb * in.tint, ov.a);
         } else {
             // Cutout: no asset authors texels in the 0.25..0.5 alpha band —
@@ -416,15 +414,15 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
             // art (ice, world-rendered in fs_transparent) at ~0.49, so item
             // cubes riding this pass draw it solid instead of vanishing.
             if (base.a < 0.25) { discard; }
-            rgb = base.rgb * in.tint;
+            rgb = fluid_albedo(in.fluid, base.rgb) * in.tint;
         }
     }
     var color = rgb * cel_shaded_light(in, vdir);
-    // Underwater: blue darkening multiply + the tight linear murk fog.
     if (u.fog.w > 0.5) {
-        color = color * WATER_TINT;
-        let f = clamp((dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-        return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
+        return vec4<f32>(medium_murk(in.fluid, color, dist), 1.0);
+    }
+    if (fluid_sheen_applies(in)) {
+        color = fluid_sheen_at(in, color, 1.0, vdir, dist).color;
     }
     let out = atmosphere_apply_dir(
         color,
@@ -446,31 +444,20 @@ fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     let dist = length(in.view);
     let vdir = in.view / max(dist, 1e-4);
     let tex = sample_flipbook(in.layer, in.uv, dpdx(in.uv), dpdy(in.uv));
-    // Water has its own surface response; ice and glass keep authored alpha.
-    if (tex.a < 0.03) { discard; }
-    var albedo = tex.rgb;
-    if (in.water != 0u) {
-        // Water carries painted body colour as well as the flipbook detail;
-        // multiplying two dark blues lets the brown lake bed dominate it.
-        albedo = mix(albedo, vec3<f32>(0.32), 0.60);
+    // A fluid face takes its medium's alpha, so its texel alpha cannot cut
+    // it; ice and glass keep authored alpha and discard their empty texels.
+    var alpha = tex.a;
+    if (in.fluid != 0u) {
+        alpha = fluid_face(in.fluid - 1u).surface_alpha;
+    } else if (tex.a < 0.03) {
+        discard;
     }
-    var color = albedo * in.tint * cel_shaded_light(in, vdir);
-    // Water blue tint + slight transparency.
-    var alpha = select(tex.a, 0.78, in.water != 0u);
-    // Tint the water volume itself when submerged so the surface seen from below
-    // blends into the murk rather than glowing.
+    var color = fluid_albedo(in.fluid, tex.rgb) * in.tint * cel_shaded_light(in, vdir);
     if (u.fog.w > 0.5) {
-        color = color * WATER_TINT;
-        let f = clamp((dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
-        return vec4<f32>(mix(color, u.fog_color.rgb, f), alpha);
+        return vec4<f32>(medium_murk(in.fluid, color, dist), alpha);
     }
-    if (in.water != 0u && in.ncode == NORMAL_POS_Y) {
-        let surface = water_surface(
-            color, in.view + u.cam_pos.xyz, u.render_origin.xyz,
-            vdir, dist, u.fog.z, in.sky_exposure,
-            u.fog_color.w, u.sky_color.rgb, u.fog_color.rgb, in.tint,
-            u.sun_dir.xyz, u.sun_dir.w,
-        );
+    if (fluid_sheen_applies(in)) {
+        let surface = fluid_sheen_at(in, color, alpha, vdir, dist);
         color = surface.color;
         alpha = surface.alpha;
     }
@@ -487,6 +474,38 @@ fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
         u.sun_dir.w,
     );
     return vec4<f32>(out, alpha);
+}
+
+// A fluid face's albedo, pulled toward its medium's grey so painted body colour
+// survives the flipbook detail and the vertex tint (two dark blues multiplied
+// let a brown lake bed dominate). Identity for any other face.
+fn fluid_albedo(fluid: u32, rgb: vec3<f32>) -> vec3<f32> {
+    if (fluid == 0u) { return rgb; }
+    let face = fluid_face(fluid - 1u);
+    return mix(rgb, vec3<f32>(face.albedo_toward), face.albedo_amount);
+}
+
+// The eye is inside a fluid: a fluid's faces take their OWN medium's surface
+// tint, every other surface the eye medium's volume tint, then the eye
+// medium's linear fog.
+fn medium_murk(fluid: u32, color: vec3<f32>, dist: f32) -> vec3<f32> {
+    var tint = u.volume_tint.rgb;
+    if (fluid != 0u) { tint = fluid_face(fluid - 1u).surface_tint; }
+    let f = clamp((dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+    return mix(color * tint, u.fog_color.rgb, f);
+}
+
+fn fluid_sheen_applies(in: VsOut) -> bool {
+    return in.fluid != 0u && in.ncode == NORMAL_POS_Y && fluid_face(in.fluid - 1u).sheen;
+}
+
+fn fluid_sheen_at(in: VsOut, color: vec3<f32>, alpha: f32, vdir: vec3<f32>, dist: f32) -> SheenSurface {
+    return fluid_sheen(
+        color, alpha, in.view + u.cam_pos.xyz, u.render_origin.xyz,
+        vdir, dist, u.fog.z, in.sky_exposure,
+        u.fog_color.w, u.sky_color.rgb, u.fog_color.rgb, in.tint,
+        u.sun_dir.xyz, u.sun_dir.w,
+    );
 }
 
 fn sample_flipbook(tile: u32, uv: vec2<f32>, grad_x: vec2<f32>, grad_y: vec2<f32>) -> vec4<f32> {

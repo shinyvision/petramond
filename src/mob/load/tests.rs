@@ -92,7 +92,7 @@ fn pack_layer_overrides_rows_by_mob() {
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": ["forest"]},
-            "avoid_water": true,
+            "avoid_fluids": true,
             "brain": [{"node": "wander", "priority": 0}]
         }]}"#;
     let defs = parse_layers(&[&base(), layer])
@@ -156,7 +156,7 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": []},
-            "avoid_water": false,
+            "avoid_fluids": false,
             "brain": [
                 {"node": "wander", "priority": 0},
                 {"node": "chase_player", "priority": 20, "params": {"radius": 12.0, "give_up_radius": 18.0}},
@@ -241,7 +241,7 @@ fn mob_sound_hooks_resolve_registered_sound_keys() {
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": []},
-            "avoid_water": false,
+            "avoid_fluids": false,
             "sounds": [
                 {"category": "idle", "sound": "petramond:item_pickup", "tick_interval": 40, "tick_interval_variance": 10},
                 {"category": "hurt", "sound": "petramond:wood_punch"},
@@ -288,7 +288,7 @@ fn empty_damage_feedback_row_resolves_to_default_components() {
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": []},
-            "avoid_water": false,
+            "avoid_fluids": false,
             "damage_feedback": [],
             "brain": []
         }]}"#;
@@ -313,7 +313,7 @@ fn damage_feedback_components_parse_from_json_objects() {
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": []},
-            "avoid_water": false,
+            "avoid_fluids": false,
             "damage_feedback": [
                 {"component": "petramond:decrease_health"},
                 {"component": "petramond:flash", "duration": 0.5},
@@ -358,7 +358,7 @@ fn idle_mob_sound_requires_a_positive_interval() {
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": []},
-            "avoid_water": false,
+            "avoid_fluids": false,
             "sounds": [{"category": "idle", "sound": "petramond:item_pickup"}],
             "brain": []
         }]}"#;
@@ -381,7 +381,7 @@ fn unknown_and_reserved_brain_nodes_are_load_errors() {
                     "spawn_group": {{"min": 1, "max": 1}},
                     "wander": {{"chance_per_tick": 0.0125, "radius": 8}},
                     "habitat": {{"avoid": [], "prefer": []}},
-                    "avoid_water": false,
+                    "avoid_fluids": false,
                     "brain": [{{"node": "{node}", "priority": 0}}]
                 }}]}}"#
         )
@@ -402,7 +402,7 @@ fn unknown_and_reserved_brain_nodes_are_load_errors() {
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
             "habitat": {"avoid": [], "prefer": []},
-            "avoid_water": false,
+            "avoid_fluids": false,
             "brain": [{"node": "head_look", "priority": 10, "params": {"bogus": 1}}]
         }]}"#;
     let err = parse_layers(&[&base(), bad])
@@ -419,7 +419,7 @@ fn bare_additions_and_bad_references_are_rejected() {
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
-            "habitat": {"avoid": [], "prefer": []}, "avoid_water": false, "brain": []}]}"#;
+            "habitat": {"avoid": [], "prefer": []}, "avoid_fluids": false, "brain": []}]}"#;
     let err = parse_layers(&[&base(), bare])
         .map(|_| ())
         .expect_err("bare additions refused");
@@ -435,7 +435,7 @@ fn bare_additions_and_bad_references_are_rejected() {
             "cap": 8, "spawn": {"biomes": ["atlantis"], "ground": []},
             "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
-            "habitat": {"avoid": [], "prefer": []}, "avoid_water": false, "brain": []}]}"#;
+            "habitat": {"avoid": [], "prefer": []}, "avoid_fluids": false, "brain": []}]}"#;
     let err = parse_layers(&[&base(), bad_biome])
         .map(|_| ())
         .expect_err("unknown biome refused");
@@ -448,7 +448,7 @@ fn bare_additions_and_bad_references_are_rejected() {
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8,
                        "cohesion": {"companion": "ghost", "search_radius_multiplier": 2}},
-            "habitat": {"avoid": [], "prefer": []}, "avoid_water": false, "brain": []}]}"#;
+            "habitat": {"avoid": [], "prefer": []}, "avoid_fluids": false, "brain": []}]}"#;
     let err = parse_layers(&[&base(), bad_companion])
         .map(|_| ())
         .expect_err("unknown companion refused");
@@ -474,7 +474,7 @@ fn loader_rejects_incomplete_tables_and_duplicate_keys() {
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
-            "habitat": {"avoid": [], "prefer": []}, "avoid_water": false, "brain": []}]}"#;
+            "habitat": {"avoid": [], "prefer": []}, "avoid_fluids": false, "brain": []}]}"#;
     let err = parse_layers(&[&base(), clash])
         .map(|_| ())
         .expect_err("duplicate keys refused");
@@ -515,7 +515,7 @@ fn dynamic_pack_mob_flows_end_to_end() {
                 "spawn_group": {"min": 1, "max": 1},
                 "wander": {"chance_per_tick": 0.0125, "radius": 8},
                 "habitat": {"avoid": [], "prefer": []},
-                "avoid_water": false,
+                "avoid_fluids": false,
                 "brain": [
                     {"node": "wander", "priority": 0},
                     {"node": "chase_player", "priority": 20, "params": {"radius": 12.0, "give_up_radius": 18.0}},

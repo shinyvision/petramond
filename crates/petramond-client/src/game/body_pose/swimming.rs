@@ -27,7 +27,7 @@ const STROKE_RATE_RISING: f32 = 0.16;
 
 impl BodyPose {
     pub(super) fn advance_swimming(&mut self, dt: f32, frame: &MotionFrame) {
-        let swimming = frame.medium == MovementMedium::Water;
+        let swimming = frame.medium == MovementMedium::Swimming;
         let blend = &mut self.locomotion.swim;
         let ease = 1.0 - (-SWIM_BLEND_RATE * dt).exp();
         let target = if swimming { 1.0 } else { 0.0 };

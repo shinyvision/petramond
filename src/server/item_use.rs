@@ -13,7 +13,7 @@ use crate::net::protocol::TargetRef;
 use crate::player::Player;
 use petramond_math::math::Vec3;
 use petramond_world::block::Block;
-use petramond_world::item::{ItemStack, ItemType, ItemUse, UseRay};
+use petramond_world::item::{ItemStack, ItemType, ItemUse};
 
 /// The in-progress eat: which hand and food item are being eaten and for how
 /// many ticks the button has been held on it. Session-owned (one per player);
@@ -36,9 +36,9 @@ impl ServerGame {
     /// `PendingUseClick`, so the ray decision and the later selection guard
     /// share one identity. Ordinary solid-ray items retain the bounded target
     /// convention used by placement prediction. An item that explicitly asks
-    /// for a water-stopping ray must additionally match the first hit of that
+    /// for a fluid-stopping ray must additionally match the first hit of that
     /// same ray in the authoritative world; otherwise a client could name a
-    /// different in-reach water cell behind an occluder.
+    /// different in-reach fluid cell behind an occluder.
     pub fn authoritative_use_target(
         &self,
         s: usize,
@@ -48,17 +48,18 @@ impl ServerGame {
         let sess = &self.sessions[s];
         let eye = super::movement::reach_eye(sess);
         let claimed = claimed.filter(|target| crate::player::block_within_reach(eye, target.block));
-        if held_item.is_none_or(|item| item.use_ray() != UseRay::Water) {
+        let Some(ray) = held_item
+            .map(|item| item.use_ray())
+            .filter(|ray| ray.sees_fluid())
+        else {
             return claimed;
-        }
+        };
 
-        let authoritative =
-            Player::raycast_including_water(eye, sess.player.forward(), &self.world).map(
-                |(hit, _)| TargetRef {
-                    block: hit.block,
-                    normal: hit.normal,
-                },
-            );
+        let authoritative = Player::raycast_use_ray(eye, sess.player.forward(), &self.world, ray)
+            .map(|(hit, _)| TargetRef {
+                block: hit.block,
+                normal: hit.normal,
+            });
         if claimed == authoritative {
             claimed
         } else {
@@ -234,8 +235,10 @@ impl ServerGame {
         // earlier shear stage of `tick_place`; mod items react to use through
         // the `item_use_pre` event handled above.
         let used = match item.item_use() {
-            Some(ItemUse::BucketFill { becomes }) => self.try_fill_bucket(s, becomes),
-            Some(ItemUse::BucketPour { becomes }) => self.try_pour_bucket(s, becomes, events),
+            Some(ItemUse::BucketFill { fills }) => self.try_fill_bucket(s, fills),
+            Some(ItemUse::BucketPour { becomes, fluid }) => {
+                self.try_pour_bucket(s, becomes, fluid, events)
+            }
             _ => false,
         };
         if used {
@@ -286,23 +289,32 @@ impl ServerGame {
         true
     }
 
-    /// Scoop water into the held empty bucket; on success the held item
-    /// becomes `becomes`, the row-declared filled counterpart. The rule: the
-    /// ray hits a water SOURCE within reach → that cell is scooped; otherwise
-    /// nothing. The fill ray stops only at sources and solids — flowing water
-    /// is transparent to it (like it is to normal selection), so a spread
+    /// Scoop a fluid source into the held empty bucket; on success the held
+    /// item becomes the result `fills` declares for the SCOOPED fluid. The
+    /// rule: the ray hits a source of a fluid the bucket takes, within reach →
+    /// that cell is scooped; otherwise nothing. The fill ray stops only at such
+    /// sources and at solids — flowing fluid (and fluid the bucket does not
+    /// take) is transparent to it, like it is to normal selection, so a spread
     /// sheet or thin film, which can render exactly like still water, never
     /// shadows the source the player is actually aiming at, and aiming at
     /// pure flow does nothing.
-    fn try_fill_bucket(&mut self, s: usize, becomes: ItemType) -> bool {
+    fn try_fill_bucket(&mut self, s: usize, fills: &[(Block, ItemType)]) -> bool {
         let (eye, dir) = {
             let p = &self.sessions[s].player;
             (p.eye(), p.forward())
         };
-        let Some((h, _)) = Player::raycast_water_sources(eye, dir, &self.world) else {
+        let takes = |fluid: Block| fills.iter().any(|&(b, _)| b == fluid);
+        let Some((h, _)) = Player::raycast_fluid_sources(eye, dir, &self.world, takes) else {
             return false;
         };
-        if !self.world.is_water_source_world(h.block) {
+        let scooped = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
+        // Only a STILL SOURCE the bucket takes fills: flowing cells are
+        // transparent to the ray and a solid hit is simply nothing to scoop
+        // (the 2026-07-02 rule).
+        let Some(&(_, becomes)) = fills.iter().find(|&&(b, _)| b == scooped) else {
+            return false;
+        };
+        if !self.world.is_fluid_source_world(h.block, scooped) {
             return false;
         }
         // The held-item swap must succeed BEFORE the world changes: with a full
@@ -321,23 +333,31 @@ impl ServerGame {
         true
     }
 
-    /// Empty the held water bucket into the clicked cell; on success the held
-    /// item becomes `becomes`, the row-declared empty counterpart. The pour
-    /// uses the same water-stopping ray as the fill, so aiming anywhere at a
-    /// water body pours INTO its surface cell: flowing water firms into a
-    /// source, and pouring onto an existing source still empties the bucket (a
-    /// no-op world write) — on water the action is always predictable. On land
-    /// it follows block placement: a replaceable target (grass, a fern) is
-    /// filled in place, anything else pours against the clicked face.
-    fn try_pour_bucket(&mut self, s: usize, becomes: ItemType, events: &mut TickEvents) -> bool {
+    /// Empty the held bucket into the clicked cell as `fluid`; on success the
+    /// held item becomes `becomes`, the row-declared empty counterpart. The
+    /// pour ray stops at the first cell of ANY fluid, so aiming anywhere at a
+    /// fluid body pours INTO its surface cell: flowing water firms into a
+    /// source, pouring onto an existing source of the same fluid still empties
+    /// the bucket (a no-op world write) — on fluid the action is always
+    /// predictable — and pouring the OTHER fluid swaps the surface cell, where
+    /// the fluid sim's contact rule then acts. On land it follows block
+    /// placement: a replaceable target (grass, a fern) is filled in place,
+    /// anything else pours against the clicked face.
+    fn try_pour_bucket(
+        &mut self,
+        s: usize,
+        becomes: ItemType,
+        fluid: Block,
+        events: &mut TickEvents,
+    ) -> bool {
         let (eye, dir) = {
             let p = &self.sessions[s].player;
             (p.eye(), p.forward())
         };
-        let Some((h, _)) = Player::raycast_including_water(eye, dir, &self.world) else {
+        let Some((h, _)) = Player::raycast_including_any_fluid(eye, dir, &self.world) else {
             return false;
         };
-        // Water is itself replaceable, so a water hit pours in place.
+        // Fluids are themselves replaceable, so a fluid hit pours in place.
         let looked_at = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
         let p = if crate::world::placement::replaces_in_place(looked_at) {
             h.block
@@ -352,7 +372,7 @@ impl ServerGame {
         {
             let mut pre = BlockPlacePre {
                 pos: p,
-                block: Block::Water,
+                block: fluid,
                 facing: facing_from_forward(dir),
             };
             let Self {
@@ -379,12 +399,12 @@ impl ServerGame {
         if !target.is_replaceable() {
             return false;
         }
-        if !self.world.set_block_world(p.x, p.y, p.z, Block::Water) {
+        if !self.world.set_block_world(p.x, p.y, p.z, fluid) {
             return false;
         }
         self.bus.emit(PostEvent::BlockPlaced {
             pos: p,
-            block: Block::Water,
+            block: fluid,
         });
         self.push_block_noise(s, p, crate::mob::NoiseKind::BlockPlaced);
         // A filled bucket row is max-stack 1 (the engine's water bucket; packs

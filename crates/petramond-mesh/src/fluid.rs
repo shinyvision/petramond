@@ -1,67 +1,77 @@
-//! Water-surface GEOMETRY for the chunk mesher.
+//! Fluid-surface GEOMETRY for the chunk mesher.
 //!
-//! Owns everything about how a water cell is *shaped* into a mesh: its per-corner
-//! surface heights (so adjacent cells join into one continuous sloped sheet), the
-//! top tile + flow rotation, the per-vertex height warp, the exposed-step decision
-//! for a full cell standing over a shorter neighbour, and the surface's reverse
-//! winding. The fluid MATH (`fluid_height`, `fills_cell`, `surface_flow_dir`) stays
-//! in `crate::world::water`; this module only turns those values into vertices.
+//! Owns everything about how a fluid cell (water or lava — the same meta-driven
+//! machine) is *shaped* into a mesh: its per-corner surface heights (so adjacent
+//! cells join into one continuous sloped sheet), the top tile + flow rotation,
+//! the per-vertex height warp, the exposed-step decision for a full cell standing
+//! over a shorter neighbour, and the surface's reverse winding. The fluid MATH
+//! (`fluid_height`, `fills_cell`, `surface_flow_dir`) stays in
+//! `petramond_world::fluid_math`; this module only turns those values into
+//! vertices.
 
 use petramond_world::block::Block;
 use petramond_world::tile::Tile;
 
-/// Whether a water cell's side face toward a neighbouring water cell is culled or
-/// kept as the exposed vertical step (a full cell standing over a shorter,
-/// open-surface neighbour — rendered as a band trimmed to the neighbour's surface).
-pub(super) enum SideVsWater {
-    /// Cull the face (the two water surfaces meet, nothing to draw).
+/// Whether a fluid cell's side face toward a neighbouring cell of the SAME fluid
+/// is culled or kept as the exposed vertical step (a full cell standing over a
+/// shorter, open-surface neighbour — rendered as a band trimmed to the
+/// neighbour's surface).
+pub(super) enum SideVsFluid {
+    /// Cull the face (the two fluid surfaces meet, nothing to draw).
     Cull,
     /// Keep it: render the exposed step, trimming its bottom to the neighbour.
     ExposedStep,
 }
 
-/// Classify a water side face toward a neighbouring water cell. The face is kept
-/// (as the exposed step) only when this cell is full to the top while the
-/// neighbour's surface is recessed — otherwise the two surfaces meet and it culls.
+/// Classify a fluid side face toward a neighbouring same-fluid cell. The face is
+/// kept (as the exposed step) only when this cell is full to the top while the
+/// neighbour's surface is recessed — otherwise the two surfaces meet and it
+/// culls.
 ///
-/// Takes the cell's `fills_cell` answer rather than a whole [`WaterSurface`]:
+/// Takes the cell's `fills_cell` answer rather than a whole [`FluidSurface`]:
 /// this decides the CULL, and a submerged cell (the bulk of an ocean) culls
 /// every face, so the surface resolve behind it — sixteen corner-height
 /// samples plus a flow gradient — must not be paid to reach this answer.
 #[inline]
-pub(super) fn side_vs_water(full: bool, is_side: bool, neighbour_full: bool) -> SideVsWater {
+pub(super) fn side_vs_fluid(full: bool, is_side: bool, neighbour_full: bool) -> SideVsFluid {
     if is_side && full && !neighbour_full {
-        SideVsWater::ExposedStep
+        SideVsFluid::ExposedStep
     } else {
-        SideVsWater::Cull
+        SideVsFluid::Cull
     }
 }
 
-/// The resolved surface shape of one water cell, computed once before its faces are
-/// emitted.
-pub(super) struct WaterSurface {
+/// The resolved surface shape of one fluid cell, computed once before its faces
+/// are emitted.
+pub(super) struct FluidSurface {
     /// 2x2 corner heights, indexed `[cx][cz]`: the average surface height of the
-    /// up-to-4 water cells meeting at each corner.
+    /// up-to-4 same-fluid cells meeting at each corner.
     corner_h: [[f32; 2]; 2],
-    /// Top-face tile: the still tile, or the animated flow tile when the cell flows.
+    /// Top-face tile: the fluid's still tile, or its animated flow tile when the
+    /// cell flows.
     top_tile: Tile,
     /// Quantized (8-bit) flow heading the shader rotates the flow tile by. 0 when still.
     top_angle: u32,
-    /// Full-height water (capped from above, or a falling column): fills to the top,
-    /// sides render full height rather than sloping.
+    /// Whether the top shows the flow strip (streaming or falling).
+    flows: bool,
+    /// Full-height fluid (capped from above, or a falling column): fills to the
+    /// top, sides render full height rather than sloping.
     full: bool,
 }
 
-impl WaterSurface {
-    /// Compute the surface shape for the water cell at world `(wx, wy, wz)`. `full`
-    /// is the cell's `fills_cell` result (passed in since the caller already has the
-    /// `water_fills_cell` lookup); `block_at`/`fluid_at` sample the world for the
-    /// corner-height average and the flow gradient.
+impl FluidSurface {
+    /// Compute the surface shape for the fluid cell at world `(wx, wy, wz)`. `full`
+    /// is the cell's `fills_cell` result and `falling` its FALLING meta bit (passed
+    /// in since the caller already has the meta lookup); `block_at`/`fluid_at`
+    /// sample the world for the corner-height average and the flow gradient;
+    /// `block` names the fluid (its row owns the still/flow tiles).
     pub(super) fn new<B, F, S>(
         wx: i32,
         wy: i32,
         wz: i32,
+        fluid: Block,
         full: bool,
+        falling: bool,
         block_at: &B,
         fluid_at: &F,
         still_at: &S,
@@ -71,8 +81,8 @@ impl WaterSurface {
         F: Fn(i32, i32, i32) -> Option<f32>,
         S: Fn(i32, i32, i32) -> bool,
     {
-        // 2x2 corner heights, indexed [cx][cz]: average the up-to-4 water cells
-        // meeting at each corner.
+        // 2x2 corner heights, indexed [cx][cz]: average the up-to-4 same-fluid
+        // cells meeting at each corner.
         let mut corner_h = [[1.0f32; 2]; 2];
         for cx in 0..2i32 {
             for cz in 0..2i32 {
@@ -92,12 +102,12 @@ impl WaterSurface {
 
         // Flow vector from the surface gradient: shared with entity physics so the
         // current push matches the texture heading.
-        let mut top_tile = petramond_world::tile::engine().water_still;
         let mut top_angle = 0u32;
-        let flow =
-            petramond_world::water_math::surface_flow_dir(wx, wy, wz, block_at, fluid_at, still_at);
-        if flow.length_squared() > 0.0 {
-            top_tile = petramond_world::tile::engine().water_flow;
+        let flow = petramond_world::fluid_math::surface_flow_dir(
+            wx, wy, wz, fluid, block_at, fluid_at, still_at,
+        );
+        let streams = flow.length_squared() > 0.0;
+        if streams {
             // Continuous flow heading: the shader rotates the flow tile by this
             // angle so a cell streaming into a corner points diagonally, not snapped
             // to a cardinal. atan2(x, z) keeps +Z=0/-X=-90/+X=+90/-Z=180 so the
@@ -106,11 +116,21 @@ impl WaterSurface {
             let frac = a / std::f32::consts::TAU + 0.5;
             top_angle = ((frac * 256.0) as i32).rem_euclid(256) as u32;
         }
+        // A FALLING stream is vertical flow whatever its horizontal gradient: a
+        // column in open air has a symmetric neighbourhood (zero gradient), yet
+        // its exposed top is streaming fluid, never a calm surface.
+        let flows = streams || falling;
+        let top_tile = if flows {
+            fluid.fluid_flow_tile()
+        } else {
+            fluid.fluid_still_tile()
+        };
 
         Self {
             corner_h,
             top_tile,
             top_angle,
+            flows,
             full,
         }
     }
@@ -135,20 +155,29 @@ impl WaterSurface {
             x,
             y,
             z,
+            block,
             block_at(x, y + 1, z).fluid() == Some(block),
+            false,
             &block_at,
             &fluid,
             &|_, _, _| true,
         );
         surface.top_tile = tile;
         surface.top_angle = 0;
+        surface.flows = false;
         surface
     }
 
-    /// The top-face tile (still or flow).
+    /// The top-face tile (the fluid's still or flow strip base).
     #[inline]
     pub(super) fn top_tile(&self) -> Tile {
         self.top_tile
+    }
+
+    /// Whether the top face shows the flow strip.
+    #[inline]
+    pub(super) fn flows(&self) -> bool {
+        self.flows
     }
 
     /// The quantized flow heading carried in the top vertex's overlay bits.
@@ -157,7 +186,7 @@ impl WaterSurface {
         self.top_angle
     }
 
-    /// Warp a face's quad corners to the water surface in place. TOP verts go to
+    /// Warp a face's quad corners to the fluid surface in place. TOP verts go to
     /// their corner's surface height so the top slopes and every side's top edge
     /// meets it exactly (a full cell spans the whole block). Exposed-step faces
     /// additionally pull their BOTTOM verts up to the neighbour's surface (= the

@@ -2,7 +2,7 @@
 //!
 //! The block id buffer remains dense and minimal (`u8` per cell). Runtime state that
 //! changes how a placed block behaves or renders lives here instead of in scattered
-//! section fields. Water keeps a dense optional buffer because it can fill whole
+//! section fields. Fluid state keeps a dense optional buffer because it can fill whole
 //! sections; rarer block states stay sparse and keyed by `section_idx` (`u16`).
 
 use std::collections::{BTreeMap, HashMap};
@@ -282,10 +282,10 @@ impl SparseStates {
 
 #[derive(Clone, Default)]
 pub struct BlockStates {
-    water: Option<Arc<[u8]>>,
-    /// Count of nonzero water-meta cells (water mid-flow). O(1) "anything
-    /// flowing?" for the streamed-water kick; the buffer is dropped when the
-    /// last cell settles, so `water` is `Some` iff this is nonzero.
+    fluid: Option<Arc<[u8]>>,
+    /// Count of nonzero fluid-meta cells (fluid mid-flow, either kind). O(1)
+    /// "anything flowing?" for the streamed-fluid kick; the buffer is dropped
+    /// when the last cell settles, so `fluid` is `Some` iff this is nonzero.
     flowing_count: u16,
     /// Allocated on the first sparse-state insert; `None` for the common section.
     sparse: Option<Box<SparseStates>>,
@@ -302,7 +302,7 @@ impl BlockStates {
     }
 
     pub fn from_shared(
-        water: Option<Arc<[u8]>>,
+        fluid: Option<Arc<[u8]>>,
         cell_states: HashMap<u16, ShapeState>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
@@ -310,22 +310,22 @@ impl BlockStates {
             cell_states,
             cell_kv,
         };
-        let flowing_count = water
+        let flowing_count = fluid
             .as_deref()
             .map_or(0, |w| w.iter().filter(|&&m| m != 0).count() as u16);
         Self {
-            water: water.filter(|_| flowing_count > 0),
+            fluid: fluid.filter(|_| flowing_count > 0),
             flowing_count,
             sparse: (!sparse.is_empty()).then(|| Box::new(sparse)),
         }
     }
 
     #[inline]
-    pub fn water_arc(&self) -> Option<Arc<[u8]>> {
-        self.water.clone()
+    pub fn fluid_arc(&self) -> Option<Arc<[u8]>> {
+        self.fluid.clone()
     }
 
-    /// `(water buffer ptr, water len, sparse heap bytes)` for the memory census.
+    /// `(fluid buffer ptr, fluid len, sparse heap bytes)` for the memory census.
     pub fn memory_parts(&self) -> (Option<usize>, usize, u64) {
         let sparse = self.sparse.as_ref().map_or(0, |s| {
             let states = (s.cell_states.len() * (2 + std::mem::size_of::<ShapeState>() + 1)) as u64;
@@ -341,47 +341,47 @@ impl BlockStates {
             std::mem::size_of::<SparseStates>() as u64 + states * 8 / 7 + kv
         });
         (
-            self.water.as_ref().map(|w| w.as_ptr() as usize),
-            self.water.as_ref().map_or(0, |w| w.len()),
+            self.fluid.as_ref().map(|w| w.as_ptr() as usize),
+            self.fluid.as_ref().map_or(0, |w| w.len()),
             sparse,
         )
     }
 
     #[inline]
-    pub fn water_slice(&self) -> Option<&[u8]> {
-        self.water.as_deref()
+    pub fn fluid_slice(&self) -> Option<&[u8]> {
+        self.fluid.as_deref()
     }
 
     #[inline]
-    pub fn water_meta(&self, idx: usize) -> u8 {
-        match &self.water {
+    pub fn fluid_meta(&self, idx: usize) -> u8 {
+        match &self.fluid {
             Some(w) => w[idx],
             None => 0,
         }
     }
 
     #[inline]
-    pub fn clear_water_meta(&mut self, idx: usize) {
+    pub fn clear_fluid_meta(&mut self, idx: usize) {
         // Read before `make_mut`: clearing an already-settled cell (the common
         // block edit) must not clone a buffer a mesh job still shares.
-        let Some(w) = self.water.as_mut() else { return };
+        let Some(w) = self.fluid.as_mut() else { return };
         if w[idx] == 0 {
             return;
         }
         Arc::make_mut(w)[idx] = 0;
         self.flowing_count -= 1;
         if self.flowing_count == 0 {
-            self.water = None;
+            self.fluid = None;
         }
     }
 
-    pub fn store_water_meta(&mut self, idx: usize, meta: u8) {
+    pub fn store_fluid_meta(&mut self, idx: usize, meta: u8) {
         if meta == 0 {
-            self.clear_water_meta(idx);
+            self.clear_fluid_meta(idx);
             return;
         }
         let w = self
-            .water
+            .fluid
             .get_or_insert_with(|| vec![0u8; SECTION_VOLUME].into());
         let cell = &mut Arc::make_mut(w)[idx];
         if *cell == 0 {
@@ -390,7 +390,7 @@ impl BlockStates {
         *cell = meta;
     }
 
-    /// Whether any cell holds nonzero water-flow meta (water mid-flow).
+    /// Whether any cell holds nonzero fluid meta (fluid mid-flow, either kind).
     #[inline]
     pub fn has_flowing(&self) -> bool {
         self.flowing_count > 0
@@ -398,7 +398,7 @@ impl BlockStates {
 
     #[inline]
     pub fn clear_on_block_change(&mut self, idx: usize) {
-        self.clear_water_meta(idx);
+        self.clear_fluid_meta(idx);
         let Some(s) = self.sparse.as_deref_mut() else {
             return;
         };

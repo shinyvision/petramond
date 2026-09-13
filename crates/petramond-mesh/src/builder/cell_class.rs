@@ -27,7 +27,7 @@ pub(super) const BOXES: u8 = 1 << 4;
 pub(super) const MODEL: u8 = 1 << 5;
 /// Eligible for the exposure-mask cube fast path.
 pub(super) const FAST_CUBE: u8 = 1 << 6;
-pub(super) const WATER: u8 = 1 << 7;
+pub(super) const FLUID: u8 = 1 << 7;
 
 /// A SECOND dense byte, for the exposure-mask build's pad scan (which asks
 /// different questions of every one of 5832 pad cells than the cell scan asks
@@ -39,6 +39,9 @@ pub(super) const PAD_SLAB: u8 = 1 << 1;
 /// plants, leaves, plain cubes) is rejected by `boxset::cell_seals_face`
 /// anyway, and asking it costs a world read plus a big-table shape-kind load.
 pub(super) const PAD_SEALS: u8 = 1 << 2;
+/// A fluid whose medium is opaque: a FULL cell of it covers the faces behind
+/// it (the fill check needs the cell's meta, so this bit only nominates).
+pub(super) const PAD_OPAQUE_FLUID: u8 = 1 << 3;
 
 #[inline]
 pub(super) fn pad_classes() -> &'static [u8] {
@@ -52,6 +55,9 @@ pub(super) fn pad_classes() -> &'static [u8] {
                 }
                 if block.is_slab() {
                     c |= PAD_SLAB;
+                }
+                if block.fluid_def().is_some_and(|def| def.medium.is_opaque()) {
+                    c |= PAD_OPAQUE_FLUID;
                 }
                 if block != Block::Air
                     && block.has_box_shape()
@@ -104,7 +110,7 @@ pub(super) fn cell_classes() -> &'static [u8] {
                     c |= FAST_CUBE;
                 }
                 if block.is_fluid() {
-                    c |= WATER;
+                    c |= FLUID;
                 }
                 c
             })

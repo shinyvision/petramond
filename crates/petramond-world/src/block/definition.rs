@@ -12,6 +12,10 @@ pub(super) struct BlockDef {
     pub block: Block,
     pub flags: BlockFlags,
     pub contained_fluid: Option<Block>,
+    /// The fluid a broken cell of this block leaves behind (see
+    /// [`Block::break_residue`](super::Block::break_residue)).
+    pub melts_to: Option<Block>,
+    pub fluid: Option<&'static crate::fluid::FluidDef>,
     /// Category memberships (see [`BlockTag`]) — what this block *is*. Most rows
     /// carry none (`&[]`); a member lists each tag it belongs to. Mirrors the
     /// item table's `tags`.
@@ -56,6 +60,9 @@ pub(super) struct BlockDef {
     /// directly above carries a `snow_cover` block — the snowy-grass side.
     /// Derived at mesh time from the neighbour above, never stored per cell.
     pub covered_side: Option<Tile>,
+    /// The animated strip a FLUID cell's flowing state draws; `tiles[0]` is the
+    /// still one. `None` on every non-fluid row.
+    pub flow_tile: Option<Tile>,
     /// Mining material class (drives tool requirement + future tool tiers).
     pub material: BlockMaterial,
     /// Minimum tool tier to HARVEST this block (`0` = hand-harvestable).

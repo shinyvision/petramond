@@ -217,7 +217,7 @@ impl SceneCapture {
     /// exactly as the game's frame does.
     fn publish_camera(&mut self) {
         let eye = self.camera.pos;
-        let (fog, underwater) = crate::game::environment::camera_fog(&self.world, eye, |wx, wz| {
+        let (fog, eye_fluid) = crate::game::environment::camera_fog(&self.world, eye, |wx, wz| {
             self.world
                 .biome_at_world(wx, wz)
                 .map_or(Biome::Plains, Biome::from_id)
@@ -226,7 +226,7 @@ impl SceneCapture {
             &self.camera,
             fog,
             self.animation_time,
-            underwater,
+            eye_fluid,
             Some(&self.shader_params),
         );
     }

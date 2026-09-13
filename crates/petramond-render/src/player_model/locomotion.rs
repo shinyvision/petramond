@@ -42,8 +42,8 @@ pub struct Inputs {
     pub airborne: f32,
     pub falling: f32,
     pub landing: f32,
-    /// Swim weight.
-    pub water: f32,
+    /// How far the body is swimming (`0` dry … `1` fully in a fluid).
+    pub swim: f32,
     /// Swimming with the feet on the floor (wading).
     pub floor: f32,
     pub swim_moving: f32,
@@ -62,7 +62,7 @@ impl Inputs {
         "airborne",
         "falling",
         "landing",
-        "water",
+        "swim",
         "floor",
         "swim_moving",
         "swim_backward",
@@ -83,7 +83,7 @@ impl Inputs {
             airborne: unit(mix.airborne),
             falling: unit(mix.falling),
             landing: unit(mix.landing),
-            water: unit(swim.weight),
+            swim: unit(swim.weight),
             floor: unit(swim.grounded),
             swim_moving: unit(swim.moving),
             swim_backward: unit(swim.backward),
@@ -102,7 +102,7 @@ impl Inputs {
             self.airborne,
             self.falling,
             self.landing,
-            self.water,
+            self.swim,
             self.floor,
             self.swim_moving,
             self.swim_backward,

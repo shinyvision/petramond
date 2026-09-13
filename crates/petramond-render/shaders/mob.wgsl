@@ -23,21 +23,19 @@ struct Uniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    atlas_anim: vec4<u32>,
+    atlas_layout: vec4<u32>,
     // rgb = sim-owned sky light COLOUR (white = identity; night tints subtly
     // blue). Applied to the SKY term only — torch light keeps its warmth.
     sky_color: vec4<f32>,
     // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
     sun_dir: vec4<f32>,
+    // rgb = the eye fluid's volume tint (white in air).
+    volume_tint: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
-
-// Underwater look: the same multiply tint (darker + blue) the world shader applies, so
-// a submerged mob murks out with the terrain around it. Keep in sync with block.wgsl.
-const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 
 struct VsIn {
     @location(0) pos:   vec3<f32>,
@@ -80,10 +78,10 @@ fn fs_mob(in: VsOut) -> @location(0) vec4<f32> {
     // zero-area faces never paint stray pixels.
     if (tex_color.a < 0.5) { discard; }
     var color = tex_color.rgb * in.shade * in.tint;
-    // Underwater: the same blue darkening multiply + tight linear murk the world
+    // Inside a fluid: the eye medium's volume tint + linear murk the world
     // applies, so a submerged mob doesn't stay vividly lit against the murk.
     if (u.fog.w > 0.5) {
-        color = color * WATER_TINT;
+        color = color * u.volume_tint.rgb;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
@@ -186,7 +184,7 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
     let lit = max(max(sky_term, block_term), vec3<f32>(FINAL_MIN));
     var color = tex_color.rgb * in.tint * in.shade * lit;
     if (u.fog.w > 0.5) {
-        color = color * WATER_TINT;
+        color = color * u.volume_tint.rgb;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
@@ -219,7 +217,7 @@ fn fs_world_model_blend(in: WmOut) -> @location(0) vec4<f32> {
     let lit = max(max(sky_term, block_term), vec3<f32>(FINAL_MIN));
     var color = tex_color.rgb * in.tint * in.shade * lit;
     if (u.fog.w > 0.5) {
-        color = color * WATER_TINT;
+        color = color * u.volume_tint.rgb;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), tex_color.a);
     }

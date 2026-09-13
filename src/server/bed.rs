@@ -216,6 +216,7 @@ impl ServerGame {
         player.clear_damage_immunity();
         // A fresh life starts clean: lingering status effects die with the body.
         player.clear_effects();
+        player.clear_exposure();
         events.player(s).respawned = true;
     }
 

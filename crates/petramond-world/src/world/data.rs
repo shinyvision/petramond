@@ -415,9 +415,10 @@ impl WorldData {
         self.physics_block(wx, wy, wz).blocks_movement()
     }
 
-    #[inline]
-    pub fn water_cell_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
-        self.physics_block(wx, wy, wz).fluid() == Some(Block::Water)
+    /// Whether the cell holds any fluid, resident or contained (the
+    /// conservative physics read: unloaded terrain answers its summary).
+    pub fn fluid_cell_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
+        self.physics_block(wx, wy, wz).fluid().is_some()
     }
 
     /// Mark the section owning world voxel `pos` as modified, so a change that no

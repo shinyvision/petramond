@@ -1,5 +1,6 @@
 use super::*;
 use crate::mob::{def, Mob, MobDamageFeedback};
+use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
 fn floor_at_zero(p: IVec3) -> bool {
@@ -22,14 +23,7 @@ fn sheep_def() -> &'static MobDef {
 fn gravity_settles_the_mob_on_the_floor() {
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
     for _ in 0..600 {
-        owl.integrate(
-            1.0 / 60.0,
-            owl_def(),
-            Vec3::ZERO,
-            false,
-            &floor_at_zero,
-            &|_| false,
-        );
+        owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     }
     assert!(
         owl.pos.y >= -1e-3,
@@ -53,35 +47,17 @@ fn zero_gravity_preserves_vertical_drive_but_still_collides() {
     let d = table.defs.iter().find(|d| d.mob == Mob::Owl).unwrap();
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
     owl.vel.y = -1.0;
-    owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero);
     assert!((owl.vel.y + 1.0).abs() < 1e-6);
     assert!((owl.pos.y - 4.95).abs() < 1e-5);
     let mut touched_floor = false;
     for _ in 0..120 {
-        owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+        owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero);
         touched_floor |= owl.on_ground();
     }
     assert!(touched_floor);
     assert!(owl.pos.y.abs() < 0.01);
     assert_eq!(owl.vel.y, 0.0);
-}
-
-#[test]
-fn neutral_buoyancy_preserves_vertical_motion_only_in_water() {
-    let (text, _) = petramond_world::assets::read_base_text("mobs.json").unwrap();
-    let mut rows: serde_json::Value = serde_json::from_str(&text).unwrap();
-    for row in rows["mobs"].as_array_mut().unwrap() {
-        row["buoyancy"] = serde_json::json!("neutral");
-    }
-    let text = rows.to_string();
-    let table = crate::mob::load::parse_layers(&[&text]).unwrap();
-    let d = table.defs.iter().find(|d| d.mob == Mob::Owl).unwrap();
-    let mut mob = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
-    mob.vel.y = -0.4;
-    mob.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| true);
-    assert!((mob.vel.y + 0.4).abs() < 1e-6);
-    mob.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
-    assert!(mob.vel.y < -0.4);
 }
 
 #[test]
@@ -98,25 +74,18 @@ fn a_body_embedded_in_a_grown_column_slides_out_sideways_without_bobbing() {
             &[][..]
         }
     };
-    let solid = |c: IVec3| c.y < 0 || (c.x == 0 && c.z == 0 && (0..3).contains(&c.y));
-    let dry = |_: IVec3| false;
-    let still = |_: Vec3| Vec3::ZERO;
     let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.4, 0.0, 0.5), 0.0, 1);
     let mut peak = 0.0f32;
     for _ in 0..40 {
-        sheep.integrate_with_flow(
+        sheep.integrate_locomotion(
             0.05,
             sheep_def(),
-            Vec3::ZERO,
-            false,
-            true,
-            &boxes,
-            &[],
-            &[],
-            &solid,
-            &dry,
-            &|_| None,
-            &still,
+            Locomotion {
+                wish: Vec3::ZERO,
+                jump: false,
+                can_steer: true,
+            },
+            &Surroundings::dry(&boxes),
         );
         peak = peak.max(sheep.pos.y);
     }
@@ -143,24 +112,17 @@ fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
         "the chest box must be inset (top {chest_top})"
     );
     let boxes = |_x: i32, y: i32, _z: i32| if y == 0 { chest } else { &[][..] };
-    let solid = |c: IVec3| c.y == 0; // nav sees the chest cell as a unit obstacle
-    let dry = |_: IVec3| false;
-    let still = |_: Vec3| Vec3::ZERO;
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
     for _ in 0..600 {
-        owl.integrate_with_flow(
+        owl.integrate_locomotion(
             1.0 / 60.0,
             owl_def(),
-            Vec3::ZERO,
-            false,
-            true,
-            &boxes,
-            &[],
-            &[],
-            &solid,
-            &dry,
-            &|_| None,
-            &still,
+            Locomotion {
+                wish: Vec3::ZERO,
+                jump: false,
+                can_steer: true,
+            },
+            &Surroundings::dry(&boxes),
         );
     }
     assert!(owl.on_ground(), "mob should be grounded on the chest");
@@ -187,25 +149,18 @@ fn grounded_mob_auto_steps_up_a_half_block() {
             &[]
         }
     };
-    let solid = |c: IVec3| c.y == 0 || (c.y == 1 && c.x >= 1); // nav obstacle
-    let dry = |_: IVec3| false;
-    let still = |_: Vec3| Vec3::ZERO;
     let wish = Vec3::new(1.0, 0.0, 0.0);
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
     for _ in 0..180 {
-        owl.integrate_with_flow(
+        owl.integrate_locomotion(
             1.0 / 60.0,
             owl_def(),
-            wish,
-            false,
-            true,
-            &half_step,
-            &[],
-            &[],
-            &solid,
-            &dry,
-            &|_| None,
-            &still,
+            Locomotion {
+                wish,
+                jump: false,
+                can_steer: true,
+            },
+            &Surroundings::dry(&half_step),
         );
     }
     assert!(owl.pos.x > 1.2, "mob steps onto the ledge: x={}", owl.pos.x);
@@ -223,24 +178,18 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
     // current route wish while rising, otherwise that side hit zeros horizontal
     // velocity and the jump stalls at the face.
     let solid = |c: IVec3| c.y < 1 || (c.x >= 1 && c.y < 2);
-    let dry = |_: IVec3| false;
-    let still = |_: Vec3| Vec3::ZERO;
     let wish = Vec3::new(1.0, 0.0, 0.0);
     let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
 
-    sheep.integrate_with_flow(
+    sheep.integrate_locomotion(
         0.05,
         sheep_def(),
-        Vec3::ZERO,
-        false,
-        true,
-        &boxes_of(&solid),
-        &[],
-        &[],
-        &solid,
-        &dry,
-        &|_| None,
-        &still,
+        Locomotion {
+            wish: Vec3::ZERO,
+            jump: false,
+            can_steer: true,
+        },
+        &Surroundings::dry(&boxes_of(&solid)),
     );
     assert!(sheep.on_ground(), "test starts from the lower floor");
 
@@ -248,19 +197,15 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
     for _ in 0..80 {
         let can_steer = route_steering_supported(sheep.on_ground, false, sheep.vel.y);
         let jump = sheep.on_ground && sheep.pos.y < 1.5;
-        sheep.integrate_with_flow(
+        sheep.integrate_locomotion(
             0.05,
             sheep_def(),
-            wish,
-            jump,
-            can_steer,
-            &boxes_of(&solid),
-            &[],
-            &[],
-            &solid,
-            &dry,
-            &|_| None,
-            &still,
+            Locomotion {
+                wish,
+                jump,
+                can_steer,
+            },
+            &Surroundings::dry(&boxes_of(&solid)),
         );
         left_ground |= !sheep.on_ground();
         if sheep.on_ground() && sheep.pos.y > 1.9 {
@@ -285,14 +230,7 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
 fn wish_direction_drives_horizontal_motion_and_facing() {
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     // Settle on the ground first.
-    owl.integrate(
-        1.0 / 60.0,
-        owl_def(),
-        Vec3::ZERO,
-        false,
-        &floor_at_zero,
-        &|_| false,
-    );
+    owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     let x0 = owl.pos.x;
     for _ in 0..30 {
         owl.integrate(
@@ -301,7 +239,6 @@ fn wish_direction_drives_horizontal_motion_and_facing() {
             Vec3::new(1.0, 0.0, 0.0),
             false,
             &floor_at_zero,
-            &|_| false,
         );
     }
     assert!(
@@ -323,24 +260,18 @@ fn wish_direction_drives_horizontal_motion_and_facing() {
 fn airborne_sheep_carries_velocity_without_walk_steering() {
     let empty_boxes =
         |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
-    let dry = |_: IVec3| false;
-    let still = |_: Vec3| Vec3::ZERO;
     let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
     sheep.vel.x = 1.0;
 
-    sheep.integrate_with_flow(
+    sheep.integrate_locomotion(
         1.0 / 60.0,
         sheep_def(),
-        Vec3::new(-1.0, 0.0, 0.0),
-        false,
-        false,
-        &empty_boxes,
-        &[],
-        &[],
-        &dry,
-        &dry,
-        &|_| None,
-        &still,
+        Locomotion {
+            wish: Vec3::new(-1.0, 0.0, 0.0),
+            jump: false,
+            can_steer: false,
+        },
+        &Surroundings::dry(&empty_boxes),
     );
 
     assert!(
@@ -363,8 +294,6 @@ fn airborne_sheep_carries_velocity_without_walk_steering() {
 fn an_airborne_drive_cannot_replace_carry_or_yaw() {
     let empty_boxes =
         |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
-    let dry = |_: IVec3| false;
-    let still = |_: Vec3| Vec3::ZERO;
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.25, 1);
     owl.vel.x = 1.0;
     assert!(owl.set_drive(DriveIntent {
@@ -374,19 +303,15 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
         while_walking: false
     }));
 
-    owl.integrate_with_flow(
+    owl.integrate_locomotion(
         1.0 / 20.0,
         owl_def(),
-        Vec3::ZERO,
-        false,
-        false,
-        &empty_boxes,
-        &[],
-        &[],
-        &dry,
-        &dry,
-        &|_| None,
-        &still,
+        Locomotion {
+            wish: Vec3::ZERO,
+            jump: false,
+            can_steer: false,
+        },
+        &Surroundings::dry(&empty_boxes),
     );
 
     assert!(owl.pos.x > 0.5, "airborne carry wins over driven -X");
@@ -397,23 +322,9 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
 #[test]
 fn jump_impulse_lifts_a_grounded_mob() {
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-    owl.integrate(
-        1.0 / 60.0,
-        owl_def(),
-        Vec3::ZERO,
-        false,
-        &floor_at_zero,
-        &|_| false,
-    );
+    owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     assert!(owl.on_ground());
-    owl.integrate(
-        1.0 / 60.0,
-        owl_def(),
-        Vec3::ZERO,
-        true,
-        &floor_at_zero,
-        &|_| false,
-    );
+    owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, true, &floor_at_zero);
     assert!(!owl.on_ground(), "jump leaves the ground");
     assert!(owl.pos.y > 0.0, "jump raises the mob");
 }
@@ -422,14 +333,7 @@ fn jump_impulse_lifts_a_grounded_mob() {
 fn idle_mob_is_not_moving() {
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..10 {
-        owl.integrate(
-            1.0 / 60.0,
-            owl_def(),
-            Vec3::ZERO,
-            false,
-            &floor_at_zero,
-            &|_| false,
-        );
+        owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     }
     assert!(
         !owl.moving,
@@ -450,14 +354,7 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
         yaw: Some(1.0),
         while_walking: false
     }));
-    owl.integrate(
-        1.0 / 20.0,
-        owl_def(),
-        Vec3::ZERO,
-        false,
-        &floor_at_zero,
-        &|_| false,
-    );
+    owl.integrate(1.0 / 20.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     assert!(owl.pos.x > 0.5, "the drive velocity moved the mob");
     assert!(
         (owl.yaw - 1.0).abs() < 1e-5,
@@ -467,14 +364,7 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
     assert!(!owl.moving, "driven is not walking (no walk anim/noise)");
 
     let x = owl.pos.x;
-    owl.integrate(
-        1.0 / 20.0,
-        owl_def(),
-        Vec3::ZERO,
-        false,
-        &floor_at_zero,
-        &|_| false,
-    );
+    owl.integrate(1.0 / 20.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     assert_eq!(owl.pos.x, x, "an un-renewed drive expires — the mob parks");
     assert!(
         (owl.yaw - 1.0).abs() < 1e-5,
@@ -496,14 +386,7 @@ fn knockback_stagger_overrides_a_drive_intent() {
         yaw: Some(1.0),
         while_walking: false
     }));
-    owl.integrate(
-        1.0 / 20.0,
-        owl_def(),
-        Vec3::ZERO,
-        false,
-        &floor_at_zero,
-        &|_| false,
-    );
+    owl.integrate(1.0 / 20.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     assert!(
         owl.pos.x < 0.5,
         "knockback wins over the drive during the stagger: x {}",
@@ -517,9 +400,7 @@ fn knockback_stagger_overrides_a_drive_intent() {
 fn knockback_pushes_away_and_overrides_the_wish() {
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     // Settle on the floor first.
-    owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
-        false
-    });
+    owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     let x0 = owl.pos.x;
     // Hit from the +X side → knockback toward -X. This is the key invariant: the
     // knockback survives `integrate`'s per-tick wish-velocity overwrite.
@@ -538,7 +419,6 @@ fn knockback_pushes_away_and_overrides_the_wish() {
             Vec3::new(1.0, 0.0, 0.0),
             false,
             &floor_at_zero,
-            &|_| false,
         );
     }
     assert!(
@@ -547,230 +427,6 @@ fn knockback_pushes_away_and_overrides_the_wish() {
         owl.pos.x
     );
     assert!(!owl.moving, "a staggered mob doesn't read as walking");
-}
-
-#[test]
-fn a_submerged_mob_swims_up_instead_of_sinking() {
-    // Solid bed below y==0, water filling y in 0..=5. Start the mob submerged at
-    // y==1: buoyancy should lift it over a few ticks (gravity alone would sink it).
-    let solid = |c: IVec3| c.y < 0;
-    let water = |c: IVec3| (0..=5).contains(&c.y);
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
-    let y0 = owl.pos.y;
-    for _ in 0..20 {
-        owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &solid, &water);
-    }
-    assert!(
-        owl.pos.y > y0,
-        "a submerged mob rises toward the surface: {y0} -> {}",
-        owl.pos.y
-    );
-}
-
-#[test]
-fn surface_buoyancy_converges_from_both_sides_without_overshoot() {
-    let surface = 6.0;
-    let target = surface - SURFACE_DRAFT;
-    for start in [target - 2.0, target + 1.0] {
-        let mut y = start;
-        for _ in 0..200 {
-            let before = target - y;
-            let velocity = surface_vertical_velocity(0.0, y, Some(surface), 0.05, 1.0);
-            y += velocity * 0.05;
-            let after = target - y;
-            assert!(
-                before == 0.0 || before.signum() == after.signum() || after.abs() < 1e-6,
-                "surface float crossed its target: {before} -> {after}"
-            );
-            assert!(
-                after.abs() <= before.abs() + 1e-6,
-                "surface float must converge monotonically: {before} -> {after}"
-            );
-        }
-        assert!(
-            (y - target).abs() < 1e-4,
-            "surface float settles at the waterline from {start}: {y}"
-        );
-    }
-}
-
-#[test]
-fn a_surface_body_out_of_water_falls_under_gravity() {
-    let mut velocity = 0.0;
-    for _ in 0..3 {
-        let next = surface_vertical_velocity(velocity, 10.0, None, 0.05, 1.0);
-        assert!(next < velocity, "gravity accelerates the dry hull downward");
-        velocity = next;
-    }
-}
-
-#[test]
-fn a_mob_bobs_up_and_down_through_the_water_surface_like_the_player() {
-    // Water fills y in 0..=5 (surface at y==6) over a solid bed at y<0. The mob
-    // swims up, breaks the surface, gravity pulls it back, it re-enters and rises
-    // again — a real bob through the waterline (not a dead float, not a wiggle that
-    // never re-enters). Run the real 20 TPS step.
-    let solid = |c: IVec3| c.y < 0;
-    let water = |c: IVec3| (0..=5).contains(&c.y);
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
-    // Let it rise to the surface and get into the bob.
-    for _ in 0..100 {
-        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &solid, &water);
-    }
-    // Over the next couple of seconds it must move both up (swim) and down
-    // (gravity), and stay in a sane band around the surface.
-    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-    let (mut went_up, mut went_down) = (false, false);
-    for _ in 0..120 {
-        let before = owl.pos.y;
-        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &solid, &water);
-        let dy = owl.pos.y - before;
-        went_up |= dy > 0.01;
-        went_down |= dy < -0.01;
-        lo = lo.min(owl.pos.y);
-        hi = hi.max(owl.pos.y);
-    }
-    assert!(
-        went_up && went_down,
-        "bobs both up and down (up {went_up}, down {went_down})"
-    );
-    assert!(hi > 5.5, "rises up to/through the surface: hi {hi}");
-    assert!(
-        (4.0..=7.0).contains(&lo) && (4.0..=7.0).contains(&hi),
-        "stays at the waterline: {lo}..{hi}"
-    );
-}
-
-#[test]
-fn a_swimming_mob_climbs_out_onto_an_adjacent_ledge() {
-    // A shore the climb-boost can actually clear: water (cells y in 0..SURFACE) over a
-    // bed at y<0, with land at x>=1 whose top is AT the waterline. The swim climb-boost
-    // (sized by `swim_climb_speed`, fired by `ledge_ahead`) lifts the feet over the surface
-    // so it steps out onto the land instead of hugging the shore forever. How high the
-    // boost reaches depends on the (tunable) swim constants, so the land is kept at the
-    // waterline and the checks derive from the owl's own size + this geometry — no swim
-    // numbers are baked in. (The original test hard-coded a 1-block ledge, which needs
-    // a far stronger boost than the tuned `SWIM_CLIMB` and so never passed.)
-    const SURFACE: i32 = 4; // top of the water (and of the land it climbs onto)
-    const SHORE: f32 = 1.0; // land starts at world x = 1
-    let solid = |c: IVec3| c.y < 0 || (c.x >= 1 && c.y < SURFACE);
-    let water = |c: IVec3| c.x <= 0 && (0..SURFACE).contains(&c.y);
-    let half = owl_def().size.half_width;
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
-    for _ in 0..300 {
-        owl.integrate(
-            0.05,
-            owl_def(),
-            Vec3::new(1.0, 0.0, 0.0),
-            false,
-            &solid,
-            &water,
-        );
-    }
-    assert!(
-        owl.on_ground(),
-        "settled on the land, not still bobbing in the water: y {}",
-        owl.pos.y
-    );
-    assert!(
-        owl.pos.y >= SURFACE as f32 - 0.05,
-        "rests up at the land surface, out of the water: y {}",
-        owl.pos.y
-    );
-    assert!(
-        owl.pos.x + half > SHORE,
-        "climbed past the shore onto the land: x {}",
-        owl.pos.x
-    );
-}
-
-#[test]
-fn swim_climb_does_not_boost_toward_a_ledge_above_reach() {
-    const SURFACE: i32 = 4;
-    // Land top is one block above the waterline. From the submerged start pose this
-    // is not yet reachable; the mob must swim up first instead of getting a cliff
-    // boost from below.
-    let solid = |c: IVec3| c.y < 0 || (c.x >= 1 && c.y < SURFACE + 1);
-    let water = |c: IVec3| c.x <= 0 && (0..SURFACE).contains(&c.y);
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, SURFACE as f32 - 0.7, 0.5), 0.0, 1);
-    assert!(
-        owl.ledge_ahead(Vec3::new(1.0, 0.0, 0.0), owl_def().size.half_width, &solid)
-            .is_none(),
-        "ledge top is too far above the mob's current feet"
-    );
-    let y0 = owl.pos.y;
-    owl.integrate(
-        0.05,
-        owl_def(),
-        Vec3::new(1.0, 0.0, 0.0),
-        false,
-        &solid,
-        &water,
-    );
-    assert!(
-        owl.pos.y < y0 + 0.1,
-        "uses normal swim rise, not the ledge boost: {y0} -> {}",
-        owl.pos.y
-    );
-}
-
-#[test]
-fn a_mob_in_flowing_water_is_carried_downstream() {
-    // Water fills y in 0..=5 over a solid bed at y<0, with a current heading +X
-    // everywhere. A mob sitting in it with no wish to move must still drift
-    // downstream — like the player and dropped items do.
-    let solid = |c: IVec3| c.y < 0;
-    let water = |c: IVec3| (0..=5).contains(&c.y);
-    let flow = |_: Vec3| Vec3::new(1.0, 0.0, 0.0);
-    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
-    let x0 = owl.pos.x;
-    for _ in 0..60 {
-        owl.integrate_with_flow(
-            1.0 / 60.0,
-            owl_def(),
-            Vec3::ZERO,
-            false,
-            true,
-            &boxes_of(&solid),
-            &[],
-            &[],
-            &solid,
-            &water,
-            &|_| None,
-            &flow,
-        );
-    }
-    assert!(
-        owl.pos.x > x0 + 0.3,
-        "the current carries the mob downstream: {x0} -> {}",
-        owl.pos.x
-    );
-
-    // Still water (no current) leaves an idle mob where it is — proving it's the flow
-    // doing the carrying, not stray drift.
-    let still = |_: Vec3| Vec3::ZERO;
-    let mut calm = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
-    for _ in 0..60 {
-        calm.integrate_with_flow(
-            1.0 / 60.0,
-            owl_def(),
-            Vec3::ZERO,
-            false,
-            true,
-            &boxes_of(&solid),
-            &[],
-            &[],
-            &solid,
-            &water,
-            &|_| None,
-            &still,
-        );
-    }
-    assert!(
-        (calm.pos.x - 0.5).abs() < 1e-3,
-        "no current → no horizontal drift: x {}",
-        calm.pos.x
-    );
 }
 
 /// The generic velocity seam a pack authors a gait (a hop) from: a VERTICAL
@@ -782,8 +438,6 @@ fn a_mob_in_flowing_water_is_carried_downstream() {
 fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     let d = owl_def();
     let solid = floor_at_zero;
-    let dry = |_: IVec3| false;
-    let still = |_: Vec3| Vec3::ZERO;
     let named = [crate::mob::model_meta::NamedAnimMeta {
         name: "walk".into(),
         length: 0.5,
@@ -816,19 +470,15 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         } else {
             Vec3::ZERO
         };
-        mob.integrate_with_flow(
+        mob.integrate_locomotion(
             dt,
             d,
-            wish,
-            false,
-            can_steer,
-            &boxes_of(&solid),
-            &[],
-            &[],
-            &solid,
-            &dry,
-            &|_| None,
-            &still,
+            Locomotion {
+                wish,
+                jump: false,
+                can_steer,
+            },
+            &Surroundings::dry(&boxes_of(&solid)),
         );
         let launched = was_grounded && !mob.on_ground() && mob.vel().y > 0.0;
         mob.apply_expression(dt, d, &named, &crate::mob::brain::BehaviorOutput::default());
@@ -871,7 +521,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     // one-block ledge the route depends on.
     let mut jumper = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
-        jumper.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
+        jumper.integrate(dt, d, Vec3::ZERO, false, &solid);
     }
     assert!(jumper.on_ground());
     assert!(jumper.set_drive(DriveIntent {
@@ -880,7 +530,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         yaw: None,
         while_walking: false
     }));
-    jumper.integrate(dt, d, Vec3::new(1.0, 0.0, 0.0), true, &solid, &dry);
+    jumper.integrate(dt, d, Vec3::new(1.0, 0.0, 0.0), true, &solid);
     assert!(
         jumper.vel().y > 4.6,
         "a nav jump launches at jump_speed, not the drive: vy={}",
@@ -890,7 +540,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     // A HORIZONTAL drive keeps its vehicle semantics: driven is not walking.
     let mut driven = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
-        driven.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
+        driven.integrate(dt, d, Vec3::ZERO, false, &solid);
     }
     assert!(driven.set_drive(DriveIntent {
         horizontal: Some([2.0, 0.0]),
@@ -898,7 +548,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         yaw: None,
         while_walking: false
     }));
-    driven.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
+    driven.integrate(dt, d, Vec3::ZERO, false, &solid);
     assert!(
         !driven.moving,
         "a horizontally-driven mob never reads as walking"
@@ -914,12 +564,12 @@ fn a_shoved_mob_moves_without_reading_as_walking() {
     let d = owl_def();
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
-        owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+        owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     }
     assert!(owl.on_ground());
 
     owl.set_push(Vec3::new(3.0, 0.0, 0.0));
-    owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     assert!(owl.pos.x > 0.5, "the push displaces the body");
     assert!(!owl.moving, "a shove never reads as walking");
 
@@ -931,7 +581,6 @@ fn a_shoved_mob_moves_without_reading_as_walking() {
         Vec3::new(1.0, 0.0, 0.0),
         false,
         &floor_at_zero,
-        &|_| false,
     );
     assert!(owl.moving, "walking while shoved is still walking");
 }
@@ -945,7 +594,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
     let d = owl_def();
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
-        owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+        owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     }
     assert!(owl.on_ground());
 
@@ -956,7 +605,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         yaw: None,
         while_walking: true,
     }));
-    owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     assert!(
         owl.on_ground() && owl.vel().y <= 0.0,
         "the stale gated intent is dropped: no parting bounce"
@@ -976,7 +625,6 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         Vec3::new(1.0, 0.0, 0.0),
         false,
         &floor_at_zero,
-        &|_| false,
     );
     assert!(
         !owl.on_ground() && owl.vel().y > 0.0,
@@ -986,7 +634,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
     // An UNGATED intent stays unconditional (a startle jump from standstill).
     let mut idle = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
-        idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+        idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     }
     assert!(idle.set_drive(DriveIntent {
         horizontal: None,
@@ -994,7 +642,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         yaw: None,
         while_walking: false,
     }));
-    idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     assert!(
         !idle.on_ground() && idle.vel().y > 0.0,
         "an ungated launch from standstill still applies"
@@ -1036,20 +684,15 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
     let x = cart.pos.x;
     let can_steer = route_steering_supported(cart.on_ground, false, cart.vel.y);
     assert!(!can_steer, "a placed body is left airborne");
-    let dry = |_: IVec3| false;
-    cart.integrate_with_flow(
+    cart.integrate_locomotion(
         dt,
         owl_def(),
-        Vec3::ZERO,
-        false,
-        can_steer,
-        &boxes_of(&floor_at_zero),
-        &[],
-        &[],
-        &floor_at_zero,
-        &dry,
-        &|_| None,
-        &|_| Vec3::ZERO,
+        Locomotion {
+            wish: Vec3::ZERO,
+            jump: false,
+            can_steer,
+        },
+        &Surroundings::dry(&boxes_of(&floor_at_zero)),
     );
     assert!(cart.pos.x > x + 0.3, "the body flew on: {}", cart.pos.x);
     assert!(
@@ -1105,7 +748,6 @@ fn brain_speed_scale_changes_horizontal_travel_and_gait_together() {
             Vec3::new(0.0, 0.0, -1.0),
             false,
             &floor_at_zero,
-            &|_| false,
         );
         mob.apply_expression(
             0.05,

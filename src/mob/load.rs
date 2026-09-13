@@ -99,10 +99,12 @@ struct RawMobDef {
     spawn_group: SpawnGroup,
     wander: RawWander,
     habitat: RawHabitat,
-    avoid_water: bool,
-    /// Water behavior (see [`Buoyancy`]); omitted = `swim`.
+    avoid_fluids: bool,
+    /// Fluid behavior (see [`Buoyancy`]); omitted = `swim`.
     #[serde(default)]
     buoyancy: Buoyancy,
+    #[serde(default)]
+    tolerates: RawTolerance,
     #[serde(default = "default_gravity_scale")]
     gravity_scale: f32,
     #[serde(default)]
@@ -444,8 +446,9 @@ fn convert(
             avoid: resolve_biomes(r.habitat.avoid)?,
             prefer: resolve_biomes(r.habitat.prefer)?,
         },
-        avoid_water: r.avoid_water,
+        avoid_fluids: r.avoid_fluids,
         buoyancy: r.buoyancy,
+        tolerates: convert_tolerance(r.tolerates)?,
         gravity_scale: r.gravity_scale,
         air_control: r.air_control,
         collision: r.collision,
@@ -659,6 +662,31 @@ fn resolve_block_tags(tags: Vec<String>) -> &'static [Block] {
     out.sort_by_key(|b| b.id());
     out.dedup();
     Box::leak(out.into_boxed_slice())
+}
+
+/// The `tolerates` row: block names (registry serde) and condition names.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawTolerance {
+    #[serde(default)]
+    blocks: Vec<Block>,
+    #[serde(default)]
+    conditions: Vec<String>,
+}
+
+fn convert_tolerance(raw: RawTolerance) -> Result<super::Tolerance, String> {
+    let conditions = raw
+        .conditions
+        .iter()
+        .map(|name| {
+            petramond_world::condition::by_name(name)
+                .ok_or_else(|| format!("tolerates unknown condition '{name}'"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(super::Tolerance {
+        blocks: Box::leak(raw.blocks.into_boxed_slice()),
+        conditions: Box::leak(conditions.into_boxed_slice()),
+    })
 }
 
 fn resolve_biomes(names: Vec<String>) -> Result<&'static [Biome], String> {

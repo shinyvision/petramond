@@ -264,6 +264,8 @@ impl ReplicatedItems {
 /// HUD, hand, and overlays read. Seeded from the session at join (the wire
 /// path seeds it from `SelfRestore`), then overwritten by every batch.
 pub struct SelfView {
+    /// Active body-condition stages `(condition id, stage)`.
+    pub conditions: Vec<(u8, u8)>,
     /// Health in half-heart points.
     pub health: i32,
     pub mode: PlayerMode,
@@ -321,6 +323,12 @@ impl SelfView {
     pub fn seed_from(player: &Player) -> Self {
         Self {
             health: player.health(),
+            conditions: player
+                .conditions()
+                .active()
+                .iter()
+                .map(|c| (c.condition.0, c.stage()))
+                .collect(),
             mode: player.mode(),
             effects: player
                 .effects()
@@ -358,6 +366,7 @@ impl SelfView {
     /// view — the pending request's own outcome batch carries the truth.
     pub fn apply(&mut self, state: &SelfState, adopt_inventory: bool) {
         self.health = state.health;
+        self.conditions.clone_from(&state.conditions);
         self.mode = match state.mode {
             1 => PlayerMode::Spectator,
             _ => PlayerMode::Survival,
@@ -754,11 +763,7 @@ impl Game {
             self.player.pos,
             self.player.yaw,
             |feet| petramond::mob::riding::player_body_free(&self.replica, feet, &obstacles),
-            |feet| {
-                let c = petramond_math::math::voxel_at(feet);
-                !self.replica.water_cell_at(c.x, c.y, c.z)
-                    && !self.replica.water_cell_at(c.x, c.y - 1, c.z)
-            },
+            |feet| petramond::mob::riding::dismount_footing_safe(&self.replica, feet),
         );
         if let Some(feet) = spot {
             self.player.teleport(feet);

@@ -10,7 +10,7 @@ use petramond_math::math::{IVec3, Vec3};
 
 use super::super::brain::{AiCtx, ChannelClaims, DecisionChannel};
 use super::super::nav;
-use super::super::path::{is_navigation_foothold_with, PathParams};
+use super::super::path::is_navigation_foothold_with;
 
 /// Default escape reach (blocks): enough to leave melee range in one leg
 /// without pathing across a whole clearing.
@@ -139,10 +139,10 @@ impl EscapeRoute {
             ctx.rng.next_f32() * std::f32::consts::TAU
         };
         let cursor = ctx.world.cursor();
-        let params = PathParams::for_body(ctx.head, ctx.half_width);
+        let params = ctx.path_params();
         let solid = nav::nav_solid_fn(&cursor);
         let support = nav::nav_support_fn(&cursor, params.half_width);
-        let water = nav::nav_water_fn(&cursor);
+        let fluid = nav::nav_fluid_fn(&cursor);
         let mut probes = 0;
         for attempt in 0..LEG_ATTEMPTS {
             let sign = if self.side ^ (attempt % 2 == 1) {
@@ -157,7 +157,7 @@ impl EscapeRoute {
             let z = (ctx.pos.z + angle.cos() * distance).floor() as i32;
             for dy in FOOTHOLD_DY {
                 let goal = IVec3::new(x, ctx.cell.y + dy, z);
-                if !is_navigation_foothold_with(goal, params, &solid, &support, &water) {
+                if !is_navigation_foothold_with(goal, params, &solid, &support, &fluid) {
                     continue;
                 }
                 let end = Vec3::new(x as f32 + 0.5, ctx.pos.y, z as f32 + 0.5);

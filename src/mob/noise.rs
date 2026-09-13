@@ -47,7 +47,7 @@ pub struct Noise {
 
 /// Minimum horizontal speed (m/s) at which a player's movement is audible.
 /// Sits between sneak speed (2.15) and walk speed (4.3), so walking and
-/// sprinting step audibly while drift, jostling, and water currents stay
+/// sprinting step audibly while drift, jostling, and fluid currents stay
 /// quiet. Sneaking is silent by the flag, not this threshold — the threshold
 /// only filters non-locomotion movement.
 pub const STEP_NOISE_MIN_SPEED: f32 = 3.0;

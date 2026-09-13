@@ -152,6 +152,17 @@ pub enum DamageSource {
     Mod {
         mod_id: String,
     },
+    /// Contact with a fluid block whose row deals contact damage.
+    FluidContact {
+        block: BlockId,
+    },
+    /// A pulse of an active body condition (resolve names with
+    /// [`HostCall::ConditionNames`]).
+    ///
+    /// [`HostCall::ConditionNames`]: crate::HostCall::ConditionNames
+    Condition {
+        condition: crate::ConditionId,
+    },
 }
 
 /// Which container GUI opened/closed, named by its registered kind key —
@@ -226,7 +237,7 @@ pub enum MobDamageFeedbackComponent {
     Ragdoll,
     /// Engine i-frames: a hit that decreases health grants `ticks` of the
     /// victim-global window, and the request is rejected while one is active.
-    /// Omit for damage-over-time (burn) that must neither grant nor be
+    /// Omit for damage on its own clock that must neither grant nor be
     /// blocked.
     Immunity {
         ticks: u32,

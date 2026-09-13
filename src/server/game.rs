@@ -143,6 +143,8 @@ pub struct ServerGame {
     /// sessions only (per [`crate::server::chat::ChatTargets`]); this is
     /// intentionally not history.
     pub pending_chat: Vec<crate::server::chat::PendingChat>,
+    /// Reused buffers for every session's exposure tick.
+    pub(crate) exposure_scratch: crate::exposure::ExposureScratch,
     pub next_chat_seq: u64,
     /// Wall-clock seconds since the last background autosave.
     pub autosave_t: f32,

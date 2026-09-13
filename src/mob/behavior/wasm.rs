@@ -52,7 +52,7 @@ impl AiBehavior for WasmNodeAi {
             player_id: mod_api::PlayerId(ctx.player_id.0),
             player_pos: ctx.player_pos.to_array(),
             nav_idle: ctx.nav_idle,
-            in_water: ctx.in_water,
+            in_fluid: ctx.in_fluid.map(|b| mod_api::BlockId(b.id())),
             target: ctx.target.map(abi_entity),
             attacker: ctx.attacker.map(|(who, age)| (abi_entity(who), age)),
             player_held: (self.inputs.player_held)

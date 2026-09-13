@@ -51,7 +51,7 @@ pub mod remap;
 //     off while the client is still MESHING what it already received (an ack
 //     only says it was applied). Counts only; the pressure policy is the
 //     server's (`TerrainSync::apply_presentation_backlog`).
-pub const PROTOCOL_VERSION: u16 = 37;
+pub const PROTOCOL_VERSION: u16 = 39;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

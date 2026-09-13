@@ -41,9 +41,9 @@ impl IdleAnimAi {
 impl AiBehavior for IdleAnimAi {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
         // Only while standing still on land, and only if the species has idle
-        // animations. A mob in water is busy swimming — it plays no idle animation
+        // animations. A mob in fluid is busy swimming — it plays no idle animation
         // (though head-look still runs).
-        if !ctx.nav_idle || ctx.in_water || ctx.idle_anims.is_empty() {
+        if !ctx.nav_idle || ctx.in_fluid.is_some() || ctx.idle_anims.is_empty() {
             self.playing = None;
             self.timer = 0;
             return BehaviorOutput::default();
@@ -130,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn never_plays_an_idle_animation_while_in_water() {
+    fn never_plays_an_idle_animation_while_in_fluid() {
         let world = World::new(0, 1);
         let mut rng = MobRng::new(7);
         let idle = [IdleAnimMeta {
@@ -140,11 +140,11 @@ mod tests {
         let mut ai = IdleAnimAi::new();
         for _ in 0..20_000 {
             let mut ctx = crate::mob::behavior::test_support::ctx(&world, &mut rng);
-            ctx.in_water = true;
+            ctx.in_fluid = Some(petramond_world::block::Block::Water);
             ctx.idle_anims = &idle;
             assert!(
                 ai.tick(&mut ctx).idle_anim.is_none(),
-                "no idle plays in water"
+                "no idle plays in a fluid"
             );
         }
     }

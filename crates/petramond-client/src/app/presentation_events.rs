@@ -59,9 +59,9 @@ impl App {
                     (!by_self).then_some((Sound::ItemPickup, pos))
                 }
                 // Particles only. A burst's SOUND is the producer's business
-                // through the ordinary sound channel (the water splash emits
+                // through the ordinary sound channel (a fluid splash emits
                 // its small/big sound alongside the burst — see
-                // `ServerGame::push_water_splash`).
+                // `ServerGame::push_fluid_splash`).
                 WorldEvent::EmitterBurst { .. } => None,
             };
             if let Some(cue) = cue {

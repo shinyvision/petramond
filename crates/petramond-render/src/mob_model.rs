@@ -19,7 +19,7 @@
 use glam::{Mat4, Vec3};
 
 use super::item_model::ItemVertex;
-use super::lighting::{fold_tint, mul3, DynLight, LightEnv};
+use super::lighting::{fold_tint_self_lit, mul3, DynLight, LightEnv};
 use super::MobRenderInstance;
 use petramond_math::face::Face;
 use petramond_mesh::SHADES;
@@ -45,6 +45,19 @@ pub(super) fn hurt_tint(hurt: f32) -> [f32; 3] {
         NO_TINT[1] + (HURT_RED[1] - NO_TINT[1]) * h,
         NO_TINT[2] + (HURT_RED[2] - NO_TINT[2]) * h,
     ]
+}
+
+/// A body's baked vertex tint — mobs and player bodies alike: the hurt flash
+/// times its emitter tint, lit by the sampled light mixed toward full bright by
+/// its emitter self-lighting.
+pub(super) fn body_tint(
+    hurt: f32,
+    emitter_tint: [f32; 3],
+    light: DynLight,
+    env: LightEnv,
+    self_lit: f32,
+) -> [f32; 3] {
+    fold_tint_self_lit(mul3(hurt_tint(hurt), emitter_tint), light, env, self_lit)
 }
 
 /// Bake every instance of ONE species into `verts`/`indices` (cleared first, capacity
@@ -150,10 +163,12 @@ pub fn build_mob_instances(
             * Mat4::from_scale(Vec3::splat(scale));
         // Two-channel RGB light folds into the tint (shade keeps the directional
         // term), so a mob standing in torch light stays lit at night.
-        let tint = fold_tint(
-            mul3(hurt_tint(inst.hurt), inst.emitter_tint),
+        let tint = body_tint(
+            inst.hurt,
+            inst.emitter_tint,
             DynLight::new(inst.skylight, inst.blocklight),
             env,
+            inst.emitter_self_lit,
         );
         bake_model_cubes(
             model,

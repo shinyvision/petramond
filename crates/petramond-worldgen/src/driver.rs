@@ -286,6 +286,23 @@ impl ChunkGenerator {
         }
     }
 
+    /// The pure engine pipeline over an explicit cave field — how a test
+    /// generates from synthetic cave rows.
+    #[cfg(all(test, feature = "worldgen-tests"))]
+    pub(crate) fn with_caves(seed: u32, caves: CaveField) -> Self {
+        Self {
+            seed,
+            surface_density: SurfaceDensitySystem::new(seed),
+            caves,
+            hooks: None,
+        }
+    }
+
+    #[cfg(all(test, feature = "worldgen-tests"))]
+    pub(crate) fn sources(&self) -> (&SurfaceDensitySystem, &CaveField) {
+        (&self.surface_density, &self.caves)
+    }
+
     /// Whether any mod worldgen hooks are active on this generator.
     pub fn has_gen_hooks(&self) -> bool {
         self.hooks.is_some()
@@ -590,9 +607,10 @@ impl ChunkGenerator {
         //    below go through `set_block_raw`, whose incremental adjust would otherwise
         //    underflow when a feature overwrites a random-tickable skin block (e.g. a tree
         //    trunk replacing surface grass) while the count still read zero.
-        match self.replaced_terrain_fill(sp, col) {
+        let engine_terrain = match self.replaced_terrain_fill(sp, col) {
             Some(fill) => {
-                *section.blocks_mut() = petramond_world::section::BlockCube::from_ids(&fill)
+                *section.blocks_mut() = petramond_world::section::BlockCube::from_ids(&fill);
+                false
             }
             // A replaced climate fills with the mod's biome map, which the
             // shared terrain memo (keyed on the engine's) must not carry.
@@ -604,6 +622,7 @@ impl ChunkGenerator {
                 self.surface_density
                     .fill_section(&mut section, &col.biome, &col.surf);
                 self.caves.carve_section(&mut section, &col.surf);
+                true
             }
             None => {
                 *section.blocks_mut() = crate::section_memo::terrain_cube(
@@ -614,9 +633,15 @@ impl ChunkGenerator {
                     &col.biome,
                     &col.surf,
                 );
+                true
             }
-        }
+        };
         section.recompute_opaque_count();
+        // After the recount, like every stage that writes through a setter. A
+        // fall reads the engine's cave, so a replaced terrain carries none.
+        if engine_terrain {
+            crate::section_memo::stamp_falls(&self.caves, sp, &mut section);
+        }
         self.run_gen_features(WorldgenStage::Terrain, sp, &mut section, col)?;
 
         // 2. Underground scatter: needs stone in the section AND overlap with the ore band.

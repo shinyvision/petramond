@@ -202,6 +202,7 @@ pub fn build_server_with_pool(
         pending_wire_events: Vec::new(),
         live_spatial_loops: Default::default(),
         pending_chat: Vec::new(),
+        exposure_scratch: Default::default(),
         next_chat_seq: 0,
         autosave_t: 0.0,
         chest_viewers: HashMap::new(),

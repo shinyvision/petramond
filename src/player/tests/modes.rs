@@ -12,7 +12,7 @@ fn spectator_clips_through_solids_and_flies_in_3d() {
         sprint: false,
         sneak: false,
     };
-    pl.update_core(1.0, &solid_wall_and_ceiling, &dry, input);
+    pl.update_core(1.0, &solid_wall_and_ceiling, input);
 
     assert_eq!(pl.mode(), PlayerMode::Spectator);
     assert!(pl.pos.x > 1.0, "spectator should pass through wall");

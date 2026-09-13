@@ -29,13 +29,17 @@ fn weather_era_client_calls_validate_and_forgive() {
         ),
         HostRet::Bool(false)
     );
-    // A real bundle that is NOT ambient (the engine water splash burst):
-    // also forgiving false.
+    // A real bundle that is NOT ambient (a shipped burst): also forgiving false.
     assert_eq!(
         handle_host_call(
             &mut data,
             HostCall::ClientAmbientSet {
-                key: petramond_world::particle_emitters::WATER_SPLASH_KEY.into(),
+                key: petramond_world::particle_emitters::defs()
+                    .iter()
+                    .find(|b| b.burst.is_some())
+                    .expect("a burst bundle ships")
+                    .key
+                    .into(),
                 intensity: 1.0,
                 wind: [0.0, 0.0],
             },
@@ -584,6 +588,7 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        conditions: Vec::new(),
     };
 
     crate::modding::client::scope::enter_actor(local, || {
@@ -672,6 +677,7 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        conditions: Vec::new(),
     };
     let want = crate::player::model::bone_id(mod_api::bone::MAIN_SHOULDER)
         .expect("the rig carries the main arm");
@@ -756,6 +762,7 @@ fn hand_motion_claims_latch_on_the_first_owned_write_and_survive_a_release() {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        conditions: Vec::new(),
     };
 
     crate::modding::client::scope::enter_actor(local, || {
@@ -870,5 +877,6 @@ fn blank_snapshot() -> mod_api::PlayerSnapshot {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        conditions: Vec::new(),
     }
 }

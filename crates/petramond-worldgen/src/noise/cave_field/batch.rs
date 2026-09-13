@@ -18,7 +18,10 @@
 //! box-dependent filter in the build (dropping a chamber that contributes zero
 //! everywhere in the box) is value-neutral by contract.
 
-use super::{CaveField, Col, Fields, CAVE_MIN_Y, CAVE_SURFACE_BUFFER, LATTICE_STEP};
+use petramond_world::block::Block;
+
+use super::query_cache::{QueryMemo, CARVED, FILLED};
+use super::{CaveCut, CaveField, Col, Fields, CAVE_MIN_Y, CAVE_SURFACE_BUFFER, LATTICE_STEP};
 
 /// Per-position work order for the carve batch: the decision's two cheap
 /// precomputed gates. Positions the gates already answered are not enqueued.
@@ -32,8 +35,33 @@ impl CaveField {
     /// [`CaveField::cave_carved`] over a batch of `(position, column surface)`
     /// pairs, sharing one lattice per box the subdivision keeps.
     pub fn cave_carved_batch(&self, queries: &[([i32; 3], i32)], out: &mut Vec<bool>) {
+        // Openness never depends on what fills a cell, so no pools are gathered.
+        self.cut_batch(queries, false, &CARVED, false, CaveCut::is_open, out);
+    }
+
+    /// [`Self::cave_carved_batch`] answering WHAT each open cell holds:
+    /// `None` where the cave leaves rock, else air or the fluid a pool or an
+    /// aquifer puts there.
+    pub fn cave_fill_batch(&self, queries: &[([i32; 3], i32)], out: &mut Vec<Option<u16>>) {
+        let fill = |cut| match cut {
+            CaveCut::Air => Some(Block::Air.id()),
+            CaveCut::Fill(block) if !Block::from_id(block).is_solid() => Some(block),
+            _ => None,
+        };
+        self.cut_batch(queries, true, &FILLED, None, fill, out);
+    }
+
+    fn cut_batch<T: Clone>(
+        &self,
+        queries: &[([i32; 3], i32)],
+        fluids: bool,
+        memo: &QueryMemo<T>,
+        rock: T,
+        answer: impl Fn(CaveCut) -> T,
+        out: &mut Vec<T>,
+    ) {
         out.clear();
-        out.resize(queries.len(), false);
+        out.resize(queries.len(), rock);
 
         // Gates first, exactly as the point path orders them: they are exact,
         // cheap, and they reject the overwhelming majority of positions without
@@ -59,7 +87,7 @@ impl CaveField {
         if work.is_empty() {
             return;
         }
-        self.cache_carve_queries(queries, out, |out| {
+        self.cache_carve_queries(memo, queries, out, |out| {
             subdivide(
                 &mut work,
                 |w| queries[w.idx as usize].0,
@@ -71,6 +99,7 @@ impl CaveField {
                         biome: false,
                         excavations: true,
                         positioned: true,
+                        fluids,
                     };
                     let lat = self
                         .build_lattice_filtered(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], fields);
@@ -88,8 +117,7 @@ impl CaveField {
                             Some((at, c)) if *at == [x, z] => c,
                             slot => &mut slot.insert(([x, z], Col::new(&lat, x, z))).1,
                         };
-                        let carved = self.cut_from_col(c, y, w.gate, w.interior).is_open();
-                        out[w.idx as usize] = carved;
+                        out[w.idx as usize] = answer(self.cut_from_col(c, y, w.gate, w.interior));
                     }
                 },
             );
@@ -106,6 +134,7 @@ impl CaveField {
             biome: true,
             excavations: true,
             positioned: true,
+            fluids: false,
         };
         let mut order: Vec<u32> = (0..positions.len() as u32).collect();
         subdivide(

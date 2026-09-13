@@ -66,7 +66,7 @@ fn section_record_roundtrips() {
     let mut s = sec(-3, -2, 7);
     s.set_block(1, 4, 2, Block::Stone);
     s.set_block(0, 10, 0, Block::Grass);
-    s.set_water(5, 5, 5, Block::Water, 0x23);
+    s.set_fluid(5, 5, 5, Block::Water, 0x23);
 
     let snap = SectionSnapshot::from_section(&s);
     let blob = encode_snapshot(&snap);
@@ -77,7 +77,7 @@ fn section_record_roundtrips() {
     assert_eq!(back.block_raw(1, 4, 2), Block::Stone.id());
     assert_eq!(back.block_raw(0, 10, 0), Block::Grass.id());
     assert_eq!(back.block_raw(5, 5, 5), Block::Water.id());
-    assert_eq!(back.water_meta(5, 5, 5), 0x23);
+    assert_eq!(back.fluid_meta(5, 5, 5), 0x23);
     assert!(!back.modified);
     assert!(entities.is_empty(), "no entities attached");
     assert!(mobs.is_empty(), "no mobs attached");
@@ -480,10 +480,10 @@ fn water_free_section_omits_water() {
     let mut s = sec(0, 4, 0);
     s.set_block(8, 0, 8, Block::Dirt);
     let snap = SectionSnapshot::from_section(&s);
-    assert!(snap.water.is_none());
+    assert!(snap.fluid.is_none());
     let blob = encode_snapshot(&snap);
     let (back, _, _) = decode_section(SectionPos::new(0, 4, 0), &blob).expect("decodes");
-    assert_eq!(back.water_meta(8, 0, 8), 0);
+    assert_eq!(back.fluid_meta(8, 0, 8), 0);
 }
 
 #[test]

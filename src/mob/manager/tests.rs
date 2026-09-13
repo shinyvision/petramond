@@ -3,6 +3,8 @@ use crate::world::World;
 use petramond_world::body::Body;
 use petramond_world::chunk::SectionPos;
 
+mod fluid;
+
 #[test]
 fn mobs_anchor_on_the_nearest_player() {
     use super::PlayerAnchor;

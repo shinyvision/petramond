@@ -124,9 +124,13 @@ pub(super) fn quad_ao(q_int: bool, side1: bool, side2: bool, corner: bool) -> u3
     if (side1 && side2) || (q_int && corner) {
         0
     } else {
-        3u32.saturating_sub(q_int as u32 + side1 as u32 + side2 as u32 + corner as u32)
+        AO_OPEN.saturating_sub(q_int as u32 + side1 as u32 + side2 as u32 + corner as u32)
     }
 }
+
+/// The AO level of a corner with nothing around it — the brightest of the
+/// four the vertex lane holds.
+pub(super) const AO_OPEN: u32 = 3;
 
 /// Pick the quad's triangulation diagonal. Default splits along corners 0-2;
 /// flip to the 1-3 diagonal when 0-2 is the brighter pair, so the seam runs

@@ -27,7 +27,16 @@ impl Renderer {
             self.view.render_origin,
             self.view.cam_pos,
             self.terrain_cull_dist(),
+            self.pixel_scale(),
         )
+    }
+
+    /// Presented pixels one world block spans at one block of distance. The
+    /// PRESENTED size, not the supersampled scene's: a gather asking "can this
+    /// be seen" is asking about the display, and SSAA must not quietly extend
+    /// how far small detail is built.
+    fn pixel_scale(&self) -> f32 {
+        0.5 * self.screen_size().1 as f32 * self.view.proj_y_scale
     }
 
     /// Emitter-derived particle density from the particles graphics option

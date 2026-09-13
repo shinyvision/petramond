@@ -22,6 +22,7 @@ pub fn resolve_body_motion<F>(
     vel: [f32; 3],
     dt: f32,
     step_height: f32,
+    step_supported: bool,
     boxes_fn: &F,
     dyn_boxes: &[petramond_world::collision::DynBox],
     healing_dyn_boxes: &[petramond_world::collision::DynBox],
@@ -75,6 +76,7 @@ where
                 vel,
                 dt,
                 step_height,
+                step_supported,
                 boxes_fn,
                 dyn_boxes,
                 ignore,
@@ -132,7 +134,7 @@ where
     let dz = vel[2] * dt;
     let normal = compound_slide(&body, moved, dx, dz, boxes_fn, dyn_boxes, ignore);
     let mut horizontal = normal;
-    if grounded && step_height > 0.0 && (normal.1 || normal.2) {
+    if (grounded || step_supported) && step_height > 0.0 && (normal.1 || normal.2) {
         let up = compound_sweep_axis(&body, moved, 1, step_height, boxes_fn, dyn_boxes, ignore);
         if up > 0.0 {
             let mut raised_offset = moved;

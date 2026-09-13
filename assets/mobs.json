@@ -51,7 +51,7 @@
           "redwood_forest"
         ]
       },
-      "avoid_water": true,
+      "avoid_fluids": true,
       "damage_feedback": [],
       "brain": [
         {
@@ -167,7 +167,7 @@
           "mountain_edge"
         ]
       },
-      "avoid_water": true,
+      "avoid_fluids": true,
       "shear": {
         "drop": "petramond:wool",
         "min": 1,

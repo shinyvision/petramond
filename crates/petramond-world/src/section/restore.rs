@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::block::{Block, ShapeState};
+use crate::block::ShapeState;
 use crate::block_state::BlockStates;
 use crate::chunk::SECTION_VOLUME;
 use crate::container::Container;
 use crate::furnace::Furnace;
 
-use super::{BlockEntities, Section, SectionMetrics};
+use super::{BlockEntities, Section, SectionMetrics, SectionSummary};
 
 impl Section {
     /// Rebuild a section from saved arrays. `modified` starts false — it already
@@ -18,7 +18,7 @@ impl Section {
         cy: i32,
         cz: i32,
         blocks: &[u16],
-        water: Option<Box<[u8]>>,
+        fluid: Option<Box<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
         cell_states: HashMap<u16, ShapeState>,
@@ -29,7 +29,7 @@ impl Section {
             cy,
             cz,
             super::BlockCube::from_ids(blocks),
-            water.map(Arc::from),
+            fluid.map(Arc::from),
             furnaces,
             containers,
             cell_states,
@@ -46,7 +46,7 @@ impl Section {
         cy: i32,
         cz: i32,
         blocks: super::BlockCube,
-        water: Option<Arc<[u8]>>,
+        fluid: Option<Arc<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
         cell_states: HashMap<u16, ShapeState>,
@@ -59,7 +59,7 @@ impl Section {
             cy,
             cz,
             blocks,
-            water,
+            fluid,
             furnaces,
             containers,
             cell_states,
@@ -74,7 +74,7 @@ impl Section {
         cy: i32,
         cz: i32,
         blocks: super::BlockCube,
-        water: Option<Arc<[u8]>>,
+        fluid: Option<Arc<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
         cell_states: HashMap<u16, ShapeState>,
@@ -90,7 +90,7 @@ impl Section {
             cy,
             cz,
             blocks,
-            states: BlockStates::from_shared(water, cell_states, cell_kv),
+            states: BlockStates::from_shared(fluid, cell_states, cell_kv),
             entities: (!entities.is_empty()).then(|| Box::new(entities)),
             dirty: true,
             modified: false,
@@ -105,6 +105,9 @@ impl Section {
             plane_opaque: [0; 6],
             non_air_count: 0,
             water_count: 0,
+            fluid_count: 0,
+            quench_count: 0,
+            quencher_count: 0,
             biome_tint_count: 0,
             particle_emitter_cells: Vec::new(),
             light_emitter_count: 0,
@@ -116,7 +119,8 @@ impl Section {
             if s.non_air_count == 0 {
                 s.blocks.fill(0);
             } else if s.water_count as usize == SECTION_VOLUME {
-                s.blocks.fill(Block::Water.id());
+                s.blocks
+                    .fill(SectionSummary::FullWater.virtual_block().id());
             }
         } else {
             s.recompute_opaque_count();

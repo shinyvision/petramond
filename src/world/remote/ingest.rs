@@ -99,7 +99,7 @@ impl World {
             return None;
         }
         if payload
-            .water
+            .fluid
             .as_ref()
             .is_some_and(|w| w.0.len() != SECTION_VOLUME)
         {
@@ -121,7 +121,7 @@ impl World {
             pos.cy,
             pos.cz,
             petramond_world::section::BlockCube::from_ids(&payload.blocks.0),
-            payload.water.map(|w| w.0),
+            payload.fluid.map(|w| w.0),
             // No furnace machine state on a replica: burn/cook counters are sim
             // state (progress reaches clients through menu sync), and the lit
             // face is the block id (`furnace_lit` is its own row).
@@ -279,7 +279,7 @@ impl World {
     /// unconditionally (no `stream_writable` gate — the server already
     /// arbitrated) and update everything RENDERING needs — counters/state
     /// clears via the section setters, column-map patch, light + mesh dirtying
-    /// — but schedule NO sim work: no water checks, no block updates, no
+    /// — but schedule NO sim work: no fluid checks, no block updates, no
     /// `modified` flag. Deltas for absent sections drop silently (the server
     /// only streams deltas for sections in the recipient's sent set; a race
     /// with an unload is benign).
@@ -302,12 +302,12 @@ impl World {
         }
         {
             let section = self.section_mut(pos).expect("presence checked above");
-            // The raw write clears the cell's sparse state + water meta — the
-            // same wipe the server's own write performed. Water then rides on
+            // The raw write clears the cell's sparse state + fluid meta — the
+            // same wipe the server's own write performed. Fluid meta then rides on
             // top of the cleared cell.
             section.set_block_raw(lx, ly, lz, delta.block_id);
-            if let Some(meta) = delta.water {
-                section.set_water(lx, ly, lz, Block::from_id(delta.block_id), meta);
+            if let Some(meta) = delta.fluid {
+                section.set_fluid(lx, ly, lz, Block::from_id(delta.block_id), meta);
             }
             if let Some(state) = delta.state {
                 section.set_cell_state(lx, ly, lz, state);

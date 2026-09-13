@@ -1,4 +1,4 @@
-//! Server-side replication delta log: the per-tick coalesced block/water
+//! Server-side replication delta log: the per-tick coalesced block/fluid
 //! change capture and the sparse per-cell wire state it ships.
 
 use crate::world::WorldData;
@@ -39,7 +39,7 @@ impl World {
         out
     }
 
-    /// Drain this tick's coalesced block/water deltas (latest state per cell),
+    /// Drain this tick's coalesced block/fluid deltas (latest state per cell),
     /// sorted by cell so the wire batch is deterministic. Each delta's
     /// per-cell STATE is re-read here, at the drain: several placement funnels
     /// write their state maps AFTER the block write that announced the change
@@ -95,12 +95,13 @@ impl World {
             return None;
         }
         let block_id = self.chunk_block(pos.x, pos.y, pos.z);
-        let water =
-            (block_id == Block::Water.id()).then(|| self.water_meta_world(pos.x, pos.y, pos.z));
+        let fluid = Block::from_id(block_id)
+            .is_fluid()
+            .then(|| self.fluid_meta_world(pos.x, pos.y, pos.z));
         Some(crate::net::protocol::BlockDelta {
             pos,
             block_id,
-            water,
+            fluid,
             state: self.cell_state_at(pos.x, pos.y, pos.z),
             cell_kv: self.cell_kv_map_at(pos.x, pos.y, pos.z),
         })
@@ -108,12 +109,16 @@ impl World {
 
     /// Log the CURRENT content of one just-changed cell (called from the
     /// block-change announce choke point, after the write landed). `block_id`
-    /// is the raw session id; `water` carries the meta byte iff the cell holds
-    /// water. Latest write per cell per tick wins by construction; the sparse
-    /// per-cell state is re-read once more at the drain (`take_block_deltas`).
+    /// is the raw session id; `fluid` carries the meta byte iff the cell holds
+    /// a simulated fluid (water or lava — the replica renders flow heights
+    /// from it, so a fluid delta without it lands as a still source). Latest
+    /// write per cell per tick wins by construction; the sparse per-cell state
+    /// is re-read once more at the drain (`take_block_deltas`).
     pub(super) fn record_block_delta(&mut self, wx: i32, wy: i32, wz: i32) {
         let block_id = self.chunk_block(wx, wy, wz);
-        let water = (block_id == Block::Water.id()).then(|| self.water_meta_world(wx, wy, wz));
+        let fluid = Block::from_id(block_id)
+            .is_fluid()
+            .then(|| self.fluid_meta_world(wx, wy, wz));
         let pos = petramond_math::math::IVec3::new(wx, wy, wz);
         let state = self.cell_state_at(wx, wy, wz);
         // KV deltas already logged for this cell are STALE: the block write
@@ -131,7 +136,7 @@ impl World {
             crate::net::protocol::BlockDelta {
                 pos,
                 block_id,
-                water,
+                fluid,
                 state,
                 // Re-read at the drain, like `state` (writes after the
                 // announce — the fill's KV — must reach the same delta).

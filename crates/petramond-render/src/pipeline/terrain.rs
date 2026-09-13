@@ -1,6 +1,6 @@
 use super::builders::{color_target, cull_back, world_pipeline, DepthPreset};
 
-/// The opaque + translucent-block (ice) + transparent (water) terrain
+/// The opaque + translucent-block (ice) + transparent (fluid) terrain
 /// pipelines: quantized [`TerrainVertex`] + instance-step column origin,
 /// `vs_terrain` entry. Dynamic bakes keep the absolute-`Vertex` `opaque_pipe`.
 pub(super) fn create_terrain_pipelines(
@@ -39,12 +39,11 @@ pub(super) fn create_terrain_pipelines(
         Some(DepthPreset::WriteLess),
         max_samples,
     );
-    // Back-face cull water SIDE faces: otherwise a side face (e.g. an exposed
-    // step over shallower water) shows its back as a dark sheet from the
-    // water side, "in front of" the water that is actually there. The TOP
-    // face is emitted in BOTH windings by the mesher, so the surface stays
-    // visible from underneath (looking up while submerged) even with culling.
-    // Depth `Less`, NO write so the water doesn't occlude geometry behind it.
+    // TRANSLUCENT fluid SIDE faces (an opaque fluid draws with the opaque
+    // terrain above). Back-face culled: otherwise a side face (e.g. an exposed
+    // step over shallower water) shows its back as a dark sheet from the fluid
+    // side, "in front of" the fluid that is actually there. Depth `Less`, NO
+    // write, so a see-through body never occludes the geometry behind it.
     let transparent_pipe = world_pipeline(
         device,
         "terrain transparent pipe",
@@ -77,8 +76,8 @@ pub(super) fn create_terrain_pipelines(
         Some(DepthPreset::WriteLess),
         max_samples,
     );
-    // Water TOP faces: same blend/depth as the water pass, culling OFF so one
-    // set of triangles is visible from above and from underneath.
+    // Translucent fluid TOP faces: same blend/depth as the side pass, culling
+    // OFF so one set of triangles is visible from above and from underneath.
     let transparent_two_sided_pipe = world_pipeline(
         device,
         "terrain transparent two-sided pipe",

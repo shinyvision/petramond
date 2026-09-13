@@ -12,7 +12,7 @@ use crate::data::{
     PlayerSnapshot, RayFilter, RaycastHitData, RuntimeSide,
 };
 use crate::events::EventKind;
-use crate::ids::{BlockId, ItemId, MobId, PlayerId};
+use crate::ids::{BlockId, ConditionId, ItemId, MobId, PlayerId};
 use crate::sched::{AttachSide, Stage, WorldgenStage};
 
 /// Guest → host: what a mod asks the engine for through `host_dispatch`.
@@ -204,7 +204,7 @@ pub enum HostCall {
     ///
     /// `feedback` composes the damage pipeline for THIS request; `None` uses
     /// the species' resolved `damage_feedback`. A pipeline without the
-    /// `Immunity` component is damage-over-time (burn): neither blocked by
+    /// `Immunity` component is damage on its own clock: neither blocked by
     /// the victim's active i-frame window nor granting one.
     ///
     /// [`DamageSource::Mod`]: crate::DamageSource::Mod
@@ -947,8 +947,8 @@ pub enum HostCall {
         pos: [i32; 2],
     },
     /// The Y of the topmost movement-blocking block of the loaded column at
-    /// world `pos = [x, z]` — real footing; walk-through cover (tall grass,
-    /// snow layers, water) is skipped. `None` = unloaded, all-air column, or
+    /// world `pos = [x, z]` — real footing; anything without collision boxes
+    /// (tall grass, any fluid) is skipped. `None` = unloaded, all-air column, or
     /// the found footing is not yet STREAM-FINAL (retry later, like a block
     /// read). Caveat: finality is checked at the found cell — a saved build
     /// HIGHER in the column that has not streamed in yet is not visible to
@@ -1073,11 +1073,11 @@ pub enum HostCall {
     /// gameplay policy: [`CollisionShape::Full`] = exactly one collision box
     /// spanning the whole unit cell, [`CollisionShape::Partial`] = any other
     /// non-empty box set (stairs, slabs, doors, snow layers, model blocks),
-    /// [`CollisionShape::Empty`] = no collision boxes (air, water, tall
+    /// [`CollisionShape::Empty`] = no collision boxes (air, any fluid, tall
     /// grass). `None` = section unloaded / streamed content not yet final
     /// (the [`HostCall::GetBlock`] contract: state frozen, retry later).
     /// Spawn/placement rules compose on top in mod code — e.g. "full solid
-    /// footing" = `Full` + the block is not water + not in
+    /// footing" = `Full` + the block is not in
     /// [`HostCall::BlocksByTag`]`("petramond:leaves")`.
     /// → [`HostRet::CollisionShape`].
     CollisionShapeAt {
@@ -2009,6 +2009,43 @@ pub enum HostCall {
     TerrainSectionAt {
         section: [i32; 3],
     },
+    /// Resolve a `conditions.json` key to its row → [`HostRet::Condition`]
+    /// (`None` = unregistered). Registry-only, legal on any instance.
+    ResolveCondition {
+        key: String,
+    },
+    /// Condition ids back to their keys, parallel to `conditions` →
+    /// [`HostRet::Names`].
+    ConditionNames {
+        conditions: Vec<ConditionId>,
+    },
+    /// Grant a live player or mob `ticks` of `condition` at `stage` (a stage
+    /// index of the row). Fuel extends, stages only upgrade, and the damage
+    /// clock of an active condition is never reset. Applying does not deal
+    /// damage itself. → `Bool` (`false` = no such live body, or the body
+    /// refuses the grant: its species tolerates the condition, or it touches
+    /// a fluid whose contact clears it). Server only.
+    EntityConditionApply {
+        entity: EntityRef,
+        condition: ConditionId,
+        stage: u8,
+        ticks: u32,
+    },
+    /// Consume `ticks` of a condition's time on a live body without moving its
+    /// damage clock; `u32::MAX` clears it. → `Bool`. Server only.
+    EntityConditionCool {
+        entity: EntityRef,
+        condition: ConditionId,
+        ticks: u32,
+    },
+    /// [`HostCall::BlockInfo`] for many ids in one crossing, parallel to
+    /// `blocks` (`None` = unregistered id; at most
+    /// [`SIM_BATCH_MAX`](crate::SIM_BATCH_MAX) ids). How a consumer classifies
+    /// the whole block registry once at init. Registry-only, legal on any
+    /// instance. → [`HostRet::BlockInfos`].
+    BlockInfos {
+        blocks: Vec<BlockId>,
+    },
 }
 
 /// The three ways a [`HostCall::MemoClaim`] comes back.
@@ -2181,4 +2218,8 @@ pub enum HostRet {
     /// [`HostCall::TerrainSectionAt`]: the 4,096 ids as little-endian pairs
     /// in section order, copied rather than encoded one by one.
     SectionBlocks(#[serde(with = "serde_bytes")] Vec<u8>),
+    /// [`HostCall::ResolveCondition`].
+    Condition(Option<crate::ConditionInfoData>),
+    /// [`HostCall::BlockInfos`], parallel to the request.
+    BlockInfos(Vec<Option<BlockInfoData>>),
 }

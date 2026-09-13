@@ -11,7 +11,7 @@
 //! [`path`]: it classifies each cell's real collision boxes
 //! ([`cell_shape`] — Empty / Full / Partial), supplies the `solid`/`support`
 //! probe pair built from that classification, sweeps the mob's actual body
-//! AABB against partial shapes per candidate edge ([`partial_step_gate`] — so
+//! AABB against partial shapes per candidate edge ([`navigation_step_gate`] — so
 //! a 1/16 ladder panel is routed around instead of walked into, while the
 //! open 15/16 of its cell stays walkable), and prices the cells other
 //! entities occupy ([`NavObstacles`]) so routes bend around mobs and players
@@ -23,12 +23,15 @@ use rustc_hash::FxHashMap;
 
 use crate::world::{SectionCursor, World};
 use petramond_math::math::{IVec3, Vec3};
-use petramond_world::block::Aabb;
+use petramond_world::block::{Aabb, Block};
 use petramond_world::collision;
 
 use super::brain::AiMob;
 use super::path::{self, PathParams};
 use super::{def, EntityRef, PlayerAnchor};
+
+mod hazards;
+pub(super) use hazards::foothold_in_hazard;
 
 /// Largest horizontal distance (m) within which a waypoint counts as reached. The
 /// actual threshold tightens for wide mobs so they don't turn before their body has
@@ -113,6 +116,9 @@ pub struct Navigator {
     /// Current same-goal retry interval. Successful routes and goal changes reset this
     /// to [`REPATH_TICKS`]; repeated partial searches double it up to the cap.
     repath_interval: u32,
+    /// What the live hazard guard refused on recent routes; persistent
+    /// refusals back off like a partial route instead of recomputing.
+    refusals: hazards::Refusals,
     #[cfg(test)]
     recomputes: u32,
 }
@@ -133,9 +139,16 @@ impl Navigator {
             goal_stall: 0,
             since_path: 0,
             repath_interval: REPATH_TICKS,
+            refusals: hazards::Refusals::default(),
             #[cfg(test)]
             recomputes: 0,
         }
+    }
+
+    /// This navigator for a species that tolerates the hazardous `blocks`.
+    pub fn tolerating(mut self, blocks: &'static [Block]) -> Self {
+        self.params = self.params.tolerating(blocks);
+        self
     }
 
     /// No active path — the mob has arrived, given up, or was never tasked. The
@@ -165,6 +178,7 @@ impl Navigator {
         self.goal_stall = 0;
         self.since_path = 0;
         self.repath_interval = REPATH_TICKS;
+        self.refusals = hazards::Refusals::default();
     }
 
     /// Set the navigation goal and keep the path fresh. A *new* goal is pathed at once
@@ -239,10 +253,11 @@ impl Navigator {
         let cursor = world.cursor();
         let solid = nav_solid_fn(&cursor);
         let support = nav_support_fn(&cursor, self.half_width);
-        let water = nav_water_fn(&cursor);
-        let step_allowed = partial_step_gate(&cursor, self.params, self.height);
+        let fluid = nav_fluid_fn(&cursor);
+        let step_allowed = navigation_step_gate(&cursor, self.params, self.height);
         let costs = entity_cell_costs(obstacles, start);
-        let cell_cost = |c: IVec3| costs.get(&c).copied().unwrap_or(0);
+        let escape_cost = hazards::escape_cost(&cursor, self.params, start);
+        let cell_cost = |c: IVec3| costs.get(&c).copied().unwrap_or(0) + escape_cost(c);
         let old_waypoint = (self.index < self.path.len()).then(|| self.path[self.index]);
         self.path = old_waypoint
             .and_then(|wp| {
@@ -253,7 +268,7 @@ impl Navigator {
                     self.params,
                     &solid,
                     &support,
-                    &water,
+                    &fluid,
                     &step_allowed,
                     &cell_cost,
                 )
@@ -265,7 +280,7 @@ impl Navigator {
                     self.params,
                     &solid,
                     &support,
-                    &water,
+                    &fluid,
                     &step_allowed,
                     cell_cost,
                 )
@@ -278,7 +293,8 @@ impl Navigator {
             self.path.len()
         };
         self.since_path = 0;
-        if self.path_reaches_goal || goal_changed {
+        let refused_again = self.refusals.replan();
+        if (self.path_reaches_goal || goal_changed) && !refused_again {
             self.repath_interval = REPATH_TICKS;
         } else {
             self.repath_interval = next_repath_backoff(self.repath_interval);
@@ -538,7 +554,7 @@ fn preserve_waypoint_path(
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
     support: &impl Fn(IVec3) -> bool,
-    water: &impl Fn(IVec3) -> bool,
+    fluid: &impl Fn(IVec3) -> bool,
     step_allowed: &impl Fn(IVec3, IVec3) -> bool,
     cell_cost: &impl Fn(IVec3) -> u32,
 ) -> Option<Vec<IVec3>> {
@@ -551,7 +567,7 @@ fn preserve_waypoint_path(
         params,
         solid,
         support,
-        water,
+        fluid,
         step_allowed,
         cell_cost,
     );
@@ -567,7 +583,7 @@ fn preserve_waypoint_path(
         params,
         solid,
         support,
-        water,
+        fluid,
         step_allowed,
         cell_cost,
     );
@@ -762,7 +778,7 @@ enum CellShape {
     Full,
     /// Any other box set (a ladder panel, a pane, a chest, a slab, a door, a
     /// model block's legs): routable in principle — whether a specific body
-    /// fits a specific move is [`partial_step_gate`]'s call.
+    /// fits a specific move is [`navigation_step_gate`]'s call.
     Partial,
 }
 
@@ -802,11 +818,22 @@ pub(super) fn nav_solid_fn<'c, 'w>(
     }
 }
 
-/// The `water` probe every navigation search shares.
-pub(super) fn nav_water_fn<'c, 'w>(
+/// The `fluid` probe every navigation search shares.
+pub(super) fn nav_fluid_fn<'c, 'w>(
     cur: &'c SectionCursor<'w>,
 ) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
-    move |c: IVec3| cur.water_cell(c)
+    move |c: IVec3| cur.fluid_cell(c)
+}
+
+/// The fluid a body at `pos` stands in or rests on, by cell: its feet cell or
+/// the one below. This is navigation footing, deliberately wider than physical
+/// immersion — a swimmer bobbing clear of its probe still routes from the
+/// fluid surface.
+pub(super) fn fluid_footing(cur: &SectionCursor<'_>, pos: Vec3) -> Option<Block> {
+    let feet = petramond_math::math::voxel_at(pos);
+    cur.physics_block(feet)
+        .fluid()
+        .or_else(|| cur.physics_block(feet - IVec3::Y).fluid())
 }
 
 /// The streaming-finality probe cell searches gate on.
@@ -938,10 +965,10 @@ pub(super) fn destination_reachable(
     let cursor = world.cursor();
     let solid = nav_solid_fn(&cursor);
     let support = nav_support_fn(&cursor, params.half_width);
-    let water = nav_water_fn(&cursor);
-    let step_allowed = partial_step_gate(&cursor, params, height);
+    let fluid = nav_fluid_fn(&cursor);
+    let step_allowed = navigation_step_gate(&cursor, params, height);
     let (out, nodes) =
-        path::reachable_nav(start, dest, params, &solid, &support, &water, step_allowed);
+        path::reachable_nav(start, dest, params, &solid, &support, &fluid, step_allowed);
     if let Some(b) = budget {
         // Charged with its SETUP too: a probe that answers in twenty
         // expansions still built a cursor, four closures and two memo tables,
@@ -957,23 +984,21 @@ pub(super) fn destination_reachable(
 /// `MobCanReach` HostCall's engine seam.
 pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool {
     let d = super::def(mob.kind);
-    let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
+    let params = d.path_params();
     let cursor = world.cursor();
     let solid = nav_solid_fn(&cursor);
     let support = nav_support_fn(&cursor, d.size.half_width);
-    let water = nav_water_fn(&cursor);
-    let feet = petramond_math::math::voxel_at(mob.pos);
-    let in_water = water(feet) || water(feet - IVec3::Y);
+    let fluid = nav_fluid_fn(&cursor);
     let start = path::navigation_cell_with(
         mob.pos,
         d.size.half_width,
         d.size.head_cells(),
-        in_water,
+        fluid_footing(&cursor, mob.pos).is_some(),
         &solid,
         &support,
-        &water,
+        &fluid,
     )
-    .unwrap_or(feet);
+    .unwrap_or_else(|| petramond_math::math::voxel_at(mob.pos));
     // The mod ABI shares the tick's probe budget (a husbandry sweep can ask
     // for dozens of probes in one tick); a refusal reads as "not reachable",
     // which is what the asking policies already do with a spot they cannot
@@ -1001,22 +1026,24 @@ pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool 
 /// probe, asked positionally so the answer arrives BEFORE a mob exists.
 pub fn site_open(world: &World, kind: super::Mob, cell: IVec3) -> bool {
     let d = def(kind);
-    let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
+    let params = d.path_params();
     let cursor = world.cursor();
     let solid = nav_solid_fn(&cursor);
     let support = nav_support_fn(&cursor, d.size.half_width);
-    let water = nav_water_fn(&cursor);
-    if !path::is_navigation_foothold_with(cell, params, &solid, &support, &water) {
+    let fluid = nav_fluid_fn(&cursor);
+    if !path::is_navigation_foothold_with(cell, params, &solid, &support, &fluid)
+        || hazards::foothold_in_hazard(&cursor, cell, params)
+    {
         return false;
     }
-    let step_allowed = partial_step_gate(&cursor, params, d.size.height);
+    let step_allowed = navigation_step_gate(&cursor, params, d.size.height);
     let loaded = nav_loaded_fn(&cursor);
     super::confined::confined_region(
         cell,
         params,
         &solid,
         &support,
-        &water,
+        &fluid,
         &step_allowed,
         &loaded,
     )
@@ -1035,7 +1062,7 @@ fn nav_partial_boxes(cur: &SectionCursor<'_>, c: IVec3) -> &'static [Aabb] {
 }
 
 /// The top of the standing surface under foothold `cell`, in `[0, 1]` above
-/// the floor cell's base: 1.0 for a full cube (or water/air — feet at the
+/// the floor cell's base: 1.0 for a full cube (or fluid/air — feet at the
 /// cell base), a partial floor's highest box top otherwise (a slab-top
 /// foothold stands half a block below its cell base).
 fn floor_top(cur: &SectionCursor<'_>, floor: IVec3) -> f32 {
@@ -1049,8 +1076,8 @@ fn floor_top(cur: &SectionCursor<'_>, floor: IVec3) -> f32 {
         .clamp(0.0, 1.0)
 }
 
-/// The accurate per-edge movement gate: accepts a step between two footholds
-/// only when the mob's REAL body AABB (its true half-width and height, feet at
+/// The per-edge movement gate: refuses entering hazardous terrain from safety,
+/// then checks whether the mob's REAL body AABB (its true half-width and height, feet at
 /// the true floor height) can sweep that move through the real collision boxes
 /// of every PARTIAL cell it crosses — with the ordinary [`collision::STEP_HEIGHT`]
 /// allowance, so a low shape (a slab lying in the way) is stepped over while a
@@ -1063,11 +1090,12 @@ fn floor_top(cur: &SectionCursor<'_>, floor: IVec3) -> f32 {
 /// where partial shapes actually are. Shared with `mob::confined`, whose
 /// reachability fill must agree with the routes this gate admits (a lone
 /// fence refuses the jump from below; a step beside it opens the way over).
-pub(super) fn partial_step_gate<'c, 'w>(
+pub(super) fn navigation_step_gate<'c, 'w>(
     cur: &'c SectionCursor<'w>,
     params: PathParams,
     height: f32,
 ) -> impl Fn(IVec3, IVec3) -> bool + use<'c, 'w> {
+    let hazard_allowed = hazards::step_gate(cur, params);
     let cache: RefCell<FxHashMap<IVec3, &'static [Aabb]>> = RefCell::new(FxHashMap::default());
     // The fast-path scan below only asks "does this cell hold a partial shape",
     // which is one bit — and it asks it for the same cells over and over as a
@@ -1076,6 +1104,9 @@ pub(super) fn partial_step_gate<'c, 'w>(
     let partial_here = path::CellMemo::<1024>::default();
     let height = height.max(0.5);
     move |from: IVec3, to: IVec3| {
+        if !hazard_allowed(from, to) {
+            return false;
+        }
         let dx = (to.x - from.x) as f32;
         let dz = (to.z - from.z) as f32;
         if dx == 0.0 && dz == 0.0 {
@@ -2260,7 +2291,7 @@ mod tests {
             goal,
             params,
             |c| world.blocks_movement_at(c.x, c.y, c.z),
-            |c| world.water_cell_at(c.x, c.y, c.z),
+            |c| world.fluid_cell_at(c.x, c.y, c.z),
         );
         assert_ne!(
             direct.get(1),

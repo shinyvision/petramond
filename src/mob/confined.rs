@@ -136,7 +136,7 @@ impl ConfinedRegion {
 /// border cell might be open, so an edge-of-stream pen must read free rather
 /// than lock stale confinement in.
 ///
-/// `solid`, `support`, `water`, and `step_allowed` match the pathfinder's
+/// `solid`, `support`, `fluid`, and `step_allowed` match the pathfinder's
 /// semantics (see `mob::nav`): the fill must agree with real routes — a lone
 /// fence refuses the jump from below, while a step block beside it opens the
 /// way over (a pen with a step inside is genuinely escapable). Mobs that are
@@ -147,17 +147,17 @@ pub fn confined_region(
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
     support: &impl Fn(IVec3) -> bool,
-    water: &impl Fn(IVec3) -> bool,
+    fluid: &impl Fn(IVec3) -> bool,
     step_allowed: &impl Fn(IVec3, IVec3) -> bool,
     loaded: &impl Fn(IVec3) -> bool,
 ) -> Option<ConfinedRegion> {
     // Every visited cell is asked about from up to four sides, and each ask
-    // costs a whole support/solid/water probe stack — so the composite verdict
+    // costs a whole support/solid/fluid probe stack — so the composite verdict
     // is memoized for the life of one fill (the world cannot change under it).
     let memo = crate::mob::path::CellMemo::<512>::default();
     let foothold = |c: IVec3| {
         memo.get(c, |c| {
-            is_navigation_foothold_with(c, params, solid, support, water)
+            is_navigation_foothold_with(c, params, solid, support, fluid)
         })
     };
     if !foothold(start) {
@@ -444,10 +444,10 @@ mod tests {
         let cursor = world.cursor();
         let solid = crate::mob::nav::nav_solid_fn(&cursor);
         let support = crate::mob::nav::nav_support_fn(&cursor, params().half_width);
-        let water = crate::mob::nav::nav_water_fn(&cursor);
-        let step = crate::mob::nav::partial_step_gate(&cursor, params(), 1.4);
+        let fluid = crate::mob::nav::nav_fluid_fn(&cursor);
+        let step = crate::mob::nav::navigation_step_gate(&cursor, params(), 1.4);
         let loaded = crate::mob::nav::nav_loaded_fn(&cursor);
-        confined_region(start, params(), &solid, &support, &water, &step, &loaded)
+        confined_region(start, params(), &solid, &support, &fluid, &step, &loaded)
     }
 
     fn check(world: &World, start: IVec3) -> bool {
@@ -561,8 +561,8 @@ mod tests {
     fn swimming_mob_is_not_confined() {
         let world = flat_world(|chunk, cx, cz| {
             if (cx, cz) == (1, 1) {
-                chunk.set_water(8, 64, 8, Block::Water, 0);
-                chunk.set_water(8, 65, 8, Block::Water, 0);
+                chunk.set_fluid(8, 64, 8, Block::Water, 0);
+                chunk.set_fluid(8, 65, 8, Block::Water, 0);
             }
         });
         // Feet submerged with no dry foothold: not "confined", just swimming.

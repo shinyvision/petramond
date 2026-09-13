@@ -249,6 +249,18 @@ mod terrain_vertex_tests {
             ("packed2", CELL_UV_V_SHIFT, CELL_UV_MASK, "cell-local v"),
             (
                 "packed2",
+                FLUID_MEDIUM_SHIFT,
+                FLUID_MEDIUM_MASK,
+                "fluid medium",
+            ),
+            (
+                "packed2",
+                FLUID_FLOW_FLAG2.trailing_zeros(),
+                0x1,
+                "fluid flow strip",
+            ),
+            (
+                "packed2",
                 NORMAL_CODE_SHIFT,
                 NORMAL_CODE_MASK,
                 "normal code",
@@ -663,6 +675,7 @@ pub fn unpack_greedy_span(packed2: u32) -> (u32, u32) {
 ///   0..6 block light RED ([`BlockLight6::packed2_bits`]; green and blue ride
 ///        the chroma split — see [`CHROMA_HI_SHIFT`])
 ///   | 6..16 cell-local uv ([`pack_cell_uv`], read only in [`UV_MODE_CELL_LOCAL`])
+///        OR, on a [`UV_MODE_NONE`] fluid face, its medium ([`pack_fluid_face`])
 ///   | 16..19 face-normal code ([`pack_normal_code`])
 ///   | 19 dyed flag ([`DYED_FLAG2`])
 ///   | 20..31 overlay payload ([`pack_overlay`]) | 31 RESERVED (zero)
@@ -710,6 +723,25 @@ pub fn pack_cell_uv(u16ths: u32, v16ths: u32) -> u32 {
 pub const CELL_UV_U_SHIFT: u32 = 6;
 pub const CELL_UV_V_SHIFT: u32 = 11;
 pub const CELL_UV_MASK: u32 = 0x1F;
+
+/// A fluid face's medium in `packed2`: `medium index + 1` at bits 6..15 (0 is
+/// "not a fluid face"), plus [`FLUID_FLOW_FLAG2`] when the face shows the
+/// fluid's flow strip. It shares the cell-local uv lane — a fluid face is
+/// always [`UV_MODE_NONE`], so the two tenants never meet on one vertex.
+#[inline]
+pub fn pack_fluid_face(medium: u32, flow: bool) -> u32 {
+    debug_assert!(medium < MAX_FLUID_MEDIA, "fluid medium exceeds its lane");
+    (((medium + 1) & FLUID_MEDIUM_MASK) << FLUID_MEDIUM_SHIFT)
+        | if flow { FLUID_FLOW_FLAG2 } else { 0 }
+}
+
+pub const FLUID_MEDIUM_SHIFT: u32 = CELL_UV_U_SHIFT;
+pub const FLUID_MEDIUM_MASK: u32 = 0x1FF;
+/// `packed2` bit 15 on a fluid face: its top turns toward the flow heading and
+/// its side crops to the fluid's height.
+pub const FLUID_FLOW_FLAG2: u32 = 1 << 15;
+/// How many fluid media the vertex lane can address.
+pub const MAX_FLUID_MEDIA: u32 = FLUID_MEDIUM_MASK;
 
 /// Packed UV mode field, shared by `block.wgsl` and dynamic block geometry.
 pub const UV_MODE_SHIFT: u32 = 23;
@@ -779,8 +811,8 @@ pub use petramond_world::shade::ContactShadowVertex;
 /// from behind appends a second, reverse-ordered copy of its corners — see
 /// [`push_back_face`].
 ///
-/// Water TOP faces are the one exception that needs neither: they ride a
-/// separate stream drawn with culling off.
+/// Translucent fluid TOP faces need neither: they ride a separate stream drawn
+/// with culling off.
 #[inline]
 pub fn push_back_face(vbuf: &mut Vec<Vertex>, start: u32) {
     let s = start as usize;
@@ -789,17 +821,18 @@ pub fn push_back_face(vbuf: &mut Vec<Vertex>, start: u32) {
 }
 
 pub struct ChunkMesh {
-    /// Opaque terrain quads, triangulation implied (see `QuadIdx`).
+    /// Opaque terrain quads, triangulation implied (see `QuadIdx`). An OPAQUE
+    /// fluid's faces ride here too (its top in both windings).
     pub opaque: Vec<Vertex>,
-    /// WATER geometry: alpha-blended, depth-READ-only (water must not occlude
-    /// the terrain behind it), drawn last, farthest section first. Back-face
-    /// culled: an exposed side face over shallower water must not show its
-    /// back as a dark sheet from the water side.
+    /// TRANSLUCENT fluid geometry: alpha-blended, depth-READ-only (a
+    /// see-through body must not occlude the terrain behind it), drawn last,
+    /// farthest section first. Back-face culled: an exposed side face over a
+    /// shallower neighbour must not show its back as a dark sheet from inside.
     pub transparent: Vec<Vertex>,
-    /// Water TOP faces, drawn by the same pass with culling OFF so the surface
-    /// stays visible from underneath. They used to be a second index winding
-    /// over the same vertices; a separate cull-none draw is the index-free
-    /// equivalent and rasterizes half the triangles.
+    /// Translucent fluid TOP faces, drawn by the same pass with culling OFF so
+    /// the surface stays visible from underneath. They used to be a second
+    /// index winding over the same vertices; a separate cull-none draw is the
+    /// index-free equivalent and rasterizes half the triangles.
     pub transparent_two_sided: Vec<Vertex>,
     /// TRANSLUCENT-BLOCK geometry (ice): alpha-blended but depth-WRITING and
     /// drawn between opaque and water — a 3D sheet of translucent cubes needs

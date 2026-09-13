@@ -178,11 +178,13 @@ pub struct AiCtx<'a> {
     /// True when the navigator has no active path (arrived / gave up / untasked).
     /// Behaviors treat this as "the mob is idle".
     pub nav_idle: bool,
-    /// True when the mob's body is in water. Behaviors react to it (e.g. idle
-    /// animations don't play while swimming); the kinematics float the mob up.
-    pub in_water: bool,
+    /// The fluid the mob's body is in or resting on. Behaviors react to it (e.g.
+    /// idle animations don't play while swimming); the kinematics float the mob up.
+    pub in_fluid: Option<petramond_world::block::Block>,
     /// The mob's vertical clearance in cells (its body height), for standable tests.
     pub head: i32,
+    /// Hazardous blocks this species may route through (`MobDef::tolerates`).
+    pub tolerated: &'static [petramond_world::block::Block],
     /// This species' `idle_*` animations (length + loop mode), so the idle-animation
     /// behavior only picks valid ones and plays a one-shot for its actual length.
     pub idle_anims: &'a [IdleAnimMeta],
@@ -206,6 +208,11 @@ pub struct AiCtx<'a> {
 }
 
 impl AiCtx<'_> {
+    /// Navigation params for the deciding mob's body and tolerances.
+    pub fn path_params(&self) -> super::path::PathParams {
+        super::path::PathParams::for_body(self.head, self.half_width).tolerating(self.tolerated)
+    }
+
     /// Whether `who` still exists as a targetable entity this tick (a
     /// connected player, or a live mob in the snapshot).
     pub fn entity_alive(&self, who: EntityRef) -> bool {

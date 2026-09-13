@@ -108,7 +108,7 @@ pub struct Particle {
     /// Sample the tile's dye-base twin (the fleck carries a `petramond:tint`
     /// multiply — see the atlas's dye-base half). Block flecks only.
     pub dyed: bool,
-    /// Destroyed the instant it touches a collision box OR water, instead of
+    /// Destroyed the instant it touches a collision box OR a fluid, instead of
     /// settling on solids like terrain dust (burst rows opt in — a splash
     /// droplet vanishes into the pool it fell out of).
     pub die_on_contact: bool,
@@ -258,7 +258,7 @@ impl ParticleSystem {
         // player/mob/item bodies collide against (here the point case, `World::point_blocked`).
         self.tick_with(dt, &|p| world.point_blocked(p), &|p| {
             let c = voxel_at(p);
-            world.water_cell_at(c.x, c.y, c.z)
+            world.fluid_cell_at(c.x, c.y, c.z)
         });
         // Re-sample light each tick so a fleck dims/brightens as the lighting around
         // it changes (e.g. a torch broken in a dark cave), rather than staying frozen
@@ -272,13 +272,13 @@ impl ParticleSystem {
     }
 
     /// Pure tick behind [`tick`](Self::tick); `blocked(p)` reports whether a world point is
-    /// inside a collision box (the model-aware shape) and `water(p)` whether it is inside
-    /// a water cell, so tests can run without a `World`.
+    /// inside a collision box (the model-aware shape) and `fluid(p)` whether it is inside
+    /// a fluid cell, so tests can run without a `World`.
     fn tick_with(
         &mut self,
         dt: f32,
         blocked: &impl Fn(Vec3) -> bool,
-        water: &impl Fn(Vec3) -> bool,
+        fluid: &impl Fn(Vec3) -> bool,
     ) {
         let mut i = 0;
         while i < self.particles.len() {
@@ -286,7 +286,7 @@ impl ParticleSystem {
             p.age += dt;
             p.vel.y += PARTICLE_GRAVITY * dt;
             let next = p.pos + p.vel * dt;
-            if p.die_on_contact && (blocked(next) || water(next)) {
+            if p.die_on_contact && (blocked(next) || fluid(next)) {
                 // A splash droplet vanishes the instant it touches anything.
                 p.age = p.lifetime;
             } else if blocked(next) {
@@ -536,7 +536,7 @@ impl ParticleSystem {
     /// intensity` solid-color cubes (capped) launched upward and outward in a
     /// rough circle from `pos`, falling under gravity like every other
     /// particle here. With `die_on_contact` they are destroyed the instant
-    /// they touch a collision box or water.
+    /// they touch a collision box or a fluid.
     pub fn spawn_emitter_burst(
         &mut self,
         spec: &petramond_world::particle_emitters::BurstSpec,

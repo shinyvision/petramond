@@ -21,10 +21,6 @@ fn shipped_particle_emitters_json_loads_fully() {
             + usize::from(d.ambient.is_some());
         assert_eq!(kinds, 1, "every bundle is exactly one kind");
     }
-    assert!(
-        by_key(WATER_SPLASH_KEY).unwrap().burst.is_some(),
-        "the water splash ships as a burst"
-    );
 }
 
 #[test]
@@ -79,7 +75,7 @@ fn burst_bundles_validate() {
 
 #[test]
 fn pack_bundles_register_after_engine_rows_and_validate() {
-    let glow = r#"{"emitter": "mymod:glow", "tint": [1.0, 0.9, 0.6], "particles": [
+    let glow = r#"{"emitter": "mymod:glow", "tint": [1.0, 0.9, 0.6], "body_self_lit": 0.4, "particles": [
             {"rate": 2.0, "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
              "color": [[0.9, 0.9, 0.2], [1.0, 1.0, 0.6]], "alpha": [0.5, 0.8]}]}"#;
     let pack = format!(r#"{{"emitters": [{glow}]}}"#);
@@ -89,9 +85,14 @@ fn pack_bundles_register_after_engine_rows_and_validate() {
     let d = defs.last().unwrap();
     assert_eq!(d.key, "mymod:glow");
     assert_eq!(d.tint, Some([1.0, 0.9, 0.6]));
+    assert_eq!(d.body_self_lit, 0.4);
     assert_eq!(d.rows.len(), 1);
 
     for (bad, why) in [
+        (
+            glow.replace("\"body_self_lit\": 0.4", "\"body_self_lit\": 1.1"),
+            "out-of-range body lighting",
+        ),
         (
             r#"{"emitter": "mymod:glow", "particles": []}"#.to_owned(),
             "no particle rows",
@@ -280,7 +281,6 @@ fn flight_rows_validate_and_resolve_their_names() {
 #[test]
 fn biome_density_table_covers_driven_bundles_only() {
     let catalog = parse_layers(&[&base()]).unwrap();
-    let splash = catalog.id(WATER_SPLASH_KEY).unwrap() as u8;
     let torch = catalog.id("petramond:torch_flame").unwrap() as u8;
     let butterfly = catalog.id("petramond:butterfly").unwrap() as u8;
     let rows: [(u8, &[(&str, f32)]); 2] = [
@@ -307,12 +307,17 @@ fn biome_density_table_covers_driven_bundles_only() {
         .err()
         .unwrap();
     assert!(err.contains("unknown"), "{err}");
-    let not_ambient: [(u8, &[(&str, f32)]); 1] = [(3, &[(WATER_SPLASH_KEY, 0.5)])];
+    let burst = catalog
+        .rows()
+        .iter()
+        .find(|b| b.burst.is_some())
+        .expect("a burst bundle ships")
+        .key;
+    let not_ambient: [(u8, &[(&str, f32)]); 1] = [(3, &[(burst, 0.5)])];
     let err = BiomeTable::build(&catalog, not_ambient.iter().map(|&(b, e)| (b, e)))
         .err()
         .unwrap();
     assert!(err.contains("not an ambient"), "{err}");
-    let _ = splash;
 }
 
 #[test]

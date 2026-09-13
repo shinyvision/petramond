@@ -100,7 +100,7 @@ fn fs_break(in: VsOut) -> @location(0) vec4<f32> {
     let tex = textureSample(atlas, samp, in.uv);
     var crack = mix(vec3<f32>(1.0), tex.rgb, tex.a);
     // Fog fade: the block underneath has already hazed toward the atmosphere
-    // (block.wgsl), or toward the tight linear murk underwater. Fade the crack's
+    // (block.wgsl), or toward the tight linear murk inside a fluid. Fade the crack's
     // darkening toward 1.0 (multiply identity) by the same total amount so it
     // melts into the haze with the surface instead of staying a hard dark
     // pattern floating in fog.

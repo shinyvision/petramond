@@ -50,13 +50,28 @@ pub struct LiningFaces {
     /// Subsurface material. Omit to use the top material throughout the course.
     pub floor_under: Option<FaceLining>,
     pub floor_submerged: Option<FaceLining>,
+    /// The fluids a floor counts as submerged under.
+    pub submerged_in: &'static [u16],
     /// Dither stream salt, from the row's namespaced NAME with its own prefix
     /// so independent surface-treatment consumers do not share a random stream.
     pub salt: u64,
 }
 
+impl LiningFaces {
+    /// The surface lining of a floor course whose open cell holds `over`.
+    #[inline]
+    pub fn floor_surface(&self, over: u16) -> FaceLining {
+        match self.floor_submerged {
+            Some(face) if self.submerged_in.contains(&over) => face,
+            _ => self.floor,
+        }
+    }
+}
+
 mod climate;
 mod depth;
+mod fluids;
+pub use fluids::{FluidFall, FluidPool, POOL_CELL};
 pub(crate) mod pattern;
 mod regions;
 use climate::{ordinary_fitness, ordinary_upper, ClimateRange};
@@ -66,9 +81,10 @@ pub(crate) use depth::MAX_FLOOR_DEPTH;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Aquifer {
-    /// Highest water-filled voxel in the territory.
+    /// Highest filled voxel in the territory.
     pub level: i32,
     pub barrier: u16,
+    pub fluid: u16,
 }
 
 /// One row of the loaded underground-biome table.
@@ -84,6 +100,7 @@ pub struct UndergroundBiomeDef {
     lining_name: &'static str,
     aquifer: Option<Aquifer>,
     barrier_name: &'static str,
+    aquifer_fluid_name: &'static str,
     /// Per-orientation override of `lining`; `None` = the one-block-everywhere
     /// shell every row had before.
     faces: Option<LiningFaces>,
@@ -176,6 +193,10 @@ pub struct UndergroundBiomes {
     pub lining_floor_depth_max: i32,
     /// Maximum lining-shell multiplier over every loaded habitat.
     pub bounds: f64,
+    /// Generated pools, in priority order.
+    pub pools: Box<[FluidPool]>,
+    /// Generated falls, in priority order.
+    pub falls: Box<[FluidFall]>,
     /// Hash of the compiled table — stamped into the column-gen cache so a
     /// pack that changes cave shape cannot be served stale cached columns.
     pub fingerprint: u64,
@@ -366,6 +387,12 @@ struct RawUndergroundBiome {
 struct RawAquifer {
     level: i32,
     barrier: Block,
+    #[serde(default = "water")]
+    fluid: Block,
+}
+
+fn water() -> Block {
+    Block::Water
 }
 
 #[derive(Deserialize)]
@@ -400,6 +427,9 @@ struct RawFaces {
     floor_under: Option<RawFace>,
     #[serde(default)]
     floor_submerged: Option<RawFace>,
+    /// The fluids `floor_submerged` applies under; omit for the row's aquifer fluid.
+    #[serde(default)]
+    submerged_in: Option<Vec<Block>>,
 }
 
 #[derive(Deserialize)]
@@ -475,11 +505,41 @@ fn smoothstep(t: f64) -> f64 {
 #[cfg(test)]
 pub fn test_table(pack_layers: &[&str]) -> &'static UndergroundBiomes {
     let base = shipped_layer();
+    let pack: Vec<String> = pack_layers.iter().map(|text| own_keys(text)).collect();
     let mut texts: Vec<&str> = vec![&base];
-    texts.extend_from_slice(pack_layers);
+    texts.extend(pack.iter().map(String::as_str));
     Box::leak(Box::new(
         parse_layers(&texts).expect("synthetic underground table"),
     ))
+}
+
+/// A table from synthetic layers over a bare ordinary-stone base: no shipped
+/// habitat, pool or fall row takes part.
+#[cfg(test)]
+pub fn synthetic_table(layers: &[&str]) -> &'static UndergroundBiomes {
+    const BARE: &str = r#"{"underground_biomes":[{"underground_biome":"petramond:stone"}]}"#;
+    let layers: Vec<String> = layers.iter().map(|text| own_keys(text)).collect();
+    let mut texts: Vec<&str> = vec![BARE];
+    texts.extend(layers.iter().map(String::as_str));
+    Box::leak(Box::new(
+        parse_layers(&texts).expect("synthetic underground table"),
+    ))
+}
+
+/// A test fixture is a whole PACK — habitats beside excavations in one text —
+/// while the loader reads only its own file, which rejects foreign keys.
+#[cfg(test)]
+fn own_keys(pack: &str) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(pack).expect("fixture JSON");
+    if let Some(file) = value.as_object_mut() {
+        file.retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "underground_biomes" | "fluid_pools" | "fluid_falls"
+            )
+        });
+    }
+    value.to_string()
 }
 
 /// The BASE layer only — a synthetic table must mean the same thing whether or

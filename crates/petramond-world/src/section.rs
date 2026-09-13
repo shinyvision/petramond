@@ -5,7 +5,7 @@
 //!
 //! This is the cubic successor to [`crate::chunk::Chunk`]: same battle-tested API
 //! shape (block access, per-cell block-entity maps keyed by a `u16` local index,
-//! water metadata, light, the random-tick gate) but scoped to one 16³ cube and
+//! fluid metadata, light, the random-tick gate) but scoped to one 16³ cube and
 //! addressed by [`crate::chunk::section_idx`].
 
 use std::collections::HashMap;
@@ -63,6 +63,9 @@ pub struct SectionMetrics {
     pub plane_opaque: [u16; 6],
     pub non_air_count: u32,
     pub water_count: u32,
+    pub fluid_count: u32,
+    pub quench_count: u32,
+    pub quencher_count: u32,
     pub biome_tint_count: u32,
     pub particle_emitter_count: u32,
     pub light_emitter_count: u32,
@@ -75,6 +78,9 @@ impl SectionMetrics {
             && self.opaque_count <= volume
             && self.non_air_count <= volume
             && self.water_count <= volume
+            && self.fluid_count <= volume
+            && self.quench_count <= volume
+            && self.quencher_count <= volume
             && self.biome_tint_count <= volume
             && self.particle_emitter_count <= volume
             && self.light_emitter_count <= volume
@@ -153,9 +159,17 @@ pub struct Section {
     /// is skipped from meshing/drawing unconditionally — the empty-sky fast path for the
     /// air band above the surface.
     non_air_count: u32,
-    /// Count of Water cells. `0` ⇒ skip the streamed-water kick scan for this section
-    /// (the vast majority of sections hold no water).
+    /// Count of water cells, kept only for the `FullWater` summary: ocean interior
+    /// is the one uniform fluid bulk common enough to be worth an absent-section
+    /// summary.
     water_count: u32,
+    /// Count of simulated-fluid cells. `0` ⇒ the streamed-fluid kick skips this
+    /// section's scans entirely.
+    fluid_count: u32,
+    /// Cells of a fluid whose row declares a quench.
+    quench_count: u32,
+    /// Cells of a block some fluid row is quenched by.
+    quencher_count: u32,
     /// Count of cells whose emitted mesh can use biome tint. `0` lets meshing skip the
     /// biome halo/tint precompute for stone/cave/building sections.
     biome_tint_count: u32,
@@ -259,6 +273,9 @@ impl Section {
             plane_opaque: [0; 6],
             non_air_count: 0,
             water_count: 0,
+            fluid_count: 0,
+            quench_count: 0,
+            quencher_count: 0,
             biome_tint_count: 0,
             particle_emitter_cells: Vec::new(),
             light_emitter_count: 0,
@@ -399,13 +416,13 @@ impl Section {
         self.blocks.clone()
     }
 
-    /// Heap accounting for the memory census: `(water buffer ptr, water len,
+    /// Heap accounting for the memory census: `(fluid buffer ptr, fluid len,
     /// sparse-state bytes, block-entity bytes, emitter-list bytes)`.
     pub fn memory_parts(&self) -> (Option<usize>, usize, u64, u64, u64) {
-        let (water_ptr, water_len, sparse) = self.states.memory_parts();
+        let (fluid_ptr, fluid_len, sparse) = self.states.memory_parts();
         let entities = self.entities.as_ref().map_or(0, |e| e.memory_bytes());
         let emitters = (self.particle_emitter_cells.capacity() * 2) as u64;
-        (water_ptr, water_len, sparse, entities, emitters)
+        (fluid_ptr, fluid_len, sparse, entities, emitters)
     }
 
     /// `(buffer identity, resident bytes)` of this section's block cube, so
@@ -414,11 +431,11 @@ impl Section {
         self.blocks.heap()
     }
 
-    /// Cheap shared handles to this section's water / skylight / block-light buffers (`Arc`
+    /// Cheap shared handles to this section's fluid / skylight / block-light buffers (`Arc`
     /// clones, no copy; `None` when the buffer is absent). Used to snapshot a section's
     /// neighbour for off-thread meshing without deep-copying any voxel array.
-    pub fn water_arc(&self) -> Option<Arc<[u8]>> {
-        self.states.water_arc()
+    pub fn fluid_arc(&self) -> Option<Arc<[u8]>> {
+        self.states.fluid_arc()
     }
     pub fn skylight_arc(&self) -> Option<Arc<[u8]>> {
         self.skylight.clone()
@@ -435,40 +452,40 @@ impl Section {
         self.skylight.is_some()
     }
 
-    // --- Water ------------------------------------------------------------------
+    // --- Fluid ------------------------------------------------------------------
 
-    /// Water-flow metadata at a local voxel (0 where not flowing water).
+    /// Fluid-flow metadata at a local voxel (0 where not flowing fluid).
     #[inline]
-    pub fn water_meta(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.states.water_meta(section_idx(x, y, z))
+    pub fn fluid_meta(&self, x: usize, y: usize, z: usize) -> u8 {
+        self.states.fluid_meta(section_idx(x, y, z))
     }
 
-    /// Set a water cell (block + flow meta) WITHOUT marking skylight dirty: water
-    /// is transparent, so flow updates only need a remesh. `meta` is treated as 0
-    /// when `b` is not water.
-    pub fn set_water(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
+    /// Set a fluid cell (block + flow meta) WITHOUT marking skylight dirty: a
+    /// fluid is transparent, so flow updates only need a remesh. `meta` is
+    /// treated as 0 when `b` is not a simulated fluid.
+    pub fn set_fluid(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
         let i = section_idx(x, y, z);
         let id = b.id();
         let old = self.blocks.get(i);
         self.blocks.set(i, id);
         self.adjust_random_tick_count(old, id);
         self.adjust_opaque_count(x, y, z, old, id);
-        let meta = if b == Block::Water { meta } else { 0 };
-        self.states.store_water_meta(i, meta);
+        let meta = if b.is_fluid() { meta } else { 0 };
+        self.states.store_fluid_meta(i, meta);
         self.dirty = true;
     }
 
-    /// Bulk water-flow metadata for saving (`None` when nothing is mid-flow —
+    /// Bulk fluid-flow metadata for saving (`None` when nothing is mid-flow —
     /// the buffer is dropped once the last cell settles).
-    pub fn water_slice(&self) -> Option<&[u8]> {
-        self.states.water_slice()
+    pub fn fluid_slice(&self) -> Option<&[u8]> {
+        self.states.fluid_slice()
     }
 
-    /// Whether any water cell is mid-flow (nonzero flow meta). O(1) from the
-    /// states counter; the streamed-water kick uses it to skip settled sections
+    /// Whether any fluid cell is mid-flow (nonzero flow meta). O(1) from the
+    /// states counter; the streamed-fluid kick uses it to skip settled sections
     /// without scanning the 4 KiB meta buffer.
     #[inline]
-    pub fn has_flowing_water(&self) -> bool {
+    pub fn has_flowing_fluid(&self) -> bool {
         self.states.has_flowing()
     }
 

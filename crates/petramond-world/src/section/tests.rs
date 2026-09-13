@@ -14,7 +14,7 @@ fn biome_tint_hint_tracks_incremental_and_bulk_blocks() {
     section.set_block(1, 1, 1, Block::Dirt);
     assert!(!section.has_biome_tint_blocks());
 
-    section.set_water(2, 2, 2, Block::Water, 0);
+    section.set_fluid(2, 2, 2, Block::Water, 0);
     assert!(section.has_biome_tint_blocks());
 
     section.set_block(2, 2, 2, Block::Air);

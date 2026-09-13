@@ -92,7 +92,8 @@ impl ServerGame {
         self.begin_stage(Stage::PlayerDamage, events);
         for s in 0..self.sessions.len() {
             self.tick_fall_damage(s, events);
-            self.tick_water_splash(s, events);
+            self.tick_player_exposure(s, events);
+            self.tick_fluid_splash(s, events);
             // Status effects ride the same stage: they are pure player-state
             // steps (regen heals, durations count down) on the tick, after damage
             // so a same-tick hit lands before the heal.
@@ -190,8 +191,9 @@ impl ServerGame {
         self.begin_stage(Stage::Mobs, events);
         let mob_events = self.world.tick_mobs(TICK_DT, &anchors);
         self.apply_mob_fall_damage(mob_events.falls, events);
+        self.apply_mob_exposure_damage(mob_events.exposure, events);
         for splash in mob_events.splashes {
-            self.push_water_splash(splash.pos, splash.fall, events);
+            self.push_fluid_splash(splash.pos, splash.fall, events);
         }
         // Mob→player combat resolves right after the mobs moved: each strike runs
         // through the engine-owned global i-frame + `player_damage_pre`

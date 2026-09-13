@@ -309,9 +309,7 @@ mod tests {
     #[test]
     fn empty_damage_feedback_does_nothing() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
-            false
-        });
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
         let health = owl.health();
         let x0 = owl.pos.x;
 
@@ -326,9 +324,7 @@ mod tests {
         assert!(!owl.is_dead());
         assert_eq!(owl.hurt_flash(1.0), 0.0);
 
-        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
-            false
-        });
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
         assert!(
             (owl.pos.x - x0).abs() < 1e-4,
             "empty feedback should not apply knockback: {x0} -> {}",
@@ -413,9 +409,7 @@ mod tests {
     #[test]
     fn non_attack_damage_does_not_apply_default_knockback() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
-            false
-        });
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
         let x0 = owl.pos.x;
         assert!(!owl.damage(
             1.0,
@@ -424,9 +418,7 @@ mod tests {
             None,
             &default_feedback()
         ));
-        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
-            false
-        });
+        owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
         assert!(
             (owl.pos.x - x0).abs() < 1e-4,
             "non-attack damage should not shove the mob: {x0} -> {}",

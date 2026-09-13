@@ -2,7 +2,8 @@
 //! records.
 //!
 //! A section record stores only what generation can't reproduce for one 16³ cube —
-//! block ids and (when present) water-flow metadata — then zlib-compresses the lot
+//! block ids and (when present) per-cell fluid metadata — then zlib-compresses
+//! the lot
 //! (flate2 / miniz_oxide, pure Rust). Biome and surface heightmap are per-column,
 //! cheaply regenerated, and so are never written here. Baked light IS persisted
 //! (when clean at snapshot time), so a reload samples the saved cubes instead of
@@ -97,7 +98,7 @@ use super::palette;
 const SECTION_REC_VERSION: u8 = 17;
 /// Oldest section-record version this build can still read.
 const SECTION_REC_MIN_VERSION: u8 = 17;
-const FLAG_HAS_WATER: u8 = 0x01;
+const FLAG_HAS_FLUID: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
 /// The unified per-cell state list (v13+; the bit carried entity facings
@@ -129,7 +130,7 @@ pub struct SectionSnapshot {
     /// Routing metadata only; it is not encoded inside the section record.
     pub cache_only: bool,
     pub blocks: petramond_world::section::BlockCube,
-    pub water: Option<Arc<[u8]>>,
+    pub fluid: Option<Arc<[u8]>>,
     /// Item entities resting in this section, captured at save time so their
     /// lifetime timers persist with it. Empty for the common case.
     pub entities: Vec<DroppedItem>,
@@ -176,7 +177,7 @@ impl SectionSnapshot {
             pos: SectionPos::new(s.cx, s.cy, s.cz),
             cache_only: false,
             blocks: s.block_cube(),
-            water: s.water_arc(),
+            fluid: s.fluid_arc(),
             entities: Vec::new(),
             furnaces: s.furnaces().clone(),
             containers: s.containers().clone(),
@@ -190,7 +191,7 @@ impl SectionSnapshot {
 }
 
 /// Compress a section snapshot into a record: `[version, flags, flags2, flags3, blocks,
-/// water?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
+/// fluid meta?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
 /// when present, so a terrain-only section pays for just its block array.
 pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     encode_snapshot_with(s, &super::palette::active())
@@ -200,12 +201,12 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
 /// process-wide handle, and a test that means to state something about the
 /// FORMAT must not depend on which world happens to be open.
 pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
-    let extra = s.water.as_ref().map_or(0, |w| w.len());
+    let extra = s.fluid.as_ref().map_or(0, |w| w.len());
     let mut payload = Vec::with_capacity(4 + s.blocks.len() + extra);
     put_u8(&mut payload, SECTION_REC_VERSION);
     let mut flags = 0u8;
-    if s.water.is_some() {
-        flags |= FLAG_HAS_WATER;
+    if s.fluid.is_some() {
+        flags |= FLAG_HAS_FLUID;
     }
     if !s.entities.is_empty() {
         flags |= FLAG_HAS_ENTITIES;
@@ -239,7 +240,7 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
     // Block ids are stored as the SAVE's ids (see `super::palette`), so a
     // future registry renumbering can't corrupt old worlds.
     put_block_cube(&mut payload, &s.blocks, pal);
-    if let Some(w) = &s.water {
+    if let Some(w) = &s.fluid {
         payload.extend_from_slice(w);
     }
     if !s.entities.is_empty() {
@@ -376,7 +377,7 @@ pub fn decode_section_with(
     let flags2 = r.u8()?;
     let flags3 = r.u8()?;
     let blocks = get_block_cube(&mut r, pal)?;
-    let water = if flags & FLAG_HAS_WATER != 0 {
+    let fluid = if flags & FLAG_HAS_FLUID != 0 {
         Some(r.bytes(SECTION_VOLUME)?.to_vec().into_boxed_slice())
     } else {
         None
@@ -448,7 +449,7 @@ pub fn decode_section_with(
         pos.cy,
         pos.cz,
         &blocks,
-        water,
+        fluid,
         furnaces,
         containers,
         cell_states,

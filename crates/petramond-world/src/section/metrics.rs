@@ -1,15 +1,21 @@
-use crate::block::{Block, BlockTag};
+use crate::block::Block;
 use crate::chunk::{SECTION_SIZE, SECTION_VOLUME};
+use crate::tile::TileTint;
 
 use super::{Section, SectionMetrics, SectionSummary};
 
-const MB_RANDOM_TICK: u8 = 1 << 0;
-const MB_OPAQUE: u8 = 1 << 1;
-const MB_NON_AIR: u8 = 1 << 2;
-const MB_WATER: u8 = 1 << 3;
-const MB_BIOME_TINT: u8 = 1 << 4;
-const MB_PARTICLE_EMITTER: u8 = 1 << 5;
-const MB_LIGHT_EMITTER: u8 = 1 << 6;
+const MB_RANDOM_TICK: u16 = 1 << 0;
+const MB_OPAQUE: u16 = 1 << 1;
+const MB_NON_AIR: u16 = 1 << 2;
+const MB_WATER: u16 = 1 << 3;
+const MB_BIOME_TINT: u16 = 1 << 4;
+const MB_PARTICLE_EMITTER: u16 = 1 << 5;
+const MB_LIGHT_EMITTER: u16 = 1 << 6;
+const MB_FLUID: u16 = 1 << 7;
+/// A fluid whose row declares a quench.
+const MB_QUENCHES: u16 = 1 << 8;
+/// A block some fluid row names as its quench `by`.
+const MB_QUENCHER: u16 = 1 << 9;
 
 /// Histogram width of the fast path in [`Section::metrics_from_blocks`].
 const LOW_HIST: usize = 256;
@@ -19,23 +25,36 @@ const LOW_HIST: usize = 256;
 /// uses — the block registry loads exactly once per process, so this can never
 /// go stale. Ids beyond the registry read as `Air` through `Block::from_id`,
 /// matching the per-cell predicates on such ids.
-fn metrics_bits() -> &'static [u8] {
-    static BITS: std::sync::LazyLock<Box<[u8]>> = std::sync::LazyLock::new(|| {
-        let mut bits = vec![0u8; Block::all().len()].into_boxed_slice();
+fn metrics_bits() -> &'static [u16] {
+    static BITS: std::sync::LazyLock<Box<[u16]>> = std::sync::LazyLock::new(|| {
+        let quench = |block: Block| block.fluid_def().and_then(|f| f.quench);
+        let mut bits = vec![0u16; Block::all().len()].into_boxed_slice();
+        for &block in Block::all() {
+            if let Some(q) = quench(block) {
+                bits[q.by.id() as usize] |= MB_QUENCHER;
+            }
+        }
         for (i, b) in bits.iter_mut().enumerate() {
             let id = i as u16;
             let block = Block::from_id(id);
-            *b = ((block.has_random_tick() as u8) * MB_RANDOM_TICK)
-                | ((block.is_opaque() as u8) * MB_OPAQUE)
-                | (((id != 0) as u8) * MB_NON_AIR)
-                | (((id == Block::Water.id()) as u8) * MB_WATER)
-                | ((Section::id_uses_biome_tint(id) as u8) * MB_BIOME_TINT)
-                | ((Section::id_has_particle_emitter(id) as u8) * MB_PARTICLE_EMITTER)
-                | ((Section::id_emits_light(id) as u8) * MB_LIGHT_EMITTER);
+            *b |= (u16::from(block.has_random_tick()) * MB_RANDOM_TICK)
+                | (u16::from(block.is_opaque()) * MB_OPAQUE)
+                | (u16::from(id != 0) * MB_NON_AIR)
+                | (u16::from(id == Block::Water.id()) * MB_WATER)
+                | (u16::from(block.is_fluid()) * MB_FLUID)
+                | (u16::from(quench(block).is_some()) * MB_QUENCHES)
+                | (u16::from(Section::id_uses_biome_tint(id)) * MB_BIOME_TINT)
+                | (u16::from(Section::id_has_particle_emitter(id)) * MB_PARTICLE_EMITTER)
+                | (u16::from(Section::id_emits_light(id)) * MB_LIGHT_EMITTER);
         }
         bits
     });
     &BITS
+}
+
+#[inline]
+fn id_bits(id: u16) -> u16 {
+    metrics_bits().get(id as usize).copied().unwrap_or(0)
 }
 
 impl Section {
@@ -121,10 +140,23 @@ impl Section {
             (true, false) => self.water_count -= 1,
             _ => {}
         }
-        match (
-            Self::id_uses_biome_tint(old_id),
-            Self::id_uses_biome_tint(new_id),
-        ) {
+        match (Self::id_is_fluid(old_id), Self::id_is_fluid(new_id)) {
+            (false, true) => self.fluid_count += 1,
+            (true, false) => self.fluid_count -= 1,
+            _ => {}
+        }
+        let (old_bits, new_bits) = (id_bits(old_id), id_bits(new_id));
+        for (bit, count) in [
+            (MB_QUENCHES, &mut self.quench_count),
+            (MB_QUENCHER, &mut self.quencher_count),
+        ] {
+            match (old_bits & bit != 0, new_bits & bit != 0) {
+                (false, true) => *count += 1,
+                (true, false) => *count -= 1,
+                _ => {}
+            }
+        }
+        match (old_bits & MB_BIOME_TINT != 0, new_bits & MB_BIOME_TINT != 0) {
             (false, true) => self.biome_tint_count += 1,
             (true, false) => self.biome_tint_count -= 1,
             _ => {}
@@ -214,6 +246,15 @@ impl Section {
             if b & MB_WATER != 0 {
                 out.water_count += n;
             }
+            if b & MB_FLUID != 0 {
+                out.fluid_count += n;
+            }
+            if b & MB_QUENCHES != 0 {
+                out.quench_count += n;
+            }
+            if b & MB_QUENCHER != 0 {
+                out.quencher_count += n;
+            }
             if b & MB_BIOME_TINT != 0 {
                 out.biome_tint_count += n;
             }
@@ -250,6 +291,9 @@ impl Section {
         self.plane_opaque = metrics.plane_opaque;
         self.non_air_count = metrics.non_air_count;
         self.water_count = metrics.water_count;
+        self.fluid_count = metrics.fluid_count;
+        self.quench_count = metrics.quench_count;
+        self.quencher_count = metrics.quencher_count;
         self.biome_tint_count = metrics.biome_tint_count;
         self.light_emitter_count = metrics.light_emitter_count;
         // Rebuilding the sparse emitter index needs a second pass over the
@@ -277,6 +321,9 @@ impl Section {
             plane_opaque: self.plane_opaque,
             non_air_count: self.non_air_count,
             water_count: self.water_count,
+            fluid_count: self.fluid_count,
+            quench_count: self.quench_count,
+            quencher_count: self.quencher_count,
             biome_tint_count: self.biome_tint_count,
             particle_emitter_count: self.particle_emitter_cells.len() as u32,
             light_emitter_count: self.light_emitter_count,
@@ -357,10 +404,26 @@ impl Section {
         }
     }
 
-    /// Whether the section holds any Water cell. The streamed-water kick scans only these.
+    /// Whether the section holds any simulated fluid cell — the streamed-fluid
+    /// kick scans these.
     #[inline]
-    pub fn has_water(&self) -> bool {
-        self.water_count > 0
+    pub fn has_fluid(&self) -> bool {
+        self.fluid_count > 0
+    }
+
+    /// Whether a quench contact can exist between a cell here and one in `other`
+    /// (pass `self` for contacts inside one section). Conservative across
+    /// several quench pairs: it may say yes for a pair no row declares, never no
+    /// for one that does.
+    #[inline]
+    pub fn may_quench_against(&self, other: &Section) -> bool {
+        (self.quench_count > 0 && other.quencher_count > 0)
+            || (other.quench_count > 0 && self.quencher_count > 0)
+    }
+
+    #[inline]
+    fn id_is_fluid(id: u16) -> bool {
+        Block::from_id(id).is_fluid()
     }
 
     /// Whether this section can emit any biome-tinted mesh face.
@@ -416,13 +479,28 @@ impl Section {
         self.random_tick_count > 0
     }
 
-    #[inline]
+    /// Whether any tile the block's row draws in the world carries a biome
+    /// tint class — derived from the row, so a pack's tinted fluid or plant
+    /// gets biome colours without being named here. Air draws nothing (its row
+    /// still names placeholder tiles), and a blank section must count zero.
     fn id_uses_biome_tint(id: u16) -> bool {
+        if id == Block::Air.id() {
+            return false;
+        }
         let block = Block::from_id(id);
-        matches!(
-            block,
-            Block::Grass | Block::Water | Block::ShortGrass | Block::Fern
-        ) || block.has_tag(BlockTag::LEAVES)
+        let overlay = block.side_overlay();
+        block
+            .tiles()
+            .into_iter()
+            .chain(overlay.map(|o| o.base))
+            .chain(overlay.map(|o| o.overlay))
+            .chain(block.covered_side())
+            .chain(block.front_tile())
+            .chain(block.is_fluid().then(|| block.fluid_flow_tile()))
+            .any(|tile| {
+                tile.world_tint()
+                    .is_some_and(|t| !matches!(t, TileTint::Fixed(_)))
+            })
     }
 
     #[inline]

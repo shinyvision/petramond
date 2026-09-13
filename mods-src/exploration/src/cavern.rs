@@ -21,7 +21,7 @@
 //! structure that spans sections: the owner would reject a mushroom its
 //! neighbours accept, and the neighbours would still write their share — caps
 //! floating in mid-air with no stem. Anything that decides WHETHER a mushroom
-//! exists therefore reads `terrain_solid_at`, which is positional and answers
+//! exists therefore reads `terrain_space_at`, which is positional and answers
 //! the same in every section.
 //!
 //! The same read is what makes DRESSING reach the section planes. A decoration
@@ -190,15 +190,15 @@ impl Dress {
     }
 
     /// Resting on rock, once the probe (if any) has answered.
-    fn on_rock(&self, solid: &[bool]) -> bool {
+    fn on_rock(&self, rock: &[bool]) -> bool {
         self.below
-            .unwrap_or_else(|| self.probe.is_some_and(|i| solid[i]))
+            .unwrap_or_else(|| self.probe.is_some_and(|i| rock[i]))
     }
 
     /// Under a roof, same.
-    fn under_roof(&self, solid: &[bool]) -> bool {
+    fn under_roof(&self, rock: &[bool]) -> bool {
         self.above
-            .unwrap_or_else(|| self.probe.is_some_and(|i| solid[i]))
+            .unwrap_or_else(|| self.probe.is_some_and(|i| rock[i]))
     }
 }
 
@@ -288,7 +288,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
         }
     }
     let (floors, ceilings, margins, margin_cols) = if ours_here {
-        gather_dressing(ctx, seed)
+        gather_dressing(content, ctx, seed)
     } else {
         Default::default()
     };
@@ -363,10 +363,14 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
         }
     }
     let want = probe.len();
-    let solid = batched(probe, terrain_solid_at);
-    if solid.len() != want {
+    let space = batched(probe, terrain_space_at);
+    if space.len() != want {
         return Ok(Vec::new());
     }
+    // ROCK is what a plant rests on or hangs from, FREE is where a curtain
+    // may hang; a fluid cell is neither.
+    let rock: Vec<bool> = space.iter().map(|s| *s == TerrainSpace::Solid).collect();
+    let free: Vec<bool> = space.iter().map(|s| *s == TerrainSpace::Air).collect();
 
     let mut out: Vec<GenWrite> = Vec::new();
     let mut claims = Claims::default();
@@ -439,7 +443,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
 
     // --- floors ----------------------------------------------------------
     for (i, d) in floors.iter().enumerate() {
-        if !mine(i) || !d.on_rock(&solid) {
+        if !mine(i) || !d.on_rock(&rock) {
             continue;
         }
         let p = d.p;
@@ -466,7 +470,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
     for (i, d) in ceilings.iter().enumerate() {
         // A cell resting on rock is a FLOOR, whatever hangs over it; letting
         // both passes claim one would put two decorations in one cell.
-        if !mine(n_f + i) || d.on_rock(&solid) || !d.under_roof(&solid) {
+        if !mine(n_f + i) || d.on_rock(&rock) || !d.under_roof(&rock) {
             continue;
         }
         hang_curtain(ctx, content, &mut claims, &mut out, seed, d.p, |cell| {
@@ -484,14 +488,14 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
         // its support at `k - 1` (our own roof row when `k == 0`, which the
         // gather already proved open) and its roof at `k + 1`.
         let k = (m.p[1] - origin[1] - 16) as usize;
-        let rock = |j: usize| solid[start + j];
-        if rock(k) || !rock(k + 1) || (k > 0 && rock(k - 1)) {
+        let is_rock = |j: usize| rock[start + j];
+        if is_rock(k) || !is_rock(k + 1) || (k > 0 && is_rock(k - 1)) {
             continue;
         }
         hang_curtain(ctx, content, &mut claims, &mut out, seed, m.p, |cell| {
             let j = cell[1] - origin[1] - 16;
             if j >= 0 {
-                !rock(j as usize)
+                free[start + j as usize]
             } else {
                 is_open(ctx, cell)
             }
@@ -507,6 +511,7 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
 ///
 /// Returns `(floors, ceilings, margin roots, the columns those roots probe)`.
 fn gather_dressing(
+    content: &Content,
     ctx: &GenCtx,
     seed: u32,
 ) -> (Vec<Dress>, Vec<Dress>, Vec<Margin>, Vec<MarginCol>) {
@@ -523,8 +528,8 @@ fn gather_dressing(
                 if !is_open(ctx, p) {
                     continue;
                 }
-                let below = neighbour_solid(ctx, p, -1);
-                let above = neighbour_solid(ctx, p, 1);
+                let below = neighbour_rock(content, ctx, p, -1);
+                let above = neighbour_rock(content, ctx, p, 1);
                 // The rolls come FIRST so an ineligible cell never costs a
                 // query slot, and a cell whose classification is still open
                 // (rows 0 and 15) is kept for BOTH passes rather than guessed
@@ -720,11 +725,19 @@ fn compute_cascade_cell(
     let mut coarse: Vec<[i32; 3]> = Vec::new();
     c.coarse_plan(|p| coarse.push(p));
     let want = coarse.len();
-    let coarse_solid = batched(coarse, terrain_solid_at);
-    if coarse_solid.len() != want {
+    let coarse_space = batched(coarse, terrain_space_at);
+    if coarse_space.len() != want {
         return None;
     }
-    let traces = c.traces(&coarse_solid);
+    let coarse_rock: Vec<bool> = coarse_space
+        .iter()
+        .map(|s| *s == TerrainSpace::Solid)
+        .collect();
+    let coarse_free: Vec<bool> = coarse_space
+        .iter()
+        .map(|s| *s == TerrainSpace::Air)
+        .collect();
+    let traces = c.traces(&coarse_rock, &coarse_free);
     if traces.is_empty() {
         return None;
     }
@@ -746,14 +759,20 @@ fn compute_cascade_cell(
         let mut plan: Vec<[i32; 3]> = Vec::new();
         t.plan(|p| plan.push(p));
         let probe_n = plan.len();
-        let replies = batched(plan.clone(), terrain_solid_at);
+        let replies = batched(plan.clone(), terrain_space_at);
         if replies.len() != probe_n {
             return None;
         }
+        // The containment proof models rock and room only, so a basin meeting a fluid is not sited.
+        if replies.contains(&TerrainSpace::Fluid) {
+            continue;
+        }
         // The plan and this lookup walk the same canonical enumeration, so
         // replies land on the cells that asked for them.
-        let lookup: std::collections::HashMap<[i32; 3], bool> =
-            plan.into_iter().zip(replies).collect();
+        let lookup: std::collections::HashMap<[i32; 3], bool> = plan
+            .into_iter()
+            .zip(replies.iter().map(|s| *s == TerrainSpace::Solid))
+            .collect();
         let terrain = |p: [i32; 3]| lookup.get(&p).copied();
         // The cell mutex: the FIRST trace that builds owns the cell — a
         // second accepted trace could overlap the first's footprint, which
@@ -848,11 +867,14 @@ pub(crate) fn giant_rolls_over(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<Can
     out
 }
 
-/// The highest open cell resting on solid, over a column probe whose first
+/// The highest FREE cell resting on ROCK, over a column probe whose first
 /// slot is the support cell UNDER the window — the root rule every giant
-/// stands on, shared so no second derivation can drift from it.
-pub(crate) fn highest_floor(solid: &[bool]) -> Option<usize> {
-    (1..solid.len()).rev().find(|&k| !solid[k] && solid[k - 1])
+/// stands on, shared so no second derivation can drift from it. A fluid cell
+/// is neither.
+pub(crate) fn highest_floor(space: &[TerrainSpace]) -> Option<usize> {
+    (1..space.len())
+        .rev()
+        .find(|&k| space[k] == TerrainSpace::Air && space[k - 1] == TerrainSpace::Solid)
 }
 
 /// Cap-competition pad: the farthest apart two anchors can sit with their caps
@@ -1140,11 +1162,13 @@ fn is_open(ctx: &GenCtx, p: [i32; 3]) -> bool {
     matches!(ctx.block(p), Some(b) if b.0 == 0)
 }
 
-/// Is the cell `dy` from `p` solid? `None` when it lies outside the dispatching
+/// Is the cell `dy` from `p` ROCK? `None` when it lies outside the dispatching
 /// section, where `GenCtx` knows nothing and only the positional terrain can
-/// answer. Reading `None` as "not solid" is what left the section planes bare.
-fn neighbour_solid(ctx: &GenCtx, p: [i32; 3], dy: i32) -> Option<bool> {
-    ctx.block([p[0], p[1] + dy, p[2]]).map(|b| b.0 != 0)
+/// answer. Reading `None` as "not rock" is what left the section planes bare,
+/// and a fluid is never rock.
+fn neighbour_rock(content: &Content, ctx: &GenCtx, p: [i32; 3], dy: i32) -> Option<bool> {
+    ctx.block([p[0], p[1] + dy, p[2]])
+        .map(|b| b.0 != 0 && !content.is_fluid(b))
 }
 
 /// Rows the claim set spans: this section's own sixteen, plus the margin rows
@@ -1507,7 +1531,7 @@ mod ctx_tests {
     fn the_bottom_row_asks_the_terrain_for_the_support_it_cannot_see() {
         let ctx = open_section([0, -3, 0]);
         let origin = ctx.origin_world();
-        let (floors, ceilings, _, _) = gather_dressing(&ctx, ctx.seed());
+        let (floors, ceilings, _, _) = gather_dressing(&test_content(), &ctx, ctx.seed());
         let bottom: Vec<&Dress> = floors.iter().filter(|d| d.p[1] == origin[1]).collect();
         assert!(
             !bottom.is_empty(),
@@ -1541,7 +1565,7 @@ mod ctx_tests {
     #[test]
     fn a_candidate_that_can_see_both_neighbours_costs_no_probe() {
         let ctx = split_section([0, -3, 0]);
-        let (floors, ceilings, _, _) = gather_dressing(&ctx, ctx.seed());
+        let (floors, ceilings, _, _) = gather_dressing(&test_content(), &ctx, ctx.seed());
         let mut inner = 0;
         for d in floors.iter().chain(&ceilings) {
             let ly = d.p[1] - ctx.origin_world()[1];
@@ -1565,7 +1589,7 @@ mod ctx_tests {
     fn roots_above_the_roof_are_scanned_when_a_curtain_can_reach_in() {
         let ctx = open_section([0, -3, 0]);
         let origin = ctx.origin_world();
-        let (_, _, margins, cols) = gather_dressing(&ctx, ctx.seed());
+        let (_, _, margins, cols) = gather_dressing(&test_content(), &ctx, ctx.seed());
         assert!(
             !margins.is_empty(),
             "no margin root rolled over an open roof"
@@ -1598,7 +1622,7 @@ mod ctx_tests {
             vec![0; 256],
             62,
         );
-        let (_, _, margins, _) = gather_dressing(&sealed, sealed.seed());
+        let (_, _, margins, _) = gather_dressing(&test_content(), &sealed, sealed.seed());
         assert!(margins.is_empty(), "a sealed roof cannot admit a curtain");
     }
 
@@ -1607,6 +1631,7 @@ mod ctx_tests {
             stem: BlockId(200),
             vine: BlockId(202),
             water: BlockId(203),
+            fluids: crate::fluids::Fluids::of(&[BlockId(203), BlockId(205)]),
             silt: BlockId(204),
             air: BlockId(0),
             species: (0..4)

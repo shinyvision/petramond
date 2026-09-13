@@ -27,36 +27,10 @@
 //!   player or any mob, sneaking or not — is locked and attacked), `retaliate`
 //!   (whoever hits it, it knows — after a 20-tick boil-over), and
 //!   `melee_attack`. No head_look: it is blind, and it never visually tracks.
-//! - **Sunburn**: every tick, each not-yet-burning zombie in strong direct sky
-//!   light has a 5% seeded chance to catch LIGHT fire: the core
-//!   `petramond:burn_light` emitter bundle (orange/yellow flames + black smoke
-//!   twirling upward) plus 1 `damage_mob` damage every 40 ticks. After 200
-//!   ticks of light burn — and only while STILL in direct sunlight — it
-//!   escalates to GREAT fire: `petramond:burn_great` (a dense blaze + a faint
-//!   orange body tint) and 2 damage every 20 ticks. Out of the sun, the burn
-//!   winds down instead: 60 CONSECUTIVE dark ticks demote great fire back to
-//!   light, and another 60 put a light burn out entirely (so nightfall or
-//!   shade eventually extinguishes every zombie). Damage keeps ticking at the
-//!   current stage's cadence while burning, sunlit or not. The burn state
-//!   machine is mod state keyed by the stable mob id (in-memory, deliberately
-//!   not persisted — a reloaded sunlit zombie simply re-ignites); the visuals
-//!   are the engine's keyed mob emitter bundles (`mob_emitter_set`), and the
-//!   damage deliberately uses the engine pipeline, so `mob_damage_pre`,
-//!   `mob_died`, loot, and the ragdoll all happen. A zombie that burns to
-//!   death keeps its flames through the ragdoll, engine-side.
-//! - **Water and rain douse the burn** (weather is OPTIONAL): a burning
-//!   zombie whose feet cell is water snuffs out instantly, and water blocks
-//!   ignition outright. Rain is soft interop: when a weather mod publishes
-//!   the `weather:field` world-KV row (see `weather-core`), each zombie
-//!   evaluates the field at its own column. Rain reaching the zombie (raw
-//!   direct sky, daylight-independent — night rain wets too) cools the burn
-//!   like darkness but FASTER, scaling with intensity (a downpour counts
-//!   several dark ticks per tick), and any rain-band cloud overhead blocks
-//!   ignition and escalation — the same deck that rains is the deck that
-//!   occludes the sun, which engine skylight cannot know. No weather mod (or
-//!   a stale row whose clock stamp fell behind `petramond:clock` — world KV
-//!   persists past an uninstall) means a permanently clear sky: sunburn is
-//!   exactly the standalone behavior above.
+//! - **Sunburn**: direct sun applies the engine's `petramond:burning`
+//!   condition to zombies; prolonged exposure strengthens it, shade lets it
+//!   wind down and exposed rain cools it faster. Everything else about the
+//!   condition (damage, water, presentation) is engine row data.
 //! - **Sounds**: groan/hurt/death calls are data-driven by the zombie mob row.
 //!   The mod does not start audio directly; the engine presentation layer plays
 //!   those semantic mob sound hooks.
@@ -78,7 +52,7 @@ const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
 const ZOMBIE_KEY: &str = "monsters:zombie";
 const HUSHJAW_KEY: &str = "monsters:hushjaw";
 const TIME_KEY: &str = "petramond:time";
-const WATER_BLOCK: &str = "petramond:water";
+const BURNING: &str = "petramond:burning";
 
 /// Block tag marking a surface no hostile spawns ON. Any pack lists it on any
 /// `blocks.json` row and that block is spawn-proof everywhere in the world,
@@ -121,8 +95,8 @@ const SUNBURN_RADIUS: f32 = 160.0;
 const SUNBURN_SKY_THRESHOLD: f32 = weather_core::DIRECT_SKY_MIN as f32;
 /// Per-TICK ignition chance for a sunlit, not-yet-burning zombie.
 const SUNBURN_CHANCE_PER_100: u64 = 5;
-/// Sunlit ticks on light fire before the burn escalates to great fire.
-const LIGHT_FIRE_TICKS: u32 = 200;
+/// Burn age before continued sunlight strengthens the flames.
+const LIGHT_FIRE_TICKS: u32 = 100;
 /// Consecutive DARK ticks that cool the burn one stage (great → light →
 /// out).
 const DARK_COOL_TICKS: u32 = 60;
@@ -132,44 +106,23 @@ const DARK_COOL_TICKS: u32 = 60;
 /// while a drizzle only takes the sun away. Snow douses identically — the
 /// field is phase-agnostic here, and smothering a fire is what snow does.
 const RAIN_COOL_BOOST: f32 = 3.0;
-/// Light fire: 1 damage every 40 ticks.
-const LIGHT_FIRE_DAMAGE: f32 = 1.0;
-const LIGHT_FIRE_DAMAGE_INTERVAL: u32 = 40;
-/// Great fire: 2 damage every 20 ticks.
-const GREAT_FIRE_DAMAGE: f32 = 2.0;
-const GREAT_FIRE_DAMAGE_INTERVAL: u32 = 20;
-/// The core emitter bundles this mod attaches (`particle_emitters.json`).
-const LIGHT_FIRE_EMITTER: &str = "petramond:burn_light";
-const GREAT_FIRE_EMITTER: &str = "petramond:burn_great";
-
-#[derive(Copy, Clone, PartialEq)]
-enum BurnStage {
-    Light,
-    Great,
-}
-
-/// One zombie's burn: how long it has been in its current stage and how many
-/// consecutive ticks it has spent out of direct sunlight.
-struct Burn {
-    stage: BurnStage,
-    stage_ticks: u32,
-    dark_ticks: u32,
-}
-
 #[derive(Default)]
 struct Monsters {
-    /// Burn state per burning zombie (by stable mob id). In-memory only:
-    /// a sunlit zombie re-rolls ignition next session.
-    burning: std::collections::HashMap<u64, Burn>,
-    /// The engine water block, resolved once — a burning zombie standing in
-    /// it snuffs out instantly.
-    water: Option<BlockId>,
+    /// The burning condition and its light/great stages, resolved once.
+    burning: Option<Burning>,
     /// Surfaces no hostile spawns on, resolved once from the tag.
     spawn_proof: SpawnProof,
     /// This pack's species ids, resolved once. A mob snapshot names its
     /// species by ID, never by string — a crowd query answers dozens per
     /// tick and a heap string each would be the marshalling's whole cost.
     species: Species,
+}
+
+#[derive(Copy, Clone)]
+struct Burning {
+    id: ConditionId,
+    light: u8,
+    great: u8,
 }
 
 /// The species ids this pack reasons about, resolved once at init.
@@ -185,7 +138,13 @@ impl Mod for Monsters {
         // so the `weather:field` row read each tick is THIS tick's publish.
         register_tick_system(Stage::Spawning, AttachSide::After, 20, MONSTERS_TICK_SYSTEM);
         register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
-        self.water = resolve_block_logged(WATER_BLOCK);
+        self.burning = resolve_condition_logged(BURNING).and_then(|info| {
+            Some(Burning {
+                id: info.id,
+                light: info.stage("light")?,
+                great: info.stage("great")?,
+            })
+        });
         // ONE crossing for the whole membership, at init — the house pattern
         // for tag-driven policy. The count is logged because a tag name is a
         // string agreed across two packs: a typo on either side is not a load
@@ -350,8 +309,7 @@ impl SpawnProof {
     /// Whether the floor a body would stand on refuses the spawn. Reads the
     /// world only when some pack actually marked something.
     ///
-    /// An UNREADABLE floor refuses. This deliberately inverts the `in_water`
-    /// convention below: core admitted the site from a merely LOADED cell
+    /// An UNREADABLE floor refuses: core admitted the site from a merely LOADED cell
     /// while a mod's `get_block` is stream-final, so the gap is exactly the
     /// moment a player first descends into a fresh cavern — the most visible
     /// moment there is. A skipped spawn costs nothing (32 attempts a tick, 20
@@ -364,153 +322,36 @@ impl SpawnProof {
 }
 
 impl Monsters {
-    /// Ignite sunlit zombies and advance every burning one by one tick.
+    /// Sunlight supplies heat; the engine condition owns the burn itself.
     fn tick_fire(&mut self, daylight: f32, field: Option<&FieldParams>, near: &[MobSnapshot]) {
-        // Forget burns whose zombie is gone from the live snapshot: it died
-        // (the engine keeps the corpse's flames through the ragdoll on its
-        // own) or despawned. One radius covers every live zombie — hostile
-        // distance-despawn culls beyond 128, inside SUNBURN_RADIUS.
-        self.burning
-            .retain(|id, _| near.iter().any(|m| m.id == *id));
-        // One host RNG draw per tick; per-zombie rolls derive from it and the
-        // stable mob id, so ignition stays deterministic without a host call
-        // per zombie per tick.
+        let Some(fire) = self.burning else {
+            return;
+        };
         let roll = rng_u64("sunburn");
-        let water = self.water;
-        let mut extinguished: Vec<u64> = Vec::new();
-        let zombie = self.species.zombie;
-        for mob in near.iter().filter(|m| Some(m.kind) == zombie) {
-            let Some(burn) = self.burning.get_mut(&mob.id) else {
-                // Not burning. Roll first, then the pure rain check (any
-                // rain-band cloud overhead occludes the sun — engine
-                // skylight can't know that), so the per-zombie host
-                // crossings happen only on the few ticks that might
-                // actually ignite. Standing in water blocks ignition too.
-                if splitmix64_mix(roll ^ mob.id) % 100 < SUNBURN_CHANCE_PER_100
-                    && rain_at(field, mob.pos) == 0.0
-                    && in_sunlight(mob.pos, daylight)
-                    && !in_water(water, cell_of(mob.pos))
-                    && mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, true)
-                {
-                    self.burning.insert(
-                        mob.id,
-                        Burn {
-                            stage: BurnStage::Light,
-                            stage_ticks: 0,
-                            dark_ticks: 0,
-                        },
-                    );
-                }
+        for mob in near.iter().filter(|m| Some(m.kind) == self.species.zombie) {
+            let burning = mob.conditions.iter().find(|c| c.condition == fire.id);
+            if burning.is_none() && splitmix64_mix(roll ^ mob.id) % 100 >= SUNBURN_CHANCE_PER_100 {
                 continue;
-            };
-
+            }
+            let entity = EntityRef::Mob(mob.id);
             let cell = cell_of(mob.pos);
-            // Dunked: water snuffs the fire outright, whatever the stage.
-            if in_water(water, cell) {
-                match burn.stage {
-                    BurnStage::Light => {
-                        mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, false);
-                    }
-                    BurnStage::Great => {
-                        mob_emitter_set(mob.id, GREAT_FIRE_EMITTER, false);
-                    }
-                }
-                extinguished.push(mob.id);
+            let Some(sky) = sky_light(cell) else {
                 continue;
-            }
-
-            let sky = sky_light(cell);
-            let rain_i = rain_at(field, mob.pos);
-            // Rain reaches the zombie only under direct sky (raw sky light,
-            // daylight-independent: night rain wets too). When it does, the
-            // same deck that rains occludes the sun, so a rained-on zombie
-            // is never "sunlit" — its burn only winds down.
-            let rained_on = rain_i > 0.0 && sky.is_some_and(|s| s >= SUNBURN_SKY_THRESHOLD);
-            let sunlit = !rained_on && sky.is_some_and(|s| s * daylight >= SUNBURN_SKY_THRESHOLD);
-            burn.stage_ticks += 1;
-            burn.dark_ticks = if sunlit {
-                0
-            } else if rained_on {
-                burn.dark_ticks + 1 + (rain_i * RAIN_COOL_BOOST) as u32
-            } else {
-                burn.dark_ticks + 1
             };
-
-            if burn.dark_ticks >= DARK_COOL_TICKS {
-                // Out of the sun (or rained on) long enough: cool one stage.
-                burn.dark_ticks = 0;
-                match burn.stage {
-                    BurnStage::Light => {
-                        mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, false);
-                        extinguished.push(mob.id);
-                        continue;
-                    }
-                    BurnStage::Great => {
-                        mob_emitter_set(mob.id, GREAT_FIRE_EMITTER, false);
-                        mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, true);
-                        burn.stage = BurnStage::Light;
-                        burn.stage_ticks = 0;
-                    }
-                }
-            } else if burn.stage == BurnStage::Light
-                && sunlit
-                && burn.stage_ticks >= LIGHT_FIRE_TICKS
-            {
-                // 200 ticks of light burn AND still in direct sunlight:
-                // escalate. A zombie that found shade before the deadline
-                // stays on light fire until the sun catches it again.
-                mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, false);
-                mob_emitter_set(mob.id, GREAT_FIRE_EMITTER, true);
-                burn.stage = BurnStage::Great;
-                burn.stage_ticks = 0;
-            }
-
-            // Damage keeps its per-stage cadence while burning, sunlit or not.
-            // Stage transitions reset the counter, so the first hit of a stage
-            // lands one full interval in.
-            let (interval, amount) = match burn.stage {
-                BurnStage::Light => (LIGHT_FIRE_DAMAGE_INTERVAL, LIGHT_FIRE_DAMAGE),
-                BurnStage::Great => (GREAT_FIRE_DAMAGE_INTERVAL, GREAT_FIRE_DAMAGE),
-            };
-            if burn.stage_ticks > 0 && burn.stage_ticks % interval == 0 {
-                // Burn is steady damage-over-time: its pipeline carries the
-                // usual flash/sound/death presentation but NO knockback and
-                // NO `Immunity` — burn ticks are neither blocked by the
-                // engine i-frame window nor grant one, so a burning zombie
-                // can still be meleed at full cadence.
-                damage_mob_with_feedback(mob.id, amount, None, burn_feedback(), None);
+            let rain = rain_at(field, mob.pos);
+            let rained_on = rain > 0.0 && sky >= SUNBURN_SKY_THRESHOLD;
+            if rained_on {
+                entity_condition_cool(entity, fire.id, (rain * RAIN_COOL_BOOST) as u32);
+            } else if rain == 0.0 && sky * daylight >= SUNBURN_SKY_THRESHOLD {
+                let (stage, ticks) = if burning.is_some_and(|b| b.elapsed >= LIGHT_FIRE_TICKS) {
+                    (fire.great, DARK_COOL_TICKS * 2)
+                } else {
+                    (fire.light, DARK_COOL_TICKS)
+                };
+                entity_condition_apply(entity, fire.id, stage, ticks);
             }
         }
-        for id in extinguished {
-            self.burning.remove(&id);
-        }
     }
-}
-
-/// The burn tick's damage pipeline: the default presentation (flash, hurt /
-/// death sounds, ragdoll on a lethal tick) minus knockback — fire doesn't
-/// shove — and minus `Immunity`, so burn damage neither respects nor grants
-/// the engine i-frame window.
-fn burn_feedback() -> MobDamageFeedback {
-    MobDamageFeedback {
-        components: vec![
-            MobDamageFeedbackComponent::DecreaseHealth,
-            MobDamageFeedbackComponent::Flash { duration: 0.3 },
-            MobDamageFeedbackComponent::Sound {
-                category: MobDamageSound::Hurt,
-            },
-            MobDamageFeedbackComponent::Sound {
-                category: MobDamageSound::Death,
-            },
-            MobDamageFeedbackComponent::Ragdoll,
-        ],
-    }
-}
-
-/// The cell holds engine water. `get_block`'s stream-finality gate
-/// (`None`) reads as "not water" — never act on frozen state.
-fn in_water(water: Option<BlockId>, cell: [i32; 3]) -> bool {
-    water.is_some() && get_block(cell) == water
 }
 
 fn cell_of(pos: [f32; 3]) -> [i32; 3] {
@@ -525,10 +366,6 @@ fn cell_of(pos: [f32; 3]) -> [i32; 3] {
 /// streamed content is not final (`light_at` carries the gate itself).
 fn sky_light(cell: [i32; 3]) -> Option<f32> {
     light_at(cell).map(|l| l.sky as f32)
-}
-
-fn in_sunlight(pos: [f32; 3], daylight: f32) -> bool {
-    sky_light(cell_of(pos)).is_some_and(|sky| sky * daylight >= SUNBURN_SKY_THRESHOLD)
 }
 
 /// Rain intensity of the weather field at the mob's column; 0 with no field.

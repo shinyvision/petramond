@@ -2,7 +2,9 @@ use petramond_world::block::CellView;
 use petramond_world::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::super::face::{Face, FACES};
-use super::cell_class::{class_of, FAST_CUBE, PAD_OPAQUE, PAD_SEALS, PAD_SLAB, SKIP};
+use super::cell_class::{
+    class_of, FAST_CUBE, PAD_OPAQUE, PAD_OPAQUE_FLUID, PAD_SEALS, PAD_SLAB, SKIP,
+};
 use super::cube_face::face_index;
 use super::pad::{mesh_pad_idx, SectionMeshPad, SECTION_PAD};
 
@@ -106,6 +108,13 @@ pub(super) fn build_exposed_masks(
                     || (c & PAD_SLAB != 0
                         && petramond_world::block_state::SlabState::from_cell(pad.cell_states[i])
                             .is_full())
+                    || (c & PAD_OPAQUE_FLUID != 0
+                        && pad.fluid_fills_local(
+                            px as i32 - 1,
+                            py as i32 - 1,
+                            pz as i32 - 1,
+                            petramond_world::block::Block::from_id(pad.blocks[i]),
+                        ))
                 {
                     row |= 1u32 << px;
                 // Air, water, plants and plain cubes are the overwhelming
@@ -128,7 +137,7 @@ pub(super) fn build_exposed_masks(
 
     let mut candidate_rows = [0u32; SECTION_SIZE * SECTION_SIZE];
     // Cells the scan has real work for whatever their exposure: plants,
-    // torches, box shapes, models, water, glass — everything that is neither
+    // torches, box shapes, models, fluids, glass — everything that is neither
     // air/chest/door nor a plain cube.
     let mut work_rows = [0u32; SECTION_SIZE * SECTION_SIZE];
     for ly in 0..SECTION_SIZE {

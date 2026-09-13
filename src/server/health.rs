@@ -10,6 +10,7 @@
 //! `player_damaged` / `player_died` events fire consistently.
 
 use crate::events::{DamageSource, Outcome, PlayerDamagePre, PostEvent};
+use petramond_world::damage::Immunity;
 
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
@@ -63,33 +64,59 @@ impl ServerGame {
         );
     }
 
-    /// Consume the water entry the fall tracker latched (a fall INTO water —
-    /// `FallOutcome::Splashed`) and throw the `petramond:water_splash` burst at
-    /// the surface. Presentation only, no damage: water broke the fall.
-    pub fn tick_water_splash(&mut self, s: usize, events: &mut TickEvents) {
+    /// Consume the fluid entry the fall tracker latched (a fall INTO a
+    /// splashing fluid — `FallOutcome::Splashed`) and throw that fluid's
+    /// splash at the surface. Presentation only, no damage: the fluid broke
+    /// the fall.
+    pub fn tick_fluid_splash(&mut self, s: usize, events: &mut TickEvents) {
         let fall = std::mem::replace(&mut self.sessions[s].pending_splash, 0.0);
         if self.sessions[s].player.is_spectator() {
             return;
         }
         let feet = self.sessions[s].player.pos;
-        self.push_water_splash(feet, fall, events);
+        self.push_fluid_splash(feet, fall, events);
     }
 
-    /// The single player-damage funnel: reject engine-owned immunity, dispatch
-    /// `player_damage_pre` (mutable amount, cancellable), apply what survives,
-    /// grant the global immunity window, queue `player_damaged`, and fire
-    /// `player_died` exactly once per >0 → 0 health transition. There is NO
-    /// default death consequence — the event just fires; a mod (or future core
-    /// content) decides what death means.
+    /// An ORDINARY player hit through [`damage_player_through_funnel`]: it
+    /// takes part in the engine-fixed immunity window (rejected while one is
+    /// active, opens a fresh one on a real health loss). Every attack, fall
+    /// and mod hit is this.
     ///
-    /// Returns whether damage was actually applied, so a caller can gate the
-    /// side effects that must die with a cancelled hit (a mob strike's knockback).
+    /// [`damage_player_through_funnel`]: ServerGame::damage_player_through_funnel
     pub fn damage_player(
         &mut self,
         s: usize,
         amount: i32,
         source: DamageSource,
         origin: Option<petramond_math::math::Vec3>,
+        events: &mut TickEvents,
+    ) -> bool {
+        self.damage_player_through_funnel(s, amount, source, origin, Immunity::PLAYER, events)
+    }
+
+    /// The single player-damage funnel: reject a hit its `immunity`
+    /// composition blocks, dispatch `player_damage_pre` (mutable amount,
+    /// cancellable), apply what survives, open the immunity window the
+    /// composition grants, queue `player_damaged`, and fire `player_died`
+    /// exactly once per >0 → 0 health transition. There is NO default death
+    /// consequence — the event just fires; a mod (or future core content)
+    /// decides what death means.
+    ///
+    /// `immunity` is the one composable piece of a player hit (the mob
+    /// pipeline spells the same choice as its `petramond:immunity`
+    /// component): [`Immunity::PLAYER`] is an ordinary hit, [`Immunity::Exempt`]
+    /// is damage on its own clock (fluid contact, condition pulses) — it lands
+    /// under an active window and never shields the victim from a real hit.
+    ///
+    /// Returns whether damage was actually applied, so a caller can gate the
+    /// side effects that must die with a cancelled hit (a mob strike's knockback).
+    pub fn damage_player_through_funnel(
+        &mut self,
+        s: usize,
+        amount: i32,
+        source: DamageSource,
+        origin: Option<petramond_math::math::Vec3>,
+        immunity: Immunity,
         events: &mut TickEvents,
     ) -> bool {
         // Non-positive damage is a non-event (matching Player::apply_damage's
@@ -106,7 +133,7 @@ impl ServerGame {
         }
         // Engine immunity is a sink rule, not a mod hook. Rejected attempts
         // produce no pre-event, feedback, or source-specific side effects.
-        if self.sessions[s].player.is_damage_immune() {
+        if immunity.blocks(self.sessions[s].player.damage_immunity()) {
             return false;
         }
         let mut pre = PlayerDamagePre {
@@ -145,7 +172,7 @@ impl ServerGame {
             return false;
         }
         let was_alive = self.sessions[s].player.health() > 0;
-        let applied = self.sessions[s].player.apply_damage(pre.amount);
+        let applied = self.sessions[s].player.apply_damage(pre.amount, immunity);
         if !applied {
             return false;
         }
@@ -213,24 +240,20 @@ impl ServerGame {
     }
 
     /// Step the player's active status effects one game tick and apply the
-    /// consequences of every interval boundary that fired. The split matters:
+    /// consequences of every interval boundary that fired:
     /// [`crate::player::Player::tick_effects`] owns the durations and reports
-    /// the boundaries; the consequences are applied HERE so a damaging
-    /// behavior (poison) can route through the [`damage_player`] funnel —
-    /// never through `Player::apply_damage` directly. Spectators keep ticking
+    /// the boundaries, the server owns what they do. Spectators keep ticking
     /// their durations too — an effect is wall-clock-like state, not a
     /// survival consequence — but healing a full or dead player is already a
     /// no-op inside [`crate::player::Player::heal`].
-    ///
-    /// [`damage_player`]: ServerGame::damage_player
     pub fn tick_effects(&mut self, s: usize) {
-        let player = &mut self.sessions[s].player;
-        for behavior in player.tick_effects() {
+        let fired = self.sessions[s].player.tick_effects();
+        for behavior in fired {
             match behavior {
                 petramond_world::effect::EffectBehavior::None
                 | petramond_world::effect::EffectBehavior::Speed { .. } => {}
                 petramond_world::effect::EffectBehavior::Regen { amount, .. } => {
-                    player.heal(amount);
+                    self.sessions[s].player.heal(amount);
                 }
             }
         }

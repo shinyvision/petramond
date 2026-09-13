@@ -87,6 +87,8 @@ pub struct Dripstone {
     /// The engine's water source — what must stand over a stalactite's root
     /// block for the run to drip and grow.
     pub water: BlockId,
+    /// So a snapshot cell holding a fluid is never rock to root on.
+    pub fluids: crate::fluids::Fluids,
     pub air: BlockId,
     /// Vessel row → the row a drip fills it into.
     pub vessels: Vec<(BlockId, BlockId)>,
@@ -94,7 +96,7 @@ pub struct Dripstone {
 }
 
 impl Dripstone {
-    pub fn resolve() -> Option<Dripstone> {
+    pub fn resolve(fluids: crate::fluids::Fluids) -> Option<Dripstone> {
         let mut vessels = Vec::new();
         for (vessel, raw) in blocks_with_data(VESSEL_KEY) {
             let Ok(spec) = serde_json::from_str::<VesselSpec>(&raw) else {
@@ -111,6 +113,7 @@ impl Dripstone {
             stalactite_wet: resolve_block_logged("exploration:stalactite_wet")?,
             stalagmite: resolve_block_logged("exploration:stalagmite")?,
             water: resolve_block_logged("petramond:water")?,
+            fluids,
             air: BlockId(0),
             vessels,
             biome: resolve_underground_biome(BIOME_KEY),

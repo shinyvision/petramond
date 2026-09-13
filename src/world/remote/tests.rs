@@ -124,7 +124,7 @@ fn column_payload_keeps_visible_glass_separate_from_sky_cover() {
     );
 }
 
-/// block ids, water meta, and every sparse state map — reads back
+/// block ids, fluid meta, and every sparse state map — reads back
 /// identically through the public query surface after installing the
 /// column payloads, the section payloads, and a tick's coalesced deltas.
 #[test]
@@ -134,8 +134,8 @@ fn replica_converges_on_payloads_and_deltas() {
     // One of each replicated state, through the normal edit funnels.
     assert!(server.set_block_world(2, 65, 2, Block::Stone));
     assert!(server.cell_kv_set(2, 65, 2, "testmod:heat".into(), vec![7, 1]));
-    assert!(server.set_water_world(IVec3::new(3, 65, 3), Block::Water, 0)); // source
-    assert!(server.set_water_world(IVec3::new(4, 65, 3), Block::Water, 0x83)); // falling
+    assert!(server.set_fluid_world(IVec3::new(3, 65, 3), Block::Water, 0)); // source
+    assert!(server.set_fluid_world(IVec3::new(4, 65, 3), Block::Water, 0x83)); // falling
     assert!(server.place_door(IVec3::new(5, 65, 5), Block::OakDoor, Facing::East));
     assert!(server.place_stair(
         IVec3::new(6, 65, 6),
@@ -194,7 +194,7 @@ fn replica_converges_on_payloads_and_deltas() {
     // Post-join edits ride the delta log.
     server.set_replication_capture(true);
     assert!(server.set_block_world(8, 65, 8, Block::Dirt));
-    assert!(server.set_water_world(IVec3::new(9, 65, 9), Block::Water, 0x05));
+    assert!(server.set_fluid_world(IVec3::new(9, 65, 9), Block::Water, 0x05));
     let deltas = server.take_block_deltas();
     assert!(!deltas.is_empty());
 
@@ -211,13 +211,13 @@ fn replica_converges_on_payloads_and_deltas() {
     replica.apply_remote_delta(BlockDelta {
         pos: IVec3::new(200, 65, 200),
         block_id: Block::Stone.id(),
-        water: None,
+        fluid: None,
         state: None,
         cell_kv: vec![],
     });
     assert_eq!(replica.chunk_block(200, 65, 200), 0);
 
-    // Raw content converges (blocks + water meta) at every touched cell.
+    // Raw content converges (blocks + fluid meta) at every touched cell.
     for (x, y, z) in [
         (2, 65, 2),
         (3, 65, 3),
@@ -241,9 +241,9 @@ fn replica_converges_on_payloads_and_deltas() {
             "block id diverged at ({x},{y},{z})"
         );
         assert_eq!(
-            replica.water_meta_world(x, y, z),
-            server.water_meta_world(x, y, z),
-            "water meta diverged at ({x},{y},{z})"
+            replica.fluid_meta_world(x, y, z),
+            server.fluid_meta_world(x, y, z),
+            "fluid meta diverged at ({x},{y},{z})"
         );
     }
     assert!(replica.is_water_source_world(IVec3::new(3, 65, 3)));
@@ -593,7 +593,7 @@ fn replication_log_coalesces_latest_wins_and_respects_capture() {
     w.set_replication_capture(true);
     assert!(w.set_block_world(3, 70, 3, Block::Stone));
     assert!(w.set_block_world(3, 70, 3, Block::Dirt)); // same cell, same tick
-    assert!(w.set_water_world(IVec3::new(4, 70, 4), Block::Water, 0x83));
+    assert!(w.set_fluid_world(IVec3::new(4, 70, 4), Block::Water, 0x83));
     let deltas = w.take_block_deltas();
     assert_eq!(deltas.len(), 2, "one delta per cell per take");
     let cell = deltas
@@ -601,13 +601,13 @@ fn replication_log_coalesces_latest_wins_and_respects_capture() {
         .find(|d| d.pos == IVec3::new(3, 70, 3))
         .expect("edited cell logged");
     assert_eq!(cell.block_id, Block::Dirt.id(), "latest write wins");
-    assert_eq!(cell.water, None);
+    assert_eq!(cell.fluid, None);
     let water = deltas
         .iter()
         .find(|d| d.pos == IVec3::new(4, 70, 4))
         .expect("water cell logged");
     assert_eq!(water.block_id, Block::Water.id());
-    assert_eq!(water.water, Some(0x83), "water meta rides the delta");
+    assert_eq!(water.fluid, Some(0x83), "fluid meta rides the delta");
     assert!(w.take_block_deltas().is_empty(), "take drains the log");
 }
 

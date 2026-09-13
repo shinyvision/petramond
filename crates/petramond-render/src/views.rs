@@ -166,6 +166,8 @@ pub struct MobPresentation {
     /// Body tint composed from the active bundles' `tint` values (white when
     /// none) — multiplied into the render tint like the hurt flash.
     pub emitter_tint: [f32; 3],
+    /// Body self-lighting from the active bundles (`0..=1`, strongest wins).
+    pub emitter_self_lit: f32,
     pub ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
 }
 
@@ -198,6 +200,11 @@ pub struct LocomotionBlend {
 /// no prev/current pairs to interpolate.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PlayerPresentation {
+    /// Multiply body tint from the body's active emitter bundles (its
+    /// conditions' stage emitters), composed with the hurt flash.
+    pub emitter_tint: [f32; 3],
+    /// Body self-lighting from the active bundles (`0..=1`, strongest wins).
+    pub emitter_self_lit: f32,
     /// Feet centre (model `y=0`).
     pub pos: Vec3,
     /// Body facing yaw (engine yaw space).

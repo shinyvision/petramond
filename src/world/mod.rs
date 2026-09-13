@@ -49,10 +49,10 @@ mod store;
 mod stream;
 
 pub use petramond_world::world::SavedIndex;
+pub mod fluid;
 mod surface_tint;
 mod tick;
 mod visibility;
-pub mod water;
 
 pub use cursor::SectionCursor;
 pub use entities::{ImpactTarget, ItemImpact, ItemStep, ITEM_MERGE_INTERVAL_TICKS};

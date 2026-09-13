@@ -152,6 +152,7 @@ fn mob_presentation(id: u64) -> MobPresentation {
         emitters: Vec::new(),
         anims: Vec::new(),
         emitter_tint: [1.0; 3],
+        emitter_self_lit: 0.0,
         ragdoll_pose: None,
     }
 }

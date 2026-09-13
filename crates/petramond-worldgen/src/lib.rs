@@ -133,7 +133,7 @@ pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u
 /// engine side of the mod ABI's `TerrainSolidAt`.
 ///
 /// Solid means what the fill+carve stages leave behind: at or below the
-/// column's density surface, and not cut away by a carver. Air and water are
+/// column's density surface, and not cut away by a carver. Air and fluids are
 /// both `false`; features (scatter, vegetation, trees, mod writes) are not
 /// included, because they are not positional — they depend on a stage having
 /// run.
@@ -151,70 +151,40 @@ pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u
 pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
     terrain_samples(seed, positions)
         .into_iter()
-        .map(|(_, _, solid)| solid)
+        .map(|(_, _, space)| space == TerrainSpace::Solid)
         .collect()
 }
 
 pub use mod_api::TerrainSpace;
 
-/// Distinguish dry clearance from aquifers and surface water without loading
-/// neighbouring sections. Shares the terrain-solid query's surface/carve path.
+/// [`terrain_solid_at`] telling air from fluid, without loading neighbouring
+/// sections: a cell holding the sea, an aquifer, a pool or a fall is neither
+/// ground to stand on nor room to grow into.
 pub fn terrain_space_at(seed: u32, positions: &[[i32; 3]]) -> Vec<TerrainSpace> {
-    let samples = terrain_samples(seed, positions);
-    let caves = cave_field(seed);
-    let table = data::underground::table();
-    let wet_candidates: Vec<_> = samples
-        .iter()
-        .filter_map(|(p, surface, solid)| {
-            (!solid
-                && p[1] <= *surface
-                && table
-                    .aquifer_y_span
-                    .is_some_and(|(lo, hi)| (lo..=hi).contains(&p[1])))
-            .then_some(*p)
-        })
-        .collect();
-    let mut wet_biomes = underground_biomes_at(seed, &wet_candidates).into_iter();
-    samples
+    terrain_samples(seed, positions)
         .into_iter()
-        .map(|(pos, surface, solid)| {
-            let field_space = caves.field_space_at(pos);
-            if solid {
-                return TerrainSpace::Solid;
-            }
-            if pos[1] > surface {
-                return field_space.unwrap_or(if pos[1] <= petramond_world::chunk::SEA_LEVEL {
-                    TerrainSpace::Water
-                } else {
-                    TerrainSpace::Air
-                });
-            }
-            if table
-                .aquifer_y_span
-                .is_some_and(|(lo, hi)| (lo..=hi).contains(&pos[1]))
-            {
-                let biome = wet_biomes.next().expect("one biome per wet candidate");
-                if table
-                    .aquifer(biome)
-                    .is_some_and(|aquifer| pos[1] <= aquifer.level)
-                {
-                    return field_space.unwrap_or(TerrainSpace::Water);
-                }
-            }
-            field_space.unwrap_or(TerrainSpace::Air)
-        })
+        .map(|(_, _, space)| space)
         .collect()
 }
 
-fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, bool)> {
+/// Each position's `(clamped position, column surface, terrain occupancy)`.
+fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, TerrainSpace)> {
+    terrain_samples_in(&cave_field(seed), &surface_system(seed), seed, positions)
+}
+
+/// [`terrain_samples`] over explicit generation sources.
+fn terrain_samples_in(
+    caves: &noise::cave_field::CaveField,
+    surface: &density::surface::SurfaceDensitySystem,
+    seed: u32,
+    positions: &[[i32; 3]],
+) -> Vec<([i32; 3], i32, TerrainSpace)> {
     use petramond_world::chunk::{SectionPos, SECTION_SIZE};
     const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
     /// Positions inside one section from which filling and carving the whole
     /// section once — kept for its generation and every later probe — beats
     /// sampling them on their own lattice.
     const SECTION_MASK_MIN: usize = 128;
-    let caves = cave_field(seed);
-    let surface = surface_system(seed);
     let mut tile: Option<(i32, i32, Vec<i32>)> = None;
     // Pair each position with its column surface first (one tile fetch per
     // 16×16 run). Dense groups then read the memoized section terrain, and
@@ -233,8 +203,8 @@ fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, boo
         let (tcx, tcz) = (x.div_euclid(TILE), z.div_euclid(TILE));
         if !matches!(&tile, Some((cx, cz, _)) if *cx == tcx && *cz == tcz) {
             let (_, raw) = feature::cached_feature_region(
-                &surface,
-                &caves,
+                surface,
+                caves,
                 seed,
                 tcx * TILE,
                 tcz * TILE,
@@ -259,15 +229,15 @@ fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, boo
         }
         groups[last].1.push(i as u32);
     }
-    let mut solid = vec![false; positions.len()];
+    let mut space = vec![TerrainSpace::Air; positions.len()];
     let mut sparse: Vec<([i32; 3], i32)> = Vec::new();
     let mut sparse_idx: Vec<u32> = Vec::new();
     for (sp, idx) in groups {
         let sp = SectionPos::new(sp[0], sp[1], sp[2]);
         let mask = if idx.len() >= SECTION_MASK_MIN {
             let (region, raw) = feature::cached_feature_region(
-                &surface,
-                &caves,
+                surface,
+                caves,
                 seed,
                 sp.cx * TILE,
                 sp.cz * TILE,
@@ -275,23 +245,22 @@ fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, boo
                 TILE as usize,
             );
             let biomes: Vec<u8> = region.biomes.iter().map(|b| b.id()).collect();
-            Some(section_memo::solid_mask(
-                &surface, &caves, seed, sp, &biomes, &raw,
+            Some(section_memo::space_mask(
+                surface, caves, seed, sp, &biomes, &raw,
             ))
         } else {
-            section_memo::solid_mask_if_memoized(&caves, seed, sp)
+            section_memo::space_mask_if_memoized(caves, seed, sp)
         };
         match mask {
             Some(mask) => {
                 let (ox, oy, oz) = sp.origin_world();
                 for &i in &idx {
                     let [x, y, z] = queries[i as usize].0;
-                    let cell = petramond_world::chunk::section_idx(
+                    space[i as usize] = mask.at(petramond_world::chunk::section_idx(
                         (x - ox) as usize,
                         (y - oy) as usize,
                         (z - oz) as usize,
-                    );
-                    solid[i as usize] = mask[cell / 64] & (1 << (cell % 64)) != 0;
+                    ));
                 }
             }
             None => {
@@ -303,19 +272,48 @@ fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, boo
         }
     }
     if !sparse.is_empty() {
-        let mut carved = Vec::new();
-        caves.cave_carved_batch(&sparse, &mut carved);
+        let mut fills = Vec::new();
+        caves.cave_fill_batch(&sparse, &mut fills);
         for (k, &i) in sparse_idx.iter().enumerate() {
             let (p, surf_y) = queries[i as usize];
-            solid[i as usize] = match caves.field_space_at(p) {
-                Some(TerrainSpace::Solid) => true,
-                Some(_) => false,
-                None => p[1] <= surf_y && (no_carve[i as usize] || !carved[k]),
+            space[i as usize] = match caves.field_space_at(p) {
+                Some(field) => field,
+                // Above the column's surface the terrain fill, not the carve,
+                // decides: open sky, or the ocean standing in it.
+                None if p[1] > surf_y => {
+                    if p[1] <= petramond_world::chunk::SEA_LEVEL {
+                        TerrainSpace::Fluid
+                    } else {
+                        TerrainSpace::Air
+                    }
+                }
+                None if no_carve[i as usize] => TerrainSpace::Solid,
+                None => match fills[k] {
+                    Some(block) => section_memo::space_of(block),
+                    None => TerrainSpace::Solid,
+                },
             };
+        }
+        // The falls the section stamp and the memoized mask apply, from the
+        // same per-chunk claims, so a sparse answer matches a cached one.
+        if let Some(top) = caves.falls_top() {
+            let mut chunk = None;
+            for &i in &sparse_idx {
+                let p = queries[i as usize].0;
+                if p[1] > top {
+                    continue;
+                }
+                let at = [p[0].div_euclid(TILE), p[2].div_euclid(TILE)];
+                if !matches!(&chunk, Some((c, _)) if *c == at) {
+                    chunk = Some((at, caves.chunk_falls(at[0], at[1])));
+                }
+                let (_, falls) = chunk.as_ref().expect("chunk just fetched");
+                space[i as usize] = falls.space_at(p, space[i as usize]);
+            }
         }
     }
     (0..positions.len())
-        .map(|i| (queries[i].0, queries[i].1, solid[i]))
+        .map(|i| (queries[i].0, queries[i].1, space[i]))
         .collect()
 }
 
@@ -422,21 +420,66 @@ mod tests {
     /// The positional terrain query PROMISES the blocks a section will
     /// actually get. A mod uses it to decide, once, whether a structure that
     /// spans sections exists at all, so a drift between the query and the
-    /// fill+carve pipeline puts mod content inside rock or floating in air —
-    /// with nothing on either side to notice. Deep sections only: vegetation
-    /// and trees add blocks the query deliberately does not model.
+    /// fill+carve pipeline puts mod content inside rock, floating in air, or
+    /// standing in a fluid. Deep sections only: vegetation and trees add
+    /// blocks the query deliberately does not model. The shipped habitats
+    /// carry a fall row every column rolls, and the sample includes a chunk
+    /// holding a fall, whose cells are asked sparsely before their sections'
+    /// terrain is memoized and again after: the answer must not depend on
+    /// what is cached.
     #[test]
     fn the_terrain_query_matches_the_blocks_a_section_receives() {
         use petramond_world::chunk::SectionPos;
         use petramond_world::chunk::SECTION_SIZE;
 
-        let seed = 0x0E58_1000;
-        let gen = driver::ChunkGenerator::new(seed);
+        // A seed of its own: the feature tile memo is keyed on the seed alone.
+        let seed = 0x0E58_1001;
+        const ALWAYS: &str = r#"{"fluid_falls":[{"fluid_fall":"test:always","fluid":"petramond:lava",
+            "chance":1.0,"y":[-38,-11],"min_surface":45}]}"#;
+        let shipped = data::underground::shipped_layer();
+        let table = data::underground::synthetic_table(&[&shipped, ALWAYS]);
+        let gen = driver::ChunkGenerator::with_caves(
+            seed,
+            noise::cave_field::CaveField::with_table(seed, table),
+        );
+        let (surface, caves) = gen.sources();
+        let space_at = |positions: &[[i32; 3]]| -> Vec<TerrainSpace> {
+            terrain_samples_in(caves, surface, seed, positions)
+                .into_iter()
+                .map(|(_, _, space)| space)
+                .collect()
+        };
+        let mut near: Vec<(i32, i32)> =
+            (-2..2).flat_map(|z| (-2..2).map(move |x| (x, z))).collect();
+        near.sort_by_key(|&(x, z)| x * x + z * z);
+        let (fall_chunk, mut fall_cells) = near
+            .into_iter()
+            .find_map(|(cx, cz)| {
+                let mut cells = Vec::new();
+                caves
+                    .chunk_falls(cx, cz)
+                    .cells([i32::MIN; 3], [i32::MAX; 3], |c| cells.push(c.pos));
+                (!cells.is_empty()).then_some(((cx, cz), cells))
+            })
+            .expect("a fall where every column rolls one");
+        // Few enough per section that every one is answered sparsely.
+        fall_cells.truncate(100);
+        let cold = space_at(&fall_cells);
+        let fall_cys: std::collections::BTreeSet<i32> =
+            fall_cells.iter().map(|p| p[1].div_euclid(16)).collect();
+
         let mut checked = 0usize;
         let mut open = 0usize;
-        for (cx, cz) in [(0, 0), (3, -2), (-5, 7)] {
+        let mut fluid = 0usize;
+        let sample = [(0, 0), (3, -2), (-5, 7), fall_chunk];
+        for (cx, cz) in sample {
             let col = gen.generate_column_gen(cx, cz);
-            for cy in [-4, -3, -2] {
+            let cys: Vec<i32> = if (cx, cz) == fall_chunk {
+                fall_cys.iter().copied().collect()
+            } else {
+                vec![-4, -3, -2]
+            };
+            for cy in cys {
                 let section = gen.generate_section(SectionPos::new(cx, cy, cz), &col);
                 let (ox, oy, oz) = section.origin_world();
                 let mut probe = Vec::with_capacity(SECTION_SIZE.pow(3));
@@ -447,22 +490,23 @@ mod tests {
                         }
                     }
                 }
-                let solid = terrain_solid_at(seed, &probe);
+                let space = space_at(&probe);
                 let mut i = 0;
                 for ly in 0..SECTION_SIZE {
                     for lz in 0..SECTION_SIZE {
                         for lx in 0..SECTION_SIZE {
                             let id = section.block_raw(lx, ly, lz);
-                            let is_solid = id != Block::Air.id() && id != Block::Water.id();
+                            let held = section_memo::space_of(id);
                             assert_eq!(
-                                solid[i],
-                                is_solid,
-                                "query says solid={} but section {:?} holds block {id} at {:?}",
-                                solid[i],
+                                space[i],
+                                held,
+                                "query says {:?} but section {:?} holds block {id} at {:?}",
+                                space[i],
                                 (cx, cy, cz),
                                 probe[i]
                             );
-                            open += usize::from(!is_solid);
+                            fluid += usize::from(held == TerrainSpace::Fluid);
+                            open += usize::from(held == TerrainSpace::Air);
                             checked += 1;
                             i += 1;
                         }
@@ -474,6 +518,17 @@ mod tests {
         assert!(
             open > 0,
             "no carved cell in the sample; the test is vacuous"
+        );
+        assert!(
+            fluid > 0,
+            "no fluid cell in the sample, so the half of this that keeps \
+             content out of a fluid proves nothing — widen the sample"
+        );
+        let warm = space_at(&fall_cells);
+        assert_eq!(cold, warm, "a fall's cells answer differently once cached");
+        assert!(
+            warm.contains(&TerrainSpace::Fluid),
+            "no fall cell holds fluid"
         );
     }
 

@@ -349,6 +349,7 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
             data: None,
         }));
         SelfState {
+            conditions: Vec::new(),
             health: 20,
             mode: 0,
             effects: Vec::new(),
@@ -941,7 +942,7 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
         block_deltas: vec![petramond::net::protocol::BlockDelta {
             pos,
             block_id: Block::Stone.0,
-            water: None,
+            fluid: None,
             state: None,
             cell_kv: vec![],
         }],

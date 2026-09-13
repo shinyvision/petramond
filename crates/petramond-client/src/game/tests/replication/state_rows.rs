@@ -8,6 +8,84 @@ use petramond::events::tick::{TickEvents, TICK_DT};
 use petramond::events::DamageSource;
 use petramond_math::math::Vec3;
 
+#[test]
+fn replicated_conditions_draw_on_local_and_remote_players_without_hud_effects() {
+    let mut game = game_on_empty_chunk();
+    let remote = game
+        .server
+        .add_session_for_test(petramond::player::Player::new(Vec3::new(4.5, 65.0, 4.5)));
+    let mut scratch = GamePresentationScratch::new();
+    let view = petramond_render::camera::ViewVolume::unbounded();
+    let baseline = scratch.snapshot(&game, 0.0, &view).particle_emitters.len();
+    let burning = petramond_world::condition::by_name("petramond:burning").unwrap();
+    let strongest = (burning.def().stages.len() - 1) as u8;
+    let bundle = petramond_world::particle_emitters::by_key(
+        burning.def().stages[strongest as usize].emitter.unwrap(),
+    )
+    .unwrap();
+    for s in [0, remote] {
+        game.server.sessions[s]
+            .player
+            .exposure_mut()
+            .apply(burning.def(), strongest, 80);
+    }
+    let events = TickEvents::default();
+    let shared = game.server.shared_tick_rows(&events);
+    let update = game
+        .server
+        .build_tick_update(0, &events, &[], &[], &[], &[], &shared);
+    game.apply_tick_update(Box::new(update));
+    game.commit_replication_window_for_test();
+    assert!(game.player_effect_icons().is_empty());
+    let presentation = scratch.snapshot(&game, 0.0, &view);
+    assert_eq!(
+        presentation.particle_emitters.len(),
+        baseline + bundle.rows.len() * 2,
+        "first-person fire and the visible remote each contribute their flames"
+    );
+    assert_eq!(
+        presentation.remote_players[0].body.emitter_tint,
+        bundle.tint.unwrap_or([1.0; 3])
+    );
+    assert_eq!(
+        presentation.remote_players[0].body.emitter_self_lit,
+        bundle.body_self_lit
+    );
+
+    game.toggle_third_person();
+    game.set_particles_mode(petramond::save::client::ParticlesMode::Off);
+    let presentation = scratch.snapshot(&game, 0.0, &view);
+    assert!(presentation.particle_emitters.is_empty());
+    assert_eq!(
+        presentation.player.unwrap().emitter_self_lit,
+        bundle.body_self_lit
+    );
+    assert_eq!(
+        presentation.remote_players[0].body.emitter_self_lit,
+        bundle.body_self_lit
+    );
+    game.set_particles_mode(petramond::save::client::ParticlesMode::Full);
+
+    for s in [0, remote] {
+        game.server.sessions[s].player.clear_exposure();
+    }
+    let shared = game.server.shared_tick_rows(&events);
+    let update = game
+        .server
+        .build_tick_update(0, &events, &[], &[], &[], &[], &shared);
+    game.apply_tick_update(Box::new(update));
+    game.commit_replication_window_for_test();
+    let presentation = scratch.snapshot(&game, 0.0, &view);
+    assert_eq!(
+        presentation.particle_emitters.len(),
+        baseline,
+        "extinguishing removes both bodies' flames"
+    );
+    assert_eq!(presentation.remote_players[0].body.emitter_tint, [1.0; 3]);
+    assert_eq!(presentation.remote_players[0].body.emitter_self_lit, 0.0);
+    assert_eq!(presentation.player.unwrap().emitter_self_lit, 0.0);
+}
+
 /// The HUD reads the replicated self view, and after a damage tick's batch it
 /// matches session truth exactly.
 #[test]
@@ -183,6 +261,7 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
 
     fn row(id: u8, mining: Option<(IVec3, u8)>, visible: bool) -> PlayerStateRow {
         PlayerStateRow {
+            conditions: Vec::new(),
             id: PlayerId(id),
             transform: petramond::net::protocol::Transform {
                 pos: Vec3::new(4.0, 64.0, 4.0),

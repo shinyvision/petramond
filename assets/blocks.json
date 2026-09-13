@@ -257,25 +257,149 @@
     },
     {
       "block": "petramond:water",
+      "fluid": {
+        "delay": 5,
+        "drop_off": 1,
+        "renewable": true,
+        "motion": {
+          "speed_scale": 1.0,
+          "accel": 16.0,
+          "friction": 0.3,
+          "rise": 3.0,
+          "sink": 1.4,
+          "vertical_accel": 14.0,
+          "entry_friction": 0.0,
+          "probe_fraction": 0.3333333333333333,
+          "probe_offset": 0.0,
+          "climb": "jump"
+        },
+        "current": {
+          "speed": 0.75,
+          "accel": 9.0
+        },
+        "splash": {
+          "burst": "petramond:water_splash",
+          "sound_small": "petramond:water_splash_small",
+          "sound_big": "petramond:water_splash_big"
+        },
+        "contact": {
+          "clears": [
+            "petramond:burning"
+          ]
+        },
+        "medium": {
+          "fog_color": [0.04, 0.16, 0.30],
+          "fog_start": 0.5,
+          "fog_end": 22.0,
+          "volume_tint": [0.42, 0.62, 0.85],
+          "surface_tint": [0.42, 0.62, 0.85],
+          "surface_alpha": 0.78,
+          "albedo_mix": {
+            "toward": 0.32,
+            "amount": 0.6
+          },
+          "sheen": true,
+          "eye_margin": 0.03
+        }
+      },
       "shape": "cube",
       "flags": [
-        "transparent"
+        "transparent",
+        "fluid"
       ],
       "tags": [
         "replaceable"
       ],
-      "behavior": "water",
+      "behavior": "fluid",
       "interaction": "none",
       "collision": [],
       "emission": 0,
       "tiles": [
-        "water",
-        "water",
-        "water"
+        "water_still",
+        "water_still",
+        "water_still"
       ],
+      "flow_tile": "water_flow",
       "material": "none",
       "hardness": -1,
       "drops": []
+    },
+    {
+      "block": "petramond:lava",
+      "fluid": {
+        "delay": 30,
+        "drop_off": 2,
+        "renewable": false,
+        "motion": {
+          "speed_scale": 0.25,
+          "accel": 2.0,
+          "friction": 0.6,
+          "rise": 0.65,
+          "sink": 0.22,
+          "vertical_accel": 2.0,
+          "entry_friction": 0.6,
+          "probe_fraction": 0.0,
+          "probe_offset": 0.05,
+          "climb": "step"
+        },
+        "current": {
+          "speed": 0.0,
+          "accel": 0.0
+        },
+        "quench": {
+          "by": "petramond:water",
+          "result": "petramond:stone"
+        },
+        "contact": {
+          "damage": {
+            "amount": 3,
+            "interval": 10
+          },
+          "applies": {
+            "condition": "petramond:burning",
+            "stage": "great",
+            "ticks": 120
+          },
+          "destroys_items": true
+        },
+        "medium": {
+          "fog_color": [0.45, 0.09, 0.012],
+          "fog_start": 0.1,
+          "fog_end": 2.2,
+          "volume_tint": [1.0, 0.55, 0.35],
+          "surface_tint": [0.85, 0.55, 0.45],
+          "surface_alpha": 1.0,
+          "self_lit": 1.0
+        }
+      },
+      "shape": "cube",
+      "flags": [
+        "transparent",
+        "fluid"
+      ],
+      "tags": [
+        "replaceable",
+        "nav_hazard"
+      ],
+      "behavior": "fluid",
+      "interaction": "none",
+      "collision": [],
+      "emission": 30,
+      "light_color": [
+        1.0,
+        0.62,
+        0.32
+      ],
+      "tiles": [
+        "lava_still",
+        "lava_still",
+        "lava_still"
+      ],
+      "flow_tile": "lava_flow",
+      "material": "none",
+      "hardness": -1,
+      "drops": [],
+      "particle_emitter": "petramond:lava_embers"
     },
     {
       "block": "petramond:oak_log",
@@ -1657,9 +1781,9 @@
         "transparent",
         "translucent"
       ],
+      "melts_to": "petramond:water",
       "tags": [
         "slippery",
-        "melts",
         "merges_with_self"
       ],
       "behavior": "inert",

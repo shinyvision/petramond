@@ -1,4 +1,5 @@
-//! Client-side entities: dropped item-stacks and short-lived particles.
+//! Entity mechanics shared across body kinds (dropped item-stacks, the shore
+//! climb swimmers use) and short-lived particles.
 //!
 //! Owned by `App` (never `World`), so they stay off the worker threads and out
 //! of the chunk save path. Ticked in `App::tick` between `world.poll()` and
@@ -10,10 +11,19 @@
 //! `crate::atlas`; the App maps these to render instances in a later layer.
 
 mod dropped_item;
+#[cfg(test)]
+pub mod fluid_fixture;
+pub mod shore;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use dropped_item::ATTRACT_RADIUS;
 pub use dropped_item::{DroppedItem, Fate, Flight, Heading, Motion, Stuck};
+
+/// Headroom a body's velocity may carry over its own physics caps:
+/// quantization, transient pushes, and a shore launch past the jump take-off.
+/// The server's claimed-velocity envelope applies this same slack, so an
+/// honest player's launch is always a claim the server accepts.
+pub const VELOCITY_SLACK: f32 = 1.25;
 
 /// A tiny deterministic hash → `f32` in `[0, 1)`. Replaces an RNG so spawns are
 /// reproducible and we never pull in the `rand` crate (banned in workflow

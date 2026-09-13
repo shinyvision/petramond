@@ -39,7 +39,7 @@ struct FrameUniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    atlas_anim: vec4<u32>,
+    atlas_layout: vec4<u32>,
     sky_color: vec4<f32>,
 };
 

@@ -136,6 +136,8 @@ pub struct PlayerRosterSnapshot {
     /// published on exactly one roster each, so a mod's tick system sees an
     /// edge once, one tick after it fired (which the eased pose lane hides).
     pub swing: mod_api::HandSwing,
+    /// Active body conditions, the ABI view.
+    pub conditions: Vec<mod_api::ConditionData>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -177,11 +179,14 @@ pub struct Player {
     /// mutates it on the deterministic tick through the server damage funnel;
     /// per-frame physics only *measures* falls (below).
     health: i32,
+    /// Transient body conditions and fluid contact, shared with mobs and
+    /// independent of status effects.
+    exposure: petramond_world::exposure::BodyExposure,
     /// Engine-owned global damage immunity. Transient: a fresh connection or
     /// respawn starts vulnerable regardless of saved health.
     damage_immunity: petramond_world::damage::DamageImmunity,
     /// Highest feet-`y` reached since the player last stood on the ground (or was in
-    /// water). The fall distance of a landing is this minus the landing `y`. Reset when
+    /// in a fluid). The fall distance of a landing is this minus the landing `y`. Reset when
     /// grounded/submerged so a fall is measured from where it began, and the arc of a
     /// jump counts from its apex, not its take-off.
     pub(super) fall_peak_y: f32,
@@ -236,6 +241,7 @@ impl Player {
             mode: PlayerMode::Survival,
             jumping: false,
             health: MAX_HEALTH,
+            exposure: Default::default(),
             damage_immunity: Default::default(),
             fall_peak_y: feet.y,
             fall_distance: 0.0,
@@ -270,22 +276,35 @@ impl Player {
         self.health = health.clamp(0, MAX_HEALTH);
     }
 
-    /// Subtract `points` half-hearts of damage, never below zero, and grant the
-    /// shared damage-immunity window. Returns whether health was actually lost.
-    /// Call this on the tick, not in per-frame physics.
-    pub fn apply_damage(&mut self, points: i32) -> bool {
-        if points <= 0 || self.health == 0 || self.damage_immunity.is_active() {
+    /// Subtract `points` half-hearts of damage, never below zero. `immunity` is
+    /// the hit's stake in the shared damage-immunity window: an ordinary hit
+    /// (`Immunity::PLAYER`) is rejected while the window is active and opens a
+    /// fresh one; damage-over-time (`Immunity::Exempt`) lands regardless and
+    /// opens none. Returns whether health was actually lost. Call this on the
+    /// tick, not in per-frame physics.
+    pub fn apply_damage(
+        &mut self,
+        points: i32,
+        immunity: petramond_world::damage::Immunity,
+    ) -> bool {
+        if points <= 0 || self.health == 0 || immunity.blocks(&self.damage_immunity) {
             return false;
         }
         self.health = (self.health - points).max(0);
-        self.damage_immunity
-            .grant_for(petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS);
+        immunity.grant(&mut self.damage_immunity);
         true
     }
 
     #[inline]
     pub fn is_damage_immune(&self) -> bool {
         self.damage_immunity.is_active()
+    }
+
+    /// The victim-global immunity timer, for a damage composition to judge
+    /// (`Immunity::blocks`) before the funnel dispatches anything.
+    #[inline]
+    pub fn damage_immunity(&self) -> &petramond_world::damage::DamageImmunity {
+        &self.damage_immunity
     }
 
     #[inline]
@@ -296,6 +315,21 @@ impl Player {
     #[inline]
     pub fn clear_damage_immunity(&mut self) {
         self.damage_immunity.clear();
+    }
+
+    /// The body's active conditions (burning and friends).
+    pub fn conditions(&self) -> &petramond_world::condition::BodyConditions {
+        self.exposure.conditions()
+    }
+
+    /// Conditions and fluid contact: every condition grant goes through here.
+    pub fn exposure_mut(&mut self) -> &mut petramond_world::exposure::BodyExposure {
+        &mut self.exposure
+    }
+
+    /// Drop every condition and contact clock: a fresh life, or no survival body.
+    pub fn clear_exposure(&mut self) {
+        self.exposure.clear();
     }
 
     /// Add `points` half-hearts, capped at [`MAX_HEALTH`]. A no-op for a
@@ -509,11 +543,11 @@ impl Player {
     }
 
     /// Update the fall bookkeeping after a physics sub-step has resolved `on_ground`
-    /// and the final feet `y`. `in_water` cancels the fall (water breaks a fall), a
+    /// and the final feet `y`. Controlled swimming or climbing cancels the fall; a
     /// fresh landing (`was_on_ground` false, now grounded) latches its distance, and
     /// while airborne the peak tracks the highest point of the arc.
-    pub(super) fn track_fall(&mut self, was_on_ground: bool, in_water: bool) {
-        if in_water {
+    pub(super) fn track_fall(&mut self, was_on_ground: bool, controlled: bool) {
+        if controlled {
             self.fall_peak_y = self.pos.y;
         } else if self.on_ground {
             if !was_on_ground {

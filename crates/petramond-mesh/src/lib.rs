@@ -21,10 +21,10 @@ pub mod plane;
 #[cfg(test)]
 mod skylight;
 pub use petramond_world::shape_mesh::slab;
+mod fluid;
 mod tint;
 mod torch;
 pub mod vertex;
-mod water;
 
 #[cfg(test)]
 pub use builder::build_section_mesh;
@@ -43,6 +43,7 @@ pub use vertex::MAX_TILES;
 pub use vertex::{pack_overlay, AO_SHIFT, CORNER_SHIFT, OVERLAY_FLAG, SHADE_SHIFT, SKY_SHIFT};
 pub use vertex::{pack_tint, retint, unpack_tint, DYED_FLAG2};
 pub use vertex::{ChunkMesh, ContactShadowVertex, ModelVertex, TerrainVertex, Vertex, SHADES};
+pub use vertex::{FLUID_FLOW_FLAG2, FLUID_MEDIUM_MASK, FLUID_MEDIUM_SHIFT, MAX_FLUID_MEDIA};
 
 #[cfg(test)]
 mod tests;

@@ -2,25 +2,60 @@ use super::*;
 
 #[test]
 fn health_damage_and_restore_clamp_to_the_valid_range() {
+    use petramond_world::damage::Immunity;
     let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
     assert_eq!(pl.health(), MAX_HEALTH, "starts at full health");
-    assert!(pl.apply_damage(3));
+    assert!(pl.apply_damage(3, Immunity::PLAYER));
     assert_eq!(pl.health(), MAX_HEALTH - 3);
-    assert!(!pl.apply_damage(0)); // non-positive is a no-op
+    assert!(!pl.apply_damage(0, Immunity::PLAYER)); // non-positive is a no-op
     assert_eq!(pl.health(), MAX_HEALTH - 3);
     assert!(
-        !pl.apply_damage(1000),
+        !pl.apply_damage(1000, Immunity::PLAYER),
         "the active i-frame window rejects damage"
     );
     for _ in 0..petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS {
         pl.tick_damage_immunity();
     }
-    assert!(pl.apply_damage(1000)); // never below zero
+    assert!(pl.apply_damage(1000, Immunity::PLAYER)); // never below zero
     assert_eq!(pl.health(), 0);
     pl.set_health(1000); // restore clamps to the max
     assert_eq!(pl.health(), MAX_HEALTH);
     pl.set_health(-5);
     assert_eq!(pl.health(), 0);
+}
+
+/// Damage-over-time is EXEMPT from the immunity window in both directions: a
+/// burn tick lands while an ordinary hit's window is open, and it opens no
+/// window of its own — so it can never shield the victim from a real hit.
+#[test]
+fn damage_over_time_neither_checks_nor_grants_the_immunity_window() {
+    use petramond_world::damage::Immunity;
+    let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
+    assert!(
+        pl.apply_damage(2, Immunity::PLAYER),
+        "the ordinary hit opens a window"
+    );
+    assert!(pl.is_damage_immune());
+    assert!(
+        pl.apply_damage(1, Immunity::Exempt),
+        "a burn tick lands under an active window"
+    );
+    assert_eq!(pl.health(), MAX_HEALTH - 3);
+
+    for _ in 0..petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS {
+        pl.tick_damage_immunity();
+    }
+    assert!(!pl.is_damage_immune());
+    assert!(pl.apply_damage(1, Immunity::Exempt));
+    assert!(
+        !pl.is_damage_immune(),
+        "a burn tick opens no window of its own"
+    );
+    assert!(
+        pl.apply_damage(2, Immunity::PLAYER),
+        "so the next ordinary hit lands at once"
+    );
+    assert_eq!(pl.health(), MAX_HEALTH - 6);
 }
 
 #[test]

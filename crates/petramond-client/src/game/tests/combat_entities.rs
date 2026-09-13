@@ -420,6 +420,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
                 dead: m.is_dead(),
                 shorn: false,
                 emitters: Vec::new(),
+                conditions: Vec::new(),
                 anims: Vec::new(),
                 ragdoll: None,
             })
@@ -483,6 +484,7 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
             dead: false,
             shorn: false,
             emitters: Vec::new(),
+            conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
         }
@@ -1013,6 +1015,7 @@ fn a_mob_pushes_the_player_per_frame() {
             dead: false,
             shorn: false,
             emitters: Vec::new(),
+            conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
         }]);
@@ -1040,6 +1043,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
 
     fn remote_row(pos: Vec3, visible: bool, sleeping: bool) -> PlayerStateRow {
         PlayerStateRow {
+            conditions: Vec::new(),
             id: PlayerId(1),
             transform: petramond::net::protocol::Transform {
                 pos,
@@ -1427,6 +1431,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
 
     fn remote_row(id: u8, pos: Vec3, visible: bool) -> PlayerStateRow {
         PlayerStateRow {
+            conditions: Vec::new(),
             id: PlayerId(id),
             transform: petramond::net::protocol::Transform {
                 pos,
@@ -1498,6 +1503,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
             dead: false,
             shorn: false,
             emitters: Vec::new(),
+            conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
         }]);

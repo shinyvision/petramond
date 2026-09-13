@@ -454,6 +454,7 @@ fn samples() -> Samples {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
         half_width: 0.4, height: 1.2, half_length: 0.4,
+        conditions: vec![ConditionData { condition: ConditionId(0), stage: 1, remaining: 120, elapsed: 3 }],
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
         id: Some(PlayerId(1)),
@@ -462,7 +463,7 @@ fn samples() -> Samples {
         off_held: None, use_held: false, holds_use: false,
         pose_anchor: Some([1.5, 2.0, -3.5]),
         swing: crate::HandSwing { mining: true, main: Some(crate::SwingKind::Attack), off: None },
-        half_width: 0.3, height: 1.8, eye_height: 1.62,
+        half_width: 0.3, height: 1.8, eye_height: 1.62, conditions: Vec::new(),
     }));
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
     s.pin("HostRet::MobTag", &HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
@@ -526,7 +527,7 @@ fn samples() -> Samples {
             off_held: Some(ItemId(5)), use_held: true, holds_use: false,
             pose_anchor: None,
             swing: crate::HandSwing::default(),
-            half_width: 0.3, height: 1.8, eye_height: 1.62,
+            half_width: 0.3, height: 1.8, eye_height: 1.62, conditions: Vec::new(),
         },
     }]));
     s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
@@ -544,6 +545,7 @@ fn samples() -> Samples {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
         half_width: 0.4, height: 1.2, half_length: 0.4,
+        conditions: vec![ConditionData { condition: ConditionId(0), stage: 1, remaining: 120, elapsed: 3 }],
     })));
     s.pin("HostRet::ItemEntity", &HostRet::ItemEntity(Some(ItemEntityData {
         id: 9, stack: ItemStackData { item: "m:i".into(), count: 1, data: vec![("m:k".into(), vec![7])] },
@@ -565,6 +567,13 @@ fn samples() -> Samples {
         material: "stone".into(), hardness: 1.5, harvest_tier: 1,
         preferred_tool: Some("pickaxe".into()), item: Some(ItemId(300)),
         collision: vec![([0.0, 0.0, 0.0], [1.0, 0.5, 1.0])],
+        fluid: Some(FluidInfoData {
+            delay: 30, drop_off: 2, renewable: false,
+            quench: Some(QuenchData { by: BlockId(1), result: BlockId(2) }),
+            contact_damage: Some(PulseData { amount: 3, interval: 10 }),
+            applies: Some(ConditionGrantData { condition: ConditionId(0), stage: 1, ticks: 120 }),
+            clears: vec![ConditionId(1)], destroys_items: true,
+        }),
     }))));
     s.pin("HostRet::HeldStack", &HostRet::HeldStack(Some(ItemStackData {
         item: "m:i".into(), count: 1, data: vec![("m:k".into(), vec![7])],
@@ -588,7 +597,7 @@ fn samples() -> Samples {
     s.pin("HostRet::TerrainHeights", &HostRet::TerrainHeights(vec![1, -2]));
     s.pin("HostRet::MaybeU16", &HostRet::MaybeU16(Some(300)));
     s.pin("HostRet::SectionBlocks", &HostRet::SectionBlocks(vec![1, 0, 9, 0]));
-    s.pin("HostRet::TerrainSpaces", &HostRet::TerrainSpaces(vec![TerrainSpace::Air, TerrainSpace::Water, TerrainSpace::Solid]));
+    s.pin("HostRet::TerrainSpaces", &HostRet::TerrainSpaces(vec![TerrainSpace::Air, TerrainSpace::Fluid, TerrainSpace::Solid]));
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
     s.pin("GuestCall::HandleEvent", &GuestCall::HandleEvent {
         id: 1, payload: EventPayload::PlayerDied,
@@ -619,7 +628,7 @@ fn samples() -> Samples {
         ctx: AiNodeCtx {
             mob_id: 1, pos: [1.0, 2.0, 3.0], cell: [1, 2, 3], yaw: 0.5,
             tick: 9, player_id: PlayerId(2),
-            player_pos: [4.0, 5.0, 6.0], nav_idle: true, in_water: false,
+            player_pos: [4.0, 5.0, 6.0], nav_idle: true, in_fluid: Some(BlockId(3)),
             target: Some(EntityRef::Mob(8)), attacker: Some((EntityRef::Player(PlayerId(2)), 3)),
             player_held: Some(ItemId(7)), player_foothold: Some([4, 5, 6]),
             tags: vec![("m:k".into(), MobTagValue::I64(-3))],
@@ -859,6 +868,8 @@ fn samples() -> Samples {
         DamageSource::PlayerAttack { id: PlayerId(1) },
         DamageSource::MobAttack { key: "m:k".into() },
         DamageSource::Mod { mod_id: "m".into() },
+        DamageSource::FluidContact { block: BlockId(3) },
+        DamageSource::Condition { condition: ConditionId(1) },
     ]);
     s.pin("ContainerKind::*", &vec![
         ContainerKind::new("petramond:inventory"), ContainerKind::new("petramond:chest"),
@@ -916,6 +927,14 @@ fn samples() -> Samples {
         BlockHookKind::RandomTick, BlockHookKind::ScheduledTick, BlockHookKind::NeighborUpdate,
     ]);
     s.pin("LightAperture::*", &vec![LightAperture::Opaque, LightAperture::Open]);
+
+    s.pin("HostCall::ResolveCondition", &HostCall::ResolveCondition { key: "m:c".into() });
+    s.pin("HostCall::ConditionNames", &HostCall::ConditionNames { conditions: vec![ConditionId(1)] });
+    s.pin("HostCall::EntityConditionApply", &HostCall::EntityConditionApply { entity: EntityRef::Mob(7), condition: ConditionId(0), stage: 1, ticks: 120 });
+    s.pin("HostCall::EntityConditionCool", &HostCall::EntityConditionCool { entity: EntityRef::Player(PlayerId(1)), condition: ConditionId(0), ticks: 3 });
+    s.pin("HostRet::Condition", &HostRet::Condition(Some(ConditionInfoData { id: ConditionId(0), key: "m:c".into(), stages: vec!["a".into()] })));
+    s.pin("HostCall::BlockInfos", &HostCall::BlockInfos { blocks: vec![BlockId(1), BlockId(9)] });
+    s.pin("HostRet::BlockInfos", &HostRet::BlockInfos(vec![None]));
 
     s
 }
@@ -1105,8 +1124,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203030201"),
-    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
-    ("HostRet::Player", "0801010000803f00000040000040400000000000000000000000000000003f0000803e28010001010200000003010000c03f00000040000060c0010100009a99993e6666e63f295ccf3f"),
+    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e0100017803"),
+    ("HostRet::Player", "0801010000803f00000040000040400000000000000000000000000000003f0000803e28010001010200000003010000c03f00000040000060c0010100009a99993e6666e63f295ccf3f00"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
@@ -1127,7 +1146,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobAnimState", "1a010000c03f0000403f0100000040"),
     ("HostRet::MaybeByte", "1b0104"),
     ("HostRet::MaybeI32", "1c010d"),
-    ("HostRet::Players", "1d010101010000803f00000040000040400000000000000000000000000000003f0000803e28010000000105010000000000009a99993e6666e63f295ccf3f"),
+    ("HostRet::Players", "1d010101010000803f00000040000040400000000000000000000000000000003f0000803e28010000000105010000000000009a99993e6666e63f295ccf3f00"),
     ("HostRet::EnvParams", "1e0200010000803f000000400000404000008040"),
     ("HostRet::BlockList", "1f020109"),
     ("HostRet::ItemList", "20020109"),
@@ -1137,7 +1156,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTags", "240101036d3a6b0001"),
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
-    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e"),
+    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e0100017803"),
     ("HostRet::ItemEntity", "280109036d3a690101036d3a6b01070100000000803f00000040000040400000000000000000000080c001"),
     ("HostRet::BytesMany", "29020102010200"),
     ("HostRet::ItemDataRows", "2a0103027b7d"),
@@ -1148,7 +1167,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Points", "2f01010000c03f0000204000006040"),
     ("HostRet::Bools", "30020100"),
     ("HostRet::GuiViewers", "310102036d3a6701020406"),
-    ("HostRet::BlockInfo", "32010573746f6e650000c03f0101077069636b61786501ac02010000000000000000000000000000803f0000003f0000803f"),
+    ("HostRet::BlockInfo", "32010573746f6e650000c03f0101077069636b61786501ac02010000000000000000000000000000803f0000003f0000803f011e020001010201060a01000178010101"),
     ("HostRet::HeldStack", "3301036d3a690101036d3a6b0107"),
     ("HostRet::Raycast", "340102040600020000002040"),
     ("HostRet::ItemEntities", "3500"),
@@ -1169,7 +1188,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::GuiClick", "04036d3a67017701020406"),
     ("GuestCall::HostileSpawnCandidate", "05010000803f000000400000404002040601020300002042"),
     ("GuestCall::BlockBehavior", "060100020406"),
-    ("GuestCall::AiNode", "0701010000803f00000040000040400204060000003f0902000080400000a0400000c040010001010801000203010701080a0c01036d3a6b0105"),
+    ("GuestCall::AiNode", "0701010000803f00000040000040400204060000003f0902000080400000a0400000c04001010301010801000203010701080a0c01036d3a6b0105"),
     ("GuestCall::ClientFrame", "08cdcc4c3d0000803f00000040000040400000003f0000803e8005e00301036d3a6700"),
     ("GuestCall::ClientKey", "090101"),
     ("GuestCall::ClientUi", "0a036d3a67000162"),
@@ -1235,7 +1254,7 @@ const PINS: &[(&str, &str)] = &[
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
     ("EventKind::*", "1c000102030405060708090a0b0c0d0e0f101112131415161718191a1b"),
-    ("DamageSource::*", "0400010102036d3a6b03016d"),
+    ("DamageSource::*", "0600010102036d3a6b03016d04030501"),
     ("ContainerKind::*", "031370657472616d6f6e643a696e76656e746f72790f70657472616d6f6e643a6368657374036d3a67"),
     ("Facing::*", "0400010203"),
     ("MobDamageFeedbackComponent::*", "0600010000003f020000803f0000003f030004050a"),
@@ -1253,6 +1272,13 @@ const PINS: &[(&str, &str)] = &[
     ("ClientUiEvent::*", "0400016201016201740201620174030162020000803f0000004001"),
     ("BlockHookKind::*", "03000102"),
     ("LightAperture::*", "020001"),
+    ("HostCall::ResolveCondition", "ae01036d3a63"),
+    ("HostCall::ConditionNames", "af010101"),
+    ("HostCall::EntityConditionApply", "b0010107000178"),
+    ("HostCall::EntityConditionCool", "b10100010003"),
+    ("HostRet::Condition", "3e0100036d3a63010161"),
+    ("HostCall::BlockInfos", "b201020109"),
+    ("HostRet::BlockInfos", "3f0100"),
 ];
 
 #[test]

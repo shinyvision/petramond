@@ -12,7 +12,7 @@
       },
       "sprite": "vehicles:boat",
       "tags": [],
-      "use_ray": "water"
+      "use_ray": {"fluids": ["petramond:water"]}
     },
     {
       "item": "vehicles:rail",

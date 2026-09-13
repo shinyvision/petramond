@@ -31,6 +31,7 @@ mod model_meta;
 mod nav;
 mod noise;
 mod path;
+pub use path::CLIMB_CELLS;
 mod populate;
 mod ragdoll;
 pub mod riding;
@@ -45,7 +46,9 @@ pub use body_geometry::{
 };
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
-pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
+pub use manager::{
+    DeathDrop, MobAttack, MobExposureDamage, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop,
+};
 pub use nav::mob_can_reach;
 pub use nav::site_open;
 pub use nav::ReachBudget;
@@ -56,6 +59,7 @@ pub use spawn::{
     hostile_spawn_plan, HostileSpawnCache, HOSTILE_SPAWN_ATTEMPTS, PASSIVE_SPAWN_INTERVAL_TICKS,
 };
 
+use petramond_world::fluid::Buoyancy;
 use std::sync::LazyLock;
 
 use petramond_math::math::Vec3;
@@ -386,7 +390,7 @@ pub struct WanderTuning {
     /// Blocks the wander AI refuses as the FLOOR under a destination —
     /// resolved at load from the row's `avoid_ground` BLOCK-TAG list (e.g.
     /// `"petramond:rock"`: stone, ores, marble), empty = no preference. A
-    /// destination policy exactly like water aversion: it steers where the
+    /// destination policy exactly like fluid aversion: it steers where the
     /// mob CHOOSES to head (so surface animals stop strolling into cave
     /// mouths), never where routes may pass, and a bounded escape hatch
     /// keeps a mob standing amid avoided ground moving.
@@ -695,6 +699,10 @@ pub fn build_brain(def: &'static MobDef) -> Brain {
     brain
 }
 
+/// What a species is unaffected by (`"tolerates"` in `mobs.json`); the exposure
+/// component enforces it, and navigation reads its blocks.
+pub use petramond_world::exposure::Tolerance;
+
 /// One row of the mob registry: everything that makes a species what it is. `model`
 /// and `scale` feed the renderer; the rest drives the simulation. (`model` names the
 /// `.bbmodel` asset, compiled once into the shared [`Model`] —
@@ -751,17 +759,19 @@ pub struct MobDef {
     pub wander: WanderTuning,
     /// Biome affinity for idle wandering (avoid / prefer) — see [`Habitat`].
     pub habitat: Habitat,
-    /// Whether the wander AI steers destinations away from water (it still re-rolls a
+    /// Whether the wander AI steers destinations away from fluids (it still re-rolls a
     /// bounded number of times before settling for a wet spot — see the wander
-    /// behavior). Crossing water en route is always allowed; this is only about where
+    /// behavior). Crossing a fluid en route is always allowed; this is only about where
     /// the mob chooses to head.
-    pub avoid_water: bool,
-    /// How this species behaves in water (`"buoyancy"` row, default `swim`) —
+    pub avoid_fluids: bool,
+    /// How this species behaves in fluids (`"buoyancy"` row, default `swim`) —
     /// see [`Buoyancy`].
     pub buoyancy: Buoyancy,
+    /// What this species is unaffected by (`"tolerates"` row) — see [`Tolerance`].
+    pub tolerates: Tolerance,
     /// Multiplier of downward acceleration; zero supports driven airborne bodies.
     pub gravity_scale: f32,
-    /// Whether locomotion may steer without ground, water, or a rising jump.
+    /// Whether locomotion may steer without ground, fluid, or a rising jump.
     pub air_control: bool,
     /// This species' body collision role (`"collision"` row, default `soft`) —
     /// see [`MobCollision`].
@@ -806,20 +816,6 @@ impl MobDef {
             _ => unreachable!("loader guarantees a Float {} spawn tag", tags::HEALTH),
         }
     }
-}
-
-/// How a species behaves in water (`mobs.json` `"buoyancy"`, default `swim`).
-/// Creatures SWIM: they stroke toward air and bob through the waterline (see
-/// the swim constants in `instance`). A hull FLOATS: it levels off at the
-/// water surface (feet a small draft below it) and holds there — no bob.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Buoyancy {
-    #[default]
-    Swim,
-    Surface,
-    /// Displacement balances gravity while submerged; movement owns vertical velocity.
-    Neutral,
 }
 
 /// A species' body collision role (`mobs.json` `"collision"`, default
@@ -894,6 +890,14 @@ fn loaded() -> &'static load::LoadedMobs {
 /// order).
 pub fn defs() -> &'static [MobDef] {
     loaded().defs
+}
+
+impl MobDef {
+    /// Navigation params for this species' real body and tolerances.
+    pub fn path_params(&self) -> path::PathParams {
+        path::PathParams::for_body(self.size.head_cells(), self.size.half_width)
+            .tolerating(self.tolerates.blocks)
+    }
 }
 
 #[inline]

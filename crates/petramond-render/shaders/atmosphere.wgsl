@@ -11,7 +11,7 @@
 // dissolves late into a luminous haze — the haze is the biome fog colour with
 // its chroma pushed UP, so distance glows like painted air instead of washing
 // out to milk (Firewatch/Sable-style authored fog, not scattering). Underwater
-// keeps the tight linear murk — callers branch on the underwater flag before
+// keeps the tight linear murk — callers branch on the eye-fluid flag before
 // calling in here.
 //
 // CONTRACT: atmosphere_amount() returns exactly 1.0 for dist >= fog_end. Terrain

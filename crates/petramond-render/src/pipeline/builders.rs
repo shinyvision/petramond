@@ -58,10 +58,11 @@ pub(super) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth3
 /// combination instead of re-spelling the `DepthStencilState` block per pipeline.
 #[derive(Copy, Clone)]
 pub(super) enum DepthPreset {
-    /// Depth test `Less` + WRITE. Opaque geometry, particles, and the hand
-    /// variants that self-sort against a cleared depth buffer.
+    /// Depth test `Less` + WRITE. Opaque geometry (opaque fluids included),
+    /// particles, and the hand variants that self-sort against a cleared depth
+    /// buffer.
     WriteLess,
-    /// Depth test `Less`, NO write. Transparent water and emitter particles:
+    /// Depth test `Less`, NO write. Translucent fluids and emitter particles:
     /// sort behind solid geometry without occluding the surfaces drawn after.
     ReadLess,
     /// Depth test `LessEqual`, NO write, with the break-overlay polygon offset.

@@ -5,13 +5,13 @@
 //! apply). Until that finishes, world reads there LIE (an absent cave-band
 //! section reads as air) and writes RACE (a synchronously materialized base is
 //! clobbered by the late gen result; a mutated base can be persisted and then
-//! shadow the player's on-disk record forever). One water flow against a
+//! shadow the player's on-disk record forever). One fluid flow against a
 //! half-streamed neighbourhood is enough to mark sections `modified` and
 //! freeze the accident into the save.
 //!
 //! Enforced at the tick dispatch points (scheduled ticks, block updates,
 //! random ticks — see `world::tick`) and at the write choke points
-//! (`set_block_world`, `set_water_world`, `materialize_section`,
+//! (`set_block_world`, `set_fluid_world`, `materialize_section`,
 //! `harvest_section_snapshot`):
 //!
 //! - a cell is simulated only when every section its behaviour can read
@@ -28,8 +28,8 @@
 //! Gated work is not lost: work blocked on an IN-FLIGHT state retries
 //! [`SIM_RETRY_DELAY`] ticks later (in-flight states resolve within ticks);
 //! work blocked on genuinely unloaded terrain is dropped and re-armed by the
-//! on-load water kick when that terrain streams in
-//! (`world::stream::queue_loaded_section_water_updates`).
+//! on-load fluid kick when that terrain streams in
+//! (`world::stream::queue_loaded_section_fluid_updates`).
 
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
@@ -38,7 +38,7 @@ use petramond_world::section::SectionSummary;
 
 use super::store::World;
 
-/// Widest read reach of any gated behaviour, in cells: water's sideways slope
+/// Widest read reach of any gated behaviour, in cells: the fluid sideways slope
 /// search walks up to `1 + SLOPE_FIND_DIST` = 5 cells from the flowing cell;
 /// every other reaction reads closer. ±5 cells stays within the adjacent
 /// section on each axis, so the reach box spans at most 2 sections per axis.
@@ -55,7 +55,7 @@ pub(super) enum SimReadiness {
     /// Blocked on an in-flight section (gen/overlay); resolves within ticks.
     Wait,
     /// Blocked on terrain that is not coming under the current load target.
-    /// The on-load water kick re-arms the flow if it ever streams in.
+    /// The on-load fluid kick re-arms the flow if it ever streams in.
     Drop,
 }
 
@@ -232,7 +232,7 @@ mod tests {
         let loaded = SectionPos::new(1, 4, 0);
         w.insert_pending_section(loaded);
         assert!(!w.set_block_world(20, 70, 8, Block::Stone));
-        assert!(!w.set_water_world(IVec3::new(20, 70, 8), Block::Water, 0));
+        assert!(!w.set_fluid_world(IVec3::new(20, 70, 8), Block::Water, 0));
         assert_eq!(w.chunk_block(20, 70, 8), Block::Air.id());
 
         // Absent section with an in-flight job: the write must not materialize it.
@@ -359,7 +359,7 @@ mod tests {
                 .section_at_world_for_test(8, 70, 8)
                 .expect("water section loaded");
             assert!(
-                s.has_water() && !s.has_air(),
+                s.has_fluid() && !s.has_air(),
                 "fixture: airless water section"
             );
             w2
@@ -367,7 +367,7 @@ mod tests {
 
         // Air side lands second: its ingest kick must find the neighbour's water.
         let mut w = build();
-        w.queue_loaded_section_water_updates(&[SectionPos::new(1, 4, 0)]);
+        w.queue_loaded_section_fluid_updates(&[SectionPos::new(1, 4, 0)]);
         run_ticks(&mut w, 30);
         assert_eq!(
             w.chunk_block(16, 65, 8),
@@ -377,7 +377,7 @@ mod tests {
 
         // Water side lands second: its boundary-plane kick must fire too.
         let mut w = build();
-        w.queue_loaded_section_water_updates(&[SectionPos::new(0, 4, 0)]);
+        w.queue_loaded_section_fluid_updates(&[SectionPos::new(0, 4, 0)]);
         run_ticks(&mut w, 30);
         assert_eq!(
             w.chunk_block(16, 65, 8),
@@ -405,13 +405,13 @@ mod tests {
                 if x == 5 || x == 10 || z == 5 || z == 10 {
                     c.set_block(x, 65, z, Block::Stone);
                 } else {
-                    c.set_water(x, 65, z, Block::Water, 3);
+                    c.set_fluid(x, 65, z, Block::Water, 3);
                 }
             }
         }
         w.insert_chunk_for_test(ChunkPos::new(0, 0), c);
 
-        w.queue_loaded_section_water_updates(&[SectionPos::new(0, 4, 0)]);
+        w.queue_loaded_section_fluid_updates(&[SectionPos::new(0, 4, 0)]);
         run_ticks(&mut w, 200);
         assert_eq!(
             w.chunk_block(7, 65, 7),
@@ -434,14 +434,14 @@ mod tests {
             }
         }
         // Sourceless flowing cell 4 cells from the seam at x=16.
-        kept.set_water(12, 1, 8, Block::Water, 4);
+        kept.set_fluid(12, 1, 8, Block::Water, 4);
         w.insert_section_for_test(SectionPos::new(0, 4, 0), kept);
         w.insert_section_for_test(
             SectionPos::new(1, 4, 0),
             petramond_world::section::Section::new(1, 4, 0),
         );
 
-        w.queue_loaded_section_water_updates(&[SectionPos::new(1, 4, 0)]);
+        w.queue_loaded_section_fluid_updates(&[SectionPos::new(1, 4, 0)]);
         assert!(
             !w.queue_block_update(IVec3::new(12, 65, 8)),
             "kick must reach the kept neighbour's mid-flow cell, not just the seam plane"

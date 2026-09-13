@@ -161,7 +161,7 @@ fn suppression_and_teleports_clear_airborne_history() {
 
 fn water(velocity: glam::Vec3) -> MotionFrame {
     MotionFrame {
-        medium: MovementMedium::Water,
+        medium: MovementMedium::Swimming,
         ..motion(velocity, false)
     }
 }

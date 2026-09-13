@@ -55,7 +55,6 @@ fn expression_advances_walk_and_eases_the_head() {
         Vec3::new(1.0, 0.0, 0.0),
         false,
         &floor_at_zero,
-        &|_| false,
     );
     owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
     let a1 = owl.anim_time;
@@ -65,7 +64,6 @@ fn expression_advances_walk_and_eases_the_head() {
         Vec3::new(1.0, 0.0, 0.0),
         false,
         &floor_at_zero,
-        &|_| false,
     );
     owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
     assert!(
@@ -83,14 +81,7 @@ fn expression_advances_walk_and_eases_the_head() {
         ..Default::default()
     };
     for _ in 0..120 {
-        owl.integrate(
-            1.0 / 60.0,
-            owl_def(),
-            Vec3::ZERO,
-            false,
-            &floor_at_zero,
-            &|_| false,
-        );
+        owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
         owl.apply_expression(1.0 / 60.0, owl_def(), &[], &look);
     }
     assert!(

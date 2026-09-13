@@ -27,9 +27,39 @@ fn mob_row(id: u64, pos: Vec3, hurt_timer: f32) -> MobStateRow {
         dead: false,
         shorn: false,
         emitters: Vec::new(),
+        conditions: Vec::new(),
         anims: Vec::new(),
         ragdoll: None,
     }
+}
+
+#[test]
+fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
+    let mut game = game_on_empty_chunk();
+    game.set_particles_mode(petramond::save::client::ParticlesMode::Off);
+    let mut scratch = GamePresentationScratch::new();
+    let view = petramond_render::camera::ViewVolume::unbounded();
+    let bundles = ["petramond:burn_great", "petramond:torch_flame"]
+        .map(|key| petramond_world::particle_emitters::by_key(key).unwrap());
+    let expected = bundles.iter().map(|b| b.body_self_lit).fold(0.0, f32::max);
+    let mut row = mob_row(7, Vec3::new(4.0, 65.0, 4.0), 0.0);
+    row.emitters = bundles.iter().map(|b| b.id).collect();
+    for dead in [false, true] {
+        row.dead = dead;
+        row.ragdoll = dead.then(|| vec![([0.0; 3], [0.0, 0.0, 0.0, 1.0])]);
+        game.replicated_mobs.apply(vec![row.clone()]);
+        let presentation = scratch.snapshot(&game, 0.0, &view);
+        assert!(presentation.particle_emitters.is_empty());
+        assert_eq!(presentation.mobs[0].emitter_self_lit, expected);
+        assert_eq!(presentation.mobs[0].ragdoll_pose.is_some(), dead);
+        row.emitters.reverse();
+    }
+    row.emitters.clear();
+    game.replicated_mobs.apply(vec![row]);
+    assert_eq!(
+        scratch.snapshot(&game, 0.0, &view).mobs[0].emitter_self_lit,
+        0.0
+    );
 }
 
 /// Store semantics: a fresh id starts with prev == curr, a repeated id shifts
@@ -138,6 +168,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 flight: None,
             }],
             players: vec![PlayerStateRow {
+                conditions: Vec::new(),
                 id: remote_id,
                 transform: petramond::net::protocol::Transform {
                     pos: Vec3::new(x, 68.0, 0.0),

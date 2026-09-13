@@ -4,7 +4,12 @@
       "effect": "petramond:regeneration",
       "display": "Regeneration",
       "icon": "textures/gui/effects/regeneration.png",
-      "behavior": { "regen": { "interval": 100, "amount": 1 } }
+      "behavior": {
+        "regen": {
+          "interval": 100,
+          "amount": 1
+        }
+      }
     }
   ]
 }

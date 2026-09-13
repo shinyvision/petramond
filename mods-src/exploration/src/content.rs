@@ -7,6 +7,8 @@
 
 use mod_sdk::*;
 
+use crate::fluids::Fluids;
+
 /// One mushroom species: a colour the whole cavern palette is built from.
 /// Adding a species is ONE row here plus its pack JSON — never a match arm.
 pub struct Species {
@@ -25,6 +27,9 @@ pub struct Content {
     /// get to invent its own fluid, and the containment proof in `cascade.rs` is
     /// written against the behaviour that row declares.
     pub water: BlockId,
+    /// Nothing of this pack is placed in or on a fluid: it is neither ground
+    /// to stand on nor room to grow into.
+    pub fluids: Fluids,
     /// Pond bed, weir lip and shore. Solid and opaque, which is load-bearing
     /// twice over: it is what walls the water in, and what holds up flora
     /// dressed on the shore.
@@ -35,10 +40,19 @@ pub struct Content {
     pub species: Vec<Species>,
 }
 
+impl Content {
+    /// Is a block the SECTION SNAPSHOT holds a fluid? The positional terrain
+    /// queries answer this outside the section; inside it the snapshot is the
+    /// truth, and it carries ids, not spaces.
+    pub fn is_fluid(&self, block: BlockId) -> bool {
+        self.fluids.contains(block)
+    }
+}
+
 const SPECIES_NAMES: [&str; 4] = ["pink", "blue", "magenta", "purple"];
 
 impl Content {
-    pub fn resolve() -> Option<Content> {
+    pub fn resolve(fluids: Fluids) -> Option<Content> {
         let mut species = Vec::with_capacity(SPECIES_NAMES.len());
         for name in SPECIES_NAMES {
             species.push(Species {
@@ -52,6 +66,7 @@ impl Content {
             stem: resolve_block_logged("exploration:mushroom_stem")?,
             vine: resolve_block_logged("exploration:hanging_vine")?,
             water: resolve_block_logged("petramond:water")?,
+            fluids,
             silt: resolve_block_logged("exploration:cave_silt")?,
             air: BlockId(0),
             species,

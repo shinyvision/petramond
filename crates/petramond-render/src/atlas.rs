@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use petramond_world::tile::{engine, Tile};
+use petramond_world::tile::Tile;
 
 /// Fixed tile edge length in texels. Every atlas cell is `TILE × TILE`.
 pub const TILE: u32 = 16;
@@ -360,20 +360,11 @@ fn div_round(n: u32, d: u32) -> u8 {
     ((n + d / 2) / d).min(255) as u8
 }
 
-/// Packs the animated-water flipbook control for the block shader's `atlas_anim`
-/// uniform: `(still_base_tile, flow_base_tile, frame_count, 0)`. The two bases
-/// are the tile ids the mesher assigns to still/flow water tops & sides; the
-/// shader cycles `base + frame` over `frame_count` consecutive atlas tiles.
-pub fn atlas_anim_uniform() -> [u32; 4] {
-    let e = engine();
-    [
-        e.water_still.index() as u32,
-        e.water_flow.index() as u32,
-        e.water_still.anim_frames(),
-        // `w`: the tile count — the texture-array layer offset from a tile to
-        // its dye-base twin (`block.wgsl` adds it for dyed vertices).
-        Tile::count() as u32,
-    ]
+/// The block shader's `atlas_layout` uniform: `w` is the tile count — the
+/// texture-array layer offset from a tile to its dye-base twin (`block.wgsl`
+/// adds it for dyed vertices).
+pub fn atlas_layout_uniform() -> [u32; 4] {
+    [0, 0, 0, Tile::count() as u32]
 }
 
 /// Tile grid -> normalized UV rect (u0,v0,u1,v1) for a tile.

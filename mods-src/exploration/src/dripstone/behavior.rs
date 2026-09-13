@@ -264,6 +264,7 @@ mod tests {
     const DRIPSTONE: BlockId = BlockId(201);
     const WATER: BlockId = BlockId(202);
     const VESSEL: BlockId = BlockId(203);
+    const LAVA: BlockId = BlockId(205);
     const FILLED: BlockId = BlockId(204);
 
     /// A synthetic world answering the host calls this behaviour makes, and
@@ -447,6 +448,7 @@ mod tests {
             stalactite_wet: STALACTITE_WET,
             stalagmite: STALAGMITE,
             water: WATER,
+            fluids: crate::fluids::Fluids::of(&[WATER, LAVA]),
             air: AIR,
             vessels: Vec::new(),
             biome: None,

@@ -5,7 +5,7 @@ use petramond_world::facing::Facing;
 use petramond_world::light::{BlockLight6, LightRgb};
 use petramond_world::tile::Tile;
 
-use super::super::face::{quad_ao, Face};
+use super::super::face::{quad_ao, Face, AO_OPEN};
 use super::super::face_emit::{fold_light, fold_light_smooth, slab_corner_open};
 
 /// The horizontal cube face a directional block's front points to, for its
@@ -390,6 +390,37 @@ where
     (ao, light6, block6)
 }
 
+/// Fold a fluid's own emission into a face it provides `fraction` (`0..=1`) of
+/// its light for: each corner's block channel moves from the sampled value
+/// toward `max(sampled, emission)` and its AO toward open by that fraction, so
+/// `0` is the sampled face and `1` a face lit wholly by itself. The sky channel
+/// is left as sampled.
+///
+/// The cube path lights a face from the cell IN FRONT of it, while every
+/// other emitter path (plant, torch, model, box plane) reads the block's own
+/// cell — the one the light flood seeds with the emission. A glowing fluid's
+/// recessed surface under a lid fronts the lid, an opaque cell the flood never
+/// enters, so it drew black under a cave ceiling; and grid AO read the rock
+/// around a trench as shadow on the very surface that is the light source.
+#[inline]
+pub(crate) fn self_lit_face(
+    emission: BlockLight6,
+    fraction: f32,
+    ao: &mut [u32; 4],
+    block6: &mut [BlockLight6; 4],
+) {
+    let lift =
+        |from: u32, to: u32| from + (to.saturating_sub(from) as f32 * fraction).round() as u32;
+    for a in ao.iter_mut() {
+        *a = lift(*a, AO_OPEN);
+    }
+    let [er, eg, eb] = emission.channels();
+    for c in block6.iter_mut() {
+        let [r, g, b] = c.channels();
+        *c = BlockLight6::new(lift(r, er), lift(g, eg), lift(b, eb));
+    }
+}
+
 /// A cube face's `(normal, U, V)` local axes (0=X, 1=Y, 2=Z), derived from `Face::quad_box`
 /// so the greedy slice's `(u,v)` grid and a merged quad's tiled UV (W tiles along U, H along
 /// V) align with `corner_local`: normal-X → U=Z,V=Y; normal-Y → U=X,V=Z; normal-Z → U=X,V=Y.
@@ -413,5 +444,34 @@ pub(super) fn face_index(face: Face) -> usize {
         Face::NegY => 3,
         Face::PosZ => 4,
         Face::NegZ => 5,
+    }
+}
+
+#[cfg(test)]
+mod self_lit_tests {
+    use super::*;
+
+    /// The fraction scales the lift: none leaves the sampled face untouched, all
+    /// raises every corner to the emission with open AO, and a part lands in
+    /// between — never below the sample, never past the target.
+    #[test]
+    fn self_lit_fraction_scales_the_lift_toward_the_emission() {
+        let emission = BlockLight6::new(60, 30, 12);
+        let sampled = [BlockLight6::new(4, 40, 0); 4];
+        let lit = |fraction: f32| {
+            let (mut ao, mut block6) = ([0; 4], sampled);
+            self_lit_face(emission, fraction, &mut ao, &mut block6);
+            (ao, block6)
+        };
+        assert_eq!(lit(0.0), ([0; 4], sampled));
+        assert_eq!(lit(1.0), ([AO_OPEN; 4], [BlockLight6::new(60, 40, 12); 4]));
+        let (ao, block6) = lit(0.5);
+        assert!(ao.iter().all(|&a| 0 < a && a < AO_OPEN));
+        let [r, g, b] = block6[0].channels();
+        assert!(
+            4 < r && r < 60 && g == 40 && 0 < b && b < 12,
+            "{:?}",
+            block6[0]
+        );
     }
 }

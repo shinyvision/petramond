@@ -46,7 +46,7 @@ fn save_reopen_roundtrips_section_level_entities() {
 
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
         section.set_block(3, 0, 7, Block::Stone);
-        section.set_water(3, 1, 7, Block::Water, 0x12);
+        section.set_fluid(3, 1, 7, Block::Water, 0x12);
         let mut snap = SectionSnapshot::from_section(&section);
         let mut drop = DroppedItem::new(
             Vec3::new(80.5, 70.0, -39.5),
@@ -95,7 +95,7 @@ fn save_reopen_roundtrips_section_level_entities() {
         let section = loaded.section.expect("section record decodes");
         assert_eq!(section.block_raw(3, 0, 7), Block::Stone.id());
         assert_eq!(section.block_raw(3, 1, 7), Block::Water.id());
-        assert_eq!(section.water_meta(3, 1, 7), 0x12);
+        assert_eq!(section.fluid_meta(3, 1, 7), 0x12);
 
         // The item entity comes back with its section, lifetime intact.
         assert_eq!(loaded.entities.len(), 1);

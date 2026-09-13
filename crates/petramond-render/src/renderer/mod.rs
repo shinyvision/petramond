@@ -52,7 +52,7 @@ use super::resources::{
 };
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
-use super::uniforms::{Uniforms, UNDERWATER_FOG_END, UNDERWATER_FOG_START};
+use super::uniforms::Uniforms;
 use super::{
     BreakOverlayView, ChestInstance, DoorInstance, EntityShadow, HeldItemFrame, HeldItemView,
     ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance, ParticleInstance,
@@ -633,7 +633,6 @@ struct SkyPass {
     env_depth: wgpu::TextureView,
     env_down_bind: wgpu::BindGroup,
     env_comp_bind: wgpu::BindGroup,
-    underwater: bool,
     /// Above-water fog band, derived from the streaming render distance
     /// (`uniforms::fog_range`) via [`Renderer::set_render_distance`] so the fade
     /// always terminates at the loaded-world edge. The end (plus
@@ -730,6 +729,10 @@ struct ViewState {
     /// Visual time from the current frame uniforms, used by presentation-only
     /// render effects such as block-row particle emitters.
     visual_time: f32,
+    /// The projection's vertical scale (`1 / tan(fov_y / 2)`), refreshed with
+    /// the frustum so a widened FOV narrows what the gathers consider visible
+    /// in the same frame it widens the view.
+    proj_y_scale: f32,
 }
 
 pub struct Renderer {
@@ -753,7 +756,7 @@ pub struct Renderer {
     suboptimal_retried: bool,
     opaque_pipe: crate::pipeline::SampledPipeline,
     translucent_pipe: crate::pipeline::SampledPipeline,
-    /// Water TOP faces: the transparent pipeline with culling off.
+    /// Fluid TOP faces: the transparent pipeline with culling off.
     transparent_two_sided_pipe: crate::pipeline::SampledPipeline,
     transparent_pipe: crate::pipeline::SampledPipeline,
     uniform_buf: wgpu::Buffer,

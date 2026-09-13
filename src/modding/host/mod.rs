@@ -32,6 +32,7 @@ pub(in crate::modding) mod module_cache;
 pub(in crate::modding) use module_cache::module_for;
 
 mod blocks;
+mod conditions;
 mod containers;
 mod core;
 mod entities;
@@ -473,6 +474,9 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         HostCall::ItemEntitiesInRadius { .. } | HostCall::ItemImpulses { .. } => {
             item_motion::handle(call)
         }
+        HostCall::EntityConditionApply { .. } | HostCall::EntityConditionCool { .. } => {
+            conditions::handle(call)
+        }
         HostCall::SpawnMob { .. }
         | HostCall::MobInfo { .. }
         | HostCall::MobCanReach { .. }
@@ -552,6 +556,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::BlockNames { .. }
         | HostCall::ItemNames { .. }
         | HostCall::MobNames { .. }
+        | HostCall::ResolveCondition { .. }
+        | HostCall::ConditionNames { .. }
         | HostCall::BlocksByTag { .. }
         | HostCall::ItemsByTag { .. }
         | HostCall::ItemInfo { .. }
@@ -560,7 +566,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ItemsWithData { .. }
         | HostCall::BlockDataGet { .. }
         | HostCall::BlocksWithData { .. }
-        | HostCall::BlockInfo { .. } => registry::handle_registry_call(call),
+        | HostCall::BlockInfo { .. }
+        | HostCall::BlockInfos { .. } => registry::handle_registry_call(call),
         HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. }

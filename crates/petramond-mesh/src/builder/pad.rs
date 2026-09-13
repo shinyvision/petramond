@@ -1,6 +1,6 @@
 use petramond_world::block::{Block, ShapeState};
 use petramond_world::chunk::{SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
-use petramond_world::water_math;
+use petramond_world::fluid_math;
 
 pub(super) const SECTION_PAD: usize = SECTION_SIZE + 2;
 /// [`SECTION_PAD`] under the name the mesh module re-exports.
@@ -20,7 +20,7 @@ fn biome_pad_idx(x: usize, z: usize) -> usize {
 
 pub struct SectionMeshPad<'a> {
     pub blocks: &'a [u16],
-    pub water: &'a [u8],
+    pub fluid: &'a [u8],
     pub skylight: &'a [u8],
     /// Per-cell block light, packed RGB — the mesher averages it PER CHANNEL
     /// and emits all three into the vertex's split light lanes.
@@ -85,9 +85,17 @@ impl SectionMeshPad<'_> {
     }
 
     #[inline]
-    pub(super) fn water_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u8 {
+    pub(super) fn fluid_meta_world(
+        &self,
+        ox: i32,
+        oy: i32,
+        oz: i32,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> u8 {
         self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(0, |i| self.water[i])
+            .map_or(0, |i| self.fluid[i])
     }
 
     #[inline]
@@ -151,7 +159,7 @@ impl SectionMeshPad<'_> {
         }
     }
 
-    /// Pad-local water probes for in-section cells and their ±1 neighbours.
+    /// Pad-local fluid probes for in-section cells and their ±1 neighbours.
     /// The neighbour-above sample for `fills_cell` can sit one cell past the
     /// top pad face — that matches `block_world` returning air out of pad.
     #[inline]
@@ -175,44 +183,54 @@ impl SectionMeshPad<'_> {
     }
 
     #[inline]
-    pub(super) fn water_fills_local(&self, lx: i32, ly: i32, lz: i32) -> bool {
+    pub(super) fn fluid_fills_local(&self, lx: i32, ly: i32, lz: i32, fluid: Block) -> bool {
         let Some((px, py, pz)) = Self::local_pad_xyz(lx, ly, lz) else {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        if Block::from_id(self.blocks[i]).fluid() != Some(Block::Water) {
+        if Block::from_id(self.blocks[i]).fluid() != Some(fluid) {
             return false;
         }
-        water_math::fills_cell(self.water[i], self.block_above_local(px, py, pz))
+        fluid_math::fills_cell(self.fluid[i], self.block_above_local(px, py, pz), fluid)
     }
 
     #[inline]
-    pub(super) fn fluid_height_local(&self, lx: i32, ly: i32, lz: i32) -> Option<f32> {
+    pub(super) fn fluid_height_local(
+        &self,
+        lx: i32,
+        ly: i32,
+        lz: i32,
+        fluid: Block,
+    ) -> Option<f32> {
         let (px, py, pz) = Self::local_pad_xyz(lx, ly, lz)?;
         let i = mesh_pad_idx(px, py, pz);
-        if Block::from_id(self.blocks[i]).fluid() != Some(Block::Water) {
+        if Block::from_id(self.blocks[i]).fluid() != Some(fluid) {
             return None;
         }
-        Some(water_math::fluid_height(
-            self.water[i],
+        Some(fluid_math::fluid_height(
+            self.fluid[i],
             self.block_above_local(px, py, pz),
+            fluid,
         ))
     }
 
     #[inline]
-    pub(super) fn water_still_local(&self, lx: i32, ly: i32, lz: i32) -> bool {
+    pub(super) fn fluid_still_local(&self, lx: i32, ly: i32, lz: i32, fluid: Block) -> bool {
         let Some((px, py, pz)) = Self::local_pad_xyz(lx, ly, lz) else {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        Block::from_id(self.blocks[i]).fluid() == Some(Block::Water)
-            && water_math::is_still_source(self.water[i])
+        Block::from_id(self.blocks[i]).fluid() == Some(fluid)
+            && fluid_math::is_still_source(self.fluid[i])
     }
 
     #[inline]
-    pub(super) fn block_local(&self, lx: i32, ly: i32, lz: i32) -> Block {
-        Self::local_pad_xyz(lx, ly, lz)
-            .map(|(px, py, pz)| self.block_at_pad(px, py, pz))
-            .unwrap_or(Block::Air)
+    pub(super) fn fluid_falling_local(&self, lx: i32, ly: i32, lz: i32, fluid: Block) -> bool {
+        let Some((px, py, pz)) = Self::local_pad_xyz(lx, ly, lz) else {
+            return false;
+        };
+        let i = mesh_pad_idx(px, py, pz);
+        Block::from_id(self.blocks[i]).fluid() == Some(fluid)
+            && fluid_math::is_falling(self.fluid[i])
     }
 }

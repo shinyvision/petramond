@@ -99,3 +99,16 @@ fn the_spatial_hash_does_not_repeat_across_section_seams() {
         }
     }
 }
+
+#[test]
+fn a_flipbook_rate_is_authored_one_way() {
+    let row = |rate: &str| format!(r#"{{"tiles":[{{"name":"test","file":"unused.png",{rate}}}]}}"#);
+    for (rate, error) in [
+        (r#""frame_ticks":2,"fps":10"#, "both"),
+        (r#""fps":0"#, "fps must be positive"),
+        (r#""frame_ticks":-1"#, "frame_ticks must be positive"),
+    ] {
+        let err = build(&[&row(rate)]).err().unwrap();
+        assert!(err.contains(error), "{rate}: {err}");
+    }
+}

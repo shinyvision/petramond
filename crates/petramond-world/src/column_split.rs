@@ -55,7 +55,7 @@ pub fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
         if !any {
             continue; // all-air section: absent reads as air.
         }
-        copy_generated_water(chunk, cy, &mut section);
+        copy_generated_fluid_meta(chunk, cy, &mut section);
         section.recompute_opaque_count();
         out.push((cy, section));
     }
@@ -71,16 +71,16 @@ pub fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
     (column, out)
 }
 
-/// Carry the generated column's water-flow metadata for section `cy` into `section`,
-/// so generated rivers/pools keep their source/falloff state through the split.
-fn copy_generated_water(chunk: &Chunk, cy: i32, section: &mut Section) {
-    let water = Block::Water.id();
+/// Carry the generated column's fluid-flow metadata for section `cy` into
+/// `section`, so generated fluid keeps its source/falloff state through the split.
+fn copy_generated_fluid_meta(chunk: &Chunk, cy: i32, section: &mut Section) {
     for ly in 0..SECTION_SIZE {
         let wy = cy as usize * SECTION_SIZE + ly;
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
-                if chunk.block_raw(x, wy, z) == water {
-                    section.set_water(x, ly, z, Block::Water, chunk.water_meta(x, wy, z));
+                let block = Block::from_id(chunk.block_raw(x, wy, z));
+                if block.is_fluid() {
+                    section.set_fluid(x, ly, z, block, chunk.fluid_meta(x, wy, z));
                 }
             }
         }

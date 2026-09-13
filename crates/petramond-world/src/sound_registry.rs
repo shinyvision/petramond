@@ -63,10 +63,6 @@ impl Sound {
     pub const SheepIdle: Sound = Sound(16);
     /// A sheep took a hit (the sheep row's `hurt` hook).
     pub const SheepHurt: Sound = Sound(17);
-    /// Something small fell into water (the water-splash burst's quiet tier).
-    pub const WaterSplashSmall: Sound = Sound(18);
-    /// Something plunged into water from height (the loud splash tier).
-    pub const WaterSplashBig: Sound = Sound(19);
     /// Mining hit on a glass-family block (glass, panes, ice) — the punch loop.
     pub const GlassPunch: Sound = Sound(20);
     /// A glass-family block shattered (broke or was destroyed).

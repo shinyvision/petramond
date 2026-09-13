@@ -1,56 +1,23 @@
 //! Instance body kinematics: the per-tick locomotion integration (knockback
-//! stagger > mod drive > brain wish precedence, water current, buoyancy,
+//! stagger > mod drive > brain wish precedence, fluid current, buoyancy,
 //! gravity, shared swept-AABB collision), the solid-peer motion commit, the
 //! soft entity push, and fall/splash bookkeeping.
 
 use std::f32::consts::{PI, TAU};
 
-use petramond_math::math::{voxel_at, IVec3, Tilt, Vec3};
+use petramond_math::math::{Tilt, Vec3};
 
 use super::instance::Instance;
 use super::MobDef;
+use crate::entity::shore::{ShoreClimb, Swimmer};
+use petramond_world::block::Aabb;
+use petramond_world::collision::{self, DynBox};
+use petramond_world::fluid::{Buoyancy, FluidCurrent, Immersion};
 
 /// Downward acceleration (m/s²) applied to airborne mobs.
 const GRAVITY: f32 = -22.0;
 /// Per-tick decay of the horizontal knockback velocity during the stagger.
 const KNOCKBACK_DAMP: f32 = 0.75;
-/// Upward swim speed a mob eases toward whenever its body is under water. A mob has no
-/// jump key, so it always swims up — exactly like a player holding jump in water.
-/// Mirrors the player's `SWIM_RISE`: the mob rises, breaches the surface (the probe
-/// clears the water), gravity then pulls it back, it re-enters and rises again —
-/// bobbing through the waterline.
-const SWIM_RISE: f32 = 3.0;
-/// How fast vertical velocity eases toward the swim target (m/s²) — a soft approach
-/// (mirrors the player's `SWIM_VACCEL`) so falling into water decelerates smoothly and
-/// the bob rocks instead of snapping.
-const SWIM_VACCEL: f32 = 14.0;
-/// Fraction of body height at which the "submerged enough to swim" probe sits (≈ the
-/// player's thigh-height probe). The mob keeps swimming up until this point clears the
-/// water, so its body breaks the surface before gravity takes back over.
-const SWIM_PROBE_FRAC: f32 = 1.0 / 3.0;
-/// FLOOR for the upward boost (m/s) a swimming mob gets when steering toward a ledge
-/// it can climb onto. The boost itself is sized to the ledge (see
-/// [`swim_climb_speed`]) — this only keeps a low step feeling firm rather than
-/// limp.
-const SWIM_CLIMB: f32 = 4.5;
-/// How far ABOVE a ledge top the climb boost aims, so the feet land on the block
-/// instead of grazing its lip and sliding back.
-const SWIM_CLIMB_CLEARANCE: f32 = 0.1;
-/// Highest ledge top (metres above current feet) that the swim-climb boost treats as
-/// reachable. A ledge much above the current waterline is a wall until the mob swims up.
-const SWIM_CLIMB_MAX_LEDGE_DELTA: f32 = 1.25;
-/// Target horizontal drift speed (m/s) imparted by flowing water — matched to the
-/// player's so a mob and the player ride the same current at the same pace. Below walk
-/// speed, so a current carries an idle mob but never overpowers a mob that's swimming.
-const WATER_CURRENT_SPEED: f32 = 0.75;
-/// How far below the waterline a surface-floating body's feet settle
-/// (`Buoyancy::Surface`) — a hull rides with its keel wetted, not skimming.
-const SURFACE_DRAFT: f32 = 0.1;
-/// First-order approach rate (per second) toward the float line for
-/// `Buoyancy::Surface`: velocity proportional to the depth error (capped at
-/// [`SWIM_RISE`]), so a hull settles level with no overshoot and NO bob.
-const SURFACE_FLOAT_RATE: f32 = 6.0;
-
 /// One tick's mod-issued locomotion — full 3-D velocity access, each part
 /// independently optional (see [`Instance::set_drive`] and the MobDrive ABI
 /// doc): `horizontal` REPLACES the brain's wish locomotion (a vehicle);
@@ -67,6 +34,42 @@ pub(super) struct DriveIntent {
     /// drop silently otherwise. A latched intent is decided from LAST
     /// tick's state — the walk it was premised on can end in between.
     pub while_walking: bool,
+}
+
+/// This tick's walking request from the brain and its route.
+#[derive(Copy, Clone, Debug)]
+pub(super) struct Locomotion {
+    /// Unit horizontal direction to walk.
+    pub wish: Vec3,
+    /// A route step-up asks for a jump.
+    pub jump: bool,
+    /// Whether locomotion may steer at all (see [`route_steering_supported`]).
+    pub can_steer: bool,
+}
+
+/// What a mob body's integration reads about its surroundings.
+pub(super) struct Surroundings<'a> {
+    pub boxes: &'a dyn Fn(i32, i32, i32) -> &'static [Aabb],
+    /// Solid entity boxes the body collides with.
+    pub obstacles: &'a [DynBox],
+    /// Solid entity boxes the shallow-foot heal may lift the body onto.
+    pub healing_obstacles: &'a [DynBox],
+    pub immersion: Option<Immersion>,
+    pub current: FluidCurrent,
+}
+
+#[cfg(test)]
+impl<'a> Surroundings<'a> {
+    /// Dry, still surroundings over `boxes` with no entities.
+    pub(super) fn dry(boxes: &'a dyn Fn(i32, i32, i32) -> &'static [Aabb]) -> Self {
+        Surroundings {
+            boxes,
+            obstacles: &[],
+            healing_obstacles: &[],
+            immersion: None,
+            current: FluidCurrent::NONE,
+        }
+    }
 }
 
 /// One tick's mod-authored pose (see [`Instance::set_kinematic`] and the
@@ -136,7 +139,7 @@ impl Instance {
     }
 
     /// Latch a mod's locomotion intent for this tick (see [`DriveIntent`] and
-    /// the consumption in [`integrate_with_flow`](Self::integrate_with_flow)).
+    /// the consumption in [`integrate_locomotion`](Self::integrate_locomotion)).
     /// Refused on a dead mob.
     pub(super) fn set_drive(&mut self, intent: DriveIntent) -> bool {
         if self.death.is_dead() {
@@ -206,14 +209,14 @@ impl Instance {
     }
 
     /// Update fall bookkeeping after a tick's movement has resolved `on_ground` and
-    /// feet position. Water breaks falls by re-anchoring the peak while submerged.
-    pub(super) fn finish_motion(&mut self, was_on_ground: bool, in_water: bool) {
-        if in_water {
+    /// feet position. Immersion breaks falls by re-anchoring the peak while submerged.
+    pub(super) fn finish_motion(&mut self, was_on_ground: bool, immersion: Option<Immersion>) {
+        if let Some(sample) = immersion {
             // The un-latched drop at the first wet tick is the fall INTO the
-            // water; while swimming the per-tick re-anchor keeps it near zero
+            // fluid; while swimming the per-tick re-anchor keeps it near zero
             // (the splash threshold filters the bobbing).
             let drop = self.fall_peak_y - self.pos.y;
-            if drop > 0.0 {
+            if sample.fluid.splash.is_some() && drop > 0.0 {
                 self.splash_drop = self.splash_drop.max(drop);
             }
             self.fall_peak_y = self.pos.y;
@@ -230,45 +233,85 @@ impl Instance {
         }
     }
 
-    /// Integrate one tick's kinematics: jump impulse, horizontal wish-velocity, water
-    /// current, gravity, collision, and facing/anim. Takes `solid`/`water`/`water_flow`
-    /// closures (not the world) so it's directly unit-testable against a stub. While
-    /// unsupported and falling, path steering is suspended and existing horizontal
-    /// velocity carries through the fall; the upward phase of a navigation jump keeps
-    /// steering so the mob can clear a one-block ledge. The mob faces its **wish**
-    /// direction — where it wants to go — so it keeps facing forward even when pressed
-    /// against a wall (where its actual velocity would be zero). Returns the mandatory
+    /// Integrate this tick's locomotion against shared fluid forces and
+    /// collision. While unsupported and falling, path steering is suspended
+    /// and existing horizontal velocity carries through the fall; the upward
+    /// phase of a navigation jump keeps steering so the mob can clear a
+    /// one-block ledge. The mob faces its **wish** direction — where it wants
+    /// to go — so it keeps facing forward even when pressed against a wall
+    /// (where its actual velocity would be zero). Returns the mandatory
     /// shallow-foot healing lift separately for the peer-motion proposal.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn integrate_with_flow(
+    pub(super) fn integrate_locomotion(
         &mut self,
         dt: f32,
         d: &MobDef,
-        wish: Vec3,
-        jump: bool,
-        can_steer: bool,
-        boxes: &impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
-        obstacles: &[petramond_world::collision::DynBox],
-        healing_obstacles: &[petramond_world::collision::DynBox],
-        support: &impl Fn(IVec3) -> bool,
-        water: &impl Fn(IVec3) -> bool,
-        water_surface: &impl Fn(IVec3) -> Option<f32>,
-        water_flow: &impl Fn(Vec3) -> Vec3,
+        loco: Locomotion,
+        env: &Surroundings<'_>,
     ) -> f32 {
         let was_grounded = self.on_ground;
-        let nav_jumped = jump && self.on_ground;
+        let incoming = self.vel;
+        let nav_jumped = loco.jump && self.on_ground && env.immersion.is_none();
         if nav_jumped {
             self.vel.y = d.jump_speed;
             self.on_ground = false;
         }
-        // During the knockback stagger the decaying knockback drives horizontal motion
-        // (so a hit shoves the mob even against where it wants to go); otherwise a
-        // mod's drive intent (a vehicle) or the wish velocity drives locomotion.
-        // Keeping knockback separate from `vel` is why these overwrites can't wipe it.
-        // The drive is consumed even when stagger owns the tick — like the wish, it is
-        // a this-tick intent, never a queue.
+        // The drive is consumed even when stagger owns the tick — like the
+        // wish, it is a this-tick intent, never a queue.
         let drive = self.drive.take();
-        let mut requested_yaw = None;
+        let requested_yaw = self.steer_horizontal(dt, d, loco, drive, nav_jumped);
+        // The intent's premise: a `while_walking` drive was decided from
+        // LAST tick's state on the promise the mob is walking — if the walk
+        // ended in between (arrival, an abandoned route, a backoff pause),
+        // the stale intent is dropped whole, or it fires one in-place bounce
+        // exactly where the mob came to rest (the "one hop too often"
+        // playtest report).
+        let premise_holds = drive.is_none_or(|dr| !dr.while_walking || self.moving);
+        let drive_steers = premise_holds && loco.can_steer && self.stagger_timer <= 0.0;
+        if !nav_jumped && drive_steers {
+            self.drive_vertical(drive);
+        }
+        // An upward launch that starts from a walking gait re-phases the walk
+        // clip forward onto a cycle boundary (see `apply_expression`), so an
+        // authored takeoff clip stays locked to the physical arc.
+        if self.moving && !self.on_ground && self.vel.y > 0.0 && was_grounded {
+            self.walk_launch = true;
+        }
+        // A drive's absolute yaw obeys the same gates as its velocities: no
+        // steering while unsupported, the knockback stagger owns its tick,
+        // and a walking-gated intent's premise must hold.
+        let drive_yaw = drive.filter(|_| drive_steers).and_then(|dr| dr.yaw);
+        if let Some(yaw) = drive_yaw.or(requested_yaw) {
+            self.yaw = super::clamp_body_yaw(
+                self.pos,
+                self.yaw,
+                yaw,
+                d.size,
+                &env.boxes,
+                env.obstacles,
+                self.id,
+            );
+        }
+        let carried = (self.stagger_timer <= 0.0 && !loco.can_steer && env.immersion.is_none())
+            .then_some([self.vel.x, self.vel.z]);
+        // The shore climb follows where locomotion (a walk or a drive) heads.
+        let heading = Vec3::new(self.vel.x, 0.0, self.vel.z);
+        self.resist_and_push(dt, incoming, env);
+        let shore = self.vertical_velocity(dt, d, loco.can_steer, heading, env);
+        self.resolve_motion(dt, d, shore, carried, env)
+    }
+
+    /// Choose this tick's horizontal velocity source: the knockback stagger,
+    /// a mod's horizontal drive (a vehicle), or the wish. Keeping knockback
+    /// separate from `vel` is why these overwrites can't wipe it. Returns the
+    /// facing a walk turned toward.
+    fn steer_horizontal(
+        &mut self,
+        dt: f32,
+        d: &MobDef,
+        loco: Locomotion,
+        drive: Option<DriveIntent>,
+        nav_jumped: bool,
+    ) -> Option<f32> {
         if self.stagger_timer > 0.0 {
             self.vel.x = self.knockback.x;
             self.vel.z = self.knockback.z;
@@ -281,14 +324,16 @@ impl Instance {
             // body has no more air or stagger control than a walking one.
             // Long-body yaw is clamped by the same segmented geometry that
             // resolves its translation.
-            if can_steer {
+            if loco.can_steer {
                 self.vel.x = vx;
                 self.vel.z = vz;
             }
             self.moving = false;
-        } else if can_steer {
+        } else if loco.can_steer {
+            let wish = loco.wish;
             self.moving = wish.length_squared() > 1e-6;
             let mut speed = d.walk_speed * self.walk_speed_scale;
+            let mut requested_yaw = None;
             if self.moving {
                 let target = heading_yaw(wish);
                 let turned = turn_toward(self.yaw, target, d.turn_rate * dt);
@@ -305,6 +350,7 @@ impl Instance {
             }
             self.vel.x = wish.x * speed;
             self.vel.z = wish.z * speed;
+            return requested_yaw;
         } else {
             // Unsteered mid-air (a fall's descent) a mob whose airborne arc
             // BEGAN as a walk still reads as walking while its horizontal
@@ -316,48 +362,34 @@ impl Instance {
                 && !self.on_ground
                 && self.vel.x * self.vel.x + self.vel.z * self.vel.z > 1e-6;
         }
-        // The intent's premise: a `while_walking` drive was decided from
-        // LAST tick's state on the promise the mob is walking — if the walk
-        // ended in between (arrival, an abandoned route, a backoff pause),
-        // the stale intent is dropped whole, or it fires one in-place bounce
-        // exactly where the mob came to rest (the "one hop too often"
-        // playtest report).
-        let premise_holds = drive.is_none_or(|dr| !dr.while_walking || self.moving);
-        // A mod's vertical drive: set this tick's vertical velocity (gravity
-        // resumes below), composing with EITHER horizontal source. An upward
-        // value from the ground is a launch. The navigator's step jump above
-        // keeps priority on a tick both fire — its full `jump_speed` is
-        // sized to clear the one-block ledge the route depends on.
+        None
+    }
+
+    /// A mod's vertical drive: set this tick's vertical velocity (gravity
+    /// resumes below), composing with EITHER horizontal source. An upward
+    /// value from the ground is a launch. The navigator's step jump keeps
+    /// priority on a tick both fire — its full `jump_speed` is sized to clear
+    /// the one-block ledge the route depends on.
+    fn drive_vertical(&mut self, drive: Option<DriveIntent>) {
         if let Some(vy) = drive.and_then(|dr| dr.vertical) {
-            if premise_holds && can_steer && !nav_jumped && self.stagger_timer <= 0.0 {
-                self.vel.y = vy;
-                if vy > 0.0 && self.on_ground {
-                    self.on_ground = false;
-                }
+            self.vel.y = vy;
+            if vy > 0.0 && self.on_ground {
+                self.on_ground = false;
             }
         }
-        // An upward launch that starts from a walking gait re-phases the walk
-        // clip forward onto a cycle boundary (see `apply_expression`), so an
-        // authored takeoff clip stays locked to the physical arc.
-        if self.moving && !self.on_ground && self.vel.y > 0.0 && was_grounded {
-            self.walk_launch = true;
-        }
-        // A drive's absolute yaw obeys the same gates as its velocities: no
-        // steering while unsupported, the knockback stagger owns its tick,
-        // and a walking-gated intent's premise must hold.
-        let drive_yaw = if premise_holds && can_steer && self.stagger_timer <= 0.0 {
-            drive.and_then(|dr| dr.yaw)
-        } else {
-            None
-        };
-        if let Some(yaw) = drive_yaw.or(requested_yaw) {
-            self.yaw =
-                super::clamp_body_yaw(self.pos, self.yaw, yaw, d.size, boxes, obstacles, self.id);
-        }
-        let preserve_air_carry = self.stagger_timer <= 0.0 && !can_steer;
-        let carried_x = self.vel.x;
-        let carried_z = self.vel.z;
+    }
 
+    /// The medium's horizontal resistance, the soft entity push, and the
+    /// fluid current.
+    fn resist_and_push(&mut self, dt: f32, incoming: Vec3, env: &Surroundings<'_>) {
+        if let Some(sample) = env.immersion {
+            let desired = self.vel;
+            let incoming = Vec3::new(incoming.x, self.vel.y, incoming.z);
+            self.vel = sample
+                .fluid
+                .motion
+                .horizontal_velocity(incoming, desired, dt);
+        }
         // Soft entity push: a velocity from being jostled by overlapping entities,
         // layered on top of locomotion (or knockback) so a crowded mob drifts apart
         // smoothly. Consumed each tick — the push pass re-derives it from the live
@@ -365,74 +397,77 @@ impl Instance {
         self.vel.x += self.push.x;
         self.vel.z += self.push.z;
         self.push = Vec3::ZERO;
+        self.vel = env.current.apply(self.vel, dt);
+    }
 
-        // Water current: while standing in or swimming through flowing water, drift with
-        // it — capped well below walk speed — so a mob caught in a river is carried
-        // downstream instead of ignoring the flow. Unlike the player (whose velocity
-        // carries momentum and eases into the current over several ticks), a mob rebuilds
-        // its horizontal velocity from `wish` every tick, so the current contributes its
-        // full drift in one tick (max step = the target speed) rather than a small accel
-        // step that would never accumulate. It still never slows a mob already swimming
-        // downstream faster than the current.
-        let flow = flow_at_body(self.pos, d.size.height, water_flow);
-        self.vel = add_flow_push(self.vel, flow, WATER_CURRENT_SPEED, WATER_CURRENT_SPEED);
-
-        // Vertical, by the species' water behavior (`Buoyancy`):
-        //
-        // SURFACE (a hull): level off AT the waterline — velocity proportional
-        // to the depth error toward `surface − draft`, capped at swim speed.
-        // First-order, so it settles flat with NO overshoot and no bob, and a
-        // submerged hull rises smoothly. No ledge-climb boost: a hull noses
-        // against the shore instead of hopping onto it.
-        //
-        // SWIM (a creature): always stroke toward the surface (no jump key, so
-        // it behaves like a player holding jump): vel eases up to `SWIM_RISE`
-        // until the probe — a fraction up the body — clears the water; then
-        // it's airborne, gravity pulls it back, it re-enters, and rises again.
-        // The result is a bob through the waterline, identical in feel to the
-        // player.
-        //
-        // Out of water either way: gravity.
-        let feet = voxel_at(self.pos);
-        if d.buoyancy == super::Buoyancy::Surface {
-            let surface = water_surface(feet).or_else(|| water_surface(feet - IVec3::Y));
-            self.vel.y =
-                surface_vertical_velocity(self.vel.y, self.pos.y, surface, dt, d.gravity_scale);
-        } else {
-            let probe = voxel_at(self.pos + Vec3::new(0.0, d.size.height * SWIM_PROBE_FRAC, 0.0));
-            if !water(probe) {
-                self.vel.y += GRAVITY * d.gravity_scale * dt;
-            } else if d.buoyancy == super::Buoyancy::Swim {
-                // Climbing out: when steering toward a 1-block ledge it can get onto (and
-                // not already falling back), a firm boost crests the waterline and lands it
-                // on the block instead of hugging the shore forever — else the swim bob.
-                let ledge = (self.vel.y >= 0.0 && can_steer && wish.length_squared() > 1e-12)
-                    .then(|| self.ledge_ahead(wish, d.size.half_width, support))
-                    .flatten();
-                if let Some(top) = ledge {
-                    self.vel.y = self.vel.y.max(swim_climb_speed(top - self.pos.y));
-                } else {
-                    self.vel.y = approach(self.vel.y, SWIM_RISE, SWIM_VACCEL * dt);
+    /// Buoyancy or gravity, and the shore climb that overrides buoyancy.
+    /// Creatures always try to leave toward a reachable shore; floating and
+    /// neutral bodies have no stroke to climb with.
+    fn vertical_velocity(
+        &mut self,
+        dt: f32,
+        d: &MobDef,
+        can_steer: bool,
+        heading: Vec3,
+        env: &Surroundings<'_>,
+    ) -> Option<ShoreClimb> {
+        let Some(sample) = env.immersion else {
+            self.vel.y += GRAVITY * d.gravity_scale * dt;
+            return None;
+        };
+        let shore = (d.buoyancy == Buoyancy::Swim && can_steer && self.stagger_timer <= 0.0)
+            .then(|| {
+                Swimmer {
+                    pos: self.pos,
+                    vel_y: self.vel.y,
+                    half_width: d.size.half_width,
+                    height: d.size.height,
+                    gravity: -GRAVITY * d.gravity_scale,
+                    jump_speed: d.jump_speed,
                 }
-            }
+                .shore_climb(heading, sample, &env.boxes, env.obstacles)
+            })
+            .flatten();
+        if let Some(ShoreClimb::Launch(speed)) = shore {
+            self.vel.y = self.vel.y.max(speed);
+        } else {
+            self.vel.y = sample.vertical_velocity(self.vel.y, self.pos.y, d.buoyancy, true, dt);
         }
-        // Body collision via the shared swept-AABB resolver (the same one the player and
-        // dropped items use) against the block's REAL collision shape — so a mob stops at a
-        // bbmodel block's legs/top, not its full cube. Navigation keeps its cell-indexed
-        // skeleton but validates candidate edges against the same real shapes (the
-        // `mob::nav` gate), so what the planner accepts is what this resolver permits.
-        // A grounded mob auto-steps up a half-block ledge (a slab / a model block's low
-        // edge) without jumping — same `STEP_HEIGHT` the player uses.
+        shore
+    }
+
+    /// Body collision via the shared swept-AABB resolver (the same one the
+    /// player and dropped items use) against the block's REAL collision shape
+    /// — so a mob stops at a bbmodel block's legs/top, not its full cube.
+    /// Navigation keeps its cell-indexed skeleton but validates candidate edges
+    /// against the same real shapes (the `mob::nav` gate), so what the planner
+    /// accepts is what this resolver permits. A grounded mob auto-steps up a
+    /// half-block ledge without jumping — same `STEP_HEIGHT` the player uses.
+    /// `carried` is the airborne horizontal velocity a collision may not
+    /// replace on an unblocked axis.
+    fn resolve_motion(
+        &mut self,
+        dt: f32,
+        d: &MobDef,
+        shore: Option<ShoreClimb>,
+        carried: Option<[f32; 2]>,
+        env: &Surroundings<'_>,
+    ) -> f32 {
+        let step = match shore {
+            Some(ShoreClimb::Step(height)) => height.max(collision::STEP_HEIGHT),
+            _ => collision::STEP_HEIGHT,
+        };
         let (moved, grounded, hit, healed) = super::resolve_body_motion(
             self.pos,
             self.yaw,
             d.size,
             self.vel.to_array(),
             dt,
-            petramond_world::collision::STEP_HEIGHT,
-            boxes,
-            obstacles,
-            healing_obstacles,
+            step,
+            matches!(shore, Some(ShoreClimb::Step(_))),
+            &env.boxes,
+            env.obstacles,
+            env.healing_obstacles,
             self.id,
         );
         self.pos += Vec3::from(moved);
@@ -445,12 +480,12 @@ impl Instance {
         if hit[2] {
             self.vel.z = 0.0;
         }
-        if preserve_air_carry {
+        if let Some([x, z]) = carried {
             if !hit[0] {
-                self.vel.x = carried_x;
+                self.vel.x = x;
             }
             if !hit[2] {
-                self.vel.z = carried_z;
+                self.vel.z = z;
             }
         }
         self.on_ground = grounded;
@@ -459,16 +494,16 @@ impl Instance {
         }
         // The air-walk latch: an airborne phase counts as a WALK while it
         // began from (or continues) walking locomotion and horizontal motion
-        // carries — read by the unsteered branch above so the gait
-        // expression survives the whole ballistic arc. Landing clears it.
+        // carries — read by the unsteered branch of `steer_horizontal` so the
+        // gait expression survives the whole ballistic arc. Landing clears it.
         self.air_walk = !grounded
             && (self.moving
                 || (self.air_walk && self.vel.x * self.vel.x + self.vel.z * self.vel.z > 1e-6));
         healed
     }
 
-    /// [`integrate_with_flow`](Self::integrate_with_flow) in still water — the unit tests
-    /// drive the kinematics against a stub world with no currents.
+    /// [`integrate_locomotion`](Self::integrate_locomotion) on dry cell-solid
+    /// terrain, for the land kinematics tests.
     #[cfg(test)]
     pub(super) fn integrate(
         &mut self,
@@ -476,72 +511,14 @@ impl Instance {
         d: &MobDef,
         wish: Vec3,
         jump: bool,
-        solid: &impl Fn(IVec3) -> bool,
-        water: &impl Fn(IVec3) -> bool,
+        solid: &impl Fn(petramond_math::math::IVec3) -> bool,
     ) {
-        // Surface height derived from the stubbed water cells: topmost
-        // contiguous cell + the source top (8/9) — engine species are all
-        // swimmers, so only the Surface-buoyancy tests consult it.
-        let water_surface = |c: IVec3| {
-            if !water(c) {
-                return None;
-            }
-            let mut top = c;
-            while water(top + IVec3::Y) {
-                top += IVec3::Y;
-            }
-            Some(top.y as f32 + 8.0 / 9.0)
-        };
-        self.integrate_with_flow(
-            dt,
-            d,
+        let loco = Locomotion {
             wish,
             jump,
-            true,
-            &boxes_of(solid),
-            &[],
-            &[],
-            solid,
-            water,
-            &water_surface,
-            &|_| Vec3::ZERO,
-        );
-    }
-
-    /// Move along each axis in turn, resolving against solid cells; returns whether
-    /// the mob is resting on the ground after the move. Mirrors the dropped-item
-    /// integrator, sized to the mob's AABB.
-    /// Is there a 1-block ledge to climb onto just ahead in `dir` (horizontal)? True
-    /// when the cell just beyond the body bears feet (`support` — full or partial
-    /// collision) at the feet level (or one above) with open space directly above
-    /// it — a single step, not a taller wall (so swimming into a cliff face won't
-    /// lift the mob up it). Mirrors the player's climb-out probe.
-    fn ledge_ahead(
-        &self,
-        dir: Vec3,
-        half_width: f32,
-        support: &impl Fn(IVec3) -> bool,
-    ) -> Option<f32> {
-        let d = Vec3::new(dir.x, 0.0, dir.z);
-        if d.length_squared() <= 1e-12 {
-            return None;
-        }
-        let d = d.normalize_or_zero();
-        // A cell just beyond the body's footprint in the move direction.
-        let fx = (self.pos.x + d.x * (half_width + 0.2)).floor() as i32;
-        let fz = (self.pos.z + d.z * (half_width + 0.2)).floor() as i32;
-        let base = self.pos.y.floor() as i32;
-        // A step at feet level, or one block above (so the boost engages from ~a block
-        // below the ledge top, giving runway to crest it).
-        let step_at = |y: i32| {
-            let top = (y + 1) as f32;
-            (top <= self.pos.y + SWIM_CLIMB_MAX_LEDGE_DELTA
-                && support(IVec3::new(fx, y, fz))
-                && !support(IVec3::new(fx, y + 1, fz)))
-            .then_some(top)
+            can_steer: true,
         };
-        // The LOWER step first: it is the one the body actually has to clear.
-        step_at(base).or_else(|| step_at(base + 1))
+        self.integrate_locomotion(dt, d, loco, &Surroundings::dry(&boxes_of(solid)));
     }
 
     /// Whether the body rests on the ground this tick — the same fact the
@@ -577,83 +554,17 @@ fn wrap_angle(a: f32) -> f32 {
     (a + PI).rem_euclid(TAU) - PI
 }
 
-fn surface_vertical_velocity(
-    current: f32,
-    feet_y: f32,
-    surface: Option<f32>,
-    dt: f32,
-    gravity_scale: f32,
-) -> f32 {
-    match surface {
-        Some(surface) => {
-            let target = surface - SURFACE_DRAFT;
-            ((target - feet_y) * SURFACE_FLOAT_RATE).clamp(-SWIM_RISE, SWIM_RISE)
-        }
-        None => current + GRAVITY * gravity_scale * dt,
-    }
-}
-
 /// Move `cur` toward `target` by at most `step` (linear, no wrapping).
 pub(super) fn approach(cur: f32, target: f32, step: f32) -> f32 {
     cur + (target - cur).clamp(-step, step)
 }
 
-/// The upward speed that just clears a ledge `rise` metres above the feet.
-///
-/// It has to be SOLVED, not picked: a floating body sits `height / 3` below the
-/// waterline (the swim probe — see [`SWIM_PROBE_FRAC`]), so how far a mob must rise to
-/// crest a shore is a function of how TALL it is. A fixed boost silently sorts mobs
-/// into those short enough to get out and those not: 4.5 m/s against this gravity buys
-/// 0.46 m, which cleared a rabbit (0.25) and a sheep (0.43) and stranded every
-/// 1.8-metre body (0.60) in any water it walked into.
-///
-/// The reachable ledge is already bounded by [`SWIM_CLIMB_MAX_LEDGE_DELTA`], so this
-/// stays in the range of an ordinary jump; [`SWIM_CLIMB`] floors it so a low step
-/// still reads as a firm push rather than a drift.
-fn swim_climb_speed(rise: f32) -> f32 {
-    let needed = (2.0 * -GRAVITY * (rise + SWIM_CLIMB_CLEARANCE))
-        .max(0.0)
-        .sqrt();
-    needed.max(SWIM_CLIMB)
-}
-
 pub(super) fn route_steering_supported(
     on_ground: bool,
-    in_water: bool,
+    in_fluid: bool,
     vertical_velocity: f32,
 ) -> bool {
-    on_ground || in_water || vertical_velocity > 0.0
-}
-
-/// The water-flow direction acting on a mob whose feet are at `pos`: the current at the
-/// swim probe (a fraction up the body, where the mob is submerged enough to swim), else
-/// the current at the feet (so a mob wading in a shallow flowing film is still nudged),
-/// else zero when no water touches it. Probes are POINTS, surface-height aware (see
-/// `World::water_flow_at_point`) — feet standing on a lowered block beside a channel,
-/// above the fluid's real surface, catch nothing.
-fn flow_at_body(pos: Vec3, height: f32, water_flow: &impl Fn(Vec3) -> Vec3) -> Vec3 {
-    let f = water_flow(pos + Vec3::new(0.0, height * SWIM_PROBE_FRAC, 0.0));
-    if f.length_squared() > 0.0 {
-        return f;
-    }
-    water_flow(pos)
-}
-
-/// Add a capped push along the water-flow direction `dir` without slowing a body that
-/// already drifts at least `target_speed` along it. Mirrors the player's and dropped
-/// item's current handling, so every entity rides a current the same way. Horizontal
-/// only — `vel.y` is untouched.
-fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec3 {
-    let len_sq = dir.x * dir.x + dir.z * dir.z;
-    if len_sq <= 1e-12 || target_speed <= 0.0 || max_delta <= 0.0 {
-        return vel;
-    }
-    let inv_len = len_sq.sqrt().recip();
-    let nx = dir.x * inv_len;
-    let nz = dir.z * inv_len;
-    let along = vel.x * nx + vel.z * nz;
-    let add = (target_speed - along).clamp(0.0, max_delta);
-    Vec3::new(vel.x + nx * add, vel.y, vel.z + nz * add)
+    on_ground || in_fluid || vertical_velocity > 0.0
 }
 
 /// Bridge a cell-solid bool stub into the shared collision box source (a full cube per
@@ -661,10 +572,10 @@ fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec
 /// predicate while it routes through the same `collision::resolve_body` as production.
 #[cfg(test)]
 fn boxes_of(
-    solid: &impl Fn(IVec3) -> bool,
+    solid: &impl Fn(petramond_math::math::IVec3) -> bool,
 ) -> impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb] + '_ {
     move |x, y, z| {
-        if solid(IVec3::new(x, y, z)) {
+        if solid(petramond_math::math::IVec3::new(x, y, z)) {
             petramond_world::block::Block::Stone.collision_boxes()
         } else {
             &[]

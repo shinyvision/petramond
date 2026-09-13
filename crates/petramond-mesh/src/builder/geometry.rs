@@ -13,17 +13,19 @@ use super::super::face_emit::{cube_face_lighting_pad, fold_light, push_cube_face
 use super::super::greedy::{emit_greedy_quads, FlatFace, GreedyScratch, GREEDY};
 use super::super::tint;
 use super::super::vertex::{transition::Transition, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE};
-use super::super::water::{self, SideVsWater, WaterSurface};
 
 use super::super::boxset::{
     cell_seals_face, cell_wears_snow, emit_box_set, snow_bed_boxes, BoxSetScratch, ShapeBox,
 };
-use super::cell_class::{cell_classes, BOXES, CROP, CROSS, FAST_CUBE, MODEL, SKIP, TORCH, WATER};
+use super::cell_class::{
+    cell_classes, BOXES, CROP, CROSS, FAST_CUBE, FLUID, MODEL, PAD_OPAQUE_FLUID, SKIP, TORCH,
+};
 use super::cube_face::{
     boundary_plane, cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face,
     log_side_cell_uvs, log_side_uvs_apply,
 };
 use super::exposed_masks::{build_exposed_masks, mask_has, VISIT_ALL};
+use super::fluid_faces::{emit_fluid_cell, FluidNeighbourhood, FluidProbe, FluidStreams};
 use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
 use super::plant::emit_plant;
@@ -36,7 +38,7 @@ pub(super) fn section_geometry(
     pos: SectionPos,
     neighbour_block: impl Fn(i32, i32, i32) -> u16,
     neighbour_cell_state: impl Fn(i32, i32, i32) -> petramond_world::block::ShapeState,
-    neighbour_water: impl Fn(i32, i32, i32) -> u8,
+    neighbour_fluid_meta: impl Fn(i32, i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_blocklight: impl Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
     neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
@@ -61,7 +63,6 @@ pub(super) fn section_geometry(
         Some(petramond_world::tile::TileTint::Fixed(rgb)) => rgb.map(|c| f32::from(c) / 255.0),
         _ => tints.map_or(tint::NO_TINT, |t| t.tile(kind, ci)),
     };
-    let tint_water = |ci| tints.map_or(tint::NO_TINT, |t| t.water[ci]);
     // Per-cell `petramond:tint` presentation entries (replicated cell KV):
     // a multiply into the vertex tint lane. Sparse — empty on almost every
     // section, so the fast path is one `is_empty` test.
@@ -133,27 +134,13 @@ pub(super) fn section_geometry(
     let slab_full_at = |wx: i32, wy: i32, wz: i32| -> bool {
         SlabState::from_cell(neighbour_cell_state(wx, wy, wz)).is_full()
     };
-    let water_at = |wx: i32, wy: i32, wz: i32| -> u8 { neighbour_water(wx, wy, wz) };
-    let fluid_at = |wx: i32, wy: i32, wz: i32| -> Option<f32> {
-        if block_at(wx, wy, wz).fluid() != Some(Block::Water) {
-            return None;
-        }
-        Some(petramond_world::water_math::fluid_height(
-            water_at(wx, wy, wz),
-            block_at(wx, wy + 1, wz),
-        ))
-    };
-    let water_fills_cell = |wx: i32, wy: i32, wz: i32| -> bool {
-        if block_at(wx, wy, wz).fluid() != Some(Block::Water) {
-            return false;
-        }
-        petramond_world::water_math::fills_cell(water_at(wx, wy, wz), block_at(wx, wy + 1, wz))
-    };
-    // Still-source probe for the flow gradient: two adjacent still sources
-    // never flow into each other (see `water::surface_flow_dir`).
-    let water_still_at = |wx: i32, wy: i32, wz: i32| -> bool {
-        block_at(wx, wy, wz).fluid() == Some(Block::Water)
-            && petramond_world::water_math::is_still_source(water_at(wx, wy, wz))
+    // Fluid probes take the fluid they read: corner heights and fills only
+    // ever average cells of the SAME fluid, so lava beside water renders both.
+    let fluid_probe = FluidProbe {
+        pad,
+        origin: IVec3::new(ox, oy, oz),
+        block_at: &block_at,
+        meta_at: &neighbour_fluid_meta,
     };
 
     // The primitive seam every shape family reads the world through.
@@ -280,11 +267,42 @@ pub(super) fn section_geometry(
         .filter(|_| options.leaf_mesh_mode == LeafMeshMode::Detailed)
         .map(|pad| build_exposed_masks(pad, (ox, oy, oz), &seals_floor));
 
+    let pad_classes = super::cell_class::pad_classes();
+    // A full cell of an opaque medium hides the faces behind it like stone:
+    // the rock walls of a lava sea are never meshed. See-through fluids cover
+    // nothing.
     let cube_face_covered = |p: IVec3, face: Face| {
         let b = block_at(p.x, p.y, p.z);
         b.is_opaque()
             || (b.is_slab() && slab_full_at(p.x, p.y, p.z))
+            || (super::cell_class::class_of(pad_classes, b.id()) & PAD_OPAQUE_FLUID != 0
+                && fluid_probe.fills(p, b))
             || (matches!(face, Face::PosY) && seals_floor(p))
+    };
+    // A cube face's per-corner (ao, sky, block light), lit from its front cell.
+    let light_face = |face: Face, front: IVec3| {
+        let (fx, fy, fz) = (front.x, front.y, front.z);
+        cube_face_lighting(
+            face,
+            fx,
+            fy,
+            fz,
+            boundary_plane(face, (fx, fy, fz)),
+            neighbour_light(fx, fy, fz) as u32,
+            neighbour_blocklight(fx, fy, fz),
+            true,
+            &block_at,
+            &slab_at,
+            &neighbour_light,
+            &neighbour_blocklight,
+            &cell_matter,
+        )
+    };
+    let fluid_neighbourhood = FluidNeighbourhood {
+        probe: &fluid_probe,
+        loaded: &neighbour_loaded,
+        covered: &cube_face_covered,
+        light_face: &light_face,
     };
     let classes = cell_classes();
     let transition_context = transition::Context {
@@ -323,6 +341,23 @@ pub(super) fn section_geometry(
                     let wy = oy + ly as i32;
                     let wz = oz + lz as i32;
                     let ci = lz * SECTION_SIZE + lx;
+
+                    if class & FLUID != 0 {
+                        emit_fluid_cell(
+                            &fluid_neighbourhood,
+                            FluidStreams {
+                                opaque: &mut opaque,
+                                transparent: &mut transparent,
+                                transparent_two_sided: &mut transparent_two_sided,
+                            },
+                            block,
+                            block == resident,
+                            IVec3::new(wx, wy, wz),
+                            |kind| tint_tile(kind, ci),
+                            part_tint(section_idx(lx, ly, lz), 0),
+                        );
+                        continue;
+                    }
 
                     // The box-set emitter's world hooks for this cell (zero-cost
                     // closures over the shared reads; only box-family cells call
@@ -573,10 +608,9 @@ pub(super) fn section_geometry(
 
                     // A cube-family cell with no exposed face draws nothing on the
                     // fast path below, so skip its whole per-cell setup — tiles,
-                    // side style, log axis, front facing, water surface — instead
-                    // of computing all of it and then culling six faces. Buried
-                    // cells are the bulk of every underground section.
-                    let is_water = class & WATER != 0;
+                    // side style, log axis, front facing — instead of computing
+                    // all of it and then culling six faces. Buried cells are the
+                    // bulk of every underground section.
                     let block_tiles = block.tiles();
                     // Row-declared side treatments, resolved once per cell — the
                     // mesher reads row fields, never concrete block ids. A
@@ -648,92 +682,6 @@ pub(super) fn section_geometry(
                                 crown(),
                             );
                         }
-                    };
-
-                    // The cell's own `fills_cell` answer — cheap, and the ONLY
-                    // thing the water-vs-water cull needs. The full surface
-                    // resolve behind it (sixteen corner-height samples plus a flow
-                    // gradient) is DEFERRED to the first face that survives
-                    // culling: a submerged ocean cell draws nothing at all, and
-                    // those are the overwhelming majority of water cells.
-                    let water_full = is_water.then(|| {
-                        if block != Block::Water {
-                            block_at(wx, wy + 1, wz).fluid() == Some(block)
-                        } else {
-                            match pad {
-                                Some(pad) => pad.water_fills_local(lx as i32, ly as i32, lz as i32),
-                                None => water_fills_cell(wx, wy, wz),
-                            }
-                        }
-                    });
-                    // A SUBMERGED water cell — full to the top, with six water
-                    // neighbours that are themselves full — draws nothing at all:
-                    // top and bottom cull against water outright, and each side
-                    // culls because the neighbour is not recessed. Ocean interiors
-                    // are the bulk of every water cell in the world, so testing it
-                    // once beats walking six faces to reach six culls.
-                    if block == Block::Water && water_full == Some(true) {
-                        let nb_full = |dx: i32, dy: i32, dz: i32| match pad {
-                            Some(pad) => pad.water_fills_local(
-                                lx as i32 + dx,
-                                ly as i32 + dy,
-                                lz as i32 + dz,
-                            ),
-                            None => water_fills_cell(wx + dx, wy + dy, wz + dz),
-                        };
-                        if FACES.iter().all(|f| {
-                            let (dx, dy, dz) = f.dir();
-                            nb_full(dx, dy, dz)
-                        }) {
-                            continue;
-                        }
-                    }
-
-                    let water_cell: std::cell::OnceCell<WaterSurface> = std::cell::OnceCell::new();
-                    let water_surface = || {
-                        water_cell.get_or_init(|| {
-                            let full = water_full.expect("only a fluid cell resolves a surface");
-                            if block != Block::Water {
-                                return WaterSurface::stationary(
-                                    [wx, wy, wz],
-                                    block,
-                                    block_tiles[0],
-                                    block_at,
-                                );
-                            }
-                            if let Some(pad) = pad {
-                                // Pad-local samples: ±1 neighbours stay inside SECTION_PAD.
-                                let (plx, ply, plz) = (lx as i32, ly as i32, lz as i32);
-                                let block_l = |nwx, nwy, nwz| {
-                                    pad.block_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
-                                };
-                                let fluid_l = |nwx, nwy, nwz| {
-                                    pad.fluid_height_local(
-                                        plx + nwx - wx,
-                                        ply + nwy - wy,
-                                        plz + nwz - wz,
-                                    )
-                                };
-                                let still_l = |nwx, nwy, nwz| {
-                                    pad.water_still_local(
-                                        plx + nwx - wx,
-                                        ply + nwy - wy,
-                                        plz + nwz - wz,
-                                    )
-                                };
-                                WaterSurface::new(wx, wy, wz, full, &block_l, &fluid_l, &still_l)
-                            } else {
-                                WaterSurface::new(
-                                    wx,
-                                    wy,
-                                    wz,
-                                    full,
-                                    &block_at,
-                                    &fluid_at,
-                                    &water_still_at,
-                                )
-                            }
-                        })
                     };
 
                     if let (Some(pad), Some(exposed)) = (pad, exposed_masks.as_ref()) {
@@ -859,21 +807,13 @@ pub(super) fn section_geometry(
 
                     for face in FACES {
                         let (dx, dy, dz) = face.dir();
-                        let nwx = wx + dx;
-                        let nwy = wy + dy;
-                        let nwz = wz + dz;
-                        let nb = block_at(nwx, nwy, nwz);
-
-                        let is_water_top = is_water && matches!(face, Face::PosY);
+                        let front = IVec3::new(wx + dx, wy + dy, wz + dz);
+                        if cube_face_covered(front, face) {
+                            continue;
+                        }
+                        let nb = block_at(front.x, front.y, front.z);
                         let is_side =
                             matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
-                        let nb_solid = cube_face_covered(IVec3::new(nwx, nwy, nwz), face);
-                        if nb_solid && !is_water_top {
-                            continue;
-                        }
-                        if is_water && is_side && !neighbour_loaded(nwx, nwy, nwz) {
-                            continue;
-                        }
                         // A block that MERGES WITH ITSELF draws no interior face
                         // against its own kind: a glass wall reads as one pane
                         // rather than stacked frames, and an ice sheet as one
@@ -887,51 +827,10 @@ pub(super) fn section_geometry(
                         if merges && nb == block {
                             continue;
                         }
-                        let mut water_exposed_step = false;
-                        if let Some(full) = water_full {
-                            if nb.fluid() == Some(block) {
-                                let nb_full = if block != Block::Water {
-                                    block_at(nwx, nwy + 1, nwz).fluid() == Some(block)
-                                } else if let Some(pad) = pad {
-                                    pad.water_fills_local(
-                                        lx as i32 + dx,
-                                        ly as i32 + dy,
-                                        lz as i32 + dz,
-                                    )
-                                } else {
-                                    water_fills_cell(nwx, nwy, nwz)
-                                };
-                                match water::side_vs_water(full, is_side, nb_full) {
-                                    SideVsWater::ExposedStep => water_exposed_step = true,
-                                    SideVsWater::Cull => continue,
-                                }
-                            }
-                        }
 
-                        let (base_tile, overlay_tile, tint) = if is_water && block != Block::Water {
-                            (
-                                cube_face_tile(block, face, block_tiles, front_faces, log_axis),
-                                None,
-                                tint::NO_TINT,
-                            )
-                        } else if is_water {
-                            let t = match face {
-                                Face::PosY => water_surface().top_tile(),
-                                Face::NegY => petramond_world::tile::engine().water_still,
-                                // A STILL SOURCE's side faces are calm water — the
-                                // step walls of the recessed pocket under a block
-                                // sitting in the sea must not stream. Flowing and
-                                // falling cells keep the animated flow sides.
-                                _ if pad
-                                    .map(|p| p.water_still_local(lx as i32, ly as i32, lz as i32))
-                                    .unwrap_or_else(|| water_still_at(wx, wy, wz)) =>
-                                {
-                                    petramond_world::tile::engine().water_still
-                                }
-                                _ => petramond_world::tile::engine().water_flow,
-                            };
-                            (t, None, tint_water(ci))
-                        } else if let (true, Some(style)) = (is_side, side_style) {
+                        let (base_tile, overlay_tile, tint) = if let (true, Some(style)) =
+                            (is_side, side_style)
+                        {
                             style
                         } else {
                             let t = cube_face_tile(block, face, block_tiles, front_faces, log_axis);
@@ -942,53 +841,18 @@ pub(super) fn section_geometry(
 
                         let base_tile = base_tile.face_variation([wx, wy, wz], face.normal_code());
 
-                        let mut corners = quad_for(face, base_x, base_y, base_z);
-                        if is_water {
-                            water_surface().warp_quad(
-                                &mut corners,
-                                base_x,
-                                base_y,
-                                base_z,
-                                water_exposed_step,
-                            );
-                        }
-
-                        let fx = nwx;
-                        let fy = nwy;
-                        let fz = nwz;
-                        let f_l = neighbour_light(fx, fy, fz) as u32;
-                        let f_bl = neighbour_blocklight(fx, fy, fz);
-
-                        let water_ov: u32 = if is_water && matches!(face, Face::PosY) {
-                            water_surface().top_angle()
-                        } else {
-                            0
-                        };
+                        let corners = quad_for(face, base_x, base_y, base_z);
                         let (overlay, has_overlay) = match overlay_tile {
                             Some(o) => (o.index() as u32, true),
-                            None => (water_ov, false),
+                            None => (0, false),
                         };
                         let log_uvs =
                             log_side_cell_uvs(log_axis, face, corners, [base_x, base_y, base_z]);
 
-                        let (ao, light6, block6) = cube_face_lighting(
-                            face,
-                            fx,
-                            fy,
-                            fz,
-                            boundary_plane(face, (fx, fy, fz)),
-                            f_l,
-                            f_bl,
-                            true,
-                            &block_at,
-                            &slab_at,
-                            &neighbour_light,
-                            &neighbour_blocklight,
-                            &cell_matter,
-                        );
+                        let (ao, light6, block6) = light_face(face, front);
                         // Defer PLAIN opaque cube faces that are FLAT (all four corners share
                         // AO + every light channel) to the greedy merge — a run of them collapses into
-                        // one tiled quad, pixel-identical. Water / grass-side (overlay) / leaves /
+                        // one tiled quad, pixel-identical. Grass-side (overlay) / leaves /
                         // cactus and any gradient (non-flat) face emit per-cell here, unchanged.
                         let transition = transition_context.plan(IVec3::new(wx, wy, wz), face, id);
                         let flat = ao[0] == ao[1]
@@ -1001,7 +865,6 @@ pub(super) fn section_geometry(
                             && block6[1] == block6[2]
                             && block6[2] == block6[3];
                         if transition.is_none()
-                            && !is_water
                             && overlay_tile.is_none()
                             && (block.is_opaque() || slab_as_cube)
                             && flat
@@ -1024,18 +887,8 @@ pub(super) fn section_geometry(
                             // Translucent blocks (ice) blend in their own
                             // depth-writing pass; their texels sit below the
                             // opaque pass's cutout and would discard to nothing
-                            // there, and water's read-only depth cannot resolve a
-                            // translucent cube sheet's own face order.
-                            // Water TOP faces are the only two-sided terrain quads
-                            // that stay in one draw: they go to their own cull-none
-                            // stream instead of duplicating their vertices.
-                            let vbuf = if is_water {
-                                if matches!(face, Face::PosY) {
-                                    &mut transparent_two_sided
-                                } else {
-                                    &mut transparent
-                                }
-                            } else if block.is_translucent() {
+                            // there, and the fluid pass draws after them.
+                            let vbuf = if block.is_translucent() {
                                 &mut translucent
                             } else {
                                 &mut opaque
@@ -1060,7 +913,7 @@ pub(super) fn section_geometry(
                                 start,
                                 face,
                                 transition,
-                                nb == Block::Air && neighbour_loaded(nwx, nwy, nwz),
+                                nb == Block::Air && neighbour_loaded(front.x, front.y, front.z),
                             );
                         }
                     }

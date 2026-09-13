@@ -59,7 +59,7 @@ const RANDOM_TICK_CHUNK_RADIUS: i32 = 8;
 /// lowered cube, and the non-colliding decorations); anything whose real
 /// boxes resolve from per-cell or neighbour state (doors, models, fences,
 /// panes, stairs, slabs, ladders) stays conservatively relevant, as does any
-/// water involvement (water is navigation FOOTING). This keeps the heavy pen
+/// fluid involvement (fluids are navigation footing). This keeps the heavy pen
 /// churn out of the feed — grazed grass (`Cross` → air), crop growth stages,
 /// farmland hydration swaps (same 15/16 box) — while a broken wall, a placed
 /// fence, or a stone→air edit still invalidates. When unsure, answer `false`.
@@ -75,9 +75,13 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
                 | petramond_world::block::ShapeFamily::Cross
                 | petramond_world::block::ShapeFamily::Crop
                 | petramond_world::block::ShapeFamily::Torch
-        ) && !b.is_water()
+        ) && b.fluid().is_none()
     };
-    static_shape(old) && static_shape(new) && old.collision_boxes() == new.collision_boxes()
+    static_shape(old)
+        && static_shape(new)
+        && old.has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
+            == new.has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
+        && old.collision_boxes() == new.collision_boxes()
 }
 
 impl World {
@@ -141,7 +145,7 @@ impl World {
             // act on reads of sections whose streamed content is still in flight or
             // absent-and-lying. In-flight blockers resolve within ticks — retry;
             // unloaded blockers only resolve on a load event — drop, and let the
-            // on-load water kick re-arm the flow when the terrain streams in.
+            // on-load fluid kick re-arm the flow when the terrain streams in.
             match self.sim_readiness_at(pos) {
                 SimReadiness::Ready => self.run_scheduled_tick(pos),
                 SimReadiness::Wait => self.schedule_block_tick(pos, SIM_RETRY_DELAY),
@@ -190,7 +194,7 @@ impl World {
     ///
     /// The relight is emitted HERE, alongside the block update, so the two can
     /// never drift apart: this is the single "a block changed" choke point that
-    /// every editor calls (`set_block_world`, `set_water_world`, the model and
+    /// every editor calls (`set_block_world`, `set_fluid_world`, the model and
     /// furnace paths), and none has to remember a matching `mark_light_dirty` of
     /// its own — forgetting one was the bug this consolidates away (water washing
     /// a torch away changes the block light, but the water path never relit). Any
@@ -646,6 +650,18 @@ mod tests {
         world.set_block_world(p.x, p.y, p.z, Block::ShortGrass);
         world.set_block_world(p.x, p.y, p.z, Block::Air);
         assert_eq!(world.take_nav_changes(), (vec![], false));
+
+        for fluid in [Block::Water, Block::Lava] {
+            world.set_block_world(p.x, p.y, p.z, fluid);
+            let (changed, overflow) = world.take_nav_changes();
+            assert!(!overflow && changed.contains(&p), "fluid entry invalidates");
+            world.set_block_world(p.x, p.y, p.z, Block::Air);
+            let (changed, overflow) = world.take_nav_changes();
+            assert!(
+                !overflow && changed.contains(&p),
+                "fluid removal invalidates"
+            );
+        }
 
         // A wall appearing very much can.
         world.set_block_world(p.x, p.y, p.z, Block::Stone);

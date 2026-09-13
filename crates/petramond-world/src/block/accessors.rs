@@ -86,14 +86,14 @@ impl Block {
     }
 
     /// Whether direct full-strength skylight can continue straight down through
-    /// this cell without the normal flood-step loss. Water and leaves have open
+    /// this cell without the normal flood-step loss. Fluids and leaves have open
     /// apertures, but remain filtering media rather than clear air-like cells.
     #[inline]
     pub fn transmits_direct_skylight(self) -> bool {
         self == Block::Air
             || (self.light_shape() == BlockLightShape::Open
                 && self.is_transparent()
-                && !self.is_water()
+                && !self.is_fluid()
                 && !self.is_leaves())
     }
 
@@ -264,19 +264,10 @@ impl Block {
         self.has_tag(BlockTag::LOG)
     }
 
-    /// Whether this is water (source or flowing — one block id, the flow is metadata).
-    /// Water has no collision, so mobs sink through it unless they swim; the mob
-    /// pathfinder treats it as crossable footing and the kinematics float mobs up out
-    /// of it.
-    #[inline]
-    pub fn is_water(self) -> bool {
-        self == Block::Water
-    }
-
     /// Liquid occupancy includes inert generated fluids as well as simulated water.
     #[inline]
     pub fn is_fluid(self) -> bool {
-        self.is_water() || self.flags().fluid()
+        self.flags().fluid()
     }
 
     /// Stationary fluid occupying the space around this block's shape.
@@ -296,6 +287,12 @@ impl Block {
         } else {
             self.contained_fluid()
         }
+    }
+
+    /// The resolved properties of a fluid block; contained-fluid hosts use `fluid()` first.
+    #[inline]
+    pub fn fluid_def(self) -> Option<&'static crate::fluid::FluidDef> {
+        self.def().fluid
     }
 
     /// This block's behaviour — the world-reactive "class" assigned in its data
@@ -552,20 +549,25 @@ impl Block {
         data::flags(self.id()).is_slippery()
     }
 
-    /// What the cell becomes when this block is BROKEN: air, except a
-    /// [`MELTS`](BlockTag::MELTS) block (ice) leaves a water source when the
-    /// cell below can hold it — solid ground or more water. Mining the frozen
-    /// sea therefore refills instead of leaving a dry pocket (water never
-    /// flows upward, so nothing else could); breaking ice suspended over air
-    /// leaves air, never floating water. Every break path — the server break,
-    /// the client's predicted break, and natural sim breaks — routes the
-    /// plain-cube clear through this one rule so prediction cannot diverge.
+    /// The fluid a broken cell of this block leaves behind (the row's `melts_to`).
+    #[inline]
+    pub fn melts_to(self) -> Option<Block> {
+        self.def().melts_to
+    }
+
+    /// What the cell becomes when this block is BROKEN: air, except a row with
+    /// `melts_to` leaves that fluid's source when the cell below can hold it —
+    /// solid ground or more of the same fluid. Mining a frozen sea therefore
+    /// refills instead of leaving a dry pocket (fluid never flows upward, so
+    /// nothing else could); a block suspended over air leaves air, never a
+    /// floating source. Every break path — the server break, the client's
+    /// predicted break, and natural sim breaks — routes the plain-cube clear
+    /// through this one rule so prediction cannot diverge.
     #[inline]
     pub fn break_residue(self, below: Block) -> Block {
-        if self.has_tag(BlockTag::MELTS) && (below.is_solid() || below.is_water()) {
-            Block::Water
-        } else {
-            Block::Air
+        match self.melts_to() {
+            Some(fluid) if below.is_solid() || below == fluid => fluid,
+            _ => Block::Air,
         }
     }
 
@@ -627,6 +629,20 @@ impl Block {
     #[inline]
     pub fn tiles(self) -> [Tile; 3] {
         self.def().tiles
+    }
+
+    /// The still surface tile of a FLUID row (`tiles[0]`, the top-face tile).
+    #[inline]
+    pub fn fluid_still_tile(self) -> Tile {
+        self.def().tiles[0]
+    }
+
+    /// The animated strip a fluid cell's FLOWING state draws. Water and lava
+    /// both declare theirs; falling back to the still tile keeps a fluid row
+    /// without a `flow_tile` renderable (it just never animates its streams).
+    #[inline]
+    pub fn fluid_flow_tile(self) -> Tile {
+        self.def().flow_tile.unwrap_or_else(|| self.def().tiles[0])
     }
 
     /// Mining material class (drives tool requirement + future tool tiers). An

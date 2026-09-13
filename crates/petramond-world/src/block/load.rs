@@ -49,6 +49,11 @@ pub(super) struct RawBlockDef {
     pub flags: Vec<RawFlag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contained_fluid: Option<String>,
+    /// The fluid block a broken cell leaves behind where it can rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub melts_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fluid: Option<crate::fluid::load::RawFluid>,
     /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
     /// (interned at load — see [`BlockTag::resolve`]).
     pub tags: Vec<String>,
@@ -104,6 +109,10 @@ pub(super) struct RawBlockDef {
     /// Side tile swapped in while a `snow_cover` block sits directly above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_side: Option<String>,
+    /// The ANIMATED strip a fluid cell's flowing state draws (the still tile is
+    /// `tiles[0]`). Fluid rows only; a flow tile anywhere else is dead data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_tile: Option<String>,
     pub material: BlockMaterial,
     pub hardness: f64,
     pub drops: Vec<RawDrop>,
@@ -477,11 +486,41 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     let defs: &'static [BlockDef] = Box::leak(defs.into_boxed_slice());
     let shape_kinds: &'static [ShapeKindDef] = Box::leak(interner.into_table().into_boxed_slice());
     for row in defs {
+        if let Some(quench) = row.fluid.and_then(|f| f.quench) {
+            let name = names.blocks.name(row.block.id()).unwrap();
+            let by = defs[quench.by.id() as usize].fluid;
+            if quench.by == row.block
+                || by.is_none()
+                || defs[quench.result.id() as usize].fluid.is_some()
+            {
+                return Err(format!(
+                    "block '{name}' requires quench.by to be another fluid \
+                     and quench.result to be nonfluid"
+                ));
+            }
+            // Contact reactions resolve one direction per pair; a mutual pair
+            // would make the outcome depend on which cell updates first.
+            if by.and_then(|f| f.quench).is_some_and(|q| q.by == row.block) {
+                return Err(format!(
+                    "block '{name}' and '{}' quench each other; \
+                     only one fluid of a pair may declare the quench",
+                    names.blocks.name(quench.by.id()).unwrap()
+                ));
+            }
+        }
         if let Some(fluid) = row.contained_fluid {
             let target = &defs[fluid.id() as usize];
-            if fluid != Block::Water && !target.flags.fluid() {
+            if !target.flags.fluid() {
                 return Err(format!(
                     "block '{}' contains a non-fluid block",
+                    names.blocks.name(row.block.id()).unwrap()
+                ));
+            }
+        }
+        if let Some(residue) = row.melts_to {
+            if !defs[residue.id() as usize].flags.fluid() || row.flags.fluid() {
+                return Err(format!(
+                    "block '{}' melts_to must name a fluid block from a non-fluid row",
                     names.blocks.name(row.block.id()).unwrap()
                 ));
             }
@@ -698,8 +737,19 @@ fn convert(
                 .ok_or_else(|| format!("unknown contained fluid '{name}'"))
         })
         .transpose()?;
+    let melts_to = r
+        .melts_to
+        .as_ref()
+        .map(|name| {
+            names
+                .blocks
+                .id(name)
+                .map(Block)
+                .ok_or_else(|| format!("unknown melts_to block '{name}'"))
+        })
+        .transpose()?;
     if contained_fluid.is_some() {
-        if flags.is_opaque() || flags.fluid() || block == Block::Water {
+        if flags.is_opaque() || flags.fluid() {
             return Err("contained_fluid requires a nonopaque, nonfluid host block".into());
         }
         flags = flags.with(BlockFlags::CONTAINS_FLUID);
@@ -863,26 +913,6 @@ fn convert(
             );
         }
     }
-    let contained_fluid = r
-        .contained_fluid
-        .as_ref()
-        .map(|name| {
-            names
-                .blocks
-                .id(name)
-                .map(Block)
-                .ok_or_else(|| format!("unknown contained fluid '{name}'"))
-        })
-        .transpose()?;
-    if contained_fluid.is_some() {
-        if flags.is_opaque() || flags.fluid() || block == Block::Water {
-            return Err("contained_fluid requires a nonopaque, nonfluid host block".into());
-        }
-        flags = flags.with(BlockFlags::CONTAINS_FLUID);
-    }
-    if flags.fluid() && (family != ShapeFamily::Cube || flags.is_opaque() || flags.is_solid()) {
-        return Err("fluid requires a nonopaque, nonsolid cube".into());
-    }
     // Derived, not row-listed: the physics climb/grip probes need these as
     // dense flags (see `BlockFlags::CLIMBABLE` / `BlockFlags::SLIPPERY`).
     if tags.contains(&BlockTag::CLIMBABLE) {
@@ -974,6 +1004,13 @@ fn convert(
         None => None,
         Some(name) => Some(tile(name)?),
     };
+    let flow_tile = match &r.flow_tile {
+        None => None,
+        Some(name) => Some(tile(name)?),
+    };
+    if flow_tile.is_some() && !flags.fluid() {
+        return Err("flow_tile is legal on a fluid row only".into());
+    }
     let particle_emitter: Option<&'static [ParticleEmitter]> = match &r.particle_emitter {
         None => None,
         Some(RawEmitterRef::Key(key)) => {
@@ -1012,10 +1049,19 @@ fn convert(
                 )
             }
         };
+    if flags.fluid() != r.fluid.is_some() {
+        return Err("a fluid flag and fluid properties must be declared together".into());
+    }
+    let fluid = r
+        .fluid
+        .map(|f| f.resolve(block, names).map(|f| &*Box::leak(Box::new(f))))
+        .transpose()?;
     Ok(BlockDef {
         block,
         flags,
         contained_fluid,
+        melts_to,
+        fluid,
         tags: leak(tags),
         behavior,
         interaction,
@@ -1028,6 +1074,7 @@ fn convert(
         front,
         side_overlay,
         covered_side,
+        flow_tile,
         material: r.material,
         harvest_tier,
         hardness: r.hardness as f32,
@@ -1212,6 +1259,34 @@ mod tests {
         // sleepable block that anchors no spawn — legal.
         let sleep_only = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": [], "behavior": "inert", "interaction": "sleep", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "hardness": 1, "drops": [] } ] }"#;
         parse_test_layers(&[&base, sleep_only]).expect("sleep without the bed tag loads");
+    }
+
+    #[test]
+    fn fluids_that_quench_each_other_fail_the_load() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let table: serde_json::Value = serde_json::from_str(&base).unwrap();
+        let mut rows: Vec<serde_json::Value> = table["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["fluid"].is_object())
+            .take(2)
+            .cloned()
+            .collect();
+        assert_eq!(rows.len(), 2, "the base table ships two fluid rows");
+        let names: Vec<String> = rows
+            .iter()
+            .map(|r| r["block"].as_str().unwrap().to_owned())
+            .collect();
+        for (row, other) in rows.iter_mut().zip(names.iter().rev()) {
+            row["fluid"]["quench"] = serde_json::json!({"by": other, "result": "petramond:stone"});
+        }
+        let layer = serde_json::json!({ "blocks": rows }).to_string();
+        let err = parse_test_layers(&[&base, &layer])
+            .err()
+            .expect("a mutual quench pair is refused");
+        assert!(err.contains("quench each other"), "{err}");
     }
 
     #[test]

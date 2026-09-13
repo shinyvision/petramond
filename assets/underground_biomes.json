@@ -3,5 +3,35 @@
     {
       "underground_biome": "petramond:stone"
     }
+  ],
+  "fluid_pools": [
+    {
+      "fluid_pool": "petramond:lava",
+      "fluid": "petramond:lava",
+      "anchor_y": -40,
+      "chance": 0.9,
+      "height_scale": 18.0,
+      "max_y": 0,
+      "reach": 16,
+      "max_depth": 10,
+      "max_drop": 24,
+      "max_sink": 16,
+      "budget": 2000,
+      "surface_clearance": 32,
+      "salt": 444248273
+    }
+  ],
+  "fluid_falls": [
+    {
+      "fluid_fall": "petramond:lava",
+      "fluid": "petramond:lava",
+      "chance": 0.011111111,
+      "y": [
+        -38,
+        -11
+      ],
+      "min_surface": 45,
+      "salt": 444264449
+    }
   ]
 }

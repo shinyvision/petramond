@@ -102,8 +102,8 @@ pub struct Instance {
     /// Landing distance latched by [`finish_motion`](Self::finish_motion) and drained by the
     /// manager after the tick so `ServerGame` can route damage through `mob_damage_pre`.
     pub(super) fall_distance: f32,
-    /// Fall-INTO-WATER distance latched by [`finish_motion`](Self::finish_motion) and drained
-    /// by the manager — `ServerGame` turns it into the water-splash burst.
+    /// Fall-into-fluid distance latched by [`finish_motion`](Self::finish_motion) and drained
+    /// by the manager — `ServerGame` turns it into the fluid-splash burst.
     pub(super) splash_drop: f32,
     /// True once this mob is beyond its row-level despawn radius this tick. The manager
     /// culls it at the end of the tick. Never persisted.
@@ -158,6 +158,9 @@ pub struct Instance {
     /// like its other transient decisions). It survives death so a corpse keeps
     /// its effect through the ragdoll.
     active_emitters: Vec<u8>,
+    /// Transient body conditions and fluid contact; dead bodies retain their
+    /// last condition stages for presentation.
+    exposure: petramond_world::exposure::BodyExposure,
     /// ACTIVE named model animations, sorted by name, at most
     /// [`super::MAX_ACTIVE_MOB_ANIMS`] — the animation sibling of
     /// [`active_emitters`](Self::active_emitters): presentation-only state
@@ -171,7 +174,7 @@ pub struct Instance {
     pub(super) active_anims: Vec<AnimLayer>,
     /// An upward launch from a WALKING gait happened THIS tick (a mod's
     /// vertical drive, a navigation step jump — see
-    /// [`integrate_with_flow`](Self::integrate_with_flow)) — consumed by
+    /// [`integrate_locomotion`](Self::integrate_locomotion)) — consumed by
     /// [`apply_expression`](Self::apply_expression), which re-phases the walk
     /// clip forward to the next cycle boundary so an authored takeoff clip
     /// stays in phase with the physical arc. Transient; never persisted.
@@ -179,10 +182,10 @@ pub struct Instance {
     /// The current airborne phase counts as a WALK (it began from walking
     /// locomotion and horizontal motion still carries) — keeps the gait
     /// expression through the whole ballistic arc. Maintained by
-    /// [`integrate_with_flow`](Self::integrate_with_flow); transient.
+    /// [`integrate_locomotion`](Self::integrate_locomotion); transient.
     pub(super) air_walk: bool,
     /// A mod's kinematic locomotion intent for THIS tick (the `MobDrive`
-    /// HostCall), consumed by [`integrate_with_flow`](Self::integrate_with_flow):
+    /// HostCall), consumed by [`integrate_locomotion`](Self::integrate_locomotion):
     /// while present it replaces the brain's wish-velocity overwrite, so a mod
     /// can drive a mob directly (a vehicle) with the engine still owning
     /// vertical physics (gravity/buoyancy) and collision. Like the brain's
@@ -269,6 +272,7 @@ impl Instance {
             confined_checked_rev: u64::MAX,
             confined_free_age: 0,
             active_emitters: Vec::new(),
+            exposure: petramond_world::exposure::BodyExposure::new(d.tolerates),
             active_anims: Vec::new(),
             walk_launch: false,
             air_walk: false,
@@ -282,10 +286,23 @@ impl Instance {
             attacker_ticks: 0,
             contacts: Vec::new(),
             brain: super::build_brain(d),
-            nav: Navigator::new(d.size.head_cells(), d.size.half_width, d.size.height),
+            nav: Navigator::new(d.size.head_cells(), d.size.half_width, d.size.height)
+                .tolerating(d.tolerates.blocks),
             unstick: Default::default(),
             rng: MobRng::new(seed),
         }
+    }
+
+    /// Conditions and fluid contact, bound to the species' tolerance.
+    #[inline]
+    pub fn exposure(&self) -> &petramond_world::exposure::BodyExposure {
+        &self.exposure
+    }
+
+    /// Every condition grant on this body goes through here.
+    #[inline]
+    pub fn exposure_mut(&mut self) -> &mut petramond_world::exposure::BodyExposure {
+        &mut self.exposure
     }
 
     /// Stable session identity for this live mob. This is the value exposed to
@@ -561,24 +578,24 @@ impl Instance {
         let support = super::nav::nav_support_fn(&cursor, d.size.half_width);
         // The model-aware box source for body collision (legs/top of a bbmodel block).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
-        let water = super::nav::nav_water_fn(&cursor);
-        // On or in water — feet submerged, or resting on the surface (water just
-        // below). Stays true while the mob floats at the surface; drives idle-animation
-        // suppression and allows path refreshes while swimming.
-        let feet_cell = voxel_at(self.pos);
-        let in_water = water(feet_cell) || water(feet_cell - IVec3::Y);
+        let fluid = super::nav::nav_fluid_fn(&cursor);
+        // Navigation footing, not physical immersion (`body_fluid` below): it
+        // stays set while the mob bobs at the surface, so AI, repathing and
+        // steering treat a swimmer as supported between strokes.
+        let footing_fluid = super::nav::fluid_footing(&cursor, self.pos);
+        let on_fluid = footing_fluid.is_some();
         // The cell navigation starts from: the standing foothold on land (robust to
         // standing at a block edge, where the cell under the centre overhangs into
-        // air), or the water-surface cell while in water. `navigation_cell_with`
-        // explains why a mob in water must never path from its submerged standing cell.
+        // air), or the fluid-surface cell while in fluid. `navigation_cell_with`
+        // explains why a mob in fluid must never path from its submerged standing cell.
         let cell = path::navigation_cell_with(
             self.pos,
             d.size.half_width,
             d.size.head_cells(),
-            in_water,
+            on_fluid,
             &solid,
             &support,
-            &water,
+            &fluid,
         )
         .unwrap_or_else(|| voxel_at(self.pos));
 
@@ -619,24 +636,24 @@ impl Instance {
                 .confined_free_age
                 .saturating_add(confined::CHECK_INTERVAL as u16);
         }
-        if due && verdict_stale && self.on_ground && !in_water {
+        if due && verdict_stale && self.on_ground && !on_fluid {
             self.confined_checked_at = cell;
             self.confined_checked_rev = nav_rev;
             self.confined_free_age = 0;
-            let params = path::PathParams::for_body(d.size.head_cells(), d.size.half_width);
+            let params = d.path_params();
             // Steady state for a penned mob: the shared cache still holds a
             // region covering its cell (a pen-mate may have filled this pen
             // already) — the lookup enforces region age, so a stale handle
             // can never short-circuit it. Only a miss floods.
             let region = regions.region_at(cell).or_else(|| {
-                let step_allowed = super::nav::partial_step_gate(&cursor, params, d.size.height);
+                let step_allowed = super::nav::navigation_step_gate(&cursor, params, d.size.height);
                 let loaded = super::nav::nav_loaded_fn(&cursor);
                 confined::confined_region(
                     cell,
                     params,
                     &solid,
                     &support,
-                    &water,
+                    &fluid,
                     &step_allowed,
                     &loaded,
                 )
@@ -678,8 +695,9 @@ impl Instance {
                 target: self.current_target,
                 attacker: self.attacker.map(|who| (who, self.attacker_ticks)),
                 nav_idle,
-                in_water,
+                in_fluid: footing_fluid,
                 head: d.size.head_cells(),
+                tolerated: d.tolerates.blocks,
                 idle_anims,
                 mob_index,
                 mobs: inputs.mobs,
@@ -724,9 +742,9 @@ impl Instance {
                 }
             }
         }
-        let can_repath = self.on_ground || in_water;
+        let can_repath = self.on_ground || on_fluid;
         let can_steer =
-            d.air_control || route_steering_supported(self.on_ground, in_water, self.vel.y);
+            d.air_control || route_steering_supported(self.on_ground, on_fluid, self.vel.y);
         // The pathfinder treats every OTHER entity as a soft obstacle to bend
         // around — except the brain's current target (a zombie paths TO the
         // player it hunts, never around them).
@@ -775,23 +793,41 @@ impl Instance {
                 inputs.players,
             )
         };
-        let water_flow = |p: Vec3| world.water_flow_at_point(p);
-        let water_surface = |c: IVec3| world.water_surface_y_world(c);
+        let immersion = world.body_fluid(self.pos, d.size.height, d.buoyancy);
+        // A mod's horizontal drive is that mod's own steering (a player-driven
+        // vehicle crosses whatever its driver steers it over).
+        let driven = self.drive.is_some_and(|drive| drive.horizontal.is_some());
+        let (wish, jump) = if driven {
+            (wish, jump)
+        } else {
+            self.nav.avoid_hazards(
+                self.pos,
+                self.yaw,
+                d.size,
+                wish,
+                jump,
+                d.walk_speed * self.walk_speed_scale * dt,
+                &cursor,
+            )
+        };
+        let current = world.body_current(self.pos, d.size.height, immersion);
         let was_on_ground = self.on_ground;
         let motion_start = self.pos;
-        let healed = self.integrate_with_flow(
+        let healed = self.integrate_locomotion(
             dt,
             d,
-            wish,
-            jump,
-            can_steer,
-            &boxes,
-            inputs.solid,
-            inputs.solid_heal,
-            &support,
-            &water,
-            &water_surface,
-            &water_flow,
+            super::kinematics::Locomotion {
+                wish,
+                jump,
+                can_steer,
+            },
+            &super::kinematics::Surroundings {
+                boxes: &boxes,
+                obstacles: inputs.solid,
+                healing_obstacles: inputs.solid_heal,
+                immersion,
+                current,
+            },
         );
         // Post-move arrival: feed the tick's LANDED position back to the
         // route before anything reads this tick's state. A landing inside
@@ -827,6 +863,8 @@ fn despawn_now(dist2: f32, radius: f32, roll: impl FnOnce() -> f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod navigation;
 
     #[test]
     fn despawn_is_certain_at_radius_random_when_far_never_when_near() {

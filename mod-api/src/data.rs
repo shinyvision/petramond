@@ -137,6 +137,9 @@ pub struct MobSnapshot {
     pub half_width: f32,
     pub height: f32,
     pub half_length: f32,
+    /// Active body conditions in condition-id order, separate from attached
+    /// particle bundles.
+    pub conditions: Vec<ConditionData>,
 }
 
 /// One item entity's snapshot ([`HostCall::ItemEntity`]): a stack loose in
@@ -682,6 +685,39 @@ pub struct PlayerSnapshot {
     pub half_width: f32,
     pub height: f32,
     pub eye_height: f32,
+    /// Active body conditions in condition-id order.
+    pub conditions: Vec<ConditionData>,
+}
+
+/// One condition active on a body (see [`MobSnapshot::conditions`] /
+/// [`PlayerSnapshot::conditions`]).
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ConditionData {
+    pub condition: crate::ConditionId,
+    /// The current stage's index in the condition row.
+    pub stage: u8,
+    /// Ticks until the condition ends.
+    pub remaining: u32,
+    /// Ticks since it began.
+    pub elapsed: u32,
+}
+
+/// A condition row, answered by [`HostCall::ResolveCondition`].
+///
+/// [`HostCall::ResolveCondition`]: crate::HostCall::ResolveCondition
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConditionInfoData {
+    pub id: crate::ConditionId,
+    pub key: String,
+    /// Stage names in row (strength) order; a stage index addresses this list.
+    pub stages: Vec<String>,
+}
+
+impl ConditionInfoData {
+    /// The index of the stage named `name`.
+    pub fn stage(&self, name: &str) -> Option<u8> {
+        self.stages.iter().position(|s| s == name).map(|i| i as u8)
+    }
 }
 
 /// One entry of [`HostCall::Players`]: a connected player's session id plus
@@ -892,6 +928,52 @@ pub struct BlockInfoData {
     /// answer to "what in that cell is a wall", so a rule can sweep its own
     /// body against it without a world read.
     pub collision: Vec<([f32; 3], [f32; 3])>,
+    /// The row's fluid descriptor, `None` for a non-fluid block (a host
+    /// containing a fluid answers `None`; ask about the contained block).
+    pub fluid: Option<FluidInfoData>,
+}
+
+/// A fluid block row's rule facts (see [`BlockInfoData::fluid`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct FluidInfoData {
+    /// Ticks between scheduled flow checks.
+    pub delay: u64,
+    /// Level lost per block of lateral spread.
+    pub drop_off: u8,
+    /// Whether adjacent sources renew a supported gap.
+    pub renewable: bool,
+    pub quench: Option<QuenchData>,
+    /// Damage on this fluid's own contact clock, first contact immediate.
+    pub contact_damage: Option<PulseData>,
+    /// The condition contact grants.
+    pub applies: Option<ConditionGrantData>,
+    /// Conditions contact removes; a body touching this fluid refuses grants
+    /// of them from any source.
+    pub clears: Vec<crate::ConditionId>,
+    /// Whether loose items inside this fluid are destroyed.
+    pub destroys_items: bool,
+}
+
+/// Contact with fluid `by` turns the receiving fluid cell into `result`.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct QuenchData {
+    pub by: BlockId,
+    pub result: BlockId,
+}
+
+/// Damage dealt every `interval` fixed ticks.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PulseData {
+    pub amount: i32,
+    pub interval: u32,
+}
+
+/// `ticks` of `condition` granted at `stage` (an index into the row's stages).
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ConditionGrantData {
+    pub condition: crate::ConditionId,
+    pub stage: u8,
+    pub ticks: u32,
 }
 
 /// An item's edible row data (see [`ItemInfoData::food`]).
@@ -958,12 +1040,12 @@ pub struct LightData {
 /// The collision-shape CLASS of a world cell (see
 /// [`HostCall::CollisionShapeAt`]) — generic physics with no gameplay policy
 /// baked in. Spawn/placement rules compose on top of it in mod code (e.g.
-/// `Full` + not water + not tagged `petramond:leaves`).
+/// `Full` + not tagged `petramond:leaves`).
 ///
 /// [`HostCall::CollisionShapeAt`]: crate::HostCall::CollisionShapeAt
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CollisionShape {
-    /// No collision boxes: air, water, walk-through cover (tall grass).
+    /// No collision boxes: air, any fluid, walk-through cover (tall grass).
     Empty,
     /// Collision boxes that do not amount to one full unit cube: stairs,
     /// slabs, doors, snow layers, model blocks.
@@ -1005,8 +1087,8 @@ pub struct AiNodeCtx {
     pub player_pos: [f32; 3],
     /// True when the navigator has no active path ("the mob is idle").
     pub nav_idle: bool,
-    /// True when the mob's body is in water.
-    pub in_water: bool,
+    /// The fluid the mob's body is in or resting on, if any.
+    pub in_fluid: Option<BlockId>,
     /// The entity the WHOLE brain locked last tick (the settled
     /// [`AiNodeDecision::target`] across every node) — what an attack
     /// decision strikes when it names no target of its own.

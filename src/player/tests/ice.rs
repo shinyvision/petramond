@@ -2,7 +2,7 @@ use super::*;
 
 /// Slippery support (ice): a coasting body glides far beyond what ordinary
 /// ground friction allows, and steering input redirects it sluggishly. Pins
-/// the grounded friction/snap swap in `update_core_with_current`, not the
+/// the grounded friction/snap swap in `Player::simulate`, not the
 /// exact constants.
 #[test]
 fn ice_glides_far_beyond_ordinary_ground() {
@@ -13,7 +13,7 @@ fn ice_glides_far_beyond_ordinary_ground() {
         let slippery = move |_x: i32, y: i32, _z: i32| ice_floor && y == 63;
         let x0 = pl.pos.x;
         for _ in 0..120 {
-            pl.update_core_slippery(1.0 / 60.0, &solid, &dry, &slippery, Input::default());
+            pl.update_core_slippery(1.0 / 60.0, &solid, &slippery, Input::default());
         }
         pl.pos.x - x0
     };
@@ -37,7 +37,7 @@ fn ice_glides_far_beyond_ordinary_ground() {
             sneak: false,
         };
         for _ in 0..15 {
-            pl.update_core_slippery(1.0 / 60.0, &solid, &dry, &slippery, back);
+            pl.update_core_slippery(1.0 / 60.0, &solid, &slippery, back);
         }
         pl.vel.x
     };

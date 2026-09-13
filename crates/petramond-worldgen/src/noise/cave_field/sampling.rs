@@ -111,13 +111,15 @@ impl CaveField {
         } else {
             (false, false, false, false)
         };
+        // Padded by the barrier neighbourhood: a fluid cell on the box edge
+        // reads whether the cell beyond it is aquifer water.
         let pad = i32::from(
             fields.carve
                 && !no_aquifer
                 && self
                     .underground
                     .aquifer_y_span
-                    .is_some_and(|(lo, hi)| y0 <= hi && y1 >= lo),
+                    .is_some_and(|(lo, hi)| y0 - 1 <= hi && y1 + 1 >= lo),
         );
         if pad != 0 {
             fields.biome = true;
@@ -164,6 +166,11 @@ impl CaveField {
                 super::volumes::Tiles::gather(self, [x0, y0, z0], [x1, y1, z1])
             } else {
                 super::volumes::Tiles::default()
+            },
+            pools: if fields.fluids {
+                fluid_pools::Pools::around(self, [x0, y0, z0], [x1, y1, z1])
+            } else {
+                fluid_pools::Pools::default()
             },
         };
 

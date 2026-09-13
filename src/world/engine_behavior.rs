@@ -23,7 +23,7 @@ pub(crate) trait EngineBlockBehavior: Sync {
 /// `behavior::by_name` engine hooks.
 pub(crate) fn engine_behavior(key: &str) -> Option<&'static dyn EngineBlockBehavior> {
     Some(match key {
-        "water" => &crate::world::water::WATER,
+        "fluid" => &crate::world::fluid::FLUID,
         "fragile" => &crate::world::fragile::FRAGILE,
         "sapling" => &crate::world::sapling::SAPLING,
         "door" => &crate::world::door::DOOR,
@@ -37,7 +37,7 @@ mod tests {
     /// vice versa — the two-tier dispatch cannot drift.
     #[test]
     fn engine_hooks_and_registry_agree() {
-        for key in ["water", "fragile", "sapling", "door"] {
+        for key in ["fluid", "fragile", "sapling", "door"] {
             let hook = petramond_world::block::behavior::by_name(key)
                 .unwrap_or_else(|| panic!("data layer misses engine hook '{key}'"));
             assert_eq!(hook.key(), key);

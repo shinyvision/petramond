@@ -125,7 +125,7 @@ pub(super) fn mul3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 }
 
 /// Mix a sampled light factor toward full bright by `self_lit` (`0..=1`) — the
-/// fraction of its brightness a particle provides itself. `0` returns the
+/// fraction of its brightness a surface provides itself. `0` returns the
 /// sample unchanged, `1` returns full bright (the old `fullbright` row flag),
 /// and an intermediate value keeps the sample's RESPONSE to the room while
 /// flooring it: in the dark the factor lands at `self_lit` rather than on the
@@ -142,6 +142,16 @@ pub(super) fn fold_self_lit(light: [f32; 3], self_lit: f32) -> [f32; 3] {
 #[inline]
 pub(super) fn fold_tint(base: [f32; 3], light: DynLight, env: LightEnv) -> [f32; 3] {
     mul3(base, light_rgb(light, env))
+}
+
+#[inline]
+pub(super) fn fold_tint_self_lit(
+    base: [f32; 3],
+    light: DynLight,
+    env: LightEnv,
+    self_lit: f32,
+) -> [f32; 3] {
+    mul3(base, fold_self_lit(light_rgb(light, env), self_lit))
 }
 
 #[cfg(test)]

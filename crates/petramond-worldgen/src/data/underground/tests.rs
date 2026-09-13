@@ -91,3 +91,41 @@ fn malformed_habitat_selectors_and_surface_rules_fail_loading() {
         assert!(parse_layers(&[&base, &text]).is_err(), "accepted {row}");
     }
 }
+
+const POOL_ROW: &str = r#"{"fluid_pool":"test:lava","fluid":"petramond:lava","anchor_y":-40,
+    "chance":0.5,"height_scale":18.0,"max_y":0,"reach":16,"max_depth":10,"max_drop":24,
+    "max_sink":16,"budget":2000,"surface_clearance":32}"#;
+const FALL_ROW: &str = r#"{"fluid_fall":"test:lava","fluid":"petramond:lava","chance":0.5,
+    "y":[-38,-11],"min_surface":45}"#;
+
+#[test]
+fn a_later_layer_disables_a_fluid_row_by_zeroing_its_chance() {
+    let rows = format!(r#"{{"fluid_pools":[{POOL_ROW}],"fluid_falls":[{FALL_ROW}]}}"#);
+    let off = rows.replace("\"chance\":0.5", "\"chance\":0");
+    let on = synthetic_table(&[&rows]);
+    assert_eq!((on.pools.len(), on.falls.len()), (1, 1));
+    let disabled = synthetic_table(&[&rows, &off]);
+    assert_eq!((disabled.pools.len(), disabled.falls.len()), (0, 0));
+}
+
+#[test]
+fn malformed_fluid_rows_and_files_fail_loading() {
+    let pools = |row: String| format!(r#"{{"fluid_pools":[{row}]}}"#);
+    let falls = |row: String| format!(r#"{{"fluid_falls":[{row}]}}"#);
+    for text in [
+        pools(POOL_ROW.replace("\"anchor_y\":-40", "\"anchor_y\":8")),
+        pools(POOL_ROW.replace("test:lava\",\"fluid\"", "lava\",\"fluid\"")),
+        pools(POOL_ROW.replace(
+            "\"fluid\":\"petramond:lava\"",
+            "\"fluid\":\"petramond:stone\"",
+        )),
+        falls(FALL_ROW.replace("\"min_surface\":45", "\"min_surface\":100000")),
+        falls(FALL_ROW.replace("\"min_surface\":45", "\"min_surface\":10")),
+        format!(r#"{{"fluid_pool":[{POOL_ROW}]}}"#),
+    ] {
+        assert!(
+            parse_layers(&[&shipped_layer(), &text]).is_err(),
+            "accepted {text}"
+        );
+    }
+}

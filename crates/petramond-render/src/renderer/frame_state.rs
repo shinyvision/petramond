@@ -81,15 +81,19 @@ impl Renderer {
         cam: &Camera,
         fog_color: [f32; 3],
         time: f32,
-        underwater: bool,
+        eye_fluid: Option<petramond_world::block::Block>,
         shader_params: Option<&petramond::world::environment::ShaderParamMap>,
     ) {
+        let eye_medium = eye_fluid
+            .and_then(petramond_world::block::Block::fluid_def)
+            .map(|def| &def.medium);
         let render_origin = render_origin_for_camera(cam.pos);
         let local_cam = cam.pos - render_origin;
         let view_proj = relative_view_proj(cam, render_origin);
         let inv_view_proj = view_proj.inverse();
         // Refresh the culling frustum from the same matrix the GPU will use.
         self.view.frustum = Frustum::from_view_proj(view_proj);
+        self.view.proj_y_scale = cam.proj().y_axis.y;
         self.view.cam_pos = cam.pos;
         self.view.render_origin = render_origin;
         self.view.visual_time = time;
@@ -108,7 +112,7 @@ impl Renderer {
                 shader_light_overrode_identity = true;
             }
         }
-        let effective_fog_color = if shader_light_overrode_identity && !underwater {
+        let effective_fog_color = if shader_light_overrode_identity && eye_medium.is_none() {
             [
                 fog_color[0] * effective_sky_scale * effective_sky_color[0],
                 fog_color[1] * effective_sky_scale * effective_sky_color[1],
@@ -118,13 +122,11 @@ impl Renderer {
             fog_color
         };
         self.sky.clear_color = effective_fog_color;
-        self.sky.underwater = underwater;
         self.sky.scale = effective_sky_scale;
         self.sky.color = effective_sky_color;
-        let (fog_start, fog_end) = if underwater {
-            (UNDERWATER_FOG_START, UNDERWATER_FOG_END)
-        } else {
-            (self.sky.fog_start, self.sky.fog_end)
+        let (fog_start, fog_end, in_fluid, volume_tint) = match eye_medium {
+            Some(m) => (m.fog_start, m.fog_end, 1.0, m.volume_tint),
+            None => (self.sky.fog_start, self.sky.fog_end, 0.0, [1.0; 3]),
         };
         self.terrain.view_key = TerrainViewKey {
             view_proj: view_proj.to_cols_array().map(f32::to_bits),
@@ -134,8 +136,7 @@ impl Renderer {
         let u = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             cam_pos: [local_cam.x, local_cam.y, local_cam.z, 0.0],
-            // fog.z = animation time (caustics), fog.w = underwater flag.
-            fog: [fog_start, fog_end, time, if underwater { 1.0 } else { 0.0 }],
+            fog: [fog_start, fog_end, time, in_fluid],
             // fog_color.w = the sim's sky scale (1.0 = identity/noon).
             fog_color: [
                 effective_fog_color[0],
@@ -145,7 +146,7 @@ impl Renderer {
             ],
             inv_view_proj: inv_view_proj.to_cols_array_2d(),
             render_origin: [render_origin.x, render_origin.y, render_origin.z, 0.0],
-            atlas_anim: crate::atlas::atlas_anim_uniform(),
+            atlas_layout: crate::atlas::atlas_layout_uniform(),
             sky_color: [
                 effective_sky_color[0],
                 effective_sky_color[1],
@@ -153,6 +154,7 @@ impl Renderer {
                 0.0,
             ],
             sun_dir: sun_uniform(shader_params),
+            volume_tint: [volume_tint[0], volume_tint[1], volume_tint[2], 0.0],
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));

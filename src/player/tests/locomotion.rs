@@ -94,13 +94,13 @@ fn air_decays_slower_than_ground() {
     let mut air = p(Vec3::new(0.0, 128.0, 0.0));
     air.vel = Vec3::new(WALK, 5.0, 0.0); // gliding +x, rising
     air.on_ground = false;
-    air.update_core(dt, &open, &dry, Input::default());
+    air.update_core(dt, &open, Input::default());
 
     let floor = |_x: i32, y: i32, _z: i32| y < 64;
     let mut gnd = p(Vec3::new(0.0, 64.0, 0.0));
     gnd.vel = Vec3::new(WALK, 0.0, 0.0);
     gnd.on_ground = true;
-    gnd.update_core(dt, &floor, &dry, Input::default());
+    gnd.update_core(dt, &floor, Input::default());
 
     // Air retains 1 - AIR_FRICTION of its speed; ground retains less per frame.
     assert!(
@@ -136,7 +136,7 @@ fn ground_accelerates_faster_than_air() {
     let floor = |_x: i32, y: i32, _z: i32| y < 64;
     let mut g = p(Vec3::new(0.0, 64.0, 0.0));
     g.on_ground = true;
-    g.update_core(dt, &floor, &dry, input);
+    g.update_core(dt, &floor, input);
     assert!(
         (g.vel.x - GROUND_ACCEL * dt).abs() < 1e-5,
         "ground vx = {}",
@@ -148,7 +148,7 @@ fn ground_accelerates_faster_than_air() {
     let open = |_x: i32, _y: i32, _z: i32| false;
     let mut a = p(Vec3::new(0.0, 128.0, 0.0));
     a.on_ground = false;
-    a.update_core(dt, &open, &dry, input);
+    a.update_core(dt, &open, input);
     assert!(
         (a.vel.x - AIR_ACCEL * dt).abs() < 1e-5,
         "air vx = {}",
@@ -177,7 +177,7 @@ fn air_input_does_not_brake_momentum() {
     let mut a = p(Vec3::new(0.0, 128.0, 0.0));
     a.on_ground = false;
     a.vel = Vec3::new(SPRINT, 0.0, 0.0); // gliding +x faster than WALK
-    a.update_core(FRICTION_REF_DT, &open, &dry, input);
+    a.update_core(FRICTION_REF_DT, &open, input);
     assert!(
         (a.vel.x - SPRINT).abs() < 1e-5,
         "air input must not brake momentum, vx = {}",
@@ -201,7 +201,7 @@ fn air_steering_redirects_without_inflating_speed() {
     let mut a = p(Vec3::new(0.0, 128.0, 0.0));
     a.on_ground = false;
     a.vel = Vec3::new(WALK, 0.0, 0.0);
-    a.update_core(FRICTION_REF_DT, &open, &dry, input);
+    a.update_core(FRICTION_REF_DT, &open, input);
     let speed = (a.vel.x * a.vel.x + a.vel.z * a.vel.z).sqrt();
     assert!(
         (speed - WALK).abs() < 1e-4,
@@ -234,7 +234,7 @@ fn jumping_into_wall_does_not_pump_sideways_speed() {
         sneak: false,
     };
     for _ in 0..600 {
-        a.update_core(0.02, &solid, &dry, input);
+        a.update_core(0.02, &solid, input);
     }
     let speed = (a.vel.x * a.vel.x + a.vel.z * a.vel.z).sqrt();
     assert!(
@@ -260,8 +260,8 @@ fn air_out_coasts_ground() {
     gnd.vel = Vec3::new(WALK, 0.0, 0.0);
     let steps = 30; // ~half a second at the reference step
     for _ in 0..steps {
-        air.update_core(FRICTION_REF_DT, &open, &dry, Input::default());
-        gnd.update_core(FRICTION_REF_DT, &floor, &dry, Input::default());
+        air.update_core(FRICTION_REF_DT, &open, Input::default());
+        gnd.update_core(FRICTION_REF_DT, &floor, Input::default());
     }
     // Pure-decay speeds implied by the friction constants (one ref step retains
     // exactly 1 - friction).
@@ -330,7 +330,7 @@ fn gravity_eases_near_apex() {
     near.vel = Vec3::new(0.0, 1.0, 0.0);
     near.on_ground = false;
     near.jumping = true;
-    near.update_core(0.05, &open, &dry, Input::default());
+    near.update_core(0.05, &open, Input::default());
     let near_drop = 1.0 - near.vel.y;
 
     // In a jump, outside the band: full gravity.
@@ -338,7 +338,7 @@ fn gravity_eases_near_apex() {
     fast.vel = Vec3::new(0.0, 20.0, 0.0);
     fast.on_ground = false;
     fast.jumping = true;
-    fast.update_core(0.05, &open, &dry, Input::default());
+    fast.update_core(0.05, &open, Input::default());
     let fast_drop = 20.0 - fast.vel.y;
 
     assert!(
@@ -361,7 +361,7 @@ fn no_apex_easing_when_not_jumping() {
     pl.vel = Vec3::new(0.0, 1.0, 0.0); // small downward-bound speed, no jump
     pl.on_ground = false;
     pl.jumping = false;
-    pl.update_core(0.05, &open, &dry, Input::default());
+    pl.update_core(0.05, &open, Input::default());
     let drop = 1.0 - pl.vel.y;
     assert!(
         (drop - GRAVITY * 0.05).abs() < 1e-5,

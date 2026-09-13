@@ -528,6 +528,7 @@ where
         vel,
         dt,
         step_height,
+        false,
         boxes_fn,
         dyn_boxes,
         ignore,
@@ -537,7 +538,8 @@ where
 }
 
 /// Resolve a body known to have completed the shallow-foot depenetration
-/// pre-pass. Kept crate-private for compound-body orchestration that must
+/// pre-pass. `step_supported` also permits stepping without a solid landing.
+/// Used by compound-body orchestration that must
 /// preserve that mandatory lift as a separate motion waypoint.
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_body_dyn_from_depenetrated<F>(
@@ -546,6 +548,7 @@ pub fn resolve_body_dyn_from_depenetrated<F>(
     vel: [f32; 3],
     dt: f32,
     step_height: f32,
+    step_supported: bool,
     boxes_fn: F,
     dyn_boxes: &[DynBox],
     ignore: u64,
@@ -567,8 +570,12 @@ where
     }
     let grounded = hit[1] && dy < 0.0;
 
-    // Horizontal: step up only while grounded (and only over a `step_height` ledge).
-    let step = if grounded { step_height } else { 0.0 };
+    // Fluids can support a step without reporting a solid landing.
+    let step = if grounded || step_supported {
+        step_height
+    } else {
+        0.0
+    };
     let (hmoved, hit_x, hit_z) = step_horizontal_dyn(
         mn,
         mx,

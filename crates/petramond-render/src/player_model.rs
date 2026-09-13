@@ -23,8 +23,8 @@ mod locomotion;
 use glam::{Mat4, Quat, Vec3};
 
 use super::item_model::ItemVertex;
-use super::lighting::{fold_tint, DynLight, LightEnv};
-use super::mob_model::{bake_model_cubes, hurt_tint};
+use super::lighting::{DynLight, LightEnv};
+use super::mob_model::{bake_model_cubes, body_tint};
 use super::vanilla_swing::vanilla_swing;
 use super::PlayerRenderInstance;
 use petramond::player::model::{PLAYER_HIP_HEIGHT, PLAYER_MODEL_SCALE};
@@ -317,10 +317,12 @@ fn bake_cubes(
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> (u32, Mat4, Mat4) {
-    let tint = fold_tint(
-        hurt_tint(inst.hurt),
+    let tint = body_tint(
+        inst.hurt,
+        inst.emitter_tint,
         DynLight::new(inst.skylight, inst.blocklight),
         env,
+        inst.emitter_self_lit,
     );
     bake_model_cubes(model, pose, global, tint, |_| false, verts, indices);
 

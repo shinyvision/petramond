@@ -92,8 +92,8 @@ pub struct MobFall {
     pub distance: f32,
 }
 
-/// A mob fell into water this tick (its un-latched fall drop at the first wet
-/// tick). `ServerGame` throws the water-splash burst above the entry point.
+/// A mob fell into a splashing fluid this tick (its un-latched fall drop at the first wet
+/// tick). `ServerGame` throws the splash burst above the entry point.
 #[derive(Copy, Clone, Debug)]
 pub struct MobSplash {
     pub pos: Vec3,
@@ -101,11 +101,19 @@ pub struct MobSplash {
     pub fall: f32,
 }
 
+/// Exposure damage due on one mob's own clocks. Stable ids survive earlier deaths.
+#[derive(Copy, Clone, Debug)]
+pub struct MobExposureDamage {
+    pub mob_id: u64,
+    pub damage: petramond_world::exposure::ExposureDamage,
+}
+
 #[derive(Default, Debug)]
 pub struct MobTickEvents {
     pub attacks: Vec<MobAttack>,
     pub falls: Vec<MobFall>,
     pub splashes: Vec<MobSplash>,
+    pub exposure: Vec<MobExposureDamage>,
 }
 
 /// Per-species, model-derived metadata the sim reads.
@@ -427,15 +435,15 @@ impl Mobs {
         // Post-motion bookkeeping observes committed poses, never an
         // overlapping proposal that the pair solver subsequently shortened.
         let mut out = MobTickEvents::default();
+        let mut exposure = std::mem::take(&mut self.exposure_scratch);
         for (i, mob) in self.list.iter_mut().enumerate() {
             if !ticked[i] {
                 continue;
             }
             if let Some((was_on_ground, _)) = motion_finish[i] {
-                let feet = voxel_at(mob.pos);
-                let in_water = world.water_cell_at(feet.x, feet.y, feet.z)
-                    || world.water_cell_at(feet.x, feet.y - 1, feet.z);
-                mob.finish_motion(was_on_ground, in_water);
+                let d = super::super::def(mob.kind);
+                let immersion = world.body_fluid(mob.pos, d.size.height, d.buoyancy);
+                mob.finish_motion(was_on_ground, immersion);
             }
             // A walking mob is audible: record its footstep for next tick's batch.
             if mob.moving {
@@ -481,6 +489,18 @@ impl Mobs {
             if let Some(fall) = mob.take_splash_drop() {
                 out.splashes.push(MobSplash { pos: mob.pos, fall });
             }
+            if !mob.is_dead() {
+                let d = def(mob.kind);
+                let boxes = crate::mob::body_geometry::body_boxes(mob.pos, mob.yaw, d.size);
+                exposure.tick(world, boxes, mob.exposure_mut());
+                let mob_id = mob.id();
+                out.exposure.extend(
+                    exposure
+                        .damage
+                        .drain(..)
+                        .map(|damage| MobExposureDamage { mob_id, damage }),
+                );
+            }
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
             mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
             mob.blocklight = petramond_world::light::BlockLight6::from_x2(
@@ -488,6 +508,7 @@ impl Mobs {
             );
         }
         self.ticked_scratch = ticked;
+        self.exposure_scratch = exposure;
         self.motion_finish_scratch = motion_finish;
         self.pending_noises = pending_noises;
         self.ai_scratch = ai_mobs;

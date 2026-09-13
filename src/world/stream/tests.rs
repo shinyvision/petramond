@@ -106,11 +106,11 @@ fn split_keeps_surface_blocks_and_adds_stone_below() {
 fn generated_water_metadata_survives_the_split() {
     let mut chunk = Chunk::new(0, 0);
     chunk.set_block(5, 64, 5, Block::Stone);
-    chunk.set_water(5, 65, 5, Block::Water, 0x07);
+    chunk.set_fluid(5, 65, 5, Block::Water, 0x07);
     let (_column, sections) = split_generated_column(&chunk);
     let s4 = sections.iter().find(|(cy, _)| *cy == 4).expect("cy 4");
     assert_eq!(s4.1.block_raw(5, 1, 5), Block::Water.id());
-    assert_eq!(s4.1.water_meta(5, 1, 5), 0x07, "falloff metadata carried");
+    assert_eq!(s4.1.fluid_meta(5, 1, 5), 0x07, "falloff metadata carried");
 }
 
 #[test]
@@ -126,10 +126,10 @@ fn water_kick_queues_source_water_over_a_drop() {
         }
     }
     section.set_block(4, 0, 4, Block::Air); // carve a hole at world (4,64,4)
-    section.set_water(4, 1, 4, Block::Water, 0); // source water at world (4,65,4)
+    section.set_fluid(4, 1, 4, Block::Water, 0); // source water at world (4,65,4)
     world.insert_section_for_test(SectionPos::new(0, 4, 0), section);
 
-    world.queue_loaded_section_water_updates(&[SectionPos::new(0, 4, 0)]);
+    world.queue_loaded_section_fluid_updates(&[SectionPos::new(0, 4, 0)]);
     // The water over the carved hole has a loaded air neighbour below, so the kick
     // queued it: re-queuing the same cell now returns false (already pending).
     assert!(

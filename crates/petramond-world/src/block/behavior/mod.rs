@@ -81,14 +81,14 @@ pub trait BlockBehavior: Sync {
     /// React to a neighbour change — the ANNOUNCE phase of a block update, fired
     /// for a cell at or beside a change. Free to schedule a future
     /// [`scheduled_tick`](Self::scheduled_tick) or edit the world. Default: do
-    /// nothing. (Water schedules its flow check here.)
+    /// nothing. (Fluids schedule their flow checks here.)
     fn neighbor_update(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
         let _ = (world, pos);
     }
 
     /// Run a scheduled tick previously requested for this cell — the EXECUTE phase,
-    /// `delay` ticks after it was scheduled. Default: do nothing. (Water runs its
-    /// flow check here.)
+    /// `delay` ticks after it was scheduled. Default: do nothing. (Fluids run
+    /// their flow checks here.)
     fn scheduled_tick(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
         let _ = (world, pos);
     }
@@ -107,7 +107,7 @@ pub fn by_name(name: &str) -> Option<&'static dyn BlockBehavior> {
         "grass" => &GRASS,
         "dirt" => &DIRT,
         "leaves" => &LEAVES,
-        "water" => &WATER_HOOK,
+        "fluid" => &FLUID_HOOK,
         "fragile" => &FRAGILE_HOOK,
         "sapling" => &SAPLING_HOOK,
         "door" => &DOOR_HOOK,
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn behavior_names_round_trip() {
         for name in [
-            "inert", "grass", "dirt", "leaves", "water", "fragile", "sapling", "door",
+            "inert", "grass", "dirt", "leaves", "fluid", "fragile", "sapling", "door",
         ] {
             let b = by_name(name).unwrap_or_else(|| panic!("unregistered behavior '{name}'"));
             assert_eq!(b.key(), name, "key() must be the inverse of by_name()");
@@ -148,8 +148,8 @@ pub struct EngineHook {
     random_tick: bool,
 }
 
-pub static WATER_HOOK: EngineHook = EngineHook {
-    key: "water",
+pub static FLUID_HOOK: EngineHook = EngineHook {
+    key: "fluid",
     random_tick: false,
 };
 pub static FRAGILE_HOOK: EngineHook = EngineHook {

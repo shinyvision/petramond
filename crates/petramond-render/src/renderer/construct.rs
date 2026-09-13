@@ -148,12 +148,13 @@ pub(super) fn new_renderer_inner(
             fog_color: [0.60, 0.82, 1.00, 1.0],
             inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_origin: [0.0; 4],
-            atlas_anim: crate::atlas::atlas_anim_uniform(),
+            atlas_layout: crate::atlas::atlas_layout_uniform(),
             // White sky colour at init = identity; the icon-atlas bake reads
             // this buffer, so baked UI icons stay untinted.
             sky_color: [1.0, 1.0, 1.0, 0.0],
             // Late-morning sun at full daylight until the sim writes petramond:time.
             sun_dir: super::frame_state::sun_uniform(None),
+            volume_tint: [1.0, 1.0, 1.0, 0.0],
         }]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
@@ -496,7 +497,6 @@ pub(super) fn new_renderer_inner(
             env_down_bind,
             env_comp_bind,
             light_param_key: pipelines.sky_light_param_key,
-            underwater: false,
             fog_start: default_fog.0,
             fog_end: default_fog.1,
             scale: 1.0,
@@ -535,6 +535,7 @@ pub(super) fn new_renderer_inner(
             cam_pos: glam::Vec3::ZERO,
             render_origin: glam::Vec3::ZERO,
             visual_time: 0.0,
+            proj_y_scale: 1.0,
         },
         terrain: TerrainPass {
             columns: HashMap::new(),

@@ -165,6 +165,21 @@ fn mesh_with(
     sky: impl Fn(i32, i32, i32) -> u8,
     loaded: impl Fn(i32, i32, i32) -> bool,
 ) -> ChunkMesh {
+    mesh_lit(
+        section,
+        sky,
+        |_, _, _| petramond_world::light::LightRgb::ZERO,
+        loaded,
+    )
+}
+
+/// [`mesh_with`] under a caller-supplied block-light field as well.
+fn mesh_lit(
+    section: &Section,
+    sky: impl Fn(i32, i32, i32) -> u8,
+    block_light: impl Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
+    loaded: impl Fn(i32, i32, i32) -> bool,
+) -> ChunkMesh {
     // Standalone fixtures never ran the edit-time refine cascade: resolve
     // the stored shape states (fence masks, stair corners) before meshing.
     let section = &refined(section);
@@ -189,14 +204,14 @@ fn mesh_with(
         },
         |wx, wy, wz| {
             if in_section(wx, wy, wz) {
-                section.water_meta(wx as usize, wy as usize, wz as usize)
+                section.fluid_meta(wx as usize, wy as usize, wz as usize)
             } else {
                 0
             }
         },
         |_, _| 0,
         sky,
-        |_, _, _| petramond_world::light::LightRgb::ZERO,
+        block_light,
         loaded,
         |wx, wy, wz| {
             in_section(wx, wy, wz)
@@ -211,6 +226,44 @@ fn mesh_with(
 /// Mesh `section` standalone under uniform full skylight, everything loaded.
 fn mesh(section: &Section) -> ChunkMesh {
     mesh_with(section, |_, _, _| SKY_FULL, |_, _, _| true)
+}
+
+/// Mesh `section` standalone through the PAD path (exposure masks, pad-local
+/// fluid probes) — the path live meshing takes — with air around it.
+fn mesh_via_pad(section: &Section) -> ChunkMesh {
+    use super::builder::mesh_pad_idx;
+    const PAD: usize = SECTION_SIZE + 2;
+    const PAD_VOL: usize = PAD * PAD * PAD;
+    let section = &refined(section);
+    let mut blocks = vec![Block::Air.id(); PAD_VOL];
+    let mut fluid = vec![0u8; PAD_VOL];
+    let mut cell_states = vec![petramond_world::block::ShapeState::NONE; PAD_VOL];
+    for y in 0..SECTION_SIZE {
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                let i = mesh_pad_idx(x + 1, y + 1, z + 1);
+                blocks[i] = section.block_raw(x, y, z);
+                fluid[i] = section.fluid_meta(x, y, z);
+                cell_states[i] = section.cell_state(x, y, z);
+            }
+        }
+    }
+    let biome_side = SECTION_SIZE + 4;
+    build_section_mesh_from_pad(
+        section,
+        SectionPos::new(0, 0, 0),
+        SectionMeshPad {
+            blocks: &blocks,
+            fluid: &fluid,
+            skylight: &vec![SKY_FULL; PAD_VOL],
+            blocklight: &vec![petramond_world::light::LightRgb::ZERO; PAD_VOL],
+            cell_states: &cell_states,
+            loaded: &vec![true; PAD_VOL],
+            transition_blocked: &vec![false; PAD_VOL],
+            biome: &vec![0u8; biome_side * biome_side],
+        },
+        test_rules(),
+    )
 }
 
 /// Mesh `section` standalone with a custom baked-skylight shape.
@@ -328,6 +381,7 @@ mod block_light_color;
 mod boxes;
 mod contact;
 mod fence;
+mod fluid;
 mod foliage;
 mod glass;
 mod greedy;
@@ -339,7 +393,7 @@ mod skylight;
 mod slabs;
 mod snow;
 mod stairs;
+mod synthetic_fluids;
 mod tint;
-mod water;
 
 mod texture_transitions;

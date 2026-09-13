@@ -31,6 +31,16 @@
       "orientation": "left_to_right"
     },
     {
+      "key": "petramond:lava_bucket",
+      "model_file": "models/items/lava_bucket.bbmodel",
+      "cells": [
+        1,
+        1,
+        1
+      ],
+      "orientation": "left_to_right"
+    },
+    {
       "key": "petramond:bed",
       "model_file": "models/blocks/bed.bbmodel",
       "cells": [

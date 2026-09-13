@@ -22,8 +22,8 @@ pub struct MemoryCensus {
     pub skylight_bytes: u64,
     pub blocklight_cubes: usize,
     pub blocklight_bytes: u64,
-    pub water_cubes: usize,
-    pub water_bytes: u64,
+    pub fluid_cubes: usize,
+    pub fluid_bytes: u64,
     /// `size_of::<Section>()` × sections — the struct bodies themselves.
     pub section_structs: u64,
     pub sparse_state_bytes: u64,
@@ -49,7 +49,7 @@ impl MemoryCensus {
         self.block_bytes
             + self.skylight_bytes
             + self.blocklight_bytes
-            + self.water_bytes
+            + self.fluid_bytes
             + self.section_structs
             + self.sparse_state_bytes
             + self.entity_bytes
@@ -94,11 +94,11 @@ impl World {
                         (bl.len() * std::mem::size_of::<petramond_world::light::LightRgb>()) as u64;
                 }
             }
-            let (water_ptr, water_len, sparse, entities, emitters) = s.memory_parts();
-            if let Some(p) = water_ptr {
+            let (fluid_ptr, fluid_len, sparse, entities, emitters) = s.memory_parts();
+            if let Some(p) = fluid_ptr {
                 if seen.insert(p) {
-                    c.water_cubes += 1;
-                    c.water_bytes += water_len as u64;
+                    c.fluid_cubes += 1;
+                    c.fluid_bytes += fluid_len as u64;
                 }
             }
             c.sparse_state_bytes += sparse;

@@ -16,6 +16,8 @@ use petramond_math::math::Vec3;
 use super::instance::ModInstance;
 use super::ModHost;
 
+mod conditions;
+
 struct Sim {
     world: World,
     player: Player,

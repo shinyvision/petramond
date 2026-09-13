@@ -10,6 +10,7 @@ use super::tick::{GameInput, PlacePrediction, WorldEvent};
 use super::Game;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond_math::math::IVec3;
+use petramond_world::block::Block;
 
 impl Game {
     /// The ACTING hand's stack from the replicated self view — the read every
@@ -70,6 +71,8 @@ impl Game {
             half_width: petramond::player::HALF_W,
             height: petramond::player::HEIGHT,
             eye_height: petramond::player::EYE,
+            // Condition timers are server-only; replication carries stages alone.
+            conditions: Vec::new(),
         }
     }
 
@@ -259,8 +262,8 @@ impl Game {
             match item.item_use() {
                 // Shears claim only through a mob target, handled above.
                 Some(ItemUse::Shear) | None => {}
-                Some(ItemUse::BucketFill { .. }) => {
-                    if self.predicts_bucket_fill() {
+                Some(ItemUse::BucketFill { fills }) => {
+                    if self.predicts_bucket_fill(fills) {
                         return true;
                     }
                 }
@@ -285,24 +288,30 @@ impl Game {
     }
 
     /// Replica mirror of the fill consumer's rule (`try_fill_bucket`): the
-    /// source-stopping ray hits a water SOURCE within reach.
-    fn predicts_bucket_fill(&self) -> bool {
-        petramond::player::Player::raycast_water_sources(
+    /// source-stopping ray hits, within reach, a SOURCE of a fluid the bucket
+    /// has a result for.
+    fn predicts_bucket_fill(&self, fills: &[(Block, petramond_world::item::ItemType)]) -> bool {
+        let takes = |fluid: Block| fills.iter().any(|&(b, _)| b == fluid);
+        let hit = petramond::player::Player::raycast_fluid_sources(
             self.cam.pos,
             self.cam.forward(),
             &self.replica,
-        )
-        .is_some_and(|(h, _)| self.replica.is_water_source_world(h.block))
+            takes,
+        );
+        hit.is_some_and(|(h, _)| {
+            let scooped = Block::from_id(self.replica.chunk_block(h.block.x, h.block.y, h.block.z));
+            takes(scooped) && self.replica.is_fluid_source_world(h.block, scooped)
+        })
     }
 
     /// Replica mirror of the pour consumer's rule (`try_pour_bucket`): the
-    /// water-stopping ray hits something within reach, and the resolved pour
-    /// cell (replace-in-place or against the face) is replaceable. Mod
+    /// any-fluid-stopping ray hits something within reach, and the resolved
+    /// pour cell (replace-in-place or against the face) is replaceable. Mod
     /// `block_place_pre` cancels stay invisible to the replica — the same
     /// over-optimism policy as the engine-block place ghost.
     fn predicts_bucket_pour(&self) -> bool {
         use petramond_world::block::Block;
-        let Some((h, _)) = petramond::player::Player::raycast_including_water(
+        let Some((h, _)) = petramond::player::Player::raycast_including_any_fluid(
             self.cam.pos,
             self.cam.forward(),
             &self.replica,

@@ -124,6 +124,8 @@ impl Scene {
         self.shadows.clear();
         self.shadows.extend_from_slice(presentation.shadows);
         self.player = presentation.player.map(|p| PlayerRenderInstance {
+            emitter_tint: p.emitter_tint,
+            emitter_self_lit: p.emitter_self_lit,
             pos: p.pos,
             body_yaw: p.body_yaw,
             head_yaw: p.head_yaw,
@@ -232,6 +234,7 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         hurt: m.hurt_flash,
         shorn: m.shorn,
         emitter_tint: m.emitter_tint,
+        emitter_self_lit: m.emitter_self_lit,
         anims: m.anims.clone(),
         ragdoll: m.ragdoll_pose.clone(),
     }));

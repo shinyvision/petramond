@@ -17,15 +17,19 @@ mod aquifer;
 mod batch;
 mod carve;
 mod climate;
+mod fluid_falls;
+mod fluid_pools;
 mod lattice;
 mod point_cache;
 mod query_cache;
 mod regions;
 mod sampling;
 mod source;
+mod terrain_surface;
 use carve::BatchCarve;
 #[cfg(test)]
 use carve::MAX_FLOOR_DEPTH;
+pub use fluid_falls::FallCell;
 #[cfg(test)]
 mod separation_tests;
 mod territory;
@@ -38,16 +42,24 @@ const LATTICE_STEP_F: f64 = LATTICE_STEP as f64;
 enum CaveCut {
     Solid,
     Shell,
-    Open,
+    /// Open and empty. A fluid the cave holds is a [`CaveCut::Fill`].
+    Air,
     Barrier(u16),
     Fill(u16),
 }
 
 impl CaveCut {
+    /// Open and empty: what a pour may fall through.
+    #[inline]
+    fn is_air(self) -> bool {
+        self == Self::Air
+    }
+
+    /// Passable: open air, or a fill that is not solid (a fluid).
     #[inline]
     fn is_open(self) -> bool {
         match self {
-            Self::Open => true,
+            Self::Air => true,
             Self::Fill(block) => !Block::from_id(block).is_solid(),
             _ => false,
         }
@@ -72,6 +84,11 @@ struct Fields {
     biome: bool,
     excavations: bool,
     positioned: bool,
+    /// Gather the pools an open cell can belong to. Off for the queries
+    /// that only ask whether a cell is OPEN — the answer never depends on
+    /// what fills it — and off inside a pool's own flood, which reads the
+    /// carve to decide what the pools are.
+    fluids: bool,
 }
 
 impl Fields {
@@ -81,6 +98,7 @@ impl Fields {
         biome: true,
         excavations: true,
         positioned: true,
+        fluids: true,
     };
 }
 
@@ -116,6 +134,8 @@ struct CaveLattice {
     walks: Option<WalkField>,
     volumes: volumes::Tiles,
     claims: volumes::claims::Columns,
+    /// The pools any cell of the box can belong to.
+    pools: fluid_pools::Pools,
 }
 
 mod lane {
@@ -206,9 +226,11 @@ impl CaveField {
                 biome: false,
                 excavations: false,
                 positioned: false,
+                fluids: false,
             },
         );
-        self.cut_unsealed(&mut Col::new(&lat, x, z), y, false, true) == CaveCut::Open
+        self.cut_unsealed(&mut Col::new(&lat, x, z), y, false, true)
+            .is_air()
     }
 
     pub fn cave_carved(&self, x: i32, y: i32, z: i32, surf_y: i32) -> bool {
@@ -234,7 +256,7 @@ impl CaveField {
         if interior {
             density = density.min(c.get(lane::INTERIOR, y));
             if density < 0.0 {
-                return CaveCut::Open;
+                return CaveCut::Air;
             }
             if y > CAVE_MIN_Y + 4 && c.get(lane::NOODLE_TOGGLE, y) >= 0.0 {
                 let noodle = c
@@ -247,7 +269,7 @@ impl CaveField {
             }
         }
         if density < 0.0 {
-            return CaveCut::Open;
+            return CaveCut::Air;
         }
         if interior || gate {
             if let Some(walks) = c.lat.walks.as_ref().filter(|_| c.lat.walk_cells[c.cell()]) {
@@ -257,7 +279,7 @@ impl CaveField {
             }
         }
         if density < 0.0 {
-            return CaveCut::Open;
+            return CaveCut::Air;
         }
         let max_shell = if c.lat.fields.biome {
             self.underground.bounds
@@ -388,6 +410,7 @@ impl CaveField {
             biome: true,
             excavations: true,
             positioned: true,
+            fluids: false,
         };
         let lat = self.build_lattice_filtered(x, y, z, x, y, z, fields);
         self.biome_id_lat(&lat, x, y, z)
@@ -699,6 +722,7 @@ impl<'a> ColumnProbe<'a> {
             biome: false,
             excavations: true,
             positioned: true,
+            fluids: false,
         }
     }
 

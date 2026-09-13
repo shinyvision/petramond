@@ -317,7 +317,7 @@ pub(super) fn space_at(field: &CaveField, pos: [i32; 3]) -> Option<mod_api::Terr
         } else if Block::from_id(block).is_solid() {
             mod_api::TerrainSpace::Solid
         } else {
-            mod_api::TerrainSpace::Water
+            mod_api::TerrainSpace::Fluid
         }),
         _ => None,
     }

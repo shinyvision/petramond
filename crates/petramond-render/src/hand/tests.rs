@@ -1068,6 +1068,8 @@ fn render_held_pose_preview() {
         // arm and its pose are item-kind-independent; only the item's own
         // transform (and its texture sheet) differ.
         let inst = crate::PlayerRenderInstance {
+            emitter_tint: [1.0; 3],
+            emitter_self_lit: 0.0,
             pos: Vec3::ZERO,
             body_yaw: 0.0,
             head_yaw: 0.0,
@@ -1384,6 +1386,8 @@ fn an_off_hand_pose_is_the_mirror_of_the_main_hands() {
             ]
         };
         let inst = crate::PlayerRenderInstance {
+            emitter_tint: [1.0; 3],
+            emitter_self_lit: 0.0,
             pos: Vec3::ZERO,
             body_yaw: 0.0,
             head_yaw: 0.0,

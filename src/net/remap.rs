@@ -32,6 +32,7 @@ pub struct IdRemap {
     sounds: Vec<Option<u16>>,
     effects: Vec<Option<u16>>,
     emitters: Vec<Option<u16>>,
+    conditions: Vec<Option<u16>>,
     /// True when every table is the identity — the fast path (a client whose
     /// registries happen to match the server's exactly).
     identity: bool,
@@ -72,9 +73,12 @@ impl IdRemap {
         let emitters = build_lut(&tables.emitters, "emitter", |n| {
             petramond_world::particle_emitters::by_key(n).map(|b| b.id as u16)
         });
+        let conditions = build_lut(&tables.conditions, "condition", |n| {
+            petramond_world::condition::by_name(n).map(|c| c.0 as u16)
+        });
 
         let identity = blocks.iter().enumerate().all(|(i, &v)| i == v as usize)
-            && [&items, &mobs, &sounds, &effects, &emitters]
+            && [&items, &mobs, &sounds, &effects, &emitters, &conditions]
                 .into_iter()
                 .all(|t| t.iter().enumerate().all(|(i, &v)| v == Some(i as u16)));
         IdRemap {
@@ -84,6 +88,7 @@ impl IdRemap {
             sounds,
             effects,
             emitters,
+            conditions,
             identity,
         }
     }
@@ -127,6 +132,21 @@ impl IdRemap {
         lookup(&self.emitters, server_id as usize).map(|id| id as u8)
     }
 
+    #[inline]
+    pub fn condition(&self, server_id: u8) -> Option<u8> {
+        lookup(&self.conditions, server_id as usize).map(|id| id as u8)
+    }
+
+    fn remap_conditions(&self, conditions: &mut Vec<(u8, u8)>) {
+        conditions.retain_mut(|(id, _)| match self.condition(*id) {
+            Some(local) => {
+                *id = local;
+                true
+            }
+            None => false,
+        });
+    }
+
     /// Rewrite a freshly-decoded server message to client-local ids, in place.
     /// EXHAUSTIVE over the enum: a new variant fails compilation here until
     /// its id story is decided (a `=> {}` arm is that decision, made visibly).
@@ -159,6 +179,7 @@ impl IdRemap {
                 t.mobs.retain_mut(|m| match self.mob(m.kind_id) {
                     Some(id) => {
                         m.kind_id = id;
+                        self.remap_conditions(&mut m.conditions);
                         // Emitter bundle ids remap per entry; an unknown one
                         // (server-side disabled mod's residue) drops alone —
                         // the mob itself still renders.
@@ -186,6 +207,7 @@ impl IdRemap {
                 // id-free, and `env` entries are param NAME strings + floats
                 // — no registry ids ride either.
                 for p in &mut t.players {
+                    self.remap_conditions(&mut p.conditions);
                     p.held_item = p.held_item.and_then(|id| self.item(id));
                     p.off_hand_item = p.off_hand_item.and_then(|id| self.item(id));
                     for shown in &mut p.held_display {
@@ -193,6 +215,7 @@ impl IdRemap {
                     }
                 }
                 if let Some(s) = &mut t.self_state {
+                    self.remap_conditions(&mut s.conditions);
                     for shown in &mut s.held_display {
                         *shown = shown.and_then(|id| self.item(id));
                     }
@@ -392,6 +415,10 @@ pub fn local_name_tables() -> NameTables {
             .iter()
             .map(|b| b.key.to_string())
             .collect(),
+        conditions: petramond_world::condition::defs()
+            .iter()
+            .map(|c| c.name.to_string())
+            .collect(),
     }
 }
 
@@ -500,7 +527,7 @@ mod tests {
                 crate::net::protocol::BlockDelta {
                     pos: IVec3::new(0, 64, 0),
                     block_id: 0, // server 0 = local 1 after the rotation
-                    water: None,
+                    fluid: None,
                     state: None,
                     cell_kv: vec![],
                 },
@@ -509,7 +536,7 @@ mod tests {
                 crate::net::protocol::BlockDelta {
                     pos: IVec3::new(1, 64, 0),
                     block_id: 2,
-                    water: None,
+                    fluid: None,
                     state: Some(slab_state(2, 3)),
                     cell_kv: vec![],
                 },
@@ -535,7 +562,7 @@ mod tests {
             },
             blocks: SectionBlocks(std::sync::Arc::from(vec![0u16, 1, 2].into_boxed_slice())),
             metrics: Default::default(),
-            water: None,
+            fluid: None,
             skylight: None,
             blocklight: None,
             states: crate::net::protocol::SectionStatesPayload {
@@ -573,6 +600,7 @@ mod tests {
             sounds: Vec::new(),
             effects: Vec::new(),
             emitters: Vec::new(),
+            conditions: Vec::new(),
             identity: false,
         };
         assert_eq!(map.block(0), 500);
@@ -670,6 +698,7 @@ mod tests {
             dead: false,
             shorn: false,
             emitters: Vec::new(),
+            conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
         };
@@ -683,6 +712,7 @@ mod tests {
             flight: None,
         };
         let player_row = |held_item: Option<u16>| crate::net::protocol::PlayerStateRow {
+            conditions: Vec::new(),
             id: crate::player::PlayerId(1),
             transform: crate::net::protocol::Transform {
                 pos: petramond_math::math::Vec3::ZERO,
@@ -719,6 +749,7 @@ mod tests {
             items: vec![item_row(2), item_row(unknown_item)],
             players: vec![player_row(Some(2)), player_row(Some(unknown_item))],
             self_state: Some(SelfState {
+                conditions: Vec::new(),
                 health: 20,
                 mode: 0,
                 denied_actions: Default::default(),

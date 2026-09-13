@@ -220,23 +220,22 @@ impl DroppedItems {
                     world.blocklight_rgb_at_world(after.x, after.y, after.z),
                 );
             }
-            // Row-declared environmental reaction (`DroppedReaction`): only
-            // items whose row declares one pay the environment probe. The
-            // whole stack transforms IN PLACE — count, motion, identity, age,
-            // and pickup state stay; only the item kind changes — and it
-            // naturally fires once (the result row no longer matches). The
-            // probe is checked every ticked frame, not just on cell
-            // crossings, so water flowing OVER a resting item still counts
-            // as the item entering water. Stream-final gated: an in-flight
-            // section reads as "not there yet", never a transient transform.
+            // Fluid contact reads the real fluid volume at the item's center, so
+            // air above a thin flow is dry. Checked every tick, not just on cell
+            // crossings, so fluid flowing OVER a resting item counts. Stream-final
+            // gated: an in-flight section reads as "not there yet".
+            let immersion = world
+                .block_if_stream_final(after.x, after.y, after.z)
+                .and_then(|_| world.fluid_at_point(it.pos));
+            // Expiring the lifetime removes the item on this tick's lifetime
+            // pass, right after physics — the lane a merge uses.
+            if immersion.is_some_and(|i| i.fluid.contact.destroys_items) {
+                it.ticks_lived = ITEM_LIFETIME_TICKS;
+            }
+            // The whole stack transforms IN PLACE and fires once: the result
+            // row no longer matches.
             if let Some(reaction) = it.stack.item.dropped_reaction() {
-                let in_env = match reaction.environment {
-                    petramond_world::item::ReactionEnvironment::Water => {
-                        world.block_if_stream_final(after.x, after.y, after.z)
-                            == Some(petramond_world::block::Block::Water)
-                    }
-                };
-                if in_env {
+                if immersion.is_some_and(|i| i.fluid.block == reaction.fluid) {
                     it.stack.item = reaction.result;
                     step.fx.push(ItemReactionFx {
                         burst: reaction.burst,

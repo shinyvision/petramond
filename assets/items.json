@@ -1646,7 +1646,10 @@
       "tags": [],
       "use": {
         "bucket_fill": {
-          "becomes": "petramond:water_bucket"
+          "becomes": {
+            "petramond:water": "petramond:water_bucket",
+            "petramond:lava": "petramond:lava_bucket"
+          }
         }
       }
     },
@@ -1664,7 +1667,27 @@
       "tags": [],
       "use": {
         "bucket_pour": {
-          "becomes": "petramond:wooden_bucket"
+          "becomes": "petramond:wooden_bucket",
+          "fluid": "petramond:water"
+        }
+      }
+    },
+    {
+      "item": "petramond:lava_bucket",
+      "key": "petramond:lava_bucket",
+      "name": "Lava Bucket",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "model": "petramond:lava_bucket",
+      "tags": [],
+      "use": {
+        "bucket_pour": {
+          "becomes": "petramond:wooden_bucket",
+          "fluid": "petramond:lava"
         }
       }
     },

@@ -75,10 +75,19 @@ impl<'w> SectionCursor<'w> {
         }
     }
 
-    /// Mirror of `World::water_cell_at`.
+    /// Mirror of `World::fluid_cell_at`.
     #[inline]
-    pub fn water_cell(&self, c: IVec3) -> bool {
-        self.physics_block(c) == Block::Water
+    pub fn fluid_cell(&self, c: IVec3) -> bool {
+        self.physics_block(c).fluid().is_some()
+    }
+
+    /// Mirror of `World::fluid_meta_world`.
+    #[inline]
+    pub fn fluid_meta(&self, c: IVec3) -> u8 {
+        match self.section_at(c.x, c.y, c.z) {
+            Some((s, lx, ly, lz)) => s.fluid_meta(lx, ly, lz),
+            None => self.world.fluid_meta_world(c.x, c.y, c.z),
+        }
     }
 
     /// Mirror of `World::collision_boxes_at`, taking the dense per-id table

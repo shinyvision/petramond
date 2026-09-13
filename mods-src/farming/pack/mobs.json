@@ -92,7 +92,7 @@
         "avoid": [],
         "prefer": []
       },
-      "avoid_water": true,
+      "avoid_fluids": true,
       "damage_feedback": [],
       "sounds": [
         {
@@ -201,7 +201,7 @@
         "avoid": [],
         "prefer": []
       },
-      "avoid_water": true,
+      "avoid_fluids": true,
       "damage_feedback": [],
       "sounds": [
         {

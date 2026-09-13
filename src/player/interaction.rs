@@ -2,6 +2,7 @@ use super::state::Player;
 use crate::world::World;
 use petramond_math::math::{IVec3, SelectionBoxes, SelectionShape, Vec3};
 use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::item::UseRay;
 use petramond_world::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
 use petramond_world::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 
@@ -47,7 +48,7 @@ pub enum RayFilter {
     /// sub-cell shapes by their geometry, plants by their selection box).
     Selectable,
     /// A body's rule: only cells holding collision boxes, tested by their
-    /// shape — plants, walk-through covers, water and no-collision models
+    /// shape — plants, walk-through covers, fluids and no-collision models
     /// pass.
     Collidable,
 }
@@ -163,7 +164,7 @@ impl Player {
     /// looks (the crosshair's own rays are [`REACH`]-bounded). No outline
     /// work — this is the line-of-sight query, not a selection. Under
     /// [`RayFilter::Collidable`] a cell without collision boxes reads as air,
-    /// so the ray passes plants, walk-through covers and water the way a
+    /// so the ray passes plants, walk-through covers and fluids the way a
     /// body does; what it does stop on is still tested by its precise shape.
     pub fn raycast_filtered(
         eye: Vec3,
@@ -198,34 +199,56 @@ impl Player {
         }
     }
 
-    /// Like [`raycast_with_dist`](Self::raycast_with_dist), but ANY water cell
-    /// stops the ray too (as a full cube). Normal selection deliberately sees
-    /// THROUGH water; a bucket POUR must target the water surface itself.
-    /// Solids still stop the ray first. The caller inspects the hit cell's real
-    /// block — the hit may be water or any normally selectable block, whichever
-    /// the ray reaches first.
-    pub fn raycast_including_water(
+    /// Like [`raycast_with_dist`](Self::raycast_with_dist), but a cell of any
+    /// fluid the item's [`UseRay`] names stops the ray too (as a full cube).
+    /// Normal selection deliberately sees THROUGH fluids; an item that acts ON
+    /// a fluid surface (the boat) must target that surface itself. Solids still
+    /// stop the ray first. The caller inspects the hit cell's real block.
+    pub fn raycast_use_ray(
+        eye: Vec3,
+        dir: Vec3,
+        world: &World,
+        ray: UseRay,
+    ) -> Option<(RaycastHit, f32)> {
+        Self::raycast_fluid_stopping(eye, dir, world, |_, fluid| ray.stops_at(fluid))
+    }
+
+    /// Like [`raycast_use_ray`](Self::raycast_use_ray), but a cell of ANY
+    /// fluid stops the ray — the bucket POUR ray. A pour acts on
+    /// the first fluid surface it meets whatever that fluid is, so lava poured
+    /// at a pond lands on the pond's surface instead of reading through the
+    /// water to the pond floor.
+    pub fn raycast_including_any_fluid(
         eye: Vec3,
         dir: Vec3,
         world: &World,
     ) -> Option<(RaycastHit, f32)> {
-        Self::raycast_water_stopping(eye, dir, world, |_| true)
+        Self::raycast_fluid_stopping(eye, dir, world, |_, _| true)
     }
 
-    /// Like [`raycast_including_water`](Self::raycast_including_water), but only
-    /// water SOURCE cells stop the ray — FLOWING water stays transparent even to
-    /// this ray. A bucket FILL only ever acts on a source, so a spread sheet or
-    /// a thin film (both of which can render exactly like still water) must
-    /// never shadow the source beneath or behind it: the ray reads through them
-    /// to the source the player is actually aiming at.
-    pub fn raycast_water_sources(eye: Vec3, dir: Vec3, world: &World) -> Option<(RaycastHit, f32)> {
-        Self::raycast_water_stopping(eye, dir, world, |p| world.is_water_source_world(p))
+    /// The bucket FILL ray: only SOURCE cells of a fluid `scoops` accepts stop
+    /// it — FLOWING fluid, and every fluid the bucket does not take, stay
+    /// transparent. A fill only ever acts on a source, so a spread sheet or a
+    /// thin film (both of which can render exactly like still water) must
+    /// never shadow the source beneath or behind it: the ray reads through
+    /// them to the source the player is actually aiming at.
+    pub fn raycast_fluid_sources(
+        eye: Vec3,
+        dir: Vec3,
+        world: &World,
+        scoops: impl Fn(Block) -> bool,
+    ) -> Option<(RaycastHit, f32)> {
+        Self::raycast_fluid_stopping(eye, dir, world, |p, fluid| {
+            scoops(fluid) && world.is_fluid_source_world(p, fluid)
+        })
     }
 
-    /// Shared water-aware DDA: water cells satisfying `stops` read as full cubes
-    /// (the ray hits them on cell entry), other water reads as air (transparent),
-    /// and every non-water block behaves exactly as in normal selection.
-    fn raycast_water_stopping<W: Fn(IVec3) -> bool>(
+    /// Shared fluid-aware DDA: fluid cells satisfying `stops` (cell, fluid
+    /// block) read as full cubes (the ray hits them on cell entry), other
+    /// fluid cells read as air (transparent), and every non-fluid block —
+    /// including a shape with fluid in its gaps — behaves exactly as in normal
+    /// selection.
+    fn raycast_fluid_stopping<W: Fn(IVec3, Block) -> bool>(
         eye: Vec3,
         dir: Vec3,
         world: &World,
@@ -237,14 +260,15 @@ impl Player {
             REACH,
             &|x, y, z| {
                 let b = Block::from_id(world.chunk_block(x, y, z));
-                if b == Block::Water {
-                    if stops(IVec3::new(x, y, z)) {
-                        Block::Stone
-                    } else {
-                        Block::Air
+                match b.fluid() {
+                    Some(fluid) if fluid == b => {
+                        if stops(IVec3::new(x, y, z), fluid) {
+                            Block::Stone
+                        } else {
+                            Block::Air
+                        }
                     }
-                } else {
-                    b
+                    _ => b,
                 }
             },
             &|e, d, pos, block| precise_shape_hit(e, d, pos, block, world),

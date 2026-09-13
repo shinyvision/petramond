@@ -56,14 +56,16 @@ pub(super) fn smothered(world: &WorldData, pos: IVec3) -> bool {
         .is_some_and(|b| b.is_solid() && !b.has_tag(BlockTag::NO_GRASS_DECAY))
 }
 
-/// Whether the cell directly above `pos` is water — grass drowns and dies back to
-/// dirt when flooded, and (read the other way) dirt will not green under water.
+/// Whether the cell directly above `pos` holds fluid — grass drowns and dies back to
+/// dirt when flooded, and (read the other way) dirt will not green under fluid.
 /// Shared with [`Dirt`](super::dirt::Dirt) so a submerged column never re-greens:
 /// worldgen already lays dirt below the waterline, and this keeps the spread from
 /// creeping grass back down a flooded slope. An unloaded or out-of-column cell above
-/// counts as not water — open sky, never a state change on missing information.
+/// counts as dry — open sky, never a state change on missing information.
 pub(super) fn submerged(world: &WorldData, pos: IVec3) -> bool {
-    world.block_if_loaded(pos.x, pos.y + 1, pos.z) == Some(Block::Water)
+    world
+        .block_if_loaded(pos.x, pos.y + 1, pos.z)
+        .is_some_and(|b| b.fluid().is_some())
 }
 
 /// Everything this module's relocated tests (in the engine crate) exercise.

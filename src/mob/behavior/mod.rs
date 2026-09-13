@@ -106,7 +106,7 @@ pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
 }
 
 /// Idle roaming, tuned entirely by the owning row's `wander` / `habitat` /
-/// `avoid_water` fields (they stay row data because spawn and habitat code read
+/// `avoid_fluids` fields (they stay row data because spawn and habitat code read
 /// them too) — the node itself takes no params.
 fn wander_node(
     _node: &'static str,
@@ -120,7 +120,7 @@ fn wander_node(
     Ok(Box::new(WanderAi::new(
         def.wander,
         &def.habitat,
-        def.avoid_water,
+        def.avoid_fluids,
     )))
 }
 

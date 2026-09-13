@@ -7,6 +7,7 @@ mod cascade;
 mod cavern;
 mod content;
 mod dripstone;
+mod fluids;
 mod shroom;
 mod spores;
 
@@ -49,7 +50,8 @@ impl Mod for Exploration {
         }
         // After Trees — the end of the pipeline. Both habitats decorate
         // carved cave volume, so they must see final terrain.
-        match Content::resolve() {
+        let fluids = fluids::Fluids::resolve();
+        match Content::resolve(fluids.clone()) {
             Some(content) => {
                 self.content = Some(content);
                 register_worldgen_feature(WorldgenStage::Trees, GEN_CAVERN, cavern::GEN_FILTER);
@@ -58,7 +60,7 @@ impl Mod for Exploration {
                 log("exploration: mushroom content failed to resolve; mushroom decoration disabled")
             }
         }
-        match Dripstone::resolve() {
+        match Dripstone::resolve(fluids) {
             Some(dripstone) => {
                 self.dripstone = Some(dripstone);
                 register_worldgen_feature(

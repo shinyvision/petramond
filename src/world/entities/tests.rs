@@ -45,7 +45,7 @@ fn dropped_reaction_transforms_the_stack_in_water() {
             { "item": "testreact:flour", "key": "testreact:flour", "name": "Test Flour",
               "max_stack_size": 64, "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
               "tags": [],
-              "dropped_reaction": { "environment": "water", "result": "testreact:dough",
+              "dropped_reaction": { "fluid": "petramond:water", "result": "testreact:dough",
                                     "burst": "petramond:water_splash",
                                     "sound": "petramond:water_splash_small" } },
             { "item": "testreact:dough", "key": "testreact:dough", "name": "Test Dough",

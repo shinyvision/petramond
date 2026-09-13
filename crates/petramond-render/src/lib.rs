@@ -405,10 +405,13 @@ pub struct MobRenderInstance {
     /// Whether the mob is currently shorn: the bake skips the model's coat cubes
     /// (the ones named `wool`) so the fleece disappears until it regrows.
     pub shorn: bool,
-    /// Multiply body tint from the mob's active named emitters (white when
+    /// Multiply body tint from the mob's active emitter bundles (white when
     /// none) — e.g. the faint warm cast of a burning mob. Composed with the
     /// hurt flash and sampled light.
     pub emitter_tint: [f32; 3],
+    /// How much of its light the body provides itself (`0..=1`, the strongest
+    /// active emitter's `body_self_lit`): a burning body stays visible in the dark.
+    pub emitter_self_lit: f32,
     /// Named model animations (mod-driven, replicated) as
     /// `(name, phase, weight)` — each is layered over the walk/idle/rest
     /// base pose at its OWN phase (seconds into the clip), scaled by its
@@ -472,6 +475,12 @@ impl BoneRange {
 /// the same animation the first-person hand plays.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PlayerRenderInstance {
+    /// Multiply body tint from the body's active emitter bundles (its
+    /// conditions' stage emitters), composed with the hurt flash.
+    pub emitter_tint: [f32; 3],
+    /// How much of its light the body provides itself (`0..=1`, the strongest
+    /// active emitter's `body_self_lit`): a burning body stays visible in the dark.
+    pub emitter_self_lit: f32,
     /// World position of the feet (model `y=0`).
     pub pos: Vec3,
     /// Body facing yaw in radians (engine yaw space).

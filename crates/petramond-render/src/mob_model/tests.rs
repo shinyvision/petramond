@@ -25,6 +25,7 @@ fn instance(anim_time: f32, moving: bool) -> MobRenderInstance {
         hurt: 0.0,
         shorn: false,
         emitter_tint: [1.0, 1.0, 1.0],
+        emitter_self_lit: 0.0,
         anims: Vec::new(),
         ragdoll: None,
     }
@@ -40,6 +41,66 @@ fn empty_instances_produce_no_geometry() {
         0
     );
     assert!(v.is_empty() && i.is_empty());
+}
+
+#[test]
+fn self_lit_mobs_and_ragdolls_keep_their_tints_in_darkness() {
+    let model = owl_model();
+    let bake = |inst: &MobRenderInstance, env| {
+        let (mut v, mut i) = (Vec::new(), Vec::new());
+        build_mob_instances(
+            &model,
+            0.25,
+            env,
+            std::slice::from_ref(inst),
+            &mut v,
+            &mut i,
+        );
+        assert!(!v.is_empty());
+        v
+    };
+    let rest = model.rest_pose();
+    let ragdoll = model
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(b, bone)| {
+            (
+                rest[b].transform_point3(bone.pivot),
+                glam::Quat::from_rotation_z(0.6),
+            )
+        })
+        .collect::<Vec<_>>()
+        .into();
+    let night = LightEnv {
+        sky_scale: 0.0,
+        sky_color: [0.6, 0.7, 1.0],
+    };
+    for pose in [None, Some(ragdoll)] {
+        let mut inst = instance(0.0, false);
+        inst.ragdoll = pose;
+        inst.emitter_tint = [1.0, 0.7, 0.4];
+        inst.hurt = 0.5;
+        let daylight = bake(&inst, LightEnv::IDENTITY);
+        for sky in [0, 63] {
+            inst.skylight = sky;
+            inst.emitter_self_lit = 0.0;
+            let dark = bake(&inst, night);
+            inst.emitter_self_lit = 1.0;
+            let lit = bake(&inst, night);
+            for ((day, lit), dark) in daylight.iter().zip(&lit).zip(&dark) {
+                assert_eq!(
+                    lit.tint, day.tint,
+                    "body light preserves fire tint and hurt flash"
+                );
+                assert_eq!(lit.shade, day.shade);
+                assert!(
+                    dark.tint[0] < lit.tint[0],
+                    "ordinary bodies still follow world light"
+                );
+            }
+        }
+    }
 }
 
 #[test]

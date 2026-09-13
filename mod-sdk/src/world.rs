@@ -196,11 +196,11 @@ host_fn! {
     /// gameplay policy: [`CollisionShape::Full`] = exactly one collision box
     /// spanning the whole unit cell, [`CollisionShape::Partial`] = any other
     /// non-empty box set (stairs, slabs, doors, snow layers, model blocks),
-    /// [`CollisionShape::Empty`] = no collision boxes (air, water, tall
+    /// [`CollisionShape::Empty`] = no collision boxes (air, any fluid, tall
     /// grass). `None` = unloaded / streamed content not final (retry later).
     /// Compose spawn/placement rules on top in mod code, e.g. "full solid
-    /// footing" = `Full` + the block is not water + not a `petramond:leaves`
-    /// tag member ([`crate::blocks_by_tag`]).
+    /// footing" = `Full` + the block is not a `petramond:leaves` tag member
+    /// ([`crate::blocks_by_tag`]).
     pub fn collision_shape_at(pos: [i32; 3]) -> Option<CollisionShape>
         => CollisionShapeAt { pos } => CollisionShape
 }
@@ -214,8 +214,8 @@ host_fn! {
 
 host_fn! {
     /// The Y of the topmost movement-blocking block of the loaded column at
-    /// world `pos = [x, z]` — real footing; walk-through cover (tall grass,
-    /// snow layers, water) is skipped. `None` = unloaded, all-air, or the
+    /// world `pos = [x, z]` — real footing; anything without collision boxes
+    /// (tall grass, any fluid) is skipped. `None` = unloaded, all-air, or the
     /// footing is not yet stream-final (treat as "retry later"). A saved
     /// build higher in the column that has not streamed in yet is invisible
     /// to this scan — answers are provisional during join streaming.

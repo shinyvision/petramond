@@ -19,7 +19,31 @@
       ]
     },
     {
+      "emitter": "petramond:lava_embers",
+      "particles": [
+        {
+          "anchor": "block_top",
+          "offset": [0, 0.06, 0],
+          "rate": [0.05, 0.2],
+          "lifetime": [1.6, 3.2],
+          "size": [0.03, 0.07],
+          "spawn_box": [0.42, 0.02, 0.42],
+          "velocity": [0, 0.35, 0],
+          "velocity_jitter": [0.12, 0.12, 0.12],
+          "gravity": 0.55,
+          "color_ramp": [[1.0, 0.55, 0.1], [1.0, 0.86, 0.3], [0.75, 0.18, 0.02]],
+          "fade_power": 0.8,
+          "shrink_power": 0.5,
+          "alpha": [0.35, 0.75],
+          "self_lit": 1.0,
+          "requires_open": "above"
+        }
+      ]
+    },
+    {
       "emitter": "petramond:burn_light",
+      "body_size": [0.6, 1.8, 0.6],
+      "body_self_lit": 1.0,
       "particles": [
         {
           "offset": [0.0, 0.9, 0.0],
@@ -54,6 +78,8 @@
     },
     {
       "emitter": "petramond:burn_great",
+      "body_size": [0.6, 1.8, 0.6],
+      "body_self_lit": 1.0,
       "tint": [1.0, 0.8, 0.55],
       "particles": [
         {

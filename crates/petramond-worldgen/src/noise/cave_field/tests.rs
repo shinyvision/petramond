@@ -542,9 +542,8 @@ fn may_cut_mask_never_skips_a_carved_cell() {
                                 // outgrow the mask's vertical dilation.
                                 if field.lining_faces {
                                     for d in 1..=table.lining_floor_depth_max {
-                                        assert_ne!(
-                                            field.cut_lat(&lat, x, y + d, z, surf_y),
-                                            CaveCut::Open,
+                                        assert!(
+                                            !field.cut_lat(&lat, x, y + d, z, surf_y).is_open(),
                                             "mask skipped ({x},{y},{z}) surf {surf_y} seed \
                                                  {seed:#x} but a cave FLOOR course {d} above \
                                                  reaches it"
@@ -733,7 +732,7 @@ fn lining_shell_is_disjoint_from_carved_air() {
             for z in z0..=z1 {
                 for x in x0..=x1 {
                     match field.cut_lat(&lat, x, y, z, surf_y) {
-                        CaveCut::Open => open += 1,
+                        CaveCut::Air => open += 1,
                         CaveCut::Shell => shell += 1,
                         CaveCut::Solid | CaveCut::Barrier(_) => solid += 1,
                         CaveCut::Fill(b) => {
@@ -847,6 +846,7 @@ fn a_declared_floor_lining_paints_every_cave_floor_in_its_biome() {
                         let wz = cz * SECTION_SIZE as i32 + z as i32;
                         if above != air
                             || here == air
+                            || Block::from_id(here).is_fluid()
                             || field.underground_biome_at(wx, wy, wz) != row
                         {
                             continue;
@@ -1005,6 +1005,7 @@ fn a_layered_floor_course_has_one_surface_wherever_the_batch_splits_it() {
                         };
                         if here == air
                             || above != air
+                            || Block::from_id(here).is_fluid()
                             || field.underground_biome_at(wx, wy, wz) != row
                         {
                             continue;
@@ -1018,7 +1019,7 @@ fn a_layered_floor_course_has_one_surface_wherever_the_batch_splits_it() {
                         );
                         for d in 1..if wx < 0 { 11 } else { 6 } {
                             let Some(deep) = at(wy - d, x, z) else { break };
-                            if deep == air {
+                            if deep == air || Block::from_id(deep).is_fluid() {
                                 break;
                             }
                             assert_eq!(
@@ -1040,8 +1041,19 @@ fn a_layered_floor_course_has_one_surface_wherever_the_batch_splits_it() {
     assert!(split > 0, "no course top swept on a section-floor plane");
 }
 
-#[test]
-fn submerged_floor_patterns_keep_one_surface_across_section_boundaries() {
+/// A pool row certain in every cell of the layered fixture's band.
+const POOLS_EVERYWHERE: &str = r#"{"fluid_pools":[{"fluid_pool":"test:lava",
+    "fluid":"petramond:lava","anchor_y":-40,"chance":1.0,"height_scale":1000.0,"max_y":0,
+    "reach":16,"max_depth":10,"max_drop":24,"max_sink":16,"budget":2000,
+    "surface_clearance":32}]}"#;
+
+/// Floors under `fluid` in the layered fixture — an aquifer's water, or a
+/// pool's lava beside a lining that lists only water — take the submerged
+/// surface exactly when the lining lists the fluid, and one subsurface,
+/// wherever a section plane splits the course: a course top on a section's
+/// TOP voxel is painted by the box below, which has to ask the cave model
+/// what the open cell above holds.
+fn floor_courses_under(fluid: Block, submerged: bool) {
     let mut pack: serde_json::Value = serde_json::from_str(LAYERED).unwrap();
     let row = pack["underground_biomes"]
         .as_array_mut()
@@ -1049,23 +1061,36 @@ fn submerged_floor_patterns_keep_one_surface_across_section_boundaries() {
         .iter_mut()
         .find(|row| row["underground_biome"] == "faces:layered")
         .unwrap();
-    row["aquifer"] = serde_json::json!({"level":-20,"barrier":"petramond:stone"});
     row["lining"]["faces"]["floor_submerged"] = serde_json::json!({
         "block":"petramond:dirt", "pattern":{
             "material":["lt","x",0], "palette":["petramond:sand","petramond:sandstone"]
         }
     });
-    let table = underground::test_table(&[&pack.to_string()]);
+    let mut layers = Vec::new();
+    if fluid == Block::Water {
+        row["aquifer"] = serde_json::json!({"level":-20,"barrier":"petramond:stone"});
+    } else {
+        row["lining"]["faces"]["submerged_in"] = serde_json::json!(["petramond:water"]);
+        layers.push(POOLS_EVERYWHERE);
+    }
+    let pack = pack.to_string();
+    layers.push(&pack);
+    let table = underground::synthetic_table(&layers);
     let row = table.id("faces:layered").unwrap();
+    let is_fluid = |b: u16| Block::from_id(b).is_fluid();
     let mut floors = 0;
-    let mut splits = 0;
+    let (mut tops_on_floor_plane, mut tops_on_top_plane) = (0, 0);
+    // Widen the sweep until the split has been seen both ways.
     for seed in [0x312, 0x1d001, 0x2beef] {
+        if floors > 0 && tops_on_floor_plane > 0 && tops_on_top_plane > 0 {
+            break;
+        }
         let field = CaveField::with_tables(
             seed,
             table,
             crate::data::excavations::test_table(&[LINING_ROOMS], table),
         );
-        for (cx, cz) in [(0, 0), (-3, 2), (7, -5), (11, 9)] {
+        for (cx, cz) in (-4..4).flat_map(|cz| (-4..4).map(move |cx| (cx, cz))) {
             let sections: Vec<Vec<_>> = (-4..=-2)
                 .map(|cy| {
                     let mut section = Section::new(cx, cy, cz);
@@ -1085,31 +1110,34 @@ fn submerged_floor_patterns_keep_one_surface_across_section_boundaries() {
                         let wz = cz * 16 + z as i32;
                         let here = at(y, x, z);
                         if here == Block::Air.id()
-                            || here == Block::Water.id()
-                            || at(y + 1, x, z) != Block::Water.id()
+                            || is_fluid(here)
+                            || at(y + 1, x, z) != fluid.id()
                             || field.underground_biome_at(wx, y, wz) != row
                         {
                             continue;
                         }
                         floors += 1;
-                        splits += usize::from(y.rem_euclid(16) == 0);
+                        tops_on_floor_plane += usize::from(y.rem_euclid(16) == 0);
+                        tops_on_top_plane += usize::from(y.rem_euclid(16) == 15);
+                        let surface = match (submerged, wx < 0) {
+                            (true, true) => Block::Sandstone,
+                            (true, false) => Block::Sand,
+                            (false, _) => Block::MossBlock,
+                        };
                         assert_eq!(
                             here,
-                            if wx < 0 {
-                                Block::Sandstone.id()
-                            } else {
-                                Block::Sand.id()
-                            }
+                            surface.id(),
+                            "floor under {fluid:?} at {wx},{y},{wz} (seed {seed:#x})"
                         );
                         for depth in 1..=2 {
                             let below = at(y - depth, x, z);
-                            if below == Block::Air.id() || below == Block::Water.id() {
+                            if below == Block::Air.id() || is_fluid(below) {
                                 break;
                             }
                             assert_eq!(
                                 below,
                                 Block::Marble.id(),
-                                "submerged course has a second surface at {wx},{},{wz}",
+                                "course under {fluid:?} has a second surface at {wx},{},{wz}",
                                 y - depth
                             );
                         }
@@ -1119,9 +1147,20 @@ fn submerged_floor_patterns_keep_one_surface_across_section_boundaries() {
         }
     }
     assert!(
-        floors > 0 && splits > 0,
-        "the fixture must exercise submerged, split courses"
+        floors > 0 && tops_on_floor_plane > 0 && tops_on_top_plane > 0,
+        "the fixture must exercise courses split both ways ({floors} floors, \
+         {tops_on_floor_plane} on a section floor, {tops_on_top_plane} on a section top)"
     );
+}
+
+#[test]
+fn submerged_floor_patterns_keep_one_surface_across_section_boundaries() {
+    floor_courses_under(Block::Water, true);
+}
+
+#[test]
+fn a_submerged_floor_lining_applies_only_under_the_fluids_it_lists() {
+    floor_courses_under(Block::Lava, false);
 }
 
 /// Which orientation a cell has, and how far a floor course reaches into
@@ -1192,7 +1231,7 @@ fn face_orientation_and_course_depth_do_not_depend_on_the_batch() {
                         }
                         for d in 1..=DEPTH {
                             let Some(deep) = at(wy - d, x, z) else { break };
-                            if deep == air {
+                            if deep == air || Block::from_id(deep).is_fluid() {
                                 break;
                             }
                             course += 1;

@@ -47,6 +47,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::BlockNames { .. }
         | HostCall::ItemNames { .. }
         | HostCall::MobNames { .. }
+        | HostCall::ResolveCondition { .. }
+        | HostCall::ConditionNames { .. }
         | HostCall::BlocksByTag { .. }
         | HostCall::ItemsByTag { .. }
         | HostCall::ItemInfo { .. }
@@ -56,6 +58,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::BlockDataGet { .. }
         | HostCall::BlocksWithData { .. }
         | HostCall::BlockInfo { .. }
+        | HostCall::BlockInfos { .. }
         | HostCall::StructureInfo { .. }
         | HostCall::LootRoll { .. }
         | HostCall::MobDataGet { .. }
@@ -143,6 +146,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SpawnMob { .. }
         | HostCall::Raycast { .. }
         | HostCall::MobsInRadius { .. }
+        | HostCall::EntityConditionApply { .. }
+        | HostCall::EntityConditionCool { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
         | HostCall::SpawnItem { .. }

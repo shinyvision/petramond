@@ -46,7 +46,7 @@ fn whole_geometry_admission_precedes_section_clipping() {
     assert_eq!(a.block(15, 15, 0), Block::OakLog);
     assert_eq!(b.block(0, 0, 0), Block::OakLog);
     assert_eq!(b.block(1, 0, 0), Block::OakLeaves);
-    for obstacle in [TerrainSpace::Solid, TerrainSpace::Water] {
+    for obstacle in [TerrainSpace::Solid, TerrainSpace::Fluid] {
         assert!(make(obstacle).cells.is_empty());
     }
 }

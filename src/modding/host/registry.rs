@@ -90,6 +90,31 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         HostCall::ResolveMob { key } => {
             HostRet::MobKind(crate::mob::by_key(&key).map(|m| mod_api::MobId(m.0)))
         }
+        HostCall::ResolveCondition { key } => {
+            HostRet::Condition(petramond_world::condition::by_name(&key).map(|id| {
+                let def = id.def();
+                mod_api::ConditionInfoData {
+                    id: mod_api::ConditionId(id.0),
+                    key: def.name.to_owned(),
+                    stages: def.stages.iter().map(|s| s.name.to_owned()).collect(),
+                }
+            }))
+        }
+        HostCall::ConditionNames { conditions } => {
+            match batch_guard("ConditionNames id", conditions.len()) {
+                Some(err) => err,
+                None => HostRet::Names(
+                    conditions
+                        .iter()
+                        .map(|c| {
+                            petramond_world::condition::defs()
+                                .get(c.0 as usize)
+                                .map(|d| d.name.to_owned())
+                        })
+                        .collect(),
+                ),
+            }
+        }
         HostCall::MobNames { mobs } => match batch_guard("MobNames id", mobs.len()) {
             Some(err) => err,
             None => HostRet::Names(
@@ -164,33 +189,11 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 .data_value(&key)
                 .map(|v| v.as_bytes().to_vec()),
         ),
-        // The block twin of `ItemInfo`: the row's stable harvest facts, with
-        // the engine's own material→tool derivation answered rather than
-        // re-derived mod-side (the duplicated-constants trap).
-        HostCall::BlockInfo { block } => {
-            // Registration gates BEFORE any row accessor runs — an
-            // unregistered id must answer `None`, never index a row table.
-            HostRet::BlockInfo(
-                petramond_world::registry::names()
-                    .blocks
-                    .name(block.0)
-                    .map(|_| {
-                        let b = petramond_world::block::Block::from_id(block.0);
-                        Box::new(mod_api::BlockInfoData {
-                            material: material_name(b.material()).to_owned(),
-                            hardness: b.hardness(),
-                            harvest_tier: b.harvest_tier(),
-                            preferred_tool: b.preferred_tool().map(|t| t.name().to_owned()),
-                            item: {
-                                let item = petramond_world::item::ItemType::from_block(b);
-                                (item != petramond_world::item::ItemType::Air)
-                                    .then_some(mod_api::ItemId(item.id()))
-                            },
-                            collision: b.collision_boxes().iter().map(|a| (a.min, a.max)).collect(),
-                        })
-                    }),
-            )
-        }
+        HostCall::BlockInfo { block } => HostRet::BlockInfo(block_info_data(block).map(Box::new)),
+        HostCall::BlockInfos { blocks } => match batch_guard("BlockInfos id", blocks.len()) {
+            Some(err) => err,
+            None => HostRet::BlockInfos(blocks.into_iter().map(block_info_data).collect()),
+        },
         HostCall::BlocksWithData { key } => HostRet::BlockDataRows(
             petramond_world::block::Block::all()
                 .iter()
@@ -204,6 +207,28 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             "non-registry call {other:?} mis-routed to handle_registry_call (host bug)"
         )),
     }
+}
+
+/// The block twin of `ItemInfo`: the row's stable harvest facts, with the
+/// engine's own material→tool derivation answered rather than re-derived
+/// mod-side (the duplicated-constants trap). `None` for an unregistered id —
+/// registration gates BEFORE any row accessor runs, so a stale id never
+/// indexes a row table.
+fn block_info_data(block: mod_api::BlockId) -> Option<mod_api::BlockInfoData> {
+    petramond_world::registry::names().blocks.name(block.0)?;
+    let b = petramond_world::block::Block::from_id(block.0);
+    Some(mod_api::BlockInfoData {
+        material: material_name(b.material()).to_owned(),
+        hardness: b.hardness(),
+        harvest_tier: b.harvest_tier(),
+        preferred_tool: b.preferred_tool().map(|t| t.name().to_owned()),
+        item: {
+            let item = petramond_world::item::ItemType::from_block(b);
+            (item != petramond_world::item::ItemType::Air).then_some(mod_api::ItemId(item.id()))
+        },
+        collision: b.collision_boxes().iter().map(|a| (a.min, a.max)).collect(),
+        fluid: b.fluid_def().map(fluid_info),
+    })
 }
 
 /// One item row as its ABI crossing — the stable, mod-relevant fields of the
@@ -268,6 +293,30 @@ fn item_use_key(u: petramond_world::item::ItemUse) -> &'static str {
         ItemUse::BucketFill { .. } => "bucket_fill",
         ItemUse::BucketPour { .. } => "bucket_pour",
         ItemUse::Shear => "shear",
+    }
+}
+
+fn fluid_info(f: &petramond_world::fluid::FluidDef) -> mod_api::FluidInfoData {
+    let condition = |c: petramond_world::condition::ConditionId| mod_api::ConditionId(c.0);
+    mod_api::FluidInfoData {
+        delay: f.delay,
+        drop_off: f.drop_off,
+        renewable: f.renewable,
+        quench: f.quench.map(|q| mod_api::QuenchData {
+            by: mod_api::BlockId(q.by.id()),
+            result: mod_api::BlockId(q.result.id()),
+        }),
+        contact_damage: f.contact.damage.map(|p| mod_api::PulseData {
+            amount: p.amount,
+            interval: p.interval,
+        }),
+        applies: f.contact.applies.map(|g| mod_api::ConditionGrantData {
+            condition: condition(g.condition),
+            stage: g.stage,
+            ticks: g.ticks,
+        }),
+        clears: f.contact.clears.iter().copied().map(condition).collect(),
+        destroys_items: f.contact.destroys_items,
     }
 }
 

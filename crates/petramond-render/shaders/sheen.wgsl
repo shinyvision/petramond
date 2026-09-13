@@ -1,16 +1,17 @@
-// Analytic water sheen: no scene reads, extra passes or displaced collision
-// surface. Broad waves fade with distance so the horizon cannot sparkle.
-struct WaterSurface {
+// Analytic fluid sheen (a medium row's `sheen`): no scene reads, extra passes
+// or displaced collision surface. Broad waves fade with distance so the
+// horizon cannot sparkle.
+struct SheenSurface {
     color: vec3<f32>,
     alpha: f32,
 }
 
-fn water_surface(
-    color: vec3<f32>, local_pos: vec3<f32>, origin: vec3<f32>,
+fn fluid_sheen(
+    color: vec3<f32>, alpha: f32, local_pos: vec3<f32>, origin: vec3<f32>,
     view_dir: vec3<f32>, dist: f32, time: f32, exposure: f32,
-    sky_scale: f32, sky_color: vec3<f32>, haze: vec3<f32>, water_tint: vec3<f32>,
+    sky_scale: f32, sky_color: vec3<f32>, haze: vec3<f32>, body_tint: vec3<f32>,
     sun_dir: vec3<f32>, daylight: f32,
-) -> WaterSurface {
+) -> SheenSurface {
     // Integral wave frequencies make the origin's 64-block wrap seamless.
     let p = local_pos.xz + origin.xz % vec2<f32>(64.0);
     let wave = vec2<f32>(
@@ -25,14 +26,15 @@ fn water_surface(
     let ray = reflect(view_dir, n);
     let horizon = atmosphere_haze_color(ray, haze, sun_dir, daylight);
     let sky = vec3<f32>(0.18, 0.43, 0.72) * sky_color * sky_scale;
-    // Let the biome own the water hue, including the reflected sky. A bright
+    // Let the biome own the body hue, including the reflected sky. A bright
     // horizon mixed into every viewing angle turns blue water into pale milk.
     let reflection = mix(horizon, sky, smoothstep(0.02, 0.85, ray.y))
-        * mix(vec3<f32>(1.0), water_tint, 0.65);
+        * mix(vec3<f32>(1.0), body_tint, 0.65);
     let sky_access = exposure * exposure;
-    var result: WaterSurface;
+    var result: SheenSurface;
     result.color = mix(color, reflection,
         (0.015 + 0.18 * fresnel) * sky_access);
-    result.alpha = 0.82 + 0.08 * fresnel;
+    // Grazing angles reflect more and transmit less.
+    result.alpha = mix(alpha, 1.0, 0.18 + 0.36 * fresnel);
     return result;
 }

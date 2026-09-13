@@ -13,6 +13,7 @@ pub(crate) use sampling::SampledPipeline;
 mod entity_models;
 mod environment;
 mod flipbook;
+mod fluid_media;
 #[cfg(test)]
 mod gpu_validation;
 mod grade;
@@ -181,6 +182,25 @@ pub(super) struct PipelineResources {
     pub model_icon_pipe: wgpu::RenderPipeline,
 }
 
+/// The terrain shader: the registry-generated tables (vertex lanes, transition
+/// sets, variation, flipbooks, the fluid `media`) ahead of the shared helpers
+/// and `block.wgsl`.
+fn block_shader_source(media: &[petramond_world::fluid::FluidMedium]) -> String {
+    lanes::declarations()
+        + &transition::declarations()
+        + &variation::declarations()
+        + &flipbook::declarations()
+        + &fluid_media::declarations(media)
+        + concat!(
+            include_str!("../shaders/cel.wgsl"),
+            include_str!("../shaders/atmosphere.wgsl"),
+            include_str!("../shaders/sheen.wgsl"),
+            include_str!("../shaders/texture_transition.wgsl"),
+            include_str!("../shaders/tile_variation.wgsl"),
+            include_str!("../shaders/block.wgsl")
+        )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn create_pipeline_resources(
     device: &wgpu::Device,
@@ -194,18 +214,7 @@ pub(super) fn create_pipeline_resources(
     array_view: &wgpu::TextureView,
     array_sampler: &wgpu::Sampler,
 ) -> PipelineResources {
-    let block_source = lanes::declarations()
-        + &transition::declarations()
-        + &variation::declarations()
-        + &flipbook::declarations()
-        + concat!(
-            include_str!("../shaders/cel.wgsl"),
-            include_str!("../shaders/atmosphere.wgsl"),
-            include_str!("../shaders/water.wgsl"),
-            include_str!("../shaders/texture_transition.wgsl"),
-            include_str!("../shaders/tile_variation.wgsl"),
-            include_str!("../shaders/block.wgsl")
-        );
+    let block_source = block_shader_source(&fluid_media::registered());
     let shader = shader_module(device, "block shader", block_source);
     let crosshair_shader = shader_module(
         device,

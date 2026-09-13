@@ -33,7 +33,7 @@ use petramond_world::chunk::{
     ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
 };
 
-use super::path::{body_clear, is_foothold, PathParams};
+use super::path::{body_clear, is_foothold};
 use super::{def, defs, Instance, Mob, MobCategory, MobRng};
 
 /// Closest a natural spawn may appear to the player (blocks). Inside this, no spawn.
@@ -245,16 +245,17 @@ fn chance_gate(chance: f32, roll: impl FnOnce() -> f32) -> bool {
     chance >= 1.0 || roll() < chance
 }
 
-/// Whether `kind` can physically stand with its feet in `feet`.
+/// Whether `kind` can physically stand with its feet in `feet`, dry and clear
+/// of every hazard its species does not tolerate.
 pub fn body_fits_at(world: &World, kind: Mob, feet: IVec3) -> bool {
-    let d = def(kind);
-    let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
+    let params = def(kind).path_params();
     let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
     if !is_foothold(feet, params, &solid) {
         return false;
     }
-    let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-    body_clear(feet, params, &water)
+    let fluid = |c: IVec3| world.fluid_cell_at(c.x, c.y, c.z);
+    body_clear(feet, params, &fluid)
+        && !super::nav::foothold_in_hazard(&world.cursor(), feet, params)
 }
 
 /// The terrain half of [`hostile_spawn_plan`], memoized.
@@ -476,9 +477,13 @@ fn hostile_candidate_at(
     {
         return None;
     }
+    // The species is not chosen yet, so every hazard refuses the site.
     if !body_cell_open(world, wx, y, wz)
         || !body_cell_open(world, wx, y + 1, wz)
         || !world.block_is_full_spawn_support(wx, y - 1, wz)
+        || world
+            .physics_block(wx, y - 1, wz)
+            .has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
     {
         return None;
     }
@@ -577,7 +582,10 @@ fn dist2(a: Vec3, b: Vec3) -> f32 {
 }
 
 fn body_cell_open(world: &World, wx: i32, y: i32, wz: i32) -> bool {
-    world.placement_cell_open(IVec3::new(wx, y, wz)) && !world.water_cell_at(wx, y, wz)
+    let block = world.physics_block(wx, y, wz);
+    world.placement_cell_open(IVec3::new(wx, y, wz))
+        && block.fluid().is_none()
+        && !block.has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
 }
 
 fn yaw_away_from_player(player_pos: Vec3, spawn_pos: Vec3) -> f32 {
@@ -791,15 +799,41 @@ mod tests {
     }
 
     #[test]
-    fn spawn_site_rejects_water_in_body_clearance() {
+    fn spawn_site_rejects_fluid_in_body_clearance() {
         let world = flat_grass_spawn_world(|chunk| {
-            chunk.set_water(8, 65, 8, Block::Water, 0);
+            chunk.set_fluid(8, 65, 8, Block::Water, 0);
         });
 
         assert!(
             spawn_site(&world, valid_spawn_distance_player(), Mob::Sheep, 8, 8).is_none(),
             "the ground below the water is solid, but the mob body would spawn in water"
         );
+    }
+
+    #[test]
+    fn spawn_sites_refuse_hazardous_floors() {
+        let root = crate::entity::fluid_fixture::stage("spawn-hazards");
+        crate::modding::tests::run_child_test(&root, "mob::spawn::tests::spawn_hazards_inner");
+    }
+
+    #[test]
+    #[ignore = "child of spawn_sites_refuse_hazardous_floors with fixture content"]
+    fn spawn_hazards_inner() {
+        use crate::entity::fluid_fixture::{block, pool, CINDER, FLOOR_Y};
+        let kind = crate::mob::by_key("bodyfluid:swim").unwrap();
+        let feet = IVec3::new(8, FLOOR_Y, 8);
+        let near = Vec3::new(8.5 + HOSTILE_MIN_SPAWN_DIST + 1.0, FLOOR_Y as f32, 8.5);
+        let plan = hostile_test_plan(near, ChunkPos::new(0, 0));
+        for (floor, safe) in [(Block::Stone, true), (block(CINDER), false)] {
+            let mut world = pool(Block::Air, FLOOR_Y - 1);
+            world.set_block_world(8, FLOOR_Y - 1, 8, floor);
+            assert_eq!(body_fits_at(&world, kind, feet), safe, "{floor:?}");
+            assert_eq!(
+                hostile_candidate_at(&world, &plan, 8, FLOOR_Y, 8).is_some(),
+                safe,
+                "{floor:?}"
+            );
+        }
     }
 
     #[test]

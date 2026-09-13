@@ -44,7 +44,7 @@ fn walking_into_a_ladder_climbs_at_the_climb_speed_sprint_or_not() {
         let mut pl = p(Vec3::new(1.5, 64.0, 0.5));
         pl.on_ground = true;
         for _ in 0..120 {
-            pl.update_core_climb(1.0 / 60.0, &solid, &dry, &ladder, input);
+            pl.update_core_climb(1.0 / 60.0, &solid, &ladder, input);
         }
         pl
     };
@@ -82,7 +82,7 @@ fn jump_on_a_ladder_climbs_instead_of_jumping() {
     pl.on_ground = true;
     let mut max_vy = f32::NEG_INFINITY;
     for _ in 0..120 {
-        pl.update_core_climb(1.0 / 60.0, &solid, &dry, &ladder, input);
+        pl.update_core_climb(1.0 / 60.0, &solid, &ladder, input);
         max_vy = max_vy.max(pl.vel.y);
     }
     assert!(
@@ -111,7 +111,7 @@ fn sideways_movement_on_a_ladder_is_halved_and_grips() {
     pl.on_ground = true;
     let mut max_lateral = 0.0f32;
     for _ in 0..120 {
-        pl.update_core_climb(1.0 / 60.0, &solid, &dry, &ladder, strafe_climb);
+        pl.update_core_climb(1.0 / 60.0, &solid, &ladder, strafe_climb);
         max_lateral = max_lateral.max(pl.vel.z.abs());
     }
     assert!(
@@ -123,7 +123,7 @@ fn sideways_movement_on_a_ladder_is_halved_and_grips() {
     // Release input mid-climb: the grip stops sideways drift almost at once
     // (well inside a quarter second), instead of the airy coast.
     for _ in 0..15 {
-        pl.update_core_climb(1.0 / 60.0, &solid, &dry, &ladder, Input::default());
+        pl.update_core_climb(1.0 / 60.0, &solid, &ladder, Input::default());
     }
     assert!(
         pl.vel.z.abs() < 0.2,
@@ -143,7 +143,7 @@ fn a_ladder_catches_a_fall_and_lowers_it_gently() {
         // The grab clamps on frames that START on the ladder (the probe runs
         // before the vertical step), so measure those frames' resulting speed.
         let on_ladder = ladder(1, pl.pos.y.floor() as i32, 0).is_some();
-        pl.update_core_climb(1.0 / 60.0, &solid, &dry, &ladder, Input::default());
+        pl.update_core_climb(1.0 / 60.0, &solid, &ladder, Input::default());
         if on_ladder {
             min_vy_on_ladder = min_vy_on_ladder.min(pl.vel.y);
         }
@@ -176,7 +176,7 @@ fn a_free_hanging_climbable_ascends_on_jump_and_on_no_other_input() {
         };
         let mut pl = p(Vec3::new(1.5, 65.0, 0.5));
         for _ in 0..120 {
-            pl.update_core_climb(1.0 / 60.0, &ground, &dry, &vine, input);
+            pl.update_core_climb(1.0 / 60.0, &ground, &vine, input);
         }
         pl.pos.y
     };

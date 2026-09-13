@@ -185,43 +185,25 @@ impl<'a> BatchCarve<'a> {
                 }
                 continue;
             }
-            match self.field.cut_col_treated(&mut cur, y, surf_y, treatment) {
-                CaveCut::Fill(block) => {
+            let cut = self.field.cut_col_treated(&mut cur, y, surf_y, treatment);
+            match cut {
+                // Open air, or the block the cell generates as instead: a
+                // positioned field's content or a pool's fluid.
+                CaveCut::Air | CaveCut::Fill(_) => {
+                    let block = match cut {
+                        CaveCut::Fill(block) => block,
+                        _ => air,
+                    };
                     blocks[i] = block;
                     carved = true;
                     if FACES {
-                        if !Block::from_id(block).is_solid() {
-                            self.paint_floor(
-                                blocks,
-                                &run[..run_len],
-                                &mut cur,
-                                patterns,
-                                Block::from_id(block).is_fluid(),
-                            );
-                            below_open = true;
-                        } else {
+                        if Block::from_id(block).is_solid() {
                             below_open = false;
+                        } else {
+                            self.paint_floor(blocks, &run[..run_len], &mut cur, patterns, block);
+                            below_open = true;
                         }
                         run_len = 0;
-                    }
-                }
-                CaveCut::Open => {
-                    blocks[i] = if self.field.aquifer_at_col(&mut cur, y).is_some() {
-                        water
-                    } else {
-                        air
-                    };
-                    carved = true;
-                    if FACES {
-                        self.paint_floor(
-                            blocks,
-                            &run[..run_len],
-                            &mut cur,
-                            patterns,
-                            blocks[i] == water,
-                        );
-                        run_len = 0;
-                        below_open = true;
                     }
                 }
                 cut => {
@@ -236,14 +218,8 @@ impl<'a> BatchCarve<'a> {
                             run.copy_within(1.., 0);
                             run_len -= 1;
                         }
-                        run[run_len] = (
-                            y,
-                            if id == stone && !matches!(cut, CaveCut::Barrier(_)) {
-                                i
-                            } else {
-                                NOT_STONE
-                            },
-                        );
+                        let paintable = id == stone && !matches!(cut, CaveCut::Barrier(_));
+                        run[run_len] = (y, if paintable { i } else { NOT_STONE });
                         run_len += 1;
                         below_open = false;
                     }
@@ -367,19 +343,13 @@ impl<'a> BatchCarve<'a> {
         patterns: &mut ColumnCache,
         take: usize,
         depth0: i32,
-        submerged: bool,
+        over: u16,
     ) {
         let (wx, wz) = (cur.x, cur.z);
         for (k, &(y, i)) in run.iter().rev().take(take).enumerate() {
             let lining = match f.floor_under {
                 Some(under) if depth0 + k as i32 > 0 => under,
-                _ => {
-                    if submerged {
-                        f.floor_submerged.unwrap_or(f.floor)
-                    } else {
-                        f.floor
-                    }
-                }
+                _ => f.floor_surface(over),
             };
             if i != NOT_STONE && face_roll(self.field.seed, f.salt, lining.weight, wx, y, wz) {
                 blocks[i] = self.field.underground.face_material_cached(
@@ -393,8 +363,8 @@ impl<'a> BatchCarve<'a> {
         }
     }
 
-    /// Paint the rock under a cave floor the walk just cut: the run's top cell
-    /// IS the course top.
+    /// Paint the rock under a cave floor the walk just cut, whose open cell
+    /// holds `over`: the run's top cell IS the course top.
     #[inline]
     fn paint_floor(
         &self,
@@ -402,7 +372,7 @@ impl<'a> BatchCarve<'a> {
         run: &[(i32, usize)],
         cur: &mut Col,
         patterns: &mut ColumnCache,
-        submerged: bool,
+        over: u16,
     ) {
         let Some(&(top_y, _)) = run.last() else {
             return;
@@ -413,7 +383,7 @@ impl<'a> BatchCarve<'a> {
         let take =
             f.floor_depth
                 .at_cached(self.field.seed, [cur.x, top_y, cur.z], patterns) as usize;
-        self.paint_run(blocks, run, f, cur, patterns, take, 0, submerged);
+        self.paint_run(blocks, run, f, cur, patterns, take, 0, over);
     }
 
     /// Paint a run left at the box's top voxel. The cave floor that owns it can
@@ -443,21 +413,13 @@ impl<'a> BatchCarve<'a> {
                     .at_cached(self.field.seed, [cur.x, y1 + above, cur.z], patterns)
                     - above;
             if reach > 0 {
-                let submerged = f.floor_submerged.is_some()
-                    && match cut {
-                        CaveCut::Fill(block) => Block::from_id(block).is_fluid(),
-                        _ => self.field.aquifer_at_col(cur, y1 + 1 + above).is_some(),
-                    };
-                self.paint_run(
-                    blocks,
-                    run,
-                    f,
-                    cur,
-                    patterns,
-                    reach as usize,
-                    above,
-                    submerged,
-                );
+                // The block the in-box floor would have read: an open cell's
+                // fill is its cut.
+                let over = match cut {
+                    CaveCut::Fill(block) => block,
+                    _ => self.air,
+                };
+                self.paint_run(blocks, run, f, cur, patterns, reach as usize, above, over);
             }
             return;
         }

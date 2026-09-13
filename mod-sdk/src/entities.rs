@@ -120,8 +120,8 @@ host_fn! {
 host_fn! {
     /// [`damage_mob`] with an explicitly composed damage pipeline for THIS
     /// request. Compose from [`crate::MobDamageFeedbackComponent`]; a pipeline
-    /// without the `Immunity` component is damage-over-time (burn ticks):
-    /// neither blocked by the victim's active i-frame window nor granting one.
+    /// without the `Immunity` component is damage on its own clock: neither
+    /// blocked by the victim's active i-frame window nor granting one.
     pub fn damage_mob_with_feedback(
         mob_id: u64,
         amount: f32,
@@ -419,4 +419,21 @@ host_fn! {
             pos,
             data: data.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
         } => Bool
+}
+
+// Body conditions address players and mobs through the same entity reference.
+host_fn! {
+    /// Grant `ticks` of `condition` at `stage` (a stage index; resolve names
+    /// with [`resolve_condition`](crate::resolve_condition)). Fuel extends,
+    /// stages only upgrade, and a running damage clock is never reset.
+    /// `false` when the body is gone or refuses the grant (its species
+    /// tolerates the condition, or it touches a fluid that clears it).
+    pub fn entity_condition_apply(entity: EntityRef, condition: mod_api::ConditionId, stage: u8, ticks: u32) -> bool
+        => EntityConditionApply { entity, condition, stage, ticks } => Bool
+}
+host_fn! {
+    /// Consume `ticks` of a condition without changing its damage cadence;
+    /// `u32::MAX` clears it.
+    pub fn entity_condition_cool(entity: EntityRef, condition: mod_api::ConditionId, ticks: u32) -> bool
+        => EntityConditionCool { entity, condition, ticks } => Bool
 }

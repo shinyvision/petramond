@@ -3,6 +3,7 @@ use petramond::net::protocol::Transform;
 
 fn row(id: u8, pos: Vec3) -> PlayerStateRow {
     PlayerStateRow {
+        conditions: Vec::new(),
         id: PlayerId(id),
         transform: Transform {
             pos,

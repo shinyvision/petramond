@@ -34,7 +34,7 @@ pub struct GpuSectionMesh {
     pub far_opaque_vertex_count: u32,
     pub transparent_vertex_start: u32,
     pub transparent_vertex_count: u32,
-    /// The cull-none water-top stream (see [`petramond_mesh::ChunkMesh`]).
+    /// The cull-none fluid-top stream (see [`petramond_mesh::ChunkMesh`]).
     pub transparent_ts_vertex_start: u32,
     pub transparent_ts_vertex_count: u32,
     pub translucent_vertex_start: u32,

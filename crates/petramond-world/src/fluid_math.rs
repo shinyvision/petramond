@@ -1,12 +1,16 @@
-//! Water-cell metadata layout and pure surface math, shared by the flow SIM
-//! (which owns spreading/re-leveling over the world) and the MESHER (surface
-//! heights, flow direction for the flowing-water texture) — one canonical
+//! Fluid-cell metadata layout and pure surface math, shared by the flow SIM
+//! (which owns spreading/re-levelling over the world) and the MESHER (surface
+//! heights, flow direction for the flowing-fluid texture) — one canonical
 //! meta→height/flow mapping so geometry and simulation cannot drift.
+//!
+//! Every function here is fluid-generic: the cell's fluid block rides in as a
+//! parameter, because a cell holds exactly one fluid and every fluid shares the
+//! meta byte layout, surface heights, and flow rules.
 
 use crate::block::Block;
 use crate::mathh::{IVec3, Vec3};
 
-/// `meta` byte layout for a water cell:
+/// `meta` byte layout for a fluid cell (every fluid shares it):
 ///   bit 7     — FALLING: a vertical stream (full amount, renders full).
 ///   bits 0..4 — `level`: 0 = source, 1..=7 = flowing distance from a source.
 pub const FALLING: u8 = 0x80;
@@ -23,12 +27,12 @@ pub fn level(meta: u8) -> u8 {
 pub fn is_falling(meta: u8) -> bool {
     meta & FALLING != 0
 }
-/// A full, still source: level 0 and not falling (worldgen water is all this).
+/// A full, still source: level 0 and not falling (worldgen fluid is all this).
 #[inline]
 pub fn is_source(meta: u8) -> bool {
     meta & (LEVEL_MASK | FALLING) == 0
 }
-/// How much water the cell holds, 1..=8: full for sources and falling cells,
+/// How much fluid the cell holds, 1..=8: full for sources and falling cells,
 /// `8 - level` for flowing ones. Drives spreading strength and surface height.
 #[inline]
 pub fn amount(meta: u8) -> u8 {
@@ -40,38 +44,38 @@ pub fn amount(meta: u8) -> u8 {
 }
 pub const FLOW_DIR_EPS_SQ: f32 = 1e-4;
 
-/// Rendered/contact surface height (0..1) of a water cell — `1.0` when
+/// Rendered/contact surface height (0..1) of a fluid cell — `1.0` when
 /// [`fills_cell`] says the cell presents no open surface, else the canonical
 /// meta->height mapping shared with the mesher so flow geometry and simulation
 /// stay in lockstep: `amount / 9`, so a source's top sits slightly recessed
 /// (8/9) and reads as liquid, and each level steps down from there.
-pub fn fluid_height(meta: u8, above: Block) -> f32 {
-    if fills_cell(meta, above) {
+pub fn fluid_height(meta: u8, above: Block, fluid: Block) -> f32 {
+    if fills_cell(meta, above, fluid) {
         return 1.0;
     }
     amount(meta) as f32 / 9.0
 }
 
-/// True when this water cell renders (and contact-probes) as a full
-/// block-height volume rather than an open, recessed/sloped surface: more
-/// WATER directly above (a mid-column cell), or a FALLING stream cell (a full
-/// column that joins seamlessly to the cell above and to the water it lands
-/// in — no mid-waterfall step).
+/// True when this fluid cell renders (and contact-probes) as a full
+/// block-height volume rather than an open, recessed/sloped surface: more of
+/// the SAME FLUID directly above (a mid-column cell), or a FALLING stream cell
+/// (a full column that joins seamlessly to the cell above and to the fluid it
+/// lands in — no mid-waterfall step).
 ///
-/// SOLID lids deliberately do NOT cap: water under ANY block — ice, stone, a
+/// SOLID lids deliberately do NOT cap: fluid under ANY block — ice, stone, a
 /// placed block — keeps the same recessed 8/9 pocket under it, uniformly
 /// (three lid variants were tried on 2026-07-16 and all rejected by playtest:
 /// any-solid seals, still-source-under-solid seals, still-source-under-ice
 /// seals). The calm look of those pockets comes from the STILL-SOURCE flow
 /// rules instead ([`surface_flow_dir`] + the mesher's still side tiles), not
 /// from faking the height. The flow SIM is untouched by all of this; the
-/// mesher, buoyancy/contact probes, and the underwater-camera test share this
+/// mesher, buoyancy/contact probes, and the submerged-camera test share this
 /// one rule.
-pub fn fills_cell(meta: u8, above: Block) -> bool {
-    above.fluid() == Some(Block::Water) || is_falling(meta)
+pub fn fills_cell(meta: u8, above: Block, fluid: Block) -> bool {
+    above.fluid() == Some(fluid) || is_falling(meta)
 }
 
-/// Whether this water meta is a STILL SOURCE — exposed for the mesher's flow
+/// Whether this fluid meta is a STILL SOURCE — exposed for the mesher's flow
 /// probe (see [`surface_flow_dir`]): two adjacent still sources never flow
 /// into each other, whatever their rendered heights.
 #[inline]
@@ -79,22 +83,24 @@ pub fn is_still_source(meta: u8) -> bool {
     is_source(meta)
 }
 
-/// Horizontal direction of the rendered water flow at a cell, using the same
-/// surface-gradient rule that rotates the flowing-water top texture. Returns
-/// zero for still/flat water and for non-water cells.
+/// Horizontal direction of the rendered fluid flow at a cell, using the same
+/// surface-gradient rule that rotates the flowing-fluid top texture. Returns
+/// zero for still/flat fluid and for cells of a DIFFERENT fluid (`fluid`
+/// selects which body the probes read).
 ///
 /// Flow direction is a statement about the SIM STATE, not about rendered
 /// heights: between two STILL SOURCES there is no flow — period — so their
 /// height difference contributes nothing. Without that rule, the recessed
 /// 8/9 cell under any block sitting in the sea slopes against its full
 /// mid-column neighbours and the whole neighbourhood grows animated flow
-/// streaks plus a phantom current, on water that is entirely still. Real
+/// streaks plus a phantom current, on fluid that is entirely still. Real
 /// gradients survive: flowing/falling metas, and the pull toward an open
 /// air edge (where a source genuinely will spread).
 pub fn surface_flow_dir<B, F, S>(
     wx: i32,
     wy: i32,
     wz: i32,
+    fluid: Block,
     block_at: &B,
     fluid_at: &F,
     still_at: &S,
@@ -114,7 +120,7 @@ where
     for d in CARDINALS {
         let (nx, nz) = (wx + d.x, wz + d.z);
         let nb = block_at(nx, wy, nz);
-        let nh = if nb.fluid() == Some(Block::Water) {
+        let nh = if nb.fluid() == Some(fluid) {
             if i_am_still && still_at(nx, wy, nz) {
                 continue; // still source ↔ still source: no flow between them
             }

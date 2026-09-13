@@ -23,9 +23,9 @@ const CLAIM_DRIFT_SLACK: f32 = 1.0;
 /// must adopt `SelfTransform` corrections instead of stretching the ring
 /// (bounds how far withheld updates can displace a player).
 const MAX_CLAIM_GAP_TICKS: u32 = 40;
-/// Claimed-velocity headroom over the physics caps (quantization, transient
-/// pushes). Applied to each axis envelope.
-const CLAIM_VEL_SLACK: f32 = 1.25;
+/// Claimed-velocity headroom over the physics caps, applied to each axis
+/// envelope: the bodies' own slack, so every launch they make fits it.
+const CLAIM_VEL_SLACK: f32 = crate::entity::VELOCITY_SLACK;
 /// Horizontal speed cap shared by the velocity envelope and the horizontal
 /// drift ring: sprint plus headroom for every legitimate horizontal transient
 /// (PvP knockback 5.0, mob-strike knockback 6.5, entity push). Sharing the cap
@@ -154,17 +154,16 @@ impl ServerGame {
         let pos = sess.player.pos;
         let on_ground = sess.player.on_ground;
 
-        let in_water = self.world.water_cell_at(
-            pos.x.floor() as i32,
-            (pos.y + player::WATER_PROBE_Y).floor() as i32,
-            pos.z.floor() as i32,
-        );
+        let immersion =
+            self.world
+                .body_fluid(pos, player::HEIGHT, petramond_world::fluid::Buoyancy::Swim);
+        let swimming = immersion.is_some();
         // On a ladder? Same feet-cell probe the shared physics uses (see
         // `Player::update`): a climbing body's descent is controlled, so the
         // authoritative fall tracker must re-anchor while it is on the ladder —
         // otherwise a climb up then a step off would measure the whole climb as
         // one fall the client physics never latched.
-        let climbing = !in_water
+        let climbing = !swimming
             && self
                 .world
                 .climb_at(
@@ -190,7 +189,7 @@ impl ServerGame {
             sess.pending_fall = 0.0;
             sess.pending_splash = 0.0;
         } else if climbing {
-            // Re-anchor like water, but land nothing: grabbing a ladder is not a
+            // Re-anchor like immersion, but land nothing: grabbing a ladder is not a
             // splash, and controlled ladder descent is never fall damage.
             sess.fall.reset(pos.y);
         } else {
@@ -202,7 +201,7 @@ impl ServerGame {
             // steps: when the claim sample is airborne and dry, re-anchor
             // the tracker at the integration's contact first — which also
             // latches any real landing that happened between claim samples.
-            if !grounded_for_fall && !in_water {
+            if !grounded_for_fall && !swimming {
                 if let Some(y) = integrated_ground_y {
                     if let Some(super::player::FallOutcome::Landed(dist)) =
                         sess.fall.observe(y, true, false)
@@ -211,14 +210,16 @@ impl ServerGame {
                     }
                 }
             }
-            match sess.fall.observe(pos.y, grounded_for_fall, in_water) {
+            match sess.fall.observe(pos.y, grounded_for_fall, swimming) {
                 Some(super::player::FallOutcome::Landed(dist)) => {
                     sess.pending_fall = sess.pending_fall.max(dist);
                 }
-                Some(super::player::FallOutcome::Splashed(dist)) => {
+                Some(super::player::FallOutcome::Splashed(dist))
+                    if immersion.is_some_and(|sample| sample.fluid.splash.is_some()) =>
+                {
                     sess.pending_splash = sess.pending_splash.max(dist);
                 }
-                None => {}
+                _ => {}
             }
         }
         // Do NOT overwrite last_reported_transform here: it stays the client's

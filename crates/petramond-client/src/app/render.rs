@@ -93,7 +93,7 @@ impl App {
                 &self.shell_camera,
                 [0.60, 0.82, 1.00],
                 now as f32,
-                false,
+                None,
                 None,
             );
             let mut ui = ui_snapshot::build(None, self.screen, self.pointer.cursor(), None);
@@ -154,7 +154,7 @@ impl App {
                 &cam,
                 frame.environment.fog,
                 frame.environment.time,
-                frame.environment.underwater,
+                frame.environment.eye_fluid,
                 Some(&frame.environment.shader_params),
             );
             renderer.set_selection(

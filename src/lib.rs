@@ -7,6 +7,7 @@
 
 pub mod entity;
 pub mod events;
+mod exposure;
 pub mod gui;
 pub mod menu;
 pub mod mob;

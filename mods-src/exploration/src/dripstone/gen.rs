@@ -110,7 +110,8 @@ impl Root {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Space {
     Air,
-    Water,
+    /// Any fluid: a formation neither roots in nor grows through one.
+    Fluid,
     Solid,
     /// Outside the section and not among the probed cells.
     Unknown,
@@ -191,8 +192,8 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
         ctx.block(c).map(|b| {
             if b == d.air {
                 Space::Air
-            } else if b == d.water {
-                Space::Water
+            } else if d.fluids.contains(b) {
+                Space::Fluid
             } else {
                 Space::Solid
             }
@@ -317,7 +318,7 @@ impl Probes {
         }
         match self.index.get(&c).map(|&i| self.spaces[i]) {
             Some(TerrainSpace::Air) => Space::Air,
-            Some(TerrainSpace::Water) => Space::Water,
+            Some(TerrainSpace::Fluid) => Space::Fluid,
             Some(TerrainSpace::Solid) => Space::Solid,
             None => Space::Unknown,
         }
@@ -666,7 +667,7 @@ mod tests {
         };
         assert_eq!(orientation(&unknown_above, [0, 0, 0]), None);
         assert_eq!(orientation(&|_| Space::Air, [0, 0, 0]), None);
-        assert_eq!(orientation(&|_| Space::Water, [0, 0, 0]), None);
+        assert_eq!(orientation(&|_| Space::Fluid, [0, 0, 0]), None);
     }
 
     /// A column is two cones joined by a shaft; where the gap is too short

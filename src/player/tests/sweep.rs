@@ -54,7 +54,6 @@ fn moves_freely_in_open_air() {
 #[test]
 fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     use petramond_world::block::Aabb;
-    let still = |_: Vec3| Vec3::ZERO;
     let walk_x = Input {
         wishdir: Vec3::new(1.0, 0.0, 0.0),
         jump: false,
@@ -77,16 +76,7 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5)); // feet on the floor top, walking +X into the ledge
     for _ in 0..180 {
-        pl.update_core_with_current(
-            1.0 / 60.0,
-            &half_step,
-            &dry,
-            &still,
-            &no_ladder,
-            &no_slip,
-            walk_x,
-            &[],
-        );
+        pl.simulate(1.0 / 60.0, &Surroundings::dry(&half_step), walk_x);
     }
     assert!(
         pl.pos.x > 1.2,
@@ -110,16 +100,7 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     };
     let mut pl2 = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..180 {
-        pl2.update_core_with_current(
-            1.0 / 60.0,
-            &full_block,
-            &dry,
-            &still,
-            &no_ladder,
-            &no_slip,
-            walk_x,
-            &[],
-        );
+        pl2.simulate(1.0 / 60.0, &Surroundings::dry(&full_block), walk_x);
     }
     assert!(
         pl2.pos.y < 1.1,
@@ -274,7 +255,7 @@ fn sweep_matches_reference_from_all_directions() {
                     // reference path (kept at floor height, like the grounded body)
                     let mut rpos = start;
                     for _ in 0..80 {
-                        pl.update_core(dt, &solid, &dry, input);
+                        pl.update_core(dt, &solid, input);
                         rpos = ref_move(rpos, wishdir * (speed * dt), &solid);
                     }
                     let d = ((pl.pos.x - rpos.x).powi(2) + (pl.pos.z - rpos.z).powi(2)).sqrt();
