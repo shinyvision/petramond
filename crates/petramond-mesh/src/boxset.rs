@@ -903,7 +903,7 @@ fn probe_ao(
         // matter; the lift owns continuation immunity).
         if boxes
             .iter()
-            .filter(|b| b.occludes)
+            .filter(|b| b.occludes && b.casts_ao)
             .any(|b| b.overlaps_pocket(plo, phi))
         {
             return true;

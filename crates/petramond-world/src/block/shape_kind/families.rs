@@ -279,6 +279,7 @@ pub fn box_set_box(
 ) -> ShapeBox {
     let mut b = ShapeBox::uniform(d.aabb, block.tiles(), tint_for);
     b.pose = d.pose;
+    b.casts_ao = d.casts_ao;
     if !d.occludes {
         b = b.as_face_carrier();
     }

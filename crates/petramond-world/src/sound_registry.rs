@@ -69,8 +69,8 @@ impl Sound {
     pub const GlassBreak: Sound = Sound(21);
     /// A glass-family block was placed into the world.
     pub const GlassPlace: Sound = Sound(22);
-    /// Mining hit on a sand-family block (sand, red sand, clay, silt, snow) —
-    /// the punch loop.
+    /// Mining hit on a sand-family block (sand, red sand, clay, silt) — the
+    /// punch loop.
     pub const SandPunch: Sound = Sound(23);
     /// A sand-family block finished breaking.
     pub const SandBreak: Sound = Sound(24);
@@ -93,12 +93,20 @@ impl Sound {
     pub const StoneStep: Sound = Sound(30);
     /// A footstep on dirt, grass or gravel.
     pub const DirtStep: Sound = Sound(31);
-    /// A footstep on sand, clay, silt or snow.
+    /// A footstep on sand, clay or silt.
     pub const SandStep: Sound = Sound(32);
     /// A footstep on glass or ice.
     pub const GlassStep: Sound = Sound(33);
     /// A footstep on plant matter.
     pub const LeafStep: Sound = Sound(34);
+    /// Mining hit on snow (the snow layer and block) — the punch loop.
+    pub const SnowPunch: Sound = Sound(35);
+    /// A snow block finished breaking.
+    pub const SnowBreak: Sound = Sound(36);
+    /// A snow block was placed into the world.
+    pub const SnowPlace: Sound = Sound(37);
+    /// A footstep on snow.
+    pub const SnowStep: Sound = Sound(38);
 }
 
 /// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
@@ -139,6 +147,10 @@ const ENGINE_SOUND_NAMES: &[&str] = &[
     "petramond:sand_step",
     "petramond:glass_step",
     "petramond:leaf_step",
+    "petramond:snow_punch",
+    "petramond:snow_break",
+    "petramond:snow_place",
+    "petramond:snow_step",
 ];
 
 impl std::fmt::Debug for Sound {

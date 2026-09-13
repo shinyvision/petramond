@@ -704,7 +704,9 @@ impl Block {
                 Some(ToolKind::Pickaxe)
             }
             BlockMaterial::Wood => Some(ToolKind::Axe),
-            BlockMaterial::Dirt | BlockMaterial::Sand => Some(ToolKind::Shovel),
+            BlockMaterial::Dirt | BlockMaterial::Sand | BlockMaterial::Snow => {
+                Some(ToolKind::Shovel)
+            }
             BlockMaterial::Wool | BlockMaterial::Plant | BlockMaterial::Foliage => {
                 Some(ToolKind::Shears)
             }
@@ -800,6 +802,7 @@ impl Block {
             BlockMaterial::Stone | BlockMaterial::Ore => &sounds::STONE,
             BlockMaterial::Dirt => &sounds::DIRT,
             BlockMaterial::Sand => &sounds::SAND,
+            BlockMaterial::Snow => &sounds::SNOW,
             // Shears part leaves and grind plants, but both are plant matter
             // and rustle alike (the Ice/Glass precedent below).
             BlockMaterial::Plant | BlockMaterial::Foliage => &sounds::LEAF,

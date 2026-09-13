@@ -276,6 +276,11 @@ pub struct ShapeBox {
     /// seals its own cell dark, and punches holes in the faces of whatever
     /// stands beside it.
     pub occludes: bool,
+    /// Whether this box's matter darkens what is around it with AO. `false`
+    /// keeps everything else matter does — sealing light, burying a
+    /// neighbour's face — and throws no shadow: a snow cover is a surface
+    /// on the ground, not a body standing on it.
+    pub casts_ao: bool,
     /// Draw this box's faces from BOTH sides (the back winding too), so they
     /// survive back-face culling.
     ///
@@ -309,6 +314,7 @@ impl ShapeBox {
         dyed: false,
         part: 0,
         occludes: true,
+        casts_ao: true,
         double_sided: false,
         pose: None,
     };
@@ -351,6 +357,7 @@ impl ShapeBox {
             dyed: false,
             part: 0,
             occludes: true,
+            casts_ao: true,
             double_sided: false,
             pose: None,
         }

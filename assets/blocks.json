@@ -220,7 +220,8 @@
               1,
               16
             ],
-            "collides": false
+            "collides": false,
+            "casts_ao": false
           }
         ]
       },
@@ -239,7 +240,7 @@
         "snow",
         "snow"
       ],
-      "material": "sand",
+      "material": "snow",
       "data": {
         "petramond:harvest": {
           "tier": 1
@@ -1712,7 +1713,7 @@
         "snow",
         "snow"
       ],
-      "material": "sand",
+      "material": "snow",
       "hardness": 0.5,
       "drops": [
         {

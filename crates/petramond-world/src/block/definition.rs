@@ -450,6 +450,9 @@ pub enum BlockMaterial {
     None,
     Dirt,
     Sand,
+    /// Snow — the snow layer and snow block. Shovel-classed like sand, but
+    /// crunches with its own sound set.
+    Snow,
     Stone,
     Ore,
     Wood,

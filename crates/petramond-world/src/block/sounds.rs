@@ -86,17 +86,25 @@ pub static DIRT: BlockSoundSet = BlockSoundSet {
     step: Some(Sound::DirtStep),
 };
 
-/// Sand-family: everything `BlockMaterial::Sand` — sand, red sand, clay, the
-/// exploration pack's cave silt, and the snow layer/block (which are
-/// shovel-classed as sand, so they inherit this set; a crunchier snow would be
-/// its own material, not a per-block exception here). Mining loops the sand
-/// "punch"; break and place use the sand break/place sounds; stepping replays
-/// the punch clips quietly.
+/// Sand-family: everything `BlockMaterial::Sand` — sand, red sand, clay, and
+/// the exploration pack's cave silt. Mining loops the sand "punch"; break and
+/// place use the sand break/place sounds; stepping replays the punch clips
+/// quietly.
 pub static SAND: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::SandPunch),
     break_: Some(Sound::SandBreak),
     place: Some(Sound::SandPlace),
     step: Some(Sound::SandStep),
+};
+
+/// Snow: the snow layer and snow block (`BlockMaterial::Snow`). Mines like
+/// sand, but crunches — its own material so it can sound unlike sand. Mining
+/// loops the snow "punch"; stepping replays the punch clips quietly.
+pub static SNOW: BlockSoundSet = BlockSoundSet {
+    dig: Some(Sound::SnowPunch),
+    break_: Some(Sound::SnowBreak),
+    place: Some(Sound::SnowPlace),
+    step: Some(Sound::SnowStep),
 };
 
 /// Plant matter: LEAVES (`BlockMaterial::Foliage`) and every cross plant

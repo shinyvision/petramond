@@ -249,11 +249,11 @@ pub(super) fn section_geometry(
         }
         // Everything below the whole-cell case is the FAMILY's answer: each
         // one knows its own shape and its own parity constraints (see
-        // `ShapeSim::occupies_pocket`). The mesher only asks — and asks the
-        // same oracle the light flood's apertures come from.
+        // `ShapeSim::shades_pocket`). The mesher only asks — the light
+        // flood's occupancy, minus matter that throws no shadow.
         let k = b.shape_kind_def();
         k.sim
-            .occupies_pocket(&k.params, &nbh, IVec3::new(cx, cy, cz), b, lo, hi)
+            .shades_pocket(&k.params, &nbh, IVec3::new(cx, cy, cz), b, lo, hi)
     };
 
     // Reused per-thread greedy scratch: flat opaque cube faces are deferred here during the

@@ -317,6 +317,9 @@ pub struct BoxDef {
     /// Draw the box's faces from both sides — see
     /// [`ShapeBox::double_sided`](crate::block::ShapeBox).
     pub double_sided: bool,
+    /// Whether the box's matter casts AO — see
+    /// [`ShapeBox::casts_ao`](crate::block::ShapeBox).
+    pub casts_ao: bool,
     /// Per face: how many quarter turns the FRAME this face's art was authored
     /// in sits ahead of the box's own frame. `0` everywhere for an authored
     /// box (and for every turn of one, since a turn moves box and art

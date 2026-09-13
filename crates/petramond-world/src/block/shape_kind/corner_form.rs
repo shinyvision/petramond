@@ -65,6 +65,7 @@ impl BoxDef {
             occludes: self.occludes,
             collides: self.collides,
             double_sided: self.double_sided,
+            casts_ao: self.casts_ao,
             art_turns: std::array::from_fn(|i| self.art_turns[FACE_BEFORE_TURN[i]]),
             uv: std::array::from_fn(|i| self.uv[FACE_BEFORE_TURN[i]]),
             uv_turns: std::array::from_fn(|i| self.uv_turns[FACE_BEFORE_TURN[i]]),
@@ -90,6 +91,7 @@ impl BoxDef {
             occludes: self.occludes,
             collides: self.collides,
             double_sided: self.double_sided,
+            casts_ao: self.casts_ao,
             art_turns: std::array::from_fn(|i| self.art_turns[SWAP_Y[i]]),
             uv: std::array::from_fn(|i| self.uv[SWAP_Y[i]]),
             uv_turns: std::array::from_fn(|i| self.uv_turns[SWAP_Y[i]]),
@@ -180,6 +182,7 @@ pub(super) fn intersect_lists(a: &[BoxDef], b: &[BoxDef]) -> Vec<BoxDef> {
             piece.occludes = pa.occludes && pb.occludes;
             piece.collides = pa.collides && pb.collides;
             piece.double_sided = pa.double_sided || pb.double_sided;
+            piece.casts_ao = pa.casts_ao && pb.casts_ao;
             if !out.contains(&piece) {
                 out.push(piece);
             }
@@ -252,6 +255,7 @@ mod tests {
             occludes: false,
             collides: false,
             double_sided: true,
+            casts_ao: true,
             art_turns: [0; 6],
             uv: [None; 6],
             uv_turns: [0; 6],

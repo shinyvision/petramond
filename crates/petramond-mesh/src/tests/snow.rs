@@ -214,3 +214,33 @@ fn a_bedded_cell_covers_the_grass_below_it_like_the_snow_it_stands_in() {
         "a bedded fern's blanket seals the grass top beneath it"
     );
 }
+
+/// Snow is a cover, not a body: the layer seals its floor and blocks light,
+/// but the ground beside it keeps its corners open. Before this every snowy
+/// step and wall base wore a dark rim from a plate one texel thick.
+#[test]
+fn a_snow_layer_casts_no_ao_onto_the_ground_beside_it() {
+    let m = mesh(&section_with(&[
+        ((7, 7, 8), Block::Stone),
+        ((8, 7, 8), Block::Stone),
+        ((8, 8, 8), Block::SnowLayer),
+    ]));
+    let open_floor_top: Vec<_> = m
+        .opaque
+        .iter()
+        .filter(|v| {
+            shade_idx(v) == 0
+                && (v.pos[1] - 8.0).abs() < 1.0e-3
+                && v.pos[0] >= 7.0 - 1.0e-3
+                && v.pos[0] <= 8.0 + 1.0e-3
+        })
+        .collect();
+    assert!(
+        !open_floor_top.is_empty(),
+        "the uncovered floor top renders"
+    );
+    assert!(
+        open_floor_top.iter().all(|v| ao_idx(v) == 3),
+        "floor corners against the snow layer stay open"
+    );
+}

@@ -183,6 +183,46 @@
       "category": "block"
     },
     {
+      "sound": "petramond:snow_punch",
+      "variants": [
+        "sounds/snow_punch_1.ogg",
+        "sounds/snow_punch_2.ogg",
+        "sounds/snow_punch_3.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:snow_break",
+      "variants": [
+        "sounds/snow_break.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:snow_place",
+      "variants": [
+        "sounds/snow_place.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:snow_step",
+      "variants": [
+        "sounds/snow_punch_1.ogg",
+        "sounds/snow_punch_2.ogg",
+        "sounds/snow_punch_3.ogg"
+      ],
+      "gain": 0.2,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
       "sound": "petramond:item_pickup",
       "variants": [
         "sounds/item_pickup.ogg"

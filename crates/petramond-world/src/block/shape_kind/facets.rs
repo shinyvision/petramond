@@ -441,6 +441,22 @@ pub trait ShapeSim: Send + Sync + 'static {
         false
     }
 
+    /// Whether this cell's matter CASTS AO into the pocket `(lo, hi)`: the
+    /// mesher's shadow question. It is [`occupies_pocket`](Self::occupies_pocket)
+    /// minus matter that seals light but throws no shadow, so the light
+    /// flood and support rules keep reading the full geometry.
+    fn shades_pocket(
+        &self,
+        params: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        block: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        self.occupies_pocket(params, nb, pos, block, lo, hi)
+    }
+
     /// The cell's packed per-face light apertures — see
     /// [`pack_light_apertures`] for the layout. Read for every `Shaped` cell,
     /// so the flood consults family-answered bits and holds no family

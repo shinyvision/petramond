@@ -278,8 +278,11 @@ fn preferred_tool_pairs_pickaxe_axe_shovel_with_their_materials() {
         Block::SnowLayer,
     ] {
         assert!(
-            matches!(b.material(), BlockMaterial::Dirt | BlockMaterial::Sand),
-            "{b:?} should be dirt/sand"
+            matches!(
+                b.material(),
+                BlockMaterial::Dirt | BlockMaterial::Sand | BlockMaterial::Snow
+            ),
+            "{b:?} should be dirt/sand/snow"
         );
         assert_eq!(b.preferred_tool(), Some(ToolKind::Shovel), "{b:?}");
     }

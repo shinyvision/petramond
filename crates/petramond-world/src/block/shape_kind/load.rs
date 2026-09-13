@@ -196,7 +196,7 @@ fn box_list_key(boxes: &[BoxDef]) -> String {
                 format!("@{}|{}", q.join(","), o.join(","))
             });
             format!(
-                "{},{},{}-{},{},{}:{faces}{}{}{}{tiles}{uv}{pose}",
+                "{},{},{}-{},{},{}:{faces}{}{}{}{}{tiles}{uv}{pose}",
                 t(b.aabb.min[0]),
                 t(b.aabb.min[1]),
                 t(b.aabb.min[2]),
@@ -205,7 +205,8 @@ fn box_list_key(boxes: &[BoxDef]) -> String {
                 t(b.aabb.max[2]),
                 if b.collides { "c" } else { "" },
                 if b.occludes { "o" } else { "" },
-                if b.double_sided { "d" } else { "" }
+                if b.double_sided { "d" } else { "" },
+                if b.casts_ao { "" } else { "n" }
             )
         })
         .collect::<Vec<_>>()
@@ -361,6 +362,10 @@ pub struct RawBox {
     /// whose art must stay whole from every angle.
     #[serde(default)]
     pub double_sided: bool,
+    /// Whether the box's matter darkens its surroundings with AO (default
+    /// yes). `false` still seals light and buries faces — a snow cover.
+    #[serde(default = "yes")]
+    pub casts_ao: bool,
 }
 
 fn yes() -> bool {
@@ -509,6 +514,7 @@ impl RawBox {
             occludes: self.occludes,
             collides: self.collides,
             double_sided: self.double_sided,
+            casts_ao: self.casts_ao,
             // Authored geometry: every face's art is in the shape's own frame.
             // Only a corner form's inherited faces ever offset this.
             art_turns: [0; 6],

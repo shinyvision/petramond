@@ -272,6 +272,7 @@ fn material_name(m: petramond_world::block::BlockMaterial) -> &'static str {
         BlockMaterial::None => "none",
         BlockMaterial::Dirt => "dirt",
         BlockMaterial::Sand => "sand",
+        BlockMaterial::Snow => "snow",
         BlockMaterial::Stone => "stone",
         BlockMaterial::Ore => "ore",
         BlockMaterial::Wood => "wood",

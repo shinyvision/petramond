@@ -72,6 +72,25 @@ impl ShapeSim for BoxSetFamily {
             })
     }
 
+    fn shades_pocket(
+        &self,
+        p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        box_set(p)
+            .boxes(box_set_turns(nb, pos, b), box_set_form(p, nb, pos))
+            .iter()
+            .filter(|d| d.occludes && d.casts_ao)
+            .any(|d| match d.pose {
+                Some(pose) => pose.overlaps_aabb(d.aabb.min, d.aabb.max, lo, hi),
+                None => overlaps(lo, hi, d.aabb.min, d.aabb.max),
+            })
+    }
+
     fn light_shape(&self, _p: &ShapeParams, _b: Block) -> crate::block::BlockLightShape {
         // Always shaped: the apertures fall out of the boxes (the trait
         // default derives them from `occupies_pocket`), so a full-cell box set

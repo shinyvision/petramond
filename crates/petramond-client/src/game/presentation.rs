@@ -20,6 +20,8 @@ use super::remote_players;
 use super::Game;
 
 mod entity_emitters;
+#[cfg(test)]
+mod tests;
 use entity_emitters::{body_emitters, emitter_self_lit, emitter_tint};
 
 pub use petramond_render::views::{
@@ -46,6 +48,24 @@ const SPRINT_FOOTSTEP_SPEED: f32 = 4.95;
 /// Walk-blend weight above which a REMOTE body is walking. The blend is eased,
 /// so this is a hysteresis-free threshold on an already-smoothed signal.
 const MIN_FOOTSTEP_WALK_WEIGHT: f32 = 0.35;
+
+/// The block a body at `pos` (feet centre, model y=0) steps on. A shape lying
+/// flat in the feet's own cell answers first: a snow layer or carpet never
+/// collides, so the body stands on the block beneath it, but the cover is what
+/// the foot presses. A plant does not lie flat, so it is still walked through.
+fn footstep_ground(
+    world: &petramond::world::World,
+    pos: petramond_math::world_pos::WorldPos,
+) -> Option<Block> {
+    let feet = (pos + Vec3::new(0.0, 0.05, 0.0)).block();
+    if let Some(cover) = world.block_if_loaded(feet.x, feet.y, feet.z) {
+        if petramond_world::block::rests_flat_on_floor(world, feet, cover) {
+            return Some(cover);
+        }
+    }
+    let below = (pos - Vec3::new(0.0, 0.1, 0.0)).block();
+    world.block_if_loaded(below.x, below.y, below.z)
+}
 
 // Entity blob-shadow tuning. The gather owns all of it: the renderer just
 // stamps quads.
@@ -365,15 +385,8 @@ impl GamePresentationScratch {
     fn collect_footsteps(&mut self, game: &Game, tick_alpha: f32) {
         self.footsteps.clear();
         let world = &game.replica;
-        // The block a body at `pos` (feet centre, model y=0) stands on.
-        let ground = |pos: petramond_math::world_pos::WorldPos,
-                      walking: bool|
-         -> Option<petramond_world::block::Block> {
-            if !walking {
-                return None;
-            }
-            let c = (pos - Vec3::new(0.0, 0.1, 0.0)).block();
-            world.block_if_loaded(c.x, c.y, c.z)
+        let ground = |pos: petramond_math::world_pos::WorldPos, walking: bool| {
+            walking.then(|| footstep_ground(world, pos)).flatten()
         };
         let p = &game.player;
         let speed = Vec3::new(p.vel.x, 0.0, p.vel.z).length();
