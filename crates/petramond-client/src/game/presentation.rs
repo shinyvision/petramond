@@ -11,7 +11,7 @@ use petramond::world::PlacedEmitter;
 use petramond_math::facing::Facing;
 use petramond_math::math::Tilt;
 use petramond_render::camera::ViewVolume;
-use petramond_render::{PlayerRenderInstance, RemotePlayerRender};
+use petramond_render::{AnimatorRanges, ArenaRange, PlayerRenderInstance, RemotePlayerRender};
 use petramond_world::block::Block;
 use petramond_world::door::DoorState;
 use petramond_world::tile::Tile;
@@ -110,6 +110,14 @@ pub struct GamePresentationScratch {
     /// of a list per body keeps the render rows `Copy` and puts no ceiling on
     /// how many bones a body wears.
     bone_offsets: Vec<petramond_render::BoneOffset>,
+    /// Every remote body's animator claims and fired graph events, back to
+    /// back like the bone offsets; each body's `RemotePlayerRender::animator`
+    /// ranges index in.
+    animator_params: Vec<petramond_render::views::AnimatorParamRow>,
+    animator_plays: Vec<petramond::player::AnimatorPlay>,
+    animator_events: Vec<(petramond::player::RigId, u16)>,
+    /// Name-valued claims, interned once per distinct name.
+    animator_names: petramond_render::views::NameCache,
     shadows: Vec<EntityShadow>,
     footsteps: Vec<FootstepSource>,
     break_overlays: Vec<BreakOverlayView>,
@@ -143,6 +151,9 @@ impl GamePresentationScratch {
             self.collect_mob_emitters(tick_alpha, view);
         }
         self.bone_offsets.clear();
+        self.animator_params.clear();
+        self.animator_plays.clear();
+        self.animator_events.clear();
         self.collect_remote_players(game, tick_alpha, view);
         self.collect_footsteps(game, tick_alpha);
         self.collect_break_overlays(game);
@@ -163,6 +174,9 @@ impl GamePresentationScratch {
             mobs: &self.mobs,
             remote_players: &self.remote_players,
             bone_offsets: &self.bone_offsets,
+            animator_params: &self.animator_params,
+            animator_plays: &self.animator_plays,
+            animator_events: &self.animator_events,
             footsteps: &self.footsteps,
             player,
             held_item_light: game.held_item_light(),
@@ -468,6 +482,16 @@ impl GamePresentationScratch {
             // Sample light at the body's torso cell (~mid-height).
             let c = (pos + Vec3::new(0.0, 0.9, 0.0)).block();
             let emitters = body_emitters(&[], &p.curr.conditions);
+            let claims = &p.curr.animator;
+            let animator = AnimatorRanges {
+                params: ArenaRange::next(&self.animator_params, claims.params.len()),
+                plays: ArenaRange::next(&self.animator_plays, p.plays.len()),
+                events: ArenaRange::next(&self.animator_events, p.events.len()),
+            };
+            self.animator_names
+                .rows(&claims.params, &mut self.animator_params);
+            self.animator_plays.extend_from_slice(&p.plays);
+            self.animator_events.extend_from_slice(&p.events);
             self.remote_players.push(RemotePlayerRender {
                 body: PlayerRenderInstance {
                     emitter_tint: emitter_tint(emitters.iter().copied()),
@@ -495,6 +519,9 @@ impl GamePresentationScratch {
                 },
                 held: p.view,
                 held_off: p.off_view,
+                key: p.curr.id.0 as u32,
+                frames: p.frames,
+                animator,
             });
             if game.particles.count_scale() > 0.0 {
                 let body = self.remote_players.last().unwrap().body;

@@ -53,10 +53,43 @@ enum Claim {
     Placed(IVec3),
 }
 
-/// One interact consumer: it is offered the attempt and either claims it or
-/// passes. The signature is the whole contract — a consumer sees the acting
-/// player, the attempt, the click, and the tick's event sink, and nothing else.
-type Consumer = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut TickEvents) -> Claim;
+/// One consumer's claim function: it is offered the attempt and either
+/// claims it or passes. The signature is the whole contract — a consumer sees
+/// the acting player, the attempt, the click, and the tick's event sink, and
+/// nothing else.
+type Consume = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut TickEvents) -> Claim;
+
+/// Which registry row a consumer is — the handle the client's prediction
+/// mirror names its own step by, so it reads the row's facts instead of
+/// keeping a copy.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ConsumerKind {
+    /// Registered `interact_attempt` handlers (mods).
+    Registered,
+    Shear,
+    BuiltinBlock,
+    ContextualPlace,
+    Eat,
+    ItemUse,
+    Place,
+}
+
+/// One consumer registry row.
+pub struct Consumer {
+    pub kind: ConsumerKind,
+    consume: Consume,
+    /// The consumer's own gesture IS its presentation — an eat's raise — so
+    /// a claim by it plays no hand jab on either mirror.
+    pub presents_itself: bool,
+}
+
+const fn consumer(kind: ConsumerKind, consume: Consume) -> Consumer {
+    Consumer {
+        kind,
+        consume,
+        presents_itself: false,
+    }
+}
 
 /// The consumer registry, in claim order. Deterministic and data-shaped: a
 /// new engine capability is a new entry here (plus its client prediction
@@ -64,26 +97,44 @@ type Consumer = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut Ti
 const CONSUMERS: &[Consumer] = &[
     // Mods first: every attempt, sneak or not, block or mob — a handler's
     // Cancel is a claim (mod GUIs, boat boarding, the trough take-out).
-    ServerGame::consume_registered_attempt,
+    consumer(
+        ConsumerKind::Registered,
+        ServerGame::consume_registered_attempt,
+    ),
     // Engine mob use: shears on a shearable mob.
-    ServerGame::consume_shear,
+    consumer(ConsumerKind::Shear, ServerGame::consume_shear),
     // The block's built-in capability (GUI open, door, bed) — passes on
     // sneak via the shared claim rule the client predictions also run.
-    ServerGame::consume_builtin_block,
+    consumer(ConsumerKind::BuiltinBlock, ServerGame::consume_builtin_block),
     // A dual-natured held item (food AND placeable — a plantable carrot)
     // tries its placement before the eat gate: a VALID placement wins over
     // starting to eat; a refused one passes so the eat still sees the click.
     // Ordering the real attempt ahead of the eat keeps one dispatch per
     // event: no dry-run duplicating `try_place`.
-    ServerGame::consume_contextual_place,
+    consumer(
+        ConsumerKind::ContextualPlace,
+        ServerGame::consume_contextual_place,
+    ),
     // Eating the held food (never started by a hold-repeat).
-    ServerGame::consume_eat,
+    Consumer {
+        kind: ConsumerKind::Eat,
+        consume: ServerGame::consume_eat,
+        presents_itself: true,
+    },
     // The held item's own use (`item_use_pre`, then the engine buckets).
-    ServerGame::consume_item_use,
+    consumer(ConsumerKind::ItemUse, ServerGame::consume_item_use),
     // Ordinary placement of the held block (skipped for dual-natured items —
     // their placement already ran above).
-    ServerGame::consume_place,
+    consumer(ConsumerKind::Place, ServerGame::consume_place),
 ];
+
+/// The registry row of `kind` (every kind has exactly one row).
+pub fn row(kind: ConsumerKind) -> &'static Consumer {
+    CONSUMERS
+        .iter()
+        .find(|c| c.kind == kind)
+        .expect("every consumer kind has a registry row")
+}
 
 impl ServerGame {
     /// Interact / placement, on the tick: consume a buffered secondary-button
@@ -108,7 +159,7 @@ impl ServerGame {
             .denies(mod_api::BodyAction::Use)
         {
             self.sessions[s].pending_use_click = None;
-            self.advance_eating(s, events);
+            self.advance_eating(s);
             return;
         }
         // A gesture with an owner is offered to nobody — not a fresh click, not
@@ -117,7 +168,7 @@ impl ServerGame {
         // and neither is interrupted by the button it is still riding.
         if !self.sessions[s].player.use_gesture.is_free() {
             self.sessions[s].pending_use_click = None;
-            self.advance_eating(s, events);
+            self.advance_eating(s);
             return;
         }
         // Taking the whole click clears its target, request, presentation
@@ -136,7 +187,7 @@ impl ServerGame {
         } else {
             self.tick_use_repeat(s, events);
         }
-        self.advance_eating(s, events);
+        self.advance_eating(s);
     }
 
     /// A HELD use button re-runs the WHOLE interact dispatch every
@@ -216,6 +267,7 @@ impl ServerGame {
         // vocabulary. An empty off-hand runs no second pass: empty-hand
         // interactions stay a main-hand affair.
         let mut consumed = false;
+        let mut claimant: Option<&Consumer> = None;
         let mut placed_at = None;
         let mut off_hand_acted = false;
         for hand in [
@@ -229,7 +281,7 @@ impl ServerGame {
             }
             self.sessions[s].player.acting_hand = hand;
             for consumer in CONSUMERS {
-                match consumer(self, s, &attempt, &meta, events) {
+                match (consumer.consume)(self, s, &attempt, &meta, events) {
                     Claim::Pass => continue,
                     Claim::Claimed => {
                         consumed = true;
@@ -239,6 +291,7 @@ impl ServerGame {
                         placed_at = Some(pos);
                     }
                 }
+                claimant = Some(consumer);
                 break;
             }
             off_hand_acted = consumed && hand == petramond_world::inventory::Hand::Off;
@@ -315,8 +368,9 @@ impl ServerGame {
         // A consumed click whose initiator stayed silent (its replica could
         // not foresee the effect — a registered consumer's claim like tilling or a
         // right-click harvest) gets its hand jab echoed back; `jabbed`
-        // guarantees this can never double an already-played one.
-        if consumed && !jabbed {
+        // guarantees this can never double an already-played one. A claimant
+        // that presents itself has no jab to echo.
+        if consumed && !jabbed && !claimant.is_some_and(|c| c.presents_itself) {
             events.player(s).used_unpredicted = true;
         }
         // The client's ghost convention is `target.block + normal` — accept

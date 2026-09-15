@@ -399,9 +399,6 @@ fn samples() -> Samples {
         player: PlayerId(7), actions: vec![BodyAction::Attack, BodyAction::Mine],
     });
     s.pin("HostCall::HoldUse", &HostCall::HoldUse { player: PlayerId(8) });
-    s.pin("HostCall::SetPlayerHandMotions", &HostCall::SetPlayerHandMotions {
-        player: PlayerId(9), main: vec![HandMotion::Swing, HandMotion::Jab], off: vec![],
-    });
     s.pin("HostCall::Raycast", &HostCall::Raycast {
         from: [1.0, 2.0, 3.0], dir: [0.0, -1.0, 0.0], max: 8.0, filter: RayFilter::Collidable,
     });
@@ -935,6 +932,22 @@ fn samples() -> Samples {
     s.pin("HostRet::Condition", &HostRet::Condition(Some(ConditionInfoData { id: ConditionId(0), key: "m:c".into(), stages: vec!["a".into()] })));
     s.pin("HostCall::BlockInfos", &HostCall::BlockInfos { blocks: vec![BlockId(1), BlockId(9)] });
     s.pin("HostRet::BlockInfos", &HostRet::BlockInfos(vec![None]));
+    s.pin("HostCall::SetPlayerAnimatorParams", &HostCall::SetPlayerAnimatorParams {
+        player: PlayerId(2),
+        params: vec![crate::AnimatorParam { rig: "r".into(), param: "p".into(), value: crate::AnimatorValue::Name("n".into()) }],
+    });
+    s.pin("HostCall::SetPlayerAnimatorPlays", &HostCall::SetPlayerAnimatorPlays {
+        player: PlayerId(2),
+        plays: vec![
+            crate::AnimatorPlay { rig: "r".into(), slot: "s".into(), clip: "c".into(), clock: crate::AnimatorClock::Scrub(0.5), mirror: true, priority: 1 },
+            crate::AnimatorPlay { rig: "r".into(), slot: "t".into(), clip: "c".into(), clock: crate::AnimatorClock::Run { rate: 1.5, looping: true }, mirror: false, priority: 0 },
+        ],
+    });
+    s.pin("HostCall::FirePlayerAnimatorEvent", &HostCall::FirePlayerAnimatorEvent { player: PlayerId(2), rig: "r".into(), event: "e".into() });
+    s.pin("HostCall::AnimationClip", &HostCall::AnimationClip { rig: "r".into(), clip: "b".into() });
+    s.pin("HostRet::AnimationClip", &HostRet::AnimationClip(Some(crate::AnimationClipInfo {
+        length: 0.5, looping: false, markers: vec![("impact".into(), 0.25)],
+    })));
 
     s
 }
@@ -1091,32 +1104,31 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::EmitEventTo", "910106036d3a65020102"),
     ("HostCall::SetPlayerDeniedActions", "920107020001"),
     ("HostCall::HoldUse", "930108"),
-    ("HostCall::SetPlayerHandMotions", "94010902000100"),
-    ("HostCall::Raycast", "9501000000000000f03f0000000000000040000000000000084000000000000080bf000000000000004101"),
-    ("HostCall::LaunchItem", "9601036d3a69000000000000f03f0000000000000040000000000000084000000000000080400000000001000100"),
-    ("HostCall::ItemEntity", "970109"),
-    ("HostCall::TakeItem", "980102036d3a69030101036d3a6b0107"),
-    ("HostCall::SetPlayerHeldDisplay", "99010301036d3a6900"),
-    ("HostCall::PlayerInventory", "9a0103"),
-    ("HostCall::MobKinematic", "9b0107000000000000f03f000000000000004000000000000008400000003f000080be0000003e"),
-    ("HostCall::SoundSet", "9c01010000003f0000803f"),
-    ("HostCall::ContainerInsert", "9d01020406036d3a690200"),
-    ("HostCall::ContainerTake", "9e010204060402"),
-    ("HostCall::ItemEntitiesInRadius", "9f01000000000000f03f000000000000004000000000000008400000804008"),
-    ("HostCall::ItemImpulses", "a00101090000803f00000000000080bf"),
-    ("HostCall::SectionKvFind", "a1010103060e666978747572653a6d61726b6572"),
-    ("HostCall::StructureInfo", "a2010c666978747572653a726f6f6d"),
-    ("HostCall::LootRoll", "a3010c666978747572653a6c6f6f7407"),
-    ("HostCall::MobDataGet", "a40104036d3a6b"),
-    ("HostCall::MobsWithData", "a501036d3a6b"),
-    ("HostCall::TerrainSpaceAt", "a60101020306"),
-    ("HostCall::MemoGet", "a701016b"),
-    ("HostCall::MemoGetMany", "a80101016b"),
-    ("HostCall::MemoPut", "a901016b0176"),
-    ("HostCall::MemoClaim", "aa01016b"),
-    ("HostCall::TerrainBlocksAt", "ab0101020306"),
-    ("HostCall::TerrainHeightsAt", "ac01010203"),
-    ("HostCall::TerrainSectionAt", "ad01020306"),
+    ("HostCall::Raycast", "9401000000000000f03f0000000000000040000000000000084000000000000080bf000000000000004101"),
+    ("HostCall::LaunchItem", "9501036d3a69000000000000f03f0000000000000040000000000000084000000000000080400000000001000100"),
+    ("HostCall::ItemEntity", "960109"),
+    ("HostCall::TakeItem", "970102036d3a69030101036d3a6b0107"),
+    ("HostCall::SetPlayerHeldDisplay", "98010301036d3a6900"),
+    ("HostCall::PlayerInventory", "990103"),
+    ("HostCall::MobKinematic", "9a0107000000000000f03f000000000000004000000000000008400000003f000080be0000003e"),
+    ("HostCall::SoundSet", "9b01010000003f0000803f"),
+    ("HostCall::ContainerInsert", "9c01020406036d3a690200"),
+    ("HostCall::ContainerTake", "9d010204060402"),
+    ("HostCall::ItemEntitiesInRadius", "9e01000000000000f03f000000000000004000000000000008400000804008"),
+    ("HostCall::ItemImpulses", "9f0101090000803f00000000000080bf"),
+    ("HostCall::SectionKvFind", "a0010103060e666978747572653a6d61726b6572"),
+    ("HostCall::StructureInfo", "a1010c666978747572653a726f6f6d"),
+    ("HostCall::LootRoll", "a2010c666978747572653a6c6f6f7407"),
+    ("HostCall::MobDataGet", "a30104036d3a6b"),
+    ("HostCall::MobsWithData", "a401036d3a6b"),
+    ("HostCall::TerrainSpaceAt", "a50101020306"),
+    ("HostCall::MemoGet", "a601016b"),
+    ("HostCall::MemoGetMany", "a70101016b"),
+    ("HostCall::MemoPut", "a801016b0176"),
+    ("HostCall::MemoClaim", "a901016b"),
+    ("HostCall::TerrainBlocksAt", "aa0101020306"),
+    ("HostCall::TerrainHeightsAt", "ab01010203"),
+    ("HostCall::TerrainSectionAt", "ac01020306"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -1272,13 +1284,18 @@ const PINS: &[(&str, &str)] = &[
     ("ClientUiEvent::*", "0400016201016201740201620174030162020000803f0000004001"),
     ("BlockHookKind::*", "03000102"),
     ("LightAperture::*", "020001"),
-    ("HostCall::ResolveCondition", "ae01036d3a63"),
-    ("HostCall::ConditionNames", "af010101"),
-    ("HostCall::EntityConditionApply", "b0010107000178"),
-    ("HostCall::EntityConditionCool", "b10100010003"),
+    ("HostCall::ResolveCondition", "ad01036d3a63"),
+    ("HostCall::ConditionNames", "ae010101"),
+    ("HostCall::EntityConditionApply", "af010107000178"),
+    ("HostCall::EntityConditionCool", "b00100010003"),
     ("HostRet::Condition", "3e0100036d3a63010161"),
-    ("HostCall::BlockInfos", "b201020109"),
+    ("HostCall::BlockInfos", "b101020109"),
     ("HostRet::BlockInfos", "3f0100"),
+    ("HostCall::SetPlayerAnimatorParams", "b20102010172017001016e"),
+    ("HostCall::SetPlayerAnimatorPlays", "b3010202017201730163000000003f0102017201740163010000c03f010000"),
+    ("HostCall::FirePlayerAnimatorEvent", "b4010201720165"),
+    ("HostCall::AnimationClip", "b50101720162"),
+    ("HostRet::AnimationClip", "40010000003f000106696d706163740000803e"),
 ];
 
 #[test]

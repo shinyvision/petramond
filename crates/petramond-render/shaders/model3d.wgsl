@@ -13,7 +13,7 @@
 // the world block.
 //
 // `packed` bit 26 is overloaded (mirrors block_model's packing):
-//  - solid cuboid (skin hand, SOLID_COLOR_FLAG): bit 26 set, NO tile / NO overlay
+//  - solid cuboid (bit 26 set, NO tile / NO overlay): the tint IS the colour
 //    tile (both 0) -> output the interpolated vertex `tint` directly.
 //  - grass-block side: bit 26 set + a real overlay tile in packed2 bits 20..31 ->
 //    sample the dirt base + tinted grayscale grass-side overlay and composite

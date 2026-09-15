@@ -6,18 +6,15 @@
 //! batches like the mob/item stores (`game/replicated.rs`): prev/curr row
 //! pairs interpolate at `tick_alpha`, absent ids drop, `snap` rows skip
 //! interpolation (tick-side teleports). On top of the rows each remote owns
-//! the SAME animation drivers the local player uses — the shared
-//! [`BodyPose`] (walk cycle + body-yaw follow) and the renderer's
-//! [`HeldItemAnimator`] swing state machine — advanced once per frame in
-//! `Game::tick_receive`, so a remote's mining loop, break/place jabs, and chew
-//! read identically to first person's.
+//! the SAME drivers the local player uses — the shared [`BodyPose`] (walk
+//! cycle + body-yaw follow), an eased held view per hand, and the two hand
+//! FRAMES its renderer-owned body animator reads — advanced once per frame
+//! in `Game::tick_receive`, so a remote's mining loop, fired gestures, and
+//! chew read identically to the local body's.
 //!
 //! Approximations (deliberate, documented):
-//! - EATING replicates as a level bool; the animator wants an `Option<f32>`
-//!   progress, so a client-side ramp (`EAT_RAMP_SECS`) stands in. Only the
-//!   blend/nibble channels pose the third-person body — the progress channel
-//!   (`eat_near`) drives a first-person-only camera approach — so the ramp is
-//!   visually exact for remote bodies.
+//! - EATING replicates as a level bool; the frame wants an `Option<f32>`
+//!   progress, so a client-side ramp (`EAT_RAMP_SECS`) stands in.
 //! - HURT replicates as the `hurt_recent` edge (sessions track no timer); the
 //!   client runs its own linear flash envelope, mirroring the local body's
 //!   hurt-flash (the app's hurt-shake envelope, 0.25 s).
@@ -25,8 +22,8 @@
 use std::collections::BTreeMap;
 
 use petramond::net::protocol::{PlayerActionKind, PlayerStateRow};
-use petramond::player::PlayerId;
-use petramond_render::{HeldItemAnimator, HeldItemFrame, HeldItemView};
+use petramond::player::{AnimatorClock, AnimatorPlay, PlayerId, RigId};
+use petramond_render::{HeldItemEase, HeldItemFrame, HeldItemView};
 
 use super::body_pose::{lerp_angle, BodyPose, MovementMedium};
 
@@ -34,47 +31,12 @@ use super::body_pose::{lerp_angle, BodyPose, MovementMedium};
 /// body's flash envelope (`app::HURT_SHAKE_SECS`, linear).
 const HURT_FLASH_SECS: f32 = 0.25;
 /// Client-side stand-in for the replicated-as-bool eat progress: foods take a
-/// few seconds; the exact duration only feeds the first-person-only
-/// `eat_near` channel, so this never shows on a remote body.
+/// few seconds, and the ramp only paces what a body graph reads from `eat`.
 const EAT_RAMP_SECS: f32 = 3.0;
-
-/// One-shot animation triggers latched from the batch's `player_actions`,
-/// consumed by the next frame's animator update — the remote twin of the
-/// App's `hand` latch (`latch_game_event_hand_triggers`).
-#[derive(Copy, Clone, Debug, Default)]
-struct ActionLatch {
-    swung: bool,
-    broke: bool,
-    placed: bool,
-    /// The place-jab latch for the LEFT hand — the `*Off` action kinds (the
-    /// use-click ladder acted from the off-hand).
-    placed_off: bool,
-}
-
-impl ActionLatch {
-    /// Mirror of the local trigger mapping: a break is the full punch; place/
-    /// throw/use/interact all play the softer place jab (their `*Off` twins
-    /// jab the LEFT hand); an attack swings.
-    /// `AteFinished`/`Died`/`Respawned` need no jab — the eat flag, the
-    /// `visible` flag, and `snap` carry their presentation.
-    fn note(&mut self, kind: PlayerActionKind) {
-        match kind {
-            PlayerActionKind::Swung => self.swung = true,
-            PlayerActionKind::Broke => self.broke = true,
-            PlayerActionKind::Placed
-            | PlayerActionKind::ThrewItem
-            | PlayerActionKind::UsedItem
-            | PlayerActionKind::Interacted => self.placed = true,
-            PlayerActionKind::PlacedOff
-            | PlayerActionKind::UsedItemOff
-            | PlayerActionKind::InteractedOff => self.placed_off = true,
-            PlayerActionKind::AteFinished
-            | PlayerActionKind::AteFinishedOff
-            | PlayerActionKind::Died
-            | PlayerActionKind::Respawned => {}
-        }
-    }
-}
+/// How far back a scrubbed play's progress may step and still ease rather
+/// than snap: further back is a restart, and easing across it would play the
+/// clip backward.
+const SCRUB_RESTART: f32 = 0.25;
 
 /// One remote player: the interpolation row pair plus per-remote animation
 /// state.
@@ -84,20 +46,20 @@ pub struct RemotePlayer {
     /// The shared body pose (walk cycle + body-yaw follow) — the same helper
     /// the local third-person view drives.
     pub pose: BodyPose,
-    /// The renderer's held-item swing state machine, one per remote, fed from
-    /// the replicated flags + latched one-shots.
-    animator: HeldItemAnimator,
-    /// The LEFT hand's own animator (off-hand jabs + off-hand eats).
-    off_animator: HeldItemAnimator,
-    latched: ActionLatch,
+    /// Each hand's eased held view (`[main, off]`).
+    ease: [HeldItemEase; 2],
+    /// Graph events the batches fired on this body's rigs (the engine's
+    /// gestures and mod fires alike) since the last frame — the remote twin
+    /// of the App's `hand_events` latch.
+    pending: Vec<(RigId, u16)>,
     /// Remaining hurt-flash seconds (see [`HURT_FLASH_SECS`]).
     hurt_t: f32,
     /// Client-side eat-progress ramp (see [`EAT_RAMP_SECS`]).
     eat_t: f32,
-    /// The animator's output for this frame — what presentation attaches to
-    /// the posed hand.
+    /// The main hand's eased held view this frame — what presentation
+    /// attaches to the posed hand.
     pub view: HeldItemView,
-    /// The off-hand animator's output — the LEFT hand's held item.
+    /// The LEFT hand's.
     pub off_view: HeldItemView,
     /// This body's eased bone offsets, so its bones move at the same rate as
     /// the item in its fist. Holds the eased value between frames; the
@@ -105,6 +67,71 @@ pub struct RemotePlayer {
     pub bones: super::bone_ease::BoneEase,
     /// Scratch for this body's resolved offset target, reused across frames.
     target: Vec<petramond_render::BoneOffset>,
+    /// This frame's two hand frames (`[main, off]`), which the body's
+    /// renderer-owned animator reads.
+    pub frames: [HeldItemFrame; 2],
+    /// This frame's claimed plays (see [`present_plays`]), sorted like the
+    /// rows by rig and slot.
+    pub plays: Vec<AnimatorPlay>,
+    /// Last frame's plays, reused as this frame's scratch.
+    last_plays: Vec<AnimatorPlay>,
+    /// The graph events fired on this body this frame, once each.
+    pub events: Vec<(RigId, u16)>,
+}
+
+/// `plays`' entry for `play`'s rig, slot and clip, walking `cursor` forward:
+/// both lists are sorted by rig and slot.
+fn matching<'a>(
+    plays: &'a [AnimatorPlay],
+    cursor: &mut usize,
+    play: &AnimatorPlay,
+) -> Option<&'a AnimatorPlay> {
+    while plays
+        .get(*cursor)
+        .is_some_and(|p| (p.rig, p.slot) < (play.rig, play.slot))
+    {
+        *cursor += 1;
+    }
+    plays
+        .get(*cursor)
+        .filter(|p| (p.rig, p.slot, p.clip) == (play.rig, play.slot, play.clip))
+}
+
+/// The plays a remote body presents this frame, into `out`: the newest
+/// row's (`curr`), each scrubbed play's progress placed at the frame. The
+/// row is a tick old when it lands, so a play still climbing is carried
+/// forward by `alpha` of the step the last two rows took (clamped to the
+/// clip) — a marker a pack lands its hit on must not fire a tick late on
+/// every observer. A play with no earlier row, or one that stepped back,
+/// eases from last frame's progress by `ease` (snapping on a restart).
+fn present_plays(
+    prev: &[AnimatorPlay],
+    curr: &[AnimatorPlay],
+    last: &[AnimatorPlay],
+    alpha: f32,
+    ease: f32,
+    out: &mut Vec<AnimatorPlay>,
+) {
+    out.clear();
+    let (mut in_prev, mut in_last) = (0, 0);
+    for play in curr {
+        let mut play = *play;
+        if let AnimatorClock::Scrub(progress) = play.clock {
+            let before = matching(prev, &mut in_prev, &play).and_then(AnimatorPlay::progress);
+            let shown = matching(last, &mut in_last, &play).and_then(AnimatorPlay::progress);
+            let at = match (before, shown) {
+                (Some(before), _) if progress >= before => {
+                    (progress + (progress - before) * alpha).min(1.0)
+                }
+                (_, Some(shown)) if progress >= shown - SCRUB_RESTART => {
+                    shown + (progress - shown) * ease
+                }
+                _ => progress,
+            };
+            play.clock = AnimatorClock::Scrub(at);
+        }
+        out.push(play);
+    }
 }
 
 impl RemotePlayer {
@@ -115,15 +142,18 @@ impl RemotePlayer {
             prev: row.clone(),
             curr: row,
             pose,
-            animator: HeldItemAnimator::default(),
-            off_animator: HeldItemAnimator::default(),
-            latched: ActionLatch::default(),
+            ease: Default::default(),
+            pending: Vec::new(),
             hurt_t: 0.0,
             eat_t: 0.0,
             view: HeldItemView::default(),
             off_view: HeldItemView::default(),
             bones: Default::default(),
             target: Vec::new(),
+            frames: Default::default(),
+            plays: Vec::new(),
+            last_plays: Vec::new(),
+            events: Vec::new(),
         }
     }
 
@@ -193,23 +223,28 @@ impl RemotePlayers {
             }
             self.map.insert(row.id, entry);
         }
+        // `Died`/`Respawned` need no edge: the `visible` flag and `snap`
+        // carry their presentation.
         for (id, kind) in actions {
-            if let Some(p) = self.map.get_mut(id) {
-                p.latched.note(*kind);
+            if let PlayerActionKind::Animator { rig, event } = *kind {
+                if let Some(p) = self.map.get_mut(id) {
+                    p.pending.push((rig, event));
+                }
             }
         }
     }
 
     /// One frame of presentation state for every remote: the shared body pose
-    /// from the interpolated speed/yaw at `alpha`, the held-item animator from
-    /// the replicated flags + consumed one-shot latches, the hurt-flash and
-    /// eat ramps. Runs in `Game::tick_receive` after the batches applied.
+    /// from the interpolated speed/yaw at `alpha`, the hand frames from the
+    /// replicated flags, this frame's plays and fired events, the hurt-flash
+    /// and eat ramps. Runs in `Game::tick_receive` after the batches applied.
     pub fn advance(
         &mut self,
         dt: f32,
         alpha: f32,
         medium: impl Fn(petramond_math::world_pos::WorldPos) -> MovementMedium,
     ) {
+        let ease = 1.0 - (-petramond_render::POSE_EASE_RATE * dt).exp();
         for p in self.map.values_mut() {
             if p.curr.sleeping {
                 // Lying body: head toward the pillow, walk cycle rested —
@@ -237,14 +272,17 @@ impl RemotePlayers {
             } else {
                 0.0
             };
-            let latch = std::mem::take(&mut p.latched);
+            // One edge per frame: two batches in a window can carry the
+            // same gesture twice, and an animator fires a slot once.
+            p.events.clear();
+            for event in p.pending.drain(..) {
+                if !p.events.contains(&event) {
+                    p.events.push(event);
+                }
+            }
             let eating_main = p.curr.eating && !p.curr.eating_off_hand;
             let eating_off = p.curr.eating && p.curr.eating_off_hand;
-            // A remote body's arm swing comes from its POSE; view bob is a
-            // first-person camera effect and has no meaning on one.
-            p.view = p.animator.update(HeldItemFrame {
-                bob: [0.0, 0.0],
-                motion_offset: [0.0; 3],
+            let main_frame = HeldItemFrame {
                 item: p.curr.held_item.map(petramond_world::item::ItemType),
                 display: p.curr.held_display[0].map(petramond_world::item::ItemType),
                 variant: p
@@ -259,20 +297,13 @@ impl RemotePlayers {
                 // The row ships the full overlay (target + stage); the arm
                 // swing only needs the level flag.
                 mining: p.curr.mining.is_some(),
-                broke_block: latch.broke,
-                placed: latch.placed,
-                swung: latch.swung,
                 eating: eating_main.then_some(p.eat_t),
                 pose_target: p.curr.held_pose_main.map(super::render_held_pose),
-                swing_claim: p.curr.motion_claims[0].contains(mod_api::HandMotion::Swing),
-                jab_claim: p.curr.motion_claims[0].contains(mod_api::HandMotion::Jab),
-                dt,
-            });
-            // The LEFT hand: its own item, its own jabs, its own eats. Mining
-            // and attack swings are main-hand actions by definition.
-            p.off_view = p.off_animator.update(HeldItemFrame {
-                bob: [0.0, 0.0],
-                motion_offset: [0.0; 3],
+            };
+            p.view = p.ease[0].update(&main_frame, dt);
+            // The LEFT hand: its own item, its own eats. Mining is a
+            // main-hand level by definition.
+            let off_frame = HeldItemFrame {
                 item: p.curr.off_hand_item.map(petramond_world::item::ItemType),
                 display: p.curr.held_display[1].map(petramond_world::item::ItemType),
                 variant: p
@@ -283,15 +314,20 @@ impl RemotePlayers {
                     .unwrap_or_default(),
                 block_state: Default::default(),
                 mining: false,
-                broke_block: false,
-                placed: latch.placed_off,
-                swung: false,
                 eating: eating_off.then_some(p.eat_t),
-                dt,
                 pose_target: p.curr.held_pose_off.map(super::render_held_pose),
-                swing_claim: p.curr.motion_claims[1].contains(mod_api::HandMotion::Swing),
-                jab_claim: p.curr.motion_claims[1].contains(mod_api::HandMotion::Jab),
-            });
+            };
+            p.off_view = p.ease[1].update(&off_frame, dt);
+            p.frames = [main_frame, off_frame];
+            std::mem::swap(&mut p.plays, &mut p.last_plays);
+            present_plays(
+                &p.prev.animator.plays,
+                &p.curr.animator.plays,
+                &p.last_plays,
+                alpha,
+                ease,
+                &mut p.plays,
+            );
             // The body's bones ease at the same rate as the item in its
             // fist, so a raised guard and the arm raising it arrive together.
             let mut target = std::mem::take(&mut p.target);

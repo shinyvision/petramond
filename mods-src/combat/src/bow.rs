@@ -20,9 +20,10 @@
 //! clock's state, and the server tick, the client frame and the release
 //! all read it, which is what makes a prediction that disagrees with the
 //! authority impossible rather than merely unlikely. The engine knows
-//! nothing about a bow: the draw rides the generic body seams (the held
-//! pose, the arm bones, the held DISPLAY, the speed and denial claims) and
-//! the arrow rides the generic launched-item primitive.
+//! nothing about a bow: the draw rides the generic body seams (the body's
+//! draw clip, the strain tremor on the held pose and the bow shoulder, the
+//! held DISPLAY, the speed and denial claims) and the arrow rides the
+//! generic launched-item primitive.
 
 mod clock;
 mod launch;
@@ -38,45 +39,24 @@ use crate::claims::{Body, Claims, Rule};
 use mod_sdk::*;
 use std::rc::Rc;
 
-/// FIRST PERSON, drawing: the AUTHORED hold, untouched. The pull frames
-/// alone show the draw — the bow must not move in the hand while it
-/// charges (her call, twice: a raise into a draw pose read as the bow
-/// wandering). Only the strain tremor moves it, about this rest.
-const DRAW_1P: HeldPoseData = HeldPoseData::IDENTITY;
+/// THIRD PERSON, the draw: both arms up and the string hand coming back to
+/// the jaw, scrubbed by how far the draw has come (an engine body clip in
+/// the body's main claim slot). FIRST PERSON plays nothing: the bow must not
+/// move in the hand while it charges (her call, twice — a raise into a draw
+/// pose read as the bow wandering). The pull frames alone show the draw;
+/// only the strain moves it.
+const DRAW_3P: &str = "petramond:body_bow_draw";
+const DRAW_SLOT: &str = "main_claim";
 
-/// THIRD PERSON, the bow arm: held out level in front, the elbow straight,
-/// as a `Replace` stance on the MAIN hand's shoulder and elbow (the rig
-/// cross-names the arms, hence `bone::MAIN_*`).
-const DRAW_SHOULDER: [f32; 3] = [-85.0, 0.0, 0.0];
-const DRAW_ELBOW: [f32; 3] = [0.0, 0.0, 0.0];
-
-/// THIRD PERSON, the string arm: raised beside the bow arm, its elbow
-/// folding back toward the cheek as the draw comes (the elbow folds about
-/// its X); the fold is what reads as the draw on somebody else's body.
-const STRING_SHOULDER: [f32; 3] = [-80.0, 0.0, 0.0];
-const STRING_ELBOW_FULL: [f32; 3] = [90.0, 0.0, 0.0];
-
-/// THIRD PERSON, the bow in the extended fist: the authored carry, lifted
-/// a touch. The ARM carries the motion in third person; turning the item
-/// too did the arm's work twice and sank the bow under the fist.
-const DRAW_3P: HeldPoseData = HeldPoseData {
-    rotation: [0.0, 0.0, 0.0],
-    translation: [0.0, 2.0, 0.0],
-};
+/// Every rig clip the bow plays, `(rig, clip)`.
+#[cfg(test)]
+pub(crate) const CLIPS: [(&str, &str); 1] = [(rig::PLAYER_BODY, DRAW_3P)];
 
 /// The strain shake at full draw: pixels and degrees of jitter at the
 /// peak, and how fast it trembles (cycles per tick).
 const SHAKE_PX: f32 = 0.9;
 const SHAKE_DEG: f32 = 2.0;
 const SHAKE_HZ: f32 = 0.45;
-
-fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    ]
-}
 
 /// What the bow is doing for one actor.
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -151,59 +131,43 @@ impl Bow<'_> {
         }
     }
 
-    /// The main hand's pose: the bow held for the draw, or `None` (the
-    /// authored carry) at rest.
+    /// The main hand's pose: the strain tremor about the hold while drawing,
+    /// `None` (the authored carry) at rest.
     fn pose(&self) -> Option<HeldPose> {
         self.drawing.then(|| {
             let [sx, sy] = self.shake();
             HeldPose {
                 first_person: HeldPoseData {
-                    rotation: [
-                        DRAW_1P.rotation[0] + sy * SHAKE_DEG,
-                        DRAW_1P.rotation[1],
-                        DRAW_1P.rotation[2] + sx * SHAKE_DEG,
-                    ],
-                    translation: [
-                        DRAW_1P.translation[0] + sx * SHAKE_PX,
-                        DRAW_1P.translation[1] + sy * SHAKE_PX,
-                        DRAW_1P.translation[2],
-                    ],
+                    rotation: [sy * SHAKE_DEG, 0.0, sx * SHAKE_DEG],
+                    translation: [sx * SHAKE_PX, sy * SHAKE_PX, 0.0],
                 },
-                third_person: DRAW_3P,
+                third_person: HeldPoseData::IDENTITY,
             }
         })
     }
 
-    /// Both arms in the archer's stance — empty at rest, so the arms hang
-    /// and swing normally. The bow arm is up from the first frame; the string
-    /// arm's elbow folds with the draw.
+    /// The strain tremor in the bow arm, composed over the draw clip — empty
+    /// until the draw strains.
     fn arms(&self) -> Vec<BonePoseData> {
-        if !self.drawing {
+        let [sx, sy] = self.shake();
+        if !self.drawing || (sx == 0.0 && sy == 0.0) {
             return Vec::new();
         }
-        let hold = |bone: &str, rotation: [f32; 3]| BonePoseData {
-            bone: bone.to_string(),
-            rotation,
+        vec![BonePoseData {
+            bone: bone::MAIN_SHOULDER.to_string(),
+            rotation: [sy * SHAKE_DEG, 0.0, sx * SHAKE_DEG],
             translation: [0.0; 3],
-            mode: BonePoseMode::Replace,
-        };
-        let [sx, sy] = self.shake();
-        vec![
-            hold(
-                bone::MAIN_SHOULDER,
-                [
-                    DRAW_SHOULDER[0] + sy * SHAKE_DEG,
-                    DRAW_SHOULDER[1],
-                    DRAW_SHOULDER[2] + sx * SHAKE_DEG,
-                ],
-            ),
-            hold(bone::MAIN_ELBOW, DRAW_ELBOW),
-            hold(bone::OFF_SHOULDER, STRING_SHOULDER),
-            hold(
-                bone::OFF_ELBOW,
-                lerp3([0.0; 3], STRING_ELBOW_FULL, self.draw),
-            ),
-        ]
+            mode: BonePoseMode::Compose,
+        }]
+    }
+
+    /// What the body plays: its draw, scrubbed at how far it has come;
+    /// nothing in first person.
+    fn plays(&self) -> Vec<AnimatorPlay> {
+        self.drawing
+            .then(|| AnimatorPlay::scrubbed(rig::PLAYER_BODY, DRAW_SLOT, DRAW_3P, self.draw))
+            .into_iter()
+            .collect()
     }
 
     /// Everything the bow claims about the body this tick, for the
@@ -218,6 +182,7 @@ impl Bow<'_> {
             display: [self.display().map(str::to_owned), None],
             main: self.pose(),
             bones: self.arms(),
+            plays: self.plays(),
             ..Default::default()
         }
     }

@@ -51,7 +51,13 @@ pub mod remap;
 //     off while the client is still MESHING what it already received (an ack
 //     only says it was applied). Counts only; the pressure policy is the
 //     server's (`TerrainSync::apply_presentation_backlog`).
-pub const PROTOCOL_VERSION: u16 = 39;
+// 40: animator claims on the player rows and `SelfState` (`animator`: graph
+//     params set and slots played, by rig and graph ids the join's per-rig
+//     animator name tables remap), the `Animator` player action kind and the
+//     echoed `SelfEvents::animator_events` for fired graph events. The
+//     per-hand `motion_claims` of 33 are gone: a mod stands an engine gesture
+//     down through the graph's own `swing_claim` / `jab_claim` params.
+pub const PROTOCOL_VERSION: u16 = 40;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

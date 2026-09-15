@@ -1,8 +1,8 @@
 use crate::events::tick::{TickEvents, WorldEvents};
 use crate::net::protocol::{
     BlockDelta, ClientEventMsg, ItemSlotWire, ItemStateRow, MobStateRow, OpenScreen,
-    PlayerActionKind, PlayerStateRow, SelfEvents, SelfState, SelfTransform, SpatialSoundMsg,
-    TickUpdate, Transform, WorldEventMsg,
+    PlayerStateRow, SelfEvents, SelfState, SelfTransform, SpatialSoundMsg, TickUpdate, Transform,
+    WorldEventMsg,
 };
 use petramond_math::math::IVec3;
 use petramond_world::inventory::Hand;
@@ -121,10 +121,11 @@ impl ServerGame {
                         sess.player.claims.held_display(Hand::Off).map(|i| i.0),
                     ],
                     bone_poses: sess.player.claims.bone_poses().collect(),
-                    motion_claims: [
-                        sess.player.claims.hand_motions(Hand::Main),
-                        sess.player.claims.hand_motions(Hand::Off),
-                    ],
+                    animator: {
+                        let mut claims = sess.player.claims.animator().clone();
+                        claims.retain_observed();
+                        claims
+                    },
                     hurt_recent: events.player_at(s).player_damaged,
                     snap: sess.tick_teleported,
                     mount: sess
@@ -135,51 +136,9 @@ impl ServerGame {
             .collect();
         let mut player_actions = Vec::new();
         for (s, sess) in self.sessions.iter().enumerate() {
-            let p = events.player_at(s);
-            let mut push = |kind| player_actions.push((sess.id, kind));
-            if p.swung_hand {
-                push(PlayerActionKind::Swung);
-            }
-            if p.broke_block.is_some() {
-                push(PlayerActionKind::Broke);
-            }
-            if p.placed_block.is_some() {
-                push(if p.click_off_hand {
-                    PlayerActionKind::PlacedOff
-                } else {
-                    PlayerActionKind::Placed
-                });
-            }
-            if p.threw_item {
-                push(PlayerActionKind::ThrewItem);
-            }
-            if p.used_item {
-                push(if p.click_off_hand {
-                    PlayerActionKind::UsedItemOff
-                } else {
-                    PlayerActionKind::UsedItem
-                });
-            }
-            if p.interacted {
-                push(if p.click_off_hand {
-                    PlayerActionKind::InteractedOff
-                } else {
-                    PlayerActionKind::Interacted
-                });
-            }
-            if p.ate_finished {
-                push(if p.ate_off_hand {
-                    PlayerActionKind::AteFinishedOff
-                } else {
-                    PlayerActionKind::AteFinished
-                });
-            }
-            if p.player_died {
-                push(PlayerActionKind::Died);
-            }
-            if p.respawned {
-                push(PlayerActionKind::Respawned);
-            }
+            super::player_actions::player_action_kinds(events.player_at(s), |kind| {
+                player_actions.push((sess.id, kind))
+            });
         }
         // Full open-chest state per batch (chest_viewers keys; tiny), sorted
         // so the wire batch is deterministic.
@@ -336,6 +295,7 @@ impl ServerGame {
         // click time echo rule. Observers
         // get them via the shared `player_actions` rows.
         SelfEvents {
+            animator_events: p.animator_events.clone(),
             picked_up_item: p.picked_up_item,
             bed_interacted: p.bed_interacted,
             player_damaged: p.player_damaged,
@@ -437,10 +397,7 @@ impl ServerGame {
                 player.claims.held_display(Hand::Off).map(|i| i.0),
             ],
             bone_poses: player.claims.bone_poses().collect(),
-            motion_claims: [
-                player.claims.hand_motions(Hand::Main),
-                player.claims.hand_motions(Hand::Off),
-            ],
+            animator: player.claims.animator().clone(),
             inventory_revision: revision,
             inventory,
             eating: sess

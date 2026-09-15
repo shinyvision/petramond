@@ -1,7 +1,7 @@
 //! Per-body easing of published bone offsets.
 //!
-//! The held-item pose is eased by the renderer's hand animator; the bones have
-//! no animator of their own and must move at the SAME rate, or the arm snaps
+//! The held-item pose is eased by `HeldItemEase`; claimed bone offsets have
+//! no easing of their own and must move at the SAME rate, or the arm snaps
 //! to a stance while the thing in its fist glides after it. One rate
 //! ([`POSE_EASE_RATE`]) for both.
 //!

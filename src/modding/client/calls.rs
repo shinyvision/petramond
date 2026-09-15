@@ -117,9 +117,12 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // A read of what the local player carries, off the replicated
         // inventory — what lets a gesture rule predict the same refusal.
         | HostCall::PlayerInventory { .. }
-        // ...and the swing claim beside them — the same presentation-only
-        // shape (silencing the local motions the mod animates).
-        | HostCall::SetPlayerHandMotions { .. }
+        // ...and what the rigs PLAY, plus the clip reads a rule times itself
+        // by.
+        | HostCall::SetPlayerAnimatorParams { .. }
+        | HostCall::SetPlayerAnimatorPlays { .. }
+        | HostCall::FirePlayerAnimatorEvent { .. }
+        | HostCall::AnimationClip { .. }
         // Taking the use gesture is what a client mod predicts BEST: the press
         // is local input, so the answer is the same one the server reaches a
         // round trip later.
@@ -485,6 +488,68 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 )
             }
         }
+        // The PREDICTED twins of the server's animator primitives, addressed
+        // at the local player like every body write here. The latch is per
+        // `(rig, param)` / `(rig, slot)`, like bones: a mod setting one param
+        // owns that param locally from then on, and leaves every other
+        // replicated claim exactly where it was. A refused write latches
+        // nothing, or a NaN would hide the replicated claim for good.
+        HostCall::SetPlayerAnimatorParams { player, params } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "SetPlayerAnimatorParams: a client instance may animate only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let params = match crate::player::animator::resolve_params(params) {
+                Ok(params) => params,
+                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorParams: {e}")),
+            };
+            let keys: Vec<_> = params.iter().map(|p| (p.rig, p.param)).collect();
+            if !client.body.set_animator_params(&mod_id, params) {
+                return HostRet::Error("SetPlayerAnimatorParams: non-finite value".into());
+            }
+            client.owns_animator.params.extend(keys);
+            HostRet::Bool(true)
+        }
+        HostCall::SetPlayerAnimatorPlays { player, plays } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "SetPlayerAnimatorPlays: a client instance may animate only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let plays = match crate::player::animator::resolve_plays(plays) {
+                Ok(plays) => plays,
+                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorPlays: {e}")),
+            };
+            let keys: Vec<_> = plays.iter().map(|p| (p.rig, p.slot)).collect();
+            if !client.body.set_animator_plays(&mod_id, plays) {
+                return HostRet::Error("SetPlayerAnimatorPlays: non-finite progress or rate".into());
+            }
+            client.owns_animator.slots.extend(keys);
+            HostRet::Bool(true)
+        }
+        HostCall::FirePlayerAnimatorEvent { player, rig, event } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::Error(format!(
+                    "FirePlayerAnimatorEvent: a client instance may animate only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let (rig, event) = match crate::player::animator::resolve_event(&rig, &event) {
+                Ok(resolved) => resolved,
+                Err(e) => return HostRet::Error(format!("FirePlayerAnimatorEvent: {e}")),
+            };
+            client.animator_events.push((rig, event));
+            HostRet::Bool(true)
+        }
+        HostCall::AnimationClip { rig, clip } => {
+            HostRet::AnimationClip(crate::player::animator::clip_info(&rig, &clip))
+        }
         HostCall::PlayerInventory { player } => {
             let local = super::scope::active_actor().and_then(|a| a.id);
             if local != Some(player) {
@@ -538,28 +603,11 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             // Latch per BONE, not per body: a mod bending an arm owns that
             // arm locally, but must not blank an unrelated bone another pack
             // is bending server-side.
-            client.poses_bones.extend(bones.iter().map(|b| b.bone));
-            client.body.set_bone_poses(&mod_id, bones);
-            HostRet::Bool(true)
-        }
-        // The predicted twin of the server's hand-motion claim, same
-        // local-only rule: the first owned write latches the hand locally, so
-        // a release presents as the vanilla motion returning on this frame.
-        HostCall::SetPlayerHandMotions { player, main, off } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "SetPlayerHandMotions: a client instance may claim only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
+            let keys: Vec<u16> = bones.iter().map(|b| b.bone).collect();
+            if !client.body.set_bone_poses(&mod_id, bones) {
+                return HostRet::Error(crate::modding::BONE_POSE_REFUSAL.into());
             }
-            let (main, off) = (
-                crate::player::HandMotions::of(main),
-                crate::player::HandMotions::of(off),
-            );
-            client.owns_motions[0] |= !main.is_empty();
-            client.owns_motions[1] |= !off.is_empty();
-            client.body.set_hand_motions(&mod_id, main, off);
+            client.poses_bones.extend(keys);
             HostRet::Bool(true)
         }
         // The PREDICTED twin of the server's `HoldUse`: a client has one

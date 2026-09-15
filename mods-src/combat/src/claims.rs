@@ -67,9 +67,11 @@ pub struct Claims {
     /// duplicates) in insertion order, which is deterministic where a hash
     /// set's order would not be.
     pub denied: Vec<BodyAction>,
-    /// The hand motions this pack animates itself, per hand (`[main, off]`),
-    /// so the engine's own stand down. Unions across rules.
-    pub hands: [Vec<HandMotion>; 2],
+    /// Graph params set on the rigs — the engine's `<hand>.swing_claim` /
+    /// `.jab_claim` among them, which stand its own gestures down on a hand
+    /// this pack animates ([`swing_claim`]). A param holds one value, so the
+    /// EARLIER rule's value wins a `(rig, param)` it states.
+    pub params: Vec<AnimatorParam>,
     /// What each hand DISPLAYS in place of its stack (`[main, off]`, by
     /// registry name); `None` = the stack's own art.
     pub display: [Option<String>; 2],
@@ -80,6 +82,9 @@ pub struct Claims {
     /// Rig bone offsets. Extend across rules — a rule owns the joints it
     /// names, and two rules naming one joint is a pack bug, not a merge.
     pub bones: Vec<BonePoseData>,
+    /// Montages held in the rigs' slots. A slot plays one thing, so the
+    /// EARLIER rule's play wins a `(rig, slot)` it states.
+    pub plays: Vec<AnimatorPlay>,
     /// The body absorbs hits arriving inside this frontal arc. A body has
     /// one guard, so the earlier rule's stands.
     pub cover: Option<Cover>,
@@ -92,11 +97,12 @@ impl Default for Claims {
             speed: 1.0,
             cooldown: 1.0,
             denied: Vec::new(),
-            hands: [Vec::new(), Vec::new()],
+            params: Vec::new(),
             display: [None, None],
             main: None,
             off: None,
             bones: Vec::new(),
+            plays: Vec::new(),
             cover: None,
         }
     }
@@ -111,24 +117,31 @@ fn union<T: PartialEq>(into: &mut Vec<T>, from: Vec<T>) {
 }
 
 impl Claims {
-    /// Compose `later` UNDER these claims: a hand, display or cover this
-    /// rule states stays its own, everything else composes (multipliers
-    /// multiply, denials and motions union, bones extend, the press is held
-    /// if either holds it).
+    /// Compose `later` UNDER these claims: a hand, display, slot or cover
+    /// this rule states stays its own, everything else composes
+    /// (multipliers multiply, denials and motions union, bones extend, the
+    /// press is held if either holds it).
     pub fn over(mut self, later: Claims) -> Claims {
         self.holds_press |= later.holds_press;
         self.speed *= later.speed;
         self.cooldown *= later.cooldown;
         union(&mut self.denied, later.denied);
-        let [main_hands, off_hands] = later.hands;
-        union(&mut self.hands[0], main_hands);
-        union(&mut self.hands[1], off_hands);
+        for param in later.params {
+            if !self.params.iter().any(|p| (&p.rig, &p.param) == (&param.rig, &param.param)) {
+                self.params.push(param);
+            }
+        }
         let [main_display, off_display] = later.display;
         self.display[0] = self.display[0].take().or(main_display);
         self.display[1] = self.display[1].take().or(off_display);
         self.main = self.main.or(later.main);
         self.off = self.off.or(later.off);
         self.bones.extend(later.bones);
+        for play in later.plays {
+            if !self.plays.iter().any(|p| (&p.rig, &p.slot) == (&play.rig, &play.slot)) {
+                self.plays.push(play);
+            }
+        }
         self.cover = self.cover.or(later.cover);
         self
     }
@@ -138,6 +151,23 @@ impl Claims {
     pub fn covers(&self, state: &PlayerSnapshot, origin: Option<[f64; 3]>) -> bool {
         self.cover.is_some_and(|cover| cover.covers(state, origin))
     }
+}
+
+/// The params that stand the engine's own SWING family (the mining loop,
+/// the break and attack punches) down on one hand (`0` main, `1` off), on
+/// both rigs: the pack animates that hand itself, and the engine's copy
+/// layered under it would be two swings fighting one another. The use jab
+/// is left to the engine.
+pub fn swing_claim(hand: usize) -> Vec<AnimatorParam> {
+    let param = if hand == 0 { "main.swing_claim" } else { "off.swing_claim" };
+    [rig::PLAYER_BODY, rig::PLAYER_FIRST_PERSON]
+        .into_iter()
+        .map(|rig| AnimatorParam {
+            rig: rig.to_string(),
+            param: param.to_string(),
+            value: AnimatorValue::Number(1.0),
+        })
+        .collect()
 }
 
 /// What a rule sees of one body when resolving its claims.

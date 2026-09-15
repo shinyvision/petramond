@@ -2,7 +2,7 @@
 //! items, health, teleports, status effects, and chat delivery.
 
 use mod_api::{
-    BodyAction, BonePoseData, EffectStateData, EntityRef, HandMotion, HeldPose, PlayerAttribute,
+    BodyAction, BonePoseData, EffectStateData, EntityRef, HeldPose, PlayerAttribute,
     PlayerId, PlayerInputData, PlayerSnapshot,
 };
 
@@ -396,24 +396,45 @@ host_fn! {
 }
 
 host_fn! {
-    /// Take over some of a hand's ENGINE MOTIONS on `player`
-    /// ([`HandMotion`]) — the claim that stops the engine playing its own
-    /// copy of each named gesture, so the animation this mod publishes
-    /// (poses and bone offsets per [`player_state`]`().swing` phase) is the
-    /// whole motion, not a layer fighting the vanilla one.
-    ///
-    /// `Swing` silences the mining loop and the break/attack punches; `Jab`
-    /// the soft use gesture. A claimed motion plays nothing of the engine's,
-    /// so the claimant owes that hand an animation every frame the facts say
-    /// it is happening; a motion left unclaimed keeps its engine default (a
-    /// swing-only claimant's hand still jabs on a placement). The facts stay
-    /// published exactly as before.
-    ///
-    /// An empty list releases a hand; a vanilla motion returns once no mod
-    /// claims it (claims UNION across mods per motion, like the denied
-    /// actions). CLIENT-legal for the LOCAL player, the predicted path of
-    /// [`set_player_held_pose`] — pose the hands a round trip early by
-    /// running the same rule on both sides.
-    pub fn set_player_hand_motions(player: PlayerId, main: Vec<HandMotion>, off: Vec<HandMotion>) -> bool
-        => SetPlayerHandMotions { player, main, off } => Bool
+    /// Set graph PARAMS on `player`'s rig animators
+    /// ([`AnimatorParam`](mod_api::AnimatorParam)) — the animator's `set`
+    /// primitive. TRANSIENT and keyed by mod: the list replaces your previous
+    /// params (empty releases them), the last mod in id order wins a
+    /// contested param, a released one falls back to the engine's value.
+    /// Params feed every formula a graph has — its weights, rule conditions
+    /// and gates — so setting the param a rig's gate reads stands an engine
+    /// gesture down on a hand you animate. `rig` names a registered rig
+    /// ([`rig`](mod_api::rig)). CLIENT-legal for the
+    /// LOCAL player — its own predicted path: a param you set locally is
+    /// yours from then on.
+    pub fn set_player_animator_params(player: PlayerId, params: Vec<mod_api::AnimatorParam>) -> bool
+        => SetPlayerAnimatorParams { player, params } => Bool
+}
+
+host_fn! {
+    /// Hold montages in SLOTS of `player`'s rig animators
+    /// ([`AnimatorPlay`](mod_api::AnimatorPlay)) — the animator's `play`
+    /// primitive: a clip in a declared slot on your clock
+    /// ([`AnimatorClock`](mod_api::AnimatorClock)). TRANSIENT and keyed by
+    /// mod: the list replaces your previous plays (empty releases them all),
+    /// the last mod in id order wins a contested slot. CLIENT-legal for the
+    /// LOCAL player — its own predicted path.
+    pub fn set_player_animator_plays(player: PlayerId, plays: Vec<mod_api::AnimatorPlay>) -> bool
+        => SetPlayerAnimatorPlays { player, plays } => Bool
+}
+
+host_fn! {
+    /// Fire a graph EVENT on one of `player`'s rig animators — the
+    /// animator's `fire` primitive; the graph's rules answer it on every
+    /// mirror. An edge, nothing to release. CLIENT-legal for the LOCAL
+    /// player; the server's echo of an event you fired is dropped.
+    pub fn fire_player_animator_event(player: PlayerId, rig: &str, event: &str) -> bool
+        => FirePlayerAnimatorEvent { player, rig: rig.into(), event: event.into() } => Bool
+}
+
+host_fn! {
+    /// One player-rig clip's length, loop and timeline markers — an `impact`
+    /// marker is where its strike lands. `None` when the rig has no such clip.
+    pub fn animation_clip(rig: &str, clip: &str) -> Option<mod_api::AnimationClipInfo>
+        => AnimationClip { rig: rig.into(), clip: clip.into() } => AnimationClip
 }

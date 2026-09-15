@@ -3,7 +3,7 @@
 //! transitions, world create/delete/settings I/O, and the text-input hooks
 //! that forward platform keyboard events into the GUI-document runtime.
 
-use super::{now_seconds, App, AppScreen, HandTriggers};
+use super::{now_seconds, App, AppScreen};
 use petramond_render::camera::Camera;
 use petramond_world::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 
@@ -319,7 +319,7 @@ impl App {
         self.scene.clear();
         self.client_canvas = None;
         self.client_overlay_images.clear();
-        self.hand = HandTriggers::default();
+        self.hand_events.clear();
         self.sleep_interact_hand_t = 0.0;
         self.lan_port = None;
         self.lan_error = None;
@@ -522,7 +522,7 @@ impl App {
         self.screen = AppScreen::Game;
         self.pointer.grab_for_gameplay();
         self.gui_router.reset_click_streak();
-        self.hand = HandTriggers::default();
+        self.hand_events.clear();
         self.sleep_interact_hand_t = 0.0;
         self.lan_port = None;
         self.lan_error = None;

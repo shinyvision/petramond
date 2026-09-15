@@ -131,7 +131,7 @@ impl ServerGame {
     /// the eating hand's item changed under the eat, or — for a main-hand eat
     /// — the selection moved to ANY other slot; consume the item and grant its
     /// effects when the hold reaches the row's `eat_ticks`.
-    pub fn advance_eating(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn advance_eating(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
         let Some(eat) = sess.eating else {
             return;
@@ -179,8 +179,6 @@ impl ServerGame {
         for &(effect, ticks) in food.effects {
             sess.player.apply_effect(effect, ticks);
         }
-        events.player(s).ate_finished = true;
-        events.player(s).ate_off_hand = eat.hand == petramond_world::inventory::Hand::Off;
         self.bus.emit(PostEvent::ItemUsed {
             player: self.sessions[s].id,
             item: eat.item,

@@ -7,10 +7,11 @@ use petramond_math::world_pos::WorldPos;
 fn run_with_other(sim: &mut Sim, other: &mut Player) {
     let mut other_gui = petramond_world::gui_state::empty_gui_state();
     with_sessions_scope(
-        crate::player::PlayerId(0),
+        (crate::player::PlayerId(0), 0),
         None,
         vec![SessionPlayerRef {
             id: crate::player::PlayerId(1),
+            index: 1,
             player: other,
             gui_state: &mut other_gui,
             gui: None,

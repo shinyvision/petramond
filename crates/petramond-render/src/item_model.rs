@@ -255,6 +255,42 @@ fn opaque(tile: Tile, tx: i32, ty: i32) -> bool {
     tile_alpha_opaque(tile, u, v_bottom_up)
 }
 
+/// Where a hand holds a sprite, in its unit model space: up from the end of its
+/// art (the lowest opaque rows) toward the art's middle — a tool a third of the
+/// way, by its shaft; anything else near its end, so wide art stays out of the
+/// fist.
+pub(crate) fn grip_point(tile: Tile, tool: bool) -> glam::Vec3 {
+    // Tile art is fixed for the process, so each grip is found once.
+    static GRIPS: std::sync::LazyLock<Box<[[std::sync::OnceLock<glam::Vec3>; 2]]>> =
+        std::sync::LazyLock::new(|| Tile::all().map(|_| Default::default()).collect());
+    match GRIPS.get(tile.index()) {
+        Some(grips) => *grips[usize::from(tool)].get_or_init(|| find_grip_point(tile, tool)),
+        None => find_grip_point(tile, tool),
+    }
+}
+
+fn find_grip_point(tile: Tile, tool: bool) -> glam::Vec3 {
+    let texels: Vec<(i32, i32)> = (0..GRID as i32)
+        .flat_map(|ty| (0..GRID as i32).map(move |tx| (tx, ty)))
+        .filter(|&(tx, ty)| opaque(tile, tx, ty))
+        .collect();
+    let Some(lowest) = texels.iter().map(|&(_, ty)| ty).max() else {
+        return glam::Vec3::ZERO;
+    };
+    let centre = |set: &mut dyn Iterator<Item = &(i32, i32)>| {
+        let (mut sum, mut n) = (glam::Vec2::ZERO, 0.0);
+        for &(tx, ty) in set {
+            sum += glam::Vec2::new(px(tx) + 0.5 / GRID as f32, py(ty) - 0.5 / GRID as f32);
+            n += 1.0;
+        }
+        sum / n
+    };
+    let end = centre(&mut texels.iter().filter(|&&(_, ty)| ty >= lowest - 1));
+    let middle = centre(&mut texels.iter());
+    let along = if tool { 0.35 } else { 0.12 };
+    (end + (middle - end) * along).extend(0.0)
+}
+
 /// Atlas UV of texel `(tx, ty)` (ty top-down) within `tile`'s rect: returns
 /// `(u0, v0, u1, v1)` for that single texel, where v0 is the TOP edge in atlas
 /// space (atlas v increases downward) so it composes with `corner` ordering.

@@ -346,6 +346,7 @@ impl App {
         on_disk.sound_volume = self.settings.sound_volume;
         on_disk.music_volume = self.settings.music_volume;
         on_disk.particles = self.settings.particles;
+        on_disk.screen_shake = self.settings.screen_shake;
         on_disk.anti_aliasing = self.settings.anti_aliasing;
         on_disk.bindings = self.settings.bindings.clone();
         if let Err(e) = petramond::save::client::store(&on_disk) {
@@ -369,6 +370,16 @@ impl App {
             game.set_particles_mode(self.settings.particles);
         }
         self.renderer_options_dirty = true;
+    }
+
+    /// Screen shake on or off: the renderer's half (camera bone, hand jitter)
+    /// on the next render; the hurt jitter on the camera reads the setting
+    /// every frame.
+    pub(super) fn apply_screen_shake(&mut self, on: bool) {
+        if self.settings.screen_shake != on {
+            self.settings.screen_shake = on;
+            self.renderer_options_dirty = true;
+        }
     }
 
     pub(super) fn apply_anti_aliasing(&mut self, mode: petramond::save::client::AntiAliasing) {

@@ -21,6 +21,7 @@ use petramond_math::math::IVec3;
 use petramond_world::crafting::Recipes;
 
 mod fixed_tick;
+mod player_actions;
 mod pump;
 mod replication;
 mod session_lifecycle;

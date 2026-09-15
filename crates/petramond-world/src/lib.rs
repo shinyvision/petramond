@@ -11,6 +11,7 @@ pub use petramond_math::{face, facing, math as mathh, wire_enum};
 pub use petramond_util::{memory, paths, test_time, texture_mips};
 
 pub mod ai_vocab;
+pub mod animation;
 pub mod asset_cache;
 pub mod assets;
 pub mod bbmodel;

@@ -71,10 +71,18 @@ fn render_origin_for_camera(pos: petramond_math::world_pos::WorldPos) -> glam::I
     glam::IVec3::new(snap(cell.x), snap(cell.y), snap(cell.z))
 }
 
+/// `view_offset` is a view-space correction applied after the look (the
+/// first-person camera bone), identity otherwise.
 #[inline]
-fn relative_view_proj(cam: &Camera, render_origin: glam::IVec3) -> glam::Mat4 {
+fn relative_view_proj(
+    cam: &Camera,
+    render_origin: glam::IVec3,
+    view_offset: glam::Mat4,
+) -> glam::Mat4 {
     let local_pos = cam.pos.relative_to(render_origin);
-    cam.proj() * glam::Mat4::look_at_rh(local_pos, local_pos + cam.forward(), glam::Vec3::Y)
+    cam.proj()
+        * view_offset
+        * glam::Mat4::look_at_rh(local_pos, local_pos + cam.forward(), glam::Vec3::Y)
 }
 
 impl Renderer {
@@ -91,7 +99,13 @@ impl Renderer {
             .map(|def| &def.medium);
         let render_origin = render_origin_for_camera(cam.pos);
         let local_cam = cam.pos.relative_to(render_origin);
-        let view_proj = relative_view_proj(cam, render_origin);
+        let view_offset = match &self.hand.first_person {
+            Some(first_person) if self.hand.visible && self.hand.screen_shake => {
+                first_person.view_offset()
+            }
+            _ => glam::Mat4::IDENTITY,
+        };
+        let view_proj = relative_view_proj(cam, render_origin, view_offset);
         let inv_view_proj = view_proj.inverse();
         // Refresh the culling frustum from the same matrix the GPU will use.
         self.view.frustum = Frustum::from_view_proj(view_proj);
@@ -229,17 +243,50 @@ impl Renderer {
         self.hand.break_overlays.extend_from_slice(v);
     }
 
-    /// Advance and store the first-person held-item / hand state for this frame.
-    pub fn set_held_item(&mut self, v: HeldItemFrame) {
-        self.hand.held_item = self.hand.held_item_anim.update(v);
+    /// Store both hands' frames, `dt` seconds after the last: each hand's
+    /// eased held view for the seats and attaches, and the frames themselves
+    /// for every animator the local player drives. An empty off-hand frame
+    /// (`item == None`) draws nothing in the left hand.
+    pub fn set_hands(&mut self, main: HeldItemFrame, off: HeldItemFrame, dt: f32) {
+        let hand = &mut self.hand;
+        hand.held_item = hand.held_ease[0].update(&main, dt);
+        hand.off_item = hand.held_ease[1].update(&off, dt);
+        hand.frames = Some([main, off]);
+        hand.frame_dt = dt;
     }
 
-    /// Advance and store the first-person OFF-hand (left) held-item state for
-    /// this frame. An empty frame (`item == None`) draws nothing — the left
-    /// hand appears exactly while the off-hand slot holds an item. The local
-    /// third-person body attaches the same animated view to its left hand.
-    pub fn set_off_hand_item(&mut self, v: HeldItemFrame) {
-        self.hand.off_item = self.hand.off_item_anim.update(v);
+    /// Store the local player's resolved animator claims and the graph
+    /// events fired on it this frame, for both of its rigs. Call before
+    /// [`set_first_person_motion`](Self::set_first_person_motion).
+    pub fn set_local_animator(
+        &mut self,
+        claims: &petramond::player::AnimatorClaims,
+        events: &[(petramond::player::RigId, u16)],
+    ) {
+        let hand = &mut self.hand;
+        hand.local_params.clear();
+        hand.names.rows(&claims.params, &mut hand.local_params);
+        hand.local_plays.clear();
+        hand.local_plays.extend_from_slice(&claims.plays);
+        hand.local_events.clear();
+        hand.local_events.extend_from_slice(events);
+    }
+
+    /// Advance the first-person rig's animator for this frame. Call after
+    /// [`set_hands`](Self::set_hands) and before
+    /// [`update_uniforms`](Self::update_uniforms), which applies the rig's
+    /// camera bone to the world view.
+    pub fn set_first_person_motion(&mut self, motion: crate::views::LocalMotion) {
+        let hand = &mut self.hand;
+        let (Some(first_person), Some(frames)) = (hand.first_person.as_mut(), hand.frames) else {
+            return;
+        };
+        let inputs = crate::AnimatorInputs {
+            params: &hand.local_params,
+            plays: &hand.local_plays,
+            events: &hand.local_events,
+        };
+        first_person.advance(&frames, &motion, inputs, hand.frame_dt);
     }
 
     pub fn set_hand_visible(&mut self, visible: bool) {
@@ -320,11 +367,25 @@ impl Renderer {
         self.actor.remote_players.extend_from_slice(v);
     }
 
-    /// Store this frame's bone-offset arena — the backing every drawn body's
-    /// `PlayerRenderInstance::bones` range indexes into. Reuses capacity.
-    pub fn set_bone_offsets(&mut self, v: &[crate::BoneOffset]) {
-        self.actor.bone_offsets.clear();
-        self.actor.bone_offsets.extend_from_slice(v);
+    /// Take this frame's animator arenas — the backing every remote body's
+    /// `RemotePlayerRender::animator` ranges index into — by swapping them
+    /// with last frame's, which go back to the caller to refill.
+    pub fn swap_animator_arenas(
+        &mut self,
+        params: &mut Vec<crate::views::AnimatorParamRow>,
+        plays: &mut Vec<petramond::player::AnimatorPlay>,
+        events: &mut Vec<(petramond::player::RigId, u16)>,
+    ) {
+        std::mem::swap(&mut self.actor.animator_params, params);
+        std::mem::swap(&mut self.actor.animator_plays, plays);
+        std::mem::swap(&mut self.actor.animator_events, events);
+    }
+
+    /// Take this frame's bone-offset arena — the backing every drawn body's
+    /// `PlayerRenderInstance::bones` range indexes into — by swapping it with
+    /// last frame's, which goes back to the caller to refill.
+    pub fn swap_bone_offsets(&mut self, v: &mut Vec<crate::BoneOffset>) {
+        std::mem::swap(&mut self.actor.bone_offsets, v);
     }
 
     /// Store the block-atlas particle cubes to draw this frame. Reuses capacity.

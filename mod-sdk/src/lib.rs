@@ -23,7 +23,7 @@ mod core_calls;
 mod entities;
 mod gui;
 mod instance_data;
-pub use mod_api::{animation, json};
+pub use mod_api::json;
 mod kv;
 mod loot;
 mod memo;

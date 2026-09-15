@@ -4,7 +4,9 @@ use glam::Vec3;
 use serde_json::Value;
 
 use super::texture::TextureSheet;
-use super::{Animation, Bone, Cube, Keyframe};
+use super::{
+    Animation, BezierHandles, Bone, Channel, Cube, Interpolation, Keyframe, Marker, MarkerKind,
+};
 
 /// Recursively assign bone parents + cube bones from one `outliner` node. A node
 /// is either a cube-uuid string (a leaf) or a group object (`uuid` + `children`).
@@ -95,8 +97,9 @@ pub(super) fn parse_faces(
     out
 }
 
-/// Parse the `animations` array into named [`Animation`]s with per-bone rotation
-/// tracks. Animators are keyed by group uuid -> bone index.
+/// Parse the `animations` array into named [`Animation`]s: per-bone rotation
+/// and position tracks (animators keyed by group uuid → bone index) with every
+/// key's interpolation, plus the Effects animator's markers.
 pub(super) fn parse_animations(
     root: &Value,
     bone_by_uuid: &HashMap<String, usize>,
@@ -112,62 +115,126 @@ pub(super) fn parse_animations(
             .unwrap_or("")
             .to_string();
         let length = a.get("length").and_then(Value::as_f64).unwrap_or(0.0) as f32;
-        // Blockbench loop modes: "loop" loops; "once"/"hold" (or absent) play once.
-        // Some formats store a bool. Anything but a looping signal counts as one-shot.
-        let looping = match a.get("loop") {
-            Some(Value::String(s)) => s == "loop",
-            Some(Value::Bool(b)) => *b,
-            _ => false,
+        // Blockbench loop modes: "loop" loops, "hold" plays once and keeps its
+        // last frame, "once" (or absent) plays once. Some formats store a bool.
+        let (looping, hold) = match a.get("loop") {
+            Some(Value::String(s)) => (s == "loop", s == "hold"),
+            Some(Value::Bool(b)) => (*b, false),
+            _ => (false, false),
         };
-        let mut tracks: HashMap<usize, Vec<Keyframe>> = HashMap::new();
-        let mut pos_tracks: HashMap<usize, Vec<Keyframe>> = HashMap::new();
+        let mut anim = Animation::new(length, looping, hold);
         if let Some(animators) = a.get("animators").and_then(Value::as_object) {
             for (uuid, animator) in animators {
-                let Some(&bone) = bone_by_uuid.get(uuid) else {
-                    continue;
-                };
                 let Some(kfs) = animator.get("keyframes").and_then(Value::as_array) else {
                     continue;
                 };
-                let channel_track = |channel: &str| -> Vec<Keyframe> {
-                    let mut track: Vec<Keyframe> = kfs
-                        .iter()
-                        .filter(|k| k.get("channel").and_then(Value::as_str) == Some(channel))
-                        .filter_map(|k| {
-                            let time = k.get("time").and_then(Value::as_f64)? as f32;
-                            let dp = k.get("data_points").and_then(Value::as_array)?.first()?;
-                            let v = Vec3::new(
-                                dp.get("x").and_then(num).unwrap_or(0.0),
-                                dp.get("y").and_then(num).unwrap_or(0.0),
-                                dp.get("z").and_then(num).unwrap_or(0.0),
-                            );
-                            Some(Keyframe { time, v })
-                        })
-                        .collect();
-                    track.sort_by(|a, b| a.time.total_cmp(&b.time));
-                    track
-                };
-                let rot = channel_track("rotation");
-                if !rot.is_empty() {
-                    tracks.insert(bone, rot);
+                if animator.get("type").and_then(Value::as_str) == Some("effect") {
+                    for k in kfs {
+                        push_effect_markers(&mut anim, k);
+                    }
+                    continue;
                 }
-                let pos = channel_track("position");
-                if !pos.is_empty() {
-                    pos_tracks.insert(bone, pos);
+                let Some(&bone) = bone_by_uuid.get(uuid) else {
+                    continue;
+                };
+                for (channel, label) in [
+                    (Channel::Rotation, "rotation"),
+                    (Channel::Position, "position"),
+                ] {
+                    let keys = kfs
+                        .iter()
+                        .filter(|k| k.get("channel").and_then(Value::as_str) == Some(label))
+                        .filter_map(parse_keyframe)
+                        .collect();
+                    anim.set_track(bone, channel, keys);
                 }
             }
         }
-        out.insert(
-            name,
-            Animation {
-                length,
-                looping,
-                tracks,
-                pos_tracks,
-            },
-        );
+        out.insert(name, anim);
     }
     out
+}
+
+/// One bone keyframe: its time, one or two data points (pre/post), its
+/// interpolation, and — on a Bezier key — its handles.
+fn parse_keyframe(k: &Value) -> Option<Keyframe> {
+    let time = k.get("time").and_then(num)?;
+    let points = k.get("data_points").and_then(Value::as_array)?;
+    let point = |dp: &Value| {
+        Vec3::new(
+            dp.get("x").and_then(num).unwrap_or(0.0),
+            dp.get("y").and_then(num).unwrap_or(0.0),
+            dp.get("z").and_then(num).unwrap_or(0.0),
+        )
+    };
+    let pre = point(points.first()?);
+    let post = points.last().map(point).unwrap_or(pre);
+    let interpolation = interpolation_named(k.get("interpolation").and_then(Value::as_str));
+    let bezier = (interpolation == Interpolation::Bezier).then(|| {
+        let d = BezierHandles::DEFAULT;
+        BezierHandles {
+            left_time: arr3(k.get("bezier_left_time")).unwrap_or(d.left_time),
+            left_value: arr3(k.get("bezier_left_value")).unwrap_or(d.left_value),
+            right_time: arr3(k.get("bezier_right_time")).unwrap_or(d.right_time),
+            right_value: arr3(k.get("bezier_right_value")).unwrap_or(d.right_value),
+        }
+    });
+    Some(Keyframe {
+        time,
+        pre,
+        post,
+        split: points.len() > 1,
+        interpolation,
+        bezier,
+    })
+}
+
+/// A Blockbench interpolation name; anything unrecognised is linear, the
+/// Blockbench default.
+pub(super) fn interpolation_named(name: Option<&str>) -> Interpolation {
+    match name {
+        Some("catmullrom") => Interpolation::CatmullRom,
+        Some("bezier") => Interpolation::Bezier,
+        Some("step") => Interpolation::Step,
+        _ => Interpolation::Linear,
+    }
+}
+
+/// One keyframe of the Effects animator as markers: a timeline key gives one
+/// marker per script line, a sound or particle key one per named effect.
+fn push_effect_markers(anim: &mut Animation, k: &Value) {
+    let Some(time) = k.get("time").and_then(num) else {
+        return;
+    };
+    let kind = match k.get("channel").and_then(Value::as_str) {
+        Some("timeline") => MarkerKind::Timeline,
+        Some("sound") => MarkerKind::Sound,
+        Some("particle") => MarkerKind::Particle,
+        _ => return,
+    };
+    for dp in k.get("data_points").and_then(Value::as_array).into_iter().flatten() {
+        if kind == MarkerKind::Timeline {
+            for name in dp.get("script").and_then(Value::as_str).into_iter().flat_map(script_lines) {
+                anim.push_marker(Marker { time, kind, name });
+            }
+        } else if let Some(effect) = dp.get("effect").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+            anim.push_marker(Marker {
+                time,
+                kind,
+                name: effect.to_string(),
+            });
+        }
+    }
+}
+
+/// A timeline script's lines as marker names: trimmed, trailing `;` dropped,
+/// empty lines skipped.
+pub(super) fn script_lines(script: &str) -> impl Iterator<Item = String> + '_ {
+    script
+        .lines()
+        .map(|line| line.trim().trim_end_matches(';').trim())
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
 }
 
 /// Whether face UVs are authored in each TEXTURE's own pixel space rather than

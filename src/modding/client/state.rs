@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::player::RigId;
+
 /// How many consecutive partial updates an image remembers; a consumer whose
 /// held revision fell out of the window uploads the whole texture.
 pub const IMAGE_BLIT_WINDOW: usize = 8;
@@ -47,6 +49,13 @@ pub enum ClientCommand {
 pub struct ClientCanvasSceneData {
     pub elements: Vec<mod_api::ClientCanvasElement>,
     pub offset: [f32; 2],
+}
+
+/// The animator keys a client mod owns locally: `(rig, id)` sets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AnimatorOwnership {
+    pub params: BTreeSet<(RigId, u16)>,
+    pub slots: BTreeSet<(RigId, u16)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,11 +126,14 @@ pub(in crate::modding) struct ClientStoreData {
     /// predicting a shoulder must leave another pack's replicated head tilt
     /// exactly where it was.
     pub poses_bones: BTreeSet<u16>,
-    /// Which hands this mod has ever claimed MOTIONS on (`[main, off]`),
-    /// latched on the first owned write like [`poses_hands`](Self::poses_hands)
-    /// and for the same reason: releasing a motion claim must present as the
-    /// vanilla motion returning on this frame, not a round trip later.
-    pub owns_motions: [bool; 2],
+    /// Which animator params and slots this mod has ever claimed, latched
+    /// like [`poses_bones`](Self::poses_bones) and for the same reason — per
+    /// key, because animator claims compose per key. Events are not latched:
+    /// a fire is an edge, so the runtime matches each one to the server's
+    /// echo one for one instead.
+    pub owns_animator: AnimatorOwnership,
+    /// Graph events this mod fired since the tick last drained them.
+    pub animator_events: Vec<(RigId, u16)>,
     /// Whether this mod holds the LOCAL player's current use gesture — the
     /// predicted twin of the session's owner, latched by `HoldUse` and cleared
     /// when the button comes up.
@@ -146,7 +158,8 @@ impl ClientStoreData {
             poses_hands: [false; 2],
             displays_hands: [false; 2],
             poses_bones: BTreeSet::new(),
-            owns_motions: [false; 2],
+            owns_animator: AnimatorOwnership::default(),
+            animator_events: Vec::new(),
             holds_use: false,
             commands: Vec::new(),
             next_image_revision: 1,

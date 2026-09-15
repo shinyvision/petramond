@@ -15,6 +15,21 @@ pub enum ItemRenderKind {
     Model(crate::block_model::BlockModelKind),
 }
 
+impl ItemRenderKind {
+    /// Every render kind's [`name`](Self::name).
+    pub const NAMES: [&'static str; 3] = ["block", "sprite", "model"];
+
+    /// The kind's name — the vocabulary data keys a render kind by (an
+    /// animator's `<hand>.kind` param, a rig's `holds`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::BlockCube(_) => "block",
+            Self::Sprite(_) => "sprite",
+            Self::Model(_) => "model",
+        }
+    }
+}
+
 /// First-person hold orientation for a [`Sprite`](ItemRenderKind::Sprite) item:
 /// the Euler tilt (radians) applied to the upright, origin-centred extruded slab
 /// before it's seated in the hand (see `crate::render`'s `held_sprite`). A long

@@ -214,10 +214,12 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
     );
     game.sync_self_view_for_test();
 
-    let (jabbed, off_hand, place) =
-        game.game
-            .predict_click_verdict_at_for_test(floor, IVec3::Y, false);
+    let verdict = game
+        .game
+        .predict_click_verdict_at_for_test(floor, IVec3::Y, false);
+    let (jabbed, off_hand, place) = (verdict.consumed, verdict.off_hand, verdict.place);
     assert!(jabbed, "the off-hand pass predicts the placement");
+    assert!(verdict.places, "a predicted placement is a place jab");
     assert!(off_hand, "the verdict names the acting hand");
     assert!(matches!(place, PlacePrediction::Predicted(_)));
     assert_eq!(
@@ -460,4 +462,57 @@ fn death_spills_the_off_hand_with_the_rest() {
         .map(|it| it.stack.count as u32)
         .sum();
     assert_eq!(spilled, 7, "both hands' stacks land in the corpse pile");
+}
+
+/// A use click with food in hand belongs to whatever claims it FIRST, as on
+/// the server: a built-in block takes it and the hand jabs; anywhere else the
+/// eat does — consumed, so the off hand never acts, but presented by the eat's
+/// raise instead of a jab.
+#[test]
+fn a_food_click_jabs_for_the_block_that_claims_it_and_otherwise_eats_without_one() {
+    let food = ItemType::all()
+        .iter()
+        .copied()
+        .find(|i| i.food().is_some() && i.as_block().is_none())
+        .expect("a registered non-block food");
+    let mut game = game_on_empty_chunk();
+    game.game.replica.insert_chunk_for_test(
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
+    );
+    let chest = IVec3::new(8, 64, 8);
+    let floor = IVec3::new(4, 63, 4);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(chest.x, chest.y, chest.z, Block::Chest));
+    assert!(game
+        .game
+        .replica
+        .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
+    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.server.sessions[0].player.inventory = hands(
+        Some(ItemStack::new(food, 3)),
+        Some(ItemStack::new(ItemType::Dirt, 3)),
+    );
+    game.sync_self_view_for_test();
+
+    let at_chest = game
+        .game
+        .predict_click_verdict_at_for_test(chest, IVec3::Y, false);
+    assert!(
+        at_chest.consumed && !at_chest.presents_itself && !at_chest.places && !at_chest.off_hand,
+        "the chest claims the click before the eat: the hand jabs"
+    );
+    let at_floor = game
+        .game
+        .predict_click_verdict_at_for_test(floor, IVec3::Y, false);
+    assert!(
+        at_floor.consumed && at_floor.presents_itself,
+        "the eat claims the click: its raise presents it, not a jab"
+    );
+    assert!(
+        !at_floor.off_hand && matches!(at_floor.place, PlacePrediction::No),
+        "a consumed click never reaches the off hand's dirt"
+    );
 }

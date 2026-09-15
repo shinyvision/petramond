@@ -398,15 +398,17 @@ impl ServerGame {
         let acting_gui = Self::open_gui_of(act);
         let others: Vec<SessionPlayerRef> = left
             .iter_mut()
-            .chain(right.iter_mut())
-            .map(|sess| SessionPlayerRef {
+            .enumerate()
+            .chain(right.iter_mut().enumerate().map(|(i, s)| (acting + 1 + i, s)))
+            .map(|(index, sess)| SessionPlayerRef {
                 id: sess.id,
+                index,
                 gui: Self::open_gui_of(sess),
                 player: &mut sess.player,
                 gui_state: &mut sess.gui_state,
             })
             .collect();
-        crate::events::with_sessions_scope(act.id, acting_gui, others, || f(act))
+        crate::events::with_sessions_scope((act.id, acting), acting_gui, others, || f(act))
     }
 
     /// One session's open GUI, as the sessions roster publishes it — the

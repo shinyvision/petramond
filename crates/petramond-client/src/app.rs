@@ -138,13 +138,14 @@ pub struct App {
     /// `now_seconds` of the last [`render`](Self::render), so the held-item animation
     /// advances by draw time even when the platform coalesces or skips a redraw.
     last_render: f64,
-    /// First-person hand-animation triggers latched since the last render, so a
-    /// swing/place/break begun on an un-drawn update isn't lost before the next
-    /// draw. Consumed (taken) by [`App::render`] and by NOTHING else: any other
-    /// consumer of these one-shot edges keeps its own latch
-    /// (`Game::swing_events` is the client mods'), because a shared latch is
-    /// whoever-eats-first and the other reader always ate second.
-    hand: HandTriggers,
+    /// Graph events fired on the local player's rigs since the last render
+    /// (the engine's own gestures resolved through `player::one_shot`, and
+    /// mod fires), so a swing/place/break begun on an un-drawn update isn't
+    /// lost before the next draw. Consumed (taken) by [`App::render`] and by
+    /// NOTHING else: any other consumer of these one-shot edges keeps its own
+    /// latch (`Game::swing_events` is the client mods'), because a shared
+    /// latch is whoever-eats-first and the other reader always ate second.
+    hand_events: Vec<(petramond::player::RigId, u16)>,
     /// Seconds left of the hurt screen/hand shake, latched to
     /// [`HURT_SHAKE_SECS`] when a `player_damaged` event arrives and decayed by
     /// render time. Presentation-only.
@@ -202,19 +203,6 @@ struct HeartWiggle {
 
 /// How long a changed heart wiggles, in REAL seconds (per design: not ticks).
 const HEART_WIGGLE_SECS: f64 = 0.2;
-
-/// One-shot first-person hand-animation triggers, latched by [`App::update`] and
-/// consumed by the next [`App::render`]. OR-merged across updates so none is dropped
-/// when several sim updates run between two draws.
-#[derive(Default, Copy, Clone)]
-struct HandTriggers {
-    broke: bool,
-    placed: bool,
-    swung: bool,
-    /// The place-jab latch for the LEFT hand (the use click's effect came
-    /// from the off-hand pass).
-    placed_off: bool,
-}
 
 #[derive(Default)]
 struct MobSoundState {
@@ -279,7 +267,7 @@ impl App {
             anti_aliasing_preview: None,
             view_distance_preview: None,
             last_render: now_seconds(),
-            hand: HandTriggers::default(),
+            hand_events: Vec::new(),
             hurt_shake_t: 0.0,
             sleep_interact_hand_t: 0.0,
             prev_heart_health: None,

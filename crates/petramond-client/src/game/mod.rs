@@ -38,8 +38,8 @@ mod client_presentation;
 pub use petramond::menu as container;
 mod bone_ease;
 pub mod environment;
+mod first_person;
 mod frame;
-mod hand_motion;
 mod local_player;
 mod menu_prediction;
 pub mod prediction;
@@ -246,7 +246,7 @@ pub struct Game {
     /// snapshot's `use_held` for mod predictors.
     intent_use_held: bool,
     /// The local body's eased bone offsets — the third-person twin of the
-    /// hand animator's held-pose easing, at the same rate. Holds the eased
+    /// held item's pose easing, at the same rate. Holds the eased
     /// value between frames; the presentation gather copies it into the
     /// frame's arena.
     local_bones: bone_ease::BoneEase,
@@ -254,9 +254,10 @@ pub struct Game {
     /// advancing the local body's easing allocates nothing.
     local_bone_target: Vec<petramond_render::BoneOffset>,
     /// First-person walking sway — a presentation offset on the camera, and
-    /// the signal the hand follows (lagged) so the two are not in lockstep.
+    /// the stride phase the first-person animator's walk plays on.
     view_bob: view_bob::ViewBob,
-    hand_motion: hand_motion::HandMotion,
+    /// The look's turn rates, advanced once per frame with the look.
+    first_person_look: first_person::LookRate,
     /// Speed-coupled FOV — the camera widens with the body's WISHED land
     /// speed (`Player::wish_speed`), a presentation retarget of `cam.fov_y`.
     speed_fov: speed_fov::SpeedFov,
@@ -269,12 +270,19 @@ pub struct Game {
     /// off-hand pass produced it). Meaningless while `local_hand_jab` is
     /// false.
     local_hand_jab_off: bool,
+    /// The latched consumed click's consumer presents itself (an eat's
+    /// raise), so the hand plays no jab. Meaningless while `local_hand_jab`
+    /// is false.
+    local_hand_presents_itself: bool,
+    /// The latched consumed click is a placement: the place jab plays, not
+    /// the interact one. Meaningless while `local_hand_jab` is false.
+    local_hand_places: bool,
     local_hand_swing: bool,
     local_hand_threw: bool,
     /// Hand-swing one-shots latched at event assembly for the client-mod
     /// frame hook (the ABI's swing facts, `PlayerSnapshot::swing`) and taken
     /// by `drive_client_mods`. Its own latch, deliberately: the app's hand
-    /// triggers feed the vanilla animator and drain at RENDER — a different
+    /// events feed the animators and drain at RENDER — a different
     /// clock — and a shared latch is whoever-eats-first, which once left a
     /// swing-claim pack dark on every one-shot. `mining` is unused here (the
     /// level is read live at dispatch, like the server's roster build).
@@ -856,15 +864,14 @@ impl Game {
 
     /// Test injection: the whole TWO-PASS click verdict (main hand, then the
     /// off hand) against a synthetic look — what a production click computes
-    /// in `build_outgoing_messages`. Returns `(jabbed, off_hand_acted,
-    /// place)`.
+    /// in `build_outgoing_messages`.
     #[cfg(test)]
     pub fn predict_click_verdict_at_for_test(
         &mut self,
         block: IVec3,
         normal: IVec3,
         sneak: bool,
-    ) -> (bool, bool, crate::game::tick::PlacePrediction) {
+    ) -> crate::game::tick::ClickVerdict {
         self.look = Some(RaycastHit {
             block,
             normal,

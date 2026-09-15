@@ -90,6 +90,12 @@ impl ViewBob {
         let theta = self.phase * TAU;
         [theta.sin() * self.weight, (2.0 * theta).cos() * self.weight]
     }
+
+    /// `(phase, weight)`: how far through the stride (0..1) and how much of
+    /// the sway is playing.
+    pub fn stride(&self) -> (f32, f32) {
+        (self.phase, self.weight)
+    }
 }
 
 #[cfg(test)]

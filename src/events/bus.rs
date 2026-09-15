@@ -64,6 +64,9 @@ pub struct SimCtx<'a> {
 /// that session's own state map and what it currently has open.
 pub struct SessionPlayerRef<'a> {
     pub id: PlayerId,
+    /// The session's index in the server's roster — the slot its per-player
+    /// tick events live in.
+    pub index: usize,
     pub player: &'a mut Player,
     /// This session's mod-GUI state map. Lent alongside the player because a
     /// tick system's gauges belong to whoever is LOOKING, and the acting
@@ -83,6 +86,7 @@ pub struct OpenGui {
 
 struct ScopeEntry {
     id: PlayerId,
+    index: usize,
     player: *mut Player,
     gui_state: *mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
     gui: Option<OpenGui>,
@@ -95,6 +99,8 @@ struct ScopeEntry {
 /// so two paths to one player can never exist).
 struct ScopeData {
     acting: PlayerId,
+    /// The acting session's roster index.
+    acting_index: usize,
     /// What the ACTING session has open — its map is the live `SimCtx` borrow,
     /// so only this half of it can ride the roster.
     acting_gui: Option<OpenGui>,
@@ -120,7 +126,7 @@ thread_local! {
 /// borrows in `others` prove validity at entry; [`SimCtx::with_player`]'s
 /// deref relies on this contract for the rest.
 pub fn with_sessions_scope<R>(
-    acting: PlayerId,
+    acting: (PlayerId, usize),
     acting_gui: Option<OpenGui>,
     others: Vec<SessionPlayerRef<'_>>,
     f: impl FnOnce() -> R,
@@ -137,6 +143,7 @@ pub fn with_sessions_scope<R>(
         .into_iter()
         .map(|o| ScopeEntry {
             id: o.id,
+            index: o.index,
             player: o.player as *mut Player,
             gui_state: o.gui_state as *mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
             gui: o.gui,
@@ -144,7 +151,8 @@ pub fn with_sessions_scope<R>(
         .collect();
     let prev = SESSIONS_SCOPE.with(|s| {
         s.borrow_mut().replace(ScopeData {
-            acting,
+            acting: acting.0,
+            acting_index: acting.1,
             acting_gui,
             others: entries,
         })
@@ -160,6 +168,19 @@ impl SimCtx<'_> {
     /// single-session and anonymous, exactly the pre-roster behaviour.
     pub fn acting_player_id(&self) -> Option<PlayerId> {
         SESSIONS_SCOPE.with(|s| s.borrow().as_ref().map(|d| d.acting))
+    }
+
+    /// Session `id`'s roster index — where its per-player tick events live.
+    /// `None` = no such session, or no roster published here.
+    pub fn session_index(&self, id: PlayerId) -> Option<usize> {
+        SESSIONS_SCOPE.with(|s| {
+            let scope = s.borrow();
+            let d = scope.as_ref()?;
+            if d.acting == id {
+                return Some(d.acting_index);
+            }
+            d.others.iter().find(|e| e.id == id).map(|e| e.index)
+        })
     }
 
     /// Lend session `id`'s authoritative player to `f`. The acting session's
@@ -593,11 +614,12 @@ mod tests {
         let mut other_gui = petramond_world::gui_state::empty_gui_state();
         let others = vec![SessionPlayerRef {
             id: PlayerId(0),
+            index: 0,
             player: &mut other,
             gui_state: &mut other_gui,
             gui: None,
         }];
-        with_sessions_scope(PlayerId(1), None, others, || {
+        with_sessions_scope((PlayerId(1), 1), None, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,

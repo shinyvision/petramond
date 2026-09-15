@@ -369,6 +369,61 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             })
         }
+        // The animator primitives: names resolve to graph ids HERE, once, so
+        // the claim, the wire row and the render frame carry plain ids; a
+        // name a rig's graph lacks is loud, like a typo'd item.
+        HostCall::SetPlayerAnimatorParams { player, params } => {
+            let params = match crate::player::animator::resolve_params(params) {
+                Ok(params) => params,
+                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorParams: {e}")),
+            };
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_animator_params(&mod_id, params)
+                }) {
+                    None => HostRet::Bool(false),
+                    Some(true) => HostRet::Bool(true),
+                    Some(false) => HostRet::Error("SetPlayerAnimatorParams: non-finite value".into()),
+                }
+            })
+        }
+        HostCall::SetPlayerAnimatorPlays { player, plays } => {
+            let plays = match crate::player::animator::resolve_plays(plays) {
+                Ok(plays) => plays,
+                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorPlays: {e}")),
+            };
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_animator_plays(&mod_id, plays)
+                }) {
+                    None => HostRet::Bool(false),
+                    Some(true) => HostRet::Bool(true),
+                    Some(false) => {
+                        HostRet::Error("SetPlayerAnimatorPlays: non-finite progress or rate".into())
+                    }
+                }
+            })
+        }
+        // An edge: queued on the tick's feed, replicated to every mirror of
+        // the body (the player's own viewmodel included).
+        HostCall::FirePlayerAnimatorEvent { player, rig, event } => {
+            let (rig, event) = match crate::player::animator::resolve_event(&rig, &event) {
+                Ok(resolved) => resolved,
+                Err(e) => return HostRet::Error(format!("FirePlayerAnimatorEvent: {e}")),
+            };
+            sim_query(move |ctx| {
+                let Some(s) = ctx.session_index(crate::player::PlayerId(player.0)) else {
+                    return HostRet::Bool(false);
+                };
+                ctx.feed.player(s).animator_events.push((rig, event));
+                HostRet::Bool(true)
+            })
+        }
+        HostCall::AnimationClip { rig, clip } => {
+            HostRet::AnimationClip(crate::player::animator::clip_info(&rig, &clip))
+        }
         // The action-denial claim. Infallible below the ABI (a set of enum
         // values has no malformed form), so the only answer is whether the
         // addressed session is reachable.
@@ -458,24 +513,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 // answer left is whether the addressed session exists.
                 let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
                     p.claims.set_bone_poses(&mod_id, bones);
-                });
-                HostRet::Bool(wrote.is_some())
-            })
-        }
-        // The motion-ownership claim: which of each hand's engine motions
-        // the CLAIMING mod animates itself, silencing the engine's own copy.
-        // Infallible like the denial claim (a set of enum values), transient,
-        // and addressed explicitly through the sessions view. Enum-to-bits
-        // happens HERE, once, like bone names resolving to rig ids.
-        HostCall::SetPlayerHandMotions { player, main, off } => {
-            let mod_id = mod_id.to_owned();
-            let (main, off) = (
-                crate::player::HandMotions::of(main),
-                crate::player::HandMotions::of(off),
-            );
-            sim_query(move |ctx| {
-                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.claims.set_hand_motions(&mod_id, main, off);
                 });
                 HostRet::Bool(wrote.is_some())
             })
@@ -607,7 +644,7 @@ mod tests {
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
 
-        crate::events::with_sessions_scope(crate::player::PlayerId(0), None, Vec::new(), || {
+        crate::events::with_sessions_scope((crate::player::PlayerId(0), 0), None, Vec::new(), || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,
@@ -671,7 +708,7 @@ mod tests {
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
 
-        crate::events::with_sessions_scope(crate::player::PlayerId(0), None, Vec::new(), || {
+        crate::events::with_sessions_scope((crate::player::PlayerId(0), 0), None, Vec::new(), || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,
@@ -757,11 +794,12 @@ mod tests {
         let mut other_gui = petramond_world::gui_state::empty_gui_state();
         let others = vec![crate::events::SessionPlayerRef {
             id: PlayerId(1),
+            index: 1,
             player: &mut other,
             gui_state: &mut other_gui,
             gui: None,
         }];
-        crate::events::with_sessions_scope(PlayerId(0), None, others, || {
+        crate::events::with_sessions_scope((PlayerId(0), 0), None, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,
@@ -846,11 +884,12 @@ mod tests {
         let mut other_gui = petramond_world::gui_state::empty_gui_state();
         let others = vec![crate::events::SessionPlayerRef {
             id: PlayerId(1),
+            index: 1,
             player: &mut other,
             gui_state: &mut other_gui,
             gui: None,
         }];
-        crate::events::with_sessions_scope(PlayerId(0), None, others, || {
+        crate::events::with_sessions_scope((PlayerId(0), 0), None, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,

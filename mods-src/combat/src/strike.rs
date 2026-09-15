@@ -23,7 +23,6 @@
 //! knockback shoves, and every `mob_damage_pre` handler sees exactly the
 //! strike the engine's own hit would have shown it.
 
-use crate::swing::Style;
 use mod_sdk::*;
 
 /// How a family's swing reaches, and what it does when it does.
@@ -53,51 +52,22 @@ const fn radians(degrees: f32) -> f32 {
     degrees * (std::f32::consts::PI / 180.0)
 }
 
-/// The axe: a flat sweep across the body — wide enough to cleave a huddle
-/// in front of you, not so wide that something at the edge of your vision
-/// takes a glancing hit (2026-09-02: ±55° was that; tightened) — strongest
-/// with the target a stride away rather than at the fist.
-const AXE: Profile = Profile {
-    reach: 3.5,
-    sweet: 2.0,
-    arc_yaw: radians(32.0),
-    arc_pitch: radians(22.0),
-    peak: 1.25,
-    floor: 0.35,
-    cleave: true,
-};
-
-/// The pickaxe: a narrow, tall plunge — dead-on and close, or barely at
-/// all — on one body.
-const PICKAXE: Profile = Profile {
-    reach: 3.2,
-    sweet: 1.4,
-    arc_yaw: radians(14.0),
-    arc_pitch: radians(40.0),
-    peak: 1.35,
-    floor: 0.35,
-    cleave: false,
-};
-
-/// The sword: a level cut — the axe's sweep, a little tighter and a little
-/// shorter (a blade, not a haft), and it lands more evenly across its reach
-/// because a fast weapon is meant to be swung often, not lined up.
-const SWORD: Profile = Profile {
-    reach: 3.0,
-    sweet: 1.8,
-    arc_yaw: radians(28.0),
-    arc_pitch: radians(20.0),
-    peak: 1.15,
-    floor: 0.45,
-    cleave: true,
-};
-
-/// The family's profile.
-pub fn profile(style: Style) -> Profile {
-    match style {
-        Style::Axe => AXE,
-        Style::Pickaxe => PICKAXE,
-        Style::Sword => SWORD,
+impl Profile {
+    /// Read a family row's `profile`: `reach`, `sweet`, `arc_yaw` and
+    /// `arc_pitch` (half-angles in DEGREES), `peak`, `floor`, `cleave`.
+    /// `None` for anything missing or malformed — a window with half its
+    /// numbers is refused whole.
+    pub fn parse(v: &json::Value) -> Option<Profile> {
+        let num = |key| crate::families::num(v, key);
+        Some(Profile {
+            reach: num("reach")?,
+            sweet: num("sweet")?,
+            arc_yaw: radians(num("arc_yaw")?),
+            arc_pitch: radians(num("arc_pitch")?),
+            peak: num("peak")?,
+            floor: num("floor")?,
+            cleave: v.get("cleave")?.as_bool()?,
+        })
     }
 }
 
@@ -271,22 +241,21 @@ fn roll_damage(me: PlayerId) -> f32 {
     roll(range, rng_u64("strike"))
 }
 
-/// SERVER: land `me`'s swing of a `style` tool — its impact just played —
-/// on every body the family's window reaches and can be seen: mobs and
-/// other players alike, through the engine's funnel with `me` named as the
-/// attacker. Nothing to land is an ordinary miss.
-pub fn land(me: PlayerId, style: Style, state: &PlayerSnapshot) {
+/// SERVER: land `me`'s swing — its impact just played — on every body the
+/// family's `profile` reaches and can be seen: mobs and other players
+/// alike, through the engine's funnel with `me` named as the attacker.
+/// Nothing to land is an ordinary miss.
+pub fn land(me: PlayerId, profile: &Profile, state: &PlayerSnapshot) {
     if state.spectator || state.health <= 0 {
         return;
     }
-    let profile = profile(style);
     let aim = Aim::of(state);
     let mut candidates: Vec<Candidate> = Vec::new();
     // A generous radius of FEET positions; the window and reach do the
     // real judging against the bodies themselves.
     let radius = profile.reach + 4.0;
     for mob in mobs_in_radius(state.pos, radius) {
-        if let Some(hit) = judge(&profile, &aim, &mob_boxes(&mob)) {
+        if let Some(hit) = judge(profile, &aim, &mob_boxes(&mob)) {
             // A swing from the saddle is not a swing AT the saddle: the
             // engine's own crosshair never targets the attacker's mount
             // either.
@@ -306,7 +275,7 @@ pub fn land(me: PlayerId, style: Style, state: &PlayerSnapshot) {
         if entry.id == me || other.spectator || other.health <= 0 {
             continue;
         }
-        if let Some(hit) = judge(&profile, &aim, &[player_box(other)]) {
+        if let Some(hit) = judge(profile, &aim, &[player_box(other)]) {
             candidates.push(Candidate {
                 who: EntityRef::Player(entry.id),
                 hit,

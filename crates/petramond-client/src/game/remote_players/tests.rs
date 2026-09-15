@@ -30,7 +30,7 @@ fn row(id: u8, pos: WorldPos) -> PlayerStateRow {
         held_pose_off: None,
         held_display: [None; 2],
         bone_poses: Vec::new(),
-        motion_claims: [Default::default(); 2],
+        animator: Default::default(),
         hurt_recent: false,
         snap: false,
         mount: None,
@@ -101,27 +101,96 @@ fn snap_rows_skip_interpolation() {
     assert_eq!(pos, far, "no frame lerps across the teleport");
 }
 
+/// A fired graph event — the engine's own break resolved on the body rig,
+/// exactly as the server emits it — reaches the remote body's animator
+/// inputs once, through the same lane a mod's fire rides, and never twice.
 #[test]
-fn a_broke_action_latches_exactly_one_animator_jab() {
+fn a_fired_action_reaches_the_body_animator_exactly_once() {
+    use petramond::player::one_shot::{self, OneShot};
+    use petramond::player::rigs;
+    use petramond_world::inventory::Hand;
+
+    let body = rigs::id(rigs::PLAYER_BODY).expect("body rig");
+    let event = one_shot::resolve(body, Hand::Main, OneShot::Break).expect("break event");
+    let action = PlayerActionKind::Animator { rig: body, event };
     let mut store = RemotePlayers::default();
+    // Two batches in one window both carry the row: one edge this frame.
     store.apply(
         &[row(1, WorldPos::ZERO)],
-        &[(PlayerId(1), PlayerActionKind::Broke)],
+        &[(PlayerId(1), action), (PlayerId(1), action)],
         PlayerId(0),
     );
     store.advance(1.0 / 60.0, 1.0, |_| MovementMedium::Land);
-    let s1 = store.iter().next().unwrap().view.swing;
-    assert!(s1 > 0.0, "the latched break starts a swing");
+    let events = |store: &RemotePlayers| store.iter().next().unwrap().events.clone();
+    assert_eq!(events(&store), vec![(body, event)], "one edge per frame");
 
-    // The latch is consumed: the next frame CONTINUES the same swing
-    // (advances forward) rather than restarting a new jab at phase 0.
+    // The latch is consumed: the next frame carries no second break.
     store.advance(1.0 / 60.0, 1.0, |_| MovementMedium::Land);
-    let s2 = store.iter().next().unwrap().view.swing;
-    assert!(s2 > s1, "one jab continues, no re-trigger: {s2} vs {s1}");
+    assert!(events(&store).is_empty(), "one edge, no re-trigger");
+}
 
-    // And it completes back to rest within a swing period.
-    store.advance(0.5, 1.0, |_| MovementMedium::Land);
-    assert_eq!(store.iter().next().unwrap().view.swing, 0.0);
+fn scrub(slot: u16, clip: u16, progress: f32) -> AnimatorPlay {
+    AnimatorPlay {
+        rig: RigId(0),
+        slot,
+        clip,
+        clock: AnimatorClock::Scrub(progress),
+        mirror: false,
+        priority: 0,
+    }
+}
+
+fn presented(
+    prev: &[AnimatorPlay],
+    curr: &[AnimatorPlay],
+    last: &[AnimatorPlay],
+    alpha: f32,
+) -> Vec<f32> {
+    let mut out = Vec::new();
+    present_plays(prev, curr, last, alpha, 0.5, &mut out);
+    out.iter().map(|p| p.progress().unwrap()).collect()
+}
+
+/// A scrub the rows show climbing is drawn where it is NOW, not where the
+/// tick-old row left it: carried forward by the step the last two rows took.
+#[test]
+fn a_climbing_scrub_is_carried_forward_by_the_step_the_last_two_rows_took() {
+    let prev = [scrub(0, 1, 0.9), scrub(1, 1, 0.2)];
+    let got = presented(&prev, &[scrub(1, 1, 0.3)], &[], 0.5);
+    assert!(
+        (got[0] - 0.35).abs() < 1e-5,
+        "halfway into the next step: {got:?}"
+    );
+    let got = presented(&[scrub(1, 1, 0.8)], &[scrub(1, 1, 0.95)], &[], 1.0);
+    assert_eq!(got, [1.0], "never past the clip's end");
+}
+
+#[test]
+fn a_restarted_or_changed_scrub_is_never_carried_backward() {
+    let got = presented(
+        &[scrub(0, 1, 0.9)],
+        &[scrub(0, 1, 0.1)],
+        &[scrub(0, 1, 0.97)],
+        0.5,
+    );
+    assert_eq!(got, [0.1], "a restart snaps to the row");
+    let got = presented(
+        &[scrub(0, 1, 0.5)],
+        &[scrub(0, 1, 0.45)],
+        &[scrub(0, 1, 0.55)],
+        0.5,
+    );
+    assert!(
+        (got[0] - 0.5).abs() < 1e-5,
+        "a small step back eases from what was drawn: {got:?}"
+    );
+    let got = presented(
+        &[scrub(0, 1, 0.2)],
+        &[scrub(0, 2, 0.3)],
+        &[scrub(0, 1, 0.25)],
+        0.5,
+    );
+    assert_eq!(got, [0.3], "another clip in the slot is a new play");
 }
 
 #[test]

@@ -56,6 +56,10 @@ pub struct ClientSettings {
     pub music_volume: f32,
     /// Decorative particle density (Options → Graphics).
     pub particles: ParticlesMode,
+    /// Screen shake (Options → Graphics): the first-person camera's kicks and
+    /// sway, and the hurt jitter. Off holds the view still; every animation
+    /// still plays.
+    pub screen_shake: bool,
     /// Remapped controls (Options → Controls). Actions absent here use their
     /// defaults, so files from before a binding existed stay valid.
     pub bindings: petramond_world::controls::BindingSet,
@@ -107,6 +111,7 @@ impl Default for ClientSettings {
             sound_volume: 1.0,
             music_volume: 1.0,
             particles: ParticlesMode::Full,
+            screen_shake: true,
             bindings: petramond_world::controls::BindingSet::default(),
         }
     }

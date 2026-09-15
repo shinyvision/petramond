@@ -9,7 +9,7 @@ impl Renderer {
     /// The frame's CPU lighting environment (sky scale + colour), mirroring the
     /// shader uniform lanes for the explicit-shade dynamic bakes.
     #[inline]
-    fn light_env(&self) -> crate::lighting::LightEnv {
+    pub(super) fn light_env(&self) -> crate::lighting::LightEnv {
         crate::lighting::LightEnv {
             sky_scale: self.sky.scale,
             sky_color: self.sky.color,
@@ -19,7 +19,7 @@ impl Renderer {
     /// The two-channel light sampled at the local player, lighting every
     /// held-item variant.
     #[inline]
-    fn held_item_light(&self) -> crate::lighting::DynLight {
+    pub(super) fn held_item_light(&self) -> crate::lighting::DynLight {
         crate::lighting::DynLight::new(self.hand.held_item_skylight, self.hand.held_item_blocklight)
     }
 
@@ -65,204 +65,6 @@ impl Renderer {
             }
             self.chrome.selection_drawn = wanted;
         }
-    }
-
-    /// The hurt-shake as a clip-space post-transform: left-multiplying a
-    /// translation adds `t * w` to the clip position, which after the divide is
-    /// exactly an NDC screen shift — the whole hand jitters without touching
-    /// any pose math.
-    fn hand_shake_mat(&self) -> glam::Mat4 {
-        glam::Mat4::from_translation(glam::Vec3::new(self.hand.shake[0], self.hand.shake[1], 0.0))
-    }
-
-    /// Build + upload this frame's first-person hand geometry and the extruded /
-    /// bbmodel held-item geometry (mutually exclusive per hand). Both hands
-    /// build into ONE CPU stream per render kind — the off hand appended after
-    /// the main — and each stream uploads once, growing its buffer to fit.
-    pub(super) fn prepare_held_item(&mut self) {
-        self.hand.index_count = 0;
-        self.hand.vertex_count = 0;
-        self.hand.item3d_vertex_count = 0;
-        self.hand.held_is_model = false;
-        self.hand.off_index_count = 0;
-        self.hand.off_item3d_start = 0;
-        self.hand.off_item3d_count = 0;
-        self.hand.off_is_model = false;
-        if !self.hand.visible {
-            return;
-        }
-        let aspect = if self.config.height > 0 {
-            self.config.width as f32 / self.config.height as f32
-        } else {
-            1.0
-        };
-        let shake = self.hand_shake_mat();
-        let light = self.held_item_light();
-        let env = self.light_env();
-
-        // The hand uses its own fixed perspective (drawn over the world), so
-        // each MVP is computed here from the framebuffer aspect and the
-        // App-supplied swing/place phases: slot 0 is the main hand, slot 1
-        // (byte offset 256) the off hand.
-        let mut hv = std::mem::take(&mut self.hand.verts);
-        let mut hi = std::mem::take(&mut self.hand.indices);
-        let mut iv = std::mem::take(&mut self.hand.item3d_verts);
-        let mut tv = std::mem::take(&mut self.hand.model_scratch_verts);
-        let mut ti = std::mem::take(&mut self.hand.model_scratch_indices);
-        iv.clear();
-        let mut main_mvp = None;
-        let mut off_mvp = None;
-
-        // MAIN hand: the block cube (model3d) or, mutually exclusively, the
-        // extruded sprite / bbmodel (item3d).
-        let mvp = shake * build_hand_lit(&self.hand.held_item, aspect, light, &mut hv, &mut hi);
-        if !hi.is_empty() {
-            self.hand.index_count = hi.len() as u32;
-            self.hand.vertex_count = hv.len() as u32;
-            main_mvp = Some(mvp);
-        }
-        if let Some((kind, mvp)) = crate::hand::held_model(&self.hand.held_item, aspect) {
-            tv.clear();
-            ti.clear();
-            crate::item_model::build_block_model_item(
-                kind,
-                glam::Mat4::IDENTITY,
-                light,
-                env,
-                None,
-                &mut tv,
-                &mut ti,
-            );
-            // item3d is non-indexed: expand the baked mesh to a triangle list.
-            iv.extend(ti.iter().map(|&idx| tv[idx as usize]));
-            if !iv.is_empty() {
-                self.hand.item3d_vertex_count = iv.len() as u32;
-                self.hand.held_is_model = true;
-                main_mvp = Some(shake * mvp);
-            }
-        } else if let Some((tile, mvp)) = crate::hand::held_sprite(&self.hand.held_item, aspect) {
-            let count = crate::item_model::build_extruded_stack_lit(
-                tile,
-                self.hand.held_item.variant,
-                light,
-                env,
-                &mut iv,
-            );
-            if count > 0 {
-                self.hand.item3d_vertex_count = count;
-                main_mvp = Some(shake * mvp);
-            }
-        }
-
-        // OFF (left) hand: the same three render-kind paths, mirrored
-        // placements (`hand::mirror_x`), appended after the main hand's
-        // geometry. Empty off-hand = nothing drawn — there is no bare left
-        // arm. Model3d indices stay off-stream-relative and draw with
-        // `base_vertex = vertex_count`.
-        self.hand.off_item3d_start = self.hand.item3d_vertex_count;
-        if self.hand.off_item.item.is_some() {
-            let mut ov = std::mem::take(&mut self.hand.off_verts);
-            let mut oi = std::mem::take(&mut self.hand.off_indices);
-            let mvp = shake
-                * crate::hand::build_off_hand_lit(
-                    &self.hand.off_item,
-                    aspect,
-                    light,
-                    &mut ov,
-                    &mut oi,
-                );
-            if !oi.is_empty() {
-                hv.extend_from_slice(&ov);
-                hi.extend_from_slice(&oi);
-                self.hand.off_index_count = oi.len() as u32;
-                off_mvp = Some(mvp);
-            }
-            self.hand.off_verts = ov;
-            self.hand.off_indices = oi;
-            if let Some((kind, mvp)) = crate::hand::held_model_off(&self.hand.off_item, aspect) {
-                tv.clear();
-                ti.clear();
-                crate::item_model::build_block_model_item(
-                    kind,
-                    glam::Mat4::IDENTITY,
-                    light,
-                    env,
-                    None,
-                    &mut tv,
-                    &mut ti,
-                );
-                let start = iv.len();
-                iv.extend(ti.iter().map(|&idx| tv[idx as usize]));
-                if iv.len() > start {
-                    self.hand.off_item3d_count = (iv.len() - start) as u32;
-                    self.hand.off_is_model = true;
-                    off_mvp = Some(shake * mvp);
-                }
-            } else if let Some((tile, mvp)) =
-                crate::hand::held_sprite_off(&self.hand.off_item, aspect)
-            {
-                // The extrusion clears its buffer, so it bakes into a scratch
-                // and appends.
-                let mut sv = std::mem::take(&mut self.hand.off_item3d_scratch);
-                let count = crate::item_model::build_extruded_stack_lit(
-                    tile,
-                    self.hand.off_item.variant,
-                    light,
-                    env,
-                    &mut sv,
-                );
-                if count > 0 {
-                    iv.extend_from_slice(&sv);
-                    self.hand.off_item3d_count = count;
-                    off_mvp = Some(shake * mvp);
-                }
-                self.hand.off_item3d_scratch = sv;
-            }
-        }
-
-        // One upload per stream, each buffer grown to fit.
-        if !hi.is_empty() {
-            super::dynamic_draw::upload(
-                &self.device,
-                &self.queue,
-                &mut self.hand.model3d_vbuf,
-                &hv,
-                wgpu::BufferUsages::VERTEX,
-                "model3d vbuf",
-            );
-            super::dynamic_draw::upload(
-                &self.device,
-                &self.queue,
-                &mut self.hand.model3d_ibuf,
-                &hi,
-                wgpu::BufferUsages::INDEX,
-                "model3d ibuf",
-            );
-        }
-        if !iv.is_empty() {
-            super::dynamic_draw::upload(
-                &self.device,
-                &self.queue,
-                &mut self.hand.item3d_vbuf,
-                &iv,
-                wgpu::BufferUsages::VERTEX,
-                "item3d vbuf",
-            );
-        }
-        for (slot, mvp) in [(0u64, main_mvp), (256u64, off_mvp)] {
-            if let Some(mvp) = mvp {
-                self.queue.write_buffer(
-                    &self.hand.model3d_mvp_buf,
-                    slot,
-                    bytemuck::cast_slice(&mvp.to_cols_array()),
-                );
-            }
-        }
-        self.hand.verts = hv;
-        self.hand.indices = hi;
-        self.hand.item3d_verts = iv;
-        self.hand.model_scratch_verts = tv;
-        self.hand.model_scratch_indices = ti;
     }
 
     /// Bake every dynamic world subsystem (item-entity, item-model-entity, chest,
@@ -485,9 +287,8 @@ impl Renderer {
         }
 
         // Player bodies + their held items: the LOCAL third-person body (when
-        // the view is up, animated by the renderer's own first-person
-        // HeldItemView — unchanged solo behavior) plus EVERY remote player
-        // (each carrying its own replicated HeldItemView), frustum-culled like
+        // the view is up, driven by the renderer's own local hand state) plus
+        // EVERY remote player (each carrying its own), frustum-culled like
         // mobs and ALL appended into the one player_gpu vertex/index stream
         // (every body shares the player model + skin bind). Held items
         // accumulate per render kind into three combined streams — block
@@ -499,14 +300,26 @@ impl Renderer {
             let pad = glam::Vec3::new(1.0, 2.2, 1.0);
             if let Some(p) = self.actor.player_view {
                 if visible_world_aabb(p.pos - pad, p.pos + pad) {
-                    self.actor
-                        .player_visible
-                        .push((p, self.hand.held_item, self.hand.off_item));
+                    self.actor.player_visible.push(super::VisibleBody {
+                        inst: p,
+                        held: self.hand.held_item,
+                        off: self.hand.off_item,
+                        key: crate::player_model::LOCAL_BODY,
+                        frames: self.hand.frames,
+                        animator: None,
+                    });
                 }
             }
             for r in &self.actor.remote_players {
                 if visible_world_aabb(r.body.pos - pad, r.body.pos + pad) {
-                    self.actor.player_visible.push((r.body, r.held, r.held_off));
+                    self.actor.player_visible.push(super::VisibleBody {
+                        inst: r.body,
+                        held: r.held,
+                        off: r.held_off,
+                        key: r.key,
+                        frames: Some(r.frames),
+                        animator: Some(r.animator),
+                    });
                 }
             }
         }
@@ -531,18 +344,76 @@ impl Renderer {
         model_indices.clear();
         block_verts.clear();
         block_indices.clear();
-        let model = self.actor.player_gpu.model;
-        for (inst, held, off) in &self.actor.player_visible {
+        let body_rig = petramond::player::rigs::presented(petramond::player::Presenter::Body)
+            .map(|(_, rig)| rig);
+        let dt = self.hand.frame_dt;
+        self.actor
+            .body_animators
+            .retain(self.actor.remote_players.iter().map(|r| r.key));
+        let local_inputs = crate::AnimatorInputs {
+            params: &self.hand.local_params,
+            plays: &self.hand.local_plays,
+            events: &self.hand.local_events,
+        };
+        // Every roster body nobody draws this frame still advances, so what
+        // it did off-screen is under way — never a stale edge — when it is
+        // drawn again.
+        for r in &self.actor.remote_players {
+            if self.actor.player_visible.iter().any(|b| b.key == r.key) {
+                continue;
+            }
+            if let Some(animator) = self.actor.body_animators.body(r.key) {
+                let inputs = crate::AnimatorInputs {
+                    params: r.animator.params.of(&self.actor.animator_params),
+                    plays: r.animator.plays.of(&self.actor.animator_plays),
+                    events: r.animator.events.of(&self.actor.animator_events),
+                };
+                animator.advance(Some(&r.body), Some(&r.frames), inputs, dt);
+            }
+        }
+        let local_drawn = self
+            .actor
+            .player_visible
+            .iter()
+            .any(|b| b.key == crate::player_model::LOCAL_BODY);
+        if !local_drawn {
+            if let Some(animator) = self.actor.body_animators.body(crate::player_model::LOCAL_BODY) {
+                animator.advance(
+                    self.actor.player_view.as_ref(),
+                    self.hand.frames.as_ref(),
+                    local_inputs,
+                    dt,
+                );
+            }
+        }
+        for body in &self.actor.player_visible {
+            let Some(rig) = body_rig else { break };
+            let (inst, held, off) = (&body.inst, &body.held, &body.off);
+            let inputs = match body.animator {
+                Some(ranges) => crate::AnimatorInputs {
+                    params: ranges.params.of(&self.actor.animator_params),
+                    plays: ranges.plays.of(&self.actor.animator_plays),
+                    events: ranges.events.of(&self.actor.animator_events),
+                },
+                None => local_inputs,
+            };
+            let drive = self.actor.body_animators.body(body.key).map(|animator| {
+                crate::player_model::BodyDrive {
+                    animator,
+                    frames: body.frames.as_ref(),
+                    inputs,
+                    dt,
+                }
+            });
             // The builder clears its buffers, so each body bakes into the
             // scratch and appends with a base-vertex offset.
             let (_, hand, off_hand) = crate::player_model::build_player_body(
-                model,
+                rig,
                 env,
                 inst,
                 render_origin,
                 inst.bones.of(&self.actor.bone_offsets),
-                held,
-                off,
+                drive,
                 &mut scratch_verts,
                 &mut scratch_indices,
             );
@@ -560,13 +431,18 @@ impl Renderer {
             // the bed. Each hand emits its own item with its own attach
             // transforms (the off set is the mirrored twin).
             for (view, hand_mat, off_side) in [(held, hand, false), (off, off_hand, true)] {
+                let grip = if off_side {
+                    crate::player_model::Grip::body_off(hand_mat)
+                } else {
+                    crate::player_model::Grip::body(hand_mat)
+                };
                 let item = (!inst.sleeping).then_some(view.item).flatten();
                 match item.map(|it| it.render_kind()) {
                     Some(petramond_world::item::ItemRenderKind::BlockCube(block)) => {
                         let m = if off_side {
-                            crate::player_model::held_block_transform_off(hand_mat)
+                            crate::player_model::held_block_off_at(grip)
                         } else {
-                            crate::player_model::held_block_transform(hand_mat)
+                            crate::player_model::held_block_at(grip)
                         };
                         let start = block_verts.len();
                         if block == petramond_world::block::Block::Chest {
@@ -602,9 +478,9 @@ impl Renderer {
                         // triangle list; transform in place, then append with
                         // sequential offset indices to ride the indexed draw.
                         let m = if off_side {
-                            crate::player_model::held_sprite_transform_off(hand_mat)
+                            crate::player_model::held_sprite_off_at(grip)
                         } else {
-                            crate::player_model::held_sprite_transform(hand_mat)
+                            crate::player_model::held_sprite_at(grip)
                         };
                         let count = crate::item_model::build_extruded_stack_lit(
                             tile,
@@ -624,9 +500,9 @@ impl Renderer {
                     Some(petramond_world::item::ItemRenderKind::Model(kind)) => {
                         // Appends with absolute indices into the shared buffer.
                         let m = if off_side {
-                            crate::player_model::held_model_transform_off(hand_mat, kind)
+                            crate::player_model::held_model_off_at(grip, kind)
                         } else {
-                            crate::player_model::held_model_transform(hand_mat, kind)
+                            crate::player_model::held_model_at(grip, kind)
                         };
                         crate::item_model::build_block_model_item(
                             kind,
@@ -642,6 +518,9 @@ impl Renderer {
                 }
             }
         }
+        // Edges, consumed by this bake: a redraw before the next
+        // `set_local_animator` must not fire them again.
+        self.hand.local_events.clear();
         // Upload the four combined streams (a stream that stayed empty draws
         // nothing).
         let prebuilt = |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32;

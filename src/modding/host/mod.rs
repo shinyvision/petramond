@@ -433,7 +433,10 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
             HostCall::SetPlayerHeldPose { .. }
                 | HostCall::SetPlayerBonePose { .. }
                 | HostCall::SetPlayerHeldDisplay { .. }
-                | HostCall::SetPlayerHandMotions { .. }
+                | HostCall::SetPlayerAnimatorParams { .. }
+                | HostCall::SetPlayerAnimatorPlays { .. }
+                | HostCall::FirePlayerAnimatorEvent { .. }
+                | HostCall::AnimationClip { .. }
                 | HostCall::HoldUse { .. }
                 | HostCall::PlayerInventory { .. }
         )
@@ -519,7 +522,10 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::SetPlayerAttribute { .. }
         | HostCall::SetPlayerHeldPose { .. }
         | HostCall::SetPlayerBonePose { .. }
-        | HostCall::SetPlayerHandMotions { .. }
+        | HostCall::SetPlayerAnimatorParams { .. }
+        | HostCall::SetPlayerAnimatorPlays { .. }
+        | HostCall::FirePlayerAnimatorEvent { .. }
+        | HostCall::AnimationClip { .. }
         | HostCall::SetPlayerDeniedActions { .. }
         | HostCall::HoldUse { .. }
         | HostCall::TakeItem { .. }

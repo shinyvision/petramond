@@ -65,7 +65,9 @@
 //!   EVERY copy is
 //!   returned base-first and the caller merges — by entry key (later packs
 //!   replace or extend) or by appending (recipes) — so a pack states only what
-//!   it changes, never a full copy of the catalogue.
+//!   it changes, never a full copy of the catalogue. Catalogs of KEYED ROWS
+//!   share one overlay rule, [`merge_rows`]: replace in place, `"enabled":
+//!   false` removes, `"before"` places a new row.
 //!
 //! # Integrations
 //!
@@ -82,6 +84,8 @@
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
+
+use serde_json::{Map, Value};
 
 /// Base asset directories (no packs), in priority order (first wins).
 fn base_roots() -> Vec<PathBuf> {
@@ -620,4 +624,146 @@ pub fn read_layers(rel: &str) -> Vec<(String, PathBuf)> {
         .into_iter()
         .map(|layer| (layer.text, layer.path))
         .collect()
+}
+
+/// The keyed-row catalog overlay rule: merge `value`'s rows into `into` by
+/// their `key` — a row keyed like an existing one replaces it in place,
+/// `"enabled": false` removes it, a new row appends or goes `"before"` the
+/// row it names. Errors are qualified by `what` (the field being merged).
+pub fn merge_rows(
+    into: &mut Vec<Value>,
+    value: Option<&Value>,
+    what: &str,
+    key: &str,
+) -> Result<(), String> {
+    for (i, row) in list(value, what)?.iter().enumerate() {
+        let Some(o) = row.as_object() else {
+            return Err(format!("{what}[{i}]: expected an object"));
+        };
+        let Some(id) = o.get(key).and_then(Value::as_str) else {
+            return Err(format!("{what}[{i}]: a row names its `{key}`"));
+        };
+        let enabled = match o.get("enabled") {
+            None => true,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err(format!("{what}[{id}].enabled: expected true or false")),
+        };
+        let before = match o.get("before") {
+            None => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(_) => return Err(format!("{what}[{id}].before: expected a `{key}`")),
+        };
+        let mut row = o.clone();
+        row.remove("enabled");
+        row.remove("before");
+        let row = Value::Object(row);
+        let named = |r: &Value, name: &str| r.get(key).and_then(Value::as_str) == Some(name);
+        let existing = into.iter().position(|r| named(r, id));
+        if existing.is_some() && before.is_some() {
+            return Err(format!(
+                "{what}[{id}].before: `before` on a row that replaces `{id}`"
+            ));
+        }
+        match (existing, enabled) {
+            (Some(at), false) => {
+                into.remove(at);
+            }
+            (Some(at), true) => into[at] = row,
+            (None, false) => {}
+            (None, true) => match before {
+                Some(target) => {
+                    let at = into
+                        .iter()
+                        .position(|r| named(r, &target))
+                        .ok_or_else(|| format!("{what}[{id}].before: no row named `{target}`"))?;
+                    into.insert(at, row);
+                }
+                None => into.push(row),
+            },
+        }
+    }
+    Ok(())
+}
+
+/// Merge `value`'s entries into `into` by key, later entries replacing.
+pub fn merge_object(
+    into: &mut Map<String, Value>,
+    value: Option<&Value>,
+    what: &str,
+) -> Result<(), String> {
+    match value {
+        None => Ok(()),
+        Some(Value::Object(o)) => {
+            for (k, v) in o {
+                into.insert(k.clone(), v.clone());
+            }
+            Ok(())
+        }
+        Some(_) => Err(format!("{what}: expected an object")),
+    }
+}
+
+/// Append every entry of the list `value` that `into` lacks.
+pub fn union(into: &mut Vec<Value>, value: Option<&Value>, what: &str) -> Result<(), String> {
+    for name in list(value, what)? {
+        if !into.contains(name) {
+            into.push(name.clone());
+        }
+    }
+    Ok(())
+}
+
+fn list<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a [Value], String> {
+    match value {
+        None => Ok(&[]),
+        Some(Value::Array(items)) => Ok(items),
+        Some(_) => Err(format!("{what}: expected a list")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(text: &str) -> Vec<Value> {
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn ids(rows: &[Value]) -> Vec<&str> {
+        rows.iter().map(|r| r["id"].as_str().unwrap()).collect()
+    }
+
+    /// The keyed-row overlay: replace in place, remove, append, insert
+    /// before — and a `before` on a row that replaces one is refused rather
+    /// than silently ignored, since the author asked for a move the rule
+    /// cannot honour.
+    #[test]
+    fn keyed_rows_overlay_by_key_and_a_before_on_a_replacement_is_refused() {
+        let mut into = rows(r#"[{"id": "a", "v": 1}, {"id": "b", "v": 1}, {"id": "c", "v": 1}]"#);
+        let overlay = serde_json::from_str(
+            r#"[
+                {"id": "b", "v": 2},
+                {"id": "c", "enabled": false},
+                {"id": "d", "before": "a", "v": 1},
+                {"id": "e", "v": 1},
+                {"id": "zz", "enabled": false}
+            ]"#,
+        )
+        .unwrap();
+        merge_rows(&mut into, Some(&overlay), "rules", "id").unwrap();
+        assert_eq!(ids(&into), ["d", "a", "b", "e"]);
+        assert_eq!(into[2]["v"], 2, "a keyed row replaces in place");
+        assert!(
+            into[0].get("before").is_none(),
+            "the directive keys are stripped"
+        );
+
+        let moved = serde_json::from_str(r#"[{"id": "a", "before": "b"}]"#).unwrap();
+        let err = merge_rows(&mut into, Some(&moved), "rules", "id").unwrap_err();
+        assert_eq!(err, "rules[a].before: `before` on a row that replaces `a`");
+        let unkeyed = serde_json::from_str(r#"[{"v": 1}]"#).unwrap();
+        assert!(merge_rows(&mut into, Some(&unkeyed), "rules", "id")
+            .unwrap_err()
+            .starts_with("rules[0]"));
+    }
 }

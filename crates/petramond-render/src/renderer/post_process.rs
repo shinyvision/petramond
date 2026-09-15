@@ -25,6 +25,7 @@ impl Renderer {
     pub fn apply_graphics(&mut self, settings: &GraphicsSettings) -> AntiAliasing {
         self.set_render_distance(settings.render_dist);
         self.set_particle_density(settings.particle_density);
+        self.hand.screen_shake = settings.screen_shake;
         self.set_render_scale(settings.render_scale);
         self.set_grade_enabled(settings.grade);
         self.set_anti_aliasing(settings.anti_aliasing)

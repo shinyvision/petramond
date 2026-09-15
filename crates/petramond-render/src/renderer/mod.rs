@@ -16,6 +16,7 @@ mod dynamic_bake;
 pub(crate) mod dynamic_draw;
 mod frame;
 mod frame_state;
+mod hand_bake;
 mod icon_atlas;
 mod lod;
 mod offscreen;
@@ -39,8 +40,6 @@ use super::chest_model::build_chests;
 use super::crosshair::crosshair_vertices;
 use super::door_model::build_doors;
 use super::entity_shadow::{build_entity_shadows, ShadowVertex};
-use super::hand::build_hand_lit;
-use super::hand_animator::HeldItemAnimator;
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;
@@ -163,7 +162,6 @@ struct MobGpu {
 /// pipeline; `verts`/`indices` are the COMBINED per-frame staging every
 /// visible body appends into.
 struct PlayerGpu {
-    model: &'static Model,
     bind: wgpu::BindGroup,
     draw: DynamicDraw,
     verts: Vec<ItemVertex>,
@@ -299,6 +297,19 @@ impl ShadowPass {
     }
 }
 
+/// One body the frame draws, with what drives its animator.
+#[derive(Clone, Copy)]
+struct VisibleBody {
+    inst: PlayerRenderInstance,
+    held: HeldItemView,
+    off: HeldItemView,
+    key: u32,
+    frames: Option<[HeldItemFrame; 2]>,
+    /// The body's claims in the frame's arenas; `None` is the local body,
+    /// whose claims the hand pass holds.
+    animator: Option<crate::AnimatorRanges>,
+}
+
 /// The actor pass: every animated body (mobs, the local third-person player,
 /// remote players) and the held-item streams attached to their hands.
 struct ActorPass {
@@ -319,9 +330,16 @@ struct ActorPass {
     /// This frame's bone offsets for every drawn body, back to back — each
     /// body addresses its own slice by `PlayerRenderInstance::bones`.
     bone_offsets: Vec<crate::BoneOffset>,
+    /// This frame's animator claims and fired events for every remote body,
+    /// back to back — each addresses its own by `RemotePlayerRender::animator`.
+    animator_params: Vec<crate::views::AnimatorParamRow>,
+    animator_plays: Vec<petramond::player::AnimatorPlay>,
+    animator_events: Vec<(petramond::player::RigId, u16)>,
     /// Frustum-visible bodies this frame (local first, then remotes), each
     /// paired with the held-item view that animates its hand.
-    player_visible: Vec<(PlayerRenderInstance, HeldItemView, HeldItemView)>,
+    player_visible: Vec<VisibleBody>,
+    /// Every roster body's animator.
+    body_animators: crate::player_model::BodyAnimators,
     /// Per-body staging for one `build_player_body` bake, appended into
     /// `player_gpu`'s combined stream.
     body_verts: Vec<super::item_model::ItemVertex>,
@@ -354,7 +372,11 @@ impl ActorPass {
         self.player_view = None;
         self.remote_players.clear();
         self.bone_offsets.clear();
+        self.animator_params.clear();
+        self.animator_plays.clear();
+        self.animator_events.clear();
         self.player_visible.clear();
+        self.body_animators.clear();
         self.item_draw.index_count = 0;
         self.model_item_draw.index_count = 0;
         self.block_item_draw.index_count = 0;
@@ -491,11 +513,6 @@ struct HandPass {
     // --- while the off-hand slot holds an item (no bare left arm).
     /// Off-hand held item state (`item == None` = empty, nothing drawn).
     off_item: HeldItemView,
-    off_item_anim: HeldItemAnimator,
-    /// Index count of the off-hand model3d geometry (drawn at
-    /// `index_count..index_count + off_index_count` with `base_vertex =
-    /// vertex_count`).
-    off_index_count: u32,
     /// The off-hand item3d stream's `[start, start + count)` vertex range in
     /// the shared item3d vbuf (appended after the main hand's stream).
     off_item3d_start: u32,
@@ -503,16 +520,12 @@ struct HandPass {
     /// The off item3d stream draws with the MODEL atlas (bbmodel) rather than
     /// the block atlas (extruded sprite) — per-stream twin of `held_is_model`.
     off_is_model: bool,
-    /// Reusable CPU staging for the per-frame hand geometry (cleared + refilled by
-    /// `build_hand`, capacity retained — no per-frame allocation).
+    /// Reusable CPU staging for the per-frame hand geometry (cleared +
+    /// refilled by `prepare_held_item`, capacity retained — no per-frame
+    /// allocation), and the bbmodel / sprite scratch every item3d expansion
+    /// bakes through.
     verts: Vec<petramond_mesh::Vertex>,
     indices: Vec<u32>,
-    /// The off hand's own model3d staging (`build_off_hand_lit` clears its
-    /// buffers, so it cannot append into `verts`/`indices` directly) and the
-    /// held-bbmodel / off-sprite scratch every item3d expansion bakes
-    /// through: all retained, cleared + refilled per frame.
-    off_verts: Vec<petramond_mesh::Vertex>,
-    off_indices: Vec<u32>,
     model_scratch_verts: Vec<super::item_model::ItemVertex>,
     model_scratch_indices: Vec<u32>,
     off_item3d_scratch: Vec<super::item_model::ItemVertex>,
@@ -523,15 +536,38 @@ struct HandPass {
     /// Block-break overlays to draw this frame (own + capped remotes; empty =
     /// none).
     break_overlays: Vec<BreakOverlayView>,
-    /// First-person held item / hand state (defaults to the bare hand).
+    /// The main hand's held item state.
     held_item: HeldItemView,
+    /// Each hand's eased claimed pose (`[main, off]`).
+    held_ease: [crate::HeldItemEase; 2],
     visible: bool,
     /// Screen-space (NDC) offset applied to the whole hand/held-item draw this
     /// frame — the hurt-shake jitter. Zero when calm.
     shake: [f32; 2],
-    held_item_anim: HeldItemAnimator,
+    /// Whether the view may shake (Options → Graphics): off draws the world
+    /// and the hands without the camera bone's offset or the hurt jitter.
+    screen_shake: bool,
     held_item_skylight: u8,
     held_item_blocklight: petramond_world::light::BlockLight6,
+    /// The first-person rig and its animator. `None` (either asset missing)
+    /// draws no hand at all.
+    first_person: Option<crate::first_person::FirstPersonHand>,
+    /// This frame's two hand frames (`[main, off]`), kept for the local
+    /// player's animators, and the seconds since the last frame's.
+    frames: Option<[crate::HeldItemFrame; 2]>,
+    frame_dt: f32,
+    /// The local player's resolved animator claims and the graph events
+    /// fired on it this frame, for both of its rigs. The body bake consumes
+    /// the events, so a second bake before the next claims fires nothing.
+    local_params: Vec<crate::views::AnimatorParamRow>,
+    local_plays: Vec<petramond::player::AnimatorPlay>,
+    local_events: Vec<(petramond::player::RigId, u16)>,
+    /// Name-valued claims, interned once per distinct name.
+    names: crate::views::NameCache,
+    /// The rig's arms in the item3d stream, `[arm_start, arm_start +
+    /// arm_count)`, drawn with the player's skin.
+    arm_start: u32,
+    arm_count: u32,
 }
 
 impl HandPass {
@@ -544,16 +580,24 @@ impl HandPass {
         self.item3d_vertex_count = 0;
         self.held_is_model = false;
         self.held_item = HeldItemView::default();
-        self.held_item_anim = HeldItemAnimator::default();
         self.off_item = HeldItemView::default();
-        self.off_item_anim = HeldItemAnimator::default();
-        self.off_index_count = 0;
+        self.held_ease = Default::default();
         self.off_item3d_start = 0;
         self.off_item3d_count = 0;
         self.off_is_model = false;
         self.shake = [0.0; 2];
         self.break_overlays.clear();
         self.break_draw.index_count = 0;
+        if let Some(first_person) = &mut self.first_person {
+            first_person.reset();
+        }
+        self.frames = None;
+        self.frame_dt = 0.0;
+        self.local_params.clear();
+        self.local_plays.clear();
+        self.local_events.clear();
+        self.arm_start = 0;
+        self.arm_count = 0;
     }
 }
 

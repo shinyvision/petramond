@@ -1,50 +1,42 @@
-//! Third-person player body: the compiled `player.bbmodel` posed and baked each
+//! Third-person player body: the rigs catalog's body rig posed and baked each
 //! frame into the mob-layout `ItemVertex` stream (world space, drawn in the mob
 //! pass with the player's own skin texture bound).
 //!
-//! Pose composition, in order: the authored `walk` animation blended by
-//! `walk_weight` (so starts/stops ease instead of snapping — [`Model::pose_layers`]),
-//! the swing's body twist on the `body` bone, the head-look override on the
-//! `head` bone (compensated for the twist so the gaze stays put), then the
-//! held-arm attack swing COMPOSED onto the visual-right shoulder via
-//! [`Model::apply_bone_rotation`] — so a punch layers over the walk cycle
-//! instead of replacing it. The swing phase is the same
-//! `HeldItemView::swing`/`swing_scale` state machine the first-person hand uses,
-//! so mining sawtooths, breaks punch, and places jab identically in both views.
-//! The swing curves are the reference biped attack swing (body yaw twist, the
-//! quartic-eased arm raise with its look-pitch term, and the sine roll), with
-//! signs mirrored for this model's facing.
+//! Pose composition, in order: the locomotion table's clips blended by their
+//! weights (`locomotion.rs`) as the GROUND, the body animator's graph
+//! evaluated over it (actions override and add to the walk), the sleep and
+//! seat poses, the head-look override on the `head` bone (compensated for
+//! the yaw the animator added to the row's `twist` bones, so the gaze stays
+//! put), then the claimed bone offsets. The items attach at the row's grip
+//! bones.
 //!
 //! The model is authored front = −Z (the skin's face texture sits on the north
 //! face), while engine yaw 0 faces +Z, so the body renders with `yaw + π`.
 
+pub(crate) mod body_animator;
 mod locomotion;
+
+pub(crate) use body_animator::{BodyAnimator, BodyAnimators, LOCAL_BODY};
 
 use glam::{Mat4, Quat, Vec3};
 
 use super::item_model::ItemVertex;
 use super::lighting::{DynLight, LightEnv};
 use super::mob_model::{bake_model_cubes, body_tint};
-use super::vanilla_swing::vanilla_swing;
 use super::PlayerRenderInstance;
 use petramond::player::model::{PLAYER_HIP_HEIGHT, PLAYER_MODEL_SCALE};
+use petramond::player::rigs::Rig;
+use petramond_world::animation::LocalPose;
 use petramond_world::bbmodel::Model;
 
-/// The grip point in model pixels, in the visual-right arm's rest frame: centred
-/// in the fist (the lower arm spans x 4..8, ends at y 12), a touch toward the
-/// front. The authored model is rotated by π to face engine-forward; under this
-/// engine's camera convention that makes the authored left arm the visual right
-/// hand in third person.
+/// The grip point in model pixels, in the main grip's rest frame: centred in
+/// the fist (the lower arm spans x 4..8, ends at y 12), a touch toward the
+/// front. The authored model is rotated by π to face engine-forward, which
+/// makes the authored left arm the visual right hand — hence the shipped
+/// row's main grip on the left arm. The off grip's attach transforms are the
+/// main hand's conjugated by an arm-local X mirror ([`mirror_local`]), so the
+/// two fists stay symmetric by construction.
 const HAND_GRIP_PX: Vec3 = Vec3::new(6.0, 11.0, -1.5);
-const HELD_SHOULDER_BONE: &str = "left_shoulder";
-const HELD_ELBOW_BONE: &str = "left_elbow";
-/// The OFF hand: the authored RIGHT arm lands on the visual LEFT side under
-/// the same yaw+π handedness conversion that makes the authored left arm the
-/// visual right. Its grip/attach transforms are the right hand's conjugated by
-/// an arm-local X mirror ([`mirror_local`]), so the two fists stay symmetric
-/// by construction.
-const OFF_SHOULDER_BONE: &str = "right_shoulder";
-const OFF_ELBOW_BONE: &str = "right_elbow";
 
 /// Mirror an arm-local attach transform across the arm's YZ plane by
 /// CONJUGATION: `S · M · S` with `S = diag(-1, 1, 1)`. Determinant preserved
@@ -77,32 +69,57 @@ const BLOCK_WORLD_SIZE: f32 = 0.30;
 /// half the 4 px body thickness plus a hair of clearance over the bed model.
 const LIE_LIFT: f32 = 2.2 * PLAYER_MODEL_SCALE;
 
-/// Bake the player body posed for this frame. Returns the emitted index count
-/// plus the visual right- and left-hand world transforms (model-pixel units
-/// under the placed, scaled body) for attaching the held items. `held` drives
-/// the right arm's swing/eat channels, `off` the left arm's (its jab and its
-/// off-hand eat) — both compose over the walk pose on their own shoulders.
+/// What drives a body's animator this frame.
+pub(super) struct BodyDrive<'a> {
+    pub animator: &'a mut BodyAnimator,
+    pub frames: Option<&'a [crate::HeldItemFrame; 2]>,
+    pub inputs: crate::AnimatorInputs<'a>,
+    pub dt: f32,
+}
+
+/// Pose and bake one player body of `rig` into `verts`/`indices`, answering
+/// its index count and the visual right- and left-hand attach frames
+/// (model-pixel space under the placed, scaled body) for the held items. With
+/// a `drive` the locomotion pose is the animator's ground and the animator's
+/// pose is what bakes; without one (no body graph) the locomotion pose bakes
+/// as it is.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_player_body(
-    model: &Model,
+    rig: &Rig,
     env: LightEnv,
     inst: &PlayerRenderInstance,
     render_origin: glam::IVec3,
     bones: &[crate::BoneOffset],
-    held: &crate::HeldItemView,
-    off: &crate::HeldItemView,
+    drive: Option<BodyDrive<'_>>,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> (u32, Mat4, Mat4) {
+    let model = &rig.model;
     let pos = inst.pos.relative_to(render_origin);
-    let (swing, swing_scale, eat, eat_bob) = (held.swing, held.swing_scale, held.eat, held.eat_bob);
     verts.clear();
     indices.clear();
 
     let layers = locomotion::layers(model, inst);
-    let mut pose = if layers.is_empty() {
-        model.rest_pose()
-    } else {
-        model.pose_layers(&layers)
+    let mut twist_total = 0.0;
+    let mut pose = match drive {
+        Some(drive) => {
+            let mut ground = LocalPose::rest(model.bones().len());
+            for (anim, time, weight) in &layers {
+                ground.add_clip(anim, *time, weight.clamp(0.0, 1.0));
+            }
+            drive
+                .animator
+                .update(inst, drive.frames, drive.inputs, drive.dt, &ground);
+            let local = drive.animator.pose();
+            // The torso twist the animator added: head-look takes it back out
+            // so the gaze holds while the body swings.
+            for &bone in &rig.twist {
+                twist_total += (local.rotation(bone).y - ground.rotation(bone).y).to_radians();
+            }
+            local.resolve(model)
+        }
+        None if layers.is_empty() => model.rest_pose(),
+        None => model.pose_layers(&layers),
     };
     let head_animated = |hb: usize| layers.iter().any(|(a, _, _)| a.affects_bone(hb));
 
@@ -114,7 +131,7 @@ pub(super) fn build_player_body(
             * Mat4::from_rotation_y(inst.body_yaw)
             * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
             * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
-        return bake_cubes(model, &pose, global, inst, env, verts, indices);
+        return bake_cubes(model, rig.grips, &pose, global, inst, env, verts, indices);
     }
 
     // Seated (riding a mob seat): thighs swing forward at the hip and the
@@ -138,22 +155,6 @@ pub(super) fn build_player_body(
         }
     }
 
-    // The vanilla third-person swing is the AUTHORED hand_player.json body
-    // channel, played through the same bone machinery a pack's body curve
-    // uses: verbatim for the MAIN hand (the authored left arm, visual right
-    // under the yaw+π placement) and MIRRORED for the off jab (left_/right_
-    // names swapped, the chirality channels negated — the same left-hand
-    // rule every pose seam follows). Angles scale linearly with the hand's
-    // swing amplitude, so a softer jab is a smaller arc, not another shape.
-    let s = swing.clamp(0.0, 1.0);
-    let off_s = off.swing.clamp(0.0, 1.0);
-    let mut twist_total = 0.0;
-    if swing > 0.0 {
-        twist_total += play_swing_body(model, &mut pose, s, swing_scale, false);
-    }
-    if off.swing > 0.0 {
-        twist_total += play_swing_body(model, &mut pose, off_s, off.swing_scale, true);
-    }
     // The GAZE layers stay procedural on top of the data, deliberately: a
     // keyframe file cannot know where this viewer's player is looking.
     // Head-look compensates the twist the data put on the torso (the engine
@@ -165,47 +166,8 @@ pub(super) fn build_player_body(
             locomotion::stabilize_swim_gaze(model, &mut pose, hb, inst);
         }
     }
-    if swing > 0.0 {
-        if let Some(shoulder) = model.bone_named(HELD_SHOULDER_BONE) {
-            let aim = (s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
-            model.apply_bone_rotation(
-                &mut pose,
-                shoulder,
-                Quat::from_rotation_x(aim * swing_scale),
-            );
-        }
-    }
-    if off.swing > 0.0 {
-        if let Some(shoulder) = model.bone_named(OFF_SHOULDER_BONE) {
-            let aim = (off_s * std::f32::consts::PI).sin() * (inst.head_pitch + 0.7) * 0.75;
-            model.apply_bone_rotation(
-                &mut pose,
-                shoulder,
-                Quat::from_rotation_x(aim * off.swing_scale),
-            );
-        }
-    }
-    // Eating: hold the forearm up so the food sits at the mouth (following the
-    // gaze pitch like the swing does), bobbing with each bite. Blended by the
-    // shared `eat` channel, so start/finish/abort ease exactly like first
-    // person. Each hand's eat raises ITS OWN arm (the X raise is
-    // mirror-symmetric, so the off arm needs no sign flips).
-    if eat > 0.0 {
-        if let Some(shoulder) = model.bone_named(HELD_SHOULDER_BONE) {
-            let raise = 1.35 + (inst.head_pitch + 0.7) * 0.35;
-            let rot = Quat::from_rotation_x(eat * (raise + eat_bob * 0.04));
-            model.apply_bone_rotation(&mut pose, shoulder, rot);
-        }
-    }
-    if off.eat > 0.0 {
-        if let Some(shoulder) = model.bone_named(OFF_SHOULDER_BONE) {
-            let raise = 1.35 + (inst.head_pitch + 0.7) * 0.35;
-            let rot = Quat::from_rotation_x(off.eat * (raise + off.eat_bob * 0.04));
-            model.apply_bone_rotation(&mut pose, shoulder, rot);
-        }
-    }
     // Claimed bone offsets LAST, so they compose on top of every engine layer
-    // (walk, sneak, head-look, the swing and eat arm raises) rather than
+    // (walk, sneak, head-look, the animator's actions) rather than
     // fighting one. `apply_bone_offset` carries each through the bone's
     // descendants, so one shoulder offset raises the whole arm AND the item in
     // its fist — the held-pose seam never has to know.
@@ -254,64 +216,15 @@ pub(super) fn build_player_body(
         * Mat4::from_rotation_y(inst.body_yaw + std::f32::consts::PI)
         * lean
         * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
-    bake_cubes(model, &pose, global, inst, env, verts, indices)
-}
-
-/// Play one hand's share of the authored vanilla swing body channel
-/// (`hand_player.json`) onto `pose` at `phase`, amplitude-scaled, and answer
-/// the yaw (radians) it put on the torso — the head-look compensation's
-/// input. `mirrored` plays the off hand's twin: `left`/`right` bone names
-/// swapped and the chirality channels (rotation Y/Z, translation X) negated.
-/// A missing/refused file swings nothing — rest.
-fn play_swing_body(model: &Model, pose: &mut [Mat4], phase: f32, amp: f32, mirrored: bool) -> f32 {
-    let swing = vanilla_swing();
-    let Some(curve) = &swing.body else {
-        return 0.0;
-    };
-    let mut torso_yaw = 0.0;
-    for (at, (name, mode)) in curve.entries().iter().enumerate() {
-        let (mut rot, mut trans) = curve.sample_entry(at, phase);
-        for c in rot.iter_mut().chain(trans.iter_mut()) {
-            *c *= amp;
-        }
-        let target: &str = if mirrored {
-            rot[1] = -rot[1];
-            rot[2] = -rot[2];
-            trans[0] = -trans[0];
-            // Names pre-swapped at load (`body_mirrored`), index-aligned.
-            &swing.body_mirrored[at]
-        } else {
-            name
-        };
-        let Some(bone) = model.bone_named(target) else {
-            continue;
-        };
-        let translation = Vec3::from(trans) / 16.0 / PLAYER_MODEL_SCALE;
-        match mode {
-            mod_api::BonePoseMode::Replace => {
-                model.hold_bone(pose, bone, Vec3::from(rot), translation);
-            }
-            mod_api::BonePoseMode::Compose => {
-                model.apply_bone_offset(
-                    pose,
-                    bone,
-                    petramond_world::bbmodel::display_euler_quat(Vec3::from(rot)),
-                    translation,
-                );
-            }
-        }
-        if target == "body" {
-            torso_yaw += rot[1].to_radians();
-        }
-    }
-    torso_yaw
+    bake_cubes(model, rig.grips, &pose, global, inst, env, verts, indices)
 }
 
 /// Emit every cube of the posed model under `global`, lit and hurt-tinted, and
-/// return the index count plus the visual right- and left-hand world
-/// transforms.
+/// return the index count plus the `[main, off]` grip bones' world transforms.
+#[allow(clippy::too_many_arguments)]
 fn bake_cubes(
     model: &Model,
+    grips: [usize; 2],
     pose: &[Mat4],
     global: Mat4,
     inst: &PlayerRenderInstance,
@@ -328,17 +241,9 @@ fn bake_cubes(
     );
     bake_model_cubes(model, pose, global, tint, |_| false, verts, indices);
 
-    let arm = |elbow: &str, shoulder: &str| {
-        let bone = model
-            .bone_named(elbow)
-            .or_else(|| model.bone_named(shoulder));
-        global
-            * bone
-                .and_then(|b| pose.get(b).copied())
-                .unwrap_or(Mat4::IDENTITY)
-    };
-    let hand = arm(HELD_ELBOW_BONE, HELD_SHOULDER_BONE);
-    let off_hand = arm(OFF_ELBOW_BONE, OFF_SHOULDER_BONE);
+    // A clip turning a grip bone turns the item in the fist.
+    let [hand, off_hand] =
+        grips.map(|bone| global * pose.get(bone).copied().unwrap_or(Mat4::IDENTITY));
     (indices.len() as u32, hand, off_hand)
 }
 
@@ -372,14 +277,57 @@ pub(super) fn posed_hand(
     }
 }
 
+/// Where a hand holds its item: the posed arm frame (everything placing the
+/// rig already folded in), the grip point in that frame's rig pixels, and one
+/// rig pixel's size in the frame's output units. The body and the
+/// first-person rig seat every held render kind through the same transforms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Grip {
+    pub frame: Mat4,
+    pub point: Vec3,
+    pub px: f32,
+}
+
+impl Grip {
+    /// The body's main-hand grip on an arm frame from [`build_player_body`].
+    pub(super) fn body(frame: Mat4) -> Self {
+        Self {
+            frame,
+            point: HAND_GRIP_PX,
+            px: PLAYER_MODEL_SCALE,
+        }
+    }
+
+    /// The body's off-hand grip: the main grip mirrored onto the other arm.
+    pub(super) fn body_off(frame: Mat4) -> Self {
+        Self {
+            point: HAND_GRIP_PX * Vec3::new(-1.0, 1.0, 1.0),
+            ..Self::body(frame)
+        }
+    }
+
+    /// This grip with its point reflected across the frame's YZ plane: the
+    /// off-hand twins compose the MAIN hand's hold and mirror it whole.
+    fn mirrored(self) -> Self {
+        Self {
+            point: self.point * Vec3::new(-1.0, 1.0, 1.0),
+            ..self
+        }
+    }
+}
+
 /// World transform for the EXTRUDED sprite item (unit XY slab). Tool art runs
 /// diagonally (handle lower-left, head upper-right); rolling the art 55° in its
 /// plane stands the tool along the sprite's +Y, the yaw turns the slab edge-on
 /// (flat face to the sides), and the X tilt lays the tool axis pointing FORWARD
 /// out of the fist with a slight rise. The sprite centre is then shifted along
 /// that axis so the fist grips the HANDLE end, not the middle/head.
-pub(super) fn held_sprite_transform(hand: Mat4) -> Mat4 {
-    let size = SPRITE_WORLD_SIZE / PLAYER_MODEL_SCALE;
+pub(super) fn held_sprite_at(grip: Grip) -> Mat4 {
+    grip.frame * sprite_hold(grip)
+}
+
+fn sprite_hold(grip: Grip) -> Mat4 {
+    let size = SPRITE_WORLD_SIZE / grip.px;
     let rot = Mat4::from_rotation_x(-65f32.to_radians())
         * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
         * Mat4::from_rotation_z(55f32.to_radians());
@@ -390,17 +338,21 @@ pub(super) fn held_sprite_transform(hand: Mat4) -> Mat4 {
         std::f32::consts::FRAC_1_SQRT_2,
         0.0,
     ));
-    hand * Mat4::from_translation(HAND_GRIP_PX + axis * (0.30 * size))
+    Mat4::from_translation(grip.point + axis * (0.30 * size))
         * rot
         * Mat4::from_scale(Vec3::splat(size))
 }
 
 /// World transform for a held block mini-cube (built origin-centred, unit size):
 /// a corner turned toward the front, floated just ahead of the fist.
-pub(super) fn held_block_transform(hand: Mat4) -> Mat4 {
-    hand * Mat4::from_translation(HAND_GRIP_PX + Vec3::new(0.0, -0.5, -2.0))
+pub(super) fn held_block_at(grip: Grip) -> Mat4 {
+    grip.frame * block_hold(grip)
+}
+
+fn block_hold(grip: Grip) -> Mat4 {
+    Mat4::from_translation(grip.point + Vec3::new(0.0, -0.5, -2.0))
         * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4)
-        * Mat4::from_scale(Vec3::splat(BLOCK_WORLD_SIZE / PLAYER_MODEL_SCALE))
+        * Mat4::from_scale(Vec3::splat(BLOCK_WORLD_SIZE / grip.px))
 }
 
 /// World transform for a held bbmodel item: the authored `thirdperson_righthand`
@@ -422,16 +374,23 @@ pub(super) fn held_block_transform(hand: Mat4) -> Mat4 {
 /// mis-oriented hold by turning the asset: that makes the `.bbmodel` lie, and
 /// every other consumer of the model inherits the lie. When the game and
 /// Blockbench disagree about a model, the GAME is wrong.
-pub(super) fn held_model_transform(
-    hand: Mat4,
+pub(super) fn held_model_at(
+    grip: Grip,
     kind: petramond_world::block_model::BlockModelKind,
 ) -> Mat4 {
     let pose = &petramond_world::block_model::display(kind).thirdperson_righthand;
-    hand * Mat4::from_translation(HAND_GRIP_PX)
-        * Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE))
-        * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+    grip.frame
+        * model_frame(grip)
         * pose.base_matrix()
         * petramond_world::block_model::instance(kind).display_from_unit
+}
+
+/// The hand-layer frame a display pose composes in: the grip point, display
+/// blocks in rig pixels, display up pointing forward out of the fist.
+fn model_frame(grip: Grip) -> Mat4 {
+    Mat4::from_translation(grip.point)
+        * Mat4::from_scale(Vec3::splat(1.0 / grip.px))
+        * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
 }
 
 /// OFF-hand (left fist) twins of the three attach transforms. The sprite and
@@ -441,31 +400,12 @@ pub(super) fn held_model_transform(
 /// lefthand preview shows. The block mini-cube keeps the winding-preserving
 /// conjugation (its pipeline culls, and a cube's three-quarter view survives
 /// conjugation).
-pub(super) fn held_sprite_transform_off(off_hand: Mat4) -> Mat4 {
-    let size = SPRITE_WORLD_SIZE / PLAYER_MODEL_SCALE;
-    let rot = Mat4::from_rotation_x(-65f32.to_radians())
-        * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
-        * Mat4::from_rotation_z(55f32.to_radians());
-    let axis = rot.transform_vector3(Vec3::new(
-        std::f32::consts::FRAC_1_SQRT_2,
-        std::f32::consts::FRAC_1_SQRT_2,
-        0.0,
-    ));
-    off_hand
-        * reflect_local(
-            Mat4::from_translation(HAND_GRIP_PX + axis * (0.30 * size))
-                * rot
-                * Mat4::from_scale(Vec3::splat(size)),
-        )
+pub(super) fn held_sprite_off_at(grip: Grip) -> Mat4 {
+    grip.frame * reflect_local(sprite_hold(grip.mirrored()))
 }
 
-pub(super) fn held_block_transform_off(off_hand: Mat4) -> Mat4 {
-    off_hand
-        * mirror_local(
-            Mat4::from_translation(HAND_GRIP_PX + Vec3::new(0.0, -0.5, -2.0))
-                * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4)
-                * Mat4::from_scale(Vec3::splat(BLOCK_WORLD_SIZE / PLAYER_MODEL_SCALE)),
-        )
+pub(super) fn held_block_off_at(grip: Grip) -> Mat4 {
+    grip.frame * mirror_local(block_hold(grip.mirrored()))
 }
 
 /// The bbmodel off-hand attach — the third-person twin of the first-person
@@ -476,8 +416,8 @@ pub(super) fn held_block_transform_off(off_hand: Mat4) -> Mat4 {
 /// `rotation.y` / `rotation.z` negated ([`DisplayTransform::left_hand`],
 /// authored `thirdperson_lefthand` included), and the geometry + its
 /// `display_from_unit` rebase stay untouched — no reflection.
-pub(super) fn held_model_transform_off(
-    off_hand: Mat4,
+pub(super) fn held_model_off_at(
+    grip: Grip,
     kind: petramond_world::block_model::BlockModelKind,
 ) -> Mat4 {
     let display = petramond_world::block_model::display(kind);
@@ -486,12 +426,8 @@ pub(super) fn held_model_transform_off(
         .as_ref()
         .unwrap_or(&display.thirdperson_righthand)
         .left_hand();
-    off_hand
-        * mirror_local(
-            Mat4::from_translation(HAND_GRIP_PX)
-                * Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE))
-                * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-        )
+    grip.frame
+        * mirror_local(model_frame(grip.mirrored()))
         * pose.base_matrix()
         * petramond_world::block_model::instance(kind).display_from_unit
 }

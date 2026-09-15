@@ -13,7 +13,11 @@
 //! One resolution rule, so a prediction cannot disagree with the authority by
 //! construction.
 
-use mod_api::{BodyAction, HandMotion, HeldPose, PlayerAttribute};
+use std::sync::OnceLock;
+
+use mod_api::{BodyAction, HeldPose, PlayerAttribute};
+
+use super::rigs::{self, RigId};
 use serde::{Deserialize, Serialize};
 
 use petramond_world::inventory::Hand;
@@ -91,48 +95,6 @@ impl DeniedActions {
     }
 }
 
-/// The set of a hand's engine [`HandMotion`]s claimed away — the resolved
-/// answer, as a bitmask, for the same reasons [`DeniedActions`] is one: it
-/// ships for every player every tick, and the resolution is a UNION. The
-/// ABI speaks the enum; the conversion happens once, at the host call.
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct HandMotions(u8);
-
-impl HandMotions {
-    /// Nothing claimed — the engine plays every motion itself.
-    pub const NONE: Self = HandMotions(0);
-
-    fn bit(motion: HandMotion) -> u8 {
-        match motion {
-            HandMotion::Swing => 1 << 0,
-            HandMotion::Jab => 1 << 1,
-        }
-    }
-
-    /// The set naming exactly `motions`.
-    pub fn of(motions: impl IntoIterator<Item = HandMotion>) -> Self {
-        HandMotions(motions.into_iter().fold(0, |m, a| m | Self::bit(a)))
-    }
-
-    /// Is `motion` claimed away from the engine on this hand?
-    #[inline]
-    pub fn contains(self, motion: HandMotion) -> bool {
-        self.0 & Self::bit(motion) != 0
-    }
-
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Both sets' claims — the resolution rule, public because the client
-    /// runtime folds its mods' predictions with it too.
-    #[inline]
-    pub fn union(self, other: Self) -> Self {
-        HandMotions(self.0 | other.0)
-    }
-}
-
 /// The claimant the ENGINE itself publishes under.
 ///
 /// The engine is not privileged here: its own rules — a status effect's speed,
@@ -175,6 +137,86 @@ type AttributeScales = [f32; PlayerAttribute::ALL.len()];
 
 const ATTRIBUTES_RELEASED: AttributeScales = [ATTRIBUTE_DEFAULT; PlayerAttribute::ALL.len()];
 
+pub use mod_api::{AnimatorClock, AnimatorValue};
+
+/// One graph param a claimant sets on one rig, resolved below the ABI: the
+/// rig by its registry id, the param as its graph declared it (by index)
+/// and the value it takes.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AnimatorParam {
+    pub rig: RigId,
+    pub param: u16,
+    pub value: AnimatorValue,
+}
+
+/// One montage a claimant holds in one slot of one rig, resolved below the
+/// ABI: the rig by its registry id, slot and clip by their graph and
+/// library indices, on the claimant's clock.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct AnimatorPlay {
+    pub rig: RigId,
+    pub slot: u16,
+    pub clip: u16,
+    pub clock: AnimatorClock,
+    pub mirror: bool,
+    pub priority: i32,
+}
+
+impl AnimatorPlay {
+    /// The scrub progress, when this play is on the caller's clock.
+    pub fn progress(&self) -> Option<f32> {
+        match self.clock {
+            AnimatorClock::Scrub(progress) => Some(progress),
+            AnimatorClock::Run { .. } => None,
+        }
+    }
+}
+
+/// Everything claimed on a body's rig animators: the resolved answer the
+/// wire carries and a driver applies. Sorted by `(rig, id)` so two folds of
+/// the same claims are byte-equal.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct AnimatorClaims {
+    pub params: Vec<AnimatorParam>,
+    pub plays: Vec<AnimatorPlay>,
+}
+
+impl AnimatorClaims {
+    pub fn is_empty(&self) -> bool {
+        self.params.is_empty() && self.plays.is_empty()
+    }
+
+    /// Order by key, and where one key appears more than once keep the
+    /// LAST entry — a later duplicate in a caller's list, or a later
+    /// claimant's in the fold, wins. Stable sorts keep that order.
+    fn sort(&mut self) {
+        self.params.sort_by_key(|p| (p.rig, p.param));
+        keep_last(&mut self.params, |p| (p.rig, p.param));
+        self.plays.sort_by_key(|p| (p.rig, p.slot));
+        keep_last(&mut self.plays, |p| (p.rig, p.slot));
+    }
+
+    /// Keep only the claims on rigs other players OBSERVE — what a player
+    /// row carries; the player's own state keeps every rig.
+    pub fn retain_observed(&mut self) {
+        self.params.retain(|p| rigs::observed(p.rig));
+        self.plays.retain(|p| rigs::observed(p.rig));
+    }
+}
+
+/// Of each run of equal keys in the sorted `items`, keep only the last.
+fn keep_last<T, K: PartialEq>(items: &mut Vec<T>, key: impl Fn(&T) -> K) {
+    let mut write = 0;
+    for read in 0..items.len() {
+        let last_of_run = read + 1 == items.len() || key(&items[read]) != key(&items[read + 1]);
+        if last_of_run {
+            items.swap(write, read);
+            write += 1;
+        }
+    }
+    items.truncate(write);
+}
+
 /// One claimant's claim on one body.
 #[derive(Clone, Debug, PartialEq)]
 struct Claim {
@@ -191,11 +233,9 @@ struct Claim {
     display: [Option<ItemType>; 2],
     bones: Vec<BonePose>,
     denied: DeniedActions,
-    /// Which of each hand's engine motions this claimant owns (`[main,
-    /// off]`): while a motion is claimed the engine plays none of its own
-    /// copy of it, because the claimant is animating the hand itself.
-    /// [`HandMotions::NONE`] = released.
-    motions: [HandMotions; 2],
+    /// This claimant's params and plays on the body's rig animators; empty
+    /// = released.
+    animator: AnimatorClaims,
 }
 
 impl Claim {
@@ -208,15 +248,23 @@ impl Claim {
             && self.display == [None; 2]
             && self.bones.is_empty()
             && self.denied.is_empty()
-            && self.motions[0].is_empty()
-            && self.motions[1].is_empty()
+            && self.animator.is_empty()
     }
 }
 
 /// Every claim on one body, in claimant order.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct BodyClaims {
     by_claimant: Vec<Claim>,
+    /// The animator fold, resolved once per change: every player row reads
+    /// it every tick, so it is cached and emptied by each animator write.
+    resolved_animator: OnceLock<AnimatorClaims>,
+}
+
+impl PartialEq for BodyClaims {
+    fn eq(&self, other: &Self) -> bool {
+        self.by_claimant == other.by_claimant
+    }
 }
 
 impl BodyClaims {
@@ -234,6 +282,7 @@ impl BodyClaims {
     /// claimant simply not re-stating it.
     pub fn clear(&mut self) {
         self.by_claimant.clear();
+        self.resolved_animator = OnceLock::new();
     }
 
     /// Whether `claimant` already holds a claim. The neutral-write fast path:
@@ -262,7 +311,7 @@ impl BodyClaims {
                         display: [None; 2],
                         bones: Vec::new(),
                         denied: DeniedActions::NONE,
-                        motions: [HandMotions::NONE; 2],
+                        animator: AnimatorClaims::default(),
                     },
                 );
                 i
@@ -366,16 +415,57 @@ impl BodyClaims {
         true
     }
 
-    /// Set the engine motions `claimant` owns on each hand
-    /// ([`HandMotions::NONE`] releases a hand). Infallible, like the denied
-    /// actions: a set of enum values has no malformed form to refuse.
-    pub fn set_hand_motions(&mut self, claimant: &str, main: HandMotions, off: HandMotions) {
-        if main.is_empty() && off.is_empty() && !self.holds(claimant) {
-            return;
+    /// Set the graph params `claimant` holds on the body's rigs (an empty
+    /// list releases them). Refused (`false`) whole if a number is
+    /// non-finite. One entry per `(rig, param)`: a later duplicate in the
+    /// list replaces the earlier.
+    pub fn set_animator_params(&mut self, claimant: &str, params: Vec<AnimatorParam>) -> bool {
+        if params
+            .iter()
+            .any(|p| matches!(p.value, AnimatorValue::Number(v) if !v.is_finite()))
+        {
+            return false;
+        }
+        if params.is_empty() && !self.holds(claimant) {
+            return true;
         }
         let at = self.slot(claimant);
-        self.by_claimant[at].motions = [main, off];
+        let mine = &mut self.by_claimant[at].animator;
+        mine.params = params;
+        mine.sort();
         self.prune(at);
+        self.resolved_animator = OnceLock::new();
+        true
+    }
+
+    /// Set the montages `claimant` holds in the body's rig slots (an empty
+    /// list releases them). Refused (`false`) whole if a clock's progress
+    /// or rate is non-finite; a scrub progress clamps into `0..=1`. One
+    /// entry per `(rig, slot)`: a later duplicate in the list replaces the
+    /// earlier.
+    pub fn set_animator_plays(&mut self, claimant: &str, plays: Vec<AnimatorPlay>) -> bool {
+        let finite = |clock: &AnimatorClock| match clock {
+            AnimatorClock::Scrub(progress) => progress.is_finite(),
+            AnimatorClock::Run { rate, .. } => rate.is_finite(),
+        };
+        if plays.iter().any(|p| !finite(&p.clock)) {
+            return false;
+        }
+        if plays.is_empty() && !self.holds(claimant) {
+            return true;
+        }
+        let at = self.slot(claimant);
+        let mine = &mut self.by_claimant[at].animator;
+        mine.plays = plays;
+        for p in &mut mine.plays {
+            if let AnimatorClock::Scrub(progress) = &mut p.clock {
+                *progress = progress.clamp(0.0, 1.0);
+            }
+        }
+        mine.sort();
+        self.prune(at);
+        self.resolved_animator = OnceLock::new();
+        true
     }
 
     /// Set the actions `claimant` bars on this body (an empty set releases
@@ -475,6 +565,23 @@ impl BodyClaims {
         })
     }
 
+    /// The resolved animator claims: per `(rig, param)` and per `(rig,
+    /// slot)` the LAST claimant in order wins, by the pose rule — a param
+    /// holds one value and a slot plays one thing, so two live claims on
+    /// one are a conflict, not a composition; keying still lets one
+    /// claimant's release uncover another's.
+    pub fn animator(&self) -> &AnimatorClaims {
+        self.resolved_animator.get_or_init(|| {
+            let mut out = AnimatorClaims::default();
+            for c in &self.by_claimant {
+                out.params.extend(c.animator.params.iter().cloned());
+                out.plays.extend(c.animator.plays.iter().copied());
+            }
+            out.sort();
+            out
+        })
+    }
+
     /// The resolved DISPLAY for one hand — the item whose art draws in place
     /// of the held stack's — by the pose rule: the LAST claim in claimant
     /// order, since a hand shows one thing.
@@ -485,26 +592,56 @@ impl BodyClaims {
         };
         self.by_claimant.iter().rev().find_map(|c| c.display[hand])
     }
-
-    /// The resolved motion ownership for one hand: a UNION across
-    /// claimants, like the denials — a claim says "this vanilla motion
-    /// stands down", so it holds while ANY claimant states it, and one
-    /// claimant releasing cannot release another's. Which pose the hand then
-    /// wears is the pose seam's own conflict to resolve.
-    pub fn hand_motions(&self, hand: Hand) -> HandMotions {
-        let hand = match hand {
-            Hand::Main => 0,
-            Hand::Off => 1,
-        };
-        self.by_claimant
-            .iter()
-            .fold(HandMotions::NONE, |set, c| set.union(c.motions[hand]))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Animator claims resolve per `(rig, slot)` and `(rig, param)` with the
+    /// pose rule: the later claimant wins, a release uncovers the earlier
+    /// claim, a non-finite value is refused whole, and a progress clamps.
+    #[test]
+    fn animator_claims_resolve_per_slot_and_param_last_wins_and_release_uncovers() {
+        let play = |slot: u16, clip: u16, progress: f32| AnimatorPlay {
+            rig: RigId(1),
+            slot,
+            clip,
+            clock: AnimatorClock::Scrub(progress),
+            mirror: false,
+            priority: 0,
+        };
+        let param = |name: u16, value: f32| AnimatorParam {
+            rig: RigId(0),
+            param: name,
+            value: AnimatorValue::Number(value),
+        };
+        let mut claims = BodyClaims::default();
+        assert!(claims.set_animator_plays("alpha", vec![play(0, 1, 0.25), play(1, 5, 0.0)]));
+        assert!(claims.set_animator_plays("beta", vec![play(0, 2, 1.5)]));
+        assert!(claims.set_animator_params("alpha", vec![param(3, 1.0)]));
+        let resolved = claims.animator().clone();
+        assert_eq!(
+            resolved.plays.iter().map(|p| (p.slot, p.clip, p.progress())).collect::<Vec<_>>(),
+            [(0, 2, Some(1.0)), (1, 5, Some(0.0))],
+            "the later claimant wins slot 0, clamped; slot 1 stands"
+        );
+        assert_eq!(resolved.params, [param(3, 1.0)]);
+
+        assert!(!claims.set_animator_plays("beta", vec![play(0, 3, f32::NAN)]));
+        assert!(!claims.set_animator_params("beta", vec![param(3, f32::INFINITY)]));
+        assert_eq!(claims.animator(), &resolved, "a refused write changes nothing");
+
+        assert!(claims.set_animator_plays("beta", Vec::new()));
+        assert_eq!(
+            claims.animator().plays[0].clip,
+            1,
+            "a release uncovers the earlier claim"
+        );
+        assert!(claims.set_animator_plays("alpha", Vec::new()));
+        assert!(claims.set_animator_params("alpha", Vec::new()));
+        assert!(claims.is_empty());
+    }
 
     fn pose(y: f32) -> HeldPose {
         HeldPose {
@@ -667,42 +804,5 @@ mod tests {
         assert!(body.set_held_pose("combat", Some(HeldPose::IDENTITY), None));
         assert!(body.is_empty());
         assert_eq!(body.held_pose(Hand::Main), None);
-    }
-
-    /// Motion claims UNION across claimants per hand and per motion — the
-    /// denials' rule, not the poses' last-wins — and a release releases only
-    /// its own: one claimant letting go must uncover another's
-    /// still-standing claim, never hand the vanilla motion back underneath
-    /// it.
-    #[test]
-    fn motion_claims_union_across_mods_and_release_only_their_own() {
-        use mod_api::HandMotion;
-        let swing = HandMotions::of([HandMotion::Swing]);
-        let jab = HandMotions::of([HandMotion::Jab]);
-
-        let mut body = BodyClaims::default();
-        assert!(body.hand_motions(Hand::Main).is_empty(), "nobody owns any");
-        assert!(body.is_empty());
-
-        body.set_hand_motions("aaa", swing, HandMotions::NONE);
-        body.set_hand_motions("zzz", jab, swing);
-        let main = body.hand_motions(Hand::Main);
-        assert!(
-            main.contains(HandMotion::Swing) && main.contains(HandMotion::Jab),
-            "per-motion claims from different claimants union"
-        );
-        assert!(body.hand_motions(Hand::Off).contains(HandMotion::Swing));
-
-        // "zzz" releases everything it claimed; "aaa"'s main-hand swing
-        // stands untouched.
-        body.set_hand_motions("zzz", HandMotions::NONE, HandMotions::NONE);
-        let main = body.hand_motions(Hand::Main);
-        assert!(main.contains(HandMotion::Swing) && !main.contains(HandMotion::Jab));
-        assert!(body.hand_motions(Hand::Off).is_empty());
-
-        // A neutral write before ANY claim touches nothing.
-        let mut fresh = BodyClaims::default();
-        fresh.set_hand_motions("combat", HandMotions::NONE, HandMotions::NONE);
-        assert!(fresh.is_empty());
     }
 }

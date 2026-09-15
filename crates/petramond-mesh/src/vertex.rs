@@ -615,7 +615,7 @@ pub const SKY_SHIFT: u32 = 17;
 
 /// `Vertex::packed` bit 26. In the chunk pass it means "composite the overlay
 /// payload"; the model3d pass, which never composites overlays, reuses the same
-/// bit as `SOLID_COLOR_FLAG`.
+/// bit as the model3d solid-colour sentinel.
 pub const OVERLAY_FLAG: u32 = 1 << 26;
 
 /// The overlay payload's home in `packed2`, bits 20..31.

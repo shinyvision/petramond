@@ -120,8 +120,9 @@ pub enum PlayerAction {
         target: Option<TargetRef>,
         request_id: Option<ClientRequestId>,
         predicted: bool,
-        /// Whether the client played its own P0 hand jab for this click (its
-        /// "predictably does something" verdict). When the server consumes a
+        /// Whether the client foresaw this click being consumed and presented
+        /// it itself (its P0 hand jab, or the eat the click starts). When the
+        /// server consumes a
         /// click the client could NOT foresee — a mod-cancelled item use or
         /// block interact — it echoes `SelfEvents::used_unpredicted` so the
         /// jab still plays exactly once.

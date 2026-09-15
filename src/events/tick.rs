@@ -71,7 +71,7 @@ pub enum SpatialSoundCommand {
 /// feed that player's `GameEvents` (hand jabs, hurt shake, screen requests).
 /// One per session per tick; the acting session's slice is written by the
 /// per-player stages.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PlayerTickEvents {
     pub broke_block: Option<Block>,
     pub placed_block: Option<Block>,
@@ -79,11 +79,6 @@ pub struct PlayerTickEvents {
     pub picked_up_item: bool,
     pub threw_item: bool,
     pub used_item: bool,
-    /// An eat COMPLETED this tick (the food was consumed) — as opposed to the
-    /// level `eating` state ending in an abort. Feeds the remote-player
-    /// `AteFinished` action; the local client's presentation reads the eat
-    /// progress instead.
-    pub ate_finished: bool,
     pub bed_interacted: bool,
     pub interacted: bool,
     pub player_damaged: bool,
@@ -100,11 +95,14 @@ pub struct PlayerTickEvents {
     /// This tick's use click was claimed on the ladder's OFF-hand pass, so its
     /// one-shots (`placed_block`/`used_item`/`interacted`/`used_unpredicted`)
     /// animate the left hand. At most one click dispatches per tick, so one
-    /// flag covers them all; the eat completion keeps its own flag because an
-    /// eat can finish in the same tick as an unrelated click.
+    /// flag covers them all.
     pub click_off_hand: bool,
-    /// The completed eat (`ate_finished`) consumed from the OFF hand.
-    pub ate_off_hand: bool,
+    /// Graph events mods fired on this player's rig animators
+    /// (`FirePlayerAnimatorEvent`), in emission order: `(rig, event id)`.
+    /// The player's own viewmodel answers every one; observers hear those
+    /// on rigs they see. The engine's own gestures (the flags above) join
+    /// this lane at replication, resolved through `player::one_shot`.
+    pub animator_events: Vec<(crate::player::RigId, u16)>,
 }
 
 /// One keyed event addressed at a single player's CLIENT instance
@@ -218,9 +216,11 @@ impl TickEvents {
         &mut self.players[s]
     }
 
-    /// Read-only copy of player `s`'s slice (default if nothing was written).
-    pub fn player_at(&self, s: usize) -> PlayerTickEvents {
-        self.players.get(s).copied().unwrap_or_default()
+    /// Player `s`'s slice, read-only (empty if nothing was written).
+    pub fn player_at(&self, s: usize) -> &PlayerTickEvents {
+        static NONE: std::sync::LazyLock<PlayerTickEvents> =
+            std::sync::LazyLock::new(PlayerTickEvents::default);
+        self.players.get(s).unwrap_or(&NONE)
     }
 
     pub fn next_spatial_sound_handle(&self) -> u64 {

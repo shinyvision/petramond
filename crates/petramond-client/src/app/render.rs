@@ -140,6 +140,7 @@ impl App {
         let shake = hurt_shake(self.hurt_shake_t, now);
         renderer.set_hand_shake(shake.hand);
 
+        let motion = game.local_motion(self.hurt_shake_t);
         let listener;
         {
             let frame = game.client_frame(now);
@@ -148,8 +149,51 @@ impl App {
                 right: frame.camera.right(),
             };
             let mut cam = frame.camera.clone();
-            cam.yaw += shake.yaw;
-            cam.pitch += shake.pitch;
+            if self.settings.screen_shake {
+                cam.yaw += shake.yaw;
+                cam.pitch += shake.pitch;
+            }
+            renderer.set_selection(
+                self.screen
+                    .gameplay_enabled()
+                    .then_some(frame.selection)
+                    .flatten(),
+            );
+            let hand_events = std::mem::take(&mut self.hand_events);
+            renderer.set_hands(
+                HeldItemFrame {
+                    item: frame.held_item.item,
+                    display: frame.held_item.display,
+                    variant: frame.held_item.variant,
+                    block_state: frame.held_item.block_state,
+                    mining: frame.held_item.mining,
+                    eating: frame.held_item.eating,
+                    pose_target: frame
+                        .held_item
+                        .pose_target
+                        .map(crate::game::render_held_pose),
+                },
+                // The OFF hand: its own item + eat channel. Mining is a
+                // main-hand level by definition.
+                HeldItemFrame {
+                    item: frame.off_hand_item.item,
+                    display: frame.off_hand_item.display,
+                    variant: frame.off_hand_item.variant,
+                    block_state: frame.off_hand_item.block_state,
+                    mining: false,
+                    eating: frame.off_hand_item.eating,
+                    pose_target: frame
+                        .off_hand_item
+                        .pose_target
+                        .map(crate::game::render_held_pose),
+                },
+                dt,
+            );
+            // The first-person animator runs once both hands' frames and the
+            // body's animator claims are in, and before the uniforms, which
+            // wear its camera bone.
+            renderer.set_local_animator(&frame.animator, &hand_events);
+            renderer.set_first_person_motion(motion);
             renderer.update_uniforms(
                 &cam,
                 frame.environment.fog,
@@ -157,61 +201,6 @@ impl App {
                 frame.environment.eye_fluid,
                 Some(&frame.environment.shader_params),
             );
-            renderer.set_selection(
-                self.screen
-                    .gameplay_enabled()
-                    .then_some(frame.selection)
-                    .flatten(),
-            );
-            let hand = std::mem::take(&mut self.hand);
-            renderer.set_held_item(HeldItemFrame {
-                item: frame.held_item.item,
-                display: frame.held_item.display,
-                variant: frame.held_item.variant,
-                block_state: frame.held_item.block_state,
-                mining: frame.held_item.mining,
-                broke_block: hand.broke,
-                placed: hand.placed,
-                swung: hand.swung,
-                eating: frame.held_item.eating,
-                pose_target: frame
-                    .held_item
-                    .pose_target
-                    .map(crate::game::render_held_pose),
-                swing_claim: frame.held_item.motions.contains(mod_api::HandMotion::Swing),
-                jab_claim: frame.held_item.motions.contains(mod_api::HandMotion::Jab),
-                bob: frame.held_item.bob,
-                motion_offset: frame.held_item.motion_offset,
-                dt,
-            });
-            // The OFF hand: its own item + jab/eat channels. Mining, breaks,
-            // and attack swings are main-hand actions by definition.
-            renderer.set_off_hand_item(HeldItemFrame {
-                item: frame.off_hand_item.item,
-                display: frame.off_hand_item.display,
-                variant: frame.off_hand_item.variant,
-                block_state: frame.off_hand_item.block_state,
-                mining: false,
-                broke_block: false,
-                placed: hand.placed_off,
-                swung: false,
-                eating: frame.off_hand_item.eating,
-                pose_target: frame
-                    .off_hand_item
-                    .pose_target
-                    .map(crate::game::render_held_pose),
-                swing_claim: frame
-                    .off_hand_item
-                    .motions
-                    .contains(mod_api::HandMotion::Swing),
-                jab_claim: frame
-                    .off_hand_item
-                    .motions
-                    .contains(mod_api::HandMotion::Jab),
-                bob: frame.off_hand_item.bob,
-                motion_offset: frame.off_hand_item.motion_offset,
-                dt,
-            });
         }
         // Build the neutral read snapshot, then bake it into render wire structs.
         {

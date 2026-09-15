@@ -129,14 +129,6 @@ pub(super) fn movement_medium(
         MovementMedium::Land
     }
 }
-
-pub(super) fn land_motion(
-    world: &petramond_world::world::WorldData,
-    pos: petramond_math::world_pos::WorldPos,
-) -> bool {
-    movement_medium(world, pos) == MovementMedium::Land
-}
-
 mod swimming;
 
 impl BodyPose {

@@ -636,7 +636,7 @@ fn queued_q_drop_uses_the_action_time_hotbar_slot() {
 }
 
 #[test]
-fn applying_a_real_throw_arms_the_hand_place_jab() {
+fn applying_a_real_throw_arms_the_hand_throw_jab() {
     // The Q drop throws from the active hotbar slot.
     {
         let mut game = game();
@@ -664,7 +664,7 @@ fn applying_a_real_throw_arms_the_hand_place_jab() {
 }
 
 #[test]
-fn a_noop_throw_does_not_arm_the_place_jab() {
+fn a_noop_throw_does_not_arm_the_throw_jab() {
     let mut game = game();
     game.server.sessions[0].player.inventory = petramond_world::inventory::Inventory::new();
     // Nothing in hand or on the cursor: every throw path is a no-op.

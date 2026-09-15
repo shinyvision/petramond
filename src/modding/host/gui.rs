@@ -129,6 +129,7 @@ mod tests {
 
         let others = vec![SessionPlayerRef {
             id: PlayerId(1),
+            index: 1,
             player: &mut guest,
             gui_state: &mut guest_gui,
             gui: Some(OpenGui {
@@ -140,7 +141,7 @@ mod tests {
             kind,
             anchor: Some(host_at),
         });
-        crate::events::with_sessions_scope(PlayerId(0), acting_gui, others, || {
+        crate::events::with_sessions_scope((PlayerId(0), 0), acting_gui, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut host,

@@ -1,6 +1,17 @@
 use super::*;
 use petramond::player::model::player_model;
+use petramond::player::rigs::{self, Presenter};
 use petramond_math::world_pos::WorldPos;
+
+/// The body rig's main arm is the authored LEFT one, which the yaw+π
+/// placement shows on the visual right; the off arm is the authored right.
+const HELD_SHOULDER_BONE: &str = "left_shoulder";
+const HELD_ELBOW_BONE: &str = "left_elbow";
+const OFF_ELBOW_BONE: &str = "right_elbow";
+
+fn body_rig() -> &'static Rig {
+    rigs::presented(Presenter::Body).expect("the body rig").1
+}
 
 #[test]
 fn swimming_gaze_stays_on_target_through_torso_rotation() {
@@ -61,24 +72,15 @@ fn instance() -> PlayerRenderInstance {
     }
 }
 
-fn swing_view(swing: f32) -> crate::HeldItemView {
-    crate::HeldItemView {
-        swing,
-        swing_scale: 1.0,
-        ..Default::default()
-    }
-}
-
-fn bake(inst: &PlayerRenderInstance, swing: f32) -> Vec<ItemVertex> {
+fn bake(inst: &PlayerRenderInstance) -> Vec<ItemVertex> {
     let (mut v, mut i) = (Vec::new(), Vec::new());
     let (n, _, _) = build_player_body(
-        player_model(),
+        body_rig(),
         LightEnv::IDENTITY,
         inst,
         petramond_math::math::IVec3::ZERO,
         &[],
-        &swing_view(swing),
-        &crate::HeldItemView::default(),
+        None,
         &mut v,
         &mut i,
     );
@@ -91,13 +93,13 @@ fn self_lit_players_keep_fire_and_hurt_tints_in_darkness() {
     let mut inst = instance();
     inst.emitter_tint = [1.0, 0.7, 0.4];
     inst.hurt = 0.5;
-    let daylight = bake(&inst, 0.0);
+    let daylight = bake(&inst);
     inst.skylight = 0;
-    let dark = bake(&inst, 0.0);
+    let dark = bake(&inst);
     inst.emitter_self_lit = 1.0;
     let (mut lit, mut indices) = (Vec::new(), Vec::new());
     build_player_body(
-        player_model(),
+        body_rig(),
         LightEnv {
             sky_scale: 0.0,
             sky_color: [0.6, 0.7, 1.0],
@@ -105,8 +107,7 @@ fn self_lit_players_keep_fire_and_hurt_tints_in_darkness() {
         &inst,
         petramond_math::math::IVec3::ZERO,
         &[],
-        &swing_view(0.0),
-        &crate::HeldItemView::default(),
+        None,
         &mut lit,
         &mut indices,
     );
@@ -124,69 +125,53 @@ fn self_lit_players_keep_fire_and_hurt_tints_in_darkness() {
     }
 }
 
-fn hand(inst: &PlayerRenderInstance, swing: f32) -> Mat4 {
+/// The two hand attach frames of a body at rest.
+fn hands(inst: &PlayerRenderInstance) -> (Mat4, Mat4) {
     let (mut v, mut i) = (Vec::new(), Vec::new());
-    let (_, hand, _) = build_player_body(
-        player_model(),
+    let (_, hand, off) = build_player_body(
+        body_rig(),
         LightEnv::IDENTITY,
         inst,
         petramond_math::math::IVec3::ZERO,
         &[],
-        &swing_view(swing),
-        &crate::HeldItemView::default(),
+        None,
         &mut v,
         &mut i,
     );
-    hand
+    (hand, off)
 }
 
-fn off_hand(inst: &PlayerRenderInstance, off_swing: f32) -> Mat4 {
-    let (mut v, mut i) = (Vec::new(), Vec::new());
-    let (_, _, off) = build_player_body(
-        player_model(),
-        LightEnv::IDENTITY,
-        inst,
-        petramond_math::math::IVec3::ZERO,
-        &[],
-        &crate::HeldItemView::default(),
-        &swing_view(off_swing),
-        &mut v,
-        &mut i,
-    );
-    off
+fn hand(inst: &PlayerRenderInstance) -> Mat4 {
+    hands(inst).0
+}
+
+fn off_hand(inst: &PlayerRenderInstance) -> Mat4 {
+    hands(inst).1
 }
 
 #[test]
-fn body_bakes_and_walk_swings_layer_with_the_punch() {
+fn body_bakes_and_walks_and_looks() {
     // Rest pose bakes geometry standing at the feet.
-    let rest = bake(&instance(), 0.0);
+    let rest = bake(&instance());
     assert!(!rest.is_empty(), "player model bakes geometry");
 
     // Walking at two phases differs (limbs swing).
     let mut walking = instance();
     walking.walk_weight = 1.0;
     walking.anim_time = 0.0;
-    let a = bake(&walking, 0.0);
+    let a = bake(&walking);
     walking.anim_time = 0.25;
-    let b = bake(&walking, 0.0);
+    let b = bake(&walking);
     assert!(
         a.iter().zip(&b).any(|(x, y)| x.pos != y.pos),
         "walk animation moves the limbs"
-    );
-
-    // A mid-swing punch changes the pose ON TOP of the same walk phase.
-    walking.anim_time = 0.25;
-    let punched = bake(&walking, 0.4);
-    assert!(
-        b.iter().zip(&punched).any(|(x, y)| x.pos != y.pos),
-        "the arm swing composes over the walk pose"
     );
 
     // Head-look moves geometry while idle (the head bone override is wired).
     let mut turned = instance();
     turned.head_yaw = 0.6;
     turned.head_pitch = 0.3;
-    let looked = bake(&turned, 0.0);
+    let looked = bake(&turned);
     assert!(
         rest.iter().zip(&looked).any(|(x, y)| x.pos != y.pos),
         "head look poses the head"
@@ -196,10 +181,10 @@ fn body_bakes_and_walk_swings_layer_with_the_punch() {
 #[test]
 fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
     // Full sneak while standing still: a crouch stance, not the upright rest.
-    let rest = bake(&instance(), 0.0);
+    let rest = bake(&instance());
     let mut crouched = instance();
     crouched.sneak_weight = 1.0;
-    let stance = bake(&crouched, 0.0);
+    let stance = bake(&crouched);
     assert!(
         rest.iter().zip(&stance).any(|(a, b)| a.pos != b.pos),
         "the sneak stance poses the body"
@@ -208,7 +193,7 @@ fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
     // A STILL sneaker holds the clip's first frame: the walk phase must not
     // leak into the stance.
     crouched.anim_time = 0.4;
-    let stance_later = bake(&crouched, 0.0);
+    let stance_later = bake(&crouched);
     assert!(
         stance
             .iter()
@@ -220,9 +205,9 @@ fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
     // A MOVING sneaker animates through the sneak clip (its own cycle)...
     crouched.walk_weight = 1.0;
     crouched.anim_time = 0.1;
-    let step_a = bake(&crouched, 0.0);
+    let step_a = bake(&crouched);
     crouched.anim_time = 0.35;
-    let step_b = bake(&crouched, 0.0);
+    let step_b = bake(&crouched);
     assert!(
         step_a.iter().zip(&step_b).any(|(a, b)| a.pos != b.pos),
         "sneak-walking advances the sneak cycle"
@@ -232,7 +217,7 @@ fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
     let mut upright = instance();
     upright.walk_weight = 1.0;
     upright.anim_time = 0.1;
-    let walking = bake(&upright, 0.0);
+    let walking = bake(&upright);
     assert!(
         walking.iter().zip(&step_a).any(|(a, b)| a.pos != b.pos),
         "sneak-walking is a different cycle than the upright walk"
@@ -246,10 +231,10 @@ fn seated_swings_the_thighs_forward_and_hangs_the_shins() {
     // the shins hang from the forward knees), and the knees stick out
     // toward the FACING (+Z at engine yaw 0), while the torso stays
     // upright (still much taller than a lying body).
-    let standing = bake(&instance(), 0.0);
+    let standing = bake(&instance());
     let mut riding = instance();
     riding.seated = true;
-    let seated = bake(&riding, 0.0);
+    let seated = bake(&riding);
     let span = |v: &[ItemVertex], axis: usize| {
         let lo = v.iter().map(|x| x.pos[axis]).fold(f32::MAX, f32::min);
         let hi = v.iter().map(|x| x.pos[axis]).fold(f32::MIN, f32::max);
@@ -287,10 +272,10 @@ fn seated_swings_the_thighs_forward_and_hangs_the_shins() {
 fn sleeping_lies_the_body_flat() {
     // Standing spans ~1.85 blocks of height; asleep the same model must lie
     // flat (height collapses to body thickness) and stretch horizontally.
-    let standing = bake(&instance(), 0.0);
+    let standing = bake(&instance());
     let mut asleep = instance();
     asleep.sleeping = true;
-    let lying = bake(&asleep, 0.0);
+    let lying = bake(&asleep);
     let height = |v: &[ItemVertex]| {
         let ys: Vec<f32> = v.iter().map(|x| x.pos[1]).collect();
         ys.iter().fold(f32::MIN, |a, &b| a.max(b)) - ys.iter().fold(f32::MAX, |a, &b| a.min(b))
@@ -319,11 +304,11 @@ fn walk_weight_blends_between_rest_and_the_full_cycle() {
     let mut inst = instance();
     inst.anim_time = 0.25;
     inst.walk_weight = 0.0;
-    let rest = bake(&inst, 0.0);
+    let rest = bake(&inst);
     inst.walk_weight = 1.0;
-    let full = bake(&inst, 0.0);
+    let full = bake(&inst);
     inst.walk_weight = 0.5;
-    let half = bake(&inst, 0.0);
+    let half = bake(&inst);
     assert!(
         rest.iter().zip(&half).any(|(a, b)| a.pos != b.pos),
         "half blend differs from rest"
@@ -438,7 +423,7 @@ fn the_third_person_attach_reorients_without_flipping_the_item() {
     };
     // In the ARM's own frame (the rest arm hangs unrotated, so its axes are
     // the authored model's: +Y up, −Z the body's front).
-    let m = held_model_transform(Mat4::IDENTITY, kind);
+    let m = held_model_at(Grip::body(Mat4::IDENTITY), kind);
     let dir = |v: Vec3| m.transform_vector3(v).normalize();
 
     let forward = dir(Vec3::Y);
@@ -502,7 +487,7 @@ fn conjugating_a_display_transform_is_exactly_the_left_hand_rule() {
 #[test]
 fn an_identity_pose_leaves_the_hand_frame_untouched() {
     let inst = instance();
-    let frame = hand(&inst, 0.0);
+    let frame = hand(&inst);
     assert_eq!(posed_hand(frame, &Default::default(), false), frame);
     assert_eq!(posed_hand(frame, &Default::default(), true), frame);
 }
@@ -510,291 +495,20 @@ fn an_identity_pose_leaves_the_hand_frame_untouched() {
 #[test]
 fn held_grip_is_on_the_visual_right_side() {
     let inst = instance();
-    let grip = hand(&inst, 0.0).transform_point3(HAND_GRIP_PX);
+    let grip = hand(&inst).transform_point3(HAND_GRIP_PX);
     assert!(
         grip.x < inst.pos.x as f32,
         "yaw 0 player-right is camera-right/world -X, grip at {grip:?}"
     );
 }
 
-/// Visual preview harness (NOT an assertion): the third-person body with
-/// the SAME item in both fists, seen from the front — so the off-hand
-/// attach transforms can be checked as the mirror of the right hand's.
-/// Rows: sprite item at rest, bbmodel item at rest, sprite mid off-jab.
-/// Run: `cargo test --lib -- --ignored --nocapture render_third_person_off_hand_preview`.
-/// Writes /tmp/third_person_off_hand.png.
 #[test]
-#[ignore = "visual preview harness; run explicitly to regenerate /tmp/third_person_off_hand.png"]
-fn render_third_person_off_hand_preview() {
-    use crate::atlas::tile_uv;
-    use crate::lighting::DynLight;
-    use petramond_world::item::{ItemRenderKind, ItemType};
-
-    let (w, h) = (640usize, 640usize);
-    let rows = 3usize;
-    let bg = [30u8, 32, 38];
-    let mut color = vec![0u8; w * h * rows * 3];
-    for px in color.chunks_mut(3) {
-        px.copy_from_slice(&bg);
-    }
-
-    // Front camera: the body stands at the origin facing +Z (yaw 0), the
-    // camera looks at its chest — their right hand is the viewer's left.
-    let proj = Mat4::perspective_rh(55f32.to_radians(), w as f32 / h as f32, 0.05, 20.0);
-    let view = Mat4::look_at_rh(
-        Vec3::new(0.0, 1.25, 2.9),
-        Vec3::new(0.0, 0.95, 0.0),
-        Vec3::Y,
-    );
-    let mvp = proj * view;
-
-    let model = player_model();
-    let skin = (model.texture_rgba.as_slice(), model.tex_w, model.tex_h);
-    let (model_atlas, maw, mah) = petramond_world::block_model::atlas().texture();
-
-    // One z-buffered cell: raster `verts` (already world-space) with a
-    // per-stream texture; both windings fill (the item streams draw on
-    // the double-sided mob pipeline in game).
-    let raster = |verts: &[ItemVertex],
-                  tex: (&[u8], u32, u32),
-                  row: usize,
-                  zbuf: &mut [f32],
-                  color: &mut [u8]| {
-        let (pix, tw, th) = tex;
-        for tri in verts.chunks_exact(3) {
-            let mut s = [[0f32; 3]; 3];
-            let mut ok = true;
-            for (dst, v) in s.iter_mut().zip(tri) {
-                let c = mvp * glam::Vec4::new(v.pos[0], v.pos[1], v.pos[2], 1.0);
-                if c.w <= 1e-6 {
-                    ok = false;
-                    break;
-                }
-                let n = c / c.w;
-                *dst = [
-                    (n.x * 0.5 + 0.5) * w as f32,
-                    (1.0 - (n.y * 0.5 + 0.5)) * h as f32,
-                    n.z,
-                ];
-            }
-            if !ok {
-                continue;
-            }
-            let (x0, y0, x1, y1, x2, y2) = (s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1]);
-            let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-            if area.abs() < 1e-6 {
-                continue;
-            }
-            let inv_area = 1.0 / area;
-            let minx = x0.min(x1).min(x2).floor().max(0.0) as usize;
-            let maxx = x0.max(x1).max(x2).ceil().min(w as f32 - 1.0) as usize;
-            let miny = y0.min(y1).min(y2).floor().max(0.0) as usize;
-            let maxy = y0.max(y1).max(y2).ceil().min(h as f32 - 1.0) as usize;
-            for y in miny..=maxy {
-                for x in minx..=maxx {
-                    let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-                    let w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv_area;
-                    let w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv_area;
-                    let w2 = 1.0 - w0 - w1;
-                    if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
-                        continue;
-                    }
-                    let z = w0 * s[0][2] + w1 * s[1][2] + w2 * s[2][2];
-                    let li = y * w + x;
-                    if z >= zbuf[li] {
-                        continue;
-                    }
-                    let u = w0 * tri[0].uv[0] + w1 * tri[1].uv[0] + w2 * tri[2].uv[0];
-                    let v = w0 * tri[0].uv[1] + w1 * tri[1].uv[1] + w2 * tri[2].uv[1];
-                    let tx = (u * tw as f32).clamp(0.0, tw as f32 - 1.0) as u32;
-                    let ty = (v * th as f32).clamp(0.0, th as f32 - 1.0) as u32;
-                    let ti = ((ty * tw + tx) * 4) as usize;
-                    if pix[ti + 3] < 128 {
-                        continue;
-                    }
-                    let shade = w0 * tri[0].shade + w1 * tri[1].shade + w2 * tri[2].shade;
-                    zbuf[li] = z;
-                    let o = ((row * h + y) * w + x) * 3;
-                    color[o] = (pix[ti] as f32 * shade).min(255.0) as u8;
-                    color[o + 1] = (pix[ti + 1] as f32 * shade).min(255.0) as u8;
-                    color[o + 2] = (pix[ti + 2] as f32 * shade).min(255.0) as u8;
-                }
-            }
-        }
-    };
-
-    // The pickaxe texture, re-addressed through its atlas rect so the
-    // extruded verts' atlas UVs sample the source PNG.
-    let pick_src = format!(
-        "{}/../../assets/textures/stone_pickaxe.png",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let pick_img = image::open(&pick_src).expect("texture").to_rgba8();
-    let (ptw, pth) = pick_img.dimensions();
-    let pick_tile = match ItemType::StonePickaxe.render_kind() {
-        ItemRenderKind::Sprite(t) => t,
-        _ => panic!("pickaxe is a sprite"),
-    };
-    let [au0, av0, au1, av1] = tile_uv(pick_tile);
-    let sprite_stream = |m: Mat4| -> Vec<ItemVertex> {
-        let mut v = Vec::new();
-        crate::item_model::build_extruded_item_lit(
-            pick_tile,
-            DynLight::FULL,
-            LightEnv::IDENTITY,
-            &mut v,
-        );
-        transform_positions(v.iter_mut().map(|x| &mut x.pos), m);
-        // Re-normalize the atlas rect onto the source PNG for sampling.
-        for x in &mut v {
-            x.uv[0] = (x.uv[0] - au0) / (au1 - au0);
-            x.uv[1] = (x.uv[1] - av0) / (av1 - av0);
-        }
-        v
-    };
-    let bucket_kind = match ItemType::WoodenBucket.render_kind() {
-        ItemRenderKind::Model(k) => k,
-        _ => panic!("bucket is a model item"),
-    };
-    let model_stream = |m: Mat4| -> Vec<ItemVertex> {
-        let (mut tv, mut ti) = (Vec::new(), Vec::new());
-        crate::item_model::build_block_model_item(
-            bucket_kind,
-            m,
-            DynLight::FULL,
-            LightEnv::IDENTITY,
-            None,
-            &mut tv,
-            &mut ti,
-        );
-        let mut flat = Vec::with_capacity(ti.len());
-        for &i in &ti {
-            flat.push(tv[i as usize]);
-        }
-        flat
-    };
-
-    let (mut bv, mut bi) = (Vec::new(), Vec::new());
-    // The shared fixture parks the body away from the origin; the camera
-    // above looks at the origin, so stand the body there.
-    let mut inst = instance();
-    inst.pos = WorldPos::ZERO;
-    for (row, (off_swing, model_row)) in
-        [(0.0, false), (0.0, true), (0.5, false)].iter().enumerate()
-    {
-        let held_view = swing_view(0.0);
-        let off_view = swing_view(*off_swing);
-        let (_, hand, off_hand) = build_player_body(
-            model,
-            LightEnv::IDENTITY,
-            &inst,
-            petramond_math::math::IVec3::ZERO,
-            &[],
-            &held_view,
-            &off_view,
-            &mut bv,
-            &mut bi,
-        );
-        let mut zbuf = vec![f32::INFINITY; w * h];
-        // Body (indexed → flat triangles), skin texture.
-        let mut body = Vec::with_capacity(bi.len());
-        for &i in &bi {
-            body.push(bv[i as usize]);
-        }
-        raster(&body, skin, row, &mut zbuf, &mut color);
-        if *model_row {
-            raster(
-                &model_stream(held_model_transform(hand, bucket_kind)),
-                (model_atlas, maw, mah),
-                row,
-                &mut zbuf,
-                &mut color,
-            );
-            raster(
-                &model_stream(held_model_transform_off(off_hand, bucket_kind)),
-                (model_atlas, maw, mah),
-                row,
-                &mut zbuf,
-                &mut color,
-            );
-        } else {
-            raster(
-                &sprite_stream(held_sprite_transform(hand)),
-                (pick_img.as_raw(), ptw, pth),
-                row,
-                &mut zbuf,
-                &mut color,
-            );
-            raster(
-                &sprite_stream(held_sprite_transform_off(off_hand)),
-                (pick_img.as_raw(), ptw, pth),
-                row,
-                &mut zbuf,
-                &mut color,
-            );
-        }
-        println!(
-            "row {row}: {} (off_swing {off_swing})",
-            if *model_row {
-                "bucket both hands"
-            } else {
-                "pickaxe both hands"
-            }
-        );
-    }
-    image::save_buffer(
-        "/tmp/third_person_off_hand.png",
-        &color,
-        w as u32,
-        (h * rows) as u32,
-        image::ColorType::Rgb8,
-    )
-    .expect("save png");
-    println!("wrote /tmp/third_person_off_hand.png (front view; their right = your left)");
-}
-
-#[test]
-fn off_hand_grip_is_on_the_visual_left_side_and_jabs_inward() {
+fn off_hand_grip_is_on_the_visual_left_side() {
     let inst = instance();
-    // The off grip point mirrors the main one in the arm-local frame.
     let grip_local = Vec3::new(-HAND_GRIP_PX.x, HAND_GRIP_PX.y, HAND_GRIP_PX.z);
-    let rest = off_hand(&inst, 0.0).transform_point3(grip_local);
+    let grip = off_hand(&inst).transform_point3(grip_local);
     assert!(
-        rest.x > inst.pos.x as f32,
-        "yaw 0 player-left is world +X, off grip at {rest:?}"
-    );
-    for swing in [0.1, 0.25, 0.5, 0.75] {
-        let grip = off_hand(&inst, swing).transform_point3(grip_local);
-        assert!(
-            grip.x < rest.x,
-            "the left-hand jab punches inward at {swing}: {grip:?} vs {rest:?}"
-        );
-        assert!(
-            grip.z > rest.z,
-            "the left-hand jab still punches forward at {swing}: {grip:?} vs {rest:?}"
-        );
-    }
-}
-
-#[test]
-fn held_swing_moves_visual_right_hand_toward_center() {
-    let inst = instance();
-    let rest = hand(&inst, 0.0).transform_point3(HAND_GRIP_PX);
-    for swing in [0.1, 0.25, 0.4, 0.5, 0.75, 0.9] {
-        let grip = hand(&inst, swing).transform_point3(HAND_GRIP_PX);
-        assert!(
-                grip.x > rest.x,
-                "visual right-hand swing should punch inward, not hook farther right at {swing}: {grip:?} vs {rest:?}"
-            );
-        assert!(
-            grip.z > rest.z,
-            "visual right-hand swing should still punch forward at {swing}: {grip:?} vs {rest:?}"
-        );
-    }
-
-    let done = hand(&inst, 1.0).transform_point3(HAND_GRIP_PX);
-    assert!(
-        (done - rest).length() < 0.001,
-        "swing phase 1.0 should return to rest: {done:?} vs {rest:?}"
+        grip.x > inst.pos.x as f32,
+        "yaw 0 player-left is world +X, off grip at {grip:?}"
     );
 }

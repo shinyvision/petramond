@@ -310,10 +310,10 @@ pub struct SelfView {
     /// claimed rig-bone offsets — the authoritative
     /// answer, overridden locally by a client mod predicting the same rule.
     pub bone_poses: Vec<petramond::player::BonePose>,
-    /// Which of each hand's engine motions carry a live claim (`[main,
-    /// off]`) — the authoritative answer, overridden locally by a client mod
-    /// making the same claim (see `ClientModRuntime::local_motion_claims`).
-    pub motion_claims: [petramond::player::HandMotions; 2],
+    /// The body's resolved animator claims — the authoritative answer,
+    /// overridden per key by a client mod claiming it (see
+    /// `ClientModRuntime::local_animator`).
+    pub animator: petramond::player::AnimatorClaims,
 }
 
 impl SelfView {
@@ -353,10 +353,7 @@ impl SelfView {
                 player.claims.held_display(Hand::Off),
             ],
             bone_poses: player.claims.bone_poses().collect(),
-            motion_claims: [
-                player.claims.hand_motions(Hand::Main),
-                player.claims.hand_motions(Hand::Off),
-            ],
+            animator: player.claims.animator().clone(),
         }
     }
 
@@ -397,7 +394,7 @@ impl SelfView {
         self.held_pose_off = state.held_pose_off;
         self.held_display = state.held_display.map(|id| id.map(ItemType));
         self.bone_poses.clone_from(&state.bone_poses);
-        self.motion_claims = state.motion_claims;
+        self.animator.clone_from(&state.animator);
     }
 }
 /// The client's MENU-session mirror, fed by [`MenuSyncMsg`]s (sent on-change

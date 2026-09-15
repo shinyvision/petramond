@@ -100,6 +100,8 @@ pub struct ClientModRuntime {
     /// Currently-down action `full_id`s — the edge filter for `ClientKey`
     /// dispatch, whatever input the player bound.
     pressed: HashSet<String>,
+    /// Graph events client mods fired that the server has yet to echo.
+    pending_fires: super::pending_fires::PendingFires,
     /// Test-only scripted answer for [`Self::placement_plan`]: lets prediction
     /// tests drive the custom-shape placement arm without a wasm instance.
     #[cfg(any(test, feature = "test-support"))]
@@ -241,6 +243,7 @@ impl ClientModRuntime {
             actions,
             overlays,
             pressed: HashSet::new(),
+            pending_fires: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             scripted_shape_plan: None,
         };
@@ -778,31 +781,53 @@ impl ClientModRuntime {
         out
     }
 
-    /// The local player's hand-motion ownership: this client's own
-    /// PREDICTION for any hand a client mod has ever claimed, `replicated`
-    /// for the rest — the same latch-and-override rule
-    /// [`local_held_poses`](Self::local_held_poses) uses, because the failure
-    /// it prevents is the same one: a released claim falling back to the
-    /// replicated answer would drag the stale "this motion is mine" state
-    /// out by a round trip, playing the vanilla motion under the claimant's
-    /// animation.
-    pub fn local_motion_claims(
+    /// The local player's animator claims, by
+    /// [`local_held_poses`](Self::local_held_poses)'s rule per KEY: a param
+    /// or slot any client mod has ever claimed is predicted by the server's
+    /// resolution, every other one keeps the replicated answer
+    /// ([`animator_fold`](super::animator_fold)).
+    pub fn local_animator(
         &self,
-        replicated: [crate::player::HandMotions; 2],
-    ) -> [crate::player::HandMotions; 2] {
-        let mut latched = [false; 2];
-        let mut owned = [crate::player::HandMotions::NONE; 2];
-        for data in self.claim_stores() {
-            for (h, hand) in [Hand::Main, Hand::Off].into_iter().enumerate() {
-                latched[h] |= data.owns_motions[h];
-                // A UNION across mods, the server's own resolution rule.
-                owned[h] = data.body.hand_motions(hand).union(owned[h]);
+        replicated: &crate::player::AnimatorClaims,
+    ) -> crate::player::AnimatorClaims {
+        super::animator_fold::fold(
+            replicated,
+            self.claim_stores()
+                .map(|data| (&data.owns_animator, data.body.animator())),
+        )
+    }
+
+    /// The graph events client mods fired since the last call, drained,
+    /// followed by the server's echoes `replicated` minus one echo per
+    /// local fire still waiting for it (the mod fired it itself, a round
+    /// trip earlier). `dt` is the seconds since the last call — the clock
+    /// the waiting fires expire on.
+    pub fn take_animator_events(
+        &mut self,
+        replicated: &[(crate::player::RigId, u16)],
+        dt: f32,
+    ) -> Vec<(crate::player::RigId, u16)> {
+        self.pending_fires.advance(dt);
+        let mut out = Vec::new();
+        for loaded in &mut self.mods {
+            let disabled = loaded.instance.disabled();
+            if let Some(data) = loaded.instance.client_data_mut() {
+                if disabled {
+                    data.animator_events.clear();
+                } else {
+                    out.append(&mut data.animator_events);
+                }
             }
         }
-        [
-            if latched[0] { owned[0] } else { replicated[0] },
-            if latched[1] { owned[1] } else { replicated[1] },
-        ]
+        for &(rig, event) in &out {
+            self.pending_fires.fired(rig, event);
+        }
+        for &(rig, event) in replicated {
+            if !self.pending_fires.absorb(rig, event) {
+                out.push((rig, event));
+            }
+        }
+        out
     }
 
     /// Dispatch one bound-action edge to its owning mod, by the action's

@@ -9,17 +9,16 @@
 //!
 //! ## The tools' swings (the body seams' second tenant)
 //!
-//! The pack also owns the MAIN hand while it works a pickaxe or an axe: the
-//! swing law in [`swing`] animates the hand per phase (the item in first
-//! person, Composed arm bones in third), claims the hand's swing so the
-//! engine's vanilla punch stands down, and releases both the moment no tool
-//! is held. Quick consecutive ATTACKS chain through the tool's combo of
-//! authored curves (each follow-up plays the next swing); mining repeats the
-//! first. Same shape as the guard — one pure law in [`swing`], its clock
-//! run by the server tick system for every body and by the client frame hook
-//! for the local player, a round trip earlier — so this pack exercises both
-//! halves of every body seam the shield dogfooded: stances AND whole-hand
-//! swing animation.
+//! The pack also owns the MAIN hand while it works a pickaxe, an axe or a
+//! sword: the swing law in [`swing`] claims the engine's player clips for
+//! the hand — one first-person and one body clip per swing, scrubbed on the
+//! pack's own clock — claims the hand's swing so the engine's vanilla punch
+//! stands down, and releases both the moment no tool is held. Quick
+//! consecutive ATTACKS chain through the family's combo (each follow-up plays
+//! the next clip); mining loops the family's work clip. Same shape as the
+//! guard — one pure law in [`swing`], its clock run by the server tick system
+//! for every body and by the client frame hook for the local player, a round
+//! trip earlier.
 //!
 //! While a claimed tool paces a body, the pack owns the ATTACK RATE
 //! outright: the engine cooldown is claimed to zero
@@ -34,8 +33,8 @@
 //!
 //! A bow in the main hand takes the use press and DRAWS while it is held
 //! (the law in [`bow`]): the row's ticks to full, shown through the pull
-//! frames on the generic held-DISPLAY seam, the arms in the archer's
-//! stance, the body slowed and its hands committed. Letting go takes one
+//! frames on the generic held-DISPLAY seam, the body playing its draw, the
+//! body slowed and its hands committed. Letting go takes one
 //! arrow from the pack and LAUNCHES it through the engine's flying-item
 //! primitive; the `projectile_hit` handler here lands the strike on what
 //! it arrives at, harder the faster it arrived — or into a raised shield
@@ -53,7 +52,7 @@
 //!
 //! ## The tools land their own hits
 //!
-//! A paced tool whose exports mark their IMPACT key takes the player's
+//! A paced tool whose attack clips mark their IMPACT takes the player's
 //! primary press outright (`attack_attempt` claimed — the engine's
 //! crosshair melee stands down for it), and the hit lands when the swing's
 //! impact plays: the strike law in [`strike`] judges, from where the
@@ -64,9 +63,9 @@
 //! block is mining's and is left alone.
 //!
 //! The pack is laws, a merger, and this wiring: the guard law lives in
-//! [`guard`], the bow's in [`bow`], the swing law in [`swing`], the strike
-//! law in [`strike`], and [`body`] merges every claim into ONE write per
-//! body seam. This file only routes:
+//! [`guard`], the bow's in [`bow`], the swing law in [`swing`] over the
+//! family rows in [`families`], the strike law in [`strike`], and
+//! [`body`] merges every claim into ONE write per body seam. This file only routes:
 //!
 //! - The **server** tick system runs every player's body per tick, and
 //!   lands the strike of any swing whose impact played this tick.
@@ -93,9 +92,13 @@
 mod body;
 mod bow;
 mod claims;
+mod families;
 mod guard;
 mod strike;
 mod swing;
+
+#[cfg(test)]
+mod rig_clips;
 
 use body::{BodyClocks, Tools, TICK_SECONDS};
 use claims::Rule;
@@ -273,8 +276,8 @@ impl Combat {
     /// tool that LANDS its own hits is this pack's — claimed here, so the
     /// engine's crosshair melee stands down, and landed by the tick system
     /// when the swing's impact plays. A press at a block is mining's; an
-    /// unpaced hand (fists, another pack's weapon, a tool whose exports
-    /// mark no impact) keeps the engine's hit on the click.
+    /// unpaced hand (fists, another pack's weapon, a tool whose attack
+    /// clips mark no impact) keeps the engine's hit on the click.
     fn on_attack_attempt(&self, payload: &EventPayload) -> Outcome {
         let EventPayload::AttackAttempt { block, player, .. } = payload else {
             return Outcome::Continue;
@@ -409,7 +412,7 @@ impl Mod for Combat {
                 TICK_SECONDS,
             );
             if let Some(style) = landed {
-                strike::land(entry.id, style, &entry.state);
+                strike::land(entry.id, self.tools.profile(style), &entry.state);
             }
         }
     }

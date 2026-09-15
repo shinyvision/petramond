@@ -2,6 +2,8 @@
 
 #![allow(clippy::too_many_arguments)]
 
+pub(crate) mod animation_inputs;
+pub(crate) mod animator_claims;
 pub mod atlas;
 pub mod block_draw;
 pub mod break_overlay;
@@ -11,12 +13,13 @@ pub mod crosshair;
 pub mod door_model;
 pub mod effect_icons;
 pub mod entity_shadow;
+pub(crate) mod first_person;
 pub mod foliage_tint;
 pub mod geometry_arena;
 pub mod gpu_mem;
 pub mod gpu_timer;
 pub mod hand;
-pub mod hand_animator;
+mod held_view;
 pub mod item_cube;
 pub mod item_entity;
 pub mod item_model;
@@ -34,9 +37,8 @@ pub mod selection;
 pub mod shader_pack;
 pub mod ui;
 pub mod uniforms;
-mod vanilla_swing;
 
-pub use hand_animator::HeldItemAnimator;
+pub use held_view::HeldItemEase;
 pub use renderer::new_offscreen_renderer;
 pub use renderer::new_renderer_from_target;
 #[allow(unused_imports)]
@@ -46,9 +48,6 @@ pub use views::BreakOverlayView;
 pub use views::EntityShadow;
 
 pub use scene::Scene;
-
-#[cfg(test)]
-pub use item_cube::SOLID_COLOR_FLAG;
 
 use glam::{Quat, Vec3};
 use petramond_math::math::Tilt;
@@ -162,11 +161,9 @@ mod ui_frame_coherence_tests {
     }
 }
 
-/// The first-person held item to draw this frame. `item == None` draws the bare
-/// skin hand. `swing` (0..1) drives the punch animation (mining and placing
-/// both); `swing_scale` (0..1) scales its amplitude so a placement reads as a
-/// softer version of the mining punch. The renderer presentation layer owns
-/// these visual animation phases.
+/// One hand's held item as the seats and attaches read it: the item whose art
+/// draws, the held stack's authored hold, and the claimed held pose, eased
+/// ([`HeldItemEase`]).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemView {
     /// The item whose ART draws: the held stack, or a mod's display stand-in
@@ -179,33 +176,8 @@ pub struct HeldItemView {
     /// The held stack's instance-data variant (tint resolution at draw).
     pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
-    /// The hand's own sway: the camera's bob run through a first-order lag, so
-    /// the arm trails the body instead of moving with it (see
-    /// `HeldItemAnimator`). View-space offset, already scaled.
-    pub bob: [f32; 2],
-    /// The hand's inertial view-space translation, added to `bob` at
-    /// placement. Already in THIS hand's frame: the client pre-negates x for
-    /// the off hand so the placement mirror lands both hands on the same
-    /// screen direction. Damped while eating.
-    pub motion_offset: [f32; 3],
-    /// 0..1 punch phase (sawtooth while mining, one-shot for a break/place).
-    pub swing: f32,
-    /// Amplitude of the current swing: `1.0` for a mining/break punch, less for
-    /// the gentler place jab. Ignored when `swing == 0.0`.
-    pub swing_scale: f32,
-    /// 0..1 EAT pose blend: how far the held food is carried from its rest
-    /// anchor up to the mouth (eased in at eat start, back out on finish or
-    /// abort). `0.0` on ordinary frames.
-    pub eat: f32,
-    /// Signed nibble oscillator (−1..1) while eating — the bite rhythm layered
-    /// over the mouth carry. Consumers scale it by [`eat`](Self::eat).
-    pub eat_bob: f32,
-    /// 0..1 smoothed EAT PROGRESS: while the food wiggles at the mouth, it
-    /// slowly closes the remaining DEPTH toward the camera as this rises — the
-    /// bite-by-bite approach. Screen-position carry stays on [`eat`](Self::eat).
-    pub eat_near: f32,
-    /// The hand's claimed held pose, already EASED by the animator so a 20 Hz
-    /// publisher still glides. Identity on ordinary frames.
+    /// The hand's claimed held pose, already EASED so a 20 Hz publisher
+    /// still glides. Identity on ordinary frames.
     pub pose: HeldPose,
 }
 
@@ -262,21 +234,16 @@ impl Default for HeldItemView {
             hold: petramond_world::item::HeldPose::DEFAULT,
             variant: petramond_world::item::VariantId::NONE,
             block_state: HeldBlockState::None,
-            bob: [0.0, 0.0],
-            motion_offset: [0.0; 3],
-            swing: 0.0,
-            swing_scale: 1.0,
-            eat: 0.0,
-            eat_bob: 0.0,
-            eat_near: 0.0,
             pose: HeldPose::default(),
         }
     }
 }
 
-/// Sim intent for the first-person held item. The renderer consumes this each
-/// frame and advances the visual hand/item animation internally.
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// Sim intent for one hand this frame: what it holds and its levels — the
+/// animator drivers' per-hand inputs. The hand's one-shot gestures are not
+/// here: they reach the drivers as resolved graph events
+/// (`AnimatorInputs::events`).
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct HeldItemFrame {
     pub item: Option<ItemType>,
     /// The item whose ART draws in place of `item`'s (a mod's held-display
@@ -290,14 +257,6 @@ pub struct HeldItemFrame {
     pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
     pub mining: bool,
-    /// True on the frame a block breaks, including instant hardness-0 blocks.
-    pub broke_block: bool,
-    /// True on the frame the hand expels an item into the world — placing a block
-    /// or throwing/dropping a stack — which plays the softer place jab.
-    pub placed: bool,
-    /// True on the frame the player swings to attack — a mob hit or a punch at the
-    /// air — which plays a full-strength one-shot swing (like a block break).
-    pub swung: bool,
     /// Level: a food item is mid-eat, carrying the eat's progress in `[0, 1)`.
     /// The animator raises the food quickly at the start, then drifts it the
     /// rest of the way to the mouth as the progress advances.
@@ -307,26 +266,25 @@ pub struct HeldItemFrame {
     /// hold. The animator eases toward it; geometry reads the eased
     /// [`HeldItemView::pose`].
     pub pose_target: Option<HeldPose>,
-    /// Whether a mod claims this hand's SWING family — while set, the
-    /// animator plays none of its own swing for this hand (the mining loop
-    /// and the break/attack punches stand down): the claimant is animating
-    /// those, and the vanilla motion layered under a mod's curve is two
-    /// swings fighting one another. The claimant re-poses the hands through
-    /// the ordinary pose seam per phase.
-    pub swing_claim: bool,
-    /// Whether a mod claims this hand's use JAB — while set, `placed`
-    /// starts no engine jab; unclaimed, the jab keeps playing even on a
-    /// swing-claimed hand (a different gesture, separately owned).
-    pub jab_claim: bool,
-    /// The camera's normalized walk sway this frame (`side`, `up` — see
-    /// `game::view_bob`). The hand does NOT wear it directly: the animator
-    /// lags it, which is what stops the item riding the screen rigidly.
-    pub bob: [f32; 2],
-    /// This hand's inertial view-space translation from the client
-    /// (`ClientHeldItem::motion_offset`, off-hand x already negated); passed
-    /// through to the view, damped while eating.
-    pub motion_offset: [f32; 3],
-    pub dt: f32,
+}
+
+/// One body's resolved animator claims and the graph events fired on it
+/// this frame, borrowed from the frame's arenas
+/// ([`GamePresentation`](views::GamePresentation) carries every body's rows
+/// back to back; a body addresses its own by [`AnimatorRanges`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AnimatorInputs<'a> {
+    pub params: &'a [views::AnimatorParamRow],
+    pub plays: &'a [petramond::player::AnimatorPlay],
+    pub events: &'a [(petramond::player::RigId, u16)],
+}
+
+/// One body's slices of the frame's animator arenas.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct AnimatorRanges {
+    pub params: ArenaRange,
+    pub plays: ArenaRange,
+    pub events: ArenaRange,
 }
 
 /// How a dropped item entity is turned this frame. The contract holds for
@@ -442,24 +400,29 @@ pub struct BoneOffset {
     pub hold: bool,
 }
 
-/// One body's slice of the frame's shared bone-offset arena
-/// ([`GamePresentation::bone_offsets`](crate::views::GamePresentation)).
+/// One row's slice of a frame arena (the bone offsets, the animator claims).
 ///
-/// Bodies carry a RANGE rather than their own list so a render instance stays
+/// Rows carry a RANGE rather than their own list so a render instance stays
 /// a plain `Copy` value with no per-body allocation, and so nothing has to cap
-/// how many bones a body may wear.
-///
-/// [`GamePresentation::bone_offsets`]: crate::views::GamePresentation
+/// how many entries a body may wear.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct BoneRange {
+pub struct ArenaRange {
     pub start: u32,
     pub len: u32,
 }
 
-impl BoneRange {
-    /// This body's offsets. An out-of-bounds range (a stale row, never a
+impl ArenaRange {
+    /// The next `len` rows of `arena` (the ones a caller is about to append).
+    pub fn next(arena: &[impl Sized], len: usize) -> Self {
+        Self {
+            start: arena.len() as u32,
+            len: len as u32,
+        }
+    }
+
+    /// This range's rows. An out-of-bounds range (a stale row, never a
     /// correctly built one) reads as empty rather than panicking mid-frame.
-    pub fn of(self, arena: &[BoneOffset]) -> &[BoneOffset] {
+    pub fn of<T>(self, arena: &[T]) -> &[T] {
         let start = self.start as usize;
         arena
             .get(start..start + self.len as usize)
@@ -467,12 +430,15 @@ impl BoneRange {
     }
 }
 
+/// One body's slice of the frame's shared bone-offset arena
+/// ([`GamePresentation::bone_offsets`](crate::views::GamePresentation)).
+pub type BoneRange = ArenaRange;
+
 /// The local player's third-person body to draw this frame (absent in first
 /// person): the compiled `player.bbmodel` at `pos` (feet), body facing
 /// `body_yaw` with the head turned `head_yaw`/`head_pitch` relative to it,
-/// walking (`moving`) at `anim_time` into the authored walk cycle. The held
-/// item and its punch swing come from the renderer's own `HeldItemView` state —
-/// the same animation the first-person hand plays.
+/// walking (`moving`) at `anim_time` into the authored walk cycle. Its held
+/// items and actions come from the renderer's own local hand state.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PlayerRenderInstance {
     /// Multiply body tint from the body's active emitter bundles (its
@@ -520,13 +486,11 @@ pub struct PlayerRenderInstance {
     pub bones: BoneRange,
 }
 
-/// One REMOTE player's body + held item to draw this frame, already
+/// One REMOTE player's body + held items to draw this frame, already
 /// interpolated/posed by the game's presentation layer: the same
 /// [`PlayerRenderInstance`] shape the local third-person body uses (so both
 /// bake through `build_player_body` identically), plus that remote's OWN
-/// [`HeldItemView`] animation channels — the local body instead reads the
-/// renderer's internal first-person held-item view, keeping its solo
-/// behavior bit-identical.
+/// eased [`HeldItemView`]s and what drives its body animator.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RemotePlayerRender {
     pub body: PlayerRenderInstance,
@@ -534,6 +498,12 @@ pub struct RemotePlayerRender {
     /// The remote's OFF-hand item view — drawn in the body's left hand
     /// (`item == None` = empty, nothing attached).
     pub held_off: HeldItemView,
+    /// Stable across frames (the player id), so this body keeps its animator.
+    pub key: u32,
+    /// The two hands' frames (`[main, off]`) the body animator reads.
+    pub frames: [HeldItemFrame; 2],
+    /// This body's claims and fired events, as ranges into the frame's arenas.
+    pub animator: AnimatorRanges,
 }
 
 /// A placed chest to draw in the world this frame: an inset body box plus a lid

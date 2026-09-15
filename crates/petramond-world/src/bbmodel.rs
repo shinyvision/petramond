@@ -35,15 +35,19 @@ use crate::asset_cache::CompiledAsset;
 use petramond_math::face::Face;
 
 mod anim;
+pub mod bedrock;
 pub mod clips;
 mod parse;
 #[cfg(test)]
 mod tests;
 mod texture;
 
-pub use anim::{display_euler_quat, euler_quat};
+pub use anim::{
+    display_euler_quat, euler_quat, Animation, BezierHandles, Channel, Interpolation, Keyframe,
+    Marker, MarkerKind, Track,
+};
 
-use anim::{bone_transform, head_look_transform, sample_track};
+use anim::{bone_transform, head_look_transform};
 use parse::{arr3, num, parse_animations, parse_faces, walk_outliner};
 use texture::TextureSheet;
 
@@ -125,40 +129,6 @@ pub struct Bone {
     /// Static Blockbench group rotation in degrees. This is the bone's rest pose.
     pub rotation: Vec3,
     pub parent: Option<usize>,
-}
-
-/// One keyframe: the channel's `Vec3` at `time` seconds — euler degrees on a
-/// rotation track, a model-unit offset on a position track.
-#[derive(Serialize, Deserialize)]
-struct Keyframe {
-    time: f32,
-    v: Vec3,
-}
-
-/// A named animation: per-bone rotation and position tracks (sorted
-/// keyframes), keyed by bone index. Rotation rotates about the bone's pivot;
-/// position translates the bone (and its subtree) in its parent's frame —
-/// both sampled with the same linear interpolation. Scale channels are not
-/// read.
-#[derive(Serialize, Deserialize)]
-pub struct Animation {
-    pub length: f32,
-    /// Whether the animation loops. Blockbench `loop: "loop"` loops; `"once"` /
-    /// `"hold"` play through once (the renderer holds the final frame rather than
-    /// wrapping).
-    pub looping: bool,
-    tracks: HashMap<usize, Vec<Keyframe>>,
-    #[serde(default)]
-    pos_tracks: HashMap<usize, Vec<Keyframe>>,
-}
-
-impl Animation {
-    /// Does this animation animate `bone` (have a rotation or position track for
-    /// it)? The mob baker uses this to suppress AI head-look while an animation
-    /// already drives the head bone.
-    pub fn affects_bone(&self, bone: usize) -> bool {
-        self.tracks.contains_key(&bone) || self.pos_tracks.contains_key(&bone)
-    }
 }
 
 /// A parsed model: bones, cubes, animations, and the embedded RGBA texture.
@@ -541,20 +511,12 @@ impl Model {
                     if w <= 0.0 {
                         continue;
                     }
-                    let t = if anim.length <= 0.0 {
-                        0.0
-                    } else if anim.looping {
-                        time.rem_euclid(anim.length)
-                    } else {
-                        // Non-looping (Blockbench `once`/`hold`): play through once
-                        // and hold the final frame instead of wrapping back.
-                        time.clamp(0.0, anim.length)
-                    };
-                    if let Some(kfs) = anim.tracks.get(&i) {
-                        rot += sample_track(kfs, t) * w;
+                    let t = anim.clip_time(*time);
+                    if let Some(r) = anim.sample(i, Channel::Rotation, t) {
+                        rot += r * w;
                     }
-                    if let Some(kfs) = anim.pos_tracks.get(&i) {
-                        pos += sample_track(kfs, t) * w;
+                    if let Some(p) = anim.sample(i, Channel::Position, t) {
+                        pos += p * w;
                     }
                 }
                 bone_transform(b, rot, pos)
@@ -562,6 +524,50 @@ impl Model {
             .collect();
 
         self.resolve_pose(&local)
+    }
+
+    /// Bone transforms for per-bone local rotation (degrees) and position
+    /// deltas from rest, in bone order — a pose several clips and procedural
+    /// layers have already summed. A missing entry is rest.
+    pub fn resolve_local(&self, rotations: &[Vec3], positions: &[Vec3]) -> Vec<Mat4> {
+        let mut out = Vec::with_capacity(self.bones.len());
+        self.resolve_local_into(rotations, positions, &mut out);
+        out
+    }
+
+    /// [`resolve_local`](Self::resolve_local) into `out`, reusing its storage.
+    pub fn resolve_local_into(&self, rotations: &[Vec3], positions: &[Vec3], out: &mut Vec<Mat4>) {
+        out.clear();
+        // NaN marks a bone not resolved yet: a model need not list parents
+        // before their children.
+        out.resize(self.bones.len(), Mat4::NAN);
+        for i in 0..self.bones.len() {
+            self.resolve_local_bone(i, rotations, positions, out);
+        }
+    }
+
+    fn resolve_local_bone(
+        &self,
+        i: usize,
+        rotations: &[Vec3],
+        positions: &[Vec3],
+        out: &mut [Mat4],
+    ) -> Mat4 {
+        if !out[i].x_axis.x.is_nan() {
+            return out[i];
+        }
+        let bone = &self.bones[i];
+        let local = bone_transform(
+            bone,
+            rotations.get(i).copied().unwrap_or(Vec3::ZERO),
+            positions.get(i).copied().unwrap_or(Vec3::ZERO),
+        );
+        let m = match bone.parent {
+            Some(p) if p != i => self.resolve_local_bone(p, rotations, positions, out) * local,
+            _ => local,
+        };
+        out[i] = m;
+        m
     }
 
     fn resolve_pose(&self, local: &[Mat4]) -> Vec<Mat4> {
@@ -602,10 +608,14 @@ impl CompiledAsset for Model {
     /// clean failure — the invisible-hushjaw bug).
     /// v7: faces carry Blockbench's per-face `rotation` ([`FaceUv`]), which the
     /// parser had been silently dropping.
+    /// v9: keyframes carry Blockbench's interpolation, pre/post data points and
+    /// Bezier handles; clips carry `hold` and effect markers.
+    /// v10: a clip's tracks are one bone-sorted table ([`Track`]) instead of
+    /// two maps.
     /// Bump on any change to these fields or to [`Model::load`]'s output; the
     /// `compiled_model_layout_change_requires_a_format_version_bump` guard
     /// fails until you do.
-    const FORMAT_VERSION: u32 = 8;
+    const FORMAT_VERSION: u32 = 10;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 

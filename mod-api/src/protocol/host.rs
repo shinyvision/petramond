@@ -6,7 +6,7 @@ use crate::client::{
     ClientTextRun,
 };
 use crate::data::{
-    BlockInfoData, CollisionShape, EffectStateData, EntityRef, GuiValue, GuiViewerData, HandMotion,
+    BlockInfoData, CollisionShape, EffectStateData, EntityRef, GuiValue, GuiViewerData,
     ItemEntityData, ItemInfoData, ItemStackData, LightData, MobAnimStateData, MobRidersData,
     MobSnapshot, MobTagLookup, MobTagValue, PlayerAttribute, PlayerInputData, PlayerListEntry,
     PlayerSnapshot, RayFilter, RaycastHitData, RuntimeSide,
@@ -1707,41 +1707,6 @@ pub enum HostCall {
     HoldUse {
         player: PlayerId,
     },
-    /// Claim some of a hand's OWN MOTIONS on one body
-    /// ([`HandMotion`](crate::HandMotion)) — the claim that says "these
-    /// gestures this hand plays are mine". While a motion is claimed on a
-    /// hand the engine plays none of its own copy of it: `Swing` stands the
-    /// mining loop and the full-strength break/attack punches down, `Jab`
-    /// the soft use gesture. The swing facts on [`PlayerSnapshot::swing`]
-    /// (the mining level and the per-tick one-shot edges) keep publishing
-    /// so the claimant can build its own curve off them.
-    ///
-    /// The ownership counterpart of
-    /// [`SetPlayerHeldPose`](Self::SetPlayerHeldPose): that poses the item in
-    /// the hand, this takes over the MOTION the hand makes — the whole reason
-    /// this exists is that the engine's punch does not compose, and a mod's
-    /// curve layered over it is two swings fighting one another. Claim
-    /// exactly the motions you animate, EVERY frame they matter: a claimed
-    /// motion never plays its vanilla form, so the claimant owes the hand
-    /// that animation, and a motion you leave unclaimed keeps its engine
-    /// default (a swing-only claimant's hand still jabs on a placement).
-    ///
-    /// Per hand and per motion, claims UNION across mods like
-    /// [`SetPlayerDeniedActions`](Self::SetPlayerDeniedActions): a motion
-    /// stands down while ANY claim on it is live, and releasing yours cannot
-    /// release another's (which pose the hand then wears is the pose seam's
-    /// own last-wins conflict). TRANSIENT — re-state it from whatever owns
-    /// the rule; an empty list releases a hand, and when it was the last
-    /// claim the vanilla motion returns. → [`HostRet::Bool`] (`false` = no
-    /// such reachable session).
-    ///
-    /// Legal on a CLIENT instance for the LOCAL player, the same predicted
-    /// path as [`SetPlayerHeldPose`](Self::SetPlayerHeldPose).
-    SetPlayerHandMotions {
-        player: PlayerId,
-        main: Vec<HandMotion>,
-        off: Vec<HandMotion>,
-    },
     /// The first block along the ray from `from` in direction `dir`
     /// (any length, normalised host-side) within `max` blocks (finite,
     /// `0 < max <= 64`), stopping on what `filter` says — the crosshair's
@@ -2046,6 +2011,73 @@ pub enum HostCall {
     BlockInfos {
         blocks: Vec<BlockId>,
     },
+    /// Set graph PARAMS on one body's rig animators — the animator's
+    /// `set` primitive at the ABI. Each rig's graph declares its params; a
+    /// mod's overlay of the animator document may add its own. The values
+    /// stand until re-stated: TRANSIENT and keyed by claimant like every
+    /// body claim — the list REPLACES this mod's previous params (an empty
+    /// list releases them all), the last claimant in mod-id order wins a
+    /// contested param, and a released param falls back to the engine's
+    /// own value. A rig name no registered rig carries, or a param name
+    /// the rig's graph lacks, is a [`HostRet::Error`].
+    ///
+    /// Params feed every formula a graph has — its layer weights, rule
+    /// conditions and GATES — so a mod stands one of the engine's gestures
+    /// down on a hand it animates itself by setting the param the rig's gate
+    /// for that gesture reads (the rig's animator document names its gates).
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, where it is its own
+    /// predicted path: the same call from a client mod owns each named
+    /// param locally from then on.
+    /// → [`HostRet::Bool`] (`false` = no such reachable session).
+    SetPlayerAnimatorParams {
+        player: PlayerId,
+        params: Vec<crate::AnimatorParam>,
+    },
+    /// Hold montages in SLOTS of one body's rig animators — the animator's
+    /// `play` primitive at the ABI ([`AnimatorPlay`]): a clip in a declared
+    /// slot, on the caller's clock ([`AnimatorClock`](crate::AnimatorClock):
+    /// scrubbed at its own progress or free-running at a rate). TRANSIENT
+    /// and keyed by claimant: the list REPLACES this mod's previous plays
+    /// (an empty list releases them all — the slot fades back to whatever
+    /// the graph does), the last claimant in mod-id order wins a contested
+    /// slot. A rig, slot or clip the engine lacks, or a non-finite progress
+    /// or rate, is a [`HostRet::Error`].
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player, where it is its own
+    /// predicted path: the same call from a client mod owns each named slot
+    /// locally from then on.
+    /// → [`HostRet::Bool`] (`false` = no such reachable session).
+    ///
+    /// [`AnimatorPlay`]: crate::AnimatorPlay
+    SetPlayerAnimatorPlays {
+        player: PlayerId,
+        plays: Vec<crate::AnimatorPlay>,
+    },
+    /// Fire a graph EVENT on one body's rig animator — the animator's `fire`
+    /// primitive at the ABI: the graph's rules answer it on every mirror
+    /// (a montage, a hit-stop, a stop) exactly as they answer the engine's
+    /// own events. An edge, not a claim: nothing to release. A rig name no
+    /// registered rig carries, or an event the rig's graph does not
+    /// declare, is a [`HostRet::Error`]. Only an OBSERVED rig's events reach
+    /// other players' mirrors; the player's own always hear it.
+    ///
+    /// Legal on a CLIENT instance for the LOCAL player; an event a client
+    /// mod fired locally is not fired again when the server's echo arrives.
+    /// → [`HostRet::Bool`] (`false` = no such reachable session).
+    FirePlayerAnimatorEvent {
+        player: PlayerId,
+        rig: String,
+        event: String,
+    },
+    /// Read one clip of a player rig — its length, loop and timeline markers
+    /// — so a mod times what it lands to the clip's own `impact` rather than
+    /// repeating the number. Legal on both sides.
+    /// → [`HostRet::AnimationClip`] (`None` = no such clip).
+    AnimationClip {
+        rig: String,
+        clip: String,
+    },
 }
 
 /// The three ways a [`HostCall::MemoClaim`] comes back.
@@ -2222,4 +2254,6 @@ pub enum HostRet {
     Condition(Option<crate::ConditionInfoData>),
     /// [`HostCall::BlockInfos`], parallel to the request.
     BlockInfos(Vec<Option<BlockInfoData>>),
+    /// [`HostCall::AnimationClip`].
+    AnimationClip(Option<crate::AnimationClipInfo>),
 }

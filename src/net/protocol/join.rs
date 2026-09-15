@@ -38,6 +38,11 @@ pub struct NameTables {
     pub emitters: Vec<String>,
     /// `conditions.json` keys, in server-id order.
     pub conditions: Vec<String>,
+    /// Every registered player rig's animator vocabulary, in server rig-id
+    /// order — the rig's name and the clips, params, slots and events its
+    /// graph declares, in id order. The client matches rigs by NAME; a rig
+    /// it lacks drops that rig's rows alone.
+    pub animators: Vec<crate::player::animator::AnimatorNames>,
 }
 
 /// The joining player's own restored state.

@@ -179,12 +179,10 @@ pub struct PlayerStateRow {
     /// Rig IDS, not names: this row ships for every player every tick, and a
     /// bone name is authoring vocabulary with no business on the wire.
     pub bone_poses: Vec<crate::player::BonePose>,
-    /// Which of each hand's engine motions carry a live claim — the
-    /// resolved `SetPlayerHandMotions` answer, one byte per hand. An
-    /// observer silences its own copy of exactly the claimed motions (the
-    /// swing family, the jab), because the claim holder is animating them
-    /// itself; unclaimed motions stay the engine's on every mirror.
-    pub motion_claims: [crate::player::HandMotions; 2],
+    /// The resolved animator claims on this body's OBSERVED rigs (params
+    /// set, slots played) — rig, graph and library ids, remapped by name at
+    /// the transport.
+    pub animator: crate::player::AnimatorClaims,
     /// The player took damage this tick window. Sessions track no hurt TIMER
     /// (unlike `MobStateRow::hurt_timer`), so this ships the EDGE and each
     /// client runs its own flash envelope — the same one as the local
@@ -231,26 +229,24 @@ impl PlayerMount {
     }
 }
 
-/// One-shot remote-player animation events, broadcast alongside the state
-/// rows as `(player, kind)` pairs — the wire form of that session's lossy
-/// `PlayerTickEvents` one-shots. No registry ids ride here.
+/// One-shot remote-player events, broadcast alongside the state rows as
+/// `(player, kind)` pairs — the wire form of that session's lossy
+/// `PlayerTickEvents` one-shots. Every animated gesture — the engine's own
+/// swings, breaks, places, interacts and throws included — is an
+/// [`Animator`](Self::Animator) row: a graph event index on a rig, remapped
+/// by name at the transport.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayerActionKind {
-    Swung,
-    Broke,
-    Placed,
-    ThrewItem,
-    UsedItem,
-    Interacted,
-    AteFinished,
     Died,
     Respawned,
-    // The `*Off` twins are the same one-shots ACTED FROM THE OFF HAND (the
-    // use-click ladder's second pass) — observers animate the left arm.
-    PlacedOff,
-    UsedItemOff,
-    InteractedOff,
-    AteFinishedOff,
+    /// A graph event fired on one of this body's rigs — by the engine's
+    /// gesture table (`player::one_shot`) or a mod's
+    /// `FirePlayerAnimatorEvent`; every mirror's animator answers it. Only
+    /// OBSERVED rigs' events ride here.
+    Animator {
+        rig: crate::player::RigId,
+        event: u16,
+    },
 }
 
 /// A server-authoritative transform correction: this pump's fixed ticks moved
@@ -321,12 +317,10 @@ pub struct SelfState {
     /// The AUTHORITATIVE rig-bone offsets for this body, as rig IDS, which a
     /// client running the same rule overrides per bone locally.
     pub bone_poses: Vec<crate::player::BonePose>,
-    /// The AUTHORITATIVE hand-motion ownership for this body (`[main,
-    /// off]`), which a client mod running the same claim overrides locally.
-    /// Like the poses beside it, this is the half the mirror cannot derive —
-    /// while a claim stands, the vanilla motion must not play under the
-    /// claimant's animation.
-    pub motion_claims: [crate::player::HandMotions; 2],
+    /// The resolved animator claims on EVERY rig of this body (params set,
+    /// slots played) — rig, graph and library ids, remapped by name at the
+    /// transport.
+    pub animator: crate::player::AnimatorClaims,
     /// A transform correction when the ticks moved this player (see
     /// [`SelfTransform`]); `None` on ordinary updates.
     pub transform: Option<SelfTransform>,
@@ -471,6 +465,12 @@ pub struct SelfEvents {
     /// use-click ladder's second pass) — the jab plays on the left hand.
     /// Meaningless while `used_unpredicted` is false.
     pub used_unpredicted_off: bool,
+    /// Graph events a SERVER mod fired on the recipient's own rigs this
+    /// window (`FirePlayerAnimatorEvent`), in emission order — the one hand
+    /// one-shot that IS echoed, because a server-only mod has no other way
+    /// to reach the local viewmodel; a client mod that fired the same event
+    /// itself drops the echo (its latch, like a predicted pose).
+    pub animator_events: Vec<(crate::player::RigId, u16)>,
     /// Cues addressed at this recipient's CLIENT instance (`EmitEventTo`), in
     /// emission order. The one NON-lossy lane here: the booleans above are
     /// latched states the newest overwrites, these are a queue.
@@ -507,6 +507,7 @@ impl SelfEvents {
         self.toggled_door = other.toggled_door.or(self.toggled_door);
         self.used_unpredicted |= other.used_unpredicted;
         self.used_unpredicted_off |= other.used_unpredicted_off;
+        self.animator_events.extend(other.animator_events);
         self.client_events.extend(other.client_events);
     }
 }

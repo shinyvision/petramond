@@ -74,6 +74,8 @@ pub struct GraphicsSettings {
     pub anti_aliasing: AntiAliasing,
     /// Emitter particle density (`0` off, `0.5` reduced, `1` full).
     pub particle_density: f32,
+    /// Whether the view may shake; off holds it still.
+    pub screen_shake: bool,
 }
 
 impl ClientSettings {
@@ -84,6 +86,7 @@ impl ClientSettings {
             grade: self.grade,
             anti_aliasing: self.anti_aliasing,
             particle_density: self.particles.density(),
+            screen_shake: self.screen_shake,
         }
     }
 }

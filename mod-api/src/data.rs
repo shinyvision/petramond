@@ -547,9 +547,8 @@ impl PlayerAttribute {
 /// One kind of one-shot hand action the engine latches per tick (client:
 /// per frame) — the raw gesture that fired, so a body-posing mod keys its
 /// own curve off the same trigger and off nothing pre-interpreted. The
-/// engine's own animation collapses these into two motions (the
-/// [`HandMotion`] vocabulary): `Attack`/`Break` play the full swing, the
-/// rest the softer jab.
+/// engine's own graphs collapse these into two gestures: `Attack`/`Break`
+/// play the full swing, the rest the softer jab.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SwingKind {
     /// An attack swing — a mob, another player, or a punch at the air.
@@ -565,26 +564,9 @@ pub enum SwingKind {
     Interact,
 }
 
-/// One of the engine's OWN hand motions a claim can silence
-/// ([`HostCall::SetPlayerHandMotions`]): the vocabulary of what the engine
-/// animates on a hand by itself, so a claimant names exactly the motions it
-/// takes over and the engine keeps playing the rest.
-///
-/// [`HostCall::SetPlayerHandMotions`]: crate::HostCall::SetPlayerHandMotions
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum HandMotion {
-    /// The full-strength swing family: the mining loop and the
-    /// break/attack punches.
-    Swing,
-    /// The soft use jab (a [`SwingKind::Place`]/[`SwingKind::Throw`]/
-    /// [`SwingKind::Interact`] edge's motion).
-    Jab,
-}
-
 /// What a body's hands are doing with the PRIMARY button this tick (client:
 /// frame), as [`HostCall::PlayerState`] / [`HostCall::Players`] publish it —
-/// the raw swing facts a body-posing mod animates from when it claims the
-/// hands via [`HostCall::SetPlayerHandMotions`].
+/// the raw swing facts a body-animating mod keys its own clock off.
 ///
 /// Deliberately raw TRIGGERS, not a phase: each side runs its own clock off
 /// them (ticks on the server, frame seconds on the client) exactly as the
@@ -593,7 +575,6 @@ pub enum HandMotion {
 ///
 /// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
 /// [`HostCall::Players`]: crate::HostCall::Players
-/// [`HostCall::SetPlayerHandMotions`]: crate::HostCall::SetPlayerHandMotions
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandSwing {
     /// The MAIN hand is mid-mine (held button on a block, timer running).
@@ -673,11 +654,12 @@ pub struct PlayerSnapshot {
     /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
     pub pose_anchor: Option<[f64; 3]>,
     /// What this body's hands did with the action buttons this tick (client:
-    /// this frame) — the swing facts a hand-animating mod keys its curves
-    /// off. See [`HostCall::SetPlayerHandMotions`], the matching ownership
-    /// claim.
+    /// this frame) — the swing facts a hand-animating mod keys its clock
+    /// off. A mod that animates a gesture itself stands the engine's copy
+    /// down by setting the param the rig's gate for that gesture reads
+    /// ([`HostCall::SetPlayerAnimatorParams`]).
     ///
-    /// [`HostCall::SetPlayerHandMotions`]: crate::HostCall::SetPlayerHandMotions
+    /// [`HostCall::SetPlayerAnimatorParams`]: crate::HostCall::SetPlayerAnimatorParams
     pub swing: HandSwing,
     /// Body extents, the same envelope the engine collides and targets:
     /// a box `half_width` either side of the feet, `height` tall, with the
@@ -1281,4 +1263,106 @@ pub struct AiNodeDecision {
     /// past it). This is the persistence channel for per-mob node state —
     /// see [`AiNodeCtx::tags`] for the read side.
     pub tags: Vec<MobTagWrite>,
+}
+
+/// The names of the engine's shipped player rigs — the `rig` every animator
+/// primitive addresses. Rigs are rows of the layered rigs catalog, one per
+/// presenter the engine draws (the body, the first-person viewmodel): a pack
+/// re-points a row's model, animator and conventions, and a name no
+/// registered rig carries is refused at the call.
+pub mod rig {
+    /// The body every observer sees, and the wielder in third person.
+    pub const PLAYER_BODY: &str = "player_body";
+    /// The first-person viewmodel: the arms (and camera) the wielder sees.
+    /// Not observed — nothing played on it reaches other players.
+    pub const PLAYER_FIRST_PERSON: &str = "player_first_person";
+}
+
+/// A value a graph param takes: a number (a bool is `1` / `0`) or a NAME,
+/// which the graph compares as an interned string (`main.tool == "spear"`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum AnimatorValue {
+    Number(f32),
+    Name(String),
+}
+
+/// How a played clip advances. `Scrub` is the caller's own clock: the frame
+/// drawn is the one at that fraction of the clip on every mirror, so a hit
+/// landing at the clip's `impact` marker lands where it is seen. `Run`
+/// free-runs from the frame the play starts, at `rate` (1 = authored
+/// speed), once or looping.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub enum AnimatorClock {
+    /// `0..=1` through the clip.
+    Scrub(f32),
+    Run { rate: f32, looping: bool },
+}
+
+/// One graph param a mod sets on one of a player's rigs, for
+/// [`HostCall::SetPlayerAnimatorParams`]. `rig` names a registered rig
+/// ([`rig`]); params are the rig graph's own declared vocabulary (`params`
+/// in its animator document). A rig or param name the engine lacks is
+/// refused at the call.
+///
+/// [`HostCall::SetPlayerAnimatorParams`]: crate::HostCall::SetPlayerAnimatorParams
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AnimatorParam {
+    pub rig: String,
+    pub param: String,
+    pub value: AnimatorValue,
+}
+
+/// One montage a mod holds in a slot of one of a player's rigs, for
+/// [`HostCall::SetPlayerAnimatorPlays`]. `rig` names a registered rig
+/// ([`rig`]); `slot` and `clip` are the rig graph's declared slot and its
+/// library's clip (`petramond:fp_slash_a`). `clock` is how the clip
+/// advances ([`AnimatorClock`]). `mirror` plays it reflected left↔right (a
+/// main-hand clip on the off hand); `priority` refuses a lower-priority
+/// newcomer to the same slot while this play stands.
+///
+/// [`HostCall::SetPlayerAnimatorPlays`]: crate::HostCall::SetPlayerAnimatorPlays
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AnimatorPlay {
+    pub rig: String,
+    pub slot: String,
+    pub clip: String,
+    pub clock: AnimatorClock,
+    pub mirror: bool,
+    pub priority: i32,
+}
+
+impl AnimatorPlay {
+    fn new(rig: &str, slot: &str, clip: &str, clock: AnimatorClock) -> Self {
+        AnimatorPlay {
+            rig: rig.to_string(),
+            slot: slot.to_string(),
+            clip: clip.to_string(),
+            clock,
+            mirror: false,
+            priority: 0,
+        }
+    }
+
+    /// A play scrubbed by the caller's own clock.
+    pub fn scrubbed(rig: &str, slot: &str, clip: &str, progress: f32) -> Self {
+        Self::new(rig, slot, clip, AnimatorClock::Scrub(progress))
+    }
+
+    /// A play free-running at `rate` from the frame it starts.
+    pub fn running(rig: &str, slot: &str, clip: &str, rate: f32, looping: bool) -> Self {
+        Self::new(rig, slot, clip, AnimatorClock::Run { rate, looping })
+    }
+}
+
+/// What [`HostCall::AnimationClip`] answers about one clip.
+///
+/// [`HostCall::AnimationClip`]: crate::HostCall::AnimationClip
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AnimationClipInfo {
+    /// Seconds.
+    pub length: f32,
+    pub looping: bool,
+    /// Timeline markers `(name, seconds)` in time order; an `impact` marker
+    /// is where a strike lands.
+    pub markers: Vec<(String, f32)>,
 }

@@ -21,20 +21,6 @@
 //! dirt base plus the tinted grayscale `GrassSideOverlay` — its tile rides the
 //! `packed2` overlay payload with the has-overlay flag set (the same
 //! overlay-composite path the chunk mesher uses, which `model3d.wgsl` mirrors).
-//! Note that flag bit is overloaded: in the textured path it means "has
-//! grass-side overlay"; the solid-color path (`cube_solid`) reuses it for
-//! [`SOLID_COLOR_FLAG`].
-//! The two never collide because a solid cuboid carries no tile/overlay and the
-//! shader reads the flag only on the appropriate branch.
-//!
-//! ### Solid-color sentinel ([`SOLID_COLOR_FLAG`])
-//! The skin hand has no texture. `cube_solid` packs the RGB tint into the
-//! `tint` field (as every textured vertex already carries a tint) and sets the
-//! chunk mesher's "has-overlay" bit, which has no meaning in the model3d
-//! pipeline. The STEP 2 model3d fragment shader reads
-//! this bit: when set it outputs the interpolated `tint` directly (solid color,
-//! atlas ignored); when clear it samples the atlas at the reconstructed uv. Keep
-//! this convention identical between this module and `model3d.wgsl`.
 
 use super::foliage_tint::{self, FaceMaterial};
 use super::lighting::{self, DynLight};
@@ -47,11 +33,6 @@ use petramond_world::block_state::{HeldBlockState, LogAxis};
 use petramond_world::tile::Tile;
 
 use glam::Vec3;
-
-/// When set, the model3d fragment shader treats the vertex's `tint` as the
-/// final solid color and ignores the atlas. Mirrors the chunk-mesher
-/// "has-overlay" bit position, which is unused by the model3d pass.
-pub const SOLID_COLOR_FLAG: u32 = petramond_mesh::OVERLAY_FLAG;
 
 /// Max AO (no occlusion).
 const FULL_AO: u32 = 3 << petramond_mesh::AO_SHIFT;
@@ -92,15 +73,6 @@ fn face_bits2(mat: FaceMaterial) -> u32 {
         Some(o) => petramond_mesh::pack_overlay(o.index() as u32),
         None => 0,
     }
-}
-
-#[inline]
-fn face_bits_solid_lit(face: Face, light: DynLight) -> u32 {
-    (face.shade_idx() << petramond_mesh::SHADE_SHIFT)
-        | FULL_AO
-        | lighting::skylight_bits(light.sky)
-        | light.block.packed_bits()
-        | SOLID_COLOR_FLAG
 }
 
 /// The base quad emitter: append 4 verts (one per corner via `vertex(corner,
@@ -704,55 +676,6 @@ pub fn cube_textured(tiles: [Tile; 3], origin: Vec3, size: f32) -> (Vec<Vertex>,
     (verts, indices)
 }
 
-/// Append a full-bright solid-color cuboid spanning `[origin, origin + size]` with
-/// RGB `tint` into the caller-owned `verts`/`indices` (capacity reused). The
-/// model3d fragment shader reads [`SOLID_COLOR_FLAG`] and outputs `tint` directly.
-/// 24 verts / 36 indices. Test-only; live render passes explicit light via
-/// [`push_cube_solid_lit`].
-#[cfg(test)]
-pub fn push_cube_solid(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    tint: [f32; 3],
-    origin: Vec3,
-    size: f32,
-) {
-    push_cube_solid_lit(verts, indices, tint, origin, size, DynLight::FULL);
-}
-
-pub(super) fn push_cube_solid_lit(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    tint: [f32; 3],
-    origin: Vec3,
-    size: f32,
-    light: DynLight,
-) {
-    let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
-    for face in ALL_FACES {
-        push_quad(
-            verts,
-            indices,
-            face.quad_box(origin.to_array(), max.to_array()),
-            light.block.tint_word(tint),
-            face_bits_solid_lit(face, light),
-            light.block.packed2_bits(),
-        );
-    }
-}
-
-/// A full-bright solid-color cuboid spanning `[origin, origin + size]` with RGB
-/// `tint`. 24 verts / 36 indices.
-///
-/// Test-only convenience; live render uses [`push_cube_solid_lit`].
-#[cfg(test)]
-pub fn cube_solid(tint: [f32; 3], origin: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
-    let mut verts = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    push_cube_solid(&mut verts, &mut indices, tint, origin, size);
-    (verts, indices)
-}
-
 /// Append a flat, upright, double-sided billboard quad of one `tile`, centered on
 /// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright, into
 /// the caller-owned `verts`/`indices` (capacity reused). Emitted in both windings
@@ -939,7 +862,7 @@ mod tests {
             // AO (bits 21..23) is full (3).
             assert_eq!((vert.packed >> petramond_mesh::vertex::AO_SHIFT) & 0x3, 3);
             // textured path never sets the solid-color flag.
-            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
+            assert_eq!(vert.packed & petramond_mesh::OVERLAY_FLAG, 0);
         }
     }
 
@@ -957,23 +880,6 @@ mod tests {
                                  // SHADES table is the brightness these indices reference.
         const { assert!(SHADES[0] > SHADES[3]) };
     }
-
-    #[test]
-    fn cube_solid_sets_flag_and_carries_tint() {
-        let tint = [0.9, 0.7, 0.6];
-        let (v, i) = cube_solid(tint, Vec3::ZERO, 1.0);
-        assert_eq!(v.len(), 24);
-        assert_eq!(i.len(), 36);
-        for vert in &v {
-            assert_eq!(vert.packed & SOLID_COLOR_FLAG, SOLID_COLOR_FLAG);
-            assert_eq!(vert.tint, pack_tint(tint));
-            assert_eq!(
-                (vert.packed >> petramond_mesh::vertex::SKY_SHIFT) & 0x3F,
-                63
-            );
-        }
-    }
-
     #[test]
     fn billboard_quad_is_double_sided() {
         let (v, i) = billboard_quad(Tile::named("poppy"), Vec3::ZERO, 1.0);
@@ -984,7 +890,7 @@ mod tests {
                 vert.packed & petramond_mesh::vertex::TILE_MASK,
                 Tile::named("poppy").index() as u32
             );
-            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
+            assert_eq!(vert.packed & petramond_mesh::OVERLAY_FLAG, 0);
         }
     }
 
@@ -1009,7 +915,11 @@ mod tests {
             Tile::named("grass_top").index() as u32
         );
         assert_eq!(top.tint, pack_tint(grass));
-        assert_eq!(top.packed & SOLID_COLOR_FLAG, 0, "top has no overlay flag");
+        assert_eq!(
+            top.packed & petramond_mesh::OVERLAY_FLAG,
+            0,
+            "top has no overlay flag"
+        );
 
         // Side faces (PosX 0, NegX 1, PosZ 4, NegZ 5): dirt base + tinted
         // grass-side overlay: the has-overlay flag in word 1, the tile in word 2.
@@ -1022,8 +932,8 @@ mod tests {
             );
             // Bit 20 (overlay flag) set; overlay tile = GrassSideOverlay.
             assert_eq!(
-                s.packed & SOLID_COLOR_FLAG,
-                SOLID_COLOR_FLAG,
+                s.packed & petramond_mesh::OVERLAY_FLAG,
+                petramond_mesh::OVERLAY_FLAG,
                 "side has overlay flag"
             );
             assert_eq!(
@@ -1042,7 +952,7 @@ mod tests {
             Tile::named("dirt").index() as u32
         );
         assert_eq!(bot.tint, pack_tint(foliage_tint::NO_TINT));
-        assert_eq!(bot.packed & SOLID_COLOR_FLAG, 0);
+        assert_eq!(bot.packed & petramond_mesh::OVERLAY_FLAG, 0);
     }
 
     #[test]
@@ -1055,7 +965,11 @@ mod tests {
                 Tile::named("oak_leaves").index() as u32
             );
             assert_eq!(vert.tint, pack_tint(foliage));
-            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0, "leaves carry no overlay");
+            assert_eq!(
+                vert.packed & petramond_mesh::OVERLAY_FLAG,
+                0,
+                "leaves carry no overlay"
+            );
         }
     }
 
@@ -1068,7 +982,7 @@ mod tests {
                 pack_tint(foliage_tint::NO_TINT),
                 "flowers are not biome-tinted"
             );
-            assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
+            assert_eq!(vert.packed & petramond_mesh::OVERLAY_FLAG, 0);
         }
     }
 

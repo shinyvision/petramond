@@ -194,7 +194,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 held_pose_off: None,
                 held_display: [None; 2],
                 bone_poses: Vec::new(),
-                motion_claims: [Default::default(); 2],
+                animator: Default::default(),
                 hurt_recent: false,
                 snap: false,
                 mount: None,
@@ -206,13 +206,18 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
 
     game.game.apply_tick_update(Box::new(update(1, None)));
     let action_kinds = [
-        PlayerActionKind::Swung,
-        PlayerActionKind::Broke,
-        PlayerActionKind::Placed,
-        PlayerActionKind::ThrewItem,
-        PlayerActionKind::UsedItem,
-        PlayerActionKind::Interacted,
-        PlayerActionKind::AteFinished,
+        PlayerActionKind::Animator {
+            rig: petramond::player::RigId(0),
+            event: 0,
+        },
+        PlayerActionKind::Animator {
+            rig: petramond::player::RigId(0),
+            event: 1,
+        },
+        PlayerActionKind::Animator {
+            rig: petramond::player::RigId(1),
+            event: 0,
+        },
         PlayerActionKind::Died,
         PlayerActionKind::Respawned,
     ];

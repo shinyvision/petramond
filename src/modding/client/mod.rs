@@ -5,6 +5,8 @@
 //! scheduler.
 
 mod calls;
+mod animator_fold;
+mod pending_fires;
 mod runtime;
 pub(in crate::modding) mod scope;
 mod state;

@@ -280,6 +280,92 @@ pub struct EntityShadow {
     pub strength: f32,
 }
 
+/// One claimed graph param with its value resolved to the number the
+/// animator takes — a name claim interned ONCE, where the claim arrives
+/// ([`NameCache`]), never per frame.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct AnimatorParamRow {
+    pub rig: petramond::player::RigId,
+    pub param: u16,
+    pub value: f32,
+}
+
+/// Interned name values, cached by string so a claim that repeats a name
+/// never takes the global intern lock again.
+#[derive(Default)]
+pub struct NameCache {
+    names: rustc_hash::FxHashMap<Box<str>, f32>,
+}
+
+impl NameCache {
+    pub fn row(&mut self, p: &petramond::player::AnimatorParam) -> AnimatorParamRow {
+        let value = match &p.value {
+            petramond::player::AnimatorValue::Number(v) => *v,
+            petramond::player::AnimatorValue::Name(n) => match self.names.get(n.as_str()) {
+                Some(v) => *v,
+                None => {
+                    let v = petramond_world::animation::expr::intern(n);
+                    self.names.insert(n.as_str().into(), v);
+                    v
+                }
+            },
+        };
+        AnimatorParamRow {
+            rig: p.rig,
+            param: p.param,
+            value,
+        }
+    }
+
+    /// Resolve every param of `claims` onto the end of `out`.
+    pub fn rows(
+        &mut self,
+        params: &[petramond::player::AnimatorParam],
+        out: &mut Vec<AnimatorParamRow>,
+    ) {
+        out.extend(params.iter().map(|p| self.row(p)));
+    }
+}
+
+/// What the local player's body is doing this frame, as the first-person
+/// animator's driver reads it beside the two hands' frames.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct LocalMotion {
+    /// Horizontal speed, blocks per second.
+    pub speed: f32,
+    /// Horizontal velocity along the look's forward and rightward axes.
+    pub forward: f32,
+    pub strafe: f32,
+    /// Vertical velocity, blocks per second, up positive.
+    pub vertical: f32,
+    pub grounded: bool,
+    pub sneaking: bool,
+    pub sprinting: bool,
+    pub swimming: bool,
+    pub climbing: bool,
+    /// Look pitch in degrees, up positive.
+    pub pitch: f32,
+    /// How fast the look is turning, degrees per second (rightward, upward).
+    pub yaw_rate: f32,
+    pub pitch_rate: f32,
+    /// The walk bob: 0..1 through a stride, and how much of it is playing.
+    pub stride: f32,
+    pub stride_weight: f32,
+    /// Seconds of hurt shake left; a rise is a fresh hit.
+    pub hurt: f32,
+    /// What the crosshair rests on within reach.
+    pub target: AimTarget,
+}
+
+/// What the local player's crosshair rests on within reach.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum AimTarget {
+    #[default]
+    Nothing = 0,
+    Block = 1,
+    Creature = 2,
+}
+
 pub struct GamePresentation<'a> {
     pub tick_alpha: f32,
     pub item_entities: &'a [DroppedItemPresentation],
@@ -303,6 +389,12 @@ pub struct GamePresentation<'a> {
     /// [`BoneRange`](crate::BoneRange). One arena keeps every render row a
     /// plain `Copy` value and puts no ceiling on how many bones a body wears.
     pub bone_offsets: &'a [crate::BoneOffset],
+    /// Every remote body's animator claims and fired graph events, back to
+    /// back like the bone offsets; each remote addresses its own by
+    /// [`AnimatorRanges`](crate::AnimatorRanges).
+    pub animator_params: &'a [AnimatorParamRow],
+    pub animator_plays: &'a [petramond::player::AnimatorPlay],
+    pub animator_events: &'a [(petramond::player::RigId, u16)],
     /// Every body that could sound a footstep this frame (see
     /// [`FootstepSource`]) — INCLUDING bodies standing still, so `App` can
     /// retire the cadence state of players who left without a second list.

@@ -318,17 +318,35 @@ fn tick_updates_roundtrip() {
                 translation: [0.0, 1.0, -2.0],
                 hold: true,
             }],
-            motion_claims: [
-                crate::player::HandMotions::of([mod_api::HandMotion::Swing]),
-                crate::player::HandMotions::NONE,
-            ],
+            animator: crate::player::AnimatorClaims {
+                params: vec![crate::player::AnimatorParam {
+                    rig: crate::player::RigId(0),
+                    param: 4,
+                    value: crate::player::AnimatorValue::Number(1.0),
+                }],
+                plays: vec![crate::player::AnimatorPlay {
+                    rig: crate::player::RigId(0),
+                    slot: 2,
+                    clip: 9,
+                    clock: crate::player::AnimatorClock::Scrub(0.25),
+                    mirror: true,
+                    priority: 1,
+                }],
+            },
             hurt_recent: true,
             snap: true,
             mount: None,
         }],
         player_actions: vec![
-            (PlayerId(1), PlayerActionKind::Broke),
-            (PlayerId(0), PlayerActionKind::AteFinished),
+            (PlayerId(1), PlayerActionKind::Died),
+            (PlayerId(0), PlayerActionKind::Respawned),
+            (
+                PlayerId(1),
+                PlayerActionKind::Animator {
+                    rig: crate::player::RigId(0),
+                    event: 5,
+                },
+            ),
         ],
         self_state: Some(SelfState {
             conditions: Vec::new(),
@@ -363,10 +381,17 @@ fn tick_updates_roundtrip() {
                 translation: [0.5, 0.0, 1.5],
                 hold: false,
             }],
-            motion_claims: [
-                crate::player::HandMotions::NONE,
-                crate::player::HandMotions::of([mod_api::HandMotion::Jab]),
-            ],
+            animator: crate::player::AnimatorClaims {
+                params: Vec::new(),
+                plays: vec![crate::player::AnimatorPlay {
+                    rig: crate::player::RigId(1),
+                    slot: 0,
+                    clip: 3,
+                    clock: crate::player::AnimatorClock::Run { rate: 1.0, looping: false },
+                    mirror: false,
+                    priority: 0,
+                }],
+            },
             sleeping: None,
             sleep_bed: None,
             transform: Some(SelfTransform {
@@ -410,6 +435,7 @@ fn tick_updates_roundtrip() {
                 kind_key: "kitchen:oven".into(),
                 pos: Some(IVec3::new(4, 65, 4)),
             }),
+            animator_events: vec![(crate::player::RigId(1), 2)],
             ..Default::default()
         },
         action_outcomes: vec![ActionOutcome {

@@ -3,12 +3,16 @@
 //! client's per-frame [`Game::tick`] driver. The fixed-tick stage ladder
 //! itself lives on [`petramond::server::game::ServerGame`].
 
+use super::world_prediction::UseClaim;
 use super::Game;
 use petramond::net::protocol::{
     ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, SelfEvents, TargetRef,
 };
+use petramond::player::one_shot::OneShot;
+use petramond::server::interact::ConsumerKind;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
+use petramond_world::inventory::Hand;
 
 pub use petramond::events::tick::TICK_DT;
 pub use petramond::events::tick::{MobSoundEvent, SoundEvent, SpatialSoundCommand};
@@ -30,6 +34,18 @@ pub enum PlacePrediction {
     Plausible,
     /// The click won't place anything.
     No,
+}
+
+/// A use click's predicted verdict: whether something consumes it, whether
+/// that consumer presents itself (an eat's raise, not a jab) or is a
+/// placement (the place jab, not the interact one), which hand acted, and
+/// what the place prediction did.
+pub struct ClickVerdict {
+    pub consumed: bool,
+    pub presents_itself: bool,
+    pub places: bool,
+    pub off_hand: bool,
+    pub place: PlacePrediction,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -145,13 +161,21 @@ pub struct GameEvents {
     pub bed_interacted: bool,
     /// The player's use click PREDICTABLY does something this frame (an
     /// interactable target, a usable/edible held item, a plausible placement)
-    /// — the P0 hand jab, latched at click time. Covers what the removed
-    /// `used_item` echo used to animate.
+    /// — the P0 hand jab, latched at click time, unless the consumer
+    /// presents itself ([`interacted_presents_itself`](Self::interacted_presents_itself)).
+    /// Covers what the removed `used_item` echo used to animate.
     pub interacted: bool,
     /// The jab above belongs to the OFF hand (the click's predicted effect —
     /// or its `used_unpredicted` echo — came from the ladder's second pass):
     /// the LEFT hand jabs instead of the right.
     pub interacted_off_hand: bool,
+    /// The consumed click's consumer PRESENTS ITSELF (the eat's raise is its
+    /// whole presentation), so no hand jabs. Still an interaction for
+    /// everything else that reads one.
+    pub interacted_presents_itself: bool,
+    /// The consumed click above is a PLACEMENT (predicted to place, ghost or
+    /// not): it plays the place jab, not the interact one.
+    pub interacted_places: bool,
     /// The player took damage this frame (post `player_damage_pre`, amount
     /// > 0) — plays the hurt sound and kicks the screen/hand shake.
     pub player_damaged: bool,
@@ -178,6 +202,10 @@ pub struct GameEvents {
     /// World-anchored events every observer presents (positional sounds,
     /// break bursts, door swings), in emission order. NON-lossy.
     pub world_events: Vec<WorldEvent>,
+    /// Graph events fired on the local player's rig animators this batch:
+    /// client mods' own (a round trip early) and the server's echoes of the
+    /// rest, `(rig, event id)` in order.
+    pub animator_events: Vec<(petramond::player::RigId, u16)>,
     /// The server became unreachable (thread crashed / channel closed) —
     /// reported EXACTLY ONCE, on the frame the loss is detected. Until the app
     /// grows a proper "world stopped" screen for it, it
@@ -186,21 +214,36 @@ pub struct GameEvents {
 }
 
 impl GameEvents {
-    /// The MAIN hand's use jab this batch. `interacted` is the client's own
-    /// "this click predictably does something" verdict, so every effectful
-    /// use click — screens, mod GUIs, doors, beds, item uses, placements —
-    /// jabs exactly once; the hand that acted takes it.
-    pub fn jab_main(&self) -> bool {
-        (self.placed_block.is_some() && !self.placed_off_hand)
-            || self.threw_item
-            || (self.interacted && !self.interacted_off_hand)
-    }
-
-    /// The LEFT hand's use jab this batch (the click's effect came from the
-    /// off-hand pass).
-    pub fn jab_off(&self) -> bool {
-        (self.placed_block.is_some() && self.placed_off_hand)
-            || (self.interacted && self.interacted_off_hand)
+    /// The hand gestures this batch fired, `(hand, gesture)` in the order
+    /// the client-mod swing facts rank them: the swing, the break, the
+    /// place (a placed block or a click predicted to place — from the hand
+    /// that acted), the throw, then the interact — every other consumed use
+    /// click, unless its consumer presents itself.
+    pub fn one_shots(&self) -> impl Iterator<Item = (Hand, OneShot)> + '_ {
+        let click_hand = if self.interacted_off_hand {
+            Hand::Off
+        } else {
+            Hand::Main
+        };
+        let place_hand = if self.placed_off_hand {
+            Hand::Off
+        } else {
+            Hand::Main
+        };
+        let placed = self.placed_block.is_some();
+        let predicted_place = self.interacted && self.interacted_places;
+        let interact =
+            self.interacted && !self.interacted_places && !self.interacted_presents_itself;
+        [
+            (self.swung_hand, Hand::Main, OneShot::Swing),
+            (self.broke_block.is_some(), Hand::Main, OneShot::Break),
+            (placed, place_hand, OneShot::Place),
+            (predicted_place && !placed, click_hand, OneShot::Place),
+            (self.threw_item, Hand::Main, OneShot::Throw),
+            (interact, click_hand, OneShot::Interact),
+        ]
+        .into_iter()
+        .filter_map(|(fired, hand, kind)| fired.then_some((hand, kind)))
     }
 }
 
@@ -387,7 +430,7 @@ impl Game {
 
         // Presentation/infra after fixed simulation; no gameplay mutation here.
         // Remote players' per-frame animation state (shared body pose,
-        // held-item animator, hurt/eat ramps) advances right after the batches
+        // held-item easing, animator plays, hurt/eat ramps) advances right after the batches
         // applied, so this frame's latched one-shots jab this frame.
         let alpha = self.replica_clock.alpha();
         self.remote_players.advance(dt, alpha, |pos| {
@@ -406,7 +449,7 @@ impl Game {
         self.advance_door_swings(dt);
         self.tick_mesh_budget();
 
-        self.assemble_game_events(events)
+        self.assemble_game_events(events, dt)
     }
 
     /// Drain and apply every pending server→client message. `Game::tick` runs
@@ -458,8 +501,9 @@ impl Game {
 
     /// Map this frame's replicated event payloads onto the app-facing
     /// `GameEvents` shape (the app's consumption is unchanged: the one-shots
-    /// and `open_*` fields read exactly as they did pre-wire).
-    fn assemble_game_events(&mut self, events: ClientEvents) -> GameEvents {
+    /// and `open_*` fields read exactly as they did pre-wire). `dt` is the
+    /// frame's seconds.
+    fn assemble_game_events(&mut self, events: ClientEvents, dt: f32) -> GameEvents {
         let se = events.self_events;
         // The hand one-shots are fed by the local prediction latches — the
         // server never echoes an action the client already animated. The one
@@ -470,12 +514,21 @@ impl Game {
         // Which hand the jab belongs to: the local latch's own verdict, or —
         // for the echoed unpredicted consumption — the server's acting hand.
         let local_jab_off = std::mem::take(&mut self.local_hand_jab_off) || se.used_unpredicted_off;
+        // An echoed consumption never presents itself: the server echoes no
+        // such claim, and the client always foresees held food.
+        let local_presents_itself =
+            std::mem::take(&mut self.local_hand_presents_itself) && !se.used_unpredicted;
+        let local_places = std::mem::take(&mut self.local_hand_places) && !se.used_unpredicted;
         let local_swing = std::mem::take(&mut self.local_hand_swing);
         let local_threw = std::mem::take(&mut self.local_hand_threw);
         let local_broke = std::mem::take(&mut self.local_broke_block);
         let local_placed = std::mem::take(&mut self.local_placed_block);
         let local_placed_off = std::mem::take(&mut self.local_placed_off_hand);
+        let animator_events = self
+            .client_mods
+            .take_animator_events(&se.animator_events, dt);
         let mut out = GameEvents {
+            animator_events,
             placed_block: local_placed,
             placed_off_hand: local_placed_off,
             broke_block: local_broke,
@@ -487,6 +540,8 @@ impl Game {
             bed_interacted: se.bed_interacted,
             interacted: local_jab,
             interacted_off_hand: local_jab && local_jab_off,
+            interacted_presents_itself: local_jab && local_presents_itself,
+            interacted_places: local_jab && local_places,
             player_damaged: se.player_damaged,
             player_died: se.player_died,
             sleep_ended: se.sleep_ended,
@@ -521,28 +576,26 @@ impl Game {
             Some(OpenScreen::Sleep) => out.open_sleep = true,
         }
         // The hand one-shots, latched AGAIN for the client-mod frame hook
-        // (`Game::swing_events`): the app's own latch feeds the vanilla
-        // animator and drains at render, so a consumer on the update clock
-        // needs its own copy — a shared latch is whoever-eats-first, and the
-        // frame hook always ate second. The RAW kind is latched, matching
-        // the server's per-site facts; newest wins within a hand, and the
-        // priority order is cosmetic (the edges share one button, so they
-        // almost never coincide).
-        if out.swung_hand {
-            self.swing_events.main = Some(mod_api::SwingKind::Attack);
-        } else if out.broke_block.is_some() {
-            self.swing_events.main = Some(mod_api::SwingKind::Break);
-        } else if out.placed_block.is_some() && !out.placed_off_hand {
-            self.swing_events.main = Some(mod_api::SwingKind::Place);
-        } else if out.threw_item {
-            self.swing_events.main = Some(mod_api::SwingKind::Throw);
-        } else if out.interacted && !out.interacted_off_hand {
-            self.swing_events.main = Some(mod_api::SwingKind::Interact);
-        }
-        if out.placed_block.is_some() && out.placed_off_hand {
-            self.swing_events.off = Some(mod_api::SwingKind::Place);
-        } else if out.interacted && out.interacted_off_hand {
-            self.swing_events.off = Some(mod_api::SwingKind::Interact);
+        // (`Game::swing_events`): the app's own latch feeds the animators
+        // and drains at render, so a consumer on the update clock needs its
+        // own copy — a shared latch is whoever-eats-first, and the frame
+        // hook always ate second. The first gesture in `one_shots` order
+        // wins a hand; the ranking is cosmetic (the edges share one button,
+        // so they almost never coincide).
+        for (hand, kind) in out.one_shots() {
+            let slot = match hand {
+                Hand::Main => &mut self.swing_events.main,
+                Hand::Off => &mut self.swing_events.off,
+            };
+            if slot.is_none() {
+                *slot = Some(match kind {
+                    OneShot::Swing => mod_api::SwingKind::Attack,
+                    OneShot::Break => mod_api::SwingKind::Break,
+                    OneShot::Place => mod_api::SwingKind::Place,
+                    OneShot::Throw => mod_api::SwingKind::Throw,
+                    OneShot::Interact => mod_api::SwingKind::Interact,
+                });
+            }
         }
         out
     }
@@ -604,33 +657,41 @@ impl Game {
         &mut self,
         input: &GameInput,
         use_mob: Option<u64>,
-    ) -> (bool, bool, PlacePrediction) {
-        use petramond_world::inventory::Hand;
+    ) -> ClickVerdict {
         self.player.acting_hand = Hand::Main;
         let (mod_claimed, mut place) = self.predict_use_click(input.movement.sneak, use_mob);
-        let mut jabbed = mod_claimed
-            || !matches!(place, PlacePrediction::No)
-            || self.use_click_predicts_effect(input, use_mob);
+        let mut claim = if mod_claimed {
+            UseClaim::Claimed(ConsumerKind::Registered)
+        } else if !matches!(place, PlacePrediction::No) {
+            UseClaim::Claimed(ConsumerKind::Place)
+        } else {
+            self.use_click_claim(input, use_mob)
+        };
         let mut off_hand = false;
-        if !jabbed && self.self_view.inventory.off_hand().is_some() {
+        if claim == UseClaim::Unclaimed && self.self_view.inventory.off_hand().is_some() {
             self.player.acting_hand = Hand::Off;
             let (mod_claimed_off, place_off) =
                 self.predict_use_click(input.movement.sneak, use_mob);
-            let off_jab = mod_claimed_off
-                || !matches!(place_off, PlacePrediction::No)
-                || self.use_click_predicts_effect(input, use_mob);
-            if off_jab {
+            let off_claim = if mod_claimed_off {
+                UseClaim::Claimed(ConsumerKind::Registered)
+            } else if !matches!(place_off, PlacePrediction::No) {
+                UseClaim::Claimed(ConsumerKind::Place)
+            } else {
+                self.use_click_claim(input, use_mob)
+            };
+            if off_claim != UseClaim::Unclaimed {
                 place = place_off;
-                jabbed = true;
+                claim = off_claim;
                 off_hand = true;
             }
         }
         // Never leak the acting hand past the verdict (level-state reads —
         // the render frame, the roster — are main-hand by definition).
         self.player.acting_hand = Hand::Main;
+        let consumed = claim != UseClaim::Unclaimed;
         // NOTHING claimed it: offer the gesture, exactly as the server does
         // once its own chain has passed. This is the frame a guard goes up on.
-        if !jabbed {
+        if !consumed {
             let payload = mod_api::EventPayload::UseUnclaimed {
                 block: self.look.map(|h| h.block.to_array()),
                 face: self.look.map(|h| h.normal.to_array()),
@@ -651,7 +712,13 @@ impl Game {
             Some(owner) => petramond::player::UseGesture::Held(owner.into()),
             None => petramond::player::UseGesture::Free,
         };
-        (jabbed, off_hand, place)
+        ClickVerdict {
+            consumed,
+            presents_itself: claim.presents_itself(),
+            places: !matches!(place, PlacePrediction::No),
+            off_hand,
+            place,
+        }
     }
 
     /// Assemble this frame's message batch into `frame_messages`, in
@@ -693,20 +760,22 @@ impl Game {
                     block: h.block,
                     normal: h.normal,
                 });
-                let (jabbed, off_hand, place) = self.predict_click_verdict(input, use_mob);
-                let request_id = match place {
+                let verdict = self.predict_click_verdict(input, use_mob);
+                let request_id = match verdict.place {
                     PlacePrediction::Predicted(id) | PlacePrediction::TrackOnly(id) => Some(id),
                     _ => None,
                 };
-                self.local_hand_jab = jabbed;
-                self.local_hand_jab_off = jabbed && off_hand;
+                self.local_hand_jab = verdict.consumed;
+                self.local_hand_jab_off = verdict.consumed && verdict.off_hand;
+                self.local_hand_presents_itself = verdict.presents_itself;
+                self.local_hand_places = verdict.places;
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::UseClick {
                         mob: use_mob,
                         target,
                         request_id,
-                        predicted: matches!(place, PlacePrediction::Predicted(_)),
-                        jabbed,
+                        predicted: matches!(verdict.place, PlacePrediction::Predicted(_)),
+                        jabbed: verdict.consumed,
                     }));
             }
             // Same for the swing — it would be the one visible thing a denied

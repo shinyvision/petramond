@@ -16,11 +16,44 @@
 //! semantics, never a rejection.
 
 use super::protocol::{ClientToServer, NameTables, SectionBlocks, ServerToClient};
+use crate::player::animator::AnimatorNames;
+use crate::player::RigId;
 
 /// LUT entry for "the client doesn't know this name". Registry ids are `u16`
 /// and the tables are dense, so a sentinel VALUE would collide with a real id;
 /// entries are `Option`-shaped instead, which niche-packs to the same size.
 pub const MISSING: Option<u16> = None;
+
+/// One rig graph's vocabulary tables, server id → this process's id.
+#[derive(Debug, Default)]
+struct AnimatorLut {
+    clips: Vec<Option<u16>>,
+    params: Vec<Option<u16>>,
+    slots: Vec<Option<u16>>,
+    events: Vec<Option<u16>>,
+}
+
+impl AnimatorLut {
+    fn build(server: &AnimatorNames, local: &AnimatorNames) -> Self {
+        let table = |server: &[String], mine: &[String], what: &str| {
+            build_lut(server, what, |n| {
+                mine.iter().position(|m| m == n).map(|i| i as u16)
+            })
+        };
+        Self {
+            clips: table(&server.clips, &local.clips, "animator clip"),
+            params: table(&server.params, &local.params, "animator param"),
+            slots: table(&server.slots, &local.slots, "animator slot"),
+            events: table(&server.events, &local.events, "animator event"),
+        }
+    }
+
+    fn is_identity(&self) -> bool {
+        [&self.clips, &self.params, &self.slots, &self.events]
+            .into_iter()
+            .all(|t| t.iter().enumerate().all(|(i, &v)| v == Some(i as u16)))
+    }
+}
 
 /// Dense server-id → client-id lookup tables.
 #[derive(Debug)]
@@ -33,6 +66,10 @@ pub struct IdRemap {
     effects: Vec<Option<u16>>,
     emitters: Vec<Option<u16>>,
     conditions: Vec<Option<u16>>,
+    /// Per SERVER rig id: this process's rig of the same name and its
+    /// graph's clips, params, slots and events; `None` for a rig this
+    /// process never registered (its rows drop).
+    animators: Vec<Option<(RigId, AnimatorLut)>>,
     /// True when every table is the identity — the fast path (a client whose
     /// registries happen to match the server's exactly).
     identity: bool,
@@ -77,10 +114,16 @@ impl IdRemap {
             petramond_world::condition::by_name(n).map(|c| c.0 as u16)
         });
 
+        let animators = Self::animator_luts(&tables.animators, &AnimatorNames::all());
+
         let identity = blocks.iter().enumerate().all(|(i, &v)| i == v as usize)
             && [&items, &mobs, &sounds, &effects, &emitters, &conditions]
                 .into_iter()
-                .all(|t| t.iter().enumerate().all(|(i, &v)| v == Some(i as u16)));
+                .all(|t| t.iter().enumerate().all(|(i, &v)| v == Some(i as u16)))
+            && animators.iter().enumerate().all(|(i, a)| {
+                a.as_ref()
+                    .is_some_and(|(rig, lut)| rig.index() == i && lut.is_identity())
+            });
         IdRemap {
             blocks,
             items,
@@ -89,8 +132,27 @@ impl IdRemap {
             effects,
             emitters,
             conditions,
+            animators,
             identity,
         }
+    }
+
+    /// The per-rig tables: each server rig joined BY NAME to this process's
+    /// rig; an unknown name maps to nothing (one warning).
+    fn animator_luts(
+        server: &[AnimatorNames],
+        local: &[AnimatorNames],
+    ) -> Vec<Option<(RigId, AnimatorLut)>> {
+        server
+            .iter()
+            .map(|names| {
+                let Some(at) = local.iter().position(|l| l.rig == names.rig) else {
+                    log::warn!("remap: unknown server rig '{}' drops its animator rows", names.rig);
+                    return None;
+                };
+                Some((RigId(at as u16), AnimatorLut::build(names, &local[at])))
+            })
+            .collect()
     }
 
     #[inline]
@@ -135,6 +197,55 @@ impl IdRemap {
     #[inline]
     pub fn condition(&self, server_id: u8) -> Option<u8> {
         lookup(&self.conditions, server_id as usize).map(|id| id as u8)
+    }
+
+    /// This process's rig and tables for a server rig id; `None` for a rig
+    /// this process lacks.
+    fn animator(&self, rig: RigId) -> Option<(RigId, &AnimatorLut)> {
+        self.animators
+            .get(rig.index())?
+            .as_ref()
+            .map(|(rig, lut)| (*rig, lut))
+    }
+
+    /// A server rig's fired event as this process's `(rig, event)`; `None`
+    /// when either is unknown here.
+    fn animator_event(&self, rig: RigId, event: u16) -> Option<(RigId, u16)> {
+        let (rig, lut) = self.animator(rig)?;
+        Some((rig, lookup(&lut.events, event as usize)?))
+    }
+
+    /// Rewrite a body's animator claims; an entry naming a rig, param, slot
+    /// or clip this process lacks drops alone (skip semantics), the rest
+    /// stand.
+    fn remap_animator(&self, claims: &mut crate::player::AnimatorClaims) {
+        claims.params.retain_mut(|p| {
+            let Some((rig, lut)) = self.animator(p.rig) else {
+                return false;
+            };
+            match lookup(&lut.params, p.param as usize) {
+                Some(local) => {
+                    p.rig = rig;
+                    p.param = local;
+                    true
+                }
+                None => false,
+            }
+        });
+        claims.plays.retain_mut(|p| {
+            let Some((rig, lut)) = self.animator(p.rig) else {
+                return false;
+            };
+            match (lookup(&lut.slots, p.slot as usize), lookup(&lut.clips, p.clip as usize)) {
+                (Some(slot), Some(clip)) => {
+                    p.rig = rig;
+                    p.slot = slot;
+                    p.clip = clip;
+                    true
+                }
+                _ => false,
+            }
+        });
     }
 
     fn remap_conditions(&self, conditions: &mut Vec<(u8, u8)>) {
@@ -201,11 +312,12 @@ impl IdRemap {
                     }
                     None => false,
                 });
-                // Player rows: only the held item carries a registry id; an
-                // unknown one reads as an empty hand (skip semantics — the
-                // body itself always renders). `player_actions` kinds are
-                // id-free, and `env` entries are param NAME strings + floats
-                // — no registry ids ride either.
+                // Player rows: the held item carries a registry id (an
+                // unknown one reads as an empty hand — skip semantics, the
+                // body itself always renders) and the animator claims carry
+                // graph ids. Of the `player_actions` kinds only the fired
+                // graph event carries one; `env` entries are param NAME
+                // strings + floats.
                 for p in &mut t.players {
                     self.remap_conditions(&mut p.conditions);
                     p.held_item = p.held_item.and_then(|id| self.item(id));
@@ -213,9 +325,24 @@ impl IdRemap {
                     for shown in &mut p.held_display {
                         *shown = shown.and_then(|id| self.item(id));
                     }
+                    self.remap_animator(&mut p.animator);
                 }
+                t.player_actions.retain_mut(|(_, kind)| match kind {
+                    super::protocol::PlayerActionKind::Animator { rig, event } => {
+                        match self.animator_event(*rig, *event) {
+                            Some((local_rig, local)) => {
+                                *rig = local_rig;
+                                *event = local;
+                                true
+                            }
+                            None => false,
+                        }
+                    }
+                    _ => true,
+                });
                 if let Some(s) = &mut t.self_state {
                     self.remap_conditions(&mut s.conditions);
+                    self.remap_animator(&mut s.animator);
                     for shown in &mut s.held_display {
                         *shown = shown.and_then(|id| self.item(id));
                     }
@@ -234,11 +361,20 @@ impl IdRemap {
                 }
                 // World events: block ids map to air (a cell-shaped fact);
                 // unknown mob/sound events are DROPPED (skip semantics).
-                // `self_events` carries no registry ids (the hand one-shots
-                // are client-predicted, never echoed; a mod cue's key is the
-                // emitting pack's own namespaced string and its payload is
-                // bytes only that pack reads).
+                // Of `self_events` only the echoed graph events carry ids (a
+                // mod cue's key is the emitting pack's own namespaced string
+                // and its payload is bytes only that pack reads).
                 t.events.retain_mut(|ev| self.remap_world_event(ev));
+                t.self_events.animator_events.retain_mut(|(rig, event)| {
+                    match self.animator_event(*rig, *event) {
+                        Some((local_rig, local)) => {
+                            *rig = local_rig;
+                            *event = local;
+                            true
+                        }
+                        None => false,
+                    }
+                });
                 if let Some(sync) = &mut t.menu_sync {
                     self.remap_menu_sync(sync);
                 }
@@ -415,6 +551,7 @@ pub fn local_name_tables() -> NameTables {
             .iter()
             .map(|b| b.key.to_string())
             .collect(),
+        animators: AnimatorNames::all(),
         conditions: petramond_world::condition::defs()
             .iter()
             .map(|c| c.name.to_string())
@@ -602,6 +739,7 @@ mod tests {
             effects: Vec::new(),
             emitters: Vec::new(),
             conditions: Vec::new(),
+            animators: Default::default(),
             identity: false,
         };
         assert_eq!(map.block(0), 500);
@@ -740,7 +878,7 @@ mod tests {
             held_pose_off: None,
             held_display: [None; 2],
             bone_poses: Vec::new(),
-            motion_claims: [Default::default(); 2],
+            animator: Default::default(),
             hurt_recent: false,
             snap: false,
             mount: None,
@@ -775,7 +913,7 @@ mod tests {
                 held_pose_off: None,
                 held_display: [Some(2), Some(unknown_item)],
                 bone_poses: Vec::new(),
-                motion_claims: [Default::default(); 2],
+                animator: Default::default(),
                 sleeping: None,
                 sleep_bed: None,
                 transform: None,
@@ -806,5 +944,83 @@ mod tests {
         let slots = s.inventory.as_ref().expect("inventory kept");
         assert_eq!(slots[0].as_ref().map(|w| w.item_id), Some(2));
         assert_eq!(slots[1], None, "an unknown inventory item reads empty");
+    }
+
+    /// Animator ids on the wire are rig, graph and library INDICES, which
+    /// differ between peers with different packs: they must remap by NAME
+    /// through the join's per-rig animator tables — the rig itself by its
+    /// name, so a peer whose registry lists rigs in another order (or lacks
+    /// one) still lands each row on the right rig — and an entry naming
+    /// something this client lacks must drop alone, leaving the rest of the
+    /// body's claims intact.
+    #[test]
+    fn animator_claims_remap_by_name_and_unknown_entries_drop_alone() {
+        use crate::player::{AnimatorClaims, AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue};
+        let names = |rig: &str, clips: &[&str], params: &[&str], slots: &[&str], events: &[&str]| {
+            let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            AnimatorNames {
+                rig: rig.to_string(),
+                clips: list(clips),
+                params: list(params),
+                slots: list(slots),
+                events: list(events),
+            }
+        };
+        // This process: the body at rig 0, the viewmodel at rig 1.
+        let local = [
+            names("body", &["idle", "swing", "guard"], &["held", "claim"], &["main", "off"], &["swing", "hurt"]),
+            names("view", &["fp_idle", "fp_swing"], &["held"], &["main"], &["swing"]),
+        ];
+        // The server: the viewmodel first, its clips in another order, a
+        // spear pack's extra slot on the body, and a rig this client lacks.
+        let server = [
+            names("view", &["fp_swing", "fp_idle"], &["held"], &["main"], &["swing"]),
+            names("body", &["guard", "swing", "idle"], &["claim", "held"], &["main", "lunge", "off"], &["hurt", "swing"]),
+            names("cart", &["roll"], &[], &["seat"], &["bump"]),
+        ];
+        let luts = IdRemap::animator_luts(&server, &local);
+        assert_eq!(luts.len(), 3);
+        assert_eq!(luts[0].as_ref().map(|(rig, _)| *rig), Some(RigId(1)), "rigs join by name");
+        assert_eq!(luts[1].as_ref().map(|(rig, _)| *rig), Some(RigId(0)));
+        assert!(luts[2].is_none(), "an unknown rig maps to nothing");
+        let map = IdRemap {
+            blocks: Vec::new(),
+            items: Vec::new(),
+            mobs: Vec::new(),
+            sounds: Vec::new(),
+            effects: Vec::new(),
+            emitters: Vec::new(),
+            conditions: Vec::new(),
+            animators: luts,
+            identity: false,
+        };
+
+        let play = |rig: u16, slot: u16, clip: u16| AnimatorPlay {
+            rig: RigId(rig),
+            slot,
+            clip,
+            clock: AnimatorClock::Scrub(0.5),
+            mirror: false,
+            priority: 0,
+        };
+        let param = |rig: u16, param: u16| AnimatorParam {
+            rig: RigId(rig),
+            param,
+            value: AnimatorValue::Number(1.0),
+        };
+        let mut claims = AnimatorClaims {
+            params: vec![param(1, 0), param(2, 0)],
+            plays: vec![play(1, 2, 0), play(1, 1, 1), play(0, 0, 0), play(2, 0, 0)],
+        };
+        map.remap_animator(&mut claims);
+        assert_eq!(claims.params, [param(0, 1)], "the body's `claim` param by name; the cart's dropped");
+        assert_eq!(
+            claims.plays,
+            [play(0, 1, 2), play(1, 0, 1)],
+            "server body `off`/`guard` → local body; `lunge` and the cart drop alone; view `main`/`fp_swing` by name"
+        );
+        assert_eq!(map.animator_event(RigId(1), 1), Some((RigId(0), 0)), "`swing` on the body");
+        assert_eq!(map.animator_event(RigId(0), 0), Some((RigId(1), 0)));
+        assert_eq!(map.animator_event(RigId(2), 0), None);
     }
 }

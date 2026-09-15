@@ -1,6 +1,6 @@
 //! Options → Graphics controller: the view-distance slider (4..=48 chunks,
 //! applied live on release — replica, streaming request, and fog together)
-//! plus particles and anti-aliasing controls. Both sliders preview their
+//! plus particles, anti-aliasing and screen shake. Both sliders preview their
 //! readout while dragged and apply on release.
 
 use crate::app::App;
@@ -43,6 +43,7 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
             particles_label(app.settings.particles)
         )),
     );
+    state.set("screen_shake", UiValue::Bool(app.settings.screen_shake));
     let aa = app
         .anti_aliasing_preview
         .unwrap_or(app.settings.anti_aliasing);
@@ -68,6 +69,10 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             } else {
                 app.anti_aliasing_preview = Some(mode);
             }
+        }
+        UiEvent::Toggle { id, .. } if id == "screen_shake" => {
+            app.apply_screen_shake(!app.settings.screen_shake);
+            app.persist_settings();
         }
         UiEvent::Click { id, .. } if id == "particles" => {
             let next = app.settings.particles.next();

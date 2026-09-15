@@ -1,0 +1,30 @@
+{
+  "pickaxe": {
+    "attacks": [
+      {"fp": "petramond:fp_swing_pickaxe", "body": "petramond:body_swing_pickaxe"}
+    ],
+    "work": {"fp": "petramond:fp_mine_pickaxe", "body": "petramond:body_mine_pickaxe"},
+    "pace": {"window_attack": [0.3], "window_mine": 0.25, "cancel_at": 0.72},
+    "profile": {"reach": 3.2, "sweet": 1.4, "arc_yaw": 14, "arc_pitch": 40, "peak": 1.35, "floor": 0.35, "cleave": false}
+  },
+  "axe": {
+    "attacks": [
+      {"fp": "petramond:fp_swing_axe", "body": "petramond:body_swing_axe"},
+      {"fp": "petramond:fp_swing_axe_back", "body": "petramond:body_swing_axe_back"},
+      {"fp": "petramond:fp_swing_overhead", "body": "petramond:body_swing_overhead"}
+    ],
+    "work": {"fp": "petramond:fp_mine_axe", "body": "petramond:body_mine_axe"},
+    "pace": {"window_attack": [0.54, 0.54, 0.54], "window_mine": 0.3, "cancel_at": 0.72},
+    "profile": {"reach": 3.5, "sweet": 2.0, "arc_yaw": 32, "arc_pitch": 22, "peak": 1.25, "floor": 0.35, "cleave": true}
+  },
+  "sword": {
+    "attacks": [
+      {"fp": "petramond:fp_slash_a", "body": "petramond:body_slash_a"},
+      {"fp": "petramond:fp_slash_b", "body": "petramond:body_slash_b"},
+      {"fp": "petramond:fp_thrust", "body": "petramond:body_thrust"}
+    ],
+    "work": {"fp": "petramond:fp_mine_hand", "body": "petramond:body_mine_hand"},
+    "pace": {"window_attack": [0.36, 0.38, 0.34], "window_mine": 0.3, "cancel_at": 0.72},
+    "profile": {"reach": 3.0, "sweet": 1.8, "arc_yaw": 28, "arc_pitch": 20, "peak": 1.15, "floor": 0.45, "cleave": true}
+  }
+}

@@ -170,6 +170,29 @@
       ]
      },
      {
+      "type": "row",
+      "layout": {
+       "gap": 4,
+       "align": "center"
+      },
+      "children": [
+       {
+        "type": "label",
+        "text": "Screen Shake",
+        "layout": {
+         "w": 92
+        }
+       },
+       {
+        "type": "checkbox",
+        "id": "screen_shake",
+        "bind": {
+         "value": "screen_shake"
+        }
+       }
+      ]
+     },
+     {
       "type": "spacer",
       "layout": {
        "h": 2

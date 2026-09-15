@@ -87,13 +87,14 @@ impl App {
             self.sleep_interact_hand_t = super::SLEEP_INTERACT_HAND_SECS;
         }
 
-        self.hand.broke |= events.broke_block.is_some();
-        // The hand that acted takes the use jab: an off-hand effect flicks
-        // the LEFT hand (`placed_off`), everything else the right (see
-        // `GameEvents::jab_main`).
-        self.hand.placed |= events.jab_main();
-        self.hand.placed_off |= events.jab_off();
-        self.hand.swung |= events.swung_hand;
+        // The engine's gestures resolve to every local rig's graph events —
+        // the viewmodel's and the body's — through the same lane a mod's
+        // fired events arrive on.
+        for (hand, kind) in events.one_shots() {
+            self.hand_events
+                .extend(petramond::player::one_shot::fired(hand, kind));
+        }
+        self.hand_events.extend_from_slice(&events.animator_events);
     }
 }
 

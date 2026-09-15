@@ -43,8 +43,11 @@ mod interaction;
 )]
 pub struct PlayerId(pub u8);
 
+pub mod animator;
 mod body_claims;
 pub mod model;
+pub mod one_shot;
+pub mod rigs;
 mod movement;
 mod progression;
 mod state;
@@ -54,9 +57,10 @@ mod swimming;
 mod tests;
 
 pub use body_claims::{
-    BodyClaims, BonePose, DeniedActions, HandMotions, ENGINE_CLAIMANT, MOVE_SCALE_DEFAULT,
-    MOVE_SCALE_MAX,
+    AnimatorClaims, AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue, BodyClaims, BonePose,
+    DeniedActions, ENGINE_CLAIMANT, MOVE_SCALE_DEFAULT, MOVE_SCALE_MAX,
 };
+pub use rigs::{Presenter, RigId};
 pub use interaction::block_within_reach;
 pub use interaction::ray_vs_aabb;
 pub use interaction::{RayFilter, RaycastHit, REACH};

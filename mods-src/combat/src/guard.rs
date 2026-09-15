@@ -3,8 +3,8 @@
 //! [`guard_of`] is a pure function of the actor snapshot, whether the use
 //! press is the guard's, and one scalar — how far through the post-hit
 //! recoil the body is — and answers everything: whether the hit is
-//! absorbed, how fast the body walks, where the shield sits in each view,
-//! how the arm holding it is bent. The server tick, the client frame and
+//! absorbed, how fast the body walks, which clip each shielding hand plays
+//! and how far through it. The server tick, the client frame and
 //! the damage handler all call it, which makes a prediction that disagrees
 //! with the authority impossible rather than merely unlikely.
 //!
@@ -29,102 +29,36 @@ const GUARD_SPEED_SCALE: f32 = 0.5;
 /// through, so a pack is still a real threat to somebody hiding behind one.
 pub const IMPACT_TICKS: u32 = 10;
 
-/// Fraction of the window the recoil takes to reach full deflection. Fast in,
-/// slow out: the impact is a shove, the rest is the arm recovering.
-const IMPACT_ATTACK: f32 = 0.25;
-
 /// The guard's cover: 60° each way off the look direction. A hit from the
 /// SIDE is not one the shield is in front of, and a hit from behind never
 /// was.
 const GUARD_COVER: Cover = Cover { arc_cos: 0.5 };
 
-/// FIRST PERSON, shield DOWN. The authored `firstperson_righthand` hold IS the
-/// guard, so IDLE is the override: drop it below the sight line and push it
-/// away from the camera, which shrinks it as much as it lowers it.
+/// The clips a shielding hand plays (engine rig clips): the carry while the
+/// shield is down — first person only, the body's own hold already IS the
+/// carry — the guard while it is up, and the recoil, scrubbed through the
+/// window, while it reels. The recoil clips start and end ON the guard, so
+/// the cuts into and out of the window never show. Each hand plays in its
+/// own claim slot; the off hand plays the main-hand clips mirrored.
 ///
-/// Tuned with `render_held_pose_preview` (`HELD_POSE_ITEM=combat:shield`,
-/// `HELD_POSE_STATES`). The −5px of depth is load-bearing; a rotation here (the
-/// obvious first guess) tips the face out of frame entirely.
-const LOWERED_1P: HeldPoseData = HeldPoseData {
-    rotation: [0.0, 0.0, 0.0],
-    translation: [1.5, -3.0, -5.0],
-};
+/// The carry and the guard are HELD frames: a scrub parked at zero, which
+/// never changes from tick to tick, so a settled guard costs no publish.
+const CARRY_1P: &str = "petramond:fp_shield_carry";
+const GUARD_1P: &str = "petramond:fp_guard";
+const RECOIL_1P: &str = "petramond:fp_guard_impact";
+const GUARD_3P: &str = "petramond:body_guard";
+const RECOIL_3P: &str = "petramond:body_guard_impact";
+const SLOTS: [&str; 2] = ["main_claim", "off_claim"];
 
-/// FIRST PERSON at the instant of impact, composed onto the authored guard
-/// (hence a settled value of `IDENTITY`). The blow drives the shield back
-/// toward the face: +Z is TOWARD the camera.
-const IMPACT_1P: HeldPoseData = HeldPoseData {
-    rotation: [-6.0, 0.0, 0.0],
-    translation: [-0.5, 0.8, 1.2],
-};
-
-/// THIRD PERSON, the shielding ARM: the stance itself, as group rotations on
-/// the rig's `left_shoulder` / `left_elbow` (the MAIN hand's arm — the rig
-/// cross-names them, which is why `bone::MAIN_*` exists).
-///
-/// `Replace`, not `Compose`: `walk` and `sneak` both drive these exact two
-/// bones, so a composed offset would ride on top of the swing and the arm
-/// would flap while blocking.
-const GUARD_SHOULDER: [f32; 3] = [59.073_37, 19.056_81, -20.208_48];
-const GUARD_ELBOW: [f32; 3] = [0.0, 0.0, -37.5];
-
-/// The same arm at the instant of impact: the shoulder GIVES and rolls in
-/// across the chest while the elbow folds, so the limb absorbs the blow.
-/// Everything in the fist comes with it, which is why [`IMPACT_3P`] only adds
-/// the last bit.
-///
-/// Raising the shoulder HARDER is the obvious guess and is wrong: more X lifts
-/// the shield over the face, which reads as bracing rather than as being hit.
-const IMPACT_SHOULDER: [f32; 3] = [43.0, 26.0, 5.0];
-const IMPACT_ELBOW: [f32; 3] = [0.0, 0.0, -54.0];
-
-/// THIRD PERSON, the shield in the posed fist.
-///
-/// Measured from the FIST and composed onto the item's AUTHORED third-person
-/// hold. It is relative to wherever the arm stance above puts the fist, so
-/// changing either the stance or the authored hold invalidates it — re-tune
-/// both in one render (`render_held_pose_preview` takes both), never one.
-const GUARD_3P: HeldPoseData = HeldPoseData {
-    rotation: [-49.408, 34.326, 9.381],
-    translation: [3.033, 5.559, 9.000],
-};
-
-/// [`GUARD_3P`] at the instant of impact: the same tilt, pressed in toward the
-/// body. Translation ONLY — the arm already carries the rotation, and an item
-/// that turns as well reads as the shield coming loose in the fist.
-const IMPACT_3P: HeldPoseData = HeldPoseData {
-    rotation: GUARD_3P.rotation,
-    translation: [1.8, 4.6, 8.0],
-};
-
-fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    ]
-}
-
-fn lerp_pose(a: HeldPoseData, b: HeldPoseData, t: f32) -> HeldPoseData {
-    HeldPoseData {
-        rotation: lerp3(a.rotation, b.rotation, t),
-        translation: lerp3(a.translation, b.translation, t),
-    }
-}
-
-/// How far into the impact pose a shield `progress` of the way through its
-/// recoil window sits: `0` settled, `1` fully deflected.
-///
-/// One curve for both sides — a body whose own view recoils differently from
-/// every observer's is the same bug as a pose only one side predicts.
-fn deflection(progress: f32) -> f32 {
-    let progress = progress.clamp(0.0, 1.0);
-    if progress < IMPACT_ATTACK {
-        progress / IMPACT_ATTACK
-    } else {
-        1.0 - (progress - IMPACT_ATTACK) / (1.0 - IMPACT_ATTACK)
-    }
-}
+/// Every rig clip the guard plays, `(rig, clip)`.
+#[cfg(test)]
+pub(crate) const CLIPS: [(&str, &str); 5] = [
+    (rig::PLAYER_FIRST_PERSON, CARRY_1P),
+    (rig::PLAYER_FIRST_PERSON, GUARD_1P),
+    (rig::PLAYER_FIRST_PERSON, RECOIL_1P),
+    (rig::PLAYER_BODY, GUARD_3P),
+    (rig::PLAYER_BODY, RECOIL_3P),
+];
 
 /// One body's recoil clock: ticks since its shield took a hit, running
 /// only through the window. Both sides run one — whole ticks on the
@@ -211,72 +145,45 @@ impl Guard {
         }
     }
 
-    fn deflection(&self) -> f32 {
-        self.impact.map_or(0.0, deflection)
-    }
-
-    /// The shielding arm in the guard stance — empty while the shield is down,
-    /// so the arms hang and swing normally.
-    ///
-    /// The off hand gets the MIRROR (negate the y and z rotations): the rig is
-    /// mirror-symmetric, so one authored arm is both arms.
-    fn arms(&self) -> Vec<BonePoseData> {
-        if !self.raised {
+    /// What one hand (`0` main, `1` off) plays: nothing unless it holds the
+    /// shield.
+    fn plays(&self, hand: usize, holds: bool) -> Vec<AnimatorPlay> {
+        if !holds {
             return Vec::new();
         }
-        let deflection = self.deflection();
-        let shoulder = lerp3(GUARD_SHOULDER, IMPACT_SHOULDER, deflection);
-        let elbow = lerp3(GUARD_ELBOW, IMPACT_ELBOW, deflection);
-        let hold = |bone: &str, r: [f32; 3], mirror: bool| BonePoseData {
-            bone: bone.to_string(),
-            rotation: if mirror { [r[0], -r[1], -r[2]] } else { r },
-            translation: [0.0; 3],
-            mode: BonePoseMode::Replace,
+        const HELD: AnimatorClock = AnimatorClock::Scrub(0.0);
+        let (first_person, third_person, clock) = match (self.raised, self.impact) {
+            (false, _) => (CARRY_1P, None, HELD),
+            (true, None) => (GUARD_1P, Some(GUARD_3P), HELD),
+            (true, Some(progress)) => (RECOIL_1P, Some(RECOIL_3P), AnimatorClock::Scrub(progress)),
         };
         let mut out = Vec::new();
-        if self.main_holds {
-            out.push(hold(bone::MAIN_SHOULDER, shoulder, false));
-            out.push(hold(bone::MAIN_ELBOW, elbow, false));
-        }
-        if self.off_holds {
-            out.push(hold(bone::OFF_SHOULDER, shoulder, true));
-            out.push(hold(bone::OFF_ELBOW, elbow, true));
+        let mut play = |rig: &str, clip: &str| {
+            out.push(AnimatorPlay {
+                rig: rig.to_string(),
+                slot: SLOTS[hand].to_string(),
+                clip: clip.to_string(),
+                clock,
+                mirror: hand == 1,
+                priority: 0,
+            });
+        };
+        play(rig::PLAYER_FIRST_PERSON, first_person);
+        if let Some(body) = third_person {
+            play(rig::PLAYER_BODY, body);
         }
         out
     }
 
-    /// The pose for one hand: `None` unless that hand holds the shield.
-    ///
-    /// Down lowers in first person only; up raises in third person only —
-    /// for this model each authored hold is already correct in one of the two
-    /// states, so each view overrides only the other.
-    fn pose(&self, holds: bool) -> Option<HeldPose> {
-        let deflection = self.deflection();
-        let pose = if self.raised {
-            HeldPose {
-                first_person: lerp_pose(HeldPoseData::IDENTITY, IMPACT_1P, deflection),
-                third_person: lerp_pose(GUARD_3P, IMPACT_3P, deflection),
-            }
-        } else {
-            HeldPose {
-                first_person: LOWERED_1P,
-                third_person: HeldPoseData::IDENTITY,
-            }
-        };
-        holds.then_some(pose)
-    }
-
     /// Everything the guard claims about the body this tick, for the
-    /// publisher to merge: the lowered carry still poses a shielding hand,
+    /// publisher to merge: the lowered carry still animates a shielding hand,
     /// everything else releases with the guard.
     pub fn claims(&self) -> Claims {
         Claims {
             holds_press: self.raised,
             speed: self.speed_scale(),
             denied: self.denied(),
-            main: self.pose(self.main_holds),
-            off: self.pose(self.off_holds),
-            bones: self.arms(),
+            plays: [self.plays(0, self.main_holds), self.plays(1, self.off_holds)].concat(),
             cover: self.absorbs().then_some(GUARD_COVER),
             ..Default::default()
         }
@@ -419,126 +326,43 @@ mod tests {
         }
     }
 
-    /// The recoil starts and ends AT the settled pose, or a one-off cue leaves
-    /// the shield parked somewhere the settled rule would never put it.
+    /// Only a shielding hand plays, and it plays what the shield is DOING:
+    /// the carry, the guard, or the recoil scrubbed at the window's progress.
+    /// A settled guard still scrubbing its recoil parks the shield knocked
+    /// aside; a reeling one showing the guard hides the only sign that the
+    /// next hit gets through.
     #[test]
-    fn the_recoil_returns_to_the_settled_guard_at_both_ends() {
-        let settled = guard(&guarding(), None);
-        for progress in [0.0, 1.0] {
-            let hit = guard(&guarding(), Some(progress));
-            assert_eq!(hit.pose(true), settled.pose(true), "at {progress}");
-            assert_eq!(hit.arms(), settled.arms(), "at {progress}");
-        }
-        let peak = guard(&guarding(), Some(IMPACT_ATTACK));
-        assert_ne!(peak.pose(true), settled.pose(true), "and moves in between");
-        assert_ne!(peak.arms(), settled.arms());
-    }
-
-    /// Whole ticks, open at the far end: a hit at T leaves the shield down
-    /// for T..T+IMPACT_TICKS on either clock. An off-by-one is a shield
-    /// either free for one tick or vulnerable for one too many, and a
-    /// window that never expires is a shield stuck in its impact pose for
-    /// the rest of the session.
-    #[test]
-    fn the_recoil_window_is_exactly_impact_ticks_long_and_then_releases() {
-        let mut recoil = Recoil::default();
-        recoil.step(1.0);
-        assert_eq!(recoil.progress(), None, "nothing to advance");
-
-        recoil.start();
-        assert_eq!(recoil.progress(), Some(0.0));
-        for _ in 0..(IMPACT_TICKS - 1) {
-            recoil.step(1.0);
-        }
-        assert!(recoil.progress().is_some_and(|p| p > 0.0 && p < 1.0));
-        recoil.step(1.0);
-        assert_eq!(
-            recoil.progress(),
-            None,
-            "released on the tick the window ends"
-        );
-
-        // The client's fractional steps cover the same window.
-        recoil.start();
-        let mut seen = Vec::new();
-        for _ in 0..(IMPACT_TICKS * 4 + 2) {
-            recoil.step(0.25);
-            seen.push(recoil.progress());
-        }
-        assert!(seen[0].is_some_and(|p| p > 0.0), "starts moving at once");
-        assert!(
-            seen.iter()
-                .take(IMPACT_TICKS as usize * 4 - 1)
-                .all(Option::is_some),
-            "runs the whole window: {seen:?}"
-        );
-        assert_eq!(seen.last(), Some(&None), "and releases: {seen:?}");
-    }
-
-    /// Pinned in the terms the asset is authored in: this model's first-person
-    /// hold IS the guard, so raising leaves first person alone and lowering
-    /// moves it; the third-person hold is the carry, so it is the reverse.
-    /// Inverted, the shield flips around in the wielder's face and reads as a
-    /// renderer bug rather than a mod one.
-    #[test]
-    fn each_view_overrides_only_the_state_its_authored_hold_is_wrong_for() {
-        let raised = guard(&guarding(), None);
-        let up = raised.pose(raised.main_holds).expect("shielding hand");
-        assert!(
-            up.first_person.is_identity(),
-            "a settled guard keeps the authored first-person hold"
-        );
-        assert!(!up.third_person.is_identity(), "raising moves the body");
-
-        let idle = guard(&actor(Some(SHIELD), None, false), None);
-        let down = idle.pose(idle.main_holds).expect("shielding hand");
-        assert!(!down.first_person.is_identity(), "idle lowers the screen");
-        assert!(
-            down.third_person.is_identity(),
-            "idle keeps the authored carry"
-        );
-        assert!(
-            down.first_person.translation[1] < 0.0,
-            "lowering is downward, and only far enough to clear the sight line"
-        );
-    }
-
-    /// Only a shielding arm is held, only while the shield is up, and each hand
-    /// holds its OWN joints. Both facts fail silently: the rig authors the main
-    /// hand's arm as the model's LEFT, and a stance that skips a joint leaves
-    /// the elbow swinging with the stride.
-    #[test]
-    fn only_a_shielding_arm_is_held_and_each_hand_holds_its_own_joints() {
-        let idle = guard(&actor(Some(SHIELD), None, false), None);
-        assert!(idle.arms().is_empty(), "an idle arm hangs normally");
-
-        let names = |g: Guard| -> Vec<String> { g.arms().into_iter().map(|b| b.bone).collect() };
-        let main = guard(&actor(Some(SHIELD), Some(OTHER), true), None);
-        assert_eq!(names(main), [bone::MAIN_SHOULDER, bone::MAIN_ELBOW]);
-
+    fn the_shielding_hand_plays_what_the_shield_is_doing() {
+        let main = |g: Guard| g.plays(0, g.main_holds);
+        assert!(main(guard(&actor(Some(OTHER), Some(SHIELD), true), None)).is_empty());
         let off = guard(&actor(Some(OTHER), Some(SHIELD), true), None);
-        assert_eq!(names(off), [bone::OFF_SHOULDER, bone::OFF_ELBOW]);
-
-        let both = guard(&actor(Some(SHIELD), Some(SHIELD), true), None);
-        assert_eq!(both.arms().len(), 4, "a whole arm per shielding hand");
-        let mirrored: Vec<[f32; 3]> = both.arms().iter().map(|b| b.rotation).collect();
+        let off_plays = off.plays(1, off.off_holds);
         assert!(
-            mirrored.contains(&GUARD_SHOULDER)
-                && mirrored.contains(&[GUARD_SHOULDER[0], -GUARD_SHOULDER[1], -GUARD_SHOULDER[2]]),
-            "one authored arm, mirrored for the other"
+            !off_plays.is_empty() && off_plays.iter().all(|p| p.mirror && p.slot == "off_claim"),
+            "the off hand plays its own slot, mirrored"
         );
-    }
+        let both = guard(&actor(Some(SHIELD), Some(SHIELD), true), None);
+        assert_eq!(both.claims().plays.len(), 4, "both hands, both rigs");
 
-    #[test]
-    fn only_the_shielding_hand_is_posed() {
-        for holds_use in [false, true] {
-            let g = guard(&actor(Some(SHIELD), Some(OTHER), holds_use), None);
-            assert!(g.pose(g.main_holds).is_some());
-            assert!(g.pose(g.off_holds).is_none());
-
-            let g = guard(&actor(Some(OTHER), Some(SHIELD), holds_use), None);
-            assert!(g.pose(g.main_holds).is_none());
-            assert!(g.pose(g.off_holds).is_some());
+        let on = |plays: &[AnimatorPlay], rig: &str| {
+            plays.iter().find(|p| p.rig == rig).map(|p| (p.clip.clone(), p.clock))
+        };
+        let down = main(guard(&actor(Some(SHIELD), None, false), None));
+        let up = main(guard(&guarding(), None));
+        let reeling = main(guard(&guarding(), Some(0.4)));
+        assert!(
+            on(&down, rig::PLAYER_FIRST_PERSON).is_some() && on(&down, rig::PLAYER_BODY).is_none(),
+            "the body's hold is the carry"
+        );
+        assert_ne!(on(&down, rig::PLAYER_FIRST_PERSON), on(&up, rig::PLAYER_FIRST_PERSON), "raising changes the view");
+        assert!(on(&up, rig::PLAYER_BODY).is_some(), "and the body");
+        assert_ne!(on(&reeling, rig::PLAYER_BODY), on(&up, rig::PLAYER_BODY));
+        assert_eq!(on(&reeling, rig::PLAYER_BODY).unwrap().1, AnimatorClock::Scrub(0.4), "the recoil scrubs at the window's progress");
+        for held in [&down, &up] {
+            assert!(
+                held.iter().all(|p| p.clock == AnimatorClock::Scrub(0.0)),
+                "a settled hand holds its frame: {held:?}"
+            );
         }
     }
 
@@ -554,9 +378,7 @@ mod tests {
         assert!(!g.raised);
         assert!(!g.absorbs());
         assert_eq!(g.speed_scale(), 1.0, "the speed claim is released");
-        assert!(g.arms().is_empty());
-        assert!(g.pose(g.main_holds).is_none());
-        assert!(g.pose(g.off_holds).is_none());
+        assert!(g.claims().plays.is_empty());
     }
 
     /// A released guard claims the NEUTRAL speed and bars nothing, which is

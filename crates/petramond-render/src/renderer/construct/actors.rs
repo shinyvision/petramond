@@ -99,7 +99,6 @@ pub(super) fn build_player_gpu(
         ],
     });
     PlayerGpu {
-        model,
         bind,
         draw: DynamicDraw::new(device, mob_pipe.clone(), "player"),
         verts: Vec::new(),

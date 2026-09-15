@@ -9,6 +9,7 @@ use super::prediction;
 use super::tick::{GameInput, PlacePrediction, WorldEvent};
 use super::Game;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
+use petramond::server::interact::ConsumerKind;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
@@ -138,8 +139,9 @@ impl Game {
     /// The whole use-click prediction, in server-registry order: the mod
     /// interact predictors first (a predicted claim suppresses the ghost —
     /// a consumed attempt reaches no later consumer, placement included),
-    /// then the place ghost. Returns `(claimed, place)` — the jab is
-    /// `claimed || place != No || use_click_predicts_effect(..)`.
+    /// then the place ghost. Returns `(claimed, place)` — the click is
+    /// consumed when `claimed || place != No` or [`use_click_claim`](Self::use_click_claim)
+    /// names a claimant.
     pub(super) fn predict_use_click(
         &mut self,
         sneak: bool,
@@ -209,22 +211,18 @@ impl Game {
             }));
     }
 
-    /// Whether the client can foresee a CONSUMER claiming this use click —
-    /// the P0 jab is a prediction of "something consumed the attempt", so it
-    /// mirrors the server's consumer registry against the replica, per
-    /// consumer: a mob target (mod claim or shear), the eat consumer (held
-    /// food), the held item's own use evaluated by KIND (shears need a mob;
-    /// buckets run their real target rules), or a built-in block claim. An
-    /// attempt nothing is predicted to claim plays NO jab — shears on air
-    /// stay silent. Claims only the server can see (a mod-cancelled
-    /// `item_use_pre`/`interact_attempt` — tilling, harvest) arrive through
-    /// the `used_unpredicted` echo instead. Gates the P0 jab only — the
-    /// click ships regardless.
-    pub(super) fn use_click_predicts_effect(
-        &mut self,
-        input: &GameInput,
-        use_mob: Option<u64>,
-    ) -> bool {
+    /// Who the client can foresee claiming this use click, walked in the
+    /// server registry's order against the replica (the mod interact
+    /// predictors and the place ghost ran first, in
+    /// [`predict_use_click`](Self::predict_use_click)): a mob target (the
+    /// shear), the block's built-in claim, the eat consumer (held food), then
+    /// the held item's own use evaluated by KIND (shears need a mob; buckets
+    /// run their real target rules). An attempt nothing is predicted to claim
+    /// is [`UseClaim::Unclaimed`] — shears on air stay silent. Claims only the
+    /// server can see (a mod-cancelled `item_use_pre`/`interact_attempt` —
+    /// tilling, harvest) arrive through the `used_unpredicted` echo instead.
+    /// Gates the P0 jab only — the click ships regardless.
+    pub(super) fn use_click_claim(&mut self, input: &GameInput, use_mob: Option<u64>) -> UseClaim {
         use petramond_world::item::ItemUse;
 
         // The ENGINE's shear, predicted exactly. This used to be a blanket
@@ -234,57 +232,52 @@ impl Game {
         // (boarding, trading) are predicted upstream through the ordinary
         // `interact_attempt` dispatch, which now carries the mob.
         if self.predicts_shear(use_mob) {
-            return true;
+            return UseClaim::Claimed(ConsumerKind::Shear);
         }
-        // The mod `interact_attempt` predictors were already dispatched
-        // upstream ([`predict_use_click`](Self::predict_use_click) — one
-        // dispatch per click); a predicted claim jabbed there.
-        let held = self.predicted_held().map(|st| st.item);
-        if let Some(item) = held {
-            // The eat consumer claims every click while food is held.
-            if item.food().is_some() {
-                return true;
-            }
-            // Mod item-use consumers (tilling, the trough/compost fills):
-            // the predicted `item_use_pre`, dispatched to the client
-            // predictors in the same registry position the server runs it.
-            let payload = mod_api::EventPayload::ItemUsePre {
-                item: mod_api::ItemId(item.id()),
-                target: self.look.map(|l| l.block.to_array()),
-            };
-            if self.predict_mod_claim(input.movement.sneak, payload) {
-                return true;
-            }
-            // The held item's own use, mirrored per kind. No arm RETURNS
-            // false: an item use that predicts nothing still falls through
-            // to the block consumer below, exactly like the server walk
-            // (shears aimed at a chest still open it).
-            match item.item_use() {
-                // Shears claim only through a mob target, handled above.
-                Some(ItemUse::Shear) | None => {}
-                Some(ItemUse::BucketFill { fills }) => {
-                    if self.predicts_bucket_fill(fills) {
-                        return true;
-                    }
-                }
-                Some(ItemUse::BucketPour { .. }) => {
-                    if self.predicts_bucket_pour() {
-                        return true;
-                    }
-                }
-            }
-        }
-        let Some(look) = self.look else {
-            return false;
-        };
-        let target = petramond_world::block::Block::from_id(self.replica.chunk_block(
-            look.block.x,
-            look.block.y,
-            look.block.z,
-        ));
-        // The SAME claim rule the server's built-in consumer runs — parity by
+        // The block's built-in capability claims before anything the hand
+        // holds (shears aimed at a chest still open it; food opens a door):
+        // the SAME claim rule the server's built-in consumer runs — parity by
         // construction, not by two hand-kept copies.
-        petramond_world::block::builtin_claims_click(target, input.movement.sneak)
+        if let Some(look) = self.look {
+            let target = petramond_world::block::Block::from_id(self.replica.chunk_block(
+                look.block.x,
+                look.block.y,
+                look.block.z,
+            ));
+            if petramond_world::block::builtin_claims_click(target, input.movement.sneak) {
+                return UseClaim::Claimed(ConsumerKind::BuiltinBlock);
+            }
+        }
+        let Some(item) = self.predicted_held().map(|st| st.item) else {
+            return UseClaim::Unclaimed;
+        };
+        // The eat consumer claims every click that reaches it while food is
+        // held.
+        if item.food().is_some() {
+            return UseClaim::Claimed(ConsumerKind::Eat);
+        }
+        // Mod item-use consumers (tilling, the trough/compost fills): the
+        // predicted `item_use_pre`, dispatched to the client predictors in the
+        // same registry position the server runs it.
+        let payload = mod_api::EventPayload::ItemUsePre {
+            item: mod_api::ItemId(item.id()),
+            target: self.look.map(|l| l.block.to_array()),
+        };
+        if self.predict_mod_claim(input.movement.sneak, payload) {
+            return UseClaim::Claimed(ConsumerKind::ItemUse);
+        }
+        // The held item's own use, mirrored per kind.
+        let claimed = match item.item_use() {
+            // Shears claim only through a mob target, handled above.
+            Some(ItemUse::Shear) | None => false,
+            Some(ItemUse::BucketFill { fills }) => self.predicts_bucket_fill(fills),
+            Some(ItemUse::BucketPour { .. }) => self.predicts_bucket_pour(),
+        };
+        if claimed {
+            UseClaim::Claimed(ConsumerKind::ItemUse)
+        } else {
+            UseClaim::Unclaimed
+        }
     }
 
     /// Replica mirror of the fill consumer's rule (`try_fill_bucket`): the
@@ -741,5 +734,26 @@ impl Game {
             }
         }
         false
+    }
+}
+
+/// Who a use click's predicted claimant is: the server registry row the
+/// mirror step stands for, so its presentation facts (`presents_itself`)
+/// are read from the row, never kept as a client copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UseClaim {
+    /// Nothing the replica can foresee claims it.
+    Unclaimed,
+    Claimed(ConsumerKind),
+}
+
+impl UseClaim {
+    /// Whether the predicted claimant presents its own claim (an eat's
+    /// raise), leaving the hand no jab to play.
+    pub(crate) fn presents_itself(self) -> bool {
+        match self {
+            Self::Unclaimed => false,
+            Self::Claimed(kind) => petramond::server::interact::row(kind).presents_itself,
+        }
     }
 }

@@ -22,6 +22,9 @@ pub struct ClientFrame<'a> {
     /// no left hand renders. Mining/rotation stay main-hand-only; an off-hand
     /// eat carries its progress here instead of on `held_item`.
     pub off_hand_item: ClientHeldItem,
+    /// The local body's resolved animator claims for both rigs — predicted
+    /// per key by a client mod claiming it, replicated otherwise.
+    pub animator: petramond::player::AnimatorClaims,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -39,21 +42,9 @@ pub struct ClientHeldItem {
     /// advances. `None` on ordinary frames.
     pub eating: Option<f32>,
     /// This hand's claimed held pose — the target the
-    /// hand animator eases toward. PREDICTED by a client mod when one poses
+    /// held item's easing glides toward. PREDICTED by a client mod when one poses
     /// hands here, replicated otherwise. `None` = the item's authored hold.
     pub pose_target: Option<mod_api::HeldPose>,
-    /// Which of this hand's engine motions a mod claims (the vanilla copy
-    /// of each claimed motion is silenced because the claimant animates it).
-    /// PREDICTED locally when a client mod claims, replicated otherwise.
-    pub motions: petramond::player::HandMotions,
-    /// The camera's normalized walk sway this frame — the hand follows a
-    /// LAGGED copy of it (see `game::view_bob` and `HeldItemAnimator`).
-    pub bob: [f32; 2],
-    /// The hands' inertial translation (`game::hand_motion`) in view space.
-    /// The off hand's copy carries a NEGATED x: the renderer places the off
-    /// hand through a view-space mirror, and the pre-negation is what makes
-    /// both hands lurch the same way on screen.
-    pub motion_offset: [f32; 3],
 }
 
 /// Carry a claimed held pose across the ABI → RENDERER boundary.
@@ -121,17 +112,14 @@ impl Game {
         } else {
             (eating, None)
         };
-        let bob = self.view_bob.offset();
-        let motion_offset = self.hand_motion.offset();
         // A client mod running the same rule as its server half answers a
         // round trip sooner, so it owns the hands it poses; hands no client
-        // mod poses keep the replicated answer. Motion ownership folds the
-        // same way, one byte per hand.
+        // mod poses keep the replicated answer.
         let (pose_main, pose_off) = self
             .client_mods
             .local_held_poses((view.held_pose_main, view.held_pose_off));
-        let [motions_main, motions_off] = self.client_mods.local_motion_claims(view.motion_claims);
         let [display_main, display_off] = self.client_mods.local_held_displays(view.held_display);
+        let animator = self.client_mods.local_animator(&view.animator);
         ClientFrame {
             // The third-person boom camera when active; the first-person eye
             // otherwise. Sim consumers keep reading `self.cam` directly.
@@ -151,9 +139,6 @@ impl Game {
                 mining_block,
                 eating: eat_main,
                 pose_target: pose_main,
-                motions: motions_main,
-                bob,
-                motion_offset,
             },
             off_hand_item: ClientHeldItem {
                 item: view.inventory.off_hand().map(|s| s.item),
@@ -169,10 +154,8 @@ impl Game {
                 mining_block: None,
                 eating: eat_off,
                 pose_target: pose_off,
-                motions: motions_off,
-                bob,
-                motion_offset: [-motion_offset[0], motion_offset[1], motion_offset[2]],
             },
+            animator,
         }
     }
 }

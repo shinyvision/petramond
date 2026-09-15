@@ -962,3 +962,25 @@ fn menu_click_that_enters_gameplay_leaves_no_mining_held() {
         "no stale mining from the menu press"
     );
 }
+
+#[test]
+fn the_screen_shake_checkbox_toggles_the_setting_and_reaches_the_renderer() {
+    use petramond_world::gui_state::GuiKind;
+    let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let screen = (1280, 720);
+    assert!(app.settings.screen_shake, "screen shake defaults on");
+    app.screen = crate::app::AppScreen::OptionsGraphics;
+    for (i, expected) in [false, true].into_iter().enumerate() {
+        let now = i as f64 * 0.3;
+        app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now);
+        app.renderer_options_dirty = false;
+        click_doc_id(&mut app, "screen_shake");
+        app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now + 0.1);
+        assert_eq!(app.settings.screen_shake, expected);
+        assert_eq!(app.settings.graphics().screen_shake, expected);
+        assert!(
+            app.renderer_options_dirty,
+            "the toggle must reach the renderer"
+        );
+    }
+}

@@ -29,7 +29,7 @@ impl Game {
         // acting for, which is what lets it address the pose call.
         //
         // The swing facts ride with them: the one-shots latched since the
-        // last hook (the SAME edges the vanilla animator plays, on their own
+        // last hook (the SAME edges the animators play, on their own
         // latch — see `Game::swing_events`), the mining level read live —
         // the exact shape of the server's roster build.
         let swing = mod_api::HandSwing {

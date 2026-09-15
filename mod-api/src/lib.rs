@@ -17,7 +17,6 @@
 //! decoding an old dialect. The host still disables (never crashes on) a mod
 //! that sends a variant it cannot decode.
 
-pub mod animation;
 pub mod biome;
 mod client;
 mod data;

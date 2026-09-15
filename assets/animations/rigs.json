@@ -1,0 +1,19 @@
+{
+  "player_body": {
+    "model": "models/entities/player.bbmodel",
+    "animator": "animations/player_body.animator.json",
+    "observed": true,
+    "presenter": "body",
+    "grips": {"main": "left_item", "off": "right_item"},
+    "twist": ["waist", "body"]
+  },
+  "player_first_person": {
+    "model": "models/entities/player_first_person.bbmodel",
+    "animator": "animations/player_first_person.animator.json",
+    "observed": false,
+    "presenter": "viewmodel",
+    "grips": {"main": "right_item", "off": "left_item"},
+    "camera": "camera",
+    "holds": {"block": "petramond:fp_hold_block", "model": "petramond:fp_hold_model"}
+  }
+}

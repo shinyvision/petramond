@@ -61,6 +61,11 @@ pub struct Scene {
     /// This frame's bone offsets for every drawn body, back to back — the
     /// backing each body's `PlayerRenderInstance::bones` range indexes into.
     bone_offsets: Vec<crate::BoneOffset>,
+    /// This frame's animator claims and fired events for every remote body,
+    /// back to back — each `RemotePlayerRender::animator` range indexes in.
+    animator_params: Vec<crate::views::AnimatorParamRow>,
+    animator_plays: Vec<petramond::player::AnimatorPlay>,
+    animator_events: Vec<(petramond::player::RigId, u16)>,
     /// Two-channel light for the first-person hand / held item, sampled at the
     /// camera each frame so it brightens AND takes the colour of nearby block
     /// light (which keeps it lit at night).
@@ -87,6 +92,9 @@ impl Scene {
         self.player = None;
         self.remote_players.clear();
         self.bone_offsets.clear();
+        self.animator_params.clear();
+        self.animator_plays.clear();
+        self.animator_events.clear();
         self.held_item_skylight = 0;
         self.held_item_blocklight = petramond_world::light::BlockLight6::DARK;
     }
@@ -146,6 +154,15 @@ impl Scene {
         self.bone_offsets.clear();
         self.bone_offsets
             .extend_from_slice(presentation.bone_offsets);
+        self.animator_params.clear();
+        self.animator_params
+            .extend_from_slice(presentation.animator_params);
+        self.animator_plays.clear();
+        self.animator_plays
+            .extend_from_slice(presentation.animator_plays);
+        self.animator_events.clear();
+        self.animator_events
+            .extend_from_slice(presentation.animator_events);
         (self.held_item_skylight, self.held_item_blocklight) = presentation.held_item_light;
     }
 
@@ -192,8 +209,11 @@ impl Scene {
         }
     }
 
-    /// Hand the baked instances + held-item light to the renderer for this frame.
-    pub fn upload(&self, renderer: &mut Renderer) {
+    /// Hand the baked instances + held-item light to the renderer for this
+    /// frame. The per-body arenas are SWAPPED in rather than copied: the
+    /// renderer's last-frame buffers come back here for the next bake to
+    /// refill.
+    pub fn upload(&mut self, renderer: &mut Renderer) {
         renderer.set_held_item_light(self.held_item_skylight, self.held_item_blocklight);
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);
@@ -203,7 +223,12 @@ impl Scene {
         renderer.set_shadows(&self.shadows);
         renderer.set_player(self.player);
         renderer.set_remote_players(&self.remote_players);
-        renderer.set_bone_offsets(&self.bone_offsets);
+        renderer.swap_bone_offsets(&mut self.bone_offsets);
+        renderer.swap_animator_arenas(
+            &mut self.animator_params,
+            &mut self.animator_plays,
+            &mut self.animator_events,
+        );
         renderer.set_particles(&self.particles);
         renderer.set_model_particles(&self.model_particles);
         renderer.set_solid_particles(&self.solid_particles);
