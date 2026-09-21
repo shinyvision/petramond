@@ -45,7 +45,10 @@ fn a_two_point_key_arrives_at_its_pre_and_leaves_from_its_post() {
     cut.post = Vec3::splat(10.0);
     cut.split = true;
     let keys = [key(0.0, 0.0, Linear), cut, key(2.0, 10.0, Linear)];
-    assert!(close(at(&keys, 0.5), 2.0), "travels toward the arriving value");
+    assert!(
+        close(at(&keys, 0.5), 2.0),
+        "travels toward the arriving value"
+    );
     assert!(close(at(&keys, 1.0), 4.0), "on the key: the arriving value");
     assert!(close(at(&keys, 1.5), 10.0), "leaves from the leaving value");
 }
@@ -61,9 +64,18 @@ fn catmull_rom_is_the_uniform_spline_over_neighbouring_keys() {
         key(3.0, -1.0, CatmullRom),
         key(4.0, 2.0, CatmullRom),
     ];
-    assert!(close(at(&keys, 2.0), uniform_catmull(0.5, 0.0, 3.0, -1.0, 2.0)));
-    assert!(close(at(&keys, 0.25), uniform_catmull(0.25, 0.0, 0.0, 3.0, -1.0)));
-    assert!(close(at(&keys, 3.5), uniform_catmull(0.5, 3.0, -1.0, 2.0, 2.0)));
+    assert!(close(
+        at(&keys, 2.0),
+        uniform_catmull(0.5, 0.0, 3.0, -1.0, 2.0)
+    ));
+    assert!(close(
+        at(&keys, 0.25),
+        uniform_catmull(0.25, 0.0, 0.0, 3.0, -1.0)
+    ));
+    assert!(close(
+        at(&keys, 3.5),
+        uniform_catmull(0.5, 3.0, -1.0, 2.0, 2.0)
+    ));
 }
 
 #[test]
@@ -96,8 +108,14 @@ fn bezier_eases_through_flat_default_handles_and_lands_on_its_keys() {
     let mut b = key(1.0, 10.0, Bezier);
     b.bezier = Some(BezierHandles::DEFAULT);
     let keys = [a, b];
-    assert!(close(at(&keys, 0.5), 5.0), "symmetric handles meet at the middle");
-    assert!(at(&keys, 0.05) < 0.5, "flat handles ease out of the first key");
+    assert!(
+        close(at(&keys, 0.5), 5.0),
+        "symmetric handles meet at the middle"
+    );
+    assert!(
+        at(&keys, 0.05) < 0.5,
+        "flat handles ease out of the first key"
+    );
     assert!(close(at(&keys, 1.0), 10.0));
 }
 

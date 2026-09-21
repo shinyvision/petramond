@@ -35,7 +35,7 @@ fn a_frozen_tick_discards_its_drive_intent() {
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
-    assert!(mobs.set_mob_drive(0, Some([2.0, 0.0]), None, Some(1.0), false));
+    assert!(mobs.set_mob_drive(0, Some([2.0, 0.0]), None, Some(1.0), false, false));
     assert!(mobs.instances()[0].drive_pending());
 
     mobs.tick(
@@ -92,6 +92,7 @@ fn restore_respawns_saved_mobs_with_their_pose() {
             pos: WorldPos::new(8.5, 70.0, 8.5),
             yaw: 1.25,
             tags: Default::default(),
+            container: Default::default(),
         },
         SavedMob {
             kind: Mob::Sheep,
@@ -101,6 +102,7 @@ fn restore_respawns_saved_mobs_with_their_pose() {
                 crate::mob::tags::SHEAR_REGROW.to_owned(),
                 MobTagValue::Int(500),
             )]),
+            container: Default::default(),
         },
     ]);
     assert_eq!(mobs.len(), 2);

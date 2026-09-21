@@ -15,7 +15,7 @@ use crate::world::SectionCursor;
 
 const EPS: f64 = 1e-4;
 
-fn hazardous(block: Block, tolerated: &[Block]) -> bool {
+pub(super) fn hazardous(block: Block, tolerated: &[Block]) -> bool {
     let hazard = |b: Block| b.has_tag(BlockTag::NAV_HAZARD) && !tolerated.contains(&b);
     hazard(block) || block.fluid().is_some_and(hazard)
 }
@@ -45,13 +45,14 @@ pub(in crate::mob) fn foothold_in_hazard(
     )
 }
 
-/// The hazard half of the per-edge navigation gate.
-pub(super) fn step_gate<'c, 'w>(
+/// The hazard half of the per-edge navigation gate, on the caller's memos:
+/// hazardous cells, footholds in hazard.
+pub(super) fn step_gate_on<'c, 'w, M: path::CellCache>(
     cur: &'c SectionCursor<'w>,
     params: PathParams,
-) -> impl Fn(IVec3, IVec3) -> bool + use<'c, 'w> {
-    let cells = path::CellMemo::<1024>::default();
-    let footholds = path::CellMemo::<1024>::default();
+    cells: M,
+    footholds: M,
+) -> impl Fn(IVec3, IVec3) -> bool + use<'c, 'w, M> {
     move |from, to| {
         // A body already in danger may traverse its pool to reach a shore.
         // After leaving, every subsequent edge must stay safe again.

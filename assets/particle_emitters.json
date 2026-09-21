@@ -132,7 +132,6 @@
       "emitter": "petramond:water_splash",
       "burst": {
         "count_per_intensity": 4.0,
-        "max_count": 56,
         "up_speed": [1.6, 3.8],
         "radial_speed": [0.5, 2.0],
         "lifetime": [0.5, 1.1],
@@ -170,6 +169,32 @@
             "ground_tags": ["soil"]
           }
         }
+      }
+    },
+    {
+      "emitter": "petramond:block_dust",
+      "burst": {
+        "count_per_intensity": 2.0,
+        "count_spread": 1.0,
+        "spawn": [0.3, 0.3, 0.3],
+        "along_speed": [0.5, 1.5],
+        "up_speed": [0.0, 1.5],
+        "radial_speed": [0.0, 0.5],
+        "lifetime": [0.5, 1.5],
+        "size": [0.1, 0.1]
+      }
+    },
+    {
+      "emitter": "petramond:block_break",
+      "burst": {
+        "count_per_intensity": 16.0,
+        "count_spread": 1.0,
+        "spawn": [0.4, 0.4, 0.4],
+        "outward_speed": [1.0, 3.5],
+        "up_speed": [1.0, 3.0],
+        "radial_speed": [0.0, 0.0],
+        "lifetime": [1.0, 3.0],
+        "size": [0.1, 0.1]
       }
     }
   ]

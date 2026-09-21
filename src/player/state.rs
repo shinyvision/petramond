@@ -138,12 +138,21 @@ pub struct PlayerRosterSnapshot {
     pub swing: mod_api::HandSwing,
     /// Active body conditions, the ABI view.
     pub conditions: Vec<mod_api::ConditionData>,
+    /// The player's stable name (the save key), for state a mod keeps past
+    /// this session.
+    pub name: String,
+    /// Whether the player is a server operator.
+    pub operator: bool,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum PlayerMode {
-    Survival,
-    Spectator,
+petramond_math::wire_enum::wire_enum! {
+    pub enum PlayerMode: u8 {
+        Survival = 0,
+        Spectator = 1,
+        Creative = 2,
+        CreativeFlying = 3,
+    }
+    default Survival
 }
 
 /// The player's bed spawn point: which bed owns it (the bed's rotated-footprint
@@ -287,7 +296,11 @@ impl Player {
         points: i32,
         immunity: petramond_world::damage::Immunity,
     ) -> bool {
-        if points <= 0 || self.health == 0 || immunity.blocks(&self.damage_immunity) {
+        if points <= 0
+            || self.health == 0
+            || self.is_invulnerable()
+            || immunity.blocks(&self.damage_immunity)
+        {
             return false;
         }
         self.health = (self.health - points).max(0);
@@ -511,7 +524,7 @@ impl Player {
     /// vertical). Spectators float free of the world and take none — mirroring how
     /// they take no damage.
     pub fn apply_knockback(&mut self, impulse: Vec3) {
-        if self.is_spectator() {
+        if self.is_invulnerable() {
             return;
         }
         self.vel += impulse;
@@ -580,6 +593,18 @@ impl Player {
         self.mode == PlayerMode::Spectator
     }
 
+    pub fn is_creative(&self) -> bool {
+        matches!(self.mode, PlayerMode::Creative | PlayerMode::CreativeFlying)
+    }
+
+    pub fn is_flying(&self) -> bool {
+        self.abilities().flying
+    }
+
+    pub fn is_invulnerable(&self) -> bool {
+        self.abilities().invulnerable
+    }
+
     pub fn set_mode(&mut self, mode: PlayerMode) {
         if self.mode == mode {
             return;
@@ -596,7 +621,9 @@ impl Player {
 
     pub fn toggle_mode(&mut self) {
         let next = match self.mode {
-            PlayerMode::Survival => PlayerMode::Spectator,
+            PlayerMode::Survival | PlayerMode::Creative | PlayerMode::CreativeFlying => {
+                PlayerMode::Spectator
+            }
             PlayerMode::Spectator => PlayerMode::Survival,
         };
         self.set_mode(next);

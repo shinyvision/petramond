@@ -12,6 +12,16 @@ pub struct DeathDrop {
     pub blocklight: petramond_world::light::BlockLight6,
 }
 
+/// Stacks a mob carried when it left the world (death or despawn): scattered at
+/// its body so nothing a mob held is destroyed with it.
+#[derive(Clone, Debug)]
+pub struct MobSpill {
+    pub pos: petramond_math::world_pos::WorldPos,
+    pub stacks: Vec<petramond_world::item::ItemStack>,
+    pub skylight: u8,
+    pub blocklight: petramond_world::light::BlockLight6,
+}
+
 /// What a successful shear yields, so `Game` can spawn the drop (like [`DeathDrop`],
 /// the manager can't spawn item entities itself). The count is already rolled from the
 /// mob's own deterministic RNG.
@@ -39,16 +49,17 @@ impl Mobs {
         feedback: &MobDamageFeedback,
     ) -> Option<DeathDrop> {
         let mob = self.mob_mut(index)?;
-        if mob.damage(amount, origin, attack, attacker, feedback) {
-            Some(DeathDrop {
-                kind: mob.kind,
-                pos: mob.pos,
-                skylight: mob.skylight,
-                blocklight: mob.blocklight,
-            })
-        } else {
-            None
+        if !mob.damage(amount, origin, attack, attacker, feedback) {
+            return None;
         }
+        let drop = DeathDrop {
+            kind: mob.kind,
+            pos: mob.pos,
+            skylight: mob.skylight,
+            blocklight: mob.blocklight,
+        };
+        self.spill_container(index);
+        Some(drop)
     }
 
     /// Shear the mob at `index`: `Some` drop when it is a coated shearable species

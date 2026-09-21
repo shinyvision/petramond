@@ -247,9 +247,15 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
         );
     }
     if changed {
-        std::fs::write(
+        // Durable BEFORE this returns: the world's writer only starts after
+        // the palette is active and the palette never changes while a world
+        // is open, so every record written this session maps through ids
+        // that are already on disk.
+        petramond_util::atomic_file::replace(
             &path,
-            serde_json::to_string_pretty(&file).expect("serializes"),
+            serde_json::to_string_pretty(&file)
+                .expect("serializes")
+                .as_bytes(),
         )?;
     }
 

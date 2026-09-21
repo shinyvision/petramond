@@ -1,5 +1,5 @@
 //! Fixed-timestep simulation STATE: the tick counter, block-update queue,
-//! scheduled ticks, random-tick RNG, and the announced-change feed. The tick DRIVER
+//! scheduled ticks, random-tick RNG, and the announced-change log. The tick DRIVER
 //! (dispatching updates against the world) lives in the engine crate.
 
 use std::cmp::Reverse;
@@ -41,80 +41,82 @@ pub struct TickState {
     /// cells). The phases run strictly in sequence, so one buffer serves all
     /// three without a fresh allocation every tick.
     pub batch_scratch: Vec<IVec3>,
-    /// Block positions announced changed since each consumer last looked —
-    /// see [`ChangeFeed`].
-    pub changes: ChangeFeed,
-    /// Bumped by every announced nav-relevant change (see
-    /// `World::nav_revision`).
-    pub nav_revision: u64,
+    /// Every announced change, for readers that keep their own place — see
+    /// [`ChangeLog`].
+    pub change_log: ChangeLog,
 }
 
-/// Cap on the announced-change buffer (see [`ChangeFeed`]).
-pub const CHANGE_FEED_CAP: usize = 256;
+/// Cap on the announced-change log (see [`ChangeLog`]).
+pub const CHANGE_LOG_CAP: usize = 4096;
 
-/// Who reads the announced block changes. Each reader keeps its own cursor
-/// into the ONE buffer, so the two can never disagree about what was
-/// announced between their drains.
+/// One announced change: the cell, and whether it could alter what a body
+/// walks on or through (a decoration appearing cannot).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ChangeReader {
-    /// Confinement-cache invalidation (`mob::confined::RegionCache`),
-    /// drained by `tick_mobs`.
-    Mobs = 0,
-    /// The item store: a lodged item watches its anchor block through it,
-    /// so a wall of lodged items costs nothing until a wall block goes.
-    /// Drained by `tick_item_physics`.
-    Items = 1,
+pub struct Change {
+    pub pos: IVec3,
+    pub nav: bool,
 }
 
-const CHANGE_READERS: usize = 2;
-
-/// Block positions announced changed, buffered once for every
-/// [`ChangeReader`]: a sliding window of the last [`CHANGE_FEED_CAP`]
-/// announcements, numbered from the first ever pushed, with one sequence
-/// cursor per reader. A reader whose cursor is still inside the window gets
-/// exactly the positions it has not seen; one that fell behind the window
-/// is told "everything may have changed" instead, once. So the buffer is
-/// bounded whoever drains (a pure client never does), and a reader that
-/// lags never costs a current one its positions.
+/// Every announced change — a block, a fluid, a door's swing — numbered
+/// from the first ever pushed, the last [`CHANGE_LOG_CAP`] of them kept.
+/// The READER holds its place (the number of the next entry it has not
+/// seen), so any number of readers the world knows nothing about follow it
+/// at their own pace, the log stays bounded whoever reads, and a reader
+/// that lags never costs a current one its positions.
 #[derive(Default)]
-pub struct ChangeFeed {
-    window: VecDeque<IVec3>,
+pub struct ChangeLog {
+    window: VecDeque<Change>,
     /// Sequence number of the window's front entry.
     base: u64,
-    /// Per reader: the sequence number of the next entry it has not seen.
-    cursors: [u64; CHANGE_READERS],
+    nav_revision: u64,
 }
 
-impl ChangeFeed {
-    /// Record one announced position.
-    pub fn push(&mut self, pos: IVec3) {
-        if self.window.len() >= CHANGE_FEED_CAP {
+impl ChangeLog {
+    pub fn push(&mut self, pos: IVec3, nav: bool) {
+        if self.window.len() >= CHANGE_LOG_CAP {
             self.window.pop_front();
             self.base += 1;
         }
-        self.window.push_back(pos);
+        self.window.push_back(Change { pos, nav });
+        if nav {
+            self.nav_revision = self.nav_revision.wrapping_add(1);
+        }
     }
 
-    /// Everything announced since `reader` last drained, plus whether the
-    /// window slid past unseen positions in between (the reader must then
-    /// treat every cell as possibly changed). Entries every reader has seen
-    /// are released.
-    pub fn drain(&mut self, reader: ChangeReader) -> (Vec<IVec3>, bool) {
-        let end = self.base + self.window.len() as u64;
-        let cursor = self.cursors[reader as usize];
-        let overflow = cursor < self.base;
-        let start = if overflow {
-            0
-        } else {
-            (cursor - self.base) as usize
-        };
-        let out = self.window.range(start..).copied().collect();
-        self.cursors[reader as usize] = end;
-        let seen = self.cursors.iter().copied().min().unwrap_or(end);
-        let release = (seen.saturating_sub(self.base) as usize).min(self.window.len());
-        self.window.drain(..release);
-        self.base += release as u64;
-        (out, overflow)
+    /// The number the next pushed entry will carry.
+    pub fn end(&self) -> u64 {
+        self.base + self.window.len() as u64
+    }
+
+    /// Moves whenever a nav-relevant change is pushed. Outlives the window:
+    /// the positions can be lost, the fact cannot.
+    pub fn nav_revision(&self) -> u64 {
+        self.nav_revision
+    }
+
+    /// Everything pushed from entry `seq` on, and whether some of it is
+    /// gone (the log slid past it, or `seq` is from another log's
+    /// numbering): the reader must then treat every cell as changed.
+    pub fn since(&self, seq: u64) -> (Vec<IVec3>, bool) {
+        self.collect_since(seq, |_| true)
+    }
+
+    /// [`since`](Self::since), nav-relevant changes only.
+    pub fn nav_since(&self, seq: u64) -> (Vec<IVec3>, bool) {
+        self.collect_since(seq, |c| c.nav)
+    }
+
+    fn collect_since(&self, seq: u64, keep: impl Fn(&Change) -> bool) -> (Vec<IVec3>, bool) {
+        if seq < self.base || seq > self.end() {
+            return (Vec::new(), true);
+        }
+        let start = (seq - self.base) as usize;
+        let cells = self
+            .window
+            .range(start..)
+            .filter(|c| keep(c))
+            .map(|c| c.pos);
+        (cells.collect(), false)
     }
 }
 

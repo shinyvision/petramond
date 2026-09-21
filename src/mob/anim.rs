@@ -7,12 +7,36 @@ use petramond_world::bbmodel::clips;
 
 use super::brain::BehaviorOutput;
 use super::instance::Instance;
-use super::kinematics::{approach, turn_toward};
+use super::kinematics::turn_toward;
 use super::MobDef;
 
-/// How fast the head turns toward its look target (rad/s) — deliberately slow so the
-/// head pans rather than snaps.
-const HEAD_TURN_RATE: f32 = 4.0;
+/// The fastest the head swings toward its look target (rad/s), and the time
+/// its motion is smoothed over: it gathers speed, pans, and settles onto the
+/// target instead of starting and stopping dead.
+const HEAD_TURN_RATE: f32 = 9.0;
+const HEAD_SMOOTH_TIME: f32 = 0.16;
+/// Close and slow enough to rest exactly on the target.
+const HEAD_SETTLED: f32 = 1.0e-3;
+
+/// One critically damped step of `cur` (moving at `vel`) toward `cur + to`,
+/// never faster than `max_speed`: the eased value. `to` is the signed way
+/// left, so an angle passes its wrapped difference.
+fn smooth_step(to: f32, vel: &mut f32, smooth_time: f32, max_speed: f32, dt: f32) -> f32 {
+    let omega = 2.0 / smooth_time;
+    let x = omega * dt;
+    let decay = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x);
+    let limit = max_speed * smooth_time;
+    let change = (-to).clamp(-limit, limit);
+    let temp = (*vel + omega * change) * dt;
+    *vel = (*vel - omega * temp) * decay;
+    let moved = (change + temp) * decay - change;
+    // Never past the target: a spring that overshoots reads as a wobble.
+    if moved.abs() >= to.abs() || (to.abs() < HEAD_SETTLED && vel.abs() < HEAD_SETTLED * 10.0) {
+        *vel = 0.0;
+        return to;
+    }
+    moved
+}
 
 /// Which animation a mob is playing — drives `anim_time` advance rate + reset.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -270,7 +294,9 @@ impl Instance {
         // phase at its own mod-set rate below, so one layer can pause
         // mid-stroke while another plays.
         match kind {
-            AnimKind::Walk => self.anim_time += d.walk_anim_rate * self.walk_speed_scale * dt,
+            AnimKind::Walk => {
+                self.anim_time += d.walk_anim_rate * self.walk_speed_scale * self.gait_pace * dt
+            }
             AnimKind::Idle(_) => self.anim_time += dt,
             AnimKind::Rest => {}
         }
@@ -303,9 +329,21 @@ impl Instance {
             Some(h) => (h.yaw, h.pitch),
             None => (0.0, 0.0),
         };
-        let step = HEAD_TURN_RATE * dt;
-        self.head_yaw = turn_toward(self.head_yaw, target_yaw, step);
-        self.head_pitch = approach(self.head_pitch, target_pitch, step);
+        let yaw_left = turn_toward(self.head_yaw, target_yaw, std::f32::consts::PI) - self.head_yaw;
+        self.head_yaw += smooth_step(
+            yaw_left,
+            &mut self.head_vel[0],
+            HEAD_SMOOTH_TIME,
+            HEAD_TURN_RATE,
+            dt,
+        );
+        self.head_pitch += smooth_step(
+            target_pitch - self.head_pitch,
+            &mut self.head_vel[1],
+            HEAD_SMOOTH_TIME,
+            HEAD_TURN_RATE,
+            dt,
+        );
     }
 }
 

@@ -58,6 +58,7 @@ pub struct Inst<'d> {
     /// Resolved `palette` binding (labels): the theme palette entry that
     /// colours the text this frame (empty string resolves to `None`).
     pub palette: Option<String>,
+    pub text_opacity: f32,
     pub enabled: bool,
     /// Arena index of the parent instance (`None` for the root).
     pub parent: Option<u32>,
@@ -239,6 +240,11 @@ impl<'d> InstTree<'d> {
                 UiValue::Str(s) if !s.is_empty() => Some(s.clone()),
                 _ => None,
             }),
+            text_opacity: resolve_key(state, item_map, &node.bind.text_opacity)
+                .and_then(UiValue::as_f32)
+                .filter(|v| v.is_finite())
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0),
             parent,
             children: Vec::new(),
             key: node.id.as_ref().map(|id| InstKey {

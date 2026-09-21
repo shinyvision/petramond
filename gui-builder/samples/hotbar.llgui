@@ -5,7 +5,7 @@
     "kind": "petramond:hotbar",
     "class": "hud",
     "root": {
-      "type": "row",
+      "type": "column",
       "layout": {
         "w": "auto",
         "h": "auto",
@@ -21,16 +21,47 @@
           0,
           1
         ],
-        "gap": 0,
+        "gap": 2,
         "dir": "column",
+        "align": "center",
         "justify": "start",
         "anchor": {
           "h": "center",
           "v": "end"
         }
       },
-      "style": "list.row",
       "children": [
+        {
+          "id": "creative_notice",
+          "type": "label",
+          "wrap": true,
+          "small": true,
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "max_w": 280
+          },
+          "bind": {
+            "text": "creative_notice",
+            "visible": "creative_notice_visible",
+            "text_opacity": "creative_notice_opacity"
+          }
+        },
         {
           "type": "row",
           "layout": {
@@ -53,6 +84,7 @@
             "align": "end",
             "justify": "start"
           },
+          "style": "list.row",
           "children": [
             {
               "type": "slot",
@@ -76,6 +108,15 @@
     "sample_state": {
       "active_slot": {
         "i32": 0
+      },
+      "creative_notice": {
+        "str": "Sample text"
+      },
+      "creative_notice_opacity": {
+        "f32": 0.5
+      },
+      "creative_notice_visible": {
+        "bool": true
       }
     },
     "zoom": 1.0,

@@ -18,6 +18,29 @@ use petramond_world::inventory::{plan_drag_distribution, slot_capacity};
 use petramond_world::item::ItemStack;
 
 impl Game {
+    pub fn creative_pick(&mut self, item: petramond_world::item::ItemType) {
+        self.creative_set_cursor(Some(item));
+    }
+
+    pub fn creative_discard_cursor(&mut self) {
+        self.creative_set_cursor(None);
+    }
+
+    fn creative_set_cursor(&mut self, item: Option<petramond_world::item::ItemType>) {
+        if !self.creative_mode() || item.is_some_and(|i| !i.creative_visible()) {
+            return;
+        }
+        let (can, request_id) = self.begin_inventory_prediction();
+        if can {
+            *self.self_view.inventory.cursor_mut() =
+                item.map(|i| ItemStack::new(i, i.max_stack_size()));
+        }
+        self.outbox.push(ClientToServer::CreativeCursor {
+            item: item.map(|i| i.registry_name().into()),
+            request_id,
+        });
+    }
+
     /// Predict one complete cursor-stack distribution and send the same
     /// ordered intent to the server. The inventory and open menu mirror are
     /// one rollback unit because a gesture may span both stores.

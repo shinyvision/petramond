@@ -13,8 +13,26 @@ use crate::animation::graph::{
 use crate::animation::pose::swap_side;
 
 const RULE_KEYS: &[&str] = &[
-    "id", "on", "when", "cooldown", "fallthrough", "slot", "play", "pick", "reset", "then", "fade_in",
-    "fade_out", "ease", "blend", "rate", "duration", "mirror", "priority", "stop", "hitstop",
+    "id",
+    "on",
+    "when",
+    "cooldown",
+    "fallthrough",
+    "slot",
+    "play",
+    "pick",
+    "reset",
+    "then",
+    "fade_in",
+    "fade_out",
+    "ease",
+    "blend",
+    "rate",
+    "duration",
+    "mirror",
+    "priority",
+    "stop",
+    "hitstop",
 ];
 const PLAY_ONLY_KEYS: &[&str] = &[
     "pick", "reset", "then", "fade_in", "ease", "blend", "rate", "duration", "mirror", "priority",
@@ -109,7 +127,11 @@ impl Compiler<'_> {
                 return Err(format!("{path}: a gate needs `when`"));
             }
             let when = self.expr(o.get("when"), 1.0, &format!("{path}.when"))?;
-            self.gates.push(GateDef { events, slots, when });
+            self.gates.push(GateDef {
+                events,
+                slots,
+                when,
+            });
         }
         Ok(())
     }
@@ -165,14 +187,26 @@ impl Compiler<'_> {
         let freeze = match o.get("hitstop") {
             Some(seconds) => {
                 let slot = slot.ok_or_else(|| format!("{path}: `hitstop` freezes a `slot`"))?;
-                Some((slot, number(Some(seconds), 0.0, &format!("{path}.hitstop"))?))
+                Some((
+                    slot,
+                    number(Some(seconds), 0.0, &format!("{path}.hitstop"))?,
+                ))
             }
             None => None,
         };
         if play.is_none() && stop.is_none() && freeze.is_none() {
             return Err(format!("{path}: a rule does `play`, `stop` or `hitstop`"));
         }
-        Ok(Rule { event, when, gates, cooldown, fallthrough, play, stop, freeze })
+        Ok(Rule {
+            event,
+            when,
+            gates,
+            cooldown,
+            fallthrough,
+            play,
+            stop,
+            freeze,
+        })
     }
 
     fn play_rule(
@@ -198,12 +232,18 @@ impl Compiler<'_> {
             single => vec![self.segment(single, &format!("{path}.play"))?],
         };
         let pick = match o.get("pick") {
-            None => Pick::Cycle { reset: number(o.get("reset"), 1.0, &format!("{path}.reset"))? },
-            Some(Value::String(s)) if s == "cycle" => {
-                Pick::Cycle { reset: number(o.get("reset"), 1.0, &format!("{path}.reset"))? }
-            }
+            None => Pick::Cycle {
+                reset: number(o.get("reset"), 1.0, &format!("{path}.reset"))?,
+            },
+            Some(Value::String(s)) if s == "cycle" => Pick::Cycle {
+                reset: number(o.get("reset"), 1.0, &format!("{path}.reset"))?,
+            },
             Some(Value::String(s)) if s == "random" => Pick::Random,
-            Some(other) => return Err(format!("{path}.pick: `{other}` is neither cycle nor random")),
+            Some(other) => {
+                return Err(format!(
+                    "{path}.pick: `{other}` is neither cycle nor random"
+                ))
+            }
         };
         let then = match o.get("then") {
             None => Vec::new(),
@@ -246,7 +286,11 @@ impl Compiler<'_> {
     fn segment(&mut self, value: &Value, path: &str) -> Result<SegmentDef, String> {
         let o = match value {
             Value::String(name) => {
-                return Ok(SegmentDef { clip: self.clip_ref(name, path)?, until: Until::Once, rate: None })
+                return Ok(SegmentDef {
+                    clip: self.clip_ref(name, path)?,
+                    until: Until::Once,
+                    rate: None,
+                })
             }
             Value::Object(o) => o,
             _ => return Err(format!("{path}: expected a clip name or a segment object")),
@@ -269,7 +313,10 @@ impl Compiler<'_> {
                         return Err(format!("{path}.exit: `{other}` is neither finish nor now"))
                     }
                 };
-                Until::While { cond: self.expr(Some(cond), 0.0, &format!("{path}.while"))?, finish_cycle }
+                Until::While {
+                    cond: self.expr(Some(cond), 0.0, &format!("{path}.while"))?,
+                    finish_cycle,
+                }
             }
             (None, loop_) => {
                 if o.contains_key("exit") {
@@ -321,7 +368,10 @@ impl Compiler<'_> {
         if clips.is_empty() {
             return Err(format!("{path}: no clip matches `{name}`"));
         }
-        self.templates.push(ClipTemplate { param: index, clips });
+        self.templates.push(ClipTemplate {
+            param: index,
+            clips,
+        });
         Ok(ClipRef::Template(self.templates.len() - 1))
     }
 }

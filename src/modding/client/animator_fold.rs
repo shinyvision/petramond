@@ -69,9 +69,16 @@ mod tests {
             params: BTreeSet::new(),
             slots: BTreeSet::from([(RigId(0), 2)]),
         };
-        let claims = |plays: Vec<AnimatorPlay>| AnimatorClaims { params: Vec::new(), plays };
+        let claims = |plays: Vec<AnimatorPlay>| AnimatorClaims {
+            params: Vec::new(),
+            plays,
+        };
         let replicated = claims(vec![play(2, 9), play(3, 7)]);
-        let (earlier, later, released) = (claims(vec![play(2, 1)]), claims(vec![play(2, 2)]), claims(Vec::new()));
+        let (earlier, later, released) = (
+            claims(vec![play(2, 1)]),
+            claims(vec![play(2, 2)]),
+            claims(Vec::new()),
+        );
         let shown = |stores: &[(&AnimatorOwnership, &AnimatorClaims)]| {
             fold(&replicated, stores.iter().copied())
                 .plays
@@ -79,7 +86,10 @@ mod tests {
                 .map(|p| (p.slot, p.clip))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(shown(&[(&owns, &earlier), (&owns, &later)]), [(2, 2), (3, 7)]);
+        assert_eq!(
+            shown(&[(&owns, &earlier), (&owns, &later)]),
+            [(2, 2), (3, 7)]
+        );
         assert_eq!(
             shown(&[(&owns, &earlier), (&owns, &released)]),
             [(2, 1), (3, 7)],

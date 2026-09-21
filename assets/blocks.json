@@ -3174,7 +3174,8 @@
           "max": 1,
           "chance": 1
         }
-      ]
+      ],
+      "data": { "petramond:construction": { "form": "petramond:furnace" } }
     },
     {
       "block": "petramond:chest",
@@ -5451,6 +5452,11 @@
           "chance": 1
         }
       ],
+      "roots_on": [
+        "soil",
+        "sand",
+        "rock"
+      ],
       "roots_face": "solid_face"
     },
     {
@@ -5534,6 +5540,11 @@
           "max": 1,
           "chance": 1
         }
+      ],
+      "roots_on": [
+        "soil",
+        "sand",
+        "rock"
       ],
       "roots_face": "solid_face"
     },
@@ -5652,6 +5663,11 @@
           "max": 1,
           "chance": 1
         }
+      ],
+      "roots_on": [
+        "soil",
+        "sand",
+        "rock"
       ],
       "roots_face": "solid_face"
     },

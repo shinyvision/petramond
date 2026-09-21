@@ -217,7 +217,7 @@ impl<S: MachineSpec> Machine<S> {
     /// `block_placed.pos` is the multi-cell anchor — the same cell the engine
     /// keys the container at.
     pub fn on_placed(&mut self, pos: [i32; 3], block: BlockId) {
-        if Some(block) == self.block {
+        if Some(block) == self.block || self.variants.contains(&Some(block)) {
             self.anchors.record(pos);
         }
     }
@@ -244,11 +244,11 @@ impl<S: MachineSpec> Machine<S> {
     /// keep was a count — and a count cannot address a gauge. The engine
     /// knows the whole viewer set (`gui_viewers`), and it is read fresh each
     /// tick, so disconnects and world unloads need no bookkeeping here.
-    pub fn on_container_opened(&mut self, kind: &ContainerKind, pos: Option<[i32; 3]>) {
+    pub fn on_container_opened(&mut self, kind: &ContainerKind, at: Option<ContainerAddress>) {
         if !kind.is(S::KIND_KEY) && !S::PANEL_KEYS.iter().any(|k| kind.is(k)) {
             return;
         }
-        if let Some(anchor) = pos {
+        if let Some(ContainerAddress::Block(anchor)) = at {
             self.anchors.record(anchor);
         }
     }
@@ -283,7 +283,9 @@ impl<S: MachineSpec> Machine<S> {
             return;
         }
         let positions: Vec<[i32; 3]> = live.iter().map(|(p, _)| *p).collect();
-        let containers = paged(positions.clone(), container_get_many);
+        let containers = paged(positions.clone(), |page| {
+            container_get_many(page.into_iter().map(ContainerAddress::from).collect())
+        });
         let states = paged(positions.clone(), |page| {
             section_kv_get_many(S::STATE_KEY, page)
         });
@@ -378,7 +380,7 @@ impl Watchers {
     fn of_kinds(kind_key: &str, panels: &[&str]) -> Watchers {
         let mut by_anchor: HashMap<[i32; 3], Vec<PlayerId>> = HashMap::new();
         for viewer in gui_viewers() {
-            let (true, Some(anchor)) = (
+            let (true, Some(ContainerAddress::Block(anchor))) = (
                 viewer.kind == kind_key || panels.contains(&viewer.kind.as_str()),
                 viewer.anchor,
             ) else {
@@ -660,7 +662,7 @@ pub fn write_changed_slots(
 ) {
     let writes = changed_slots(before, after);
     if !writes.is_empty() {
-        container_set(pos, writes);
+        container_set(pos.into(), writes);
     }
 }
 

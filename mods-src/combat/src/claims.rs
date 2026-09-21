@@ -127,7 +127,11 @@ impl Claims {
         self.cooldown *= later.cooldown;
         union(&mut self.denied, later.denied);
         for param in later.params {
-            if !self.params.iter().any(|p| (&p.rig, &p.param) == (&param.rig, &param.param)) {
+            if !self
+                .params
+                .iter()
+                .any(|p| (&p.rig, &p.param) == (&param.rig, &param.param))
+            {
                 self.params.push(param);
             }
         }
@@ -138,7 +142,11 @@ impl Claims {
         self.off = self.off.or(later.off);
         self.bones.extend(later.bones);
         for play in later.plays {
-            if !self.plays.iter().any(|p| (&p.rig, &p.slot) == (&play.rig, &play.slot)) {
+            if !self
+                .plays
+                .iter()
+                .any(|p| (&p.rig, &p.slot) == (&play.rig, &play.slot))
+            {
                 self.plays.push(play);
             }
         }
@@ -159,7 +167,11 @@ impl Claims {
 /// layered under it would be two swings fighting one another. The use jab
 /// is left to the engine.
 pub fn swing_claim(hand: usize) -> Vec<AnimatorParam> {
-    let param = if hand == 0 { "main.swing_claim" } else { "off.swing_claim" };
+    let param = if hand == 0 {
+        "main.swing_claim"
+    } else {
+        "off.swing_claim"
+    };
     [rig::PLAYER_BODY, rig::PLAYER_FIRST_PERSON]
         .into_iter()
         .map(|rig| AnimatorParam {

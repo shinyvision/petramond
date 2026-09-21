@@ -4,6 +4,10 @@
 
 #![allow(clippy::too_many_arguments)]
 
+#[cfg(test)]
+#[global_allocator]
+static TEST_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod app;
 pub mod game;
 pub mod keymap;

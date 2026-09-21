@@ -22,6 +22,7 @@ use super::Game;
 /// stand-in for the remote join handshake's `JoinData`/`SelfRestore`).
 pub struct ClientBootstrap {
     replica: World,
+    jobs: Arc<JobPool>,
     client_player: Player,
     self_view: crate::game::replicated::SelfView,
     self_id: PlayerId,
@@ -32,6 +33,12 @@ pub struct ClientBootstrap {
 }
 
 impl Game {
+    /// The session's background pool, for presentation work that must stay
+    /// off the frame thread.
+    pub fn jobs(&self) -> &Arc<JobPool> {
+        &self.jobs
+    }
+
     pub fn new(cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
         let t0 = std::time::Instant::now();
         let (server, bootstrap) = build_session(world_name, new_seed, render_dist);
@@ -74,10 +81,16 @@ impl Game {
         // The replica gets its OWN pool: unlike the in-process split there is
         // no server world in this process to share one with.
         let pool = Arc::new(JobPool::new(JobPool::default_threads()));
-        let replica = World::new_with_pool(join.seed, render_dist, WorldRole::ClientReplica, pool);
+        let replica = World::new_with_pool(
+            join.seed,
+            render_dist,
+            WorldRole::ClientReplica,
+            pool.clone(),
+        );
         let client_player = player_from_restore(&join.self_restore);
         let bootstrap = ClientBootstrap {
             replica,
+            jobs: pool,
             self_view: crate::game::replicated::SelfView::seed_from(&client_player),
             client_player,
             self_id: join.player_id,
@@ -164,6 +177,16 @@ impl Game {
             replicated_tick: bootstrap.replicated_tick,
             open_chests: Default::default(),
             prediction: super::prediction::PredictionLedger::new(),
+            jobs: bootstrap.jobs,
+            notice: String::new(),
+            world_tools: Default::default(),
+            schematic_preview: Default::default(),
+            schematic_library: Default::default(),
+            paste_preview_ready: false,
+            flight_toggle: Default::default(),
+            break_repeat: Default::default(),
+            schematics: Default::default(),
+            ghosts: Default::default(),
             local_mining: petramond_world::mining::MiningState::new(),
             predicted_input: Default::default(),
             local_bones: Default::default(),
@@ -187,7 +210,8 @@ impl Game {
             section_cache: Default::default(),
             fallback_world: bootstrap.fallback_world,
             particles: ParticleSystem::new(),
-            mining_dust_t: 0.0,
+            mining_feedback: Default::default(),
+            mob_digging: HashMap::new(),
             chest_lids: HashMap::new(),
             door_swings: HashMap::new(),
         }
@@ -257,7 +281,7 @@ pub fn build_session_with_pool(
         server.world.seed,
         render_dist,
         WorldRole::ClientReplica,
-        pool,
+        pool.clone(),
     );
 
     // The client's locally-simulated player starts as an exact clone of
@@ -294,6 +318,7 @@ pub fn build_session_with_pool(
         server,
         ClientBootstrap {
             replica,
+            jobs: pool,
             client_player,
             self_view,
             self_id,
@@ -310,10 +335,7 @@ pub fn build_session_with_pool(
 /// remapped to local ids at the transport; effects travel by name).
 fn player_from_restore(r: &petramond::net::protocol::SelfRestore) -> Player {
     let mut player = Player::new(r.transform.pos);
-    player.set_mode(match r.mode {
-        1 => petramond::player::PlayerMode::Spectator,
-        _ => petramond::player::PlayerMode::Survival,
-    });
+    player.set_mode(petramond::player::PlayerMode::from_u8(r.mode));
     // `set_mode` clears velocity; restore motion after it.
     player.vel = r.transform.vel;
     player.yaw = r.transform.yaw;

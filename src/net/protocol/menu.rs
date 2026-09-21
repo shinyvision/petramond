@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use petramond_math::math::IVec3;
-
 use super::ItemSlotWire;
 
 /// A container-menu slot identity on the wire — the message twin of
@@ -97,7 +95,8 @@ pub enum MenuTargetWire {
     Crafting { output: Option<ItemSlotWire> },
     Container {
         kind_key: String,
-        pos: Option<IVec3>,
+        /// The block or mob the session is anchored on, if any.
+        anchor: Option<crate::menu::MenuAnchor>,
         /// The backing container's slots, `None` for a slot-less GUI.
         slots: Option<Vec<Option<ItemSlotWire>>>,
         /// The session's full state map — present ONLY when it changed since

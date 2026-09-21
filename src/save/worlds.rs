@@ -1,7 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
-use super::io::write_atomic;
 use super::{level, settings};
+use petramond_util::atomic_file;
 use petramond_util::paths::base_data_dir;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,7 +74,7 @@ pub fn write_world_metadata(name: &str) -> std::io::Result<()> {
         name: name.trim().to_string(),
     })
     .map_err(std::io::Error::other)?;
-    write_atomic(&dir.join("world.json"), &metadata)
+    atomic_file::replace(&dir.join("world.json"), &metadata)
 }
 
 pub fn list_worlds() -> std::io::Result<Vec<WorldInfo>> {
@@ -136,7 +136,7 @@ pub fn rename_world(dir_name: &str, new_name: &str) -> std::io::Result<()> {
         name: new_name.to_string(),
     })
     .map_err(std::io::Error::other)?;
-    write_atomic(&dir.join("world.json"), &metadata)
+    atomic_file::replace(&dir.join("world.json"), &metadata)
 }
 
 pub fn delete_world(dir_name: &str) -> std::io::Result<()> {

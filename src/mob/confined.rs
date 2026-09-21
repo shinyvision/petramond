@@ -362,7 +362,7 @@ impl RegionCache {
     }
 
     /// Drop every region a changed block could have altered. `all` drops
-    /// everything (the change buffer overflowed, so positions are unknown).
+    /// everything (the change log slid past the reader, so positions are unknown).
     pub fn invalidate(&mut self, changed: &[IVec3], all: bool) {
         if all {
             self.regions.clear();

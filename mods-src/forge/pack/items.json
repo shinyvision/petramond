@@ -759,7 +759,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:diamond_tip_stone",
@@ -772,7 +777,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:diamond_axe_blade",
@@ -785,7 +795,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:diamond_axe_blade_stone",
@@ -798,7 +813,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:diamond_shovel_blade",
@@ -811,7 +831,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:diamond_shovel_blade_stone",
@@ -824,7 +849,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:gold_inlay",
@@ -837,7 +867,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:gold_inlay_pickaxe",
@@ -850,7 +885,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:gold_inlay_pickaxe_stone",
@@ -863,7 +903,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:gold_inlay_axe",
@@ -876,7 +921,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:gold_inlay_axe_stone",
@@ -889,7 +939,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:gold_inlay_shovel",
@@ -902,7 +957,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "forge:gold_inlay_shovel_stone",
@@ -915,7 +975,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "patch": "petramond:diamond",

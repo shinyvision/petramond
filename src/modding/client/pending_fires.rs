@@ -66,10 +66,16 @@ mod tests {
         let mut pending = PendingFires::default();
         pending.fired(rig, swing);
         pending.fired(rig, swing);
-        assert!(!pending.absorb(rig, other), "an event nobody fired locally is the server's");
+        assert!(
+            !pending.absorb(rig, other),
+            "an event nobody fired locally is the server's"
+        );
         assert!(pending.absorb(rig, swing));
         assert!(pending.absorb(rig, swing), "two fires, two echoes");
-        assert!(!pending.absorb(rig, swing), "the third echo is a new server fire");
+        assert!(
+            !pending.absorb(rig, swing),
+            "the third echo is a new server fire"
+        );
 
         for frame_dt in [1.0 / 30.0, 1.0 / 240.0] {
             let mut pending = PendingFires::default();
@@ -77,12 +83,18 @@ mod tests {
             for _ in 0..(0.9 / frame_dt) as usize {
                 pending.advance(frame_dt);
             }
-            assert!(pending.absorb(rig, swing), "still waiting 0.9 s later at {frame_dt}");
+            assert!(
+                pending.absorb(rig, swing),
+                "still waiting 0.9 s later at {frame_dt}"
+            );
             pending.fired(rig, other);
             for _ in 0..(1.1 / frame_dt) as usize {
                 pending.advance(frame_dt);
             }
-            assert!(!pending.absorb(rig, other), "expired past the window at {frame_dt}");
+            assert!(
+                !pending.absorb(rig, other),
+                "expired past the window at {frame_dt}"
+            );
         }
     }
 }

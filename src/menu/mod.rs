@@ -9,7 +9,7 @@ mod transport;
 
 pub use crafting::CraftMenuFailure;
 pub use state::ContainerMenu;
-pub use target::ContainerTarget;
+pub use target::{ContainerTarget, MenuAnchor};
 
 #[cfg(test)]
 mod tests {

@@ -46,7 +46,9 @@ struct VsIn {
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) uv:    vec2<f32>,
+    // Centroid: an antialiased edge fragment's uv is never extrapolated past
+    // the face, where it would sample the atlas tile next door.
+    @location(0) @interpolate(perspective, centroid) uv: vec2<f32>,
     @location(1) shade: f32,
     @location(2) tint:  vec3<f32>,
     // Fragment − camera in render-local space: distance AND view direction for
@@ -171,10 +173,10 @@ fn vs_world_model(in: WmIn) -> WmOut {
     return out;
 }
 
-@fragment
-fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
+fn world_model_color(in: WmOut, cutout: f32) -> vec4<f32> {
+    let normal = selection_model_normal(in.view);
     let tex_color = sample_model_texture(in.uv, in.animation);
-    if (tex_color.a < 0.5) { discard; }
+    if (tex_color.a < cutout) { discard; }
     // The same two-term light as block.wgsl: sky scaled + tinted by the sim's
     // day/night state, block light night-invariant and COLOURED, max of the two.
     let sky_term = mix(SKY_MIN, 1.0, pow(in.light.x, SKY_GAMMA) * u.fog_color.w) * u.sky_color.rgb;
@@ -183,6 +185,7 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
     let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
     let lit = max(max(sky_term, block_term), vec3<f32>(FINAL_MIN));
     var color = tex_color.rgb * in.tint * in.shade * lit;
+    color = selection_brighten(color, in.view + u.cam_pos.xyz, normal, u.render_origin.xyz);
     if (u.fog.w > 0.5) {
         color = color * u.volume_tint.rgb;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
@@ -202,6 +205,16 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
     return vec4<f32>(out, 1.0);
 }
 
+@fragment
+fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
+    return world_model_color(in, 0.5);
+}
+
+@fragment
+fn fs_schematic_model(in: WmOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(world_model_color(in, 0.004).rgb, 0.55);
+}
+
 // The alpha-BLEND twin of fs_world_model for the chunk's semi-transparent model
 // faces (the `model_blend_idx` stream): identical lighting, but the texture
 // alpha survives to the blend unit instead of a 0.5 cutout. Only truly empty
@@ -209,6 +222,7 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
 // has partial alpha, and the rest of the rect may still hold cutout holes.
 @fragment
 fn fs_world_model_blend(in: WmOut) -> @location(0) vec4<f32> {
+    let normal = selection_model_normal(in.view);
     let tex_color = sample_model_texture(in.uv, in.animation);
     if (tex_color.a < 0.004) { discard; }
     let sky_term = mix(SKY_MIN, 1.0, pow(in.light.x, SKY_GAMMA) * u.fog_color.w) * u.sky_color.rgb;
@@ -216,6 +230,7 @@ fn fs_world_model_blend(in: WmOut) -> @location(0) vec4<f32> {
     let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
     let lit = max(max(sky_term, block_term), vec3<f32>(FINAL_MIN));
     var color = tex_color.rgb * in.tint * in.shade * lit;
+    color = selection_brighten(color, in.view + u.cam_pos.xyz, normal, u.render_origin.xyz);
     if (u.fog.w > 0.5) {
         color = color * u.volume_tint.rgb;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);

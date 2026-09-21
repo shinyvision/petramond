@@ -12,6 +12,12 @@ use super::guards::batch_guard;
 /// membership, reverse name lookups, item row reads).
 pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
     match call {
+        HostCall::BlockRecordPlans { records } => {
+            if let Some(err) = batch_guard("BlockRecordPlans record", records.len()) {
+                return err;
+            }
+            HostRet::RecordPlans(records.iter().map(super::construction::plan_out).collect())
+        }
         HostCall::MobDataGet { mob, key } => HostRet::Bytes(
             crate::mob::defs()
                 .get(mob.0 as usize)
@@ -228,6 +234,17 @@ fn block_info_data(block: mod_api::BlockId) -> Option<mod_api::BlockInfoData> {
         },
         collision: b.collision_boxes().iter().map(|a| (a.min, a.max)).collect(),
         fluid: b.fluid_def().map(fluid_info),
+        replaceable: b.is_replaceable(),
+        interaction: match b.interaction() {
+            petramond_world::block::BlockInteraction::None => None,
+            petramond_world::block::BlockInteraction::OpenGui(_) => {
+                Some(mod_api::BlockUse::OpenGui)
+            }
+            petramond_world::block::BlockInteraction::ToggleDoor => {
+                Some(mod_api::BlockUse::ToggleDoor)
+            }
+            petramond_world::block::BlockInteraction::Sleep => Some(mod_api::BlockUse::Sleep),
+        },
     })
 }
 

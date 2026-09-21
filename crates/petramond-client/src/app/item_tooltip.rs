@@ -30,6 +30,13 @@ pub(super) fn populate(
     } else {
         hover_slot.and_then(|(role, index)| hovered_stack(game, role, *index as usize))
     };
+    populate_stack(stack, state)
+}
+
+pub(super) fn populate_stack(
+    stack: Option<ItemStack>,
+    state: &mut UiState,
+) -> Vec<(String, std::path::PathBuf)> {
     let stack =
         stack.filter(|stack| stack.item != petramond_world::item::ItemType::Air && stack.count > 0);
     state.set("show_item_tip", UiValue::Bool(stack.is_some()));

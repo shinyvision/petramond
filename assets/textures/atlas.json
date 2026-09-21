@@ -177,6 +177,8 @@
     {"name": "glass", "file": "glass.png"},
     {"name": "glass_pane_top", "file": "glass_pane_top.png"},
     {"name": "wool_block", "file": "wool_block.png"},
-    {"name": "organic_transition_mask", "file": "transitions/organic_0.png", "variants": ["transitions/organic_1.png", "transitions/organic_2.png", "transitions/organic_3.png", "transitions/organic_4.png", "transitions/organic_5.png", "transitions/organic_6.png", "transitions/organic_7.png", "transitions/organic_8.png", "transitions/organic_9.png", "transitions/organic_10.png", "transitions/organic_11.png", "transitions/organic_12.png", "transitions/organic_13.png", "transitions/organic_14.png", "transitions/organic_15.png"]}
+    {"name": "organic_transition_mask", "file": "transitions/organic_0.png", "variants": ["transitions/organic_1.png", "transitions/organic_2.png", "transitions/organic_3.png", "transitions/organic_4.png", "transitions/organic_5.png", "transitions/organic_6.png", "transitions/organic_7.png", "transitions/organic_8.png", "transitions/organic_9.png", "transitions/organic_10.png", "transitions/organic_11.png", "transitions/organic_12.png", "transitions/organic_13.png", "transitions/organic_14.png", "transitions/organic_15.png"]},
+    { "name": "schematic_wand", "file": "schematic_wand.png" },
+    { "name": "paper", "file": "paper.png" }
   ]
 }

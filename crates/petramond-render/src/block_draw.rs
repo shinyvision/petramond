@@ -35,6 +35,11 @@ pub struct VisibleDraws<'a> {
     pub visible: &'a [u32],
     /// The render origin the baked vertices are relative to.
     pub origin: glam::IVec3,
+    /// The viewer's visual clock (seconds), which moves spinning and bobbing
+    /// prims.
+    pub time: f32,
+    /// The viewer's eye, relative to `origin`.
+    pub eye: Vec3,
 }
 
 impl<'a> VisibleDraws<'a> {
@@ -146,7 +151,80 @@ pub fn build_block_draws(draws: VisibleDraws<'_>, verts: &mut Vec<Vertex>, indic
                     }
                     multiply_tint(&mut verts[start..], *tint);
                 }
+                BlockDrawPrim::Sprite { .. } => {}
             }
+        }
+    }
+}
+
+/// One extruded sprite slab, whichever prim asked for it: an item drawn as
+/// its own sprite, or an authored sprite with its motion.
+struct SpriteSlab {
+    at: [f32; 3],
+    scale: f32,
+    yaw: f32,
+    pitch: f32,
+    tile: petramond_world::tile::Tile,
+    tint: [u8; 3],
+    emissive: bool,
+    motion: Option<SlabMotion>,
+}
+
+#[derive(Clone, Copy)]
+struct SlabMotion {
+    /// Bob height and period in seconds; either zero = still.
+    bob: [f32; 2],
+    faces_viewer: bool,
+}
+
+impl SpriteSlab {
+    /// The slab `prim` draws at `time`, or `None` for a prim drawn another way.
+    fn of(prim: &BlockDrawPrim, time: f32) -> Option<Self> {
+        match *prim {
+            BlockDrawPrim::Item {
+                at,
+                scale,
+                yaw,
+                pitch,
+                item,
+                tint,
+            } => {
+                let ItemRenderKind::Sprite(tile) = item.render_kind() else {
+                    return None;
+                };
+                Some(Self {
+                    at,
+                    scale,
+                    yaw,
+                    pitch,
+                    tile,
+                    tint,
+                    emissive: false,
+                    motion: None,
+                })
+            }
+            BlockDrawPrim::Sprite {
+                at,
+                scale,
+                yaw,
+                pitch,
+                spin,
+                bob,
+                faces_viewer,
+                tile,
+                tint,
+                emissive,
+            } => Some(Self {
+                at,
+                scale,
+                yaw: (yaw + spin * time) % std::f32::consts::TAU,
+                pitch,
+                tile,
+                tint,
+                emissive,
+                motion: Some(SlabMotion { bob, faces_viewer }),
+            }),
+            BlockDrawPrim::Cuboid { .. } => None,
         }
     }
 }
@@ -166,38 +244,42 @@ pub fn build_block_draw_sprites(
 ) {
     for inst in draws.iter() {
         for prim in &inst.set.resolved {
-            let BlockDrawPrim::Item {
-                at: local,
-                scale,
-                yaw,
-                pitch,
-                item,
-                tint,
-            } = prim
-            else {
-                continue;
-            };
-            let ItemRenderKind::Sprite(tile) = item.render_kind() else {
+            let Some(sprite) = SpriteSlab::of(prim, draws.time) else {
                 continue;
             };
             let count = super::item_model::build_extruded_item_lit(
-                tile,
-                prim_light(inst, false),
+                sprite.tile,
+                prim_light(inst, sprite.emissive),
                 env,
                 scratch,
             );
             if count == 0 {
                 continue;
             }
-            let centre = at(inst, draws.origin, *local);
+            let mut centre = at(inst, draws.origin, sprite.at);
+            let mut turn = block_rotation(inst);
+            if let Some(SlabMotion {
+                bob: [height, seconds],
+                faces_viewer,
+            }) = sprite.motion
+            {
+                if height != 0.0 && seconds != 0.0 {
+                    centre.y += height * (draws.time * std::f32::consts::TAU / seconds).sin();
+                }
+                if faces_viewer {
+                    // The slab's face is its ±Z; the viewer sees it square on.
+                    let to = draws.eye - centre;
+                    turn = Mat4::from_rotation_y(to.x.atan2(to.z));
+                }
+            }
             let m = Mat4::from_translation(centre)
-                * block_rotation(inst)
-                * Mat4::from_rotation_y(*yaw)
-                * Mat4::from_rotation_x(*pitch);
+                * turn
+                * Mat4::from_rotation_y(sprite.yaw)
+                * Mat4::from_rotation_x(sprite.pitch);
             let base = verts.len() as u32;
-            let t = tint_floats(*tint);
+            let t = tint_floats(sprite.tint);
             for v in scratch.iter() {
-                let local = Vec3::from(v.pos) * *scale;
+                let local = Vec3::from(v.pos) * sprite.scale;
                 verts.push(ItemVertex {
                     pos: m.transform_point3(local).to_array(),
                     tint: [v.tint[0] * t[0], v.tint[1] * t[1], v.tint[2] * t[2]],

@@ -318,7 +318,12 @@ fn a_rule_in_a_claimed_slot_never_takes_the_scrub_and_the_claim_comes_back_after
             },
         );
     };
-    let clip = |a: &Animator| a.graph().clips().name(a.playing(slot).expect("playing").clip).to_string();
+    let clip = |a: &Animator| {
+        a.graph()
+            .clips()
+            .name(a.playing(slot).expect("playing").clip)
+            .to_string()
+    };
 
     frame_at(&mut a, 0.5, &[]);
     assert_eq!(clip(&a), "a");
@@ -329,14 +334,21 @@ fn a_rule_in_a_claimed_slot_never_takes_the_scrub_and_the_claim_comes_back_after
         frame_at(&mut a, progress, &[]);
         assert_eq!(clip(&a), "b");
         let time = a.playing(slot).unwrap().time;
-        assert!((time - last - DT).abs() < 1e-4, "the rule's clip runs unscrubbed: {last} -> {time}");
+        assert!(
+            (time - last - DT).abs() < 1e-4,
+            "the rule's clip runs unscrubbed: {last} -> {time}"
+        );
         last = time;
     }
 
     for _ in 0..70 {
         frame_at(&mut a, 0.3, &[]);
     }
-    assert_eq!(clip(&a), "a", "the claim is back once the rule has played out");
+    assert_eq!(
+        clip(&a),
+        "a",
+        "the claim is back once the rule has played out"
+    );
     assert!((a.playing(slot).unwrap().progress - 0.3).abs() < 1e-3);
 }
 
@@ -355,10 +367,29 @@ fn a_run_that_plays_out_stays_ended_while_its_claim_stands() {
             looping: false,
         },
     )];
-    frame(&mut driver, &mut a, 0.0, AnimatorInputs { plays: &once, ..Default::default() });
+    frame(
+        &mut driver,
+        &mut a,
+        0.0,
+        AnimatorInputs {
+            plays: &once,
+            ..Default::default()
+        },
+    );
     assert!(a.playing(slot).is_some(), "the run starts");
     for _ in 0..40 {
-        frame(&mut driver, &mut a, 0.0, AnimatorInputs { plays: &once, ..Default::default() });
+        frame(
+            &mut driver,
+            &mut a,
+            0.0,
+            AnimatorInputs {
+                plays: &once,
+                ..Default::default()
+            },
+        );
     }
-    assert!(a.playing(slot).is_none(), "played out in a quarter second and never restarted");
+    assert!(
+        a.playing(slot).is_none(),
+        "played out in a quarter second and never restarted"
+    );
 }

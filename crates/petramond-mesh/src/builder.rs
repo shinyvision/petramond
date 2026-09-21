@@ -1,5 +1,4 @@
 use petramond_world::block::Block;
-#[cfg(test)]
 use petramond_world::block::ShapeState;
 use petramond_world::chunk::SectionPos;
 use petramond_world::section::Section;
@@ -60,7 +59,6 @@ impl MeshOptions {
 /// the pad mesher scatters their tint maps. The renderer culls the resulting
 /// mesh by its [`SectionPos`].
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
 pub fn build_section_mesh(
     section: &Section,
     pos: SectionPos,

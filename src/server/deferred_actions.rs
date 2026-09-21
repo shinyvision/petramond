@@ -71,13 +71,17 @@ impl ServerGame {
                 }
                 // GUI opens share the ordered menu boundary with player
                 // clicks and closes; this action point precedes that stage.
-                DeferredAction::OpenGui { player, kind, pos } => {
+                DeferredAction::OpenGui {
+                    player,
+                    kind,
+                    anchor,
+                } => {
                     let Some(s) = self.sessions.iter().position(|sess| sess.id == player) else {
                         continue;
                     };
                     self.sessions[s]
                         .pending_menu_actions
-                        .push(crate::server::player::PendingMenuAction::OpenGui { kind, pos });
+                        .push(crate::server::player::PendingMenuAction::OpenGui { kind, anchor });
                 }
                 DeferredAction::CloseGui { player } => {
                     let Some(s) = self.sessions.iter().position(|sess| sess.id == player) else {
@@ -85,6 +89,35 @@ impl ServerGame {
                     };
                     self.sessions[s].request_close_gui = true;
                 }
+                DeferredAction::ActorBreak {
+                    mob_id,
+                    pos,
+                    target,
+                    tool_slot,
+                    collect,
+                } => self.apply_actor_break(mob_id, pos, target, tool_slot, collect, events),
+                DeferredAction::ActorPlace {
+                    mob_id,
+                    pos,
+                    record,
+                    pay,
+                } => self.apply_actor_place(mob_id, pos, record, pay, events),
+                DeferredAction::ActorInteract { mob_id, pos } => {
+                    self.apply_actor_interact(mob_id, pos, events)
+                }
+                DeferredAction::ContainerHold { mob_id, pos, open } => {
+                    self.hold_container(mob_id, pos, open, events)
+                }
+                DeferredAction::SchematicChoose { player, tag } => {
+                    self.open_schematic_choice(player, tag)
+                }
+                DeferredAction::SchematicPosition {
+                    player,
+                    tag,
+                    asset,
+                    origin,
+                    turns,
+                } => self.open_schematic_position(player, tag, asset, origin, turns),
                 DeferredAction::ChatSend { text, targets } => {
                     let targets = match targets {
                         None => crate::server::chat::ChatTargets::All,

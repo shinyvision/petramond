@@ -425,14 +425,14 @@ fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
         game.server.sessions[0].menu.target(),
         crate::game::container::ContainerTarget::Gui {
             kind: petramond_world::gui_state::GuiKind::CraftingTable,
-            pos: None
+            anchor: None
         }
     );
     assert_eq!(
         game.server.sessions[0].request_open_gui,
         Some((
             petramond_world::gui_state::GuiKind::CraftingTable,
-            Some(table)
+            Some(table.into())
         ))
     );
     assert!(game.server.sessions[0].menu.craft_output().is_none());

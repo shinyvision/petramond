@@ -169,6 +169,12 @@ pub enum PlayerAction {
     /// tracker re-anchors so the switch is never measured as a fall. The
     /// authoritative mode flows back via `SelfState::mode`.
     ToggleMode,
+    /// Operator-only creative mode and flight controls.
+    ToggleCreative,
+    ToggleFlight,
+    Creative(crate::schematic::CreativeAction),
+    /// Schematic choices, positionings and archive streams (any mode).
+    Schematic(crate::schematic::share::SchematicRequest),
     /// The inventory key (E): the server opens the inventory crafting session
     /// on the next tick and answers with an `OpenScreen::Gui` ack carrying
     /// the inventory kind (the client's screen is already up).

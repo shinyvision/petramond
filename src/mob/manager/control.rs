@@ -73,6 +73,7 @@ impl Mobs {
         vertical: Option<f32>,
         yaw: Option<f32>,
         while_walking: bool,
+        gait: bool,
     ) -> bool {
         self.mob_mut(index).is_some_and(|m| {
             m.set_drive(super::super::kinematics::DriveIntent {
@@ -80,6 +81,7 @@ impl Mobs {
                 vertical,
                 yaw,
                 while_walking,
+                gait,
             })
         })
     }

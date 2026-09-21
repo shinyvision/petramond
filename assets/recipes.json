@@ -107,6 +107,21 @@
     },
     {
       "type": "crafting",
+      "recipe": "petramond:paper",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:hemp",
+          "count": 8
+        }
+      ],
+      "result": {
+        "item": "petramond:paper",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
       "recipe": "petramond:rope",
       "station": "petramond:inventory",
       "ingredients": [

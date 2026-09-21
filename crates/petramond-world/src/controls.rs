@@ -33,6 +33,13 @@ pub enum Control {
     OpenChat,
     OpenCommandChat,
     TogglePlayerMode,
+    ToggleCreative,
+    UndoEdit,
+    RedoEdit,
+    /// Step the held tool's setting (or a preview's height) by one notch.
+    /// Default: Ctrl + scroll. With nothing to adjust it steps the hotbar.
+    AdjustToolNext,
+    AdjustToolPrev,
     CloseScreen,
     SelectHotbar(u8),
     /// Drop the held (active hotbar) item: one item, or the whole stack when the
@@ -104,12 +111,17 @@ pub enum BindableAction {
     DropItem,
     SwapOffHand,
     Chat,
+    CreativeMode,
+    UndoEdit,
+    RedoEdit,
+    AdjustToolNext,
+    AdjustToolPrev,
 }
 
 impl BindableAction {
     /// Display order of the Options → Controls screen: grouped by
     /// [`category`](Self::category), categories in first-appearance order.
-    pub const ALL: [BindableAction; 16] = [
+    pub const ALL: [BindableAction; 21] = [
         BindableAction::WalkForward,
         BindableAction::StrafeRight,
         BindableAction::StrafeLeft,
@@ -126,6 +138,11 @@ impl BindableAction {
         BindableAction::DropItem,
         BindableAction::SwapOffHand,
         BindableAction::Chat,
+        BindableAction::CreativeMode,
+        BindableAction::UndoEdit,
+        BindableAction::RedoEdit,
+        BindableAction::AdjustToolNext,
+        BindableAction::AdjustToolPrev,
     ];
 
     /// Stable id string (the serde name): widget-id suffix + settings key.
@@ -142,6 +159,11 @@ impl BindableAction {
             BindableAction::HotbarPrev => "hotbar_prev",
             BindableAction::OpenInventory => "open_inventory",
             BindableAction::Chat => "chat",
+            BindableAction::CreativeMode => "creative_mode",
+            BindableAction::UndoEdit => "undo_edit",
+            BindableAction::RedoEdit => "redo_edit",
+            BindableAction::AdjustToolNext => "adjust_tool_next",
+            BindableAction::AdjustToolPrev => "adjust_tool_prev",
             BindableAction::Sprint => "sprint",
             BindableAction::Sneak => "sneak",
             BindableAction::RotateBlock => "rotate_block",
@@ -164,6 +186,11 @@ impl BindableAction {
             BindableAction::HotbarPrev => "Previous Hotbar",
             BindableAction::OpenInventory => "Open Inventory",
             BindableAction::Chat => "Chat",
+            BindableAction::CreativeMode => "Creative Mode",
+            BindableAction::UndoEdit => "Undo Edit",
+            BindableAction::RedoEdit => "Redo Edit",
+            BindableAction::AdjustToolNext => "Next Tool Setting",
+            BindableAction::AdjustToolPrev => "Prev Tool Setting",
             BindableAction::Sprint => "Sprint",
             BindableAction::Sneak => "Sneak",
             BindableAction::RotateBlock => "Rotate Block",
@@ -191,7 +218,12 @@ impl BindableAction {
             | BindableAction::RotateBlock
             | BindableAction::DropItem
             | BindableAction::SwapOffHand => "Interacting",
-            BindableAction::Chat => "Other",
+            BindableAction::Chat
+            | BindableAction::CreativeMode
+            | BindableAction::UndoEdit
+            | BindableAction::RedoEdit
+            | BindableAction::AdjustToolNext
+            | BindableAction::AdjustToolPrev => "Other",
         }
     }
 
@@ -209,6 +241,11 @@ impl BindableAction {
             BindableAction::HotbarPrev => Control::HotbarPrev,
             BindableAction::OpenInventory => Control::ToggleInventory,
             BindableAction::Chat => Control::OpenChat,
+            BindableAction::CreativeMode => Control::ToggleCreative,
+            BindableAction::UndoEdit => Control::UndoEdit,
+            BindableAction::RedoEdit => Control::RedoEdit,
+            BindableAction::AdjustToolNext => Control::AdjustToolNext,
+            BindableAction::AdjustToolPrev => Control::AdjustToolPrev,
             BindableAction::Sprint => Control::Sprint,
             BindableAction::Sneak => Control::Sneak,
             BindableAction::RotateBlock => Control::RotateHeldBlock,
@@ -231,6 +268,31 @@ impl BindableAction {
             BindableAction::HotbarPrev => Binding::scroll(ScrollDir::Up),
             BindableAction::OpenInventory => key(KeyCode::KeyE),
             BindableAction::Chat => key(KeyCode::KeyT),
+            BindableAction::CreativeMode | BindableAction::UndoEdit | BindableAction::RedoEdit => {
+                Binding {
+                    mods: BindMods {
+                        ctrl: true,
+                        shift: self == BindableAction::RedoEdit,
+                        ..BindMods::default()
+                    },
+                    ..key(if self == BindableAction::CreativeMode {
+                        KeyCode::KeyU
+                    } else {
+                        KeyCode::KeyZ
+                    })
+                }
+            }
+            BindableAction::AdjustToolNext | BindableAction::AdjustToolPrev => Binding {
+                mods: BindMods {
+                    ctrl: true,
+                    ..BindMods::default()
+                },
+                ..Binding::scroll(if self == BindableAction::AdjustToolNext {
+                    ScrollDir::Down
+                } else {
+                    ScrollDir::Up
+                })
+            },
             BindableAction::Sprint => key(KeyCode::ControlLeft),
             BindableAction::Sneak => key(KeyCode::ShiftLeft),
             BindableAction::RotateBlock => key(KeyCode::KeyR),

@@ -6,10 +6,10 @@ use crate::client::{
     ClientTextRun,
 };
 use crate::data::{
-    BlockInfoData, CollisionShape, EffectStateData, EntityRef, GuiValue, GuiViewerData,
-    ItemEntityData, ItemInfoData, ItemStackData, LightData, MobAnimStateData, MobRidersData,
-    MobSnapshot, MobTagLookup, MobTagValue, PlayerAttribute, PlayerInputData, PlayerListEntry,
-    PlayerSnapshot, RayFilter, RaycastHitData, RuntimeSide,
+    BlockInfoData, BlockRecord, CollisionShape, ContainerAddress, EffectStateData, EntityRef,
+    GuiValue, GuiViewerData, ItemEntityData, ItemInfoData, ItemStackData, LightData,
+    MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup, MobTagValue, PlayerAttribute,
+    PlayerInputData, PlayerListEntry, PlayerSnapshot, RayFilter, RaycastHitData, RuntimeSide,
 };
 use crate::events::EventKind;
 use crate::ids::{BlockId, ConditionId, ItemId, MobId, PlayerId};
@@ -419,10 +419,13 @@ pub enum HostCall {
     /// Ask the app shell to open the mod GUI registered under `kind_key`
     /// (`"wheel:wheel"` — a baked manifest or `open_gui` block row must have
     /// registered it). Queued like [`HostCall::DamagePlayer`]; the screen
-    /// opens after this tick and may replace an open menu. `false` = unknown / non-mod kind. → [`HostRet::Bool`].
+    /// opens after this tick and may replace an open menu. `at` anchors the
+    /// session: a block (its container backs the document's `container`
+    /// slots) or a live mob (its carried slots do; the session closes when
+    /// the mob leaves). `false` = unknown / non-mod kind. → [`HostRet::Bool`].
     GuiOpen {
         kind_key: String,
-        pos: Option<[i32; 3]>,
+        at: Option<crate::ContainerAddress>,
     },
     /// Close the open mod GUI (a no-op if none is open — engine containers
     /// are not closable from mods). Queued like [`HostCall::GuiOpen`].
@@ -523,7 +526,7 @@ pub enum HostCall {
     /// there yet (one is created when the GUI first opens, or by the first
     /// `ContainerSet`). → [`HostRet::ContainerSlots`].
     ContainerGet {
-        pos: [i32; 3],
+        at: ContainerAddress,
     },
     /// Write container slots at `pos` as `(slot index, stack)` entries, batched
     /// per the message-level ABI rule. Creates/grows the container as needed
@@ -536,10 +539,10 @@ pub enum HostCall {
     /// to it — size against `ItemInfo.max_stack` if the overflow matters.
     /// At most 4096 slot entries per call (the sim batch cap); more is
     /// [`HostRet::Error`]. →
-    /// [`HostRet::Bool`] (`false` = unloaded, or an unknown item name — the
-    /// batch is not applied).
+    /// [`HostRet::Bool`] (`false` = unloaded, storage that is not this
+    /// mod's, or an unknown item name — the batch is not applied).
     ContainerSet {
-        pos: [i32; 3],
+        at: ContainerAddress,
         slots: Vec<(u32, Option<ItemStackData>)>,
     },
     /// Read one item's registry row (by registry NAME): the same
@@ -610,7 +613,7 @@ pub enum HostCall {
     /// [`HostRet::Error`]. → [`HostRet::Containers`], parallel to the
     /// positions.
     ContainerGetMany {
-        positions: Vec<[i32; 3]>,
+        addresses: Vec<ContainerAddress>,
     },
 
     // --- Mob particle emitters (landed 2026-07-10) ---------------------------
@@ -640,6 +643,11 @@ pub enum HostCall {
         key: String,
         pos: [f64; 3],
         intensity: f32,
+        /// Which way the event pushes, for a bundle with an `along_speed` (a
+        /// struck face's normal).
+        direction: Option<[f32; 3]>,
+        /// What the particles are cut from; `None` = the bundle's own look.
+        texture: Option<crate::ParticleTexture>,
     },
 
     // --- Presentation-only client modules ---------------------------------
@@ -883,6 +891,12 @@ pub enum HostCall {
         vertical: Option<f32>,
         yaw: Option<f32>,
         while_walking: bool,
+        /// The horizontal drive is the body WALKING ITSELF there (a step
+        /// sideways, a shuffle to the middle of its block), not something
+        /// carrying it: the mob reads as `moving` — walk clip paced to the
+        /// driven speed, footsteps — where a plain drive (a boat, a cart)
+        /// deliberately does not.
+        gait: bool,
     },
     /// Toggle a NAMED model animation on the live mob `mob_id` — the
     /// animation sibling of [`HostCall::MobEmitterSet`]: presentation-only,
@@ -1374,10 +1388,10 @@ pub enum HostCall {
     /// ([`DrawPrim`](crate::DrawPrim), in the block's own space). An empty
     /// list clears it. → [`HostRet::Bool`], where `false` means the cell is
     /// UNLOADED (or not stream-final) — a clear is an accepted submission and
-    /// answers `true`. Submitting for a block this mod does not own is a
-    /// [`HostRet::Error`], not a `false`: on the single call that is a mod
-    /// bug, while the batched form answers `false` per entry, because losing
-    /// a race with a machine someone just broke is ordinary.
+    /// answers `true`. A block that is not this mod's answers `false` too,
+    /// here and per entry in the batched form: what stands at a position is
+    /// the world's to say and changes under a mod (a machine someone just
+    /// broke, a position remembered from a save), so it is never an error.
     ///
     /// The set is RETAINED and redrawn every frame from the replica, and it
     /// costs NO re-mesh — which is the whole point. A block row swap or a
@@ -1867,12 +1881,12 @@ pub enum HostCall {
     },
     /// Insert through the target container's slot admission rules; returns the remainder.
     ContainerInsert {
-        pos: [i32; 3],
+        at: ContainerAddress,
         stack: ItemStackData,
     },
     /// Take at most count from one slot of any container; returns the taken stack.
     ContainerTake {
-        pos: [i32; 3],
+        at: ContainerAddress,
         slot: u32,
         count: u8,
     },
@@ -2078,6 +2092,252 @@ pub enum HostCall {
         rig: String,
         clip: String,
     },
+    /// Move up to `count` items out of slot `slot` of `from` into `to`,
+    /// through `to`'s own slot admission (filter-matching slots first,
+    /// merging before filling) — a hopper step as ONE atomic move: whatever
+    /// `to` refuses stays in the source slot, so no item exists in both or
+    /// neither. Neither side is namespace-guarded, exactly like
+    /// [`ContainerTake`](Self::ContainerTake) + [`ContainerInsert`](Self::ContainerInsert).
+    /// Both containers must be readable (stream-final, the mob alive).
+    /// → [`HostRet::ItemStack`]: what actually moved (`None` = nothing).
+    ContainerTransfer {
+        from: ContainerAddress,
+        slot: u32,
+        to: ContainerAddress,
+        count: u8,
+    },
+    /// Each position's cell as a [`BlockRecord`], parallel to `positions`:
+    /// its row, shape state and carried data — never container contents or
+    /// machine state. `None` = unloaded or not stream-final. At most
+    /// `SIM_BATCH_MAX` positions. Server only. → [`HostRet::BlockRecords`].
+    BlockRecordsAt {
+        positions: Vec<[i32; 3]>,
+    },
+    /// What each record asks of construction ([`RecordPlan`]), parallel to
+    /// `records`. Registry-only: legal on any instance. At most
+    /// `SIM_BATCH_MAX` records. → [`HostRet::RecordPlans`].
+    BlockRecordPlans {
+        records: Vec<BlockRecord>,
+    },
+    /// Each record measured against the world at its position
+    /// ([`RecordStatus`]), parallel to `cells`. At most `SIM_BATCH_MAX`
+    /// cells. Server only. → [`HostRet::RecordStatuses`].
+    BlockRecordStatuses {
+        cells: Vec<([i32; 3], BlockRecord)>,
+    },
+    /// One tick of `actor` (a live mob) digging the block at `pos` with the
+    /// tool in slot `tool_slot` of its own carried container (`None` = its
+    /// bare hands), under the mining rules a player's break follows: the
+    /// block's hardness, the tool's kind, tier and speed, and the harvest gate
+    /// for drops. The dig accrues only while the actor keeps calling on
+    /// consecutive ticks for the same block and tool; a gap, another target or
+    /// another tool starts over. Every call checks reach from the actor's eye
+    /// (its row's `reach`) and a clear line to the block. When the duration
+    /// completes the break is queued: `block_break_pre` sees the actor, and
+    /// with `collect` the drops (and a broken container's contents) go into
+    /// the actor's container, the rest scattering as usual. Presentation
+    /// follows the actor: the crack shows on the block while it digs.
+    /// Server only. → [`HostRet::Dig`].
+    ActorDig {
+        actor: EntityRef,
+        pos: [i32; 3],
+        tool_slot: Option<u32>,
+        collect: bool,
+    },
+    /// `actor` (a live mob) builds `record` at `pos` — the whole object the
+    /// record anchors — under survival placement rules: reach and a clear
+    /// line from its eye, a block beside the object to place it against, the
+    /// support its row demands, no body in the way, and `block_place_pre`
+    /// seeing the actor. With `pay`, the record's cost (only the missing
+    /// parts of a partly built cell) must be carried in the actor's container
+    /// and is consumed, and the paid items' data lands in the cell. Without
+    /// `pay` the record's block must be the calling mod's own. Valid requests
+    /// queue for this tick and report through
+    /// [`EventKind::ActorActed`](crate::EventKind::ActorActed). Server only.
+    /// → [`HostRet::Place`].
+    ActorPlace {
+        actor: EntityRef,
+        pos: [i32; 3],
+        record: BlockRecord,
+        pay: bool,
+    },
+    /// Whether a body of species `key` standing at foothold `from` can walk
+    /// to foothold `to`, treating every `blocked` cell as a solid block — a
+    /// wall that is planned but not built. The probe spends up to `max_nodes`
+    /// search expansions (at most the navigator's own route budget) from a
+    /// per-tick budget shared by every route probe. → [`HostRet::Route`]:
+    /// `None` = the budget cannot cover it this tick (ask again next tick) or
+    /// the species is unknown. Server only.
+    PathProbe {
+        key: String,
+        from: [i32; 3],
+        to: [i32; 3],
+        blocked: Vec<[i32; 3]>,
+        max_nodes: u32,
+    },
+    /// Which `cells` a body of species `key` could stand in (a navigation
+    /// foothold with room for the body, out of hazards), parallel to `cells`
+    /// (at most `SIM_BATCH_MAX`). Unknown species = all `false`. Server only.
+    /// → [`HostRet::Bools`].
+    Footholds {
+        key: String,
+        cells: Vec<[i32; 3]>,
+    },
+    /// Draw item `main` in the live mob's main hand and `off` in its off hand
+    /// (registry names; `None` = empty), at the hand bones its row names.
+    /// Presentation only: replicated, never persisted — the claiming mod
+    /// re-derives it. → [`HostRet::Bool`] (`false` = no such live mob or an
+    /// unknown item).
+    MobHeldDisplay {
+        mob_id: u64,
+        main: Option<String>,
+        off: Option<String>,
+    },
+    /// A world-held schematic's facts, starting a background decode on the
+    /// first ask. Server only. → [`HostRet::Schematic`].
+    SchematicInfo {
+        asset: crate::SchematicId,
+    },
+    /// Stored section `section` of a decoded schematic turned `turns` quarter
+    /// turns clockwise, as construction records. `None` = not decoded yet
+    /// (see [`SchematicInfo`](Self::SchematicInfo)) or no such section.
+    /// Server only. → [`HostRet::SchematicCells`].
+    SchematicCells {
+        asset: crate::SchematicId,
+        section: u32,
+        turns: u8,
+    },
+    /// Ask `player`'s client to choose a schematic from their library for
+    /// `tag` (namespaced to this mod). The choice arrives as
+    /// [`EventKind::SchematicChosen`](crate::EventKind::SchematicChosen) once
+    /// the world holds the design — uploaded from the client if it did not.
+    /// A newer request for the same player replaces an open one.
+    /// → [`HostRet::Bool`] (`false` = no such connected player).
+    SchematicChoose {
+        player: PlayerId,
+        tag: String,
+    },
+    /// Ask `player`'s client to position the world-held schematic `asset`
+    /// for `tag` (namespaced to this mod) with the placement controls,
+    /// starting at `origin` when given. Anchoring it arrives as
+    /// [`EventKind::SchematicPositioned`](crate::EventKind::SchematicPositioned).
+    /// → [`HostRet::Bool`] (`false` = no such player or no such asset).
+    SchematicPosition {
+        player: PlayerId,
+        tag: String,
+        asset: crate::SchematicId,
+        origin: Option<[i32; 3]>,
+        turns: u8,
+    },
+    /// Anchor, move or remove (`None`) the ghost `key` (namespaced to this
+    /// mod): a translucent render of a world-held schematic where it will be
+    /// built, drawn by the viewers' clients from the remaining work.
+    /// Presentation, never persisted: re-set it after a restart.
+    /// → [`HostRet::Bool`] (`false` = no such asset).
+    SchematicGhostSet {
+        key: String,
+        ghost: Option<crate::SchematicGhostData>,
+    },
+    /// A connected player's lasting identity: their stable name and whether
+    /// they are an operator. → [`HostRet::Identity`] (`None` = no such
+    /// connected player). Server only.
+    PlayerIdentity {
+        player: PlayerId,
+    },
+    /// What [`HostCall::ActorPlace`] would answer if `actor` stood with its
+    /// feet at `from`, without placing, paying or queueing anything — the
+    /// same rules, so a planner hands its worker only placements the world
+    /// accepts. `Queued` = it would be accepted. Refusals that do not depend
+    /// on where the actor stands (no face, no support, obstructed, a body in
+    /// the way) hold for any stance. Server only. → [`HostRet::Place`].
+    ActorPlaceCheck {
+        actor: EntityRef,
+        from: [f64; 3],
+        pos: [i32; 3],
+        record: BlockRecord,
+        pay: bool,
+    },
+    /// Every foothold inside the inclusive box `min..=max` that a body of
+    /// species `key` walks to from foothold `from` without leaving the box —
+    /// or, with `toward`, every foothold in it that walks to `from` — each
+    /// `blocked` cell treated as a solid block. The moves are
+    /// [`PathProbe`](Self::PathProbe)'s, so one call answers a probe per cell,
+    /// and a detour inside the box is never cut short. Spends from the same
+    /// per-tick budget, at most `max_nodes` footholds. → [`HostRet::Flood`]
+    /// (an unknown species is `Exceeded`: no asking again answers it). Server
+    /// only.
+    WalkRegion {
+        key: String,
+        from: [i32; 3],
+        min: [i32; 3],
+        max: [i32; 3],
+        blocked: Vec<[i32; 3]>,
+        toward: bool,
+        max_nodes: u32,
+    },
+    /// Hold the container at `at` open (`open`) or let it go, on behalf of a
+    /// live mob, exactly as a player's open screen does: what the container
+    /// shows while viewed (a chest's lid lifting, with its sound) it shows
+    /// while anyone holds it. A mob's holds end when it leaves the world.
+    /// → [`HostRet::Bool`]: `false` = no slot storage there (a carried
+    /// container has nothing to show) or no such mob. Server only.
+    ContainerHold {
+        at: ContainerAddress,
+        actor: EntityRef,
+        open: bool,
+    },
+    /// A live mob uses the block at `pos` the way a player's right-click
+    /// does, for what a body does without a screen (a door swings open or
+    /// shut, heard and seen by every viewer). The actor must be looking at
+    /// the block within its reach, as [`ActorAims`](Self::ActorAims) judges.
+    /// Applied at the tick's action point and reported as `actor_acted` with
+    /// [`ActorAction::Use`](crate::ActorAction::Use): a block with nothing a
+    /// body uses is refused `NothingToDo` there. → [`HostRet::Bool`]:
+    /// `false` = no such mob, or it cannot click the block from where it
+    /// stands. Server only.
+    ActorInteract {
+        actor: EntityRef,
+        pos: [i32; 3],
+    },
+    /// Where a live mob, with its feet at each of `from` (at most
+    /// `SIM_BATCH_MAX`), would look to work the cell at `pos`: with a
+    /// `record`, the point on a face a click places it against —
+    /// one that is seen, within reach, and leaves the record's orientation
+    /// when clicked looking that way; without, a seen point of the block
+    /// standing there (a dig, a use). An actor's actions land only where it
+    /// is looking, so this is both the stance test and the gaze to take up.
+    /// → [`HostRet::Aims`], parallel to `from`. Server only.
+    ActorAims {
+        actor: EntityRef,
+        from: Vec<[f64; 3]>,
+        pos: [i32; 3],
+        record: Option<crate::BlockRecord>,
+    },
+    /// Replace the retained draw set a live mob wears (empty clears it):
+    /// [`SetBlockDraw`](Self::SetBlockDraw) for a body instead of a cell.
+    /// Prim space has its origin at the mob's FEET centre, in block units;
+    /// `frame` says whether it turns with the body's yaw (a hat) or keeps
+    /// the world's axes (a mark hung in the air beside it). The set follows
+    /// the body between ticks on every viewer's own interpolation, is
+    /// replicated, never saved, and ends with the mob. Bounded and
+    /// finite-checked like a block's set. → [`HostRet::Bool`]: `false` = no
+    /// such mob. Server only.
+    SetMobDraw {
+        mob_id: u64,
+        frame: crate::DrawFrame,
+        prims: Vec<crate::DrawPrim>,
+    },
+    /// The world's change log: every cell announced changed — a block, a
+    /// fluid, a door's swing — from entry `since` on. `None` asks only where
+    /// the log stands now. A mod keeping something derived from the world's
+    /// cells (a survey, a route answer) follows the log instead of reading
+    /// the cells again: pass the reply's `next` as the following `since`.
+    /// Streaming is not a change (a section loading or leaving is not
+    /// logged), and the numbering is a session's: never save it. Server
+    /// only. → [`HostRet::BlockChanges`].
+    BlockChangesSince {
+        since: Option<u64>,
+    },
 }
 
 /// The three ways a [`HostCall::MemoClaim`] comes back.
@@ -2256,4 +2516,17 @@ pub enum HostRet {
     BlockInfos(Vec<Option<BlockInfoData>>),
     /// [`HostCall::AnimationClip`].
     AnimationClip(Option<crate::AnimationClipInfo>),
+    BlockRecords(Vec<Option<crate::BlockRecord>>),
+    RecordPlans(Vec<crate::RecordPlan>),
+    RecordStatuses(Vec<crate::RecordStatus>),
+    Dig(crate::DigProgress),
+    Place(crate::PlaceRequest),
+    Route(Option<crate::Route>),
+    Schematic(crate::SchematicLookup),
+    SchematicCells(Option<crate::SchematicCellsData>),
+    Identity(Option<crate::PlayerIdentityData>),
+    Flood(crate::Flood),
+    Aims(Vec<Result<[f64; 3], crate::ActionRefusal>>),
+    /// [`HostCall::BlockChangesSince`].
+    BlockChanges(crate::BlockChanges),
 }

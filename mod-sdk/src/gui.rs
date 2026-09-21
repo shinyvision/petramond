@@ -9,7 +9,7 @@
 //! progress flame, a charge meter). A bound frame is authoritative over the
 //! sheet's own `fps`, which cycles on its own while nothing is bound.
 
-use mod_api::{GuiValue, GuiViewerData, PlayerId};
+use mod_api::{ContainerAddress, GuiValue, GuiViewerData, PlayerId};
 
 use crate::__rt::host_fn;
 
@@ -42,7 +42,7 @@ host_fn! {
 
 host_fn! {
     /// Every connected session with a mod GUI open right now, in session
-    /// order: who, which kind, and the cell it was opened on.
+    /// order: who, which kind, and the block or mob it was opened on.
     ///
     /// This is the "who is looking" question, answered by the engine rather
     /// than tracked mod-side off `container_opened`/`container_closed` — those
@@ -60,8 +60,15 @@ host_fn! {
     /// Ask the app shell to open the mod GUI registered under `kind_key` (a baked
     /// manifest or an `open_gui` block row must have registered it). The screen
     /// opens after this tick, replacing an existing menu when present.
-    /// `pos` anchors the document; `false` = unknown/non-mod kind or no actor.
-    pub fn gui_open(kind_key: &str, pos: Option<[i32; 3]>) -> bool => GuiOpen { kind_key: kind_key.into(), pos } => Bool
+    ///
+    /// `at` anchors the session, and the anchor's storage backs the document's
+    /// `container` slots: a block position (`Some([x, y, z])`) or a live mob
+    /// (`Some(ContainerAddress::Mob(id))`, its carried slots; the session ends
+    /// when the mob leaves the world). An unanchored open is
+    /// `None::<ContainerAddress>`. `false` = unknown/non-mod kind, no actor,
+    /// or no such mob.
+    pub fn gui_open(kind_key: &str, at: Option<impl Into<ContainerAddress>>) -> bool
+        => GuiOpen { kind_key: kind_key.into(), at: at.map(Into::into) } => Bool
 }
 
 host_fn! {

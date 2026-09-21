@@ -41,6 +41,56 @@ impl Container {
             self.slots.resize(len, None);
         }
     }
+
+    /// How many items stack with `like` (same item, same instance data)
+    /// across every slot.
+    pub fn count_like(&self, like: ItemStack) -> u32 {
+        self.slots
+            .iter()
+            .flatten()
+            .filter(|s| s.can_stack_with(&like))
+            .map(|s| u32::from(s.count))
+            .sum()
+    }
+
+    /// Whether the slots hold every stack of `cost`, equal stacks counted
+    /// together.
+    pub fn holds_all(&self, cost: &[ItemStack]) -> bool {
+        cost.iter().all(|want| {
+            let needed: u32 = cost
+                .iter()
+                .filter(|c| c.can_stack_with(want))
+                .map(|c| u32::from(c.count))
+                .sum();
+            self.count_like(*want) >= needed
+        })
+    }
+
+    /// Remove exactly `cost`, emptiest-last-slot first; `false` (and nothing
+    /// removed) when the slots do not hold it all.
+    pub fn take_all(&mut self, cost: &[ItemStack]) -> bool {
+        if !self.holds_all(cost) {
+            return false;
+        }
+        for want in cost {
+            let mut left = want.count;
+            for slot in self.slots.iter_mut().rev() {
+                if left == 0 {
+                    break;
+                }
+                let Some(stack) = slot else {
+                    continue;
+                };
+                if !stack.can_stack_with(want) {
+                    continue;
+                }
+                let n = stack.count.min(left);
+                left -= n;
+                *slot = (stack.count > n).then(|| stack.restack(stack.count - n));
+            }
+        }
+        true
+    }
 }
 
 /// One item GROUP a slot admits, in whichever of the content layer's two

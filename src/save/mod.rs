@@ -17,6 +17,7 @@ mod decode;
 pub mod entities;
 mod furnace;
 mod io;
+mod journal;
 pub mod level;
 pub mod mobs;
 pub mod palette;
@@ -29,7 +30,6 @@ mod worlds;
 mod tests;
 
 pub use codec::SectionSnapshot;
-pub use io::write_atomic;
 pub use level::LevelData;
 pub use petramond_util::paths::base_data_dir;
 pub use worlds::{
@@ -79,9 +79,8 @@ pub struct LoadedColumnGen {
 
 /// Live handle to a world's on-disk save and its I/O thread.
 pub struct WorldSave {
-    tx: Sender<(u64, IoMsg)>,
+    writes: Arc<WriteQueue>,
     read_tx: Sender<ReadMsg>,
-    next_write_seq: AtomicU64,
     section_write_barriers: HashMap<(SectionStore, i32, i32), u64>,
     colgen_write_barriers: HashMap<(i32, i32), u64>,
     load_rx: Receiver<LoadedSection>,
@@ -103,6 +102,74 @@ pub struct WorldSave {
     /// `<world dir>/players/` — per-player `<sanitized name>.dat` files, read
     /// synchronously at session open/join (one small file, like `level.dat`).
     players_dir: PathBuf,
+    /// The world's save directory.
+    dir: PathBuf,
+    /// Write jobs the I/O thread is holding because one failed to land.
+    held_writes: Arc<AtomicU64>,
+}
+
+/// The ordered lane to the write thread, shared with any open
+/// [`SaveBatch`].
+struct WriteQueue {
+    tx: Sender<(u64, IoMsg)>,
+    next_seq: AtomicU64,
+    open: Mutex<Option<OpenBatch>>,
+}
+
+struct OpenBatch {
+    seq: u64,
+    msgs: Vec<IoMsg>,
+    /// Live [`SaveBatch`] guards; the batch is sent when the last one drops.
+    guards: usize,
+}
+
+impl WriteQueue {
+    fn next_seq(&self) -> u64 {
+        self.next_seq.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    fn queue(&self, msg: IoMsg) -> u64 {
+        if let Some(batch) = self.open.lock().expect("save batch").as_mut() {
+            batch.msgs.push(msg);
+            return batch.seq;
+        }
+        let seq = self.next_seq();
+        let _ = self.tx.send((seq, msg));
+        seq
+    }
+
+    fn send_open_batch(&self) {
+        if let Some(batch) = self.open.lock().expect("save batch").take() {
+            let _ = self.tx.send((batch.seq, IoMsg::Batch(batch.msgs)));
+        }
+    }
+}
+
+/// While alive, every write queued on its [`WorldSave`] is gathered into one
+/// batch that reaches disk whole or not at all; dropping it hands the batch
+/// to the I/O thread. An unwind drops it too, so what was gathered is still
+/// written and later writes are never swallowed by a batch nobody closes.
+#[must_use = "the batch is sent when this guard drops"]
+pub struct SaveBatch {
+    writes: Arc<WriteQueue>,
+}
+
+impl Drop for SaveBatch {
+    fn drop(&mut self) {
+        let last = {
+            let mut open = self.writes.open.lock().expect("save batch");
+            match open.as_mut() {
+                Some(batch) => {
+                    batch.guards -= 1;
+                    batch.guards == 0
+                }
+                None => false,
+            }
+        };
+        if last {
+            self.writes.send_open_batch();
+        }
+    }
 }
 
 /// The result of opening (or creating) a world.
@@ -127,10 +194,41 @@ pub struct OpenedWorld {
 }
 
 impl WorldSave {
+    /// The world's save directory.
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     fn queue_write(&self, msg: IoMsg) -> u64 {
-        let seq = self.next_write_seq.fetch_add(1, Ordering::AcqRel) + 1;
-        let _ = self.tx.send((seq, msg));
-        seq
+        self.writes.queue(msg)
+    }
+
+    /// Gather the writes queued while the returned guard lives into one
+    /// batch. Only those: a write queued outside a batch (a section leaving
+    /// the streamed area) lands on its own, so state that spans two records
+    /// is consistent on disk as of the last batch, not between batches.
+    /// Guards nest; the outermost one sends.
+    pub fn begin_batch(&self) -> SaveBatch {
+        let mut open = self.writes.open.lock().expect("save batch");
+        match open.as_mut() {
+            Some(batch) => batch.guards += 1,
+            None => {
+                *open = Some(OpenBatch {
+                    seq: self.writes.next_seq(),
+                    msgs: Vec::new(),
+                    guards: 1,
+                })
+            }
+        }
+        SaveBatch {
+            writes: self.writes.clone(),
+        }
+    }
+
+    /// How many write jobs are being held back because one failed to reach
+    /// disk (it is retried; the rest wait behind it). 0 = saving works.
+    pub fn held_writes(&self) -> u64 {
+        self.held_writes.load(Ordering::Relaxed)
     }
 
     fn queue_section_writes(&mut self, store: SectionStore, snaps: Vec<SectionSnapshot>) {
@@ -329,6 +427,7 @@ impl WorldSave {
     /// sending the final level / entities / chunks: the channel is ordered, so
     /// the join returns only once every prior write has hit disk.
     pub fn shutdown(&mut self) {
+        self.writes.send_open_batch();
         self.queue_write(IoMsg::Shutdown);
         if let Some(h) = self.writer_handle.take() {
             let _ = h.join();
@@ -359,6 +458,10 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let explored_dir = dir.join("explored");
     std::fs::create_dir_all(&region_dir)?;
     std::fs::create_dir_all(&explored_dir)?;
+    // Finish the last save's batch before anything reads the save.
+    if journal::recover(&dir)? {
+        log::info!("finished an interrupted save in {}", dir.display());
+    }
 
     // Per-world settings (`settings.json`; absent = defaults). Mod enablement
     // is read BEFORE the palette so disabled-mod content decodes as unknown.
@@ -490,16 +593,19 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     );
 
     let players_dir = dir.join("players");
+    let world_dir = dir.clone();
     let (tx, rx) = std::sync::mpsc::channel::<(u64, IoMsg)>();
     let (read_tx, read_rx) = std::sync::mpsc::channel::<ReadMsg>();
     let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedSection>();
     let (colgen_tx, colgen_rx) = std::sync::mpsc::channel::<LoadedColumnGen>();
     let completed = Arc::new((Mutex::new(0u64), Condvar::new()));
     let writer_completed = completed.clone();
+    let held_writes = Arc::new(AtomicU64::new(0));
+    let writer_held = held_writes.clone();
     let writer_dir = dir.clone();
     let writer_handle = std::thread::Builder::new()
         .name("petramond-save".to_string())
-        .spawn(move || write_thread(writer_dir, rx, writer_completed))
+        .spawn(move || write_thread(writer_dir, rx, writer_completed, writer_held))
         .expect("spawn save writer");
     let reader_handle = std::thread::Builder::new()
         .name("petramond-load".to_string())
@@ -509,9 +615,12 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     Ok(OpenedWorld {
         saved: crate::world::SavedIndex::from_scan(manifest, explored_manifest),
         save: WorldSave {
-            tx,
+            writes: Arc::new(WriteQueue {
+                tx,
+                next_seq: AtomicU64::new(0),
+                open: Mutex::new(None),
+            }),
             read_tx,
-            next_write_seq: AtomicU64::new(0),
             section_write_barriers: HashMap::new(),
             colgen_write_barriers: HashMap::new(),
             load_rx,
@@ -521,6 +630,8 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             colgen_manifest,
             entities_on_disk: HashSet::new(),
             players_dir,
+            dir: world_dir,
+            held_writes,
         },
         level,
         disabled_mods,

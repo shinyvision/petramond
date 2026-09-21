@@ -288,7 +288,10 @@ pub fn plays(family: &Family, play: Play, attacking: bool) -> Vec<AnimatorPlay> 
     let progress = play.phase.clamp(0.0, 1.0);
     let (motion, first_person_progress) = if attacking {
         let step = play.combo % family.attacks.len();
-        let fp = match (family.impact_phase(step), family.fp_impacts.get(step).copied().flatten()) {
+        let fp = match (
+            family.impact_phase(step),
+            family.fp_impacts.get(step).copied().flatten(),
+        ) {
             (Some(body), Some(fp)) => remap(progress, body, fp),
             _ => progress,
         };
@@ -391,7 +394,10 @@ mod tests {
             assert_eq!(first.clock, AnimatorClock::Scrub(0.4));
             assert!(!first.mirror, "the main hand plays unmirrored");
             let body = by_rig(&got, rig::PLAYER_BODY);
-            assert_eq!((body.clip.as_str(), body.slot.as_str()), (motion.body.as_str(), CLAIM_SLOT));
+            assert_eq!(
+                (body.clip.as_str(), body.slot.as_str()),
+                (motion.body.as_str(), CLAIM_SLOT)
+            );
         }
         let work = plays(&family, play(1.3, 1), false);
         assert_eq!(
@@ -421,7 +427,10 @@ mod tests {
         assert!(close(remap(0.71, 0.42, 0.47), 0.735), "linear after");
         assert!(close(remap(0.5, 0.5, 0.486), 0.486), "and the other way");
         for (from, to) in [(0.0, 0.5), (1.0, 0.5), (0.5, 0.0), (0.5, 1.0)] {
-            assert!(close(remap(0.3, from, to), 0.3), "an impact on an end is no map");
+            assert!(
+                close(remap(0.3, from, to), 0.3),
+                "an impact on an end is no map"
+            );
         }
         // Monotone: a scrub never runs backwards through the map.
         let mut last = -1.0;
@@ -433,15 +442,33 @@ mod tests {
 
         let mut family = family(&[0.4], 0.3, 0.72, &[0.5, 0.25]);
         family.fp_impacts = vec![Some(0.6), None];
-        let fp = |family: &Family, phase: f32, combo: usize, attacking: bool| match plays(family, Play { phase, combo }, attacking)[0].clock {
+        let fp = |family: &Family, phase: f32, combo: usize, attacking: bool| match plays(
+            family,
+            Play { phase, combo },
+            attacking,
+        )[0]
+        .clock
+        {
             AnimatorClock::Scrub(p) => p,
             other => panic!("{other:?}"),
         };
-        assert!(close(fp(&family, 0.5, 0, true), 0.6), "step 0 lands on its own frame");
-        assert!(close(fp(&family, 0.25, 1, true), 0.25), "no viewmodel marker, no map");
-        assert!(close(fp(&family, 0.5, 0, false), 0.5), "work is never remapped");
+        assert!(
+            close(fp(&family, 0.5, 0, true), 0.6),
+            "step 0 lands on its own frame"
+        );
+        assert!(
+            close(fp(&family, 0.25, 1, true), 0.25),
+            "no viewmodel marker, no map"
+        );
+        assert!(
+            close(fp(&family, 0.5, 0, false), 0.5),
+            "work is never remapped"
+        );
         family.impacts.clear();
-        assert!(close(fp(&family, 0.5, 0, true), 0.5), "nothing lands, nothing maps");
+        assert!(
+            close(fp(&family, 0.5, 0, true), 0.5),
+            "nothing lands, nothing maps"
+        );
     }
 
     /// Work shares the dig cadence — a break edge and the mining loop
@@ -512,7 +539,11 @@ mod tests {
         // it, never on a step's attack window.
         let mut work = Clock::default();
         let looped = work.step(Some((AXE, &family)), None, true, dt()).unwrap();
-        assert!((looped.phase - dt() / 0.42).abs() < 1e-6, "{}", looped.phase);
+        assert!(
+            (looped.phase - dt() / 0.42).abs() < 1e-6,
+            "{}",
+            looped.phase
+        );
         let broke = Clock::default()
             .step(Some((AXE, &family)), Some(SwingKind::Break), true, dt())
             .unwrap();
@@ -553,7 +584,9 @@ mod tests {
         // Mining stays the FIRST animation on repeat: the loop and the break
         // edges it lands play combo 0, however fresh the last attack.
         assert_eq!(
-            hand.step(Some((AXE, &family)), None, true, dt()).unwrap().combo,
+            hand.step(Some((AXE, &family)), None, true, dt())
+                .unwrap()
+                .combo,
             0
         );
         assert_eq!(
@@ -588,7 +621,10 @@ mod tests {
         assert!(mashed.phase > first.phase, "the arc was not restarted");
         assert!(hand.queued, "…but the press is held");
         attack(&mut hand);
-        assert!(hand.queued, "a second mid-arc press is not a second queue entry");
+        assert!(
+            hand.queued,
+            "a second mid-arc press is not a second queue entry"
+        );
 
         // …and the instant the hold has fully played, the queued press
         // fires as the chained step — no further click needed.
@@ -706,7 +742,10 @@ mod tests {
             }
         }
         let at = at.expect("the chained step lands too");
-        assert!((0.25..0.5).contains(&at), "step 1 lands at its own phase: {at}");
+        assert!(
+            (0.25..0.5).contains(&at),
+            "step 1 lands at its own phase: {at}"
+        );
 
         // Work never lands, across several wraps of the loop.
         let mut work = Clock::default();
@@ -723,7 +762,12 @@ mod tests {
         // A family whose clips mark no impact never reports one.
         let quiet_family = plain();
         let mut quiet = Clock::default();
-        quiet.step(Some((AXE, &quiet_family)), Some(SwingKind::Attack), false, dt());
+        quiet.step(
+            Some((AXE, &quiet_family)),
+            Some(SwingKind::Attack),
+            false,
+            dt(),
+        );
         while quiet.playing {
             quiet.step(Some((AXE, &quiet_family)), None, false, dt());
             assert!(!quiet.impact());
@@ -770,7 +814,10 @@ mod tests {
             }
             last = phase;
         }
-        assert!(wraps >= 2, "a held level wraps on the swing cadence: {last}");
+        assert!(
+            wraps >= 2,
+            "a held level wraps on the swing cadence: {last}"
+        );
 
         // The released level finishes the arc home: the swing plays out and
         // then the hand rests — still claimed, so the vanilla punch stays

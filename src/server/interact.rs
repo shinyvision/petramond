@@ -105,7 +105,10 @@ const CONSUMERS: &[Consumer] = &[
     consumer(ConsumerKind::Shear, ServerGame::consume_shear),
     // The block's built-in capability (GUI open, door, bed) — passes on
     // sneak via the shared claim rule the client predictions also run.
-    consumer(ConsumerKind::BuiltinBlock, ServerGame::consume_builtin_block),
+    consumer(
+        ConsumerKind::BuiltinBlock,
+        ServerGame::consume_builtin_block,
+    ),
     // A dual-natured held item (food AND placeable — a plantable carrot)
     // tries its placement before the eat gate: a VALID placement wins over
     // starting to eat; a refused one passes so the eat still sees the click.
@@ -489,6 +492,22 @@ impl ServerGame {
         }
     }
 
+    /// Swing the door at `pos`, whoever used it: the open/closed bit flips on
+    /// this tick (collision updates at once), and every observer's swing
+    /// animation and positional sound come from the world event. Answers the
+    /// new open state; `None` for a door whose paired cell cannot be resolved.
+    pub(super) fn swing_door(&mut self, pos: IVec3, events: &mut TickEvents) -> Option<bool> {
+        let lower = self.world.door_lower_cell(pos.x, pos.y, pos.z)?;
+        self.world.toggle_door(pos);
+        let now_open = self
+            .world
+            .door_state_at(lower.x, lower.y, lower.z)
+            .map(|st| st.open)
+            .unwrap_or(true);
+        events.world.door_changed.push((lower, now_open));
+        Some(now_open)
+    }
+
     /// The block's built-in capability as a consumer: claims the attempt when
     /// the target block has one AND the shared claim rule says this attempt
     /// is its business (`block::builtin_claims_click` — built-ins pass on
@@ -519,7 +538,7 @@ impl ServerGame {
                 self.sessions[s].pending_menu_actions.push(
                     crate::server::player::PendingMenuAction::OpenGui {
                         kind,
-                        pos: Some(pos),
+                        anchor: Some(crate::menu::MenuAnchor::Block(pos)),
                     },
                 );
                 true
@@ -531,24 +550,11 @@ impl ServerGame {
             BlockInteraction::ToggleDoor => {
                 // Act-based claim: a door row whose paired cell cannot be
                 // resolved toggles nothing and consumes nothing.
-                let Some(lower) = self.world.door_lower_cell(pos.x, pos.y, pos.z) else {
+                let Some(now_open) = self.swing_door(pos, events) else {
                     return Claim::Pass;
                 };
-                {
-                    self.world.toggle_door(pos);
-                    // The new open state after the toggle — drives open vs close sound.
-                    let now_open = self
-                        .world
-                        .door_state_at(lower.x, lower.y, lower.z)
-                        .map(|st| st.open)
-                        .unwrap_or(true);
-                    // The swing animation + positional sound come from this
-                    // event client-side (`apply_world_effects` / the app),
-                    // like any observer's will.
-                    events.world.door_changed.push((lower, now_open));
-                    // The TOGGLER's own one-shot (hand flick).
-                    events.player(s).toggled_door = Some(now_open);
-                }
+                // The TOGGLER's own one-shot (hand flick).
+                events.player(s).toggled_door = Some(now_open);
                 true
             }
 

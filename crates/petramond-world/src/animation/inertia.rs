@@ -88,7 +88,9 @@ impl Inertia {
             let j1 = *v + *x * y;
             *x = (*x + j1 * dt) * e;
             *v = (*v - j1 * y * dt) * e;
-            peak = peak.max(x.abs().max_element()).max(v.abs().max_element() * 0.01);
+            peak = peak
+                .max(x.abs().max_element())
+                .max(v.abs().max_element() * 0.01);
         }
         if peak < 1e-3 {
             self.active = false;

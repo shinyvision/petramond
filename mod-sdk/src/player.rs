@@ -2,8 +2,8 @@
 //! items, health, teleports, status effects, and chat delivery.
 
 use mod_api::{
-    BodyAction, BonePoseData, EffectStateData, EntityRef, HeldPose, PlayerAttribute,
-    PlayerId, PlayerInputData, PlayerSnapshot,
+    BodyAction, BonePoseData, EffectStateData, EntityRef, HeldPose, PlayerAttribute, PlayerId,
+    PlayerInputData, PlayerSnapshot,
 };
 
 use crate::__rt::host_fn;
@@ -437,4 +437,12 @@ host_fn! {
     /// marker is where its strike lands. `None` when the rig has no such clip.
     pub fn animation_clip(rig: &str, clip: &str) -> Option<mod_api::AnimationClipInfo>
         => AnimationClip { rig: rig.into(), clip: clip.into() } => AnimationClip
+}
+
+host_fn! {
+    /// A connected player's lasting identity: their stable name (what to key
+    /// state kept past this session by) and whether they are an operator.
+    /// `None` = no such connected player. Server only.
+    pub fn player_identity(player: PlayerId) -> Option<mod_api::PlayerIdentityData>
+        => PlayerIdentity { player } => Identity
 }

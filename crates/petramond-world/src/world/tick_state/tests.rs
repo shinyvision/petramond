@@ -4,36 +4,49 @@ fn p(x: i32) -> IVec3 {
     IVec3::new(x, 0, 0)
 }
 
-/// Two readers see the same announcements independently: one draining does
-/// not consume the other's view, and each sees a position exactly once.
 #[test]
-fn readers_drain_independently() {
-    let mut feed = ChangeFeed::default();
-    feed.push(p(1));
-    assert_eq!(feed.drain(ChangeReader::Mobs), (vec![p(1)], false));
-    feed.push(p(2));
-    assert_eq!(feed.drain(ChangeReader::Items), (vec![p(1), p(2)], false));
-    assert_eq!(feed.drain(ChangeReader::Mobs), (vec![p(2)], false));
-    assert_eq!(feed.drain(ChangeReader::Mobs), (vec![], false));
-    assert_eq!(feed.drain(ChangeReader::Items), (vec![], false));
+fn readers_follow_the_log_independently() {
+    let mut log = ChangeLog::default();
+    let (mut a, mut b) = (log.end(), log.end());
+    let read = |log: &ChangeLog, seq: &mut u64| {
+        let out = log.since(*seq);
+        *seq = log.end();
+        out
+    };
+    log.push(p(1), true);
+    assert_eq!(read(&log, &mut a), (vec![p(1)], false));
+    log.push(p(2), false);
+    assert_eq!(read(&log, &mut b), (vec![p(1), p(2)], false));
+    assert_eq!(read(&log, &mut a), (vec![p(2)], false));
+    assert_eq!(read(&log, &mut a), (vec![], false));
+    assert_eq!(read(&log, &mut b), (vec![], false));
 }
 
-/// An overflow reaches EVERY reader once, however late it drains; the
-/// buffer stays bounded while nobody drains; and a reader that lags never
-/// costs a current one its exact positions.
 #[test]
-fn overflow_is_reported_once_per_reader() {
-    let mut feed = ChangeFeed::default();
-    let _ = feed.drain(ChangeReader::Mobs);
-    for i in 0..(CHANGE_FEED_CAP as i32 * 3) {
-        feed.push(p(i));
+fn a_reader_the_log_slid_past_is_told_it_lost_some() {
+    let mut log = ChangeLog::default();
+    let late = log.end();
+    for i in 0..(CHANGE_LOG_CAP as i32 * 2) {
+        log.push(p(i), false);
     }
-    assert!(feed.window.len() <= CHANGE_FEED_CAP);
-    let (_, overflow) = feed.drain(ChangeReader::Mobs);
-    assert!(overflow, "positions were lost since the last drain");
-    feed.push(p(-1));
-    assert_eq!(feed.drain(ChangeReader::Mobs), (vec![p(-1)], false));
-    let (_, overflow) = feed.drain(ChangeReader::Items);
-    assert!(overflow, "the late reader still learns of the overflow");
-    assert_eq!(feed.drain(ChangeReader::Items), (vec![], false));
+    assert!(log.window.len() <= CHANGE_LOG_CAP);
+    assert!(log.since(late).1, "the log slid past the reader");
+    assert!(log.nav_since(late).1, "loss is loss whatever the filter");
+    assert!(log.since(log.end() + 1).1, "a place from another numbering");
+    let current = log.end();
+    log.push(p(-1), true);
+    assert_eq!(log.since(current), (vec![p(-1)], false));
+}
+
+#[test]
+fn the_nav_view_skips_other_changes_but_shares_the_numbering() {
+    let mut log = ChangeLog::default();
+    let start = log.end();
+    let revision = log.nav_revision();
+    log.push(p(1), false);
+    assert_eq!(log.nav_revision(), revision);
+    log.push(p(2), true);
+    assert_ne!(log.nav_revision(), revision);
+    assert_eq!(log.nav_since(start), (vec![p(2)], false));
+    assert_eq!(log.nav_since(start + 2), (vec![], false));
 }

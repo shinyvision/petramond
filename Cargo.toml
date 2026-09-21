@@ -68,6 +68,9 @@ rayon = "1.10"
 env_logger = "0.11"
 directories = "5"
 flate2 = "1"
+crc32fast = "1"
+# Content addressing for world-owned schematic assets.
+blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1"

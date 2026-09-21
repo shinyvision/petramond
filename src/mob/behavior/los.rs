@@ -15,15 +15,26 @@ const LOS_EPS: f32 = 0.001;
 
 /// Whether the straight line `from → to` crosses no world collision box.
 pub(super) fn line_clear(world: &World, from: WorldPos, to: WorldPos) -> bool {
+    line_clear_skipping(world, from, to, &[])
+}
+
+/// [`line_clear`], ignoring the boxes of the `skip` cells — the cells an
+/// action is aimed at, which may stand in its own way.
+pub(crate) fn line_clear_skipping(
+    world: &World,
+    from: WorldPos,
+    to: WorldPos,
+    skip: &[IVec3],
+) -> bool {
     let delta = to - from;
     let dist = delta.length();
     if dist <= f32::EPSILON {
         return true;
     }
-    !ray_hits_collision(world, from, delta / dist, dist)
+    !ray_hits_collision(world, from, delta / dist, dist, skip)
 }
 
-fn ray_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32) -> bool {
+fn ray_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32, skip: &[IVec3]) -> bool {
     let mut ix = eye.x.floor() as i32;
     let mut iy = eye.y.floor() as i32;
     let mut iz = eye.z.floor() as i32;
@@ -36,7 +47,8 @@ fn ray_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32) -> bo
     let t_delta = Vec3::new(inv_abs(dir.x), inv_abs(dir.y), inv_abs(dir.z));
 
     loop {
-        if cell_hits_collision(world, eye, dir, max_t, IVec3::new(ix, iy, iz)) {
+        let cell = IVec3::new(ix, iy, iz);
+        if !skip.contains(&cell) && cell_hits_collision(world, eye, dir, max_t, cell) {
             return true;
         }
         let (axis, t_exit) = if t_max.x <= t_max.y && t_max.x <= t_max.z {

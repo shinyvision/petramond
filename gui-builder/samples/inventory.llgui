@@ -666,7 +666,22 @@
       "item_tip_has_info": {
         "bool": true
       },
+      "item_tip_icon0": {
+        "str": "Sample text"
+      },
+      "item_tip_icon1": {
+        "str": "Sample text"
+      },
+      "item_tip_icon2": {
+        "str": "Sample text"
+      },
+      "item_tip_icon3": {
+        "str": "Sample text"
+      },
       "item_tip_info": {
+        "str": "Sample text"
+      },
+      "item_tip_instance": {
         "str": "Sample text"
       },
       "item_tip_name": {

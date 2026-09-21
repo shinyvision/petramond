@@ -3,6 +3,7 @@
 //! `test_time` is always compiled (it is a few lines) so downstream crates can
 //! use it from `#[cfg(test)]` code without a dev-dependency cycle.
 
+pub mod atomic_file;
 pub mod bytecodec;
 pub mod memory;
 pub mod paths;

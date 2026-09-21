@@ -100,6 +100,15 @@ struct RawMobDef {
     wander: RawWander,
     habitat: RawHabitat,
     avoid_fluids: bool,
+    /// Whether its walking is heard; omitted = silent.
+    #[serde(default)]
+    footsteps: bool,
+    /// How strongly the body's own parts shade each other; omitted = fully.
+    #[serde(default = "full")]
+    self_ao: f32,
+    /// Whether it refuses to walk off ledges taller than its routes drop.
+    #[serde(default)]
+    edge_guard: bool,
     /// Fluid behavior (see [`Buoyancy`]); omitted = `swim`.
     #[serde(default)]
     buoyancy: Buoyancy,
@@ -123,6 +132,37 @@ struct RawMobDef {
     /// `y` = up from the feet). Empty/omitted = not rideable.
     #[serde(default)]
     seats: Vec<[f64; 3]>,
+    /// Carried item slots (see [`MobDef::container_slots`]); omitted = none.
+    #[serde(default)]
+    container_slots: usize,
+    /// Block-interaction reach from the eye; omitted = a player's reach.
+    #[serde(default)]
+    reach: Option<f64>,
+    /// Eye height above the feet; omitted = most of the body height.
+    #[serde(default)]
+    eye_height: Option<f64>,
+    /// Bones that hold items (see [`MobDef::hands`]); omitted = none.
+    #[serde(default)]
+    hands: Option<RawHands>,
+}
+
+fn full() -> f32 {
+    1.0
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawHands {
+    main: String,
+    #[serde(default)]
+    off: Option<String>,
+    /// Where the fist closes, in model units of the rest pose.
+    grip: [f32; 3],
+    #[serde(default)]
+    off_grip: Option<[f32; 3]>,
+    /// Degrees a held sprite is rolled about its own length.
+    #[serde(default)]
+    roll: f32,
 }
 
 #[derive(Deserialize)]
@@ -410,6 +450,26 @@ fn convert(
         seats.push(seat);
     }
 
+    if r.container_slots > petramond_world::container::MAX_CONTAINER_SLOTS {
+        return Err(format!(
+            "container_slots must be at most {}, got {}",
+            petramond_world::container::MAX_CONTAINER_SLOTS,
+            r.container_slots
+        ));
+    }
+    let reach = r.reach.unwrap_or(crate::player::REACH as f64);
+    if !reach.is_finite() || !(0.0..=super::MAX_MOB_REACH as f64).contains(&reach) {
+        return Err(format!(
+            "reach must be within 0..={}, got {reach}",
+            super::MAX_MOB_REACH
+        ));
+    }
+    let eye_height = r.eye_height.unwrap_or(r.size.height as f64 * 0.85);
+    if !eye_height.is_finite() || eye_height < 0.0 || eye_height > r.size.height as f64 {
+        return Err(format!(
+            "eye_height must lie within the body height, got {eye_height}"
+        ));
+    }
     let data = petramond_world::registry::compile_data_map(&r.mob, &r.data, patches)?;
     let loot = petramond_world::registry::engine_data::<String>(data, "petramond:loot")?;
     if let Some(key) = &loot {
@@ -447,6 +507,9 @@ fn convert(
             prefer: resolve_biomes(r.habitat.prefer)?,
         },
         avoid_fluids: r.avoid_fluids,
+        footsteps: r.footsteps,
+        self_ao: r.self_ao.clamp(0.0, 1.0),
+        edge_guard: r.edge_guard,
         buoyancy: r.buoyancy,
         tolerates: convert_tolerance(r.tolerates)?,
         gravity_scale: r.gravity_scale,
@@ -457,6 +520,19 @@ fn convert(
         sounds: convert_sounds(r.sounds)?,
         brain: convert_brain(r.brain)?,
         seats: Box::leak(seats.into_boxed_slice()),
+        container_slots: r.container_slots,
+        reach: reach as f32,
+        eye_height: eye_height as f32,
+        hands: r.hands.map(|h| super::MobHands {
+            roll: h.roll.to_radians(),
+            main: (String::leak(h.main), h.grip),
+            off: h.off.map(|bone| {
+                (
+                    &*String::leak(bone),
+                    h.off_grip.unwrap_or([-h.grip[0], h.grip[1], h.grip[2]]),
+                )
+            }),
+        }),
     })
 }
 

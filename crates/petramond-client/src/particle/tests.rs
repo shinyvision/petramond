@@ -1,5 +1,72 @@
 use super::*;
 
+/// The patch share the engine's dust rows use: a 4×4 texel fleck of a 16px tile.
+const PATCH_FRAC: f32 = 0.25;
+
+/// Full-bright shorthands over the engine's own rows.
+impl ParticleSystem {
+    fn spawn_mining(&mut self, block_pos: IVec3, face_normal: IVec3, block: Block) {
+        let spec = petramond_world::particle_emitters::by_key(BLOCK_DUST)
+            .and_then(|b| b.burst)
+            .unwrap();
+        self.spawn_burst(
+            &spec,
+            BurstEvent::struck(
+                block_pos,
+                face_normal,
+                block,
+                None,
+                63,
+                petramond_world::light::BlockLight6::DARK,
+            ),
+        );
+    }
+
+    fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
+        let spec = petramond_world::particle_emitters::by_key(BLOCK_BREAK)
+            .and_then(|b| b.burst)
+            .unwrap();
+        self.spawn_burst(
+            &spec,
+            BurstEvent::broken(
+                block_pos,
+                block,
+                None,
+                63,
+                petramond_world::light::BlockLight6::DARK,
+            ),
+        );
+    }
+
+    fn spawn_emitter_burst(
+        &mut self,
+        spec: &petramond_world::particle_emitters::BurstSpec,
+        pos: WorldPos,
+        intensity: f32,
+        skylight: u8,
+        blocklight: petramond_world::light::BlockLight6,
+    ) {
+        self.spawn_burst(
+            spec,
+            BurstEvent {
+                pos,
+                intensity,
+                direction: None,
+                look: BurstLook::Row,
+                skylight,
+                blocklight,
+            },
+        );
+    }
+}
+
+fn tile_of(p: &Particle) -> Tile {
+    match p.source {
+        ParticleSource::Tile { tile, .. } => tile,
+        other => panic!("expected a tile fleck, got {other:?}"),
+    }
+}
+
 /// No solid surfaces (particles never hit ground).
 fn empty(_p: petramond_math::world_pos::WorldPos) -> bool {
     false
@@ -27,13 +94,10 @@ fn atlas_uv_stays_strictly_inside_the_tile_rect() {
                     vel: Vec3::ZERO,
                     skylight: 63,
                     blocklight: petramond_world::light::BlockLight6::DARK,
-                    tile,
-                    model: None,
-                    dyed,
+                    source: ParticleSource::Tile { tile, dyed },
                     uv_min: [m, m],
                     uv_size: [PATCH_FRAC; 2],
                     tint: NO_TINT,
-                    solid: false,
                     die_on_contact: false,
                     age: 0.0,
                     lifetime: 1.0,
@@ -70,13 +134,13 @@ fn alpha_fades_at_end_of_life() {
         vel: Vec3::ZERO,
         skylight: 63,
         blocklight: petramond_world::light::BlockLight6::DARK,
-        tile: Tile::from_name("grass_top").unwrap(),
-        model: None,
-        dyed: false,
+        source: ParticleSource::Tile {
+            tile: Tile::from_name("grass_top").unwrap(),
+            dyed: false,
+        },
         uv_min: [0.0, 0.0],
         uv_size: [0.25; 2],
         tint: NO_TINT,
-        solid: false,
         die_on_contact: false,
         age: 0.0,
         lifetime: 1.0,
@@ -102,13 +166,13 @@ fn render_size_shrinks_during_fade() {
         vel: Vec3::ZERO,
         skylight: 63,
         blocklight: petramond_world::light::BlockLight6::DARK,
-        tile: Tile::from_name("grass_top").unwrap(),
-        model: None,
-        dyed: false,
+        source: ParticleSource::Tile {
+            tile: Tile::from_name("grass_top").unwrap(),
+            dyed: false,
+        },
         uv_min: [0.0, 0.0],
         uv_size: [0.25; 2],
         tint: NO_TINT,
-        solid: false,
         die_on_contact: false,
         age: 0.0,
         lifetime: 1.0,
@@ -177,13 +241,13 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
         vel,
         skylight: 63,
         blocklight: petramond_world::light::BlockLight6::DARK,
-        tile: Tile::from_name("grass_top").unwrap(),
-        model: None,
-        dyed: false,
+        source: ParticleSource::Tile {
+            tile: Tile::from_name("grass_top").unwrap(),
+            dyed: false,
+        },
         uv_min: [0.0; 2],
         uv_size: [0.1; 2],
         tint: NO_TINT,
-        solid: false,
         die_on_contact: false,
         age: 0.0,
         lifetime: 100.0,
@@ -223,14 +287,14 @@ fn grass_top_mining_dust_is_green_but_dirt_side_is_not() {
     sys.spawn_mining(IVec3::new(0, 64, 0), IVec3::Y, Block::Grass);
     assert!(!sys.is_empty());
     for p in sys.particles() {
-        assert_eq!(p.tile, Tile::from_name("grass_top").unwrap());
+        assert_eq!(tile_of(p), Tile::from_name("grass_top").unwrap());
         assert_eq!(p.tint, grass, "grass-top dust must be tinted green");
     }
     // Mining a grass-block SIDE samples the pre-baked GrassSide tile -> no tint.
     let mut side = ParticleSystem::new();
     side.spawn_mining(IVec3::new(0, 64, 0), IVec3::new(1, 0, 0), Block::Grass);
     for p in side.particles() {
-        assert_eq!(p.tile, Tile::from_name("grass_side").unwrap());
+        assert_eq!(tile_of(p), Tile::from_name("grass_side").unwrap());
         assert_eq!(p.tint, NO_TINT, "grass-block side dust stays untinted");
     }
     // A plain non-foliage block is never tinted on any face.
@@ -256,11 +320,16 @@ fn leaf_burst_flecks_carry_the_foliage_tint() {
 fn splash_spec() -> petramond_world::particle_emitters::BurstSpec {
     petramond_world::particle_emitters::BurstSpec {
         count_per_intensity: 4.0,
-        max_count: 20,
         up_speed: [1.5, 3.5],
         radial_speed: [0.5, 2.0],
         lifetime: [0.5, 1.0],
         size: [0.05, 0.11],
+        count_spread: 0.0,
+        spawn: [0.15, 0.05, 0.15],
+        outward_speed: [0.0, 0.0],
+        along_speed: [0.0, 0.0],
+        texture: None,
+        patch: 0.25,
         color: [[0.05, 0.1, 0.5], [0.3, 0.7, 0.95]],
         color_bias: 2.5,
         die_on_contact: true,
@@ -268,7 +337,7 @@ fn splash_spec() -> petramond_world::particle_emitters::BurstSpec {
 }
 
 #[test]
-fn emitter_burst_count_scales_with_intensity_and_caps() {
+fn emitter_burst_count_scales_with_intensity() {
     let spec = splash_spec();
     let mut small = ParticleSystem::new();
     small.spawn_emitter_burst(
@@ -287,9 +356,9 @@ fn emitter_burst_count_scales_with_intensity_and_caps() {
         63,
         petramond_world::light::BlockLight6::DARK,
     );
-    assert_eq!(big.len(), 20, "hard-capped at max_count");
+    assert_eq!(big.len(), 400, "a hundredfold burst is never truncated");
     for p in big.particles() {
-        assert!(p.solid && p.die_on_contact);
+        assert!(p.source == ParticleSource::Solid && p.die_on_contact);
         assert!(p.vel.y >= 1.5 && p.vel.y <= 3.5, "launched upward");
         let radial = Vec3::new(p.vel.x, 0.0, p.vel.z).length();
         assert!(

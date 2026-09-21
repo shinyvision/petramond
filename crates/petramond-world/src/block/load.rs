@@ -188,6 +188,15 @@ pub(super) struct RawHarvest {
     pub tier: u8,
 }
 
+/// A row's `petramond:construction` data: how paid construction builds it.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum RawConstruction {
+    Item(String),
+    Form(String),
+    Unsupported(String),
+}
+
 /// A row's `facing_rows` field: the four facing-sibling registry names.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1035,6 +1044,36 @@ fn convert(
         &r.data,
         patches,
     )?;
+    let rotate_y = crate::registry::engine_data::<String>(data, "petramond:rotate_y")?
+        .map(|name| {
+            names
+                .blocks
+                .id(&name)
+                .map(Block)
+                .ok_or_else(|| format!("Unknown rotate_y block: {name}"))
+        })
+        .transpose()?;
+    let construction =
+        match crate::registry::engine_data::<RawConstruction>(data, "petramond:construction")? {
+            None => None,
+            Some(RawConstruction::Item(name)) => Some(super::Construction::Item(
+                names
+                    .items
+                    .id(&name)
+                    .map(crate::item::ItemType)
+                    .ok_or_else(|| format!("Unknown construction item: {name}"))?,
+            )),
+            Some(RawConstruction::Form(name)) => Some(super::Construction::Form(
+                names
+                    .blocks
+                    .id(&name)
+                    .map(Block)
+                    .ok_or_else(|| format!("Unknown construction form: {name}"))?,
+            )),
+            Some(RawConstruction::Unsupported(reason)) => {
+                Some(super::Construction::Unsupported(String::leak(reason)))
+            }
+        };
     let harvest_tier = crate::registry::engine_data::<RawHarvest>(data, "petramond:harvest")?
         .map_or(0, |h| h.tier);
     let carry: &'static [&'static str] =
@@ -1085,6 +1124,8 @@ fn convert(
         facing_rows,
         flipped_row,
         data,
+        rotate_y,
+        construction,
         carry,
         support: r.support,
         roots_on: leak(

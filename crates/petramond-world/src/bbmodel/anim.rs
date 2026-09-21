@@ -158,7 +158,10 @@ impl Animation {
                 }
             }
             Err(i) if !keys.is_empty() => {
-                let mut track = Track { bone, ..Track::default() };
+                let mut track = Track {
+                    bone,
+                    ..Track::default()
+                };
                 *track.keys_mut(channel) = keys;
                 self.tracks.insert(i, track);
             }
@@ -228,14 +231,16 @@ impl Animation {
         looping: bool,
     ) -> impl Iterator<Item = (usize, Channel, Vec3)> + '_ {
         self.tracks.iter().flat_map(move |track| {
-            [Channel::Rotation, Channel::Position].into_iter().filter_map(move |channel| {
-                let keys = track.keys(channel);
-                (!keys.is_empty()).then(|| (track.bone, channel, sample_track(keys, t, looping)))
-            })
+            [Channel::Rotation, Channel::Position]
+                .into_iter()
+                .filter_map(move |channel| {
+                    let keys = track.keys(channel);
+                    (!keys.is_empty())
+                        .then(|| (track.bone, channel, sample_track(keys, t, looping)))
+                })
         })
     }
 }
-
 
 /// Two times this close are the same instant — Blockbench's `1/1200` s.
 const KEY_EPSILON: f32 = 1.0 / 1200.0;
@@ -332,7 +337,10 @@ fn spline_point(points: &[Vec3], t: f32) -> Vec3 {
     let v1 = (p3 - p1) * 0.5;
     let t2 = weight * weight;
     let t3 = weight * t2;
-    (2.0 * p1 - 2.0 * p2 + v0 + v1) * t3 + (-3.0 * p1 + 3.0 * p2 - 2.0 * v0 - v1) * t2 + v0 * weight + p1
+    (2.0 * p1 - 2.0 * p2 + v0 + v1) * t3
+        + (-3.0 * p1 + 3.0 * p2 - 2.0 * v0 - v1) * t2
+        + v0 * weight
+        + p1
 }
 
 /// Blockbench's `getBezierLerp`, per axis: the cubic through each key's value

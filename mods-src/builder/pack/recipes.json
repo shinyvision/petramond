@@ -1,0 +1,122 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "builder:schematic_table",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 4
+        },
+        {
+          "item": "petramond:cobblestone",
+          "count": 4
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 2
+        },
+        {
+          "item": "petramond:glass_pane",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "builder:schematic_table",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "builder:copper_block",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:copper_ingot",
+          "count": 9
+        }
+      ],
+      "result": {
+        "item": "builder:copper_block",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "builder:copper_ingots_from_block",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "builder:copper_block",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:copper_ingot",
+        "count": 9
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "builder:golem_core",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "builder:copper_block",
+          "count": 4
+        },
+        {
+          "item": "petramond:coal",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "builder:golem_core",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "builder:blueprint",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:paper",
+          "count": 8
+        },
+        {
+          "item": "builder:golem_core",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "builder:blueprint",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "builder:schematic_wand",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:stick",
+          "count": 1
+        },
+        {
+          "item": "petramond:copper_ingot",
+          "count": 1
+        },
+        {
+          "item": "petramond:glass",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:schematic_wand",
+        "count": 1
+      }
+    }
+  ]
+}

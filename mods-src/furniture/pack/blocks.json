@@ -115,6 +115,7 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:construction": { "item": "furniture:chain" },
         "petramond:harvest": {
           "tier": 1
         }
@@ -148,6 +149,7 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:construction": { "item": "furniture:chain" },
         "petramond:harvest": {
           "tier": 1
         }
@@ -217,6 +219,7 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:construction": { "form": "furniture:cauldron" },
         "petramond:harvest": {
           "tier": 1
         }
@@ -251,6 +254,7 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:construction": { "form": "furniture:cauldron" },
         "petramond:harvest": {
           "tier": 1
         }
@@ -884,7 +888,8 @@
           "chance": 1.0
         }
       ],
-      "support": "above"
+      "support": "above",
+      "data": { "petramond:construction": { "item": "furniture:lantern" } }
     },
     {
       "block": "furniture:lantern_wall_north",
@@ -919,7 +924,8 @@
           "chance": 1.0
         }
       ],
-      "support": "north"
+      "support": "north",
+      "data": { "petramond:construction": { "item": "furniture:lantern" } }
     },
     {
       "block": "furniture:lantern_wall_south",
@@ -954,7 +960,8 @@
           "chance": 1.0
         }
       ],
-      "support": "south"
+      "support": "south",
+      "data": { "petramond:construction": { "item": "furniture:lantern" } }
     },
     {
       "block": "furniture:lantern_wall_west",
@@ -989,7 +996,8 @@
           "chance": 1.0
         }
       ],
-      "support": "west"
+      "support": "west",
+      "data": { "petramond:construction": { "item": "furniture:lantern" } }
     },
     {
       "block": "furniture:lantern_wall_east",
@@ -1024,7 +1032,8 @@
           "chance": 1.0
         }
       ],
-      "support": "east"
+      "support": "east",
+      "data": { "petramond:construction": { "item": "furniture:lantern" } }
     },
     {
       "patch": "petramond:wool_block",
@@ -1049,6 +1058,12 @@
           "petramond:tint"
         ]
       }
-    }
+    },
+    {"patch": "furniture:chain_ns", "data": {"petramond:rotate_y": "furniture:chain_ew"}},
+    {"patch": "furniture:chain_ew", "data": {"petramond:rotate_y": "furniture:chain_ns"}},
+    {"patch": "furniture:lantern_wall_north", "data": {"petramond:rotate_y": "furniture:lantern_wall_east"}},
+    {"patch": "furniture:lantern_wall_east", "data": {"petramond:rotate_y": "furniture:lantern_wall_south"}},
+    {"patch": "furniture:lantern_wall_south", "data": {"petramond:rotate_y": "furniture:lantern_wall_west"}},
+    {"patch": "furniture:lantern_wall_west", "data": {"petramond:rotate_y": "furniture:lantern_wall_north"}}
   ]
 }

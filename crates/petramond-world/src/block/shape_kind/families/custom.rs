@@ -117,4 +117,10 @@ impl ShapeRender for CustomFamily {
     }
 }
 
-impl ShapePlacement for CustomFamily {}
+impl ShapePlacement for CustomFamily {
+    /// A custom shape places stateless: whatever state its cell holds was
+    /// resolved from its neighbours afterwards, and is no one's intent.
+    fn authored_state(&self, _block: Block, _state: ShapeState) -> ShapeState {
+        ShapeState::NONE
+    }
+}

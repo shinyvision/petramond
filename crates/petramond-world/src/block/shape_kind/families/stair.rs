@@ -9,6 +9,24 @@ use super::*;
 pub struct StairFamily;
 
 impl ShapeSim for StairFamily {
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        let placed = StairState::from_cell(state);
+        let mut bytes = state.bytes().to_vec();
+        if bytes.is_empty() {
+            bytes.push(0);
+        }
+        bytes[0] = StairState {
+            facing: crate::block::rotation::facing(placed.facing),
+            ..placed
+        }
+        .encode();
+        if bytes.len() > 1 {
+            let m = bytes[1];
+            bytes[1] = ((m & 1) << 1) | ((m & 2) << 2) | ((m & 8) >> 1) | ((m & 4) >> 2);
+        }
+        crate::block::rotation::CellRotation::unchanged(block, ShapeState::new(&bytes))
+    }
+
     fn default_boxes(&self, _p: &ShapeParams, _b: Block) -> &'static [Aabb] {
         crate::stair::boxes(crate::block_model::DEFAULT_MODEL_FACING)
     }

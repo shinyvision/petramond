@@ -15,7 +15,9 @@
 //! to degrade to, and respawning a wrong species would corrupt the world.
 
 use crate::mob::{Mob, MobTagValue, SavedMob};
-use crate::save::codec::{put_f32, put_f64, put_i64, put_u16, put_u8, Reader};
+use crate::save::codec::{
+    get_item_slot, put_f32, put_f64, put_i64, put_item_slot, put_u16, put_u32, put_u8, Reader,
+};
 
 /// Fixed bytes per serialized mob: kind(1) + pos(24) + yaw(4);
 /// the variable-length tag map follows. Tag KEYS repeat across
@@ -94,6 +96,19 @@ pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob]) {
         put_f64(buf, m.pos.z);
         put_f32(buf, m.yaw);
         put_mob_tags(buf, &m.tags, &index_of);
+        let slots = &m.container.slots;
+        put_u8(
+            buf,
+            slots
+                .len()
+                .min(petramond_world::container::MAX_CONTAINER_SLOTS) as u8,
+        );
+        for slot in slots
+            .iter()
+            .take(petramond_world::container::MAX_CONTAINER_SLOTS)
+        {
+            put_item_slot(buf, *slot);
+        }
     }
 }
 
@@ -129,8 +144,9 @@ fn put_mob_tags(
             }
             MobTagValue::String(s) => {
                 put_u8(buf, TAG_STRING);
+                // A string tag may hold a full KV value (64 KiB), past u16.
                 let bytes = s.as_bytes();
-                put_u16(buf, bytes.len().min(u16::MAX as usize) as u16);
+                put_u32(buf, bytes.len() as u32);
                 buf.extend_from_slice(bytes);
             }
         }
@@ -150,7 +166,7 @@ fn get_mob_tags(
             TAG_INT => MobTagValue::Int(r.i64()?),
             TAG_FLOAT => MobTagValue::Float(r.f64()?),
             TAG_STRING => {
-                let len = r.u16()? as usize;
+                let len = r.u32()? as usize;
                 let s = std::str::from_utf8(r.bytes(len)?).ok()?.to_string();
                 MobTagValue::String(s)
             }
@@ -184,6 +200,12 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
         let pos = petramond_math::world_pos::WorldPos::new(r.f64()?, r.f64()?, r.f64()?);
         let yaw = r.f32()?;
         let tags = get_mob_tags(r, &table)?;
+        let slot_count = r.u8()? as usize;
+        let mut slots = Vec::with_capacity(slot_count);
+        for _ in 0..slot_count {
+            slots.push(get_item_slot(r)?);
+        }
+        let container = petramond_world::container::Container { slots };
         // Resolve the species AFTER consuming the record bytes, so a skip can't
         // desync the reader.
         let kind = pal
@@ -201,6 +223,7 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
             pos,
             yaw,
             tags,
+            container,
         });
     }
     Some(out)
@@ -220,6 +243,7 @@ mod tests {
             pos: WorldPos::new(1.0, 64.0, 2.0),
             yaw: 1.5,
             tags: BTreeMap::new(),
+            container: Default::default(),
         };
         let b = SavedMob {
             kind: Mob::Sheep,
@@ -236,7 +260,21 @@ mod tests {
                 ),
                 (crate::mob::tags::HEALTH.to_owned(), MobTagValue::Float(3.5)),
                 ("farm:quality".to_owned(), MobTagValue::Int(7)),
+                (
+                    "farm:note".to_owned(),
+                    MobTagValue::String("x".repeat(70_000)),
+                ),
             ]),
+            container: petramond_world::container::Container {
+                slots: vec![
+                    None,
+                    Some(petramond_world::item::ItemStack::new(
+                        petramond_world::item::ItemType::Coal,
+                        9,
+                    )),
+                    None,
+                ],
+            },
         };
         let mut buf = Vec::new();
         put_mobs(&mut buf, &[a.clone(), b.clone()]);
@@ -250,7 +288,7 @@ mod tests {
         );
         assert_eq!(
             got[1], b,
-            "the tag map (shear, health, mod keys) survives too"
+            "the tag map (a string past u16 included) and carried slots survive too"
         );
     }
 
@@ -279,6 +317,8 @@ mod tests {
             put_u16(&mut buf, 0); // ...keying the shared table
             put_u8(&mut buf, TAG_INT);
             put_i64(&mut buf, 9);
+            put_u8(&mut buf, 1); // one carried slot...
+            put_item_slot(&mut buf, None); // ...empty
         }
         let mut r = Reader::new(&buf);
         let got = get_mobs(&mut r).expect("decodes despite the stranger");
@@ -310,6 +350,7 @@ mod tests {
             pos: WorldPos::new(x, 64.0, 2.0),
             yaw: 0.0,
             tags: BTreeMap::from([(key.to_owned(), MobTagValue::Bool(true))]),
+            container: Default::default(),
         };
         let mut buf = Vec::new();
         put_mobs(&mut buf, &[penned(1.0), penned(2.0)]);

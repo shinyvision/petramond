@@ -29,11 +29,16 @@ fn rain_spec(hit: AmbientHit) -> AmbientSpec {
 fn splash_spec() -> BurstSpec {
     BurstSpec {
         count_per_intensity: 3.0,
-        max_count: 24,
         up_speed: [1.0, 2.0],
         radial_speed: [0.5, 1.5],
         lifetime: [0.3, 0.5],
         size: [0.04, 0.08],
+        count_spread: 0.0,
+        spawn: [0.15, 0.05, 0.15],
+        outward_speed: [0.0, 0.0],
+        along_speed: [0.0, 0.0],
+        texture: None,
+        patch: 0.25,
         color: [[0.2, 0.3, 0.8], [0.5, 0.7, 1.0]],
         color_bias: 1.0,
         die_on_contact: true,

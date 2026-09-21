@@ -44,7 +44,7 @@ impl Storage {
     pub fn deliver(&self, anchor: [i32; 3], stack: ItemStackData) -> Option<ItemStackData> {
         let mut remaining = Some(stack);
         for pos in self.adjacent(anchor) {
-            remaining = container_insert(pos, remaining?);
+            remaining = container_insert(pos.into(), remaining?);
         }
         remaining
     }
@@ -60,7 +60,13 @@ impl Storage {
     ) {
         let mould = slots[super::SLOT_MOULD].as_ref().map(|s| s.item.clone());
         let positions = self.adjacent(anchor);
-        let containers = container_get_many(positions.clone());
+        let containers = container_get_many(
+            positions
+                .iter()
+                .copied()
+                .map(ContainerAddress::from)
+                .collect(),
+        );
         for (pos, container) in positions.into_iter().zip(containers) {
             for (index, stack) in container.unwrap_or_default().into_iter().enumerate() {
                 let Some(stack) = stack else {
@@ -95,7 +101,8 @@ impl Storage {
                 if room == 0 {
                     continue;
                 }
-                if let Some(taken) = container_take(pos, index as u32, room.min(stack.count)) {
+                if let Some(taken) = container_take(pos.into(), index as u32, room.min(stack.count))
+                {
                     machine_core::merge_output(&mut slots[target], &taken);
                 }
             }

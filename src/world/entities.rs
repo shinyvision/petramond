@@ -121,6 +121,9 @@ pub struct DroppedItems {
     /// Last assigned stable id (see [`DroppedItem::id`]). Session-scoped:
     /// reloaded drops get fresh ids, like everything entering the active set.
     next_id: u64,
+    /// This store's place in the world's change log: the number of the next
+    /// announced change its lodged items have not been checked against.
+    change_seq: u64,
 }
 
 impl DroppedItems {
@@ -614,12 +617,12 @@ impl World {
     /// the rest of the world: the field is moved out so the
     /// `&mut DroppedItems` and `&World` borrows stay disjoint.
     pub fn tick_item_physics(&mut self, dt: f32, anchors: &[PlayerAnchor]) -> ItemStep {
-        // Drained whether or not anything is listening, so a drop-free world
-        // never grows the buffer to its overflow.
-        let (changed, overflow) = self.take_collision_changes();
         if self.dropped_items.is_empty() {
+            self.dropped_items.change_seq = self.changes_end();
             return ItemStep::default();
         }
+        let (next, changed, overflow) = self.changes_since(self.dropped_items.change_seq);
+        self.dropped_items.change_seq = next;
         let freeze_unloaded = self.save.is_some();
         let mut drops = std::mem::take(&mut self.dropped_items);
         let step = drops.tick_physics(self, dt, anchors, &changed, overflow, freeze_unloaded);

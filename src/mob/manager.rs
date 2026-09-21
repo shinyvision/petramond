@@ -29,7 +29,7 @@ mod simulation;
 #[cfg(test)]
 mod tests;
 
-pub use drops::{DeathDrop, ShearDrop};
+pub use drops::{DeathDrop, MobSpill, ShearDrop};
 use simulation::PushBody;
 pub use simulation::{MobAttack, MobExposureDamage, MobFall, MobTickEvents, PlayerAnchor};
 
@@ -110,10 +110,17 @@ pub struct Mobs {
     /// Live confined regions shared by penned mobs (see [`super::confined`]):
     /// one flood-fill serves every mob in the same pen. Block changes drop
     /// overlapping regions through [`invalidate_confined_regions`]
-    /// (fed by the world's per-tick change buffer) before each mob tick.
+    /// (fed from the world's change log) before each mob tick.
     ///
     /// [`invalidate_confined_regions`]: Mobs::invalidate_confined_regions
     confined_regions: super::confined::RegionCache,
+    /// This manager's place in the world's change log: the number of the
+    /// next announced change `confined_regions` has not been told about.
+    change_seq: u64,
+    /// Carried stacks of mobs that left the world this tick by death or
+    /// despawn, waiting for the game to scatter them (the manager cannot
+    /// spawn item entities itself). Drained by [`take_spills`](Self::take_spills).
+    spills: Vec<drops::MobSpill>,
 }
 
 impl Default for Mobs {
@@ -150,23 +157,55 @@ impl Mobs {
             heard: Vec::new(),
             populate_checked: FxHashSet::default(),
             confined_regions: super::confined::RegionCache::default(),
+            change_seq: 0,
+            spills: Vec::new(),
         }
+    }
+
+    /// The carried stacks of every mob that died or despawned since the last
+    /// drain, for the game to scatter.
+    pub fn take_spills(&mut self) -> Vec<drops::MobSpill> {
+        std::mem::take(&mut self.spills)
+    }
+
+    fn spill_container(&mut self, index: usize) {
+        let Some(mob) = self.list.get_mut(index) else {
+            return;
+        };
+        let stacks = mob.take_container_items();
+        if !stacks.is_empty() {
+            self.spills.push(drops::MobSpill {
+                pos: mob.pos,
+                stacks,
+                skylight: mob.skylight,
+                blocklight: mob.blocklight,
+            });
+        }
+    }
+
+    /// This manager's place in the world's change log (see
+    /// [`invalidate_confined_regions`](Self::invalidate_confined_regions)).
+    pub fn change_seq(&self) -> u64 {
+        self.change_seq
+    }
+
+    /// Drop cached confined regions a block change could have altered: the
+    /// nav-relevant changes logged from [`change_seq`](Self::change_seq) on,
+    /// with `next` the place to read from next time. `all` means some were
+    /// lost (exact positions unknown).
+    pub fn invalidate_confined_regions(
+        &mut self,
+        next: u64,
+        changed: &[petramond_math::math::IVec3],
+        all: bool,
+    ) {
+        self.change_seq = next;
+        self.confined_regions.invalidate(changed, all);
     }
 
     /// Record one gameplay noise for the NEXT mob AI batch (this tick's, when
     /// pushed before the mob stage). Emitters go through
     /// [`World::push_noise`](crate::world::World::push_noise).
-    /// Drop cached confined regions a block change could have altered — the
-    /// world drains its per-tick change buffer here before each mob tick.
-    /// `all` means the buffer overflowed (exact positions unknown).
-    pub fn invalidate_confined_regions(
-        &mut self,
-        changed: &[petramond_math::math::IVec3],
-        all: bool,
-    ) {
-        self.confined_regions.invalidate(changed, all);
-    }
-
     pub fn push_noise(&mut self, noise: Noise) {
         self.pending_noises.push(noise);
     }
@@ -194,6 +233,51 @@ impl Mobs {
     /// `&mut Instance`.
     fn mob_mut(&mut self, index: usize) -> Option<&mut Instance> {
         self.list.get_mut(index)
+    }
+
+    /// One tick of the dig the mob at `index` is driven through (see
+    /// [`Instance::advance_dig`](super::Instance::advance_dig)).
+    pub fn advance_dig(
+        &mut self,
+        index: usize,
+        now: u64,
+        pos: IVec3,
+        block: petramond_world::block::Block,
+        tool: Option<petramond_world::item::Tool>,
+    ) -> Option<super::DigStep> {
+        Some(self.list.get_mut(index)?.advance_dig(now, pos, block, tool))
+    }
+
+    /// Turn the mob at `index` to look along a world yaw and pitch at once.
+    #[cfg(test)]
+    pub fn set_gaze_for_test(&mut self, index: usize, yaw: f32, pitch: f32) {
+        if let Some(mob) = self.list.get_mut(index) {
+            mob.yaw = yaw;
+            mob.head_yaw = 0.0;
+            mob.head_pitch = pitch;
+        }
+    }
+
+    /// Replace the draw set the mob at `index` wears.
+    pub fn set_draw(&mut self, index: usize, draw: crate::world::draw::BodyDraw) {
+        if let Some(mob) = self.list.get_mut(index) {
+            mob.set_draw(draw);
+        }
+    }
+
+    /// Claim what the mob at `index` draws in its hands.
+    pub fn set_held(&mut self, index: usize, held: [Option<petramond_world::item::ItemType>; 2]) {
+        if let Some(mob) = self.list.get_mut(index) {
+            mob.set_held(held);
+        }
+    }
+
+    /// The carried slots of the mob at `index`.
+    pub fn container_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut petramond_world::container::Container> {
+        self.list.get_mut(index).map(Instance::container_mut)
     }
 
     /// The live mobs, for the render-side scene adapter to bake (read-only).

@@ -37,7 +37,7 @@ const SNEAK_EYE_SETTLE_SPEED: f32 = 10.0;
 
 impl Game {
     pub(super) fn apply_camera_input(&mut self, input: &GameInput) {
-        if !input.gameplay_enabled {
+        if !input.gameplay_enabled || self.world_tool_holds_camera() {
             return;
         }
         let (dx, dy) = input.look_delta;

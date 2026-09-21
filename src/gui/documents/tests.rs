@@ -619,6 +619,16 @@ fn seeded_state(kind: GuiKind, seed: Seed, page: usize) -> petramond_ui::UiState
             state.set((*off).to_string(), UiValue::Bool(false));
         }
     }
+    if kind == GuiKind::Creative {
+        state.set("browsing", UiValue::Bool(page < 3));
+        state.set("confirming_delete", UiValue::Bool(page == 3));
+        for (i, key) in ["catalog_tab", "selection_tab", "library_tab"]
+            .into_iter()
+            .enumerate()
+        {
+            state.set(key, UiValue::Bool(i == page));
+        }
+    }
     for key in EMPTY_STATE_KEYS {
         if state.get(key).is_some() {
             state.set((*key).to_string(), UiValue::Bool(false));
@@ -631,6 +641,7 @@ fn seeded_state(kind: GuiKind, seed: Seed, page: usize) -> petramond_ui::UiState
 /// guards below cover the whole surface rather than the screens someone
 /// happened to open.
 const SHELL_KINDS: &[GuiKind] = &[
+    GuiKind::Creative,
     GuiKind::Chest,
     GuiKind::Inventory,
     GuiKind::CraftingTable,
@@ -669,7 +680,7 @@ struct SolvedNode<'a, 'd> {
 /// Solve one shipped document with seeded dynamic text at `scale`, then
 /// hand every instance to `check`.
 fn walk_solved(kind: GuiKind, scale: i32, seed: Seed, mut check: impl FnMut(SolvedNode<'_, '_>)) {
-    for page in 0..2 {
+    for page in 0..if kind == GuiKind::Creative { 4 } else { 2 } {
         walk_solved_page(kind, scale, seed, page, &mut check);
     }
 }
@@ -1004,4 +1015,10 @@ fn an_unframed_reference_does_not_hide_a_sheet_grid() {
     let err = collect_doc_images(&doc, &dir).unwrap_err();
     assert!(err.contains("does not divide evenly"), "{err}");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn creative_document_keeps_hotbar_slots_outside_its_tabs() {
+    let doc = doc_for(GuiKind::Creative).expect("creative document loads and validates");
+    assert_eq!(doc.doc.role_slots(), vec![("hotbar".to_string(), 9)]);
 }

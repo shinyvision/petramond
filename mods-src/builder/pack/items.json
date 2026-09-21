@@ -1,0 +1,67 @@
+{
+  "items": [
+    {
+      "item": "builder:schematic_table",
+      "key": "builder:schematic_table",
+      "name": "Schematic Table",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "builder:schematic_table"
+    },
+    {
+      "item": "builder:blueprint",
+      "key": "builder:blueprint",
+      "name": "Blueprint",
+      "info": "Place in a schematic table to plan a build. The golem keeps it",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "builder:blueprint",
+      "tags": [],
+      "data": {
+        "builder:blueprint": true
+      }
+    },
+    {
+      "item": "builder:copper_block",
+      "key": "builder:copper_block",
+      "name": "Copper Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "builder:copper_block"
+    },
+    {
+      "item": "builder:golem_core",
+      "key": "builder:golem_core",
+      "name": "Golem Core",
+      "info": "The heart of a Mason Golem",
+      "max_stack_size": 16,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "builder:golem_core",
+      "tags": []
+    },
+    {
+      "patch": "petramond:schematic_wand",
+      "data": {
+        "petramond:creative_only": false
+      }
+    }
+  ]
+}

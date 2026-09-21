@@ -17,18 +17,27 @@
 pub use mod_api::*;
 
 mod bytes;
+mod cadence;
+mod change_log;
 mod client;
+mod construction;
 mod containers;
 mod core_calls;
 mod entities;
+mod fast_hash;
 mod gui;
+mod id_shards;
 mod instance_data;
 pub use mod_api::json;
 mod kv;
 mod loot;
 mod memo;
+mod paged;
+mod panel_state;
 mod player;
+mod records;
 mod registry;
+mod schematics;
 mod sounds;
 mod structures;
 mod tags;
@@ -39,17 +48,26 @@ mod worldgen;
 pub mod __rt;
 
 pub use bytes::*;
+pub use cadence::*;
+pub use change_log::*;
 pub use client::*;
+pub use construction::*;
 pub use containers::*;
 pub use core_calls::*;
 pub use entities::*;
+pub use fast_hash::*;
 pub use gui::*;
+pub use id_shards::*;
 pub use instance_data::*;
 pub use kv::*;
 pub use loot::*;
 pub use memo::*;
+pub use paged::*;
+pub use panel_state::*;
 pub use player::*;
+pub use records::*;
 pub use registry::*;
+pub use schematics::*;
 pub use sounds::*;
 pub use structures::*;
 pub use tags::*;
@@ -126,11 +144,11 @@ pub trait Mod: Default {
 
     /// A button of this mod's own GUI was clicked (dispatched on the tick, in
     /// click order). `kind_key` is the GUI's registered kind, `widget_id` the
-    /// manifest button id, and `pos` the block the GUI was opened from
-    /// (`None` for a programmatic [`gui_open`]). Typical handling: update the
+    /// manifest button id, and `at` the block or mob the GUI session is
+    /// anchored on (`None` for an unanchored [`gui_open`]). Typical handling: update the
     /// session's state map via [`gui_state_set`] so the GUI's `label` /
     /// `rotimage` widgets redraw.
-    fn gui_click(&mut self, _kind_key: &str, _widget_id: &str, _pos: Option<[i32; 3]>) {}
+    fn gui_click(&mut self, _kind_key: &str, _widget_id: &str, _at: Option<ContainerAddress>) {}
 
     /// Core is asking whether this candidate should spawn one of this mod's
     /// hostile species. Return a mob registry key to request a spawn, or `None`

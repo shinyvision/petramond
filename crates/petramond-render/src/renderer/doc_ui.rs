@@ -58,6 +58,7 @@ impl Renderer {
         self.ui.doc_ui.overlay_start = 0;
         self.ui.doc_ui.frame_images.clear();
         let Some(document) = document else {
+            self.ui.doc_ui.dynamic_binds.clear();
             return;
         };
         let draw = document.draw;
@@ -65,6 +66,20 @@ impl Renderer {
             .doc_ui
             .frame_images
             .extend_from_slice(document.images);
+        let current: std::collections::HashSet<_> = self
+            .ui
+            .doc_ui
+            .frame_images
+            .iter()
+            .filter_map(|source| match source {
+                petramond::gui::DocImageSource::Dynamic { key, .. } => Some(key.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.ui
+            .doc_ui
+            .dynamic_binds
+            .retain(|key, _| current.contains(key.as_str()));
         self.ensure_doc_image_binds();
         if draw.vertices.is_empty() {
             return;

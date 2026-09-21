@@ -5,14 +5,17 @@
 
 use super::world_prediction::UseClaim;
 use super::Game;
-use petramond::net::protocol::{
-    ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, SelfEvents, TargetRef,
-};
+use petramond::net::protocol::{ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, TargetRef};
 use petramond::player::one_shot::OneShot;
 use petramond::server::interact::ConsumerKind;
 use petramond_math::math::IVec3;
-use petramond_world::block::Block;
 use petramond_world::inventory::Hand;
+
+mod events;
+mod replica_clock;
+
+pub use events::{ClientEvents, GameEvents, WorldEvent};
+pub use replica_clock::ReplicaClock;
 
 pub use petramond::events::tick::TICK_DT;
 pub use petramond::events::tick::{MobSoundEvent, SoundEvent, SpatialSoundCommand};
@@ -78,267 +81,6 @@ pub struct GameInput {
     pub use_held: bool,
 }
 
-/// One world-anchored event this frame's tick batch carried, in local types —
-/// the client-side twin of [`petramond::net::protocol::WorldEventMsg`]. Every
-/// observer presents these (break bursts, door swings, POSITIONAL sounds);
-/// the app maps each to its sound at the event's position.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum WorldEvent {
-    BlockBroken {
-        pos: IVec3,
-        block: Block,
-        normal: Option<IVec3>,
-        /// The cell's `petramond:tint` KV at break time (the KV is wiped with
-        /// the block, so the burst tint must ride the event).
-        tint: Option<[u8; 3]>,
-    },
-    BlockPlaced {
-        pos: IVec3,
-        block: Block,
-    },
-    /// A door toggled: the LOWER cell + its NEW open state.
-    DoorToggled {
-        lower: IVec3,
-        open: bool,
-    },
-    ChestOpened {
-        pos: IVec3,
-    },
-    ChestClosed {
-        pos: IVec3,
-    },
-    /// A player collected a drop at `pos`. `by_self` = the LOCAL player did
-    /// (the app keeps its non-positional self pickup sound for that).
-    ItemPickedUp {
-        pos: petramond_math::world_pos::WorldPos,
-        by_self: bool,
-    },
-    /// A one-shot particle burst (a `particle_emitters.json` burst bundle by
-    /// client-local catalog id) — e.g. the water splash when something falls
-    /// in. Every client spawns the burst into its own particle system.
-    EmitterBurst {
-        emitter: u8,
-        pos: petramond_math::world_pos::WorldPos,
-        intensity: f32,
-    },
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct GameEvents {
-    // The hand one-shots below are CLIENT-PREDICTED (latched at click/finish
-    // time) — the server never echoes self-initiated actions back, so each
-    // fires exactly once. World-visible confirmation (sounds, bursts) comes
-    // from the replicated world events instead.
-    /// The place ghost predicted a block this frame, if any.
-    pub placed_block: Option<Block>,
-    /// The predicted place above committed from the OFF hand (the use-click
-    /// ladder's second pass) — the LEFT hand animates the pop.
-    pub placed_off_hand: bool,
-    /// The local mining timer finished a block this frame, if any.
-    pub broke_block: Option<Block>,
-    /// The hand swung this frame for an attack.
-    pub swung_hand: bool,
-    /// An item/stack left the hand for the world this frame.
-    pub threw_item: bool,
-    /// At least one dropped item was collected into the inventory this frame.
-    pub picked_up_item: bool,
-    /// A GUI screen should open this frame — engine containers and mod GUIs
-    /// alike: from a block's interaction (`pos = Some`) or a mod's
-    /// programmatic `GuiOpen` (`pos = None`). The inventory's E-key open is
-    /// client-initiated and never rides here.
-    pub open_gui: Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)>,
-    /// A mod asked to close the open mod GUI this frame (`GuiClose`); the app
-    /// honours it only while a mod GUI screen is actually up.
-    pub close_document_gui: bool,
-    /// The player right-clicked a door this frame. Carries the door's NEW open
-    /// state (after the toggle applied). The open/close SOUND is driven by the
-    /// positional [`WorldEvent::DoorToggled`] every observer receives; this
-    /// one-shot remains for the toggler's own presentation. `None` = no door
-    /// toggle this frame.
-    pub toggled_door: Option<bool>,
-    /// The player right-clicked a bed this frame. This fires even in daytime,
-    /// when the click sets the spawn point but does not start sleep.
-    pub bed_interacted: bool,
-    /// The player's use click PREDICTABLY does something this frame (an
-    /// interactable target, a usable/edible held item, a plausible placement)
-    /// — the P0 hand jab, latched at click time, unless the consumer
-    /// presents itself ([`interacted_presents_itself`](Self::interacted_presents_itself)).
-    /// Covers what the removed `used_item` echo used to animate.
-    pub interacted: bool,
-    /// The jab above belongs to the OFF hand (the click's predicted effect —
-    /// or its `used_unpredicted` echo — came from the ladder's second pass):
-    /// the LEFT hand jabs instead of the right.
-    pub interacted_off_hand: bool,
-    /// The consumed click's consumer PRESENTS ITSELF (the eat's raise is its
-    /// whole presentation), so no hand jabs. Still an interaction for
-    /// everything else that reads one.
-    pub interacted_presents_itself: bool,
-    /// The consumed click above is a PLACEMENT (predicted to place, ghost or
-    /// not): it plays the place jab, not the interact one.
-    pub interacted_places: bool,
-    /// The player took damage this frame (post `player_damage_pre`, amount
-    /// > 0) — plays the hurt sound and kicks the screen/hand shake.
-    pub player_damaged: bool,
-    /// The player's health hit 0 this frame — the app opens the death screen.
-    pub player_died: bool,
-    /// The player right-clicked a bed this frame — the app opens the sleep
-    /// overlay.
-    pub open_sleep: bool,
-    /// The sleep ended this frame (completed, cancelled, or died) — the app
-    /// closes the sleep overlay if it is up.
-    pub sleep_ended: bool,
-    /// The player respawned this frame — the app closes the death screen.
-    pub respawned: bool,
-    /// Every sound mods emitted across this frame's fixed ticks, in emission
-    /// order. NON-lossy (unlike the latched booleans above): each entry plays
-    /// exactly once.
-    pub sounds: Vec<SoundEvent>,
-    /// Spatial sound start/stop commands emitted by mods across this frame's
-    /// fixed ticks. NON-lossy; the app/audio side owns active playback state.
-    pub spatial_sounds: Vec<SpatialSoundCommand>,
-    /// Semantic mob sound events emitted by gameplay across this frame's fixed
-    /// ticks. NON-lossy; the app resolves species data and plays them.
-    pub mob_sounds: Vec<MobSoundEvent>,
-    /// World-anchored events every observer presents (positional sounds,
-    /// break bursts, door swings), in emission order. NON-lossy.
-    pub world_events: Vec<WorldEvent>,
-    /// Graph events fired on the local player's rig animators this batch:
-    /// client mods' own (a round trip early) and the server's echoes of the
-    /// rest, `(rig, event id)` in order.
-    pub animator_events: Vec<(petramond::player::RigId, u16)>,
-    /// The server became unreachable (thread crashed / channel closed) —
-    /// reported EXACTLY ONCE, on the frame the loss is detected. Until the app
-    /// grows a proper "world stopped" screen for it, it
-    /// is logged and the (frozen) world keeps rendering.
-    pub connection_lost: Option<String>,
-}
-
-impl GameEvents {
-    /// The hand gestures this batch fired, `(hand, gesture)` in the order
-    /// the client-mod swing facts rank them: the swing, the break, the
-    /// place (a placed block or a click predicted to place — from the hand
-    /// that acted), the throw, then the interact — every other consumed use
-    /// click, unless its consumer presents itself.
-    pub fn one_shots(&self) -> impl Iterator<Item = (Hand, OneShot)> + '_ {
-        let click_hand = if self.interacted_off_hand {
-            Hand::Off
-        } else {
-            Hand::Main
-        };
-        let place_hand = if self.placed_off_hand {
-            Hand::Off
-        } else {
-            Hand::Main
-        };
-        let placed = self.placed_block.is_some();
-        let predicted_place = self.interacted && self.interacted_places;
-        let interact =
-            self.interacted && !self.interacted_places && !self.interacted_presents_itself;
-        [
-            (self.swung_hand, Hand::Main, OneShot::Swing),
-            (self.broke_block.is_some(), Hand::Main, OneShot::Break),
-            (placed, place_hand, OneShot::Place),
-            (predicted_place && !placed, click_hand, OneShot::Place),
-            (self.threw_item, Hand::Main, OneShot::Throw),
-            (interact, click_hand, OneShot::Interact),
-        ]
-        .into_iter()
-        .filter_map(|(fired, hand, kind)| fired.then_some((hand, kind)))
-    }
-}
-
-/// Client-side PHASE-ACCUMULATOR clock over a STAGED interpolation window.
-/// `tick_alpha` used to read the server accumulator, which now lives on the
-/// server thread; tying it to each update's arrival time instead makes batch
-/// arrivals quantized to frame boundaries
-/// and jittered by thread scheduling; the old timestamp-reset clock aliased
-/// that into a stall/lurch cycle — every early batch shifted the pair under a
-/// mid-segment render (a forward jump), every late one pinned alpha at 1 (a
-/// stall). Invisible on a walking sheep; violent rubber-banding with the
-/// camera glued to a 4.5 m/s boat (the 2026-07-15 riding bug).
-///
-/// Now fresh batches enter a small bounded FIFO (`Game::staged_rows`): render
-/// time advances by the frame's real `dt` ([`advance`](Self::advance)) and
-/// queued rows COMMIT only when the phase crosses segment boundaries
-/// (`Game::advance_interp_window` → [`consume_segment`](Self::consume_segment)),
-/// so the pair under the render never shifts mid-segment and steady batches
-/// render at constant velocity no matter how arrivals alias against the frame
-/// rate. The timeline self-centres by a one-sided ratchet: only a genuinely
-/// late batch slips it ([`hold`](Self::hold) drops the starved excess). If the
-/// queue overflows, pending snapshots collapse to the newest state (all player
-/// actions retained in order) and snap prev == curr at the NEXT crossed
-/// boundary; even emergency catch-up never mutates a live segment.
-#[derive(Default)]
-pub struct ReplicaClock {
-    /// Render-time phase in fixed ticks past the committed pair: `advance`
-    /// adds real time, `consume_segment` subtracts a committed batch,
-    /// [`alpha`](Self::alpha) clamps into the pair's interpolation range.
-    phase: f32,
-    started: bool,
-}
-
-impl ReplicaClock {
-    /// Advance render time by one frame of real `dt` (called once per frame,
-    /// before anything samples [`alpha`](Self::alpha)).
-    pub fn advance(&mut self, dt: f32) {
-        if self.started {
-            self.phase += dt / TICK_DT;
-        }
-    }
-
-    /// The first batch bootstrapped the stores (prev == curr): start the
-    /// render timeline at the segment origin.
-    pub fn start(&mut self) {
-        self.started = true;
-        self.phase = 0.0;
-    }
-
-    pub fn started(&self) -> bool {
-        self.started
-    }
-
-    /// Render time has crossed the current segment — the next staged batch
-    /// (if any) is due to commit.
-    pub fn overdue(&self) -> bool {
-        self.started && self.phase >= 1.0
-    }
-
-    /// A staged batch committed: the render window moved one segment forward.
-    pub fn consume_segment(&mut self) {
-        self.phase = (self.phase - 1.0).max(0.0);
-    }
-
-    /// Nothing staged while overdue (a late batch, a pause): hold at the
-    /// segment end instead of extrapolating, dropping the starved excess —
-    /// the ratchet that keeps the timeline just far enough behind arrivals.
-    pub fn hold(&mut self) {
-        self.phase = self.phase.min(1.0);
-    }
-
-    /// Fraction (0..1) into the committed prev→curr pair. `1.0` before the
-    /// first update (render current state, no interpolation).
-    pub fn alpha(&self) -> f32 {
-        if self.started {
-            self.phase.clamp(0.0, 1.0)
-        } else {
-            1.0
-        }
-    }
-}
-
-/// The client-side accumulation of one frame's `TickUpdate` event payloads,
-/// already translated to LOCAL types (ids remapped at the transport for a
-/// remote client; identity in-process). Filled by `apply_tick_update`, drained
-/// once per frame by [`Game::tick`] into `GameEvents`.
-#[derive(Default)]
-pub struct ClientEvents {
-    pub world: Vec<WorldEvent>,
-    pub self_events: SelfEvents,
-    pub sounds: Vec<SoundEvent>,
-    pub spatial_sounds: Vec<SpatialSoundCommand>,
-    pub mob_sounds: Vec<MobSoundEvent>,
-}
-
 impl Game {
     pub fn tick(&mut self, dt: f32, input: &GameInput) -> GameEvents {
         self.tick_send(dt, input);
@@ -382,6 +124,9 @@ impl Game {
         );
         self.local_bones.advance(&target, dt);
         self.local_bone_target = target;
+        let mut tool_input = *input;
+        self.world_tool_input(&mut tool_input);
+        let input = &tool_input;
         self.tick_local_mining(dt, input);
 
         let update = self.build_player_update(input);
@@ -444,12 +189,15 @@ impl Game {
         // remote client drives them from off the wire.
         self.apply_world_effects(&events.world);
         self.tick_mining_dust(dt);
+        let digging = self.tick_mob_digging(dt);
         self.tick_entities(dt);
         self.advance_chest_lids(dt);
         self.advance_door_swings(dt);
         self.tick_mesh_budget();
 
-        self.assemble_game_events(events, dt)
+        let mut out = self.assemble_game_events(events, dt);
+        out.sounds.extend(digging);
+        out
     }
 
     /// Drain and apply every pending server→client message. `Game::tick` runs
@@ -482,6 +230,24 @@ impl Game {
             .player
             .denied_actions()
             .denies(mod_api::BodyAction::Mine);
+        self.break_repeat.tick(dt);
+        if self.player.is_creative() {
+            self.local_mining = Default::default();
+            self.self_view.mining = None;
+            if !barred && input.break_held && self.break_repeat.ready() {
+                if let Some(pos) = look {
+                    let block = petramond_world::block::Block::from_id(
+                        self.replica.chunk_block(pos.x, pos.y, pos.z),
+                    );
+                    if block != petramond_world::block::Block::Air {
+                        self.break_repeat.arm();
+                        let normal = self.look.map(|h| h.normal);
+                        self.apply_predicted_break(pos, block, normal);
+                    }
+                }
+            }
+            return;
+        }
         let event =
             self.local_mining
                 .update(dt, look, input.break_held, barred, &self.replica, tool);
@@ -561,14 +327,14 @@ impl Game {
         }
         match se.open_screen {
             None => {}
-            Some(OpenScreen::Gui { kind_key, pos }) => {
+            Some(OpenScreen::Gui { kind_key, anchor }) => {
                 // Unknown kind = a mod the client lacks; the handshake makes
                 // this unreachable in practice — skip rather than panic. The
                 // inventory open is the server's ack of the client's own E-key
                 // request (its screen is already up), so it never re-opens.
                 match petramond_world::gui_state::resolve_kind(&kind_key) {
                     Some(kind) if kind != petramond_world::gui_state::GuiKind::Inventory => {
-                        out.open_gui = Some((kind, pos));
+                        out.open_gui = Some((kind, anchor));
                     }
                     _ => {}
                 }
@@ -789,6 +555,7 @@ impl Game {
                     }));
             }
         }
+        self.poll_schematic_share();
         self.frame_messages.append(&mut self.outbox);
     }
 

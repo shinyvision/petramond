@@ -517,6 +517,9 @@ impl App {
     /// thread) and the test fixtures (which build a loopback-piped session).
     pub fn adopt_game(&mut self, game: crate::game::Game) {
         self.game = Some(game);
+        self.hotbar_notice = Default::default();
+        self.creative_menu = Default::default();
+        self.library_form = Default::default();
         self.apply_particles();
         self.rebuild_action_table();
         self.screen = AppScreen::Game;

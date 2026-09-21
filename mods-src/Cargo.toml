@@ -4,6 +4,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "builder",
     "combat",
     "exploration",
     "farming",

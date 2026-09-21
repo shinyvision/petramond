@@ -1,0 +1,154 @@
+{
+  "format": 1,
+  "kind": "builder:materials",
+  "class": "container",
+  "root": {
+    "type": "frame",
+    "style": "panel.large",
+    "layout": {
+      "w": 250,
+      "h": 230,
+      "pad": [
+        8,
+        4,
+        8,
+        8
+      ],
+      "gap": 6
+    },
+    "children": [
+      {
+        "type": "row",
+        "layout": {
+          "align": "center",
+          "gap": 6,
+          "w": {
+            "grow": 1
+          }
+        },
+        "children": [
+          {
+            "type": "label",
+            "text": "Materials"
+          },
+          {
+            "type": "spacer",
+            "layout": {
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "back",
+            "text": "Back",
+            "layout": {
+              "w": 48,
+              "h": 22
+            }
+          }
+        ]
+      },
+      {
+        "type": "scroll",
+        "id": "materials_scroll",
+        "axis": "vertical",
+        "style": "panel.inset",
+        "layout": {
+          "h": {
+            "grow": 1
+          },
+          "min_h": 80,
+          "pad": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "children": [
+          {
+            "type": "list",
+            "id": "materials_list",
+            "layout": {
+              "align": "stretch",
+              "gap": 2
+            },
+            "bind": {
+              "items": "builder:bill"
+            },
+            "children": [
+              {
+                "type": "row",
+                "layout": {
+                  "gap": 4,
+                  "align": "center",
+                  "w": {
+                    "grow": 1
+                  }
+                },
+                "children": [
+                  {
+                    "type": "column",
+                    "layout": {
+                      "w": 10,
+                      "h": 10
+                    },
+                    "children": [
+                      {
+                        "type": "image",
+                        "image": "../icons/have.png",
+                        "bind": {
+                          "visible": "done"
+                        },
+                        "layout": {
+                          "w": 10,
+                          "h": 10
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "hook",
+                    "id": "material_item",
+                    "bind": {
+                      "item": "item"
+                    },
+                    "layout": {
+                      "w": 16,
+                      "h": 16
+                    }
+                  },
+                  {
+                    "type": "label",
+                    "small": true,
+                    "bind": {
+                      "text": "text"
+                    }
+                  },
+                  {
+                    "type": "spacer",
+                    "layout": {
+                      "w": {
+                        "grow": 1
+                      }
+                    }
+                  },
+                  {
+                    "type": "label",
+                    "small": true,
+                    "bind": {
+                      "text": "note",
+                      "palette": "note_palette"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

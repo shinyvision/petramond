@@ -15,6 +15,8 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             key,
             pos,
             intensity,
+            direction,
+            texture,
         } => match super::guards::finite_pos(pos, "EmitterBurst.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
@@ -29,10 +31,40 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                     log::warn!("[mod {mod_id}] EmitterBurst: '{key}' is not a burst bundle");
                     return HostRet::Bool(false);
                 }
+                if direction.is_some_and(|d| d.iter().any(|v| !v.is_finite())) {
+                    return HostRet::Error("EmitterBurst: non-finite direction".into());
+                }
+                use crate::events::tick::BurstTexture;
+                let texture = match texture {
+                    None => None,
+                    Some(mod_api::ParticleTexture::Tile { tile, slice, tint }) => {
+                        let Some(slice) =
+                            petramond_world::particle_emitters::TextureSlice::named(&tile, slice)
+                        else {
+                            log::warn!(
+                                "[mod {mod_id}] EmitterBurst: no tile slice '{tile}' {slice:?}"
+                            );
+                            return HostRet::Bool(false);
+                        };
+                        Some(BurstTexture::Tile { slice, tint })
+                    }
+                    Some(mod_api::ParticleTexture::Block { block, tint }) => {
+                        match super::guards::checked_block(block) {
+                            Ok(block) => Some(BurstTexture::Block { block, tint }),
+                            Err(e) => return e,
+                        }
+                    }
+                };
                 ctx.feed
                     .world
                     .emitter_bursts
-                    .push((bundle.id, pos, intensity));
+                    .push(crate::events::tick::BurstFired {
+                        emitter: bundle.id,
+                        pos,
+                        intensity,
+                        direction,
+                        texture,
+                    });
                 HostRet::Bool(true)
             }),
         },

@@ -98,9 +98,11 @@ use super::palette;
 /// v18 (2026-09-13): item entity and mob positions are `f64` world
 /// positions, exact anywhere inside the world border. Clean break; dev
 /// worlds regenerate.
-const SECTION_REC_VERSION: u8 = 18;
+/// v19 (2026-09-16): saved mobs carry their container slots, and string tags
+/// a u32 length. Clean break; dev worlds regenerate.
+const SECTION_REC_VERSION: u8 = 19;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 18;
+const SECTION_REC_MIN_VERSION: u8 = 19;
 const FLAG_HAS_FLUID: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;

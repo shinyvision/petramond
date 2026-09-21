@@ -686,6 +686,9 @@ pub struct Bindings {
     /// node's own style; a disabled node keeps the disabled colour.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
+    /// Label text alpha (0–1), for transient notices without changing layout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_opacity: Option<String>,
 }
 
 impl Bindings {

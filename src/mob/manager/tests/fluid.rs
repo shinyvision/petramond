@@ -26,7 +26,7 @@ fn step(
     world: &World,
     drive: [f32; 2],
 ) -> super::super::simulation::MobTickEvents {
-    assert!(mobs.set_mob_drive(0, Some(drive), None, None, false));
+    assert!(mobs.set_mob_drive(0, Some(drive), None, None, false, false));
     mobs.tick(
         0.05,
         world,

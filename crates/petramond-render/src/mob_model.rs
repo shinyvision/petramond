@@ -23,14 +23,11 @@ use super::lighting::{fold_tint_self_lit, mul3, DynLight, LightEnv};
 use super::MobRenderInstance;
 use petramond_math::face::Face;
 use petramond_mesh::SHADES;
-use petramond_world::bbmodel::{clips, euler_quat, face_corners, Animation, Cube, Model};
+use petramond_world::bbmodel::{clips, euler_quat, face_corners, Animation, Model};
 
 /// White: mobs are textured directly (no foliage tint), so the shader's
 /// `tex.rgb * shade * tint` reduces to `tex.rgb * shade`.
 const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
-/// The authored name of a model's shearable-coat cubes (a sheep's fleece): every cube
-/// with this element name is skipped while the instance is `shorn`.
-const COAT_CUBE_NAME: &str = "wool";
 /// The multiply tint a fully-hurt mob flashes — dims green/blue toward red (a multiply
 /// can't brighten, so this reads as a red cast rather than an additive glow).
 const HURT_RED: [f32; 3] = [1.0, 0.25, 0.25];
@@ -66,7 +63,66 @@ pub(super) fn body_tint(
 /// neutral rest pose — and (when the model has a `head` bone and the active animation
 /// isn't already moving it) the AI head-look is applied to the head. The caller groups
 /// instances by species and frustum-culls them first.
-pub fn build_mob_instances(
+/// Where one posed mob holds one item: the hand's grip and the light to draw
+/// the item in. Collected while the mobs bake and drawn with the held items.
+pub(crate) struct MobHeld {
+    pub grip: crate::player_model::Grip,
+    pub item: petramond_world::item::ItemType,
+    pub off_side: bool,
+    pub light: DynLight,
+}
+
+/// What a species' model resolves to once, so the per-instance bake compares
+/// no names: its hand bones, its coat cubes, and its rest-pose self-AO.
+pub(crate) struct MobRig {
+    /// Main and off hand: the bone index and the grip point in its rest pose.
+    hands: [Option<(usize, Vec3)>; 2],
+    hand_roll: f32,
+    /// Per cube: part of the shearable coat.
+    coat: Vec<bool>,
+    /// Rest-pose self-AO per cube face corner, at the species' strength.
+    self_ao: Option<Vec<[[f32; 4]; 6]>>,
+}
+
+impl MobRig {
+    /// `coat` names the species' shearable-coat cubes, when it has a coat.
+    pub(crate) fn resolve(
+        model: &Model,
+        hands: Option<petramond::mob::MobHands>,
+        coat: Option<&str>,
+    ) -> Self {
+        let hand = |hand: Option<(&str, [f32; 3])>| {
+            let (bone, grip) = hand?;
+            let index = model.bones.iter().position(|b| b.name == bone)?;
+            Some((index, Vec3::from_array(grip)))
+        };
+        Self {
+            hands: [hand(hands.map(|h| h.main)), hand(hands.and_then(|h| h.off))],
+            hand_roll: hands.map_or(0.0, |h| h.roll),
+            coat: model
+                .cubes
+                .iter()
+                .map(|cube| Some(cube.name.as_str()) == coat)
+                .collect(),
+            self_ao: None,
+        }
+    }
+
+    /// Add the rest-pose self-AO table at `strength`. A coat casts nothing:
+    /// shorn, the body it covered must not stay dark.
+    pub(crate) fn with_self_ao(mut self, model: &Model, scale: f32, strength: f32) -> Self {
+        let world_px = 1.0 / (16.0 * scale.max(1e-6));
+        let mut table = model.rest_self_ao(world_px, |cube| !self.coat[cube]);
+        for ao in table.iter_mut().flatten().flatten() {
+            *ao = 1.0 - strength * (1.0 - *ao);
+        }
+        self.self_ao = Some(table);
+        self
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_mob_instances(
     model: &Model,
     scale: f32,
     env: LightEnv,
@@ -74,6 +130,8 @@ pub fn build_mob_instances(
     render_origin: glam::IVec3,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
+    held: &mut Vec<MobHeld>,
+    rig: &MobRig,
 ) -> u32 {
     verts.clear();
     indices.clear();
@@ -117,7 +175,14 @@ pub fn build_mob_instances(
                 None
             };
             layers.clear();
-            layers.extend(base.map(|a| (a, inst.anim_time, 1.0)));
+            layers.extend(base.map(|a| (a, inst.anim_time, inst.gait_weight)));
+            layers.extend(inst.gait_fades.iter().filter_map(|(clip, phase, weight)| {
+                let anim = match clip {
+                    crate::GaitClip::Walk => walk,
+                    crate::GaitClip::Idle(i) => model.idle_animation(*i as usize),
+                };
+                anim.map(|a| (a, *phase, *weight))
+            }));
             layers.extend(
                 inst.anims
                     .iter()
@@ -126,8 +191,16 @@ pub fn build_mob_instances(
                         model.animation(name).map(|a| (a, *phase, *weight))
                     }),
             );
-            let looking_head =
-                head_bone.filter(|&hb| !layers.iter().any(|(a, _, _)| a.affects_bone(hb)));
+            // Clips that move the head own it by their WEIGHT: a walk easing
+            // in hands the head over gradually, never in one frame.
+            let looking_head = head_bone.map(|hb| {
+                let owned: f32 = layers
+                    .iter()
+                    .filter(|(a, _, _)| a.affects_bone(hb))
+                    .map(|(_, _, weight)| weight.clamp(0.0, 1.0))
+                    .sum();
+                (hb, 1.0 - owned.min(1.0))
+            });
             if inst.hurt > 0.001 {
                 if let Some(hurt) = model.animation(clips::HURT) {
                     layers.push((
@@ -143,13 +216,16 @@ pub fn build_mob_instances(
                 model.pose_layers(&layers)
             };
             // Hurt is additive to the gaze; authored actions still own the head.
-            if let Some(hb) = looking_head {
+            if let Some((hb, free)) = looking_head.filter(|(_, free)| *free > 0.001) {
                 let parent = model.bones[hb]
                     .parent
                     .map(|p| pose[p].to_scale_rotation_translation().1)
                     .unwrap_or(glam::Quat::IDENTITY);
-                let look = glam::Quat::from_rotation_y(inst.head_yaw)
-                    * glam::Quat::from_rotation_x(inst.head_pitch);
+                let look = glam::Quat::IDENTITY.slerp(
+                    glam::Quat::from_rotation_y(inst.head_yaw)
+                        * glam::Quat::from_rotation_x(inst.head_pitch),
+                    free,
+                );
                 model.apply_bone_rotation(&mut pose, hb, parent * look * parent.conjugate());
             }
             pose
@@ -176,17 +252,39 @@ pub fn build_mob_instances(
             &pose,
             global,
             tint,
-            |cube| inst.shorn && cube.name == COAT_CUBE_NAME,
+            |cube| inst.shorn && rig.coat[cube],
+            rig.self_ao.as_deref(),
             verts,
             indices,
         );
+        for (side, hand) in rig.hands.iter().enumerate() {
+            let (Some((bone, grip)), Some(item)) = (*hand, inst.held[side]) else {
+                continue;
+            };
+            let quarter_back = if item.sprite_face_leads() {
+                std::f32::consts::FRAC_PI_2
+            } else {
+                0.0
+            };
+            held.push(MobHeld {
+                grip: crate::player_model::Grip {
+                    frame: global * pose.get(bone).copied().unwrap_or(Mat4::IDENTITY),
+                    point: grip,
+                    px: scale,
+                    roll: rig.hand_roll + quarter_back,
+                },
+                item,
+                off_side: side == 1,
+                light: DynLight::new(inst.skylight, inst.blocklight),
+            });
+        }
     }
     indices.len() as u32
 }
 
 /// Emit every cube of the posed model under `global`, tinted by `tint`, skipping
-/// cubes where `skip` returns true (per-instance part hiding like a shorn sheep's
-/// `wool` cubes; pass `|_| false` for none). Per cube the transform is
+/// cubes whose INDEX `skip` returns true for (per-instance part hiding like a
+/// shorn sheep's coat; pass `|_| false` for none). Per cube the transform is
 /// `global · pose[bone] · S_cube` (see the module doc). Shared with the
 /// third-person player bake ([`super::player_model`]).
 pub(super) fn bake_model_cubes(
@@ -194,12 +292,13 @@ pub(super) fn bake_model_cubes(
     pose: &[Mat4],
     global: Mat4,
     tint: [f32; 3],
-    skip: impl Fn(&Cube) -> bool,
+    skip: impl Fn(usize) -> bool,
+    self_ao: Option<&[[[f32; 4]; 6]]>,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) {
-    for cube in &model.cubes {
-        if skip(cube) {
+    for (ci, cube) in model.cubes.iter().enumerate() {
+        if skip(ci) {
             continue;
         }
         let bone = pose.get(cube.bone).copied().unwrap_or(Mat4::IDENTITY);
@@ -210,7 +309,10 @@ pub(super) fn bake_model_cubes(
 
         for (slot, face) in Face::ALL.into_iter().enumerate() {
             let Some(uv) = cube.faces[slot] else { continue };
-            push_face(verts, indices, m, face, cube.from, cube.to, uv, tint);
+            let ao = self_ao
+                .and_then(|table| table.get(ci))
+                .map_or([1.0; 4], |faces| faces[slot]);
+            push_face(verts, indices, m, face, cube.from, cube.to, uv, tint, ao);
         }
     }
 }
@@ -229,6 +331,7 @@ pub(super) fn push_face(
     to: Vec3,
     uv: petramond_world::bbmodel::FaceUv,
     tint: [f32; 3],
+    ao: [f32; 4],
 ) {
     let local = face_corners(face, from, to);
     let p: [Vec3; 4] = [
@@ -251,11 +354,15 @@ pub(super) fn push_face(
         verts.push(ItemVertex {
             pos: p[i].to_array(),
             uv: corner_uv[i],
-            shade,
+            shade: shade * ao[i],
             tint,
         });
     }
-    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    indices.extend(
+        petramond_world::block_model::model_face_tris(ao)
+            .into_iter()
+            .map(|i| start + i),
+    );
 }
 
 #[cfg(test)]

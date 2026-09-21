@@ -16,6 +16,7 @@ pub mod net;
 pub mod platform;
 pub mod player;
 pub mod save;
+pub mod schematic;
 pub mod server;
 pub mod tooling;
 pub mod worker;

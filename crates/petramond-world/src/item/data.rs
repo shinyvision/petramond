@@ -170,6 +170,8 @@ pub const ENGINE_ITEM_NAMES: &[&str] = &[
     "petramond:redwood_fence",
     "petramond:clay_block",
     "petramond:lava_bucket",
+    "petramond:schematic_wand",
+    "petramond:paper",
 ];
 
 /// The JSON-loaded item table. Loads exactly once, on first access; the loader
@@ -203,6 +205,9 @@ static BLOCK_TO_ITEM: LazyLock<Box<[ItemType]>> = LazyLock::new(|| {
     let mut lut = vec![ItemType::Air; n].into_boxed_slice();
     let mut set = vec![false; n].into_boxed_slice();
     for d in TABLE.iter() {
+        if d.key.starts_with(super::creative::PREFIX) {
+            continue;
+        }
         if let Some(b) = d.block {
             if !set[b.id() as usize] {
                 lut[b.id() as usize] = d.item;

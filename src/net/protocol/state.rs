@@ -99,6 +99,14 @@ pub struct MobStateRow {
     /// this tick — present only while the death ragdoll plays (bounded), so
     /// live mobs pay nothing for it.
     pub ragdoll: Option<Vec<([f32; 3], [f32; 4])>>,
+    /// The block this mob is digging and the crack stage it has reached
+    /// (`0..BREAK_STAGES`), while it digs.
+    pub dig: Option<(petramond_math::math::IVec3, u8)>,
+    /// Wire item ids drawn in the mob's main and off hands (see
+    /// `MobHeldDisplay`), remapped like every item id.
+    pub held: [Option<u16>; 2],
+    /// The draw set the body wears (see `SetMobDraw`); names, so no remap.
+    pub draw: crate::world::draw::BodyDraw,
 }
 
 /// One dropped item entity's replicated state as of the batch's tick — the
@@ -271,7 +279,7 @@ pub struct SelfState {
     pub conditions: Vec<(u8, u8)>,
     /// Health in half-heart points.
     pub health: i32,
-    /// `PlayerMode` as its discriminant (0 = survival, 1 = spectator).
+    /// `PlayerMode` wire value, including creative walking and flight.
     pub mode: u8,
     /// Active status effects as (wire effect id, remaining ticks), in
     /// application order.
@@ -381,6 +389,8 @@ pub enum WorldEventMsg {
         emitter_id: u8,
         pos: petramond_math::world_pos::WorldPos,
         intensity: f32,
+        direction: Option<[f32; 3]>,
+        texture: Option<BurstTextureMsg>,
     },
     /// A handle-addressed spatial sound command (`SoundPlayAt`/`OnMob`/`Stop`).
     SpatialSound(SpatialSoundMsg),
@@ -423,10 +433,10 @@ pub enum OpenScreen {
     /// A GUI session opened for the recipient — engine containers and mod
     /// GUIs ride the one lane. `kind_key` is the registered kind's stable
     /// string key (GuiKind ids are process-local, so the wire speaks keys);
-    /// `pos` is the block the session was opened from, if any.
+    /// `anchor` is the block or mob the session was opened on, if any.
     Gui {
         kind_key: String,
-        pos: Option<IVec3>,
+        anchor: Option<crate::menu::MenuAnchor>,
     },
     /// The sleep overlay (bed interaction).
     Sleep,
@@ -555,6 +565,26 @@ pub struct TickUpdate {
     /// Answers to this recipient's `ClientRequestId`s (menu clicks, breaks,
     /// drops, …), in emission order.
     pub action_outcomes: Vec<ActionOutcome>,
+    pub creative: Vec<crate::schematic::CreativeReply>,
+    /// Schematic choices, positionings, archive streams and ghosts for this
+    /// recipient.
+    pub schematics: Vec<crate::schematic::share::SchematicNotice>,
     /// The recipient's menu-session view when it changed (`None` = unchanged).
     pub menu_sync: Option<MenuSyncMsg>,
+}
+
+/// What a fired burst's particles are cut from. A tile travels by NAME (tiles
+/// have no wire ids, and a burst is a rare event); a block by its wire id,
+/// remapped like every block id.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum BurstTextureMsg {
+    Tile {
+        tile: String,
+        slice: [f32; 4],
+        tint: [u8; 3],
+    },
+    Block {
+        block_id: u16,
+        tint: Option<[u8; 3]>,
+    },
 }

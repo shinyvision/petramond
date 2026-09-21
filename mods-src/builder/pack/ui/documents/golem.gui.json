@@ -1,0 +1,60 @@
+{
+  "format": 1,
+  "kind": "builder:golem",
+  "class": "container",
+  "root": {
+    "type": "frame",
+    "style": "panel.large",
+    "layout": {
+      "pad": [4, 2, 4, 4],
+      "gap": 6
+    },
+    "children": [
+      {
+        "type": "label",
+        "text": "Mason Golem"
+      },
+      {
+        "type": "label",
+        "small": true,
+        "wrap": true,
+        "layout": {
+          "w": {
+            "grow": 1
+          }
+        },
+        "bind": {
+          "text": "builder:golem_status",
+          "palette": "builder:golem_status_palette"
+        }
+      },
+      {
+        "type": "slot_grid",
+        "role": "container",
+        "cols": 9,
+        "rows": 3
+      },
+      {
+        "type": "spacer",
+        "layout": {
+          "h": 2
+        }
+      },
+      {
+        "type": "slot_grid",
+        "role": "player_inv",
+        "cols": 9,
+        "rows": 3
+      },
+      {
+        "type": "slot_grid",
+        "role": "hotbar",
+        "cols": 9,
+        "rows": 1,
+        "layout": {
+          "margin": [0, 2, 0, 0]
+        }
+      }
+    ]
+  }
+}

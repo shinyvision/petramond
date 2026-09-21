@@ -39,6 +39,10 @@ pub(super) enum AppScreen {
     /// receives client-WASM UI events while the replicated world keeps
     /// running; no server menu session exists.
     ClientModGui(petramond_world::gui_state::GuiKind),
+    /// The schematic library opened for a choice a mod asked for: a
+    /// client-local document over the running world, with no server menu
+    /// session.
+    Schematics,
     /// A presentation-only client mod's centered physical-pixel canvas. The
     /// concrete owner/image lives in `App::client_canvas`; this screen gates
     /// gameplay and releases the cursor without selecting a GUI document.
@@ -114,7 +118,7 @@ impl AppScreen {
 
     #[inline]
     pub(super) fn client_ui_open(self) -> bool {
-        matches!(self, AppScreen::ClientModGui(_))
+        matches!(self, AppScreen::ClientModGui(_) | AppScreen::Schematics)
     }
 
     #[inline]
@@ -133,6 +137,7 @@ impl AppScreen {
             AppScreen::Chat => GuiKind::Hotbar,
             AppScreen::Menu(kind) => kind,
             AppScreen::ClientModGui(kind) => kind,
+            AppScreen::Schematics => GuiKind::Schematics,
             AppScreen::Sleeping => GuiKind::Sleep,
             AppScreen::Dead => GuiKind::Death,
             AppScreen::Title

@@ -169,6 +169,11 @@ impl ServerGame {
         match msg {
             ClientToServer::PlayerUpdate(u) => self.apply_player_update(s, &u),
             ClientToServer::Action(action) => self.apply_action(s, action),
+            ClientToServer::CreativeCursor { item, request_id } => {
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(PendingMenuAction::CreativeCursor { item, request_id });
+            }
             ClientToServer::MenuClick {
                 slot,
                 button,

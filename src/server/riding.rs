@@ -62,10 +62,16 @@ impl ServerGame {
         self.world.set_player_inputs(inputs);
         // Session storage order changes with swap_remove joins/leaves; the
         // roster SORTS by id so the ABI's "session-id order" stays true.
+        let operators: Vec<bool> = (0..self.sessions.len())
+            .map(|s| self.is_operator(s))
+            .collect();
         let mut roster: Vec<crate::player::PlayerRosterSnapshot> = self
             .sessions
             .iter_mut()
-            .map(|sess| crate::player::PlayerRosterSnapshot {
+            .zip(operators)
+            .map(|(sess, operator)| crate::player::PlayerRosterSnapshot {
+                name: sess.name.clone(),
+                operator,
                 id: sess.id.0,
                 pos: sess.player.pos.to_array(),
                 vel: sess.player.vel.to_array(),

@@ -232,9 +232,9 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
         GuestCall::GuiClick {
             kind_key,
             widget_id,
-            pos,
+            at,
         } => {
-            mod_.gui_click(&kind_key, &widget_id, pos);
+            mod_.gui_click(&kind_key, &widget_id, at);
             GuestRet::Unit
         }
         GuestCall::HostileSpawnCandidate {

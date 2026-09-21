@@ -130,8 +130,16 @@ impl Montage {
     }
 
     pub fn from_spec(spec: &PlaySpec, id: PlayId) -> Self {
-        let until = if spec.looping { Until::Forever } else { Until::Once };
-        let segment = Segment { clip: spec.clip, until, rate: None };
+        let until = if spec.looping {
+            Until::Forever
+        } else {
+            Until::Once
+        };
+        let segment = Segment {
+            clip: spec.clip,
+            until,
+            rate: None,
+        };
         let mut montage = Montage::new(vec![segment], Rate::Const(spec.rate), id);
         montage.duration = spec.duration.map(Rate::Const);
         montage.fade_in = spec.fade_in.max(0.0);
@@ -196,7 +204,12 @@ impl Montage {
         let from = self.time;
         self.time = to;
         self.hold_at = None;
-        (to > from && self.out.is_none() && !self.interrupted).then_some((clip, from, to, self.mirror))
+        (to > from && self.out.is_none() && !self.interrupted).then_some((
+            clip,
+            from,
+            to,
+            self.mirror,
+        ))
     }
 
     /// Begin leaving at its end; answers the settle time inertialization
@@ -308,7 +321,11 @@ impl SlotRt {
         let Some(top) = self.montages.last() else {
             return [0.0; 4];
         };
-        let coverage = 1.0 - self.montages.iter().fold(1.0, |rest, m| rest * (1.0 - m.weight()));
+        let coverage = 1.0
+            - self
+                .montages
+                .iter()
+                .fold(1.0, |rest, m| rest * (1.0 - m.weight()));
         let (clip, time, progress) = top.position(g);
         [coverage, time, progress, g.clips.interned(clip)]
     }
@@ -316,7 +333,12 @@ impl SlotRt {
     pub fn playing(&self, g: &Graph) -> Option<Playing> {
         let top = self.montages.last()?;
         let (clip, time, progress) = top.position(g);
-        Some(Playing { clip, time, progress, weight: top.weight() })
+        Some(Playing {
+            clip,
+            time,
+            progress,
+            weight: top.weight(),
+        })
     }
 
     fn settle_fades(&mut self) {
@@ -417,12 +439,20 @@ impl Animator {
                 if holding || (finish_cycle && !crossed) {
                     wrap(m, len);
                 } else if last {
-                    m.hold_at = Some(if finish_cycle { len } else { m.time.rem_euclid(len.max(1e-6)) });
+                    m.hold_at = Some(if finish_cycle {
+                        len
+                    } else {
+                        m.time.rem_euclid(len.max(1e-6))
+                    });
                     if !m.interrupted {
                         settle = m.end();
                     }
                 } else {
-                    m.time = if finish_cycle && len > 0.0 { (m.time - len).min(len) } else { 0.0 };
+                    m.time = if finish_cycle && len > 0.0 {
+                        (m.time - len).min(len)
+                    } else {
+                        0.0
+                    };
                     m.seg += 1;
                     if fire {
                         self.cross(g, m.segment().clip, 0.0, m.time, false, m.mirror);
@@ -436,7 +466,13 @@ impl Animator {
         // A cross-faded montage starts leaving so its fade completes as its
         // final clip does. An interrupted one holds and leaves with whatever
         // covers it.
-        if last && !m.inertial && !m.interrupted && m.out.is_none() && seg.until == Until::Once && rate > 0.0 {
+        if last
+            && !m.inertial
+            && !m.interrupted
+            && m.out.is_none()
+            && seg.until == Until::Once
+            && rate > 0.0
+        {
             let remaining = ((len - m.time) / rate).max(0.0);
             if remaining < m.fade_out {
                 m.out = Some((m.fade_out - remaining, m.fade_out));

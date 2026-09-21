@@ -57,10 +57,10 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
             "{block:?} should report interacted"
         );
         // Every engine container opens through the SAME unified request lane
-        // a mod GUI uses: one (kind, pos) shape, no per-kind fields.
+        // a mod GUI uses: one (kind, anchor) shape, no per-kind fields.
         assert_eq!(
             game.server.sessions[0].request_open_gui,
-            Some((expected_kind, Some(pos))),
+            Some((expected_kind, Some(pos.into()))),
             "{block:?}"
         );
     }

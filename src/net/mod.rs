@@ -8,6 +8,7 @@
 //! its own reader/writer threads.
 
 pub mod address;
+pub mod blob;
 pub mod connection;
 pub mod framing;
 pub mod handshake;
@@ -57,7 +58,13 @@ pub mod remap;
 //     echoed `SelfEvents::animator_events` for fired graph events. The
 //     per-hand `motion_claims` of 33 are gone: a mod stands an engine gesture
 //     down through the graph's own `swing_claim` / `jab_claim` params.
-pub const PROTOCOL_VERSION: u16 = 40;
+// 41: creative mode, portable schematic actions and capture replies.
+// 42: schematic wand in the engine item table.
+// 43: creative catalog pickup joins the ordered inventory-action stream.
+// 45: redo for authoritative creative schematic placement history.
+// 46: schematic capture requests carry region bounds instead of voxel coordinates.
+// 48: mob rows carry a digging mob's crack stage and the items it holds.
+pub const PROTOCOL_VERSION: u16 = 49;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

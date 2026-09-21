@@ -107,7 +107,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Clear(1.0)),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             pass.set_pipeline(self.opaque_pipe.get(samples));
             // Two binds for the whole pass: every column draw picks its origin
@@ -262,7 +262,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
             pass.set_bind_group(1, &self.model_atlas_bind, &[]);
             // Chunk model geometry draws with the world-model pipeline: its
             // vertices carry (sky, block) light so the shader applies the
@@ -352,7 +352,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             self.block_entity.chest_draw.draw(&mut pass, samples);
             self.block_entity.door_draw.draw(&mut pass, samples);
@@ -425,7 +425,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             pass.set_pipeline(self.translucent_pipe.get(samples));
             // One bind for the whole pass: every column draw picks its
@@ -471,7 +471,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
             pass.set_bind_group(1, &self.model_atlas_bind, &[]);
             pass.set_pipeline(self.world_model_blend_pipe.get(samples));
             pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
@@ -602,7 +602,7 @@ impl Renderer {
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             // One bind for the whole pass: every column draw picks its
             // origin row with `first_instance`.
@@ -698,6 +698,19 @@ impl Renderer {
             pass.set_bind_group(0, &self.chrome.outline_bind, &[]);
             pass.set_vertex_buffer(0, self.chrome.outline_vbuf.slice(..));
             pass.draw(0..self.chrome.outline_vertex_count, 0..1);
+        }
+        if !(self.ghosts.is_empty() && self.selection.is_empty()) {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.targets.depth,
+                "ghosts and selection",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
+            );
+            self.ghosts.draw(&mut pass, samples);
+            self.selection.draw(&mut pass, samples);
         }
         self.encode_hand(enc, view, samples);
         self.encode_screen(enc, view, swapchain, samples, route);

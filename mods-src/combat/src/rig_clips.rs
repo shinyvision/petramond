@@ -23,8 +23,15 @@ fn document(path: &Path) -> json::Value {
 /// Every clip `rig` carries, by full name.
 fn rig_clips(rig: &str) -> Vec<String> {
     let catalog = document(&assets().join("animations/rigs.json"));
-    let row = catalog.get(rig).unwrap_or_else(|| panic!("no rig row `{rig}`"));
-    let field = |key: &str| row.get(key).and_then(json::Value::as_str).expect(key).to_string();
+    let row = catalog
+        .get(rig)
+        .unwrap_or_else(|| panic!("no rig row `{rig}`"));
+    let field = |key: &str| {
+        row.get(key)
+            .and_then(json::Value::as_str)
+            .expect(key)
+            .to_string()
+    };
     let model = document(&assets().join(field("model")));
     let mut clips: Vec<String> = model
         .get("animations")
@@ -45,7 +52,11 @@ fn rig_clips(rig: &str) -> Vec<String> {
     {
         let library = document(&animator.parent().expect("a directory").join(library));
         if let Some(animations) = library.get("animations").and_then(json::Value::as_object) {
-            clips.extend(animations.iter().map(|(name, _)| format!("petramond:{name}")));
+            clips.extend(
+                animations
+                    .iter()
+                    .map(|(name, _)| format!("petramond:{name}")),
+            );
         }
     }
     clips
@@ -72,11 +83,19 @@ fn every_clip_the_pack_plays_is_on_its_rig() {
     let missing: Vec<String> = played
         .iter()
         .filter(|(rig, clip)| {
-            let on = if *rig == rig::PLAYER_BODY { &body } else { &first_person };
+            let on = if *rig == rig::PLAYER_BODY {
+                &body
+            } else {
+                &first_person
+            };
             !on.contains(clip)
         })
         .map(|(rig, clip)| format!("{rig}: {clip}"))
         .collect();
     assert!(!played.is_empty());
-    assert!(missing.is_empty(), "clips the pack plays that its rig lacks:\n{}", missing.join("\n"));
+    assert!(
+        missing.is_empty(),
+        "clips the pack plays that its rig lacks:\n{}",
+        missing.join("\n")
+    );
 }

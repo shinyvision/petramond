@@ -287,3 +287,28 @@ fn a_finished_one_shot_layer_retires_itself() {
         "resumed playback finishes and retires"
     );
 }
+
+#[test]
+fn the_head_gathers_speed_settles_without_overshoot_and_lands_on_its_target() {
+    let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
+    let look = BehaviorOutput {
+        head_look: Some(crate::mob::brain::HeadLook {
+            yaw: 1.2,
+            pitch: -0.8,
+        }),
+        ..Default::default()
+    };
+    let mut steps = Vec::new();
+    for _ in 0..40 {
+        let before = owl.head_yaw;
+        owl.apply_expression(1.0 / 20.0, owl_def(), &[], &look);
+        assert!(owl.head_yaw <= 1.2 + 1e-6, "never past the target");
+        steps.push(owl.head_yaw - before);
+    }
+    assert!(steps[1] > steps[0], "it starts gently: {steps:?}");
+    let peak = steps.iter().copied().fold(0.0, f32::max);
+    assert!(steps[6] < peak, "and slows into the target: {steps:?}");
+    // An action judged along the gaze needs the head to ARRIVE, not approach.
+    assert_eq!(owl.head_yaw, 1.2);
+    assert_eq!(owl.head_pitch, -0.8);
+}

@@ -9,15 +9,19 @@ mod chat;
 mod client_mod_ui;
 mod connect;
 mod crafting_browser;
+mod creative;
 mod gui_router;
 mod gui_value;
+mod hotbar_notice;
 mod input;
+mod inventory_menu;
 mod item_tooltip;
 mod menu_lifecycle;
 mod options;
 mod pointer;
 mod presentation_events;
 mod render;
+mod schematic_library;
 mod screen;
 mod shell;
 mod shell_docs;
@@ -51,6 +55,9 @@ const SLEEP_INTERACT_HAND_SECS: f32 = 0.30;
 
 pub struct App {
     game: Option<Game>,
+    hotbar_notice: hotbar_notice::HotbarNotice,
+    creative_menu: creative::CreativeMenu,
+    library_form: schematic_library::LibraryForm,
     shell_camera: Camera,
     render_dist: i32,
     /// Reusable builder for neutral per-frame presentation data read from the game.
@@ -231,6 +238,9 @@ impl App {
         );
         let mut app = Self {
             game: None,
+            hotbar_notice: Default::default(),
+            creative_menu: Default::default(),
+            library_form: Default::default(),
             shell_camera: cam,
             render_dist,
             presentation: GamePresentationScratch::new(),
@@ -351,6 +361,35 @@ impl App {
                 }
                 true
             }
+            ControlEvent::ToggleCreative
+            | ControlEvent::UndoEdit
+            | ControlEvent::RedoEdit
+            | ControlEvent::JumpPressed => {
+                if self.screen.gameplay_enabled() {
+                    if let Some(game) = self.game.as_mut() {
+                        match event {
+                            ControlEvent::ToggleCreative => game.toggle_creative_mode(),
+                            ControlEvent::UndoEdit => game.undo_edit(),
+                            ControlEvent::RedoEdit => game.redo_edit(),
+                            _ => game.jump_pressed(now_seconds()),
+                        }
+                    }
+                }
+                true
+            }
+            ControlEvent::AdjustTool(steps) => {
+                // With nothing to adjust, the wheel is the hotbar's whatever
+                // is held with it (sprinting on Ctrl scrolls slots as ever).
+                let taken = self.screen.gameplay_enabled()
+                    && self
+                        .game
+                        .as_mut()
+                        .is_some_and(|game| game.adjust_tool(steps));
+                if !taken {
+                    self.input.step_hotbar(steps);
+                }
+                true
+            }
             ControlEvent::TogglePlayerMode => {
                 if self.screen.gameplay_enabled() {
                     if let Some(game) = self.game.as_mut() {
@@ -434,7 +473,9 @@ impl App {
             ControlEvent::RotateHeldBlock => {
                 if self.screen.gameplay_enabled() {
                     if let Some(game) = self.game.as_mut() {
-                        game.toggle_held_block_rotation();
+                        if !game.rotate_schematic_preview() {
+                            game.toggle_held_block_rotation();
+                        }
                     }
                 }
                 true
@@ -486,6 +527,7 @@ impl App {
             AppScreen::Dead => GuiKind::Death,
             AppScreen::Menu(kind) => kind,
             AppScreen::ClientModGui(kind) => kind,
+            AppScreen::Schematics => GuiKind::Schematics,
             _ => return None,
         };
         ui_runtime::AppUi::doc_backed(kind).then_some(kind)

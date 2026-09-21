@@ -32,8 +32,14 @@ impl App {
         if doc_kind.is_none() && self.doc_hud_active() {
             let kind = petramond_world::gui_state::GuiKind::Hotbar;
             self.ui.ensure_active(kind);
-            if let Some(game) = self.game.as_ref() {
+            if let Some(game) = self.game.as_mut() {
                 let active = game.menu_read_model().inventory.active_slot();
+                self.hotbar_notice.populate(
+                    game.held_tool_setting().map(|label| (active, label)),
+                    &mut game.notice,
+                    now,
+                    self.ui.state_mut(),
+                );
                 self.ui
                     .state_mut()
                     .set("active_slot", petramond_ui::UiValue::I32(active as i32));
@@ -143,6 +149,37 @@ impl App {
         let motion = game.local_motion(self.hurt_shake_t);
         let listener;
         {
+            if let Some(schematic) = game.schematic_library.pending_save() {
+                match game.schematic_scene(&schematic, 0) {
+                    Ok(scene) => {
+                        let jobs = game.jobs().clone();
+                        let thumbnailer = renderer.schematic_thumbnailer();
+                        game.schematic_library
+                            .start_save(&jobs, schematic, move || thumbnailer.render(&scene));
+                    }
+                    Err(error) => {
+                        game.schematic_library.abandon_save();
+                        game.notice = error;
+                    }
+                }
+            }
+            let jobs = game.jobs().clone();
+            let pieces = game.ghost_pieces(now, self.render_dist);
+            renderer.set_anchored_ghosts(&jobs, &pieces);
+            let gameplay = self.screen.gameplay_enabled();
+            let preview = &game.schematic_preview;
+            renderer.set_schematic_preview(
+                &jobs,
+                (gameplay && game.schematic_preview_active())
+                    .then(|| preview.scene().cloned())
+                    .flatten(),
+                preview.origin(),
+            );
+            let overlay = gameplay
+                .then(|| game.tool_overlay())
+                .flatten()
+                .unwrap_or_default();
+            renderer.set_selection_overlay(overlay.selection, overlay.corners, overlay.face);
             let frame = game.client_frame(now);
             listener = SpatialListener {
                 pos: frame.camera.pos,

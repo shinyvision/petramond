@@ -1,4 +1,4 @@
-use super::ContainerTarget;
+use super::{ContainerTarget, MenuAnchor};
 use crate::world::World;
 use petramond_math::math::IVec3;
 use petramond_world::crafting::CraftingStation;
@@ -51,7 +51,7 @@ impl ContainerMenu {
     pub fn open_crafting(&mut self, station: CraftingStation) {
         self.target = ContainerTarget::Gui {
             kind: station.gui_kind(),
-            pos: None,
+            anchor: None,
         };
     }
 
@@ -64,7 +64,7 @@ impl ContainerMenu {
         }
         self.target = ContainerTarget::Gui {
             kind: GuiKind::Furnace,
-            pos: Some(pos),
+            anchor: Some(MenuAnchor::Block(pos)),
         };
     }
 
@@ -82,7 +82,7 @@ impl ContainerMenu {
         }
         self.target = ContainerTarget::Gui {
             kind: GuiKind::Chest,
-            pos: Some(pos),
+            anchor: Some(MenuAnchor::Block(pos)),
         };
     }
 
@@ -91,33 +91,39 @@ impl ContainerMenu {
         self.close_kind(|kind| kind == GuiKind::Chest);
     }
 
-    /// Begin a mod GUI session for `kind`, opened from `pos` (`None` for a
-    /// programmatic open). The state map lives on the world; `Game`'s open
+    /// Begin a mod GUI session for `kind`, opened on `anchor` (`None` for an
+    /// unanchored open). The state map lives on the world; `Game`'s open
     /// funnel clears it around this call.
     ///
-    /// A slot-bearing kind (its document declares `container` slots) gets its
-    /// backing storage here: `pos` is canonicalized to the block's container
-    /// anchor (multi-cell model blocks share ONE container at the group base,
-    /// whichever cell was clicked) and a container sized to the document is
-    /// created — or grown, never shrunk — at it.
+    /// A slot-bearing kind (its document declares `container` slots) opened on
+    /// a block gets its backing storage here: the cell is canonicalized to the
+    /// block's container anchor (multi-cell model blocks share ONE container
+    /// at the group base, whichever cell was clicked) and a container sized to
+    /// the document is created — or grown, never shrunk — at it. A mob's
+    /// storage is its row's to size, so a mob anchor is taken as it is.
     pub fn open_document_gui(
         &mut self,
         world: &mut World,
         kind: GuiKind,
-        pos: Option<petramond_math::math::IVec3>,
+        anchor: Option<MenuAnchor>,
     ) {
-        let pos = pos.map(|p| world.container_anchor(p));
-        let specs = crate::gui::documents::container_slot_specs(kind);
-        if let (Some(p), false) = (pos, specs.is_empty()) {
-            world.ensure_container(p, specs.len());
+        let anchor = anchor.map(|anchor| match anchor {
+            MenuAnchor::Block(p) => MenuAnchor::Block(world.container_anchor(p)),
+            mob @ MenuAnchor::Mob(_) => mob,
+        });
+        if let Some(MenuAnchor::Block(p)) = anchor {
+            let specs = crate::gui::documents::container_slot_specs(kind);
+            if !specs.is_empty() {
+                world.ensure_container(p, specs.len());
+            }
         }
-        self.target = ContainerTarget::Gui { kind, pos };
+        self.target = ContainerTarget::Gui { kind, anchor };
     }
 
     /// End the mod GUI session (the state map is cleared by `Game`'s close
     /// funnel, which knows the world).
     pub fn close_document_gui(&mut self) {
-        self.close_kind(|kind| kind.is_registered());
+        self.close_kind(|kind| kind.is_registered() || kind == GuiKind::Creative);
     }
 
     /// Close player crafting: return its real output to inventory (overflow is

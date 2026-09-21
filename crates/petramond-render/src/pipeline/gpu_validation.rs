@@ -100,11 +100,16 @@ fn packed_vertex_pipeline_validates() {
     });
 
     device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for lines in [false, true] {
+        let (p, _) =
+            super::world_overlay::flat(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1, lines);
+        let _ = p.get(1);
+    }
 
     // Build EVERY real pipeline through the production factory. Any
     // shader/layout/vertex-attribute/blend/depth mismatch surfaces as a
     // captured validation error below.
-    let _resources = create_pipeline_resources(
+    let resources = create_pipeline_resources(
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -124,6 +129,23 @@ fn packed_vertex_pipeline_validates() {
         &array_view,
         &sampler,
     );
+
+    for model in [false, true] {
+        let source = if model {
+            &resources.world_model_pipe
+        } else {
+            &resources.dynamic_opaque_pipe
+        };
+        let ghost = super::world_overlay::ghost(
+            &device,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            1,
+            &source.get(1).get_bind_group_layout(0),
+            &source.get(1).get_bind_group_layout(1),
+            model,
+        );
+        let _ = ghost.get(1);
+    }
 
     let err = pollster::block_on(device.pop_error_scope());
     assert!(err.is_none(), "real-pipeline validation error: {err:?}");

@@ -212,12 +212,26 @@ fn push_effect_markers(anim: &mut Animation, k: &Value) {
         Some("particle") => MarkerKind::Particle,
         _ => return,
     };
-    for dp in k.get("data_points").and_then(Value::as_array).into_iter().flatten() {
+    for dp in k
+        .get("data_points")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if kind == MarkerKind::Timeline {
-            for name in dp.get("script").and_then(Value::as_str).into_iter().flat_map(script_lines) {
+            for name in dp
+                .get("script")
+                .and_then(Value::as_str)
+                .into_iter()
+                .flat_map(script_lines)
+            {
                 anim.push_marker(Marker { time, kind, name });
             }
-        } else if let Some(effect) = dp.get("effect").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+        } else if let Some(effect) = dp
+            .get("effect")
+            .and_then(Value::as_str)
+            .filter(|e| !e.is_empty())
+        {
             anim.push_marker(Marker {
                 time,
                 kind,

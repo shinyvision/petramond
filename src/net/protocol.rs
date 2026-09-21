@@ -108,6 +108,11 @@ pub enum ClientToServer {
     },
     PlayerUpdate(PlayerUpdate),
     Action(PlayerAction),
+    /// Catalog pickup, or deletion of the cursor stack when `item` is absent.
+    CreativeCursor {
+        item: Option<String>,
+        request_id: ClientRequestId,
+    },
     /// A hit-tested container-menu click (slot identity + button + Shift +
     /// the client's double-click gather verdict), latched to the next tick.
     MenuClick {

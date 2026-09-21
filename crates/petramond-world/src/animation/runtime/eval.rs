@@ -94,7 +94,11 @@ impl Animator {
                 };
                 let span = clip_len(lo) * (1.0 - f) + clip_len(hi) * f;
                 let from = self.phases[b.phase];
-                let to = if span > 0.0 { from + self.dt * rate / span } else { from };
+                let to = if span > 0.0 {
+                    from + self.dt * rate / span
+                } else {
+                    from
+                };
                 let fire = weight >= MARKER_WEIGHT;
                 let heaviest = if f > 0.5 { hi } else { lo };
                 self.sync_clip(g, lo, from, to, out, fire && heaviest == lo);
@@ -201,7 +205,12 @@ impl Animator {
             rt.started = true;
             rt.current = m.initial;
             rt.stack.clear();
-            rt.stack.push(Fade { state: m.initial, age: 0.0, duration: 0.0, ease: Ease::Linear });
+            rt.stack.push(Fade {
+                state: m.initial,
+                age: 0.0,
+                duration: 0.0,
+                ease: Ease::Linear,
+            });
             self.reset_node(g, m.states[m.initial].1);
         }
 
@@ -225,12 +234,22 @@ impl Animator {
                 // running its clocks twice, so re-entry collapses the stack and
                 // inertialization carries the difference instead.
                 rt.stack.clear();
-                rt.stack.push(Fade { state: t.to, age: 0.0, duration: 0.0, ease: t.ease });
+                rt.stack.push(Fade {
+                    state: t.to,
+                    age: 0.0,
+                    duration: 0.0,
+                    ease: t.ease,
+                });
                 if t.fade > 0.0 && (t.inertial || live) {
                     rt.inertia.trigger(settle_halflife(t.fade));
                 }
             } else {
-                rt.stack.push(Fade { state: t.to, age: 0.0, duration: t.fade, ease: t.ease });
+                rt.stack.push(Fade {
+                    state: t.to,
+                    age: 0.0,
+                    duration: t.fade,
+                    ease: t.ease,
+                });
             }
             rt.current = t.to;
             break;
@@ -365,7 +384,11 @@ impl Animator {
             return;
         }
         let len = anim.length;
-        let fired = |marker| FiredMarker { clip, marker, mirrored };
+        let fired = |marker| FiredMarker {
+            clip,
+            marker,
+            mirrored,
+        };
         if looping && len > 0.0 {
             let first = (from / len).floor();
             let cycles = ((to / len).floor() - first).clamp(0.0, 4.0) as usize;

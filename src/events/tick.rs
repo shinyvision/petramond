@@ -156,7 +156,7 @@ pub struct WorldEvents {
     pub item_picked_up: Vec<(petramond_math::world_pos::WorldPos, PlayerId)>,
     /// One-shot particle bursts (catalog id, world position, producer-defined
     /// intensity — the water splash passes blocks fallen).
-    pub emitter_bursts: Vec<(u8, petramond_math::world_pos::WorldPos, f32)>,
+    pub emitter_bursts: Vec<BurstFired>,
     next_spatial_sound_handle: u64,
 }
 
@@ -232,4 +232,42 @@ impl TickEvents {
         self.world.next_spatial_sound_handle = handle.wrapping_add(1).max(1);
         handle
     }
+}
+
+/// One firing of a burst bundle, as every client will spawn it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BurstFired {
+    /// Catalog id of the bundle (`particle_emitters::def`).
+    pub emitter: u8,
+    pub pos: petramond_math::world_pos::WorldPos,
+    pub intensity: f32,
+    /// Which way the event pushes (a struck face's normal).
+    pub direction: Option<[f32; 3]>,
+    /// What the particles are cut from; `None` = the bundle's own look.
+    pub texture: Option<BurstTexture>,
+}
+
+impl BurstFired {
+    /// A bundle fired with its own look and no push.
+    pub fn plain(emitter: u8, pos: petramond_math::world_pos::WorldPos, intensity: f32) -> Self {
+        Self {
+            emitter,
+            pos,
+            intensity,
+            direction: None,
+            texture: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BurstTexture {
+    Tile {
+        slice: petramond_world::particle_emitters::TextureSlice,
+        tint: [u8; 3],
+    },
+    Block {
+        block: petramond_world::block::Block,
+        tint: Option<[u8; 3]>,
+    },
 }

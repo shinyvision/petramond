@@ -33,6 +33,10 @@ pub use petramond_render::views::{
 /// The local player's [`FootstepSource`] key. Remotes are `1 + PlayerId`, so
 /// zero can never collide with one.
 const LOCAL_FOOTSTEP_ID: u64 = 0;
+/// Mob footstep sources are keyed apart from players' (`1 + player id`).
+const MOB_FOOTSTEP_IDS: u64 = 1 << 62;
+/// How far a body may rise or fall in one tick and still be walking, blocks.
+const MOB_STEP_RISE: f64 = 0.2;
 
 /// Horizontal speed (blocks/s) below which a body is not walking. Well
 /// under a sneak (half walk) and well over the drift a current or a
@@ -48,6 +52,22 @@ const SPRINT_FOOTSTEP_SPEED: f32 = 4.95;
 /// Walk-blend weight above which a REMOTE body is walking. The blend is eased,
 /// so this is a hysteresis-free threshold on an already-smoothed signal.
 const MIN_FOOTSTEP_WALK_WEIGHT: f32 = 0.35;
+
+/// Where a body whose light is sampled at `cell` is lit from. Inside solid
+/// ground every light level is zero — true, and no way to draw a body coming
+/// up out of it (or sunk into it by anything else): it is lit by the open
+/// air it stands up into, the first cell above that is not an opaque block.
+fn lit_cell(world: &petramond::world::World, cell: IVec3) -> IVec3 {
+    const RISE: i32 = 4;
+    (0..=RISE)
+        .map(|dy| cell + IVec3::new(0, dy, 0))
+        .find(|c| {
+            world
+                .block_if_loaded(c.x, c.y, c.z)
+                .is_none_or(|block| !block.is_opaque())
+        })
+        .unwrap_or(cell)
+}
 
 /// The block a body at `pos` (feet centre, model y=0) steps on. A shape lying
 /// flat in the feet's own cell answers first: a snow layer or carpet never
@@ -73,6 +93,9 @@ fn footstep_ground(
 /// giving up (no shadow when nothing is within reach — a body falling past a
 /// cliff fades out long before this).
 const SHADOW_PROBE_DEPTH: i32 = 6;
+/// How far under a surface feet may be drawn and still stand on it (blocks):
+/// settling error, and the step-up easing of a half-block ledge.
+const SHADOW_SINK: f32 = 0.6;
 /// Body height above its ground at which the shadow has fully faded.
 const SHADOW_MAX_DROP: f32 = 4.0;
 /// Peak darkening at a shadow's centre for a body resting on its ground.
@@ -145,6 +168,7 @@ impl GamePresentationScratch {
         self.collect_particle_emitters(game, view);
         self.collect_chests(game);
         self.collect_block_draws(game, view);
+        self.collect_mob_draws(game, tick_alpha, view);
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
         if game.particles.count_scale() > 0.0 {
@@ -225,12 +249,10 @@ impl GamePresentationScratch {
                 let (uv_min, uv_size) = particle.atlas_uv();
                 ParticlePresentation {
                     quad_axes: None,
-                    atlas: if particle.solid {
-                        ParticleAtlas::Solid
-                    } else if particle.model.is_some() {
-                        ParticleAtlas::Model
-                    } else {
-                        ParticleAtlas::Block
+                    atlas: match particle.source {
+                        crate::particle::ParticleSource::Solid => ParticleAtlas::Solid,
+                        crate::particle::ParticleSource::Model(_) => ParticleAtlas::Model,
+                        crate::particle::ParticleSource::Tile { .. } => ParticleAtlas::Block,
                     },
                     pos: particle.pos,
                     uv_min,
@@ -279,6 +301,46 @@ impl GamePresentationScratch {
             .collect_block_draws(view, &mut self.block_draws);
     }
 
+    /// Draw sets live bodies wear, appended to the block sets: the same rows,
+    /// framed at each body's interpolated feet instead of a cell.
+    fn collect_mob_draws(&mut self, game: &Game, tick_alpha: f32, view: &ViewVolume) {
+        let world = &game.replica;
+        for entry in game.replicated_mobs.iter() {
+            let Some(set) = &entry.draw else { continue };
+            let Some((lo, hi)) = set.bounds else { continue };
+            if entry.curr.dead {
+                continue;
+            }
+            let (pos, yaw) = entry.interpolated_pose(tick_alpha);
+            let anchor = pos.block();
+            let turn = if entry.curr.draw.turns { yaw } else { 0.0 };
+            let frame = petramond::world::draw::BlockLocalFrame {
+                anchor,
+                transform: petramond_math::math::Mat4::from_translation(pos.relative_to(anchor))
+                    * petramond_math::math::Mat4::from_rotation_y(turn),
+            };
+            let (mn, mx) = petramond::world::draw::world_bounds(&frame, lo, hi);
+            if !view.aabb_visible(mn, mx) {
+                continue;
+            }
+            // Lit where the set is, not at the feet: a mark over a body
+            // standing in a doorway's shadow hangs in the light above it.
+            let c = ((mn.block() + mx.block()).as_vec3() * 0.5)
+                .floor()
+                .as_ivec3();
+            self.block_draws
+                .push(petramond::world::draw::BlockDrawInstance {
+                    pos: anchor,
+                    set: std::sync::Arc::clone(set),
+                    frame,
+                    skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                    blocklight: petramond_world::light::BlockLight6::from_x2(
+                        world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                    ),
+                });
+        }
+    }
+
     fn collect_chests(&mut self, game: &Game) {
         game.replica.collect_chests(&mut self.chest_rows);
         self.chests.clear();
@@ -319,8 +381,9 @@ impl GamePresentationScratch {
         let world = &game.replica;
         self.mobs.extend(game.replicated_mobs.iter().map(|entry| {
             let (prev, curr) = (&entry.prev, &entry.curr);
-            let c = (curr.pos + Vec3::new(0.0, 0.3, 0.0)).block();
+            let c = lit_cell(world, (curr.pos + Vec3::new(0.0, 0.3, 0.0)).block());
             let emitters = body_emitters(&curr.emitters, &curr.conditions);
+            let gait = crate::game::replicated::gait_of(curr);
             MobPresentation {
                 id: curr.id,
                 kind: Mob(curr.kind_id),
@@ -334,6 +397,17 @@ impl GamePresentationScratch {
                 anim_time: curr.anim_time,
                 moving: curr.moving,
                 idle_anim: curr.idle_anim,
+                gait_weight: entry
+                    .gait_blend
+                    .iter()
+                    .find(|(clip, _, _)| Some(*clip) == gait)
+                    .map_or(1.0, |(_, weight, _)| *weight),
+                gait_fades: entry
+                    .gait_blend
+                    .iter()
+                    .filter(|(clip, _, _)| Some(*clip) != gait)
+                    .map(|(clip, weight, phase)| (*clip, *phase, *weight))
+                    .collect(),
                 prev_head_yaw: prev.head_yaw,
                 head_yaw: curr.head_yaw,
                 prev_head_pitch: prev.head_pitch,
@@ -373,6 +447,7 @@ impl GamePresentationScratch {
                     crate::game::replicated::lerp_ragdoll(prev.ragdoll.as_ref(), pose, tick_alpha)
                         .into()
                 }),
+                held: curr.held.map(|id| id.map(petramond_world::item::ItemType)),
             }
         }));
     }
@@ -432,6 +507,21 @@ impl GamePresentationScratch {
                 pos,
                 ground: ground(pos, walking),
                 sprinting: speed >= SPRINT_FOOTSTEP_SPEED,
+            });
+        }
+        for entry in game.replicated_mobs.iter() {
+            let (prev, curr) = (&entry.prev, &entry.curr);
+            if curr.dead || !petramond::mob::def(Mob(curr.kind_id)).footsteps {
+                continue;
+            }
+            // Airborne (a jump, a fall) takes no steps.
+            let walking = curr.moving && (curr.pos.y - prev.pos.y).abs() < MOB_STEP_RISE;
+            let pos = prev.pos.lerp(curr.pos, tick_alpha);
+            self.footsteps.push(FootstepSource {
+                id: MOB_FOOTSTEP_IDS | curr.id,
+                pos,
+                ground: ground(pos, walking),
+                sprinting: false,
             });
         }
     }
@@ -557,6 +647,12 @@ impl GamePresentationScratch {
                     .push(break_overlay_at(game, block, stage));
             }
         }
+        for mob in game.replicated_mobs.iter() {
+            if let Some((block, stage)) = mob.curr.dig {
+                self.break_overlays
+                    .push(break_overlay_at(game, block, stage));
+            }
+        }
     }
 
     /// One blob-shadow row per shadowed entity this frame: every mob, dropped
@@ -643,20 +739,33 @@ fn push_entity_shadow(
 ) {
     let x = feet.x.floor() as i32;
     let z = feet.z.floor() as i32;
-    let y0 = feet.y.floor() as i32 - 1;
-    for dy in 0..SHADOW_PROBE_DEPTH {
+    // Feet rest a hair under a surface as often as on it (a landing settles
+    // at 69.99999; a step-up eases the drawn body through the ledge), so the
+    // probe starts in the cell a slightly sunk body stands ON, not the one
+    // `floor` of its feet names — that skipped the ground itself and stamped
+    // the decal on the block beneath it, inside the terrain.
+    let reach = feet.y + f64::from(SHADOW_SINK);
+    let y0 = reach.floor() as i32;
+    let (fx, fz) = (
+        (feet.x - f64::from(x)) as f32,
+        (feet.z - f64::from(z)) as f32,
+    );
+    for dy in 0..=SHADOW_PROBE_DEPTH {
         let y = y0 - dy;
-        let boxes = world.collision_boxes_at(x, y, z);
-        if boxes.is_empty() {
+        // The highest surface UNDER the feet: boxes beside them in the same
+        // cell (a stair's upper step, a fence post) and ones above them are
+        // not ground.
+        let top = world
+            .collision_boxes_at(x, y, z)
+            .iter()
+            .filter(|b| b.min[0] <= fx && fx <= b.max[0] && b.min[2] <= fz && fz <= b.max[2])
+            .map(|b| b.max[1])
+            .filter(|top| f64::from(y) + f64::from(*top) <= reach)
+            .fold(f32::MIN, f32::max);
+        if top == f32::MIN {
             continue;
         }
-        let top = boxes.iter().map(|b| b.max[1]).fold(f32::MIN, f32::max);
         let ground = y as f32 + top;
-        // Geometry poking up beside/into the body (a snow layer, a stair the
-        // feet clip) is not ground UNDER it; keep probing deeper.
-        if f64::from(ground) > feet.y + 0.01 {
-            continue;
-        }
         let t = ((feet.y - f64::from(ground)) as f32 / SHADOW_MAX_DROP).clamp(0.0, 1.0);
         out.push(EntityShadow {
             center: petramond_math::world_pos::WorldPos::new(feet.x, f64::from(ground), feet.z),

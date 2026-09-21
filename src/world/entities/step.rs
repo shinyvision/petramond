@@ -26,7 +26,7 @@ const CHANGED_HASH_THRESHOLD: usize = 16;
 /// The announced block changes since the last item tick, shaped as the one
 /// question a lodged item asks of them: was my anchor touched?
 pub(super) enum ChangedCells<'a> {
-    /// The feed overflowed: every cell may have changed.
+    /// Changes were lost: every cell may have changed.
     All,
     Few(&'a [IVec3]),
     Many(HashSet<IVec3>),

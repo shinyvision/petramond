@@ -17,8 +17,8 @@ use super::pose::LocalPose;
 mod eval;
 mod slot;
 
-pub use slot::{PlayId, PlaySpec, PlayState, Playing};
 use slot::{Montage, Rate, Segment, SlotRt};
+pub use slot::{PlayId, PlaySpec, PlayState, Playing};
 
 /// A marker a clip crossed during the last update.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,7 +133,9 @@ impl Animator {
         self.expr_state = vec![0.0; g.expr_state];
         self.clocks = vec![0.0; g.clip_nodes];
         self.phases = vec![0.0; g.blend_nodes];
-        self.machines = (0..g.machines).map(|_| eval::MachineRt::default()).collect();
+        self.machines = (0..g.machines)
+            .map(|_| eval::MachineRt::default())
+            .collect();
         self.slots = (0..g.slots.len()).map(|_| SlotRt::default()).collect();
         self.rules = vec![RuleRt::default(); g.rules.len()];
         self.gates_open = vec![true; g.gates.len()];
@@ -284,7 +286,11 @@ impl Animator {
     fn step(&mut self, dt: f32, ground: Ground<'_>) {
         let graph = Arc::clone(&self.graph);
         let g = &*graph;
-        self.dt = if dt.is_finite() { dt.clamp(0.0, MAX_STEP) } else { 0.0 };
+        self.dt = if dt.is_finite() {
+            dt.clamp(0.0, MAX_STEP)
+        } else {
+            0.0
+        };
         self.time += f64::from(self.dt);
         self.frame += 1;
         self.markers.clear();
@@ -396,9 +402,8 @@ impl Animator {
             if let Some((slot, fade)) = rule.stop {
                 self.slots[slot.index()].stop(fade);
             }
-            let played = play.is_none_or(|(play, pick, segments)| {
-                self.play_rule(g, i, play, pick, segments)
-            });
+            let played = play
+                .is_none_or(|(play, pick, segments)| self.play_rule(g, i, play, pick, segments));
             if played {
                 self.rules[i].last = self.time;
                 if let Some((slot, seconds)) = rule.freeze {

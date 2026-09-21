@@ -239,7 +239,7 @@ fn bake_cubes(
         env,
         inst.emitter_self_lit,
     );
-    bake_model_cubes(model, pose, global, tint, |_| false, verts, indices);
+    bake_model_cubes(model, pose, global, tint, |_| false, None, verts, indices);
 
     // A clip turning a grip bone turns the item in the fist.
     let [hand, off_hand] =
@@ -286,6 +286,9 @@ pub(super) struct Grip {
     pub frame: Mat4,
     pub point: Vec3,
     pub px: f32,
+    /// A held sprite's roll about its own length (radians); the player's
+    /// seats are authored at none.
+    pub roll: f32,
 }
 
 impl Grip {
@@ -295,6 +298,7 @@ impl Grip {
             frame,
             point: HAND_GRIP_PX,
             px: PLAYER_MODEL_SCALE,
+            roll: 0.0,
         }
     }
 
@@ -330,7 +334,15 @@ fn sprite_hold(grip: Grip) -> Mat4 {
     let size = SPRITE_WORLD_SIZE / grip.px;
     let rot = Mat4::from_rotation_x(-65f32.to_radians())
         * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
-        * Mat4::from_rotation_z(55f32.to_radians());
+        * Mat4::from_rotation_z(55f32.to_radians())
+        * Mat4::from_axis_angle(
+            Vec3::new(
+                std::f32::consts::FRAC_1_SQRT_2,
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+            ),
+            grip.roll,
+        );
     // The tool axis = the art diagonal carried through the pose; gripping ~30%
     // from the handle end pushes the centre forward along it.
     let axis = rot.transform_vector3(Vec3::new(

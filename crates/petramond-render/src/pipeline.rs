@@ -38,9 +38,7 @@ pub(super) use self::environment::{
 };
 pub(super) use self::grade::create_grade_bind;
 
-use self::builders::{
-    buffer_bind_group, pipeline_layout, shader_module, texture_sampler_bgl_bind, uniform_entry,
-};
+use self::builders::{pipeline_layout, shader_module, texture_sampler_bgl_bind, uniform_entry};
 use self::entity_models::{create_mob_pipeline, create_world_model_pipeline};
 use self::environment::{create_env_scaler, create_environment_pipelines};
 use self::grade::create_grade_pipeline;
@@ -197,6 +195,7 @@ fn block_shader_source(media: &[petramond_world::fluid::FluidMedium]) -> String 
             include_str!("../shaders/sheen.wgsl"),
             include_str!("../shaders/texture_transition.wgsl"),
             include_str!("../shaders/tile_variation.wgsl"),
+            include_str!("../shaders/selection_highlight.wgsl"),
             include_str!("../shaders/block.wgsl")
         )
 }
@@ -517,14 +516,12 @@ fn create_shared_bindings(
                 std::mem::size_of::<Uniforms>() as u64,
             ),
             uniform_entry(1, wgpu::ShaderStages::VERTEX, (UV_RECTS_LEN * 16) as u64),
+            crate::selection_highlight::layout_entries()[0],
+            crate::selection_highlight::layout_entries()[1],
         ],
     });
-    let uniform_bind = buffer_bind_group(
-        device,
-        "uniform bg",
-        &uniform_bgl,
-        &[uniform_buf, &uv_rects_buf],
-    );
+    let uniform_bind =
+        crate::selection_highlight::inactive_bind(device, &uniform_bgl, uniform_buf, &uv_rects_buf);
 
     let (atlas_bgl, atlas_bind) = texture_sampler_bgl_bind(
         device,
@@ -558,3 +555,5 @@ fn create_shared_bindings(
         array_layout,
     }
 }
+
+pub(crate) mod world_overlay;

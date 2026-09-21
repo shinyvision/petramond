@@ -8,6 +8,12 @@ pub enum ControlEvent {
         command: bool,
     },
     TogglePlayerMode,
+    ToggleCreative,
+    UndoEdit,
+    RedoEdit,
+    /// Step whatever is adjustable by this many notches (positive = next).
+    AdjustTool(i32),
+    JumpPressed,
     CloseScreen,
     SelectHotbar(u8),
     /// Attack / mine state change (both edges — the App mirrors it into the
@@ -29,123 +35,79 @@ pub enum ControlEvent {
     TogglePerspective,
 }
 
+/// The controls currently down. `Control` is a small closed catalog, so a
+/// scan beats hashing.
+#[derive(Default)]
+struct HeldControls(Vec<Control>);
+
+impl HeldControls {
+    /// Record `control`'s state; `true` on the edge from up to down.
+    fn set(&mut self, control: Control, down: bool) -> bool {
+        let held = self.is_held(control);
+        if down && !held {
+            self.0.push(control);
+        } else if !down {
+            self.0.retain(|c| *c != control);
+        }
+        down && !held
+    }
+
+    fn is_held(&self, control: Control) -> bool {
+        self.0.contains(&control)
+    }
+}
+
 #[derive(Default)]
 pub struct InputController {
-    forward: bool,
-    backward: bool,
-    left: bool,
-    right: bool,
-    jump: bool,
-    sneak: bool,
-    sprint: bool,
-    toggle_mode_key: bool,
-    toggle_mode_chord: bool,
+    held: HeldControls,
+    /// The sprint + toggle-mode chord is down (its own edge).
+    mode_chord: bool,
     /// Whole hotbar steps accumulated by HotbarNext/HotbarPrev edges since the
     /// last frame (positive = next), drained into `GameInput.hotbar_scroll`.
     hotbar_steps: i32,
-    hotbar_next_held: bool,
-    hotbar_prev_held: bool,
-    inventory_toggle_held: bool,
-    chat_open_held: bool,
-    command_chat_open_held: bool,
-    drop_item_held: bool,
-    swap_off_hand_held: bool,
-    rotate_held_block_held: bool,
-    toggle_perspective_held: bool,
 }
 
 impl InputController {
     pub fn set_control(&mut self, control: Control, down: bool) -> Option<ControlEvent> {
+        let pressed = self.held.set(control, down);
         let event = match control {
-            Control::MoveForward => {
-                self.forward = down;
-                None
-            }
-            Control::MoveBackward => {
-                self.backward = down;
-                None
-            }
-            Control::MoveLeft => {
-                self.left = down;
-                None
-            }
-            Control::MoveRight => {
-                self.right = down;
-                None
-            }
-            Control::Jump => {
-                self.jump = down;
-                None
-            }
-            Control::Sneak => {
-                self.sneak = down;
-                None
-            }
-            Control::Sprint => {
-                self.sprint = down;
-                None
-            }
+            // Both edges, wherever they are bound.
             Control::Attack => Some(ControlEvent::Attack { down }),
             Control::Interact => Some(ControlEvent::Interact { down }),
+            // Level-triggered: every down report fires, key repeat included.
+            Control::CloseScreen => down.then_some(ControlEvent::CloseScreen),
+            Control::SelectHotbar(slot) => down.then_some(ControlEvent::SelectHotbar(slot)),
+            _ if !pressed => None,
             Control::HotbarNext => {
-                let edge = down && !self.hotbar_next_held;
-                self.hotbar_next_held = down;
-                if edge {
-                    self.hotbar_steps += 1;
-                }
+                self.hotbar_steps += 1;
                 None
             }
             Control::HotbarPrev => {
-                let edge = down && !self.hotbar_prev_held;
-                self.hotbar_prev_held = down;
-                if edge {
-                    self.hotbar_steps -= 1;
-                }
+                self.hotbar_steps -= 1;
                 None
             }
-            Control::TogglePlayerMode => {
-                self.toggle_mode_key = down;
-                None
-            }
-            Control::ToggleInventory => {
-                let edge = down && !self.inventory_toggle_held;
-                self.inventory_toggle_held = down;
-                edge.then_some(ControlEvent::ToggleInventory)
-            }
-            Control::OpenChat => {
-                let edge = down && !self.chat_open_held;
-                self.chat_open_held = down;
-                edge.then_some(ControlEvent::OpenChat { command: false })
-            }
-            Control::OpenCommandChat => {
-                let edge = down && !self.command_chat_open_held;
-                self.command_chat_open_held = down;
-                edge.then_some(ControlEvent::OpenChat { command: true })
-            }
-            Control::CloseScreen => down.then_some(ControlEvent::CloseScreen),
-            Control::SelectHotbar(slot) => down.then_some(ControlEvent::SelectHotbar(slot)),
-            Control::DropItem => {
-                // Edge-triggered: one drop per press. The whole-stack vs
-                // single choice is the App's, read from the held SPRINT state.
-                let edge = down && !self.drop_item_held;
-                self.drop_item_held = down;
-                edge.then_some(ControlEvent::DropItem)
-            }
-            Control::SwapOffHand => {
-                let edge = down && !self.swap_off_hand_held;
-                self.swap_off_hand_held = down;
-                edge.then_some(ControlEvent::SwapOffHand)
-            }
-            Control::RotateHeldBlock => {
-                let edge = down && !self.rotate_held_block_held;
-                self.rotate_held_block_held = down;
-                edge.then_some(ControlEvent::RotateHeldBlock)
-            }
-            Control::TogglePerspective => {
-                let edge = down && !self.toggle_perspective_held;
-                self.toggle_perspective_held = down;
-                edge.then_some(ControlEvent::TogglePerspective)
-            }
+            Control::Jump => Some(ControlEvent::JumpPressed),
+            Control::ToggleCreative => Some(ControlEvent::ToggleCreative),
+            Control::UndoEdit => Some(ControlEvent::UndoEdit),
+            Control::RedoEdit => Some(ControlEvent::RedoEdit),
+            Control::AdjustToolNext => Some(ControlEvent::AdjustTool(1)),
+            Control::AdjustToolPrev => Some(ControlEvent::AdjustTool(-1)),
+            Control::ToggleInventory => Some(ControlEvent::ToggleInventory),
+            Control::OpenChat => Some(ControlEvent::OpenChat { command: false }),
+            Control::OpenCommandChat => Some(ControlEvent::OpenChat { command: true }),
+            // Whole stack vs one item is the App's call, read from the held
+            // SPRINT state.
+            Control::DropItem => Some(ControlEvent::DropItem),
+            Control::SwapOffHand => Some(ControlEvent::SwapOffHand),
+            Control::RotateHeldBlock => Some(ControlEvent::RotateHeldBlock),
+            Control::TogglePerspective => Some(ControlEvent::TogglePerspective),
+            Control::MoveForward
+            | Control::MoveBackward
+            | Control::MoveLeft
+            | Control::MoveRight
+            | Control::Sneak
+            | Control::Sprint
+            | Control::TogglePlayerMode => None,
         };
 
         event.or_else(|| self.mode_chord_event())
@@ -154,7 +116,12 @@ impl InputController {
     /// Whether the SPRINT control is held — the drop-whole-stack modifier
     /// (follows the sprint binding, wherever it points).
     pub fn sprint_held(&self) -> bool {
-        self.sprint
+        self.held.is_held(Control::Sprint)
+    }
+
+    /// Step the hotbar as its own controls would (positive = next slot).
+    pub fn step_hotbar(&mut self, steps: i32) {
+        self.hotbar_steps += steps;
     }
 
     /// Drain the accumulated hotbar steps (positive = next slot).
@@ -163,98 +130,25 @@ impl InputController {
     }
 
     pub fn movement(&self) -> MovementInput {
+        let held = |control| self.held.is_held(control);
         MovementInput {
-            forward: self.forward,
-            backward: self.backward,
-            left: self.left,
-            right: self.right,
-            jump: self.jump,
-            sneak: self.sneak,
-            sprint: self.sprint,
+            forward: held(Control::MoveForward),
+            backward: held(Control::MoveBackward),
+            left: held(Control::MoveLeft),
+            right: held(Control::MoveRight),
+            jump: held(Control::Jump),
+            sneak: held(Control::Sneak),
+            sprint: held(Control::Sprint),
         }
     }
 
     fn mode_chord_event(&mut self) -> Option<ControlEvent> {
-        let chord = self.sprint && self.toggle_mode_key;
-        let event = chord && !self.toggle_mode_chord;
-        self.toggle_mode_chord = chord;
+        let chord = self.sprint_held() && self.held.is_held(Control::TogglePlayerMode);
+        let event = chord && !self.mode_chord;
+        self.mode_chord = chord;
         event.then_some(ControlEvent::TogglePlayerMode)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inventory_toggle_is_edge_triggered() {
-        let mut input = InputController::default();
-        assert_eq!(
-            input.set_control(Control::ToggleInventory, true),
-            Some(ControlEvent::ToggleInventory)
-        );
-        assert_eq!(input.set_control(Control::ToggleInventory, true), None);
-        assert_eq!(input.set_control(Control::ToggleInventory, false), None);
-        assert_eq!(
-            input.set_control(Control::ToggleInventory, true),
-            Some(ControlEvent::ToggleInventory)
-        );
-    }
-
-    #[test]
-    fn drop_item_is_edge_triggered() {
-        let mut input = InputController::default();
-        // One event per press.
-        assert_eq!(
-            input.set_control(Control::DropItem, true),
-            Some(ControlEvent::DropItem)
-        );
-        // Holding Q does not repeat the drop.
-        assert_eq!(input.set_control(Control::DropItem, true), None);
-        assert_eq!(input.set_control(Control::DropItem, false), None);
-        // Next press fires again. Whole-stack vs single is contextual App
-        // policy, no longer encoded in the event.
-        assert_eq!(
-            input.set_control(Control::DropItem, true),
-            Some(ControlEvent::DropItem)
-        );
-    }
-
-    #[test]
-    fn rotate_held_block_is_edge_triggered() {
-        let mut input = InputController::default();
-        assert_eq!(
-            input.set_control(Control::RotateHeldBlock, true),
-            Some(ControlEvent::RotateHeldBlock)
-        );
-        assert_eq!(input.set_control(Control::RotateHeldBlock, true), None);
-        assert_eq!(input.set_control(Control::RotateHeldBlock, false), None);
-        assert_eq!(
-            input.set_control(Control::RotateHeldBlock, true),
-            Some(ControlEvent::RotateHeldBlock)
-        );
-    }
-
-    #[test]
-    fn ctrl_y_chord_is_edge_triggered_from_either_order() {
-        let mut input = InputController::default();
-        assert_eq!(input.set_control(Control::Sprint, true), None);
-        assert_eq!(
-            input.set_control(Control::TogglePlayerMode, true),
-            Some(ControlEvent::TogglePlayerMode)
-        );
-        assert_eq!(input.set_control(Control::TogglePlayerMode, true), None);
-        assert_eq!(input.set_control(Control::TogglePlayerMode, false), None);
-        assert_eq!(
-            input.set_control(Control::TogglePlayerMode, true),
-            Some(ControlEvent::TogglePlayerMode)
-        );
-
-        let mut input = InputController::default();
-        assert_eq!(input.set_control(Control::TogglePlayerMode, true), None);
-        assert_eq!(
-            input.set_control(Control::Sprint, true),
-            Some(ControlEvent::TogglePlayerMode)
-        );
-    }
-}
+mod tests;

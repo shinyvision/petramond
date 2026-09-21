@@ -1,0 +1,13 @@
+[package]
+name = "builder"
+version = "0.1.0"
+edition = "2021"
+description = "Survival schematics: a schematic table, blueprints, and a Mason Golem that builds a chosen design from supplied materials."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }
+serde = { version = "1", features = ["derive"] }

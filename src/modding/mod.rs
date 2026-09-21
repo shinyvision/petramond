@@ -367,7 +367,7 @@ impl ModHost {
         ctx: &mut SimCtx,
         kind_key: &str,
         widget_id: &str,
-        pos: Option<[i32; 3]>,
+        anchor: Option<crate::menu::MenuAnchor>,
     ) {
         let Some((owner, _)) = kind_key.split_once(':') else {
             return;
@@ -378,7 +378,7 @@ impl ModHost {
         let call = GuestCall::GuiClick {
             kind_key: kind_key.to_owned(),
             widget_id: widget_id.to_owned(),
-            pos,
+            at: anchor.map(convert::container_address),
         };
         self.instances[i].lock().unwrap().call_guest(ctx, &call);
     }
@@ -496,19 +496,32 @@ impl ModHost {
         shape_kind: u16,
         input: mod_api::CellInput,
     ) -> Option<Vec<petramond_world::block::Aabb>> {
+        self.bake_placement_sim_batch(ctx, shape_key, shape_kind, vec![input])?
+            .into_iter()
+            .next()
+    }
+
+    pub(crate) fn bake_placement_sim_batch(
+        &self,
+        ctx: &mut SimCtx,
+        shape_key: &str,
+        shape_kind: u16,
+        inputs: Vec<mod_api::CellInput>,
+    ) -> Option<Vec<Vec<petramond_world::block::Aabb>>> {
         let mod_id = petramond_world::registry::namespace(shape_key)?;
         let inst = self.instance_by_id(mod_id)?;
+        let count = inputs.len();
         let call = GuestCall::BakeShapeSim {
             shape_kind,
-            cells: vec![input],
+            cells: inputs,
         };
         let reply = inst.lock().unwrap().call_guest(ctx, &call);
         let Some(GuestRet::BakedSim(baked)) = reply else {
             return None;
         };
-        match shape_bake::ingest_sim_bake(&baked, 1) {
+        match shape_bake::ingest_sim_bake(&baked, count) {
             shape_bake::BakeIngest::Apply(cells) => {
-                cells.into_iter().next().map(|(boxes, _)| boxes)
+                Some(cells.into_iter().map(|(boxes, _)| boxes).collect())
             }
             shape_bake::BakeIngest::Fallback => None,
             shape_bake::BakeIngest::Disable(reason) => {
@@ -727,6 +740,14 @@ fn wire_event_handler(
         EventKind::BlockPlacePre => {
             bus.on_block_place_pre(priority, move |ctx, ev| {
                 match call_event(&inst, ctx, handler_id, convert::block_place_pre(ev)) {
+                    Some((outcome, _)) => convert::outcome(outcome),
+                    None => Outcome::Continue,
+                }
+            })
+        }
+        EventKind::CellsEditPre => {
+            bus.on_cells_edit_pre(priority, move |ctx, ev| {
+                match call_event(&inst, ctx, handler_id, convert::cells_edit_pre(ev)) {
                     Some((outcome, _)) => convert::outcome(outcome),
                     None => Outcome::Continue,
                 }

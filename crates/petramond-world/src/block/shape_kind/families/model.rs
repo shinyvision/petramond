@@ -9,6 +9,12 @@ use super::*;
 pub struct ModelFamily;
 
 impl ShapeSim for ModelFamily {
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        let mut model = crate::block_model::ModelCellState::from_cell(state);
+        model.facing = crate::block::rotation::facing(model.facing);
+        crate::block::rotation::CellRotation::unchanged(block, model.to_cell())
+    }
+
     fn collision_boxes(
         &self,
         p: &ShapeParams,
@@ -51,7 +57,100 @@ impl ShapeRender for ModelFamily {
     }
 }
 
+/// Whether a placement of this model takes its facing from the placer: a
+/// centred model and a lone undirected cell always stand the default way.
+fn turns_with_the_placer(block: Block, kind: crate::block_model::BlockModelKind) -> bool {
+    !matches!(
+        crate::block_model::def(kind).orientation,
+        crate::block_model::PlacementOrientation::Centered
+    ) && (block.directional_view() || crate::block_model::instance(kind).cells.len() > 1)
+}
+
+/// The pose construction builds a recorded model in. One that turns with its
+/// placer is built as recorded. One that never turns was turned by something
+/// other than a click (a design laid down rotated): it is built the default
+/// way over the same cells where they allow it, which is all a click can do.
+fn clickable_pose(
+    block: Block,
+    kind: crate::block_model::BlockModelKind,
+    base: IVec3,
+    facing: Facing,
+) -> (IVec3, Facing) {
+    let default = crate::block_model::DEFAULT_MODEL_FACING;
+    if facing == default || turns_with_the_placer(block, kind) {
+        return (base, facing);
+    }
+    let cells = |base, facing| {
+        let mut cells: Vec<IVec3> =
+            crate::block_model::oriented_footprint_cells(base, kind, facing)
+                .into_iter()
+                .map(|(cell, _)| cell)
+                .collect();
+        cells.sort_by_key(|c| (c.x, c.y, c.z));
+        cells
+    };
+    let recorded = cells(base, facing);
+    let corner = recorded
+        .iter()
+        .fold(IVec3::MAX, |corner, &cell| corner.min(cell));
+    let upright = crate::block_model::base_from_cell(corner, kind, [0, 0, 0], default);
+    if cells(upright, default) == recorded {
+        (upright, default)
+    } else {
+        (base, facing)
+    }
+}
+
 impl ShapePlacement for ModelFamily {
+    fn construction_writes(
+        &self,
+        block: Block,
+        state: ShapeState,
+        pos: IVec3,
+    ) -> crate::world::placement::ConstructionWrites {
+        let kind = block
+            .model_kind()
+            .expect("model family carries a model kind");
+        let cell = crate::block_model::ModelCellState::from_cell(state);
+        let (base, facing) = clickable_pose(
+            block,
+            kind,
+            crate::block_model::base_from_cell(pos, kind, cell.offset, cell.facing),
+            cell.facing,
+        );
+        if base != pos {
+            return crate::world::placement::ConstructionWrites::Member(base);
+        }
+        crate::world::placement::ConstructionWrites::Anchor(PlacementPlan {
+            anchor: base,
+            writes: crate::block_model::oriented_footprint_cells(base, kind, facing)
+                .into_iter()
+                .map(|(c, offset)| {
+                    PlacementPlan::whole(
+                        c,
+                        block,
+                        crate::block_model::ModelCellState { offset, facing }.to_cell(),
+                    )
+                })
+                .collect(),
+        })
+    }
+
+    fn member_state(&self, block: Block, state: ShapeState, pos: IVec3) -> ShapeState {
+        let kind = block
+            .model_kind()
+            .expect("model family carries a model kind");
+        let cell = crate::block_model::ModelCellState::from_cell(state);
+        let recorded = crate::block_model::base_from_cell(pos, kind, cell.offset, cell.facing);
+        let (base, facing) = clickable_pose(block, kind, recorded, cell.facing);
+        crate::block_model::oriented_footprint_cells(base, kind, facing)
+            .into_iter()
+            .find(|(c, _)| *c == pos)
+            .map_or(state, |(_, offset)| {
+                crate::block_model::ModelCellState { offset, facing }.to_cell()
+            })
+    }
+
     fn authored_plan(
         &self,
         block: Block,
@@ -97,8 +196,7 @@ impl ShapePlacement for ModelFamily {
             crate::block_model::def(kind).orientation,
             crate::block_model::PlacementOrientation::Centered
         );
-        let oriented = !centered
-            && (block.directional_view() || crate::block_model::instance(kind).cells.len() > 1);
+        let oriented = turns_with_the_placer(block, kind);
         let facing = if oriented {
             crate::block_model::def(kind)
                 .orientation

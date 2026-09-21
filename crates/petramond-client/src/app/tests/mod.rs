@@ -11,6 +11,7 @@ use petramond_world::item::{ItemStack, ItemType};
 
 mod connect;
 mod controls;
+mod creative;
 mod drops;
 mod gui_routing;
 mod overlays;

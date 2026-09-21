@@ -34,7 +34,9 @@ struct VsIn {
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) uv:    vec2<f32>,
+    // Centroid: an antialiased edge fragment's uv is never extrapolated past
+    // the face, where it would sample the atlas tile next door.
+    @location(0) @interpolate(perspective, centroid) uv: vec2<f32>,
     @location(1) shade: f32,
     @location(2) tint:  vec3<f32>,
 };

@@ -1,0 +1,9 @@
+{
+  "tiles": [
+    { "name": "builder:blueprint", "file": "blueprint.png" },
+    { "name": "builder:copper_block", "file": "copper_block.png" },
+    { "name": "builder:golem_core", "file": "golem_core.png" },
+    { "name": "builder:golem_warning", "file": "golem_warning.png" },
+    { "name": "builder:golem_thinking", "file": "golem_thinking.png" }
+  ]
+}

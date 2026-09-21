@@ -138,13 +138,13 @@ pub enum GuestCall {
 
     // --- mod GUIs ---------------------------------------------------------------
     /// A button of the mod's own GUI was clicked (dispatched on the tick, in
-    /// click order, to the mod whose namespace `kind_key` carries). `pos` is
-    /// the block the GUI was opened from (`None` for a programmatic
-    /// [`HostCall::GuiOpen`]). → [`GuestRet::Unit`].
+    /// click order, to the mod whose namespace `kind_key` carries). `at` is
+    /// the block or mob the GUI session is anchored on (`None` for an
+    /// unanchored [`HostCall::GuiOpen`]). → [`GuestRet::Unit`].
     GuiClick {
         kind_key: String,
         widget_id: String,
-        pos: Option<[i32; 3]>,
+        at: Option<crate::ContainerAddress>,
     },
 
     // --- Hostile spawning -------------------------------------------------

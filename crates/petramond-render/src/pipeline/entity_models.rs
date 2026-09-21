@@ -32,6 +32,7 @@ pub(super) fn create_mob_pipeline(
             include_str!("../../shaders/cel.wgsl"),
             include_str!("../../shaders/atmosphere.wgsl"),
             &super::flipbook::model_declarations(),
+            crate::selection_highlight::SHADER,
             include_str!("../../shaders/mob.wgsl"),
         ]
         .concat(),

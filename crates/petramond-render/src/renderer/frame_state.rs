@@ -172,6 +172,8 @@ impl Renderer {
             sun_dir: sun_uniform(shader_params),
             volume_tint: [volume_tint[0], volume_tint[1], volume_tint[2], 0.0],
         };
+        self.ghosts.camera(&self.queue, &u);
+        self.selection.camera(&self.queue, &u);
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
     }
@@ -424,6 +426,8 @@ impl Renderer {
     }
 
     pub fn clear_world_state(&mut self) {
+        self.ghosts.clear_world();
+        self.selection.clear_world();
         self.terrain.clear_world();
         self.chrome.clear_world();
         // Each pass drops its own world-scoped state, so leaving a world

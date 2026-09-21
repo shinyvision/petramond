@@ -139,8 +139,15 @@ impl ServerGame {
 
         // F1: only soft-accept a claim from a PlayerUpdate this pump. Stale
         // claims must not yank the player every tick (tests and idle sessions).
+        let velocity_plausible = if self.sessions[s].player.is_flying() {
+            claimed_vel.is_finite()
+                && claimed_vel.length()
+                    <= crate::player::creative_flight_speed(true) * CLAIM_VEL_SLACK
+        } else {
+            claim_velocity_plausible(claimed_vel, spectator)
+        };
         let accept_claim = fresh
-            && claim_velocity_plausible(claimed_vel, spectator)
+            && velocity_plausible
             && claim_within_drift(spectator, gap, claimed_pos - self.sessions[s].player.pos)
             && claim_not_deeply_penetrating(claimed_pos, &self.world, obstacles, spectator);
 
@@ -184,7 +191,7 @@ impl ServerGame {
                 || !self.sessions[s].player.columns_loaded(&self.world)
                 || feet_supported(pos, &self.world, obstacles));
         let sess = &mut self.sessions[s];
-        if spectator {
+        if sess.player.is_invulnerable() {
             sess.fall.reset(pos.y);
             sess.pending_fall = 0.0;
             sess.pending_splash = 0.0;

@@ -44,6 +44,10 @@ pub(super) struct RawItemDef {
     /// Absent = the tool diagonal every tool and weapon sprite is drawn to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite_axis: Option<f32>,
+    /// The sprite's flat FACE does its work (a shovel's scoop) rather than
+    /// its edge (a blade, a pick) — see [`ItemDef::sprite_face_leads`](super::ItemDef).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sprite_face_leads: bool,
     /// Atlas tile name of the flat billboard sprite, for the items drawn as one
     /// (tools, raw drops, door/torch icons). Absent for items whose icon comes
     /// from their block or bbmodel.
@@ -302,13 +306,16 @@ pub(super) fn parse_layers(
     texts: &[&str],
     names: &ContentNames,
 ) -> Result<&'static [ItemDef], String> {
+    let creative = super::creative::catalog(names);
+    let mut texts = texts.to_vec();
+    texts.push(&creative);
     let mut keys = std::collections::HashSet::new();
     // Data patches split out of every layer during the parse (layer order
     // preserved); the convert applies each row's matching patches. RefCell:
     // the parse and convert closures both borrow the collection.
     let patches = std::cell::RefCell::new(Vec::new());
     let defs = crate::registry::resolve_catalog(
-        texts,
+        &texts,
         |text| {
             crate::registry::parse_rows_with_patches(
                 text,
@@ -418,6 +425,12 @@ fn convert(
         &r.data,
         patches,
     )?;
+    let (creative_visible, creative_name, placement_variants) =
+        super::creative::resolve(data, &r.key, block, names)?;
+    let creative_only =
+        crate::registry::engine_data::<bool>(data, "petramond:creative_only")?.unwrap_or(false);
+    let world_tool = crate::registry::engine_data::<String>(data, "petramond:creative_tool")?
+        .map(|name| &*Box::leak(name.into_boxed_str()));
     // Fuel and tool are ordinary data-surface consumers whose system is the
     // engine (furnace / mining) — same vocabulary a mod consumer uses.
     let fuel_burn_ticks = crate::registry::engine_data::<RawFuel>(data, "petramond:fuel")?
@@ -569,7 +582,7 @@ fn convert(
     Ok(ItemDef {
         item,
         key: Box::leak(r.key.into_boxed_str()),
-        name: Box::leak(r.name.into_boxed_str()),
+        name: Box::leak(creative_name.unwrap_or(r.name).into_boxed_str()),
         info: r.info.map(|info| &*Box::leak(info.into_boxed_str())),
         max_stack_size: r.max_stack_size,
         held_pose: r.held_pose.map_or(HeldPose::DEFAULT, |p| HeldPose {
@@ -578,10 +591,15 @@ fn convert(
             roll: p.roll as f32,
         }),
         sprite_axis_degrees,
+        sprite_face_leads: r.sprite_face_leads,
         sprite,
         model: r.model,
         tags: Box::leak(tags.into_boxed_slice()),
         block,
+        creative_visible,
+        creative_only,
+        world_tool,
+        placement_variants,
         item_use,
         use_ray: r.use_ray.resolve()?,
         fuel_burn_ticks,
@@ -605,7 +623,9 @@ mod tests {
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
         let defs = parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         assert_eq!(
-            defs.len(),
+            defs.iter()
+                .filter(|d| !d.key.starts_with(super::super::creative::PREFIX))
+                .count(),
             crate::item::ENGINE_ITEM_NAMES.len(),
             "the base table is exactly the engine set"
         );
@@ -620,7 +640,12 @@ mod tests {
         let stone = &defs[ItemType::Stone.id() as usize];
         assert_eq!(stone.name, "Modded Stone");
         assert_eq!(stone.max_stack_size, 16);
-        assert_eq!(defs.len(), crate::item::ENGINE_ITEM_NAMES.len());
+        assert_eq!(
+            defs.iter()
+                .filter(|d| !d.key.starts_with(super::super::creative::PREFIX))
+                .count(),
+            crate::item::ENGINE_ITEM_NAMES.len()
+        );
     }
 
     #[test]
@@ -647,7 +672,13 @@ mod tests {
         ]}"#;
         let defs = parse_test_layers(&[&base, layer]).expect("dynamic rows load");
         let engine = crate::item::ENGINE_ITEM_NAMES.len();
-        assert_eq!(defs.len(), engine + 2, "fresh ids past the engine set");
+        assert_eq!(
+            defs.iter()
+                .filter(|d| !d.key.starts_with(super::super::creative::PREFIX))
+                .count(),
+            engine + 2,
+            "fresh ids past the engine set"
+        );
         let filled = defs[engine].item;
         let gadget = &defs[engine + 1];
         assert_eq!(gadget.item, ItemType((engine + 1) as u16));

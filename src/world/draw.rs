@@ -67,6 +67,15 @@ impl<'de> serde::Deserialize<'de> for DrawPrims {
     }
 }
 
+/// The draw set a live body wears: the same prims a block's set holds, in a
+/// space whose origin is the body's feet centre. `turns` = the space turns
+/// with the body's yaw; otherwise it keeps the world's axes.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BodyDraw {
+    pub prims: DrawPrims,
+    pub turns: bool,
+}
+
 /// One resolved prim, ready for the renderer: names have become ids, so the
 /// per-frame bake never touches a registry.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +94,18 @@ pub enum BlockDrawPrim {
         pitch: f32,
         item: petramond_world::item::ItemType,
         tint: [u8; 3],
+    },
+    Sprite {
+        at: [f32; 3],
+        scale: f32,
+        yaw: f32,
+        pitch: f32,
+        spin: f32,
+        bob: [f32; 2],
+        faces_viewer: bool,
+        tile: petramond_world::tile::Tile,
+        tint: [u8; 3],
+        emissive: bool,
     },
 }
 
@@ -135,6 +156,38 @@ impl BlockDrawPrim {
                     pitch: *pitch,
                     item,
                     tint: *tint,
+                })
+            }
+            DrawPrim::Sprite {
+                at,
+                scale,
+                yaw,
+                pitch,
+                spin,
+                bob,
+                faces_viewer,
+                tile,
+                tint,
+                emissive,
+            } => {
+                let tile = petramond_world::tile::Tile::from_name(tile)?;
+                let sane = *scale > 0.0
+                    && [*scale, *yaw, *pitch, *spin]
+                        .iter()
+                        .chain(at)
+                        .chain(bob)
+                        .all(|v| v.is_finite());
+                sane.then_some(BlockDrawPrim::Sprite {
+                    at: *at,
+                    scale: *scale,
+                    yaw: *yaw,
+                    pitch: *pitch,
+                    spin: *spin,
+                    bob: *bob,
+                    faces_viewer: *faces_viewer,
+                    tile,
+                    tint: *tint,
+                    emissive: *emissive,
                 })
             }
         }
@@ -240,6 +293,14 @@ fn prim_bounds(prims: &[BlockDrawPrim]) -> Option<DrawBox> {
         any = true;
         match prim {
             BlockDrawPrim::Cuboid { min, max, .. } => grow(*min, *max),
+            BlockDrawPrim::Sprite { at, scale, bob, .. } => {
+                let r = scale * 0.87;
+                let lift = bob[0].abs();
+                grow(
+                    [at[0] - r, at[1] - r - lift, at[2] - r],
+                    [at[0] + r, at[1] + r + lift, at[2] + r],
+                );
+            }
             BlockDrawPrim::Item { at, scale, .. } => {
                 // The diagonal, so a spin about any axis stays inside.
                 let r = scale * 0.87;

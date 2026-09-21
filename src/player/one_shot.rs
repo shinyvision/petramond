@@ -89,10 +89,7 @@ pub fn resolve(rig: RigId, hand: Hand, kind: OneShot) -> Option<u16> {
 /// Every rig's event for `kind` from `hand` — the `(rig, event)` rows a
 /// fired gesture becomes, in rig id order.
 pub fn fired(hand: Hand, kind: OneShot) -> impl Iterator<Item = (RigId, u16)> {
-    TABLE
-        .iter()
-        .enumerate()
-        .filter_map(move |(i, per_hand)| {
-            per_hand[hand_slot(hand)][kind.slot()].map(|event| (RigId(i as u16), event))
-        })
+    TABLE.iter().enumerate().filter_map(move |(i, per_hand)| {
+        per_hand[hand_slot(hand)][kind.slot()].map(|event| (RigId(i as u16), event))
+    })
 }

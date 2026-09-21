@@ -80,6 +80,11 @@ fn abi_roundtrip_host_and_guest_calls() {
         key: "petramond:water_splash".into(),
         pos: [0.5, 64.0, 0.5],
         intensity: 4.5,
+        direction: None,
+        texture: Some(crate::ParticleTexture::Block {
+            block: crate::BlockId(3),
+            tint: None,
+        }),
     });
     roundtrip(HostCall::SpawnItem {
         item: "petramond:stick".into(),
@@ -177,7 +182,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     });
     roundtrip(HostCall::GuiOpen {
         kind_key: "wheel:wheel".into(),
-        pos: Some([1, 2, 3]),
+        at: Some(crate::ContainerAddress::Block([1, 2, 3])),
     });
     roundtrip(HostCall::GuiClose);
     roundtrip(HostCall::ChatSend {
@@ -393,7 +398,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(GuestCall::GuiClick {
         kind_key: "wheel:wheel".into(),
         widget_id: "spin".into(),
-        pos: Some([4, 65, -2]),
+        at: Some(crate::ContainerAddress::Block([4, 65, -2])),
     });
     let candidate = HostileSpawnCandidate {
         pos: [10.5, 64.0, -2.5],
@@ -465,7 +470,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     })));
     roundtrip(EventPayload::ContainerOpened {
         kind: ContainerKind::new("wheel:wheel"),
-        pos: None,
+        at: None,
     });
     roundtrip(GuestCall::GenFeature {
         feature_id: 3,
@@ -580,7 +585,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     });
     roundtrip(EventPayload::ContainerOpened {
         kind: ContainerKind::new("petramond:furnace"),
-        pos: Some([1, -64, 3]),
+        at: Some(crate::ContainerAddress::Block([1, -64, 3])),
     });
     roundtrip(HostCall::BlockNames {
         blocks: vec![BlockId(0), BlockId(200)],

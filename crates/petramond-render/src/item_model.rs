@@ -234,6 +234,10 @@ const GRID: usize = 16;
 /// side walls are precisely one texel wide and one texel deep.
 const DEPTH: f32 = 1.0 / 16.0;
 
+/// How far inside its tile a full-face uv corner sits, in texels (see
+/// `build_extruded_item_geometry`).
+const EDGE_UV_INSET_TEXELS: f32 = 1.0 / 64.0;
+
 /// Directional shades so the extrusion reads as 3D (front brightest, back dim,
 /// side walls in between). Mirrors the "top bright / bottom dark" voxel feel.
 const SHADE_FRONT: f32 = 1.0;
@@ -647,7 +651,20 @@ fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
     let tint = [1.0, 1.0, 1.0];
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
-    let [fu0, fv0, fu1, fv1] = tile_uv(tile);
+    // The faces span the tile edge to edge and the atlas has no gutters: a
+    // corner uv exactly on the tile's boundary samples the NEIGHBOURING tile's
+    // edge texels, a faint line along the slab's rim. A hair inside (far too
+    // little to stretch a texel visibly, unlike a half-texel inset) keeps
+    // every sample the face's own; the shaders interpolate uv at the centroid
+    // so an antialiased edge fragment is not extrapolated back out.
+    let [fu0, fv0, fu1, fv1] = {
+        let [u0, v0, u1, v1] = tile_uv(tile);
+        let (du, dv) = (
+            (u1 - u0) / GRID as f32 * EDGE_UV_INSET_TEXELS,
+            (v1 - v0) / GRID as f32 * EDGE_UV_INSET_TEXELS,
+        );
+        [u0 + du, v0 + dv, u1 - du, v1 - dv]
+    };
 
     // FRONT face (+Z), CCW seen from +Z. Corner order bl, br, tr, tl with UVs
     // matching: bottom-left = (u0, v1) since atlas v increases downward.
@@ -818,18 +835,18 @@ mod tests {
     }
 
     #[test]
-    fn front_and_back_faces_use_full_tile_uv() {
+    fn full_faces_sample_strictly_inside_their_own_tile() {
         let mut out = Vec::new();
         build_extruded_item(Tile::named("poppy"), &mut out);
         let [u0, v0, u1, v1] = tile_uv(Tile::named("poppy"));
-        // First 6 verts = front face; they must span the full tile rect corners.
-        let front = &out[..6];
-        let us: Vec<f32> = front.iter().map(|v| v.uv[0]).collect();
-        let vs: Vec<f32> = front.iter().map(|v| v.uv[1]).collect();
-        assert!(us.iter().any(|&u| (u - u0).abs() < 1e-5));
-        assert!(us.iter().any(|&u| (u - u1).abs() < 1e-5));
-        assert!(vs.iter().any(|&v| (v - v0).abs() < 1e-5));
-        assert!(vs.iter().any(|&v| (v - v1).abs() < 1e-5));
+        let texel = (u1 - u0) / GRID as f32;
+        // First 12 verts = front + back faces.
+        for v in &out[..12] {
+            let [u, w] = v.uv;
+            assert!(u > u0 && u < u1 && w > v0 && w < v1, "uv on the tile edge");
+            let edge = (u - u0).min(u1 - u).max((w - v0).min(v1 - w));
+            assert!(edge < texel * 0.1, "inset large enough to stretch texels");
+        }
     }
 
     #[test]

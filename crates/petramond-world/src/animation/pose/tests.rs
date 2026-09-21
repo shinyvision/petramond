@@ -95,7 +95,10 @@ fn a_mirrored_pose_is_the_reflection_of_the_original_across_the_rig() {
 #[test]
 fn side_names_swap_whatever_their_spelling() {
     assert_eq!(swap_side("leftArm").as_deref(), Some("rightArm"));
-    assert_eq!(swap_side("right_shoulder").as_deref(), Some("left_shoulder"));
+    assert_eq!(
+        swap_side("right_shoulder").as_deref(),
+        Some("left_shoulder")
+    );
     assert_eq!(swap_side("LeftLeg").as_deref(), Some("RightLeg"));
     assert_eq!(swap_side("item_right").as_deref(), Some("item_left"));
     assert_eq!(swap_side("head"), None);
@@ -112,5 +115,9 @@ fn a_masked_blend_moves_only_the_bones_inside_the_mask() {
     assert_eq!(base.rotation(0), Vec3::splat(5.0));
     assert_eq!(base.rotation(1), Vec3::splat(2.5));
     assert_eq!(base.position(1), Vec3::splat(0.5));
-    assert_eq!(base.rotation(2), Vec3::ZERO, "a bone past the mask is outside it");
+    assert_eq!(
+        base.rotation(2),
+        Vec3::ZERO,
+        "a bone past the mask is outside it"
+    );
 }

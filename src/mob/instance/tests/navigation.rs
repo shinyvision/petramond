@@ -215,3 +215,62 @@ fn tick(
         &Skeleton::default(),
     );
 }
+
+#[test]
+fn a_body_walking_down_a_flight_of_ledges_lands_on_every_one() {
+    // One-cell landings, each a block lower: a fall that keeps the speed the
+    // ledge was left with lands a cell late, on the NEXT drop.
+    let mut world = world();
+    for (x, top) in [(2, 68), (3, 68), (4, 67), (5, 66), (6, 65), (7, 64)] {
+        for y in 64..top {
+            for z in 7..=9 {
+                world.set_block_world(x, y, z, Block::Stone);
+            }
+        }
+    }
+    let goal = IVec3::new(11, 64, 8);
+    struct Hurry(IVec3);
+    impl AiBehavior for Hurry {
+        fn tick(&mut self, _: &mut AiCtx) -> BehaviorOutput {
+            BehaviorOutput {
+                goal: Some(self.0),
+                speed_scale: Some(1.6),
+                ..Default::default()
+            }
+        }
+    }
+    let mut mob = Instance::new(Mob::Owl, WorldPos::new(2.5, 68.0, 8.5), 0.0, 1);
+    mob.brain = Brain::new().with_boxed(0, Box::new(Hurry(goal)));
+    let anchors = [PlayerAnchor {
+        pos: WorldPos::new(8.5, 70.0, 8.5),
+        ..Default::default()
+    }];
+    let mut regions = confined::RegionCache::default();
+    let mut left_at = mob.pos.y;
+    let mut landings = 0;
+    for _ in 0..400 {
+        let was_grounded = mob.on_ground;
+        tick(&mut mob, &world, &anchors, &mut regions);
+        if was_grounded && !mob.on_ground {
+            left_at = mob.pos.y;
+        }
+        if !was_grounded && mob.on_ground {
+            landings += 1;
+            assert!(
+                left_at - mob.pos.y < 1.2,
+                "fell {} in one go, past a landing, at {:?}",
+                left_at - mob.pos.y,
+                mob.pos
+            );
+        }
+        if mob.pos.x > 10.8 {
+            break;
+        }
+    }
+    assert!(
+        mob.pos.x > 10.8,
+        "walks the whole flight down: {:?}",
+        mob.pos
+    );
+    assert!(landings >= 4, "one landing a step: {landings}");
+}

@@ -6,10 +6,12 @@
 //! lives on the server thread); everything mutated is
 //! client-owned (particles, lids, swings, the mesh pump).
 
-use petramond_math::math::IVec3;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
 use petramond_world::block::{Block, ShapeFamily};
 
-use super::{Game, MINING_DUST_INTERVAL};
+use super::dig_feedback::DigFeedback;
+use super::Game;
 
 /// Chest-lid open/close speed (fraction per second)
 const CHEST_LID_SPEED: f32 = 3.5;
@@ -36,12 +38,10 @@ impl Game {
                     // pump's deltas (the break landed before the events).
                     let (sky, blk) =
                         petramond::server::breaking::break_light(&self.replica, pos, normal);
-                    match block.model_kind() {
-                        Some(kind) => self.particles.spawn_break_burst_model(pos, kind, sky, blk),
-                        None => self
-                            .particles
-                            .spawn_break_burst_lit(pos, block, sky, blk, tint),
-                    }
+                    self.burst(
+                        crate::particle::BLOCK_BREAK,
+                        crate::particle::BurstEvent::broken(pos, block, tint, sky, blk),
+                    );
                     // A broken door's swing entry dies with it (client-owned
                     // state the sim can no longer clear). The event carries
                     // the mined cell — either half — so the LOWER cell (the
@@ -62,6 +62,8 @@ impl Game {
                     emitter,
                     pos,
                     intensity,
+                    direction,
+                    look,
                 } => {
                     // A one-shot burst bundle: spawn its physics particles into
                     // the client-local system, world-lit at the burst point.
@@ -72,8 +74,17 @@ impl Game {
                     };
                     let c = pos.block();
                     let (sky, blk) = self.replica.dynamic_light_at_world(c.x, c.y, c.z);
-                    self.particles
-                        .spawn_emitter_burst(spec, pos, intensity, sky, blk);
+                    self.particles.spawn_burst(
+                        spec,
+                        crate::particle::BurstEvent {
+                            pos,
+                            intensity,
+                            direction: direction.map(petramond_math::math::Vec3::from),
+                            look,
+                            skylight: sky,
+                            blocklight: blk,
+                        },
+                    );
                 }
                 // Sounds only (played by the app); lids follow `open_chests`.
                 super::tick::WorldEvent::BlockPlaced { .. }
@@ -101,41 +112,77 @@ impl Game {
         self.sync_camera_to_player_eye(0.0);
     }
 
-    /// A small dust fleck every [`MINING_DUST_INTERVAL`] while the LOCAL player
-    /// is actively mining, gated on the REPLICATED mining state (`SelfView`).
-    /// Presentation only; remote players' dust is client-derived the same
-    /// way, from their replicated mining state. Per frame — the
-    /// cadence is paced on REAL frame time now, where it used to accumulate
-    /// TICK_DT inside the fixed tick; both tick over every 0.1 s, so the fleck
-    /// rate is visually identical.
+    /// Dust off the face the LOCAL player is mining, gated on the REPLICATED
+    /// mining state (`SelfView`) and paced on real frame time. Its dig sound
+    /// is the app's loop, so only the dust pulse is read.
     pub(super) fn tick_mining_dust(&mut self, dt: f32) {
-        if self.self_view.mining.is_none() {
-            self.mining_dust_t = 0.0;
-            return;
-        }
-        // The dust anchors on the CLIENT's fresh raycast (same cell the
-        // session's latched target came from).
-        let Some(h) = self.look else {
+        let Some((cell, _)) = self.self_view.mining else {
+            self.mining_feedback = DigFeedback::default();
             return;
         };
-        self.mining_dust_t += dt.clamp(0.0, MINING_DUST_INTERVAL);
-        if self.mining_dust_t < MINING_DUST_INTERVAL {
+        // The dust is the MINED cell's. The fresh raycast only says which of
+        // its faces is struck: on the frames it has already moved on (the
+        // block just broke, the aim slid off) it names another block, and
+        // dust cut from that one is the wrong colour.
+        let Some(h) = self.look.filter(|h| h.block == cell) else {
             return;
+        };
+        if self.mining_feedback.advance(dt).dust {
+            self.dig_dust(cell, h.normal);
         }
-        self.mining_dust_t = 0.0;
-        let world = &self.replica;
-        let block = Block::from_id(world.chunk_block(h.block.x, h.block.y, h.block.z));
-        let cell = h.block + h.normal;
-        let (sky, blk) = world.dynamic_light_at_world(cell.x, cell.y, cell.z);
-        let kv_tint = world.cell_burst_tint(h.block);
-        match block.model_kind() {
-            Some(kind) => self
-                .particles
-                .spawn_mining_model(h.block, h.normal, kind, sky, blk),
-            None => self
-                .particles
-                .spawn_mining_lit(h.block, h.normal, block, sky, blk, kv_tint),
+    }
+
+    /// Fire one of the engine's own burst rows.
+    pub(super) fn burst(&mut self, key: &str, event: crate::particle::BurstEvent) {
+        if let Some(spec) = petramond_world::particle_emitters::by_key(key).and_then(|b| b.burst) {
+            self.particles.spawn_burst(&spec, event);
         }
+    }
+
+    /// A digging mob reads like a player mining: dust off the face it works
+    /// and the block's dig hit at the same pace, both from its replicated dig
+    /// state. The sounds are returned for the frame's events.
+    pub(super) fn tick_mob_digging(&mut self, dt: f32) -> Vec<petramond::events::tick::SoundEvent> {
+        let digging: Vec<(u64, IVec3, WorldPos)> = self
+            .replicated_mobs
+            .iter()
+            .filter_map(|m| {
+                let (cell, _) = m.curr.dig?;
+                let eye = petramond::mob::def(petramond::mob::Mob(m.curr.kind_id)).eye_height;
+                Some((m.curr.id, cell, m.curr.pos + Vec3::new(0.0, eye, 0.0)))
+            })
+            .collect();
+        let live: std::collections::HashSet<u64> = digging.iter().map(|(id, ..)| *id).collect();
+        self.mob_digging.retain(|id, _| live.contains(id));
+        let mut sounds = Vec::new();
+        for (id, cell, eye) in digging {
+            let pulse = self
+                .mob_digging
+                .entry(id)
+                .or_insert_with(DigFeedback::primed)
+                .advance(dt);
+            let centre = WorldPos::block_center(cell);
+            if pulse.hit {
+                let block = Block::from_id(self.replica.chunk_block(cell.x, cell.y, cell.z));
+                if let Some(sound) = block.sound(petramond_world::block::BlockSoundAction::Dig) {
+                    sounds.push(petramond::events::tick::SoundEvent {
+                        sound,
+                        pos: Some(centre),
+                    });
+                }
+            }
+            if pulse.dust {
+                // The face turned toward the digger's eye, where its reach starts.
+                let to = (eye - centre).to_array();
+                let axis = (0..3)
+                    .max_by(|a, b| to[*a].abs().total_cmp(&to[*b].abs()))
+                    .unwrap_or(1);
+                let mut normal = IVec3::ZERO;
+                normal[axis] = if to[axis] < 0.0 { -1 } else { 1 };
+                self.dig_dust(cell, normal);
+            }
+        }
+        sounds
     }
 
     /// Per-frame presentation update: only particles, which are a purely visual effect

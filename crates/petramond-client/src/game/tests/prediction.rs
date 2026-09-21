@@ -380,7 +380,7 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
         MenuSyncMsg {
             target: MenuTargetWire::Container {
                 kind_key: "petramond:chest".to_string(),
-                pos: Some(pos),
+                anchor: Some(pos.into()),
                 slots: Some(slots),
                 gui_state: None,
             },

@@ -16,7 +16,7 @@ mod escape;
 mod head_look;
 mod hearing;
 mod idle_anim;
-mod los;
+pub(crate) mod los;
 mod melee;
 mod panic;
 mod retaliate;

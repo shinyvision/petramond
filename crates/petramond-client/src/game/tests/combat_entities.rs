@@ -426,6 +426,9 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
                 conditions: Vec::new(),
                 anims: Vec::new(),
                 ragdoll: None,
+                dig: None,
+                held: [None; 2],
+                draw: Default::default(),
             })
             .collect()
     };
@@ -490,6 +493,9 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
             conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
+            dig: None,
+            held: [None; 2],
+            draw: Default::default(),
         }
     }
 
@@ -511,6 +517,64 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
         Some(42),
         "the halfway rendered body is still in reach even though curr is not"
     );
+}
+
+#[test]
+fn a_mob_eases_into_and_out_of_its_gait() {
+    use petramond::net::protocol::MobStateRow;
+    use petramond_render::GaitClip;
+
+    fn row(moving: bool, anim_time: f32) -> MobStateRow {
+        MobStateRow {
+            id: 7,
+            kind_id: Mob::Owl.0,
+            pos: WorldPos::new(8.0, 64.0, 8.0),
+            yaw: 0.0,
+            tilt: petramond_math::math::Tilt::LEVEL,
+            anim_time,
+            moving,
+            idle_anim: None,
+            head_yaw: 0.0,
+            head_pitch: 0.0,
+            hurt_timer: 0.0,
+            dead: false,
+            shorn: false,
+            emitters: Vec::new(),
+            conditions: Vec::new(),
+            anims: Vec::new(),
+            ragdoll: None,
+            dig: None,
+            held: [None; 2],
+            draw: Default::default(),
+        }
+    }
+    let walk = |game: &crate::game::Game| {
+        let entry = game.replicated_mobs.iter().next().unwrap();
+        entry
+            .gait_blend
+            .iter()
+            .find(|(clip, _, _)| *clip == GaitClip::Walk)
+            .map(|(_, weight, phase)| (*weight, *phase))
+    };
+
+    let mut game = game();
+    game.replicated_mobs.apply(vec![row(false, 0.0)]);
+    // A step begins: the walk comes in from rest, never at full weight.
+    game.replicated_mobs.apply(vec![row(true, 0.4)]);
+    game.replicated_mobs.advance_anim_blends(0.05);
+    game.replicated_mobs.advance_anim_blends(0.05);
+    let (weight, _) = walk(&game).expect("the walk is blending in");
+    assert!(
+        weight > 0.0 && weight < 1.0,
+        "eased in, not snapped: {weight}"
+    );
+    // And ends mid-stride (the sim's clock resets with the gait): the walk
+    // fades from the stride it was in, not from the reset clock.
+    game.replicated_mobs.apply(vec![row(false, 0.0)]);
+    game.replicated_mobs.advance_anim_blends(0.05);
+    let (fading, phase) = walk(&game).expect("the walk is still fading out");
+    assert!(fading > 0.0 && fading < weight + 1e-6);
+    assert_eq!(phase, 0.4, "it holds the stride it stopped in");
 }
 
 #[test]
@@ -1021,6 +1085,9 @@ fn a_mob_pushes_the_player_per_frame() {
             conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
+            dig: None,
+            held: [None; 2],
+            draw: Default::default(),
         }]);
     let x0 = game.player.pos.x;
     for _ in 0..30 {
@@ -1513,6 +1580,9 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
             conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
+            dig: None,
+            held: [None; 2],
+            draw: Default::default(),
         }]);
     game.refresh_target();
     assert_eq!(game.targeted_mob, Some(42), "the nearer mob wins");

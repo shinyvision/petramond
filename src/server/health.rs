@@ -122,7 +122,7 @@ impl ServerGame {
         // Non-positive damage is a non-event (matching Player::apply_damage's
         // no-op); the fall drain calls this every tick, so dispatching zeros
         // would spam handlers 20×/s.
-        if amount <= 0 {
+        if amount <= 0 || self.sessions[s].player.is_invulnerable() {
             return false;
         }
         // A dead player takes no further hits: without this, mobs pounding the

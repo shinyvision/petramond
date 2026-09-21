@@ -13,7 +13,11 @@ use crate::player::rigs;
 
 /// Every action row `p` produces this window, in emission order.
 pub fn player_action_kinds(p: &PlayerTickEvents, mut push: impl FnMut(PlayerActionKind)) {
-    let click_hand = if p.click_off_hand { Hand::Off } else { Hand::Main };
+    let click_hand = if p.click_off_hand {
+        Hand::Off
+    } else {
+        Hand::Main
+    };
     let gestures = [
         (p.swung_hand, Hand::Main, OneShot::Swing),
         (p.broke_block.is_some(), Hand::Main, OneShot::Break),
@@ -55,8 +59,10 @@ mod tests {
     fn engine_one_shots_become_observed_rigs_graph_events() {
         let body = rigs::id(rigs::PLAYER_BODY).expect("body rig");
         let viewmodel = rigs::id(rigs::PLAYER_FIRST_PERSON).expect("viewmodel rig");
-        let mut p = PlayerTickEvents::default();
-        p.broke_block = Some(petramond_world::block::Block::Stone);
+        let mut p = PlayerTickEvents {
+            broke_block: Some(petramond_world::block::Block::Stone),
+            ..Default::default()
+        };
         p.animator_events.push((viewmodel, 0));
         let out = kinds(&p);
         let event = one_shot::resolve(body, Hand::Main, OneShot::Break)
@@ -73,12 +79,17 @@ mod tests {
     #[test]
     fn the_click_hand_picks_the_hand_prefix() {
         let body = rigs::id(rigs::PLAYER_BODY).expect("body rig");
-        let mut p = PlayerTickEvents::default();
-        p.interacted = true;
-        p.click_off_hand = true;
+        let p = PlayerTickEvents {
+            interacted: true,
+            click_off_hand: true,
+            ..Default::default()
+        };
         let event = one_shot::resolve(body, Hand::Off, OneShot::Interact)
             .expect("the shipped body graph hears an off-hand interact");
-        assert_eq!(kinds(&p), vec![PlayerActionKind::Animator { rig: body, event }]);
+        assert_eq!(
+            kinds(&p),
+            vec![PlayerActionKind::Animator { rig: body, event }]
+        );
         assert_ne!(
             Some(event),
             one_shot::resolve(body, Hand::Main, OneShot::Interact),

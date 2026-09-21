@@ -184,7 +184,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
     game.server.open_registered_gui_screen_for(
         0,
         kind,
-        Some(petramond_math::math::IVec3::new(1, 2, 3)),
+        Some(petramond_math::math::IVec3::new(1, 2, 3).into()),
     );
     assert!(
         game.server.sessions[0]

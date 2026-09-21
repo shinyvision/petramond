@@ -137,6 +137,7 @@ fn a_later_row_never_touches_an_earlier_rows_pool() {
 }
 
 #[test]
+#[ignore = "manual terrain census over 32,000 regions; prints statistics"]
 fn zz_dip_census() {
     let layer = r#"{"fluid_pools":[]}"#;
     for seed in [0x2au32, 786, 0x1A7A_F0FA, 0x1234_5678, 0xDEAD_BEEF] {

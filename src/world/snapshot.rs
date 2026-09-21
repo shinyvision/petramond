@@ -19,6 +19,7 @@ impl World {
             self.role != WorldRole::ClientReplica,
             "a replica must not persist replicated sections"
         );
+        self.schematics.store = crate::schematic::store::Store::new(Some(save.dir()));
         self.save = Some(save);
         self.data.saved = saved;
     }

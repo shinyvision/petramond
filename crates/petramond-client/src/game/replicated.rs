@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
+use petramond_render::GaitClip;
 
 use petramond_world::gui_state::ContainerView;
 
@@ -72,6 +73,22 @@ pub struct ReplicatedMob {
     /// Presentation state only, advanced by
     /// [`ReplicatedMobs::advance_anim_blends`].
     pub anim_blend: Vec<(String, f32, f32)>,
+    /// The same blend over the BASE gait the row's locomotion selects (walk,
+    /// an idle, or none = rest): `(clip, weight, phase)`. A body eases into
+    /// and out of its gait like any layer, however briefly it steps.
+    pub gait_blend: Vec<(GaitClip, f32, f32)>,
+    /// `curr.draw` resolved for the renderer, rebuilt only when the row's
+    /// set changes.
+    pub draw: Option<petramond::world::draw::BlockDraw>,
+}
+
+/// The gait a replicated row is in, or `None` at rest.
+pub fn gait_of(row: &MobStateRow) -> Option<GaitClip> {
+    if row.moving {
+        Some(GaitClip::Walk)
+    } else {
+        row.idle_anim.map(GaitClip::Idle)
+    }
 }
 
 impl ReplicatedMob {
@@ -121,14 +138,33 @@ impl ReplicatedMobs {
             // A fresh id starts its animations at FULL weight (a mob streamed
             // in mid-row must not fade in from rest); a known id keeps its
             // blend state and eases toward the new target set.
-            let (prev, anim_blend) = match old.remove(&row.id) {
-                Some(entry) => (entry.curr, entry.anim_blend),
+            let resolve = |row: &MobStateRow| {
+                (!row.draw.prims.is_empty()).then(|| {
+                    std::sync::Arc::new(petramond::world::draw::BlockDrawSet::new(
+                        row.draw.prims.clone(),
+                    ))
+                })
+            };
+            let (prev, anim_blend, gait_blend, draw) = match old.remove(&row.id) {
+                Some(entry) => {
+                    let draw = if entry.curr.draw.prims == row.draw.prims {
+                        entry.draw
+                    } else {
+                        resolve(&row)
+                    };
+                    (entry.curr, entry.anim_blend, entry.gait_blend, draw)
+                }
                 None => (
                     row.clone(),
                     row.anims
                         .iter()
                         .map(|(n, phase)| (n.clone(), 1.0, *phase))
                         .collect(),
+                    gait_of(&row)
+                        .map(|clip| (clip, 1.0, row.anim_time))
+                        .into_iter()
+                        .collect(),
+                    resolve(&row),
                 ),
             };
             self.rows.insert(
@@ -137,6 +173,8 @@ impl ReplicatedMobs {
                     prev,
                     curr: row,
                     anim_blend,
+                    gait_blend,
+                    draw,
                 },
             );
         }
@@ -171,6 +209,21 @@ impl ReplicatedMobs {
                 }
             }
             entry.anim_blend.retain(|(_, w, _)| *w > 0.0);
+            let gait = gait_of(&entry.curr);
+            if let Some(clip) = gait {
+                if !entry.gait_blend.iter().any(|(c, _, _)| *c == clip) {
+                    entry.gait_blend.push((clip, 0.0, entry.curr.anim_time));
+                }
+            }
+            for (clip, weight, phase) in entry.gait_blend.iter_mut() {
+                if Some(*clip) == gait {
+                    *weight = (*weight + step).min(1.0);
+                    *phase = entry.curr.anim_time;
+                } else {
+                    *weight -= step;
+                }
+            }
+            entry.gait_blend.retain(|(_, w, _)| *w > 0.0);
         }
     }
 
@@ -364,10 +417,7 @@ impl SelfView {
     pub fn apply(&mut self, state: &SelfState, adopt_inventory: bool) {
         self.health = state.health;
         self.conditions.clone_from(&state.conditions);
-        self.mode = match state.mode {
-            1 => PlayerMode::Spectator,
-            _ => PlayerMode::Survival,
-        };
+        self.mode = PlayerMode::from_u8(state.mode);
         self.effects = state
             .effects
             .iter()
@@ -800,11 +850,14 @@ impl Game {
     /// window's events translate to LOCAL types and buffer for `GameEvents`.
     pub fn apply_tick_update(&mut self, update: Box<TickUpdate>) {
         let update = *update;
+        self.receive_creative_replies(update.creative);
+        self.receive_schematic_notices(update.schematics);
         self.replicated_tick = update.tick;
         // The batch's written cells, collected before the deltas are consumed
         // (the rollback and place-ghost checks below both key on them).
         let delta_cells: rustc_hash::FxHashSet<IVec3> =
             update.block_deltas.iter().map(|d| d.pos).collect();
+        self.note_ghost_changes(delta_cells.iter().copied());
         for delta in update.block_deltas {
             self.replica.apply_remote_delta(delta);
         }
@@ -1056,11 +1109,35 @@ impl Game {
                 emitter_id,
                 pos,
                 intensity,
-            } => ev.world.push(WorldEvent::EmitterBurst {
-                emitter: emitter_id,
-                pos,
-                intensity,
-            }),
+                direction,
+                texture,
+            } => {
+                use crate::particle::BurstLook;
+                use petramond::net::protocol::BurstTextureMsg;
+                let look = match texture {
+                    None => BurstLook::Row,
+                    Some(BurstTextureMsg::Block { block_id, tint }) => BurstLook::Block {
+                        block: petramond_world::block::Block::from_id(block_id),
+                        kv_tint: tint,
+                    },
+                    // A tile this client's packs do not know: the row's own
+                    // look, not nothing.
+                    Some(BurstTextureMsg::Tile { tile, slice, tint }) => {
+                        petramond_world::particle_emitters::TextureSlice::named(&tile, slice)
+                            .map_or(BurstLook::Row, |slice| BurstLook::Texture {
+                                slice,
+                                tint: tint.map(|c| f32::from(c) / 255.0),
+                            })
+                    }
+                };
+                ev.world.push(WorldEvent::EmitterBurst {
+                    emitter: emitter_id,
+                    pos,
+                    intensity,
+                    direction,
+                    look,
+                })
+            }
             WorldEventMsg::SpatialSound(cmd) => ev.spatial_sounds.push(match cmd {
                 SpatialSoundMsg::PlayAt {
                     handle,

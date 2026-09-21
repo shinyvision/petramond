@@ -31,6 +31,9 @@ fn mob_row(id: u64, pos: WorldPos, hurt_timer: f32) -> MobStateRow {
         conditions: Vec::new(),
         anims: Vec::new(),
         ragdoll: None,
+        dig: None,
+        held: [None; 2],
+        draw: Default::default(),
     }
 }
 
@@ -511,4 +514,51 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     assert_eq!(row.prev_pos, row1.pos, "prev = previous batch state");
     assert_eq!(row.pos, row2.pos, "curr = latest batch state");
     assert_eq!(row.count, 3);
+}
+
+/// A draw set a mob wears reaches the frame at the body's interpolated feet,
+/// and leaves with the row's set.
+#[test]
+fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
+    let mut game = game_on_empty_chunk();
+    let mut scratch = GamePresentationScratch::new();
+    let view = petramond_render::camera::ViewVolume::unbounded();
+    let worn = petramond::world::draw::BodyDraw {
+        prims: vec![mod_api::DrawPrim::Sprite {
+            at: [0.0, 2.0, 0.0],
+            scale: 0.5,
+            yaw: 0.0,
+            pitch: 0.0,
+            spin: 0.0,
+            bob: [0.1, 4.0],
+            faces_viewer: true,
+            tile: "stone".into(),
+            tint: [255; 3],
+            emissive: true,
+        }]
+        .into(),
+        turns: false,
+    };
+    let mut row = mob_row(7, WorldPos::new(4.25, 65.0, 4.0), 0.0);
+    row.draw = worn.clone();
+    game.replicated_mobs.apply(vec![row.clone()]);
+    row.pos = WorldPos::new(5.25, 65.0, 4.0);
+    game.replicated_mobs.apply(vec![row.clone()]);
+
+    let presentation = scratch.snapshot(&game, 0.5, &view);
+    let [draw] = presentation.block_draws else {
+        panic!("one worn set, got {}", presentation.block_draws.len());
+    };
+    let feet = draw.frame.to_world(Vec3::ZERO);
+    let (body, _) = game
+        .replicated_mobs
+        .iter()
+        .next()
+        .unwrap()
+        .interpolated_pose(game.tick_alpha());
+    assert!((feet.x - body.x).abs() < 1e-4, "{} vs {}", feet.x, body.x);
+
+    row.draw = Default::default();
+    game.replicated_mobs.apply(vec![row]);
+    assert!(scratch.snapshot(&game, 0.5, &view).block_draws.is_empty());
 }

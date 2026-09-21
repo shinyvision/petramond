@@ -229,7 +229,12 @@ pub fn swap_side(name: &str) -> Option<String> {
     if name[at..].starts_with(|c: char| c.is_ascii_uppercase()) {
         word[..1].make_ascii_uppercase();
     }
-    Some(format!("{}{}{}", &name[..at], word, &name[at + from.len()..]))
+    Some(format!(
+        "{}{}{}",
+        &name[..at],
+        word,
+        &name[at + from.len()..]
+    ))
 }
 
 #[cfg(test)]

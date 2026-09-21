@@ -47,6 +47,7 @@ mod query;
 #[cfg(test)]
 mod tests;
 
+pub use ao::{bake_box_ao, AoBox};
 pub use atlas::{atlas, particle_patch};
 pub use compiled::*;
 pub use defs::*;

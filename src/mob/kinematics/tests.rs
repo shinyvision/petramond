@@ -301,7 +301,8 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
         horizontal: Some([-5.0, 0.0]),
         vertical: None,
         yaw: Some(1.5),
-        while_walking: false
+        while_walking: false,
+        gait: false,
     }));
 
     owl.integrate_locomotion(
@@ -353,7 +354,8 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
         horizontal: Some([2.0, 0.0]),
         vertical: None,
         yaw: Some(1.0),
-        while_walking: false
+        while_walking: false,
+        gait: false,
     }));
     owl.integrate(1.0 / 20.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     assert!(owl.pos.x > 0.5, "the drive velocity moved the mob");
@@ -375,6 +377,34 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
 }
 
 #[test]
+fn a_driven_step_walks_and_a_carried_body_does_not() {
+    let step = |gait| {
+        let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
+        owl.integrate(1.0 / 20.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
+        assert!(owl.set_drive(DriveIntent {
+            horizontal: Some([0.6, 0.0]),
+            vertical: None,
+            yaw: None,
+            while_walking: false,
+            gait,
+        }));
+        owl.integrate(1.0 / 20.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
+        owl
+    };
+    let walked = step(true);
+    assert!(
+        walked.moving,
+        "a body stepping sideways under its own power walks"
+    );
+    assert!(
+        walked.gait_pace < 1.0,
+        "and its gait keeps pace with the slow step: {}",
+        walked.gait_pace
+    );
+    assert!(!step(false).moving, "a body carried along does not");
+}
+
+#[test]
 fn knockback_stagger_overrides_a_drive_intent() {
     // A punched vehicle takes its knockback: the decaying knockback owns
     // horizontal velocity for the stagger, the drive is consumed unused.
@@ -385,7 +415,8 @@ fn knockback_stagger_overrides_a_drive_intent() {
         horizontal: Some([5.0, 0.0]),
         vertical: None,
         yaw: Some(1.0),
-        while_walking: false
+        while_walking: false,
+        gait: false,
     }));
     owl.integrate(1.0 / 20.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     assert!(
@@ -463,6 +494,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
                 vertical: Some(4.6),
                 yaw: None,
                 while_walking: true,
+                gait: false,
             }));
         }
         let can_steer = route_steering_supported(mob.on_ground(), false, mob.vel().y);
@@ -529,7 +561,8 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         horizontal: None,
         vertical: Some(4.6),
         yaw: None,
-        while_walking: false
+        while_walking: false,
+        gait: false,
     }));
     jumper.integrate(dt, d, Vec3::new(1.0, 0.0, 0.0), true, &solid);
     assert!(
@@ -547,7 +580,8 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         horizontal: Some([2.0, 0.0]),
         vertical: None,
         yaw: None,
-        while_walking: false
+        while_walking: false,
+        gait: false,
     }));
     driven.integrate(dt, d, Vec3::ZERO, false, &solid);
     assert!(
@@ -605,6 +639,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         vertical: Some(4.6),
         yaw: None,
         while_walking: true,
+        gait: false,
     }));
     owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     assert!(
@@ -619,6 +654,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         vertical: Some(4.6),
         yaw: None,
         while_walking: true,
+        gait: false,
     }));
     owl.integrate(
         1.0 / 60.0,
@@ -642,6 +678,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         vertical: Some(4.6),
         yaw: None,
         while_walking: false,
+        gait: false,
     }));
     idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
     assert!(
@@ -760,4 +797,63 @@ fn brain_speed_scale_changes_horizontal_travel_and_gait_together() {
     assert!((hurried.vel.z - normal.vel.z * ratio).abs() < 1e-5);
     assert!((hurried.anim_time - normal.anim_time * ratio).abs() < 1e-5);
     assert_eq!(hurried.vel.y, normal.vel.y);
+}
+
+#[test]
+fn an_edge_guarded_body_stops_at_a_tall_ledge_but_steps_down_a_short_one() {
+    // A platform 6 tall ending at x = 3; a body walking +x off it.
+    let tall = |c: IVec3| c.y < 0 || (c.x < 3 && c.y < 6);
+    let short = |c: IVec3| c.y < 0 || (c.x < 3 && c.y < 2);
+    let walk_off = |d: &MobDef, solid: &dyn Fn(IVec3) -> bool, top: f64| {
+        let solid = |c: IVec3| solid(c);
+        let mut sheep = Instance::new(Mob::Sheep, WorldPos::new(1.5, top, 0.5), 0.0, 1);
+        for _ in 0..80 {
+            sheep.integrate(0.05, d, Vec3::new(1.0, 0.0, 0.0), false, &solid);
+        }
+        sheep.pos
+    };
+    let (text, _) = petramond_world::assets::read_base_text("mobs.json").unwrap();
+    let mut rows: serde_json::Value = serde_json::from_str(&text).unwrap();
+    for row in rows["mobs"].as_array_mut().unwrap() {
+        row["edge_guard"] = serde_json::json!(true);
+    }
+    let table = crate::mob::load::parse_layers(&[&rows.to_string()]).unwrap();
+    let guarded = table.defs.iter().find(|d| d.mob == Mob::Sheep).unwrap();
+    let stayed = walk_off(guarded, &tall, 6.0);
+    assert!(
+        stayed.y > 5.9 && stayed.x < 3.5,
+        "stopped at the lip: {stayed:?}"
+    );
+    let stepped = walk_off(guarded, &short, 2.0);
+    assert!(
+        stepped.y < 0.1 && stepped.x > 4.0,
+        "a drop within its routes is walked: {stepped:?}"
+    );
+    let fell = walk_off(sheep_def(), &tall, 6.0);
+    assert!(fell.y < 0.1, "unguarded bodies still walk off: {fell:?}");
+    // Four tall onto a slab is the three-cell drop a route plans, half a block
+    // further than three: the guard measures it as the route does.
+    let slab = |x: i32, y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] {
+        if y < 0 || (x < 3 && y < 4) {
+            Block::Stone.collision_boxes()
+        } else if y == 0 {
+            Block::OakSlab.collision_boxes()
+        } else {
+            &[]
+        }
+    };
+    let mut sheep = Instance::new(Mob::Sheep, WorldPos::new(1.5, 4.0, 0.5), 0.0, 1);
+    let loco = Locomotion {
+        wish: Vec3::new(1.0, 0.0, 0.0),
+        jump: false,
+        can_steer: true,
+    };
+    for _ in 0..80 {
+        sheep.integrate_locomotion(0.05, guarded, loco, &Surroundings::dry(&slab));
+    }
+    assert!(
+        sheep.pos.y < 0.6 && sheep.pos.x > 4.0,
+        "a planned drop onto a slab is walked: {:?}",
+        sheep.pos
+    );
 }

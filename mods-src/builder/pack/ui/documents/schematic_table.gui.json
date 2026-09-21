@@ -1,0 +1,256 @@
+{
+  "format": 1,
+  "kind": "builder:schematic_table",
+  "class": "container",
+  "root": {
+    "type": "frame",
+    "style": "panel.large",
+    "layout": {
+      "pad": [
+        4,
+        2,
+        4,
+        4
+      ],
+      "gap": 6
+    },
+    "children": [
+      {
+        "type": "row",
+        "layout": {
+          "align": "center",
+          "w": {
+            "grow": 1
+          }
+        },
+        "children": [
+          {
+            "type": "label",
+            "text": "Schematic Table"
+          },
+          {
+            "type": "spacer",
+            "layout": {
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "ghost",
+            "image": "../icons/ghost_toggle.png",
+            "frames": [
+              2,
+              1
+            ],
+            "bind": {
+              "frame": "builder:ghost_frame",
+              "enabled": "builder:can_ghost"
+            },
+            "layout": {
+              "w": 16,
+              "h": 16
+            }
+          }
+        ]
+      },
+      {
+        "type": "row",
+        "layout": {
+          "gap": 6,
+          "align": "center",
+          "w": {
+            "grow": 1
+          }
+        },
+        "children": [
+          {
+            "type": "slot",
+            "role": "container",
+            "accepts": [
+              {
+                "data": "builder:blueprint"
+              }
+            ]
+          },
+          {
+            "type": "column",
+            "layout": {
+              "gap": 2,
+              "w": {
+                "grow": 1
+              }
+            },
+            "children": [
+              {
+                "type": "label",
+                "wrap": true,
+                "bind": {
+                  "text": "builder:title"
+                }
+              },
+              {
+                "type": "label",
+                "small": true,
+                "wrap": true,
+                "bind": {
+                  "text": "builder:status",
+                  "palette": "builder:status_palette"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "row",
+        "layout": {
+          "gap": 4,
+          "w": {
+            "grow": 1
+          }
+        },
+        "children": [
+          {
+            "type": "button",
+            "id": "choose",
+            "text": "Choose",
+            "bind": {
+              "enabled": "builder:can_choose"
+            },
+            "layout": {
+              "h": 20,
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "position",
+            "text": "Position",
+            "bind": {
+              "enabled": "builder:can_position"
+            },
+            "layout": {
+              "h": 20,
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "materials",
+            "text": "Materials",
+            "bind": {
+              "enabled": "builder:has_design"
+            },
+            "layout": {
+              "h": 20,
+              "w": {
+                "grow": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "row",
+        "layout": {
+          "gap": 4,
+          "w": {
+            "grow": 1
+          }
+        },
+        "children": [
+          {
+            "type": "button",
+            "id": "start",
+            "text": "Start",
+            "bind": {
+              "enabled": "builder:can_start",
+              "visible": "builder:show_start"
+            },
+            "layout": {
+              "h": 20,
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "pause",
+            "text": "Pause",
+            "bind": {
+              "visible": "builder:show_pause"
+            },
+            "layout": {
+              "h": 20,
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "resume",
+            "text": "Resume",
+            "bind": {
+              "enabled": "builder:can_resume",
+              "visible": "builder:show_resume"
+            },
+            "layout": {
+              "h": 20,
+              "w": {
+                "grow": 1
+              }
+            }
+          },
+          {
+            "type": "button",
+            "id": "cancel",
+            "text": "Cancel",
+            "bind": {
+              "visible": "builder:show_cancel"
+            },
+            "layout": {
+              "h": 20,
+              "w": {
+                "grow": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "spacer",
+        "layout": {
+          "h": 2
+        }
+      },
+      {
+        "type": "slot_grid",
+        "role": "player_inv",
+        "cols": 9,
+        "rows": 3
+      },
+      {
+        "type": "slot_grid",
+        "role": "hotbar",
+        "cols": 9,
+        "rows": 1,
+        "layout": {
+          "margin": [
+            0,
+            2,
+            0,
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

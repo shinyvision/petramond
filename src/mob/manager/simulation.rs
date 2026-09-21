@@ -517,6 +517,11 @@ impl Mobs {
         self.pending_noises = pending_noises;
         self.ai_scratch = ai_mobs;
         self.resolve_pushes(world, anchors, freeze_unloaded);
+        for i in 0..self.list.len() {
+            if self.list[i].is_distance_despawned() {
+                self.spill_container(i);
+            }
+        }
         self.list
             .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
         out

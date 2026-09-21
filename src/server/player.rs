@@ -181,14 +181,18 @@ pub enum FallOutcome {
 #[derive(Clone, Debug)]
 pub enum PendingMenuAction {
     /// Open the GUI session for `kind` — engine containers and mod GUIs ride
-    /// this one lane. `pos` is the block the open came from (`None` for the
-    /// inventory key and programmatic `GuiOpen`s); per-kind session semantics
+    /// this one lane. `anchor` is the block or mob the session opens on (`None`
+    /// for the inventory key and unanchored `GuiOpen`s); per-kind session semantics
     /// resolve at the menu stage's kind dispatch, not here.
     OpenGui {
         kind: petramond_world::gui_state::GuiKind,
-        pos: Option<IVec3>,
+        anchor: Option<crate::menu::MenuAnchor>,
     },
     Close,
+    CreativeCursor {
+        item: Option<String>,
+        request_id: crate::net::protocol::ClientRequestId,
+    },
     SlotClick {
         slot: MenuSlot,
         button: PointerButton,
@@ -233,6 +237,15 @@ pub struct ConnectedPlayer {
     /// when a mob is the closer target.
     pub look: Option<TargetRef>,
     pub mining: MiningState,
+    /// When this session last broke a block at once, without mining it: the
+    /// repeat gate that keeps a held break from tearing through a row.
+    pub last_instant_break: Option<u64>,
+    pub creative: super::creative::CreativeSession,
+    /// Undo/redo over every edit this session makes while it edits cells.
+    pub edits: super::creative::EditHistory,
+    /// Schematic choices, positionings, archive streams and ghosts shared
+    /// with this client.
+    pub schematic: super::schematics::SchematicSession,
     pub attack_cooldown: u32,
     // --- Input intent latched from the most recent message, consumed on the
     // fixed tick. ---
@@ -363,7 +376,10 @@ pub struct ConnectedPlayer {
     // (INTERNAL — the client only sees `OpenScreen`). ---
     /// The GUI session the tick opened for this client this tick, if any —
     /// one field for every kind (engine containers and mod GUIs alike).
-    pub request_open_gui: Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)>,
+    pub request_open_gui: Option<(
+        petramond_world::gui_state::GuiKind,
+        Option<crate::menu::MenuAnchor>,
+    )>,
     pub request_close_gui: bool,
     pub request_open_sleep: bool,
     /// The open mod-GUI session's state map (written by mods on the tick via
@@ -418,6 +434,10 @@ impl ConnectedPlayer {
             player,
             look: None,
             mining: MiningState::new(),
+            last_instant_break: None,
+            creative: Default::default(),
+            edits: Default::default(),
+            schematic: Default::default(),
             attack_cooldown: 0,
             intent_break_held: false,
             intent_use_held: false,

@@ -206,6 +206,7 @@ pub fn build_server_with_pool(
         next_chat_seq: 0,
         autosave_t: 0.0,
         chest_viewers: HashMap::new(),
+        container_holds: HashMap::new(),
         last_shipped_env: None,
     };
     crate::server::daynight::install_core(&mut server.world, &mut server.systems);

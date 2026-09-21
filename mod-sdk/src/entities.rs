@@ -150,7 +150,22 @@ host_fn! {
     /// `count_per_intensity`. Fire-and-forget presentation for every client, like
     /// `emit_sound`. `false` = unknown key or not a burst bundle.
     pub fn emitter_burst(key: &str, pos: [f64; 3], intensity: f32) -> bool
-        => EmitterBurst { key: key.into(), pos, intensity } => Bool
+        => EmitterBurst { key: key.into(), pos, intensity, direction: None, texture: None } => Bool
+}
+
+host_fn! {
+    /// [`emitter_burst`] with the event's own push and look: `direction`
+    /// feeds the bundle's `along_speed`, and `texture` is what the particles
+    /// are cut from instead of the bundle's own — a tile slice, or a block's
+    /// look as mining it would shed it.
+    pub fn emitter_burst_of(
+        key: &str,
+        pos: [f64; 3],
+        intensity: f32,
+        direction: Option<[f32; 3]>,
+        texture: Option<mod_api::ParticleTexture>
+    ) -> bool
+        => EmitterBurst { key: key.into(), pos, intensity, direction, texture } => Bool
 }
 
 host_fn! {
@@ -205,14 +220,23 @@ host_fn! {
     /// For the vertical axis see [`mob_drive_vertical`]; the raw `MobDrive`
     /// call composes all three parts at once.
     pub fn mob_drive(mob_id: u64, vel: [f32; 2], yaw: Option<f32>) -> bool
-        => MobDrive { mob_id, horizontal: Some(vel), vertical: None, yaw, while_walking: false } => Bool
+        => MobDrive { mob_id, horizontal: Some(vel), vertical: None, yaw, while_walking: false, gait: false } => Bool
+}
+
+host_fn! {
+    /// [`mob_drive`] as the body walking itself: a step sideways or a shuffle
+    /// within its block reads as `moving` (walk clip paced to the speed,
+    /// footsteps), which a plain drive — something carrying the body —
+    /// deliberately does not. `false` = unknown or dead mob.
+    pub fn mob_step(mob_id: u64, vel: [f32; 2]) -> bool
+        => MobDrive { mob_id, horizontal: Some(vel), vertical: None, yaw: None, while_walking: false, gait: true } => Bool
 }
 
 host_fn! {
     /// Drive all velocity axes in one intent. A later drive replaces the whole
     /// intent, so compose horizontal and vertical motion before submitting it.
     pub fn mob_drive_velocity(mob_id: u64, vel: [f32; 3], yaw: Option<f32>) -> bool
-        => MobDrive { mob_id, horizontal: Some([vel[0], vel[2]]), vertical: Some(vel[1]), yaw, while_walking: false } => Bool
+        => MobDrive { mob_id, horizontal: Some([vel[0], vel[2]]), vertical: Some(vel[1]), yaw, while_walking: false, gait: false } => Bool
 }
 
 host_fn! {
@@ -250,7 +274,7 @@ host_fn! {
     /// INTENT like [`mob_drive`]: re-issue per launch. `false` = unknown or
     /// dead mob.
     pub fn mob_drive_vertical(mob_id: u64, vel: f32, while_walking: bool) -> bool
-        => MobDrive { mob_id, horizontal: None, vertical: Some(vel), yaw: None, while_walking } => Bool
+        => MobDrive { mob_id, horizontal: None, vertical: Some(vel), yaw: None, while_walking, gait: false } => Bool
 }
 
 host_fn! {
@@ -440,4 +464,48 @@ host_fn! {
     /// `u32::MAX` clears it.
     pub fn entity_condition_cool(entity: EntityRef, condition: mod_api::ConditionId, ticks: u32) -> bool
         => EntityConditionCool { entity, condition, ticks } => Bool
+}
+
+host_fn! {
+    /// Whether a body of species `key` standing at foothold `from` can walk to
+    /// foothold `to`, treating every `blocked` cell as solid (a wall planned
+    /// but not yet built). `Undecided` = `max_nodes` ran out first; `None` =
+    /// this tick's route budget cannot cover `max_nodes` (ask again next tick)
+    /// or an unknown species. Server only.
+    pub fn path_probe(key: &str, from: [i32; 3], to: [i32; 3], blocked: Vec<[i32; 3]>, max_nodes: u32) -> Option<mod_api::Route>
+        => PathProbe { key: key.into(), from, to, blocked, max_nodes } => Route
+}
+
+host_fn! {
+    /// Every foothold inside the inclusive box `min..=max` a body of species
+    /// `key` walks to from `from` without leaving the box (`toward`: every one
+    /// that walks to `from`), each `blocked` cell treated as solid, breadth
+    /// first. `Deferred` = this tick's route budget cannot cover `max_nodes`;
+    /// `Exceeded` = the box holds more footholds than that. Server only.
+    pub fn walk_region(key: &str, from: [i32; 3], min: [i32; 3], max: [i32; 3], blocked: Vec<[i32; 3]>, toward: bool, max_nodes: u32) -> mod_api::Flood
+        => WalkRegion { key: key.into(), from, min, max, blocked, toward, max_nodes } => Flood
+}
+
+host_fn! {
+    /// Which `cells` a body of species `key` could stand in, parallel to
+    /// `cells` (at most [`crate::SIM_BATCH_MAX`]). Server only.
+    pub fn footholds(key: &str, cells: Vec<[i32; 3]>) -> Vec<bool>
+        => Footholds { key: key.into(), cells } => Bools
+}
+
+host_fn! {
+    /// Draw item `main` in the live mob's main hand and `off` in its off hand
+    /// (registry names; `None` = empty). Presentation only, never persisted.
+    /// `false` = no such live mob or an unknown item.
+    pub fn mob_held_display(mob_id: u64, main: Option<String>, off: Option<String>) -> bool
+        => MobHeldDisplay { mob_id, main, off } => Bool
+}
+
+host_fn! {
+    /// Replace the retained draw set a live mob wears (empty clears it). Prim
+    /// space has its origin at the mob's feet centre; `turns` = it turns with
+    /// the body's yaw, otherwise it keeps the world's axes. Replicated, never
+    /// saved. `false` = no such live mob.
+    pub fn set_mob_draw(mob_id: u64, frame: mod_api::DrawFrame, prims: Vec<mod_api::DrawPrim>) -> bool
+        => SetMobDraw { mob_id, frame, prims } => Bool
 }

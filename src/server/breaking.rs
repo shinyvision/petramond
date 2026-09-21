@@ -9,6 +9,21 @@ use petramond_world::mining::{BreakEvent, MiningState};
 use super::game::ServerGame;
 use crate::events::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 
+/// Who a break is performed by, and where its consequences go.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Breaker {
+    /// The session the pre-event dispatch acts as (the host session for a
+    /// mob).
+    pub acting: usize,
+    pub actor: crate::mob::EntityRef,
+    /// Whether the break yields anything: drops, scattered contents.
+    pub yields: bool,
+    /// A mob whose carried slots take the drops before they scatter.
+    pub collector: Option<u64>,
+    /// The broken face, when known, for the burst's light.
+    pub normal: Option<IVec3>,
+}
+
 /// How long a broken cell stays in `pending_break_ack` waiting for its lagged
 /// `BreakFinished` (10 s — far beyond any real finish RTT). An expired entry
 /// only means such a finish is denied with corrective cells, which reconciles
@@ -16,6 +31,9 @@ use crate::events::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 /// released on the exact tick the server's timer crossed) grows the set for
 /// the session's lifetime.
 const BREAK_ACK_TTL_TICKS: u64 = 200;
+
+/// Ticks between two instant breaks by one session.
+const INSTANT_BREAK_REPEAT_TICKS: u64 = 3;
 
 impl ServerGame {
     /// Mining, on the tick: advance the break timer against the block under the
@@ -26,10 +44,16 @@ impl ServerGame {
         self.sessions[s]
             .pending_break_ack
             .retain(|_, broke_at| now.saturating_sub(*broke_at) <= BREAK_ACK_TTL_TICKS);
+        // Last tick's single-block edits have had their hooks run by now.
+        self.close_open_edit(s, events);
         for req in std::mem::take(&mut self.sessions[s].pending_break_finished) {
             self.resolve_break_finished(s, req, events);
         }
 
+        if self.sessions[s].player.abilities().instant_break {
+            self.sessions[s].mining = MiningState::new();
+            return;
+        }
         let tool = self.sessions[s]
             .player
             .inventory
@@ -178,6 +202,38 @@ impl ServerGame {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
             return;
         }
+        if self.sessions[s].player.abilities().instant_break {
+            let now = self.world.current_tick();
+            if self.sessions[s]
+                .last_instant_break
+                .is_some_and(|last| now.saturating_sub(last) < INSTANT_BREAK_REPEAT_TICKS)
+            {
+                self.deny_break_finished(s, request_id, pos, ActionDenyReason::TooFast);
+                return;
+            }
+            if self
+                .world
+                .break_footprint_cells(pos)
+                .iter()
+                .any(|p| !self.world.physics_cell_final_at(p.x, p.y, p.z))
+            {
+                self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
+                return;
+            }
+            let event = BreakEvent {
+                pos,
+                block,
+                harvested: false,
+            };
+            if self.finish_player_break(s, event, events, predicted) {
+                self.sessions[s].last_instant_break = Some(now);
+                self.sessions[s].pending_break_ack.remove(&pos);
+                self.push_action_outcome(s, request_id, true, None);
+            } else {
+                self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
+            }
+            return;
+        }
         if block.hardness() < 0.0 {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
             return;
@@ -280,10 +336,9 @@ impl ServerGame {
         self.sessions[s].pending_corrective_cells.extend(cells);
     }
 
-    /// Apply a finished player break: announce `block_break_pre` (cancel =
-    /// unbreakable — the block stays; the spent mining progress is the cost), then
-    /// clear the block, scatter block-entity contents + harvested drops, spawn the
-    /// burst, and queue `block_broken`. Returns whether the block actually broke.
+    /// Apply a finished player break: the shared break funnel as that
+    /// session, then the session's own bookkeeping. Returns whether the block
+    /// actually broke.
     ///
     /// `initiator_presented`: whether the breaking client is KNOWN to have
     /// played the break presentation locally (a finish request flagged
@@ -297,35 +352,21 @@ impl ServerGame {
         events: &mut TickEvents,
         initiator_presented: bool,
     ) -> bool {
-        let drops_override = {
-            let mut pre = BlockBreakPre {
-                pos: event.pos,
-                block: event.block,
-                harvested: event.harvested,
-                player: self.sessions[s].id,
-                drops: None,
-            };
-            let Self {
-                world,
-                sessions,
-                bus,
-                ..
-            } = self;
-            // The breaking session acts; the sessions view rides the dispatch.
-            let cancelled = Self::with_sessions_view(sessions, s, |sess| {
-                bus.block_break_pre(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut pre,
-                ) == Outcome::Cancel
-            });
-            if cancelled {
-                return false;
-            }
-            pre.drops
+        let hit_normal = self.sessions[s]
+            .look
+            .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
+            .map(|h| h.normal);
+        self.touch_edit_cells(s, self.world.break_footprint_cells(event.pos));
+        let breaker = Breaker {
+            acting: s,
+            actor: crate::mob::EntityRef::Player(self.sessions[s].id),
+            yields: self.sessions[s].player.abilities().yields_drops,
+            collector: None,
+            normal: hit_normal,
         };
+        if !self.break_block(breaker, event, events) {
+            return false;
+        }
         events.player(s).broke_block = Some(event.block);
         // Mining is main-hand by definition (breaks land outside any
         // acting-hand dispatch).
@@ -344,6 +385,51 @@ impl ServerGame {
         // not deny/restore. Tick-stamped for the ack TTL.
         let now = self.world.current_tick();
         self.sessions[s].pending_break_ack.insert(event.pos, now);
+        true
+    }
+
+    /// THE break funnel, whoever breaks: announce `block_break_pre` naming
+    /// the actor (cancel = unbreakable — the block stays; the spent mining
+    /// progress is the cost), then clear the block, scatter block-entity
+    /// contents + harvested drops (into the breaker's collector first, when
+    /// it has one), queue the burst, and emit `block_broken`. Returns whether
+    /// the block actually broke.
+    pub(super) fn break_block(
+        &mut self,
+        breaker: Breaker,
+        event: BreakEvent,
+        events: &mut TickEvents,
+    ) -> bool {
+        let drops_override = {
+            let mut pre = BlockBreakPre {
+                pos: event.pos,
+                block: event.block,
+                harvested: event.harvested,
+                actor: breaker.actor,
+                drops: None,
+            };
+            let Self {
+                world,
+                sessions,
+                bus,
+                ..
+            } = self;
+            // The breaking session acts (the host session for a mob); the
+            // sessions view rides the dispatch.
+            let cancelled = Self::with_sessions_view(sessions, breaker.acting, |sess| {
+                bus.block_break_pre(
+                    world,
+                    &mut sess.player,
+                    &mut sess.gui_state,
+                    events,
+                    &mut pre,
+                ) == Outcome::Cancel
+            });
+            if cancelled {
+                return false;
+            }
+            pre.drops
+        };
         // Breaking a bed takes its spawn point with it — resolved BEFORE the
         // removal below clears the footprint metadata the group lookup needs.
         // Checked for EVERY session: any player can break another's spawn bed.
@@ -351,11 +437,7 @@ impl ServerGame {
         if event.block.has_tag(petramond_world::block::BlockTag::BED) {
             self.clear_bed_spawn_at(event.pos);
         }
-        let hit_normal = self.sessions[s]
-            .look
-            .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
-            .map(|h| h.normal);
-        let (sky, blk) = break_light(&self.world, event.pos, hit_normal);
+        let (sky, blk) = break_light(&self.world, event.pos, breaker.normal);
         // A COMPOSED cell (a slab stack) drops each of its parts as its own
         // material, each stamped with that part's own carried data, so a white
         // slab under an orange one comes back as one white and one orange —
@@ -411,10 +493,12 @@ impl ServerGame {
         self.world.forget_block_entity_records(container_pos);
         // ANY broken container block — chest, furnace, or a mod's — scatters
         // its whole contents, regardless of tool (the block ITEM's own drop
-        // still gates on harvest via spawn_drops below).
+        // still gates on harvest below).
         if let Some(container) = self.world.take_container(container_pos) {
-            for stack in container.slots.into_iter().flatten() {
-                self.spawn_item_stack(event.pos, stack, (sky, blk));
+            if breaker.yields {
+                for stack in container.slots.into_iter().flatten() {
+                    self.deliver_break_stack(breaker.collector, event.pos, stack, (sky, blk));
+                }
             }
         }
         // The break burst is presentation: queued as a world event and spawned
@@ -422,7 +506,7 @@ impl ServerGame {
         events.world.block_broken.push(BlockBrokenEvent {
             pos: event.pos,
             block: event.block,
-            normal: hit_normal,
+            normal: breaker.normal,
             tint: broken_tint,
         });
         // A drops override from `block_break_pre` is final and spawns
@@ -431,23 +515,22 @@ impl ServerGame {
         // broken block's own item still picks up the cell's carried data
         // (the dye a cauldron holds), matching `spawn_drops`' carry rule,
         // unless the override already stamped its own instance data.
-        if let Some(stacks) = drops_override {
+        if let Some(stacks) = drops_override.filter(|_| breaker.yields) {
             for mut stack in stacks {
                 if carries_to_item(event.block, stack.item)
                     && stack.variant == petramond_world::item::VariantId::NONE
                 {
                     stack.variant = carry_variant;
                 }
-                self.spawn_item_stack(event.pos, stack, (sky, blk));
+                self.deliver_break_stack(breaker.collector, event.pos, stack, (sky, blk));
             }
         } else if event.harvested {
-            match part_drops {
-                Some(stacks) => {
-                    for stack in stacks {
-                        self.spawn_item_stack(event.pos, stack, (sky, blk));
-                    }
-                }
-                None => self.spawn_drops(event.pos, event.block, (sky, blk), carry_variant),
+            let stacks = match part_drops {
+                Some(stacks) => stacks,
+                None => self.roll_drops(event.block, carry_variant),
+            };
+            for stack in stacks {
+                self.deliver_break_stack(breaker.collector, event.pos, stack, (sky, blk));
             }
         }
         self.bus.emit(PostEvent::BlockBroken {
@@ -456,8 +539,34 @@ impl ServerGame {
             harvested: event.harvested,
             natural: false,
         });
-        self.push_block_noise(s, event.pos, crate::mob::NoiseKind::BlockBroken);
+        self.push_noise_from(breaker.actor, event.pos, crate::mob::NoiseKind::BlockBroken);
         true
+    }
+
+    /// Hand one broken block's stack to the breaker's collector (a mob's
+    /// carried slots), scattering whatever it cannot hold.
+    fn deliver_break_stack(
+        &mut self,
+        collector: Option<u64>,
+        pos: IVec3,
+        stack: ItemStack,
+        light: (u8, petramond_world::light::BlockLight6),
+    ) {
+        let mut rest = Some(stack);
+        if let Some(index) = collector.and_then(|id| self.world.mobs().index_of_id(id)) {
+            if let Some(container) = self.world.mobs_mut().container_mut(index) {
+                let len = container.slots.len();
+                petramond_world::container::route_into(
+                    &mut rest,
+                    &mut container.slots,
+                    &vec![petramond_world::container::SlotSpec::default(); len],
+                    None,
+                );
+            }
+        }
+        if let Some(stack) = rest {
+            self.spawn_item_stack(pos, stack, light);
+        }
     }
 
     /// Drain the blocks the world simulation destroyed this tick (fragile blocks that
@@ -575,10 +684,23 @@ impl ServerGame {
         &mut self,
         pos: IVec3,
         block: Block,
-        (sky, blk): (u8, petramond_world::light::BlockLight6),
+        light: (u8, petramond_world::light::BlockLight6),
         carry_variant: petramond_world::item::VariantId,
     ) {
-        let centre = petramond_math::world_pos::WorldPos::block_center(pos);
+        for stack in self.roll_drops(block, carry_variant) {
+            self.spawn_item_stack(pos, stack, light);
+        }
+    }
+
+    /// Roll `block`'s drop table: probabilistic entries first, then each
+    /// count, deterministic on the tick; the block's own item picks up the
+    /// cell's carried data.
+    fn roll_drops(
+        &mut self,
+        block: Block,
+        carry_variant: petramond_world::item::VariantId,
+    ) -> Vec<ItemStack> {
+        let mut stacks = Vec::new();
         for d in block.drop_spec().drops {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
             // Probabilistic drops (chance < 1, e.g. a leaf's 10% sapling) roll first;
@@ -604,16 +726,14 @@ impl ServerGame {
             if carries_to_item(block, d.item) {
                 stack.variant = carry_variant;
             }
-            let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
-            drop.skylight = sky;
-            drop.blocklight = blk;
-            self.world.spawn_item(drop);
+            stacks.push(stack);
         }
+        stacks
     }
 
     /// Spawn `stack` as a dropped item at the centre of block `pos` (e.g. a broken
     /// furnace scattering its contents). No-op for an empty stack.
-    fn spawn_item_stack(
+    pub(super) fn spawn_item_stack(
         &mut self,
         pos: IVec3,
         stack: ItemStack,

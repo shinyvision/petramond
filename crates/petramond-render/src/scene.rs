@@ -250,6 +250,8 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         anim_time: m.prev_anim_time + (m.anim_time - m.prev_anim_time) * alpha,
         moving: m.moving,
         idle_anim: m.idle_anim,
+        gait_weight: m.gait_weight,
+        gait_fades: m.gait_fades.clone(),
         head_yaw: lerp_angle(m.prev_head_yaw, m.head_yaw, alpha),
         head_pitch: m.prev_head_pitch + (m.head_pitch - m.prev_head_pitch) * alpha,
         skylight: m.skylight,
@@ -260,6 +262,7 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         emitter_self_lit: m.emitter_self_lit,
         anims: m.anims.clone(),
         ragdoll: m.ragdoll_pose.clone(),
+        held: if m.dead { [None; 2] } else { m.held },
     }));
 }
 

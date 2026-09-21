@@ -372,6 +372,7 @@ impl ServerGame {
                 pos: p,
                 block: fluid,
                 facing: facing_from_forward(dir),
+                actor: crate::mob::EntityRef::Player(self.sessions[s].id),
             };
             let Self {
                 world,

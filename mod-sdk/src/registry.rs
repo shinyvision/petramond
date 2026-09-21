@@ -239,3 +239,12 @@ host_fn! {
     pub fn block_infos(blocks: Vec<BlockId>) -> Vec<Option<mod_api::BlockInfoData>>
         => BlockInfos { blocks } => BlockInfos
 }
+
+host_fn! {
+    /// What each [`BlockRecord`](mod_api::BlockRecord) asks of construction on
+    /// its own — clearance, a member of an object anchored elsewhere, or a
+    /// unit with its item cost and footprint — parallel to `records` (at most
+    /// [`mod_api::SIM_BATCH_MAX`]). Registry-only, legal on any instance.
+    pub fn block_record_plans(records: Vec<mod_api::BlockRecord>) -> Vec<mod_api::RecordPlan>
+        => BlockRecordPlans { records } => RecordPlans
+}

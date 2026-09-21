@@ -49,7 +49,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                         Some(mod_api::GuiViewerData {
                             player_id: mod_api::PlayerId(id.0),
                             kind: kind.to_owned(),
-                            anchor: open.anchor.map(|p| [p.x, p.y, p.z]),
+                            anchor: open.anchor.map(crate::modding::convert::container_address),
                         })
                     })
                     .collect(),
@@ -62,7 +62,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(crate::modding::convert::gui_value_out),
             )
         }),
-        HostCall::GuiOpen { kind_key, pos } => {
+        HostCall::GuiOpen { kind_key, at } => {
             // Resolve WITHOUT registering: opening a kind nothing declared is
             // a mod bug, reported forgivingly (like an unknown sound key).
             let Some(kind) =
@@ -75,10 +75,14 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                 let Some(player) = ctx.acting_player_id() else {
                     return HostRet::Bool(false);
                 };
+                let anchor = at.map(crate::modding::convert::menu_anchor);
+                if anchor.is_some_and(|anchor| !anchor.present(ctx.world)) {
+                    return HostRet::Bool(false);
+                }
                 ctx.queue.push_action(DeferredAction::OpenGui {
                     player,
                     kind,
-                    pos: pos.map(Into::into),
+                    anchor,
                 });
                 HostRet::Bool(true)
             })
@@ -134,12 +138,12 @@ mod tests {
             gui_state: &mut guest_gui,
             gui: Some(OpenGui {
                 kind,
-                anchor: Some(guest_at),
+                anchor: Some(guest_at.into()),
             }),
         }];
         let acting_gui = Some(OpenGui {
             kind,
-            anchor: Some(host_at),
+            anchor: Some(host_at.into()),
         });
         crate::events::with_sessions_scope((PlayerId(0), 0), acting_gui, others, || {
             let mut ctx = SimCtx {
@@ -164,7 +168,10 @@ mod tests {
                         .iter()
                         .map(|v| (v.player_id.0, v.anchor))
                         .collect::<Vec<_>>(),
-                    vec![(0, Some([1, 2, 3])), (1, Some([9, 2, 3]))],
+                    vec![
+                        (0, Some(mod_api::ContainerAddress::Block([1, 2, 3]))),
+                        (1, Some(mod_api::ContainerAddress::Block([9, 2, 3]))),
+                    ],
                     "both sessions, in session order, with the cell each opened"
                 );
                 assert!(viewers.iter().all(|v| v.kind == "doctest:machine"));

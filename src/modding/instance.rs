@@ -225,7 +225,7 @@ impl ModInstance {
                 host::short_debug(call, host::DIAG_DEBUG_CAP)
             ));
         }
-        match &self.store.data().last_host_call {
+        match &self.store.data().last_host_call() {
             Some((desc, true)) => out.push_str(&format!(" [last host call (returned): {desc}]")),
             Some((desc, false)) => out.push_str(&format!(" [host call in flight: {desc}]")),
             None => {}

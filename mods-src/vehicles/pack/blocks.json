@@ -29,56 +29,64 @@
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}, "uv_rotation": {"up": 270}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:rail_curve_se",
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:rail_curve_sw",
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}, "uv_rotation": {"up": 90}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:rail_curve_nw",
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [0, 1, 0], "to": [16, 1, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "tiles": {"up": "vehicles:rail_curve"}, "uv_rotation": {"up": 180}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:rail_slope_n",
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:rail_slope_e",
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, 45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:rail_slope_s",
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [-45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:rail_slope_w",
       "extends": "vehicles:rail_ns",
       "shape": { "boxes": [
         {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, -45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:rail" } }
     },
     {
       "block": "vehicles:booster_rail_ns",
@@ -101,28 +109,48 @@
       "extends": "vehicles:booster_rail_ns",
       "shape": { "boxes": [
         {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:booster_rail" } }
     },
     {
       "block": "vehicles:booster_rail_slope_e",
       "extends": "vehicles:booster_rail_ns",
       "shape": { "boxes": [
         {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, 45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:booster_rail" } }
     },
     {
       "block": "vehicles:booster_rail_slope_s",
       "extends": "vehicles:booster_rail_ns",
       "shape": { "boxes": [
         {"from": [0, 8, -3.3137], "to": [16, 8, 19.3137], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [-45, 0, 0], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}}
-      ] }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:booster_rail" } }
     },
     {
       "block": "vehicles:booster_rail_slope_w",
       "extends": "vehicles:booster_rail_ns",
       "shape": { "boxes": [
         {"from": [-3.3137, 8, 0], "to": [19.3137, 8, 16], "faces": ["up"], "double_sided": true, "collides": false, "occludes": false, "rotation": [0, 0, -45], "origin": [8, 8, 8], "uv": {"up": [0, 0, 16, 16]}, "uv_rotation": {"up": 90}}
-      ] }
-    }
+      ] },
+      "data": { "petramond:construction": { "item": "vehicles:booster_rail" } }
+    },
+    {"patch": "vehicles:rail_ns", "data": {"petramond:rotate_y": "vehicles:rail_ew"}},
+    {"patch": "vehicles:rail_ew", "data": {"petramond:rotate_y": "vehicles:rail_ns"}},
+    {"patch": "vehicles:rail_curve_ne", "data": {"petramond:rotate_y": "vehicles:rail_curve_se"}},
+    {"patch": "vehicles:rail_curve_se", "data": {"petramond:rotate_y": "vehicles:rail_curve_sw"}},
+    {"patch": "vehicles:rail_curve_sw", "data": {"petramond:rotate_y": "vehicles:rail_curve_nw"}},
+    {"patch": "vehicles:rail_curve_nw", "data": {"petramond:rotate_y": "vehicles:rail_curve_ne"}},
+    {"patch": "vehicles:rail_slope_n", "data": {"petramond:rotate_y": "vehicles:rail_slope_e"}},
+    {"patch": "vehicles:rail_slope_e", "data": {"petramond:rotate_y": "vehicles:rail_slope_s"}},
+    {"patch": "vehicles:rail_slope_s", "data": {"petramond:rotate_y": "vehicles:rail_slope_w"}},
+    {"patch": "vehicles:rail_slope_w", "data": {"petramond:rotate_y": "vehicles:rail_slope_n"}},
+    {"patch": "vehicles:booster_rail_ns", "data": {"petramond:rotate_y": "vehicles:booster_rail_ew"}},
+    {"patch": "vehicles:booster_rail_ew", "data": {"petramond:rotate_y": "vehicles:booster_rail_ns"}},
+    {"patch": "vehicles:booster_rail_slope_n", "data": {"petramond:rotate_y": "vehicles:booster_rail_slope_e"}},
+    {"patch": "vehicles:booster_rail_slope_e", "data": {"petramond:rotate_y": "vehicles:booster_rail_slope_s"}},
+    {"patch": "vehicles:booster_rail_slope_s", "data": {"petramond:rotate_y": "vehicles:booster_rail_slope_w"}},
+    {"patch": "vehicles:booster_rail_slope_w", "data": {"petramond:rotate_y": "vehicles:booster_rail_slope_n"}}
   ]
 }

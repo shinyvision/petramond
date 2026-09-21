@@ -8,14 +8,23 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use wgpu::util::DeviceExt;
 
+mod actor_pass;
+use actor_pass::{ActorPass, MobGpu, PlayerGpu, VisibleBody};
 mod client_overlay;
 mod construct;
+mod ghosts;
+pub use ghosts::GhostPiece;
+mod schematic_thumbnail;
+pub use schematic_thumbnail::SchematicThumbnailer;
 mod doc_ui;
 mod draw_plan;
 mod dynamic_bake;
 pub(crate) mod dynamic_draw;
 mod frame;
 mod frame_state;
+mod hand_pass;
+mod selection;
+use hand_pass::HandPass;
 mod hand_bake;
 mod icon_atlas;
 mod lod;
@@ -128,44 +137,6 @@ pub(crate) struct VisibleSection {
     /// (drawn by the model-blend pass; see [`petramond_mesh::ChunkMesh::model_blend_idx`]).
     model_blend_index_start: u32,
     model_blend_idx_count: u32,
-}
-
-/// Per-species GPU resources for the mob pipeline, built once at renderer init by
-/// iterating [`petramond::mob::defs()`] (so the renderer never names a species). Borrows
-/// the species' precached [`Model`] + its render scale, the species' own texture/sampler + group(1)
-/// bind, its dynamic draw buffers, and reused per-frame scratch (the visible subset
-/// + the baked `ItemVertex` geometry). The `Vec<MobGpu>` is in `Mob as usize` order.
-struct MobGpu {
-    model: &'static Model,
-    scale: f32,
-    bind: wgpu::BindGroup,
-    draw: DynamicDraw,
-    /// Live-mob frustum cull volume around the instance position, derived from
-    /// the REST-POSED model bounds × scale plus animation slack (see
-    /// `construct`): horizontal radius (yaw-independent — the farthest posed
-    /// corner can point any way) and the vertical extent relative to the feet.
-    /// A hardcoded pad was the old bug: it topped out at 1.2 m and clipped any
-    /// taller species (the hushjaw is ~1.9 m) out of the frustum early.
-    cull_r: f32,
-    cull_y0: f32,
-    cull_y1: f32,
-    /// Frustum-visible subset of this species' instances this frame.
-    visible: Vec<MobRenderInstance>,
-    /// Reused CPU staging for this species' baked geometry.
-    verts: Vec<ItemVertex>,
-    indices: Vec<u32>,
-}
-
-/// GPU resources for player bodies — the local third-person body AND every
-/// remote player, all sharing the precached player model + skin texture bind
-/// (per-remote skins are out of scope). One dynamic draw over the shared mob
-/// pipeline; `verts`/`indices` are the COMBINED per-frame staging every
-/// visible body appends into.
-struct PlayerGpu {
-    bind: wgpu::BindGroup,
-    draw: DynamicDraw,
-    verts: Vec<ItemVertex>,
-    indices: Vec<u32>,
 }
 
 /// One pack environment (volumetric) pass: its pipeline resources plus the
@@ -297,92 +268,6 @@ impl ShadowPass {
     }
 }
 
-/// One body the frame draws, with what drives its animator.
-#[derive(Clone, Copy)]
-struct VisibleBody {
-    inst: PlayerRenderInstance,
-    held: HeldItemView,
-    off: HeldItemView,
-    key: u32,
-    frames: Option<[HeldItemFrame; 2]>,
-    /// The body's claims in the frame's arenas; `None` is the local body,
-    /// whose claims the hand pass holds.
-    animator: Option<crate::AnimatorRanges>,
-}
-
-/// The actor pass: every animated body (mobs, the local third-person player,
-/// remote players) and the held-item streams attached to their hands.
-struct ActorPass {
-    /// Per-species mob render resources, indexed by `Mob as usize` (registry id
-    /// order). Built once from `mob::defs()`; each frame the visible mobs are
-    /// grouped here by species, baked, and drawn in the mob pass.
-    mob_gpu: Vec<MobGpu>,
-    /// Mobs to draw in the world this frame (the scene adapter fills this by
-    /// interpolating the sim's live mob instances).
-    mobs: Vec<MobRenderInstance>,
-    /// Player-body resources (local third-person + remote players, one
-    /// combined stream drawn in the mob pass).
-    player_gpu: PlayerGpu,
-    /// The LOCAL third-person body to draw this frame (`None` in first person).
-    player_view: Option<PlayerRenderInstance>,
-    /// The remote players' bodies + held-item views for this frame.
-    remote_players: Vec<RemotePlayerRender>,
-    /// This frame's bone offsets for every drawn body, back to back — each
-    /// body addresses its own slice by `PlayerRenderInstance::bones`.
-    bone_offsets: Vec<crate::BoneOffset>,
-    /// This frame's animator claims and fired events for every remote body,
-    /// back to back — each addresses its own by `RemotePlayerRender::animator`.
-    animator_params: Vec<crate::views::AnimatorParamRow>,
-    animator_plays: Vec<petramond::player::AnimatorPlay>,
-    animator_events: Vec<(petramond::player::RigId, u16)>,
-    /// Frustum-visible bodies this frame (local first, then remotes), each
-    /// paired with the held-item view that animates its hand.
-    player_visible: Vec<VisibleBody>,
-    /// Every roster body's animator.
-    body_animators: crate::player_model::BodyAnimators,
-    /// Per-body staging for one `build_player_body` bake, appended into
-    /// `player_gpu`'s combined stream.
-    body_verts: Vec<super::item_model::ItemVertex>,
-    body_indices: Vec<u32>,
-    /// Held EXTRUDED-SPRITE items across all bodies (explicit-UV stream, 2D
-    /// atlas), attached to each posed right hand.
-    item_draw: DynamicDraw,
-    item_verts: Vec<super::item_model::ItemVertex>,
-    item_indices: Vec<u32>,
-    /// Per-item staging for one extruded-sprite build (the builder clears).
-    sprite_verts: Vec<super::item_model::ItemVertex>,
-    /// Held BBMODEL items across all bodies (explicit-UV stream, MODEL atlas) —
-    /// split from the sprite stream so mixed hands draw with the right texture.
-    model_item_draw: DynamicDraw,
-    model_item_verts: Vec<super::item_model::ItemVertex>,
-    model_item_indices: Vec<u32>,
-    /// Held BLOCK mini-cubes across all bodies (packed block vertices, opaque
-    /// pipeline + terrain atlas array), CPU-transformed to each hand.
-    block_item_draw: DynamicDraw,
-}
-
-impl ActorPass {
-    fn clear_world(&mut self) {
-        for mob in &mut self.mob_gpu {
-            mob.draw.index_count = 0;
-            mob.visible.clear();
-        }
-        self.mobs.clear();
-        self.player_gpu.draw.index_count = 0;
-        self.player_view = None;
-        self.remote_players.clear();
-        self.bone_offsets.clear();
-        self.animator_params.clear();
-        self.animator_plays.clear();
-        self.animator_events.clear();
-        self.player_visible.clear();
-        self.body_animators.clear();
-        self.item_draw.index_count = 0;
-        self.model_item_draw.index_count = 0;
-        self.block_item_draw.index_count = 0;
-    }
-}
-
 /// The block-entity pass: placed blocks drawn as animated models rather than
 /// chunk geometry (chest lids, door swings), each with its own draw caps so a
 /// wall of one cannot starve the other.
@@ -472,132 +357,6 @@ impl TerrainPass {
         self.opaque_column_order.clear();
         self.model_column_order.clear();
         self.contact_column_order.clear();
-    }
-}
-
-/// The first-person hand pass: the held item's own pipelines and buffers,
-/// the per-frame hand geometry, and the break-crack decal drawn with it.
-struct HandPass {
-    /// Depth-enabled model3d variant for the first-person held block in the hand
-    /// pass (same shader; the hand pass clears depth so the held block self-sorts).
-    /// (The depthless `model3d_pipe` is now used only to bake the icon atlas at init,
-    /// so it isn't stored here.)
-    model3d_pipe: crate::pipeline::SampledPipeline,
-    /// Dynamic-offset MVP uniform buffer (256-byte slots); slot 0 is the hand.
-    model3d_mvp_buf: wgpu::Buffer,
-    /// group(0) bind for model3d (MVP at binding 0 + uv_rects at binding 1).
-    model3d_mvp_bind: wgpu::BindGroup,
-    /// Reusable dynamic vertex/index buffers for model3d draws (rewritten in place).
-    model3d_vbuf: wgpu::Buffer,
-    model3d_ibuf: wgpu::Buffer,
-    /// item3d pipeline (extruded first-person held item) + its group0 MVP bind
-    /// (over the shared `model3d_mvp_buf`, slot 0) and reusable dynamic vbuf.
-    item3d_pipe: crate::pipeline::SampledPipeline,
-    item3d_mvp_bind: wgpu::BindGroup,
-    item3d_vbuf: wgpu::Buffer,
-    /// Reusable CPU staging for the extruded held-item geometry (cleared +
-    /// refilled by `item_model::build_extruded_item`, capacity retained).
-    item3d_verts: Vec<super::item_model::ItemVertex>,
-    /// Vertex count of the extruded held item uploaded this frame (0 = none).
-    item3d_vertex_count: u32,
-    /// True when this frame's item3d geometry is a held bbmodel block (drawn with the
-    /// MODEL atlas) rather than an extruded sprite (the block atlas).
-    held_is_model: bool,
-    /// Index count of the hand geometry uploaded for this frame (0 = nothing).
-    index_count: u32,
-    /// Vertex count of the hand geometry — the OFF-hand geometry appends
-    /// after it in the shared model3d vbuf, so its `base_vertex` starts here.
-    vertex_count: u32,
-    // --- The OFF (left) hand: its own view/animator, its geometry appended
-    // --- into the SAME buffers after the main hand's, MVP slot 1. Drawn only
-    // --- while the off-hand slot holds an item (no bare left arm).
-    /// Off-hand held item state (`item == None` = empty, nothing drawn).
-    off_item: HeldItemView,
-    /// The off-hand item3d stream's `[start, start + count)` vertex range in
-    /// the shared item3d vbuf (appended after the main hand's stream).
-    off_item3d_start: u32,
-    off_item3d_count: u32,
-    /// The off item3d stream draws with the MODEL atlas (bbmodel) rather than
-    /// the block atlas (extruded sprite) — per-stream twin of `held_is_model`.
-    off_is_model: bool,
-    /// Reusable CPU staging for the per-frame hand geometry (cleared +
-    /// refilled by `prepare_held_item`, capacity retained — no per-frame
-    /// allocation), and the bbmodel / sprite scratch every item3d expansion
-    /// bakes through.
-    verts: Vec<petramond_mesh::Vertex>,
-    indices: Vec<u32>,
-    model_scratch_verts: Vec<super::item_model::ItemVertex>,
-    model_scratch_indices: Vec<u32>,
-    off_item3d_scratch: Vec<super::item_model::ItemVertex>,
-    /// Break-overlay (destroy crack): its own pipeline + dynamic vbuf/ibuf + the
-    /// index count baked this frame (0 = no overlay), as one [`DynamicDraw`].
-    break_draw: DynamicDraw,
-    // --- Per-frame view state handed off by the App, drawn in `render`. ---
-    /// Block-break overlays to draw this frame (own + capped remotes; empty =
-    /// none).
-    break_overlays: Vec<BreakOverlayView>,
-    /// The main hand's held item state.
-    held_item: HeldItemView,
-    /// Each hand's eased claimed pose (`[main, off]`).
-    held_ease: [crate::HeldItemEase; 2],
-    visible: bool,
-    /// Screen-space (NDC) offset applied to the whole hand/held-item draw this
-    /// frame — the hurt-shake jitter. Zero when calm.
-    shake: [f32; 2],
-    /// Whether the view may shake (Options → Graphics): off draws the world
-    /// and the hands without the camera bone's offset or the hurt jitter.
-    screen_shake: bool,
-    held_item_skylight: u8,
-    held_item_blocklight: petramond_world::light::BlockLight6,
-    /// The first-person rig and its animator. `None` (either asset missing)
-    /// draws no hand at all.
-    first_person: Option<crate::first_person::FirstPersonHand>,
-    /// This frame's two hand frames (`[main, off]`), kept for the local
-    /// player's animators, and the seconds since the last frame's.
-    frames: Option<[crate::HeldItemFrame; 2]>,
-    frame_dt: f32,
-    /// The local player's resolved animator claims and the graph events
-    /// fired on it this frame, for both of its rigs. The body bake consumes
-    /// the events, so a second bake before the next claims fires nothing.
-    local_params: Vec<crate::views::AnimatorParamRow>,
-    local_plays: Vec<petramond::player::AnimatorPlay>,
-    local_events: Vec<(petramond::player::RigId, u16)>,
-    /// Name-valued claims, interned once per distinct name.
-    names: crate::views::NameCache,
-    /// The rig's arms in the item3d stream, `[arm_start, arm_start +
-    /// arm_count)`, drawn with the player's skin.
-    arm_start: u32,
-    arm_count: u32,
-}
-
-impl HandPass {
-    /// Drop the world-scoped hand state. The held item and its animator
-    /// are world state too — a stale pose must not survive into the next.
-    fn clear_world(&mut self) {
-        self.visible = false;
-        self.index_count = 0;
-        self.vertex_count = 0;
-        self.item3d_vertex_count = 0;
-        self.held_is_model = false;
-        self.held_item = HeldItemView::default();
-        self.off_item = HeldItemView::default();
-        self.held_ease = Default::default();
-        self.off_item3d_start = 0;
-        self.off_item3d_count = 0;
-        self.off_is_model = false;
-        self.shake = [0.0; 2];
-        self.break_overlays.clear();
-        self.break_draw.index_count = 0;
-        if let Some(first_person) = &mut self.first_person {
-            first_person.reset();
-        }
-        self.frames = None;
-        self.frame_dt = 0.0;
-        self.local_params.clear();
-        self.local_plays.clear();
-        self.local_events.clear();
-        self.arm_start = 0;
-        self.arm_count = 0;
     }
 }
 
@@ -781,6 +540,8 @@ struct ViewState {
 }
 
 pub struct Renderer {
+    ghosts: ghosts::GhostPass,
+    selection: selection::SelectionPass,
     /// The presentation swapchain, or `None` for a surfaceless renderer (see
     /// `offscreen`) that draws into its own texture and never presents.
     /// `config` describes the frame geometry + colour format either way.

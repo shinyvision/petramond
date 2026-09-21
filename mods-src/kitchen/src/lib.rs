@@ -79,9 +79,9 @@ impl Mod for Kitchen {
                 self.oven.on_placed(*pos, *block);
                 self.miller.on_placed(*pos, *block);
             }
-            (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, pos }) => {
-                self.oven.on_container_opened(kind, *pos);
-                self.miller.on_container_opened(kind, *pos);
+            (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, at }) => {
+                self.oven.on_container_opened(kind, *at);
+                self.miller.on_container_opened(kind, *at);
             }
             (ON_ITEM_USED, EventPayload::ItemUsed { player, item, kind }) => {
                 self.vessels.on_item_used(*player, *item, *kind)

@@ -18,7 +18,7 @@
 //! the simulation both read — the renderer also reads `scale` off the table.
 
 mod anim;
-mod behavior;
+pub(crate) mod behavior;
 mod body_geometry;
 mod brain;
 mod confined;
@@ -45,13 +45,20 @@ pub use body_geometry::{
     SolidMotionSolver,
 };
 pub use brain::Brain;
-pub use instance::{hurt_flash01, Instance};
+pub use instance::{hurt_flash01, DigStep, Instance};
 pub use manager::{
-    DeathDrop, MobAttack, MobExposureDamage, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop,
+    DeathDrop, MobAttack, MobExposureDamage, MobFall, MobSpill, MobTickEvents, Mobs, PlayerAnchor,
+    ShearDrop,
 };
 pub use nav::mob_can_reach;
+#[cfg(any(test, feature = "test-support"))]
+pub use nav::route_path;
 pub use nav::site_open;
 pub use nav::ReachBudget;
+pub use nav::{
+    footholds, route_probe, walk_region, FloodAsk, KeptBoxes, ROUTE_PROBE_MAX_NODES,
+    ROUTE_PROBE_TICK_BUDGET,
+};
 pub use noise::{player_steps_are_audible, Noise, NoiseKind};
 pub use petramond_world::ai_vocab::validate_brain_extensions;
 pub use spawn::{
@@ -528,6 +535,8 @@ pub const MAX_MOB_BODY_HALF_EXTENT: f32 = 32.0;
 pub const MAX_MOB_BODY_HEIGHT: f32 = 32.0;
 pub const MAX_MOB_BODY_SEGMENTS: usize = 64;
 pub const MAX_MOB_SEAT_OFFSET: f32 = 32.0;
+/// Longest block reach a species row may declare.
+pub const MAX_MOB_REACH: f32 = 16.0;
 
 /// A mob's collision/render footprint: a centred AABB `half_width` across and
 /// `height` tall, with the feet at the mob position. A LONG body (a hull) may
@@ -615,6 +624,19 @@ pub struct ShearSpec {
     /// Inclusive regrow-duration range (game ticks) rolled per shear.
     pub regrow_min: u32,
     pub regrow_max: u32,
+    /// The authored name of the model cubes that ARE the coat: not drawn
+    /// while the mob is shorn, and casting no self-shadow on the body.
+    pub coat: CubeName,
+}
+
+/// A model cube's authored name, as a registry row spells it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CubeName(pub &'static str);
+
+impl<'de> serde::Deserialize<'de> for CubeName {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        String::deserialize(d).map(|name| Self(String::leak(name)))
+    }
 }
 
 /// A mob in its persisted form: just what survives a save — the species, where it
@@ -634,6 +656,9 @@ pub struct SavedMob {
     /// Engine- and mod-owned tags attached to this mob instance. The engine
     /// reserves the `petramond:` namespace (e.g., `petramond:confined`).
     pub tags: std::collections::BTreeMap<String, MobTagValue>,
+    /// The carried slots, exactly as held (a species whose declared capacity
+    /// shrank since keeps every saved slot rather than losing items).
+    pub container: petramond_world::container::Container,
 }
 
 impl SavedMob {
@@ -644,6 +669,7 @@ impl SavedMob {
             pos: inst.pos,
             yaw: inst.yaw,
             tags: inst.tags().clone(),
+            container: inst.container().clone(),
         }
     }
 }
@@ -763,6 +789,16 @@ pub struct MobDef {
     /// behavior). Crossing a fluid en route is always allowed; this is only about where
     /// the mob chooses to head.
     pub avoid_fluids: bool,
+    /// Whether its walking is heard: a footstep per stride from the block
+    /// underfoot, paced like a player's (`"footsteps"` row).
+    pub footsteps: bool,
+    /// Strength of the model's self ambient occlusion, 0 (none) to 1
+    /// (`"self_ao"` row): where its parts meet, they shade each other.
+    pub self_ao: f32,
+    /// Whether a grounded body refuses to walk off a ledge taller than its
+    /// routes plan to drop (`"edge_guard"` row), as a sneaking player does;
+    /// knockback and jumps still carry it off.
+    pub edge_guard: bool,
     /// How this species behaves in fluids (`"buoyancy"` row, default `swim`) —
     /// see [`Buoyancy`].
     pub buoyancy: Buoyancy,
@@ -792,6 +828,32 @@ pub struct MobDef {
     /// mob's live yaw each tick. Mount/dismount POLICY (who may sit where)
     /// stays with mods — the engine only owns the attachment.
     pub seats: &'static [[f32; 3]],
+    /// Carried item slots every individual owns (`"container_slots"` row,
+    /// default 0): ordinary container storage addressed by the stable mob id,
+    /// saved with the mob and scattered when it leaves the world any other
+    /// way — items a mob carries are never destroyed with it.
+    pub container_slots: usize,
+    /// How far this species reaches from its eye to act on a block (the
+    /// closest point of the cell), the rule a player's reach uses.
+    pub reach: f32,
+    /// Eye height above the feet: where reach and line of sight start.
+    pub eye_height: f32,
+    /// The bones a held item is drawn at (`"hands"` row), or `None` for a
+    /// species that holds nothing.
+    pub hands: Option<MobHands>,
+}
+
+/// A species' holding bones: each hand's bone name and the point in the
+/// model's rest pose where its fist closes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MobHands {
+    /// Radians a held sprite is rolled about its own length (handle to
+    /// head), so the rig's hand bone presents a tool's EDGE to its swing —
+    /// an axe blade down, not lying flat. Face-led items
+    /// (`ItemType::sprite_face_leads`) turn a quarter back.
+    pub roll: f32,
+    pub main: (&'static str, [f32; 3]),
+    pub off: Option<(&'static str, [f32; 3])>,
 }
 
 impl MobDef {

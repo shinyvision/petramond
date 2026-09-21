@@ -283,6 +283,10 @@ impl Player {
             self.update_spectator(dt, input);
             return;
         }
+        if self.is_flying() {
+            self.update_creative_flight(dt, env, input);
+            return;
+        }
         let was_on_ground = self.on_ground;
         let medium = self.sample_medium(env, input);
         self.vertical_velocity(dt, input, medium, was_on_ground);

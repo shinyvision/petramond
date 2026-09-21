@@ -622,7 +622,11 @@ mod tests {
         assert!(claims.set_animator_params("alpha", vec![param(3, 1.0)]));
         let resolved = claims.animator().clone();
         assert_eq!(
-            resolved.plays.iter().map(|p| (p.slot, p.clip, p.progress())).collect::<Vec<_>>(),
+            resolved
+                .plays
+                .iter()
+                .map(|p| (p.slot, p.clip, p.progress()))
+                .collect::<Vec<_>>(),
             [(0, 2, Some(1.0)), (1, 5, Some(0.0))],
             "the later claimant wins slot 0, clamped; slot 1 stands"
         );
@@ -630,7 +634,11 @@ mod tests {
 
         assert!(!claims.set_animator_plays("beta", vec![play(0, 3, f32::NAN)]));
         assert!(!claims.set_animator_params("beta", vec![param(3, f32::INFINITY)]));
-        assert_eq!(claims.animator(), &resolved, "a refused write changes nothing");
+        assert_eq!(
+            claims.animator(),
+            &resolved,
+            "a refused write changes nothing"
+        );
 
         assert!(claims.set_animator_plays("beta", Vec::new()));
         assert_eq!(

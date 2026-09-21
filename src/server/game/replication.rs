@@ -14,6 +14,7 @@ impl ServerGame {
     /// and cheaply cloned per recipient (small rows; `SectionBytes` never
     /// rides here). `&mut` for the env-diff bookkeeping only.
     pub fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
+        let now = self.world.current_tick();
         let mobs = self
             .world
             .mobs()
@@ -48,6 +49,9 @@ impl ServerGame {
                         .map(|(p, q)| (p.to_array(), q.to_array()))
                         .collect()
                 }),
+                dig: m.dig_overlay(now),
+                held: m.held().map(|item| item.map(|item| item.0)),
+                draw: m.draw().clone(),
             })
             .collect();
         let items = self
@@ -263,6 +267,8 @@ impl ServerGame {
             events: events_for_recipient,
             self_events: self.build_self_events(s, events),
             action_outcomes,
+            creative: self.sessions[s].creative.take_replies(),
+            schematics: self.sessions[s].schematic.take_notices(),
             menu_sync: self.build_menu_sync(s),
         }
     }
@@ -278,12 +284,12 @@ impl ServerGame {
         // them (one consumed click per tick), so first-Some is the open.
         let gui = sess.request_open_gui.take();
         let sleep = std::mem::take(&mut sess.request_open_sleep);
-        let open_screen = if let Some((kind, pos)) = gui {
+        let open_screen = if let Some((kind, anchor)) = gui {
             // The wire speaks kind KEYS (GuiKind ids are process-local) — one
             // lane for engine containers and mod GUIs alike.
             petramond_world::gui_state::kind_key(kind).map(|kind_key| OpenScreen::Gui {
                 kind_key: kind_key.to_string(),
-                pos,
+                anchor,
             })
         } else if sleep {
             Some(OpenScreen::Sleep)
@@ -381,10 +387,7 @@ impl ServerGame {
         SelfState {
             health: player.health(),
             conditions: condition_stages(player.conditions()),
-            mode: match player.mode() {
-                crate::player::PlayerMode::Survival => 0,
-                crate::player::PlayerMode::Spectator => 1,
-            },
+            mode: player.mode().to_u8(),
             effects: player
                 .effects()
                 .iter()
@@ -543,11 +546,25 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
             pos: s.pos,
         });
     }
-    for (emitter_id, pos, intensity) in world.emitter_bursts.drain(..) {
+    for fired in world.emitter_bursts.drain(..) {
+        use crate::events::tick::BurstTexture;
+        use crate::net::protocol::BurstTextureMsg;
         out.push(WorldEventMsg::EmitterBurst {
-            emitter_id,
-            pos,
-            intensity,
+            emitter_id: fired.emitter,
+            pos: fired.pos,
+            intensity: fired.intensity,
+            direction: fired.direction,
+            texture: fired.texture.map(|texture| match texture {
+                BurstTexture::Tile { slice, tint } => BurstTextureMsg::Tile {
+                    tile: slice.tile.name().to_owned(),
+                    slice: slice.slice,
+                    tint,
+                },
+                BurstTexture::Block { block, tint } => BurstTextureMsg::Block {
+                    block_id: block.0,
+                    tint,
+                },
+            }),
         });
     }
     for s in world.sounds.drain(..) {

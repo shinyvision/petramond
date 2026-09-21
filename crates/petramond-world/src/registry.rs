@@ -714,20 +714,28 @@ pub fn build_names(block_texts: &[&str], item_texts: &[&str]) -> Result<ContentN
     }
     let block_keys = layer_keys(block_texts, "blocks.json", "blocks", "block")?;
     let item_keys = layer_keys(item_texts, "items.json", "items", "item")?;
-    Ok(ContentNames {
-        blocks: NameTable::build(
-            crate::block::ENGINE_BLOCK_NAMES,
-            &block_keys,
-            "block",
-            WIDE_ID_CAP,
-        )?,
-        items: NameTable::build(
-            crate::item::ENGINE_ITEM_NAMES,
-            &item_keys,
-            "item",
-            WIDE_ID_CAP,
-        )?,
-    })
+    let blocks = NameTable::build(
+        crate::block::ENGINE_BLOCK_NAMES,
+        &block_keys,
+        "block",
+        WIDE_ID_CAP,
+    )?;
+    let mut items = NameTable::build(
+        crate::item::ENGINE_ITEM_NAMES,
+        &item_keys,
+        "item",
+        WIDE_ID_CAP,
+    )?;
+    let creative_items = crate::item::creative::missing(&blocks, item_texts)?;
+    if items.len() + creative_items.len() > WIDE_ID_CAP {
+        return Err("Item registry is full, including creative block items".into());
+    }
+    // Derived engine items follow pack ids. Pack input still passes the
+    // reserved-namespace check above; only this owner synthesizes these keys.
+    for name in creative_items {
+        items.push(String::leak(name));
+    }
+    Ok(ContentNames { blocks, items })
 }
 
 /// The process-wide name tables, built once from the real catalog layers

@@ -18,6 +18,11 @@ use petramond_world::fluid::{Buoyancy, FluidCurrent, Immersion};
 const GRAVITY: f32 = -22.0;
 /// Per-tick decay of the horizontal knockback velocity during the stagger.
 const KNOCKBACK_DAMP: f32 = 0.75;
+/// A driven step slower than this is a body settling, not walking.
+const GAIT_MIN_SPEED: f32 = 0.15;
+/// The slowest a gait clip runs under a driven step.
+const GAIT_MIN_PACE: f32 = 0.35;
+
 /// One tick's mod-issued locomotion — full 3-D velocity access, each part
 /// independently optional (see [`Instance::set_drive`] and the MobDrive ABI
 /// doc): `horizontal` REPLACES the brain's wish locomotion (a vehicle);
@@ -34,6 +39,9 @@ pub(super) struct DriveIntent {
     /// drop silently otherwise. A latched intent is decided from LAST
     /// tick's state — the walk it was premised on can end in between.
     pub while_walking: bool,
+    /// The horizontal drive is the body walking itself there, not something
+    /// carrying it: it reads as `moving`, its gait paced to the driven speed.
+    pub gait: bool,
 }
 
 /// This tick's walking request from the brain and its route.
@@ -291,6 +299,9 @@ impl Instance {
                 self.id,
             );
         }
+        if d.edge_guard && self.on_ground && !nav_jumped && env.immersion.is_none() {
+            self.guard_edge(dt, d, env);
+        }
         let carried = (self.stagger_timer <= 0.0 && !loco.can_steer && env.immersion.is_none())
             .then_some([self.vel.x, self.vel.z]);
         // The shore climb follows where locomotion (a walk or a drive) heads.
@@ -298,6 +309,46 @@ impl Instance {
         self.resist_and_push(dt, incoming, env);
         let shore = self.vertical_velocity(dt, d, loco.can_steer, heading, env);
         self.resolve_motion(dt, d, shore, carried, env)
+    }
+
+    /// The edge guard of a cautious species (`"edge_guard"` row): a grounded
+    /// body never walks off more than its routes plan to drop. Anything within
+    /// that still steps down; a ledge taller pulls the offending axis back to
+    /// its lip, as a sneaking player's does, so a body steering along a wall
+    /// top or a roof edge slides along it instead of over.
+    ///
+    /// Routes count a drop in cells, from the cell the feet stand in to the
+    /// one they land in, and a floor sits anywhere within its cell (a slab's
+    /// top, a chest's): the lowest floor a planned drop lands on lies just
+    /// above the top of the cell `max_drop + 1` below the feet's.
+    fn guard_edge(&mut self, dt: f32, d: &MobDef, env: &Surroundings<'_>) {
+        let feet_cell = (self.pos.y - 0.01).floor() + 1.0;
+        let lowest = feet_cell - f64::from(d.path_params().max_drop) - 1.0;
+        let drop = (self.pos.y - lowest) as f32 - collision::SUPPORT_PROBE_MARGIN;
+        let h = f64::from(d.size.half_width);
+        let min = [self.pos.x - h, self.pos.y, self.pos.z - h];
+        let max = [
+            self.pos.x + h,
+            self.pos.y + f64::from(d.size.height),
+            self.pos.z + h,
+        ];
+        let (dx, dz) = (self.vel.x * dt, self.vel.z * dt);
+        let (cx, cz) = collision::clamp_to_supported_dyn(
+            min,
+            max,
+            dx,
+            dz,
+            drop,
+            env.boxes,
+            env.obstacles,
+            self.id,
+        );
+        if cx != dx {
+            self.vel.x = cx / dt;
+        }
+        if cz != dz {
+            self.vel.z = cz / dt;
+        }
     }
 
     /// Choose this tick's horizontal velocity source: the knockback stagger,
@@ -312,6 +363,7 @@ impl Instance {
         drive: Option<DriveIntent>,
         nav_jumped: bool,
     ) -> Option<f32> {
+        self.stepping = false;
         if self.stagger_timer > 0.0 {
             self.vel.x = self.knockback.x;
             self.vel.z = self.knockback.z;
@@ -320,7 +372,8 @@ impl Instance {
         } else if let Some([vx, vz]) = drive.and_then(|dr| dr.horizontal) {
             // A horizontally-driven mob is deliberately not `moving`: the
             // drive is not a walk — no walk animation, no footstep noise, no
-            // wish-facing. Gated on `can_steer` like the wish so a driven
+            // wish-facing — unless the intent says the body walks itself
+            // (`gait`): a step sideways is still a step. Gated on `can_steer` like the wish so a driven
             // body has no more air or stagger control than a walking one.
             // Long-body yaw is clamped by the same segmented geometry that
             // resolves its translation.
@@ -328,10 +381,17 @@ impl Instance {
                 self.vel.x = vx;
                 self.vel.z = vz;
             }
-            self.moving = false;
+            let speed = vx.hypot(vz);
+            self.moving =
+                drive.is_some_and(|dr| dr.gait) && loco.can_steer && speed > GAIT_MIN_SPEED;
+            self.stepping = self.moving;
+            if self.moving {
+                self.gait_pace = (speed / d.walk_speed.max(1e-3)).clamp(GAIT_MIN_PACE, 1.0);
+            }
         } else if loco.can_steer {
             let wish = loco.wish;
             self.moving = wish.length_squared() > 1e-6;
+            self.gait_pace = 1.0;
             let mut speed = d.walk_speed * self.walk_speed_scale;
             let mut requested_yaw = None;
             if self.moving {
@@ -553,11 +613,6 @@ pub(super) fn turn_toward(yaw: f32, target: f32, max_step: f32) -> f32 {
 /// Wrap an angle into `[-PI, PI]`.
 fn wrap_angle(a: f32) -> f32 {
     (a + PI).rem_euclid(TAU) - PI
-}
-
-/// Move `cur` toward `target` by at most `step` (linear, no wrapping).
-pub(super) fn approach(cur: f32, target: f32, step: f32) -> f32 {
-    cur + (target - cur).clamp(-step, step)
 }
 
 pub(super) fn route_steering_supported(

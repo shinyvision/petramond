@@ -79,6 +79,18 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 conditions: crate::exposure::condition_data(p.conditions()),
             }))
         }),
+        HostCall::PlayerIdentity { player } => sim_query(|ctx| {
+            HostRet::Identity(
+                ctx.world
+                    .player_roster()
+                    .iter()
+                    .find(|p| p.id == player.0)
+                    .map(|p| mod_api::PlayerIdentityData {
+                        name: p.name.clone(),
+                        operator: p.operator,
+                    }),
+            )
+        }),
         HostCall::Players => sim_query(|ctx| {
             HostRet::Players(
                 ctx.world
@@ -384,7 +396,9 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 }) {
                     None => HostRet::Bool(false),
                     Some(true) => HostRet::Bool(true),
-                    Some(false) => HostRet::Error("SetPlayerAnimatorParams: non-finite value".into()),
+                    Some(false) => {
+                        HostRet::Error("SetPlayerAnimatorParams: non-finite value".into())
+                    }
                 }
             })
         }
@@ -644,28 +658,33 @@ mod tests {
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
 
-        crate::events::with_sessions_scope((crate::player::PlayerId(0), 0), None, Vec::new(), || {
-            let mut ctx = SimCtx {
-                world: &mut world,
-                player: &mut acting,
-                gui_state: &mut gui,
-                feed: &mut feed,
-                queue: &mut queue,
-            };
-            scope::enter(&mut ctx, || {
-                assert_eq!(
-                    write(&mut data, &stamp(9)),
-                    HostRet::Bool(false),
-                    "data the stack no longer carries loses the compare"
-                );
-                assert_eq!(
-                    write(&mut data, &variant::VariantMap::new()),
-                    HostRet::Bool(false),
-                    "an empty expectation means PLAIN, not 'any data'"
-                );
-                assert_eq!(write(&mut data, &stamp(2)), HostRet::Bool(true));
-            });
-        });
+        crate::events::with_sessions_scope(
+            (crate::player::PlayerId(0), 0),
+            None,
+            Vec::new(),
+            || {
+                let mut ctx = SimCtx {
+                    world: &mut world,
+                    player: &mut acting,
+                    gui_state: &mut gui,
+                    feed: &mut feed,
+                    queue: &mut queue,
+                };
+                scope::enter(&mut ctx, || {
+                    assert_eq!(
+                        write(&mut data, &stamp(9)),
+                        HostRet::Bool(false),
+                        "data the stack no longer carries loses the compare"
+                    );
+                    assert_eq!(
+                        write(&mut data, &variant::VariantMap::new()),
+                        HostRet::Bool(false),
+                        "an empty expectation means PLAIN, not 'any data'"
+                    );
+                    assert_eq!(write(&mut data, &stamp(2)), HostRet::Bool(true));
+                });
+            },
+        );
         let after = acting.inventory.selected().expect("the stack survives");
         assert_eq!(*variant::get(after.variant).expect("data"), stamp(1));
     }
@@ -708,35 +727,40 @@ mod tests {
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
 
-        crate::events::with_sessions_scope((crate::player::PlayerId(0), 0), None, Vec::new(), || {
-            let mut ctx = SimCtx {
-                world: &mut world,
-                player: &mut acting,
-                gui_state: &mut gui,
-                feed: &mut feed,
-                queue: &mut queue,
-            };
-            scope::enter(&mut ctx, || {
-                assert_eq!(
-                    take(&mut data, 1, Some(&rejected)),
-                    HostRet::ItemStack(None),
-                    "a filter nothing carries takes nothing"
-                );
-                assert!(
-                    !variant::is_interned_for_test(&rejected),
-                    "the losing filter minted a variant row"
-                );
-                let HostRet::ItemStack(Some(took)) = take(&mut data, 3, Some(&stamp(2))) else {
-                    panic!("three tinted sticks are carried");
+        crate::events::with_sessions_scope(
+            (crate::player::PlayerId(0), 0),
+            None,
+            Vec::new(),
+            || {
+                let mut ctx = SimCtx {
+                    world: &mut world,
+                    player: &mut acting,
+                    gui_state: &mut gui,
+                    feed: &mut feed,
+                    queue: &mut queue,
                 };
-                assert_eq!((took.count, took.data), (3, abi(&stamp(2))));
-                let HostRet::ItemStack(Some(took)) = take(&mut data, 2, None) else {
-                    panic!("two plain sticks remain");
-                };
-                assert!(took.data.is_empty(), "no filter takes the first variant");
-                assert_eq!(take(&mut data, 1, None), HostRet::ItemStack(None));
-            });
-        });
+                scope::enter(&mut ctx, || {
+                    assert_eq!(
+                        take(&mut data, 1, Some(&rejected)),
+                        HostRet::ItemStack(None),
+                        "a filter nothing carries takes nothing"
+                    );
+                    assert!(
+                        !variant::is_interned_for_test(&rejected),
+                        "the losing filter minted a variant row"
+                    );
+                    let HostRet::ItemStack(Some(took)) = take(&mut data, 3, Some(&stamp(2))) else {
+                        panic!("three tinted sticks are carried");
+                    };
+                    assert_eq!((took.count, took.data), (3, abi(&stamp(2))));
+                    let HostRet::ItemStack(Some(took)) = take(&mut data, 2, None) else {
+                        panic!("two plain sticks remain");
+                    };
+                    assert!(took.data.is_empty(), "no filter takes the first variant");
+                    assert_eq!(take(&mut data, 1, None), HostRet::ItemStack(None));
+                });
+            },
+        );
     }
 
     /// The progression arms: unlocking is per-player, idempotent (`true` only

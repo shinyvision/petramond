@@ -1,0 +1,175 @@
+{
+  "blocks": [
+    {
+      "block": "builder:schematic_table",
+      "shape": {
+        "model": "builder:schematic_table"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": {
+        "open_gui": "builder:schematic_table"
+      },
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "hardness": 2.5,
+      "drops": [
+        {
+          "item": "builder:schematic_table",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "builder:copper_block",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "builder:copper_block",
+        "builder:copper_block",
+        "builder:copper_block"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 2
+        }
+      },
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "builder:copper_block",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "patch": "petramond:chest",
+      "data": {
+        "builder:supply": true
+      }
+    },
+    {
+      "patch": "petramond:dirt",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:oak_log",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:spruce_log",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:birch_log",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:jungle_log",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:acacia_log",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:cobblestone",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:oak_planks",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:spruce_planks",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:birch_planks",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:jungle_planks",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:acacia_planks",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:redwood_log",
+      "data": {
+        "builder:scaffolding": true
+      }
+    },
+    {
+      "patch": "petramond:redwood_planks",
+      "data": {
+        "builder:scaffolding": true
+      }
+    }
+  ]
+}

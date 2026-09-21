@@ -154,6 +154,9 @@ pub struct ServerGame {
     /// shows); entries are removed at zero. Updated by the menu open/close
     /// funnels; 0↔1 transitions emit `ChestOpened`/`ChestClosed` world events.
     pub chest_viewers: HashMap<IVec3, u8>,
+    /// The live mobs holding each container open (`ContainerHold`), each
+    /// counted once among its chest's viewers.
+    pub container_holds: HashMap<IVec3, Vec<u64>>,
     /// The `WorldEnvironment` shader-param map the last `TickUpdate.env`
     /// shipped (value-compared per tick window; the map is tiny). `None` =
     /// nothing shipped yet, so the first window always carries the full set.

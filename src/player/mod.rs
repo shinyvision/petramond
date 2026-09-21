@@ -24,7 +24,9 @@
 //! is still a jump-to-climb wall (`JUMP_V0` clears ~1.26 blocks). Step-up is gated on being
 //! solid or fluid support; freely falling bodies cannot step.
 
+mod abilities;
 mod collision;
+mod creative;
 mod interaction;
 /// A connected player's session id: the small per-world slot byte that names a
 /// player on the wire, in mob aggro/hearing, and in per-player server state.
@@ -46,21 +48,22 @@ pub struct PlayerId(pub u8);
 pub mod animator;
 mod body_claims;
 pub mod model;
-pub mod one_shot;
-pub mod rigs;
 mod movement;
+pub mod one_shot;
 mod progression;
+pub mod rigs;
 mod state;
 mod swimming;
 
 #[cfg(test)]
 mod tests;
 
+pub use abilities::PlayerAbilities;
 pub use body_claims::{
-    AnimatorClaims, AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue, BodyClaims, BonePose,
-    DeniedActions, ENGINE_CLAIMANT, MOVE_SCALE_DEFAULT, MOVE_SCALE_MAX,
+    AnimatorClaims, AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue, BodyClaims,
+    BonePose, DeniedActions, ENGINE_CLAIMANT, MOVE_SCALE_DEFAULT, MOVE_SCALE_MAX,
 };
-pub use rigs::{Presenter, RigId};
+pub use creative::creative_flight_speed;
 pub use interaction::block_within_reach;
 pub use interaction::ray_vs_aabb;
 pub use interaction::{RayFilter, RaycastHit, REACH};
@@ -69,6 +72,7 @@ pub use interaction::{RayFilter, RaycastHit, REACH};
 /// and gravity (correction deadband scaling).
 pub use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, SWIM_SPEED, TERMINAL, WALK};
 pub use progression::Progression;
+pub use rigs::{Presenter, RigId};
 pub use state::UseGesture;
 pub use state::{
     BedSpawn, Input, Player, PlayerInputSnapshot, PlayerMode, PlayerRosterSnapshot, DT_MAX, EYE,

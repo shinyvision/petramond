@@ -68,10 +68,19 @@ impl ServerGame {
     /// and a player write defers if no detached position is provably safe. A
     /// no-op without an attached save.
     pub fn save_all(&mut self) {
-        self.world.flush_modified_chunks();
-        if self.world.save().is_none() {
+        let Some(save) = self.world.save() else {
             return;
-        }
+        };
+        // Sections, the level (mod world KV) and every player land together:
+        // as of this save, items moved between a chest, a mob and a player
+        // are on disk on both sides or neither.
+        let batch = save.begin_batch();
+        self.save_all_batched();
+        drop(batch);
+    }
+
+    fn save_all_batched(&mut self) {
+        self.world.flush_modified_chunks();
 
         let obstacles = self.world.mobs().solid_obstacles();
         let players: Vec<_> = self

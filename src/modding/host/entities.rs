@@ -8,12 +8,13 @@ use mod_api::{
 
 use crate::entity::DroppedItem;
 use crate::events::{DamageSource, DeferredAction, PostEvent, SimCtx};
-use petramond_math::math::Tilt;
+use petramond_math::math::{IVec3, Tilt};
 use petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE;
 use petramond_world::item::{ItemStack, ItemType};
 
 use super::guards::{
-    finite3, finite_pos, item_by_name, live_mob, sim_mutate, sim_mutating_query, sim_query,
+    batch_guard, finite3, finite_pos, item_by_name, live_mob, sim_mutate, sim_mutating_query,
+    sim_query,
 };
 use super::intern_mod_id;
 
@@ -162,6 +163,113 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             }))
         }),
+        HostCall::PathProbe {
+            key,
+            from,
+            to,
+            blocked,
+            max_nodes,
+        } => {
+            if let Some(err) = batch_guard("PathProbe blocked cell", blocked.len()) {
+                return err;
+            }
+            sim_query(|ctx| {
+                let Some(kind) = crate::mob::by_key(&key) else {
+                    log::warn!("[mod {mod_id}] PathProbe: unknown species '{key}'");
+                    return HostRet::Route(None);
+                };
+                let blocked: Vec<_> = blocked.iter().copied().map(IVec3::from_array).collect();
+                HostRet::Route(crate::mob::route_probe(
+                    ctx.world,
+                    kind,
+                    IVec3::from_array(from),
+                    IVec3::from_array(to),
+                    &blocked,
+                    max_nodes as usize,
+                ))
+            })
+        }
+        HostCall::WalkRegion {
+            key,
+            from,
+            min,
+            max,
+            blocked,
+            toward,
+            max_nodes,
+        } => {
+            if let Some(err) = batch_guard("WalkRegion blocked cell", blocked.len()) {
+                return err;
+            }
+            sim_query(|ctx| {
+                let Some(kind) = crate::mob::by_key(&key) else {
+                    log::warn!("[mod {mod_id}] WalkRegion: unknown species '{key}'");
+                    return HostRet::Flood(mod_api::Flood::Exceeded);
+                };
+                let blocked: Vec<_> = blocked.iter().copied().map(IVec3::from_array).collect();
+                HostRet::Flood(crate::mob::walk_region(
+                    ctx.world,
+                    kind,
+                    crate::mob::FloodAsk {
+                        from: IVec3::from_array(from),
+                        span: (IVec3::from_array(min), IVec3::from_array(max)),
+                        toward,
+                        blocked: &blocked,
+                        max_nodes: max_nodes as usize,
+                    },
+                ))
+            })
+        }
+        HostCall::Footholds { key, cells } => {
+            if let Some(err) = batch_guard("Footholds cell", cells.len()) {
+                return err;
+            }
+            sim_query(|ctx| {
+                let Some(kind) = crate::mob::by_key(&key) else {
+                    return HostRet::Bools(vec![false; cells.len()]);
+                };
+                let cells: Vec<_> = cells.iter().copied().map(IVec3::from_array).collect();
+                HostRet::Bools(crate::mob::footholds(ctx.world, kind, &cells))
+            })
+        }
+        HostCall::MobHeldDisplay { mob_id, main, off } => {
+            let resolve = |name: &Option<String>| match name {
+                None => Ok(None),
+                Some(name) => item_by_name(name).map(Some).ok_or(()),
+            };
+            let (Ok(main), Ok(off)) = (resolve(&main), resolve(&off)) else {
+                return HostRet::Bool(false);
+            };
+            sim_mutating_query(|ctx| {
+                let Some(index) = live_mob(ctx, mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                ctx.world.mobs_mut().set_held(index, [main, off]);
+                HostRet::Bool(true)
+            })
+        }
+        HostCall::SetMobDraw {
+            mob_id,
+            frame,
+            prims,
+        } => {
+            if let Some(err) = super::blocks::check_draw_set("SetMobDraw", &prims) {
+                return err;
+            }
+            sim_mutating_query(|ctx| {
+                let Some(index) = live_mob(ctx, mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                ctx.world.mobs_mut().set_draw(
+                    index,
+                    crate::world::draw::BodyDraw {
+                        prims: prims.into(),
+                        turns: frame == mod_api::DrawFrame::Body,
+                    },
+                );
+                HostRet::Bool(true)
+            })
+        }
         HostCall::SiteOpen { key, cell } => sim_query(|ctx| {
             let Some(kind) = crate::mob::by_key(&key) else {
                 log::warn!("[mod {mod_id}] SiteOpen: unknown species '{key}'");
@@ -306,6 +414,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             vertical,
             yaw,
             while_walking,
+            gait,
         } => {
             if horizontal.is_some_and(|v| !v.iter().all(|c| c.is_finite()))
                 || vertical.is_some_and(|v| !v.is_finite())
@@ -340,6 +449,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     vertical,
                     yaw,
                     while_walking,
+                    gait,
                 ))
             })
         }
@@ -873,6 +983,7 @@ mod tests {
             vertical: None,
             yaw: None,
             while_walking: false,
+            gait: false,
         });
         rejected(HostCall::MobDrive {
             mob_id: 1,
@@ -880,6 +991,7 @@ mod tests {
             vertical: Some(super::MAX_MOB_DRIVE_SPEED * 2.0),
             yaw: None,
             while_walking: false,
+            gait: false,
         });
         rejected(HostCall::MobDrive {
             mob_id: 1,
@@ -887,6 +999,7 @@ mod tests {
             vertical: Some(1.0),
             yaw: None,
             while_walking: true,
+            gait: false,
         });
     }
 
@@ -1032,6 +1145,7 @@ mod tests {
                     vertical: None,
                     yaw: None,
                     while_walking: false,
+                    gait: false,
                 },
             );
             refused(

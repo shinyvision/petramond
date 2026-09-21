@@ -11,9 +11,12 @@ pub use petramond_world::world::{
     data, environment, load_targets, placement as placement_types, shape_bake_validate, tick_state,
 };
 
+pub mod actor;
 mod block_deltas;
+pub(crate) mod cells;
 pub mod chest;
 mod column_heightmaps;
+pub mod construction;
 mod container;
 mod cursor;
 mod custom_bake;
@@ -40,6 +43,7 @@ mod relocated_world_crate_tests;
 mod remote;
 mod render_handoff;
 pub mod sapling;
+pub(crate) mod schematic;
 mod shape_refine;
 mod sim_guard;
 mod slab;

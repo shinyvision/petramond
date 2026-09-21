@@ -38,7 +38,10 @@ fn a_library_reads_back_into_blockbench_axes_with_steps_modes_and_markers() {
     let a = &lib.iter().find(|(n, _)| n == "clip.a").expect("clip.a").1;
     assert!(a.looping && !a.hold);
     assert_eq!(a.length, 2.0);
-    let rot = |t| a.sample(0, Channel::Rotation, t).expect("arm rotation keyed");
+    let rot = |t| {
+        a.sample(0, Channel::Rotation, t)
+            .expect("arm rotation keyed")
+    };
     assert_eq!(rot(0.0), Vec3::new(-10.0, -20.0, 30.0));
     assert_eq!(rot(1.25), Vec3::new(-1.0, -2.0, 3.0), "the step holds");
     assert_eq!(rot(1.5), Vec3::new(-7.0, -8.0, 9.0));
@@ -93,12 +96,16 @@ fn the_last_key_steps_only_when_the_pair_before_it_does() {
     };
     use Interpolation::{Linear, Step};
     assert_eq!(
-        track(r#""0.0": [0, 0, 0], "1.0": { "pre": [0, 0, 0], "post": [2, 2, 2] }, "2.0": [4, 4, 4]"#),
+        track(
+            r#""0.0": [0, 0, 0], "1.0": { "pre": [0, 0, 0], "post": [2, 2, 2] }, "2.0": [4, 4, 4]"#
+        ),
         [Step, Linear, Linear],
         "the step is between the first two keys only"
     );
     assert_eq!(
-        track(r#""0.0": [0, 0, 0], "1.0": [2, 2, 2], "2.0": { "pre": [2, 2, 2], "post": [4, 4, 4] }"#),
+        track(
+            r#""0.0": [0, 0, 0], "1.0": [2, 2, 2], "2.0": { "pre": [2, 2, 2], "post": [4, 4, 4] }"#
+        ),
         [Linear, Step, Step],
         "the pair before the last key steps, so the last key does too"
     );

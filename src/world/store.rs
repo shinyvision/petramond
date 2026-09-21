@@ -274,6 +274,10 @@ pub struct World {
     /// here because both askers — the mob brains and the mod ABI's
     /// `MobCanReach` — hold only `&World` when they ask.
     nav_probe_budget: crate::mob::ReachBudget,
+    /// This tick's budget for positional route probes (`mob::route_probe`).
+    route_probe_budget: crate::mob::ReachBudget,
+    /// What reachability searches keep about the ground they search.
+    kept_boxes: crate::mob::KeptBoxes,
     pub worker: WorkerPool,
     pub(super) light_bakes: LightBakeQueue,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
@@ -286,6 +290,10 @@ pub struct World {
     /// mount HostCalls reach it through `SimCtx`; the server's riding pass
     /// reconciles sessions against it each tick. Never persisted.
     pub(super) riding: crate::mob::riding::Riding,
+    /// The world's schematic assets and anchored ghosts (see
+    /// `world::schematic`). SERVER only; reached through `SimCtx` by the host
+    /// calls that read designs and set ghosts.
+    pub(super) schematics: super::schematic::WorldSchematics,
 }
 
 impl std::ops::Deref for World {
@@ -421,9 +429,14 @@ impl World {
                 stream_events_enabled: false,
             },
             nav_probe_budget: crate::mob::ReachBudget::default(),
+            route_probe_budget: crate::mob::ReachBudget::with_capacity(
+                crate::mob::ROUTE_PROBE_TICK_BUDGET,
+            ),
+            kept_boxes: Default::default(),
             worker: WorkerPool::new(jobs.clone()),
             light_bakes: LightBakeQueue::new(jobs.clone()),
             save: None,
+            schematics: Default::default(),
             dropped_items: DroppedItems::default(),
             mobs: Mobs::new(seed as u64),
             riding: Default::default(),
@@ -608,6 +621,17 @@ impl World {
     #[inline]
     pub fn reach_budget(&self) -> &crate::mob::ReachBudget {
         &self.nav_probe_budget
+    }
+
+    #[inline]
+    pub(crate) fn kept_boxes(&self) -> &crate::mob::KeptBoxes {
+        &self.kept_boxes
+    }
+
+    /// This tick's positional route probe budget.
+    #[inline]
+    pub fn route_probe_budget(&self) -> &crate::mob::ReachBudget {
+        &self.route_probe_budget
     }
 }
 

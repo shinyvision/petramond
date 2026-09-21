@@ -11,7 +11,7 @@ use petramond_world::exposure::{ExposureDamage, ExposureSource};
 impl ServerGame {
     pub(crate) fn tick_player_exposure(&mut self, s: usize, events: &mut TickEvents) {
         let player = &mut self.sessions[s].player;
-        if player.is_spectator() || player.health() == 0 {
+        if player.is_invulnerable() || player.health() == 0 {
             player.clear_exposure();
             return;
         }

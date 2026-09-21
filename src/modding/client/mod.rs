@@ -4,8 +4,8 @@
 //! and sandboxed storage. Never installed in the deterministic tick
 //! scheduler.
 
-mod calls;
 mod animator_fold;
+mod calls;
 mod pending_fires;
 mod runtime;
 pub(in crate::modding) mod scope;

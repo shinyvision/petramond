@@ -147,7 +147,10 @@ impl IdRemap {
             .iter()
             .map(|names| {
                 let Some(at) = local.iter().position(|l| l.rig == names.rig) else {
-                    log::warn!("remap: unknown server rig '{}' drops its animator rows", names.rig);
+                    log::warn!(
+                        "remap: unknown server rig '{}' drops its animator rows",
+                        names.rig
+                    );
                     return None;
                 };
                 Some((RigId(at as u16), AnimatorLut::build(names, &local[at])))
@@ -236,7 +239,10 @@ impl IdRemap {
             let Some((rig, lut)) = self.animator(p.rig) else {
                 return false;
             };
-            match (lookup(&lut.slots, p.slot as usize), lookup(&lut.clips, p.clip as usize)) {
+            match (
+                lookup(&lut.slots, p.slot as usize),
+                lookup(&lut.clips, p.clip as usize),
+            ) {
                 (Some(slot), Some(clip)) => {
                     p.rig = rig;
                     p.slot = slot;
@@ -301,6 +307,10 @@ impl IdRemap {
                             }
                             None => false,
                         });
+                        // An unknown held item draws an empty hand.
+                        for held in &mut m.held {
+                            *held = held.and_then(|item| self.item(item));
+                        }
                         true
                     }
                     None => false,
@@ -441,13 +451,22 @@ impl IdRemap {
                 }
                 None => false,
             },
-            WorldEventMsg::EmitterBurst { emitter_id, .. } => match self.emitter(*emitter_id) {
-                Some(id) => {
-                    *emitter_id = id;
-                    true
+            WorldEventMsg::EmitterBurst {
+                emitter_id,
+                texture,
+                ..
+            } => {
+                if let Some(super::protocol::BurstTextureMsg::Block { block_id, .. }) = texture {
+                    *block_id = self.block(*block_id);
                 }
-                None => false,
-            },
+                match self.emitter(*emitter_id) {
+                    Some(id) => {
+                        *emitter_id = id;
+                        true
+                    }
+                    None => false,
+                }
+            }
             WorldEventMsg::SpatialSound(cmd) => match cmd {
                 SpatialSoundMsg::PlayAt { sound_id, .. }
                 | SpatialSoundMsg::PlayOnMob { sound_id, .. } => match self.sound(*sound_id) {
@@ -503,6 +522,7 @@ impl IdRemap {
             | ClientToServer::SetCraftFilter { .. }
             | ClientToServer::PlayerUpdate(_)
             | ClientToServer::Action(_)
+            | ClientToServer::CreativeCursor { .. }
             | ClientToServer::MenuClick { .. }
             | ClientToServer::MenuDrag { .. }
             | ClientToServer::MenuDrop { .. }
@@ -840,6 +860,9 @@ mod tests {
             conditions: Vec::new(),
             anims: Vec::new(),
             ragdoll: None,
+            dig: None,
+            held: [None; 2],
+            draw: Default::default(),
         };
         let item_row = |item_id: u16| ItemStateRow {
             id: item_id as u64,
@@ -955,32 +978,63 @@ mod tests {
     /// body's claims intact.
     #[test]
     fn animator_claims_remap_by_name_and_unknown_entries_drop_alone() {
-        use crate::player::{AnimatorClaims, AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue};
-        let names = |rig: &str, clips: &[&str], params: &[&str], slots: &[&str], events: &[&str]| {
-            let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-            AnimatorNames {
-                rig: rig.to_string(),
-                clips: list(clips),
-                params: list(params),
-                slots: list(slots),
-                events: list(events),
-            }
+        use crate::player::{
+            AnimatorClaims, AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue,
         };
+        let names =
+            |rig: &str, clips: &[&str], params: &[&str], slots: &[&str], events: &[&str]| {
+                let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+                AnimatorNames {
+                    rig: rig.to_string(),
+                    clips: list(clips),
+                    params: list(params),
+                    slots: list(slots),
+                    events: list(events),
+                }
+            };
         // This process: the body at rig 0, the viewmodel at rig 1.
         let local = [
-            names("body", &["idle", "swing", "guard"], &["held", "claim"], &["main", "off"], &["swing", "hurt"]),
-            names("view", &["fp_idle", "fp_swing"], &["held"], &["main"], &["swing"]),
+            names(
+                "body",
+                &["idle", "swing", "guard"],
+                &["held", "claim"],
+                &["main", "off"],
+                &["swing", "hurt"],
+            ),
+            names(
+                "view",
+                &["fp_idle", "fp_swing"],
+                &["held"],
+                &["main"],
+                &["swing"],
+            ),
         ];
         // The server: the viewmodel first, its clips in another order, a
         // spear pack's extra slot on the body, and a rig this client lacks.
         let server = [
-            names("view", &["fp_swing", "fp_idle"], &["held"], &["main"], &["swing"]),
-            names("body", &["guard", "swing", "idle"], &["claim", "held"], &["main", "lunge", "off"], &["hurt", "swing"]),
+            names(
+                "view",
+                &["fp_swing", "fp_idle"],
+                &["held"],
+                &["main"],
+                &["swing"],
+            ),
+            names(
+                "body",
+                &["guard", "swing", "idle"],
+                &["claim", "held"],
+                &["main", "lunge", "off"],
+                &["hurt", "swing"],
+            ),
             names("cart", &["roll"], &[], &["seat"], &["bump"]),
         ];
         let luts = IdRemap::animator_luts(&server, &local);
         assert_eq!(luts.len(), 3);
-        assert_eq!(luts[0].as_ref().map(|(rig, _)| *rig), Some(RigId(1)), "rigs join by name");
+        assert_eq!(
+            luts[0].as_ref().map(|(rig, _)| *rig),
+            Some(RigId(1)),
+            "rigs join by name"
+        );
         assert_eq!(luts[1].as_ref().map(|(rig, _)| *rig), Some(RigId(0)));
         assert!(luts[2].is_none(), "an unknown rig maps to nothing");
         let map = IdRemap {
@@ -1013,13 +1067,21 @@ mod tests {
             plays: vec![play(1, 2, 0), play(1, 1, 1), play(0, 0, 0), play(2, 0, 0)],
         };
         map.remap_animator(&mut claims);
-        assert_eq!(claims.params, [param(0, 1)], "the body's `claim` param by name; the cart's dropped");
+        assert_eq!(
+            claims.params,
+            [param(0, 1)],
+            "the body's `claim` param by name; the cart's dropped"
+        );
         assert_eq!(
             claims.plays,
             [play(0, 1, 2), play(1, 0, 1)],
             "server body `off`/`guard` → local body; `lunge` and the cart drop alone; view `main`/`fp_swing` by name"
         );
-        assert_eq!(map.animator_event(RigId(1), 1), Some((RigId(0), 0)), "`swing` on the body");
+        assert_eq!(
+            map.animator_event(RigId(1), 1),
+            Some((RigId(0), 0)),
+            "`swing` on the body"
+        );
         assert_eq!(map.animator_event(RigId(0), 0), Some((RigId(1), 0)));
         assert_eq!(map.animator_event(RigId(2), 0), None);
     }

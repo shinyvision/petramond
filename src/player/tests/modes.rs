@@ -45,3 +45,44 @@ fn switching_modes_resets_motion_state() {
     assert!(!pl.on_ground);
     assert!(!pl.jumping);
 }
+
+#[test]
+fn creative_flight_coasts_consistently_and_collides() {
+    let moving = Input {
+        wishdir: Vec3::X,
+        jump: false,
+        sprint: false,
+        sneak: false,
+    };
+    let stopped = Input {
+        wishdir: Vec3::ZERO,
+        ..moving
+    };
+    let run = |steps: u32| {
+        let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
+        pl.toggle_creative();
+        assert!(!pl.is_flying());
+        pl.toggle_creative_flight();
+        for _ in 0..steps {
+            pl.update_core(1.0 / steps as f32, &|_, _, _| false, moving);
+        }
+        let release = pl.pos;
+        let speed = pl.vel.length();
+        pl.update_core(0.05, &|_, _, _| false, stopped);
+        assert!(pl.vel.length() > 0.0 && pl.vel.length() < speed);
+        assert!(pl.pos.x > release.x);
+        (pl.pos, pl.vel)
+    };
+    let (a, av) = run(30);
+    let (b, bv) = run(144);
+    assert!((a - b).length() < 0.001);
+    assert!((av - bv).length() < 0.001);
+    let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
+    pl.set_mode(PlayerMode::CreativeFlying);
+    pl.update_core(0.5, &|x, _, _| x >= 1, moving);
+    assert!(pl.pos.x < 1.0);
+    assert_eq!(pl.vel.x, 0.0);
+    let hp = pl.health();
+    assert!(!pl.apply_damage(5, petramond_world::damage::Immunity::Exempt));
+    assert_eq!(pl.health(), hp);
+}

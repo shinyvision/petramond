@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "builder"
+version = "0.1.0"
+dependencies = [
+ "mod-sdk",
+ "serde",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

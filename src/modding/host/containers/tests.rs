@@ -48,7 +48,7 @@ fn container_calls_canonicalize_to_the_group_anchor() {
         let set = handle_host_call(
             &mut store,
             HostCall::ContainerSet {
-                pos: far.to_array(),
+                at: far.to_array().into(),
                 slots: vec![(
                     0,
                     Some(mod_api::ItemStackData {
@@ -64,7 +64,7 @@ fn container_calls_canonicalize_to_the_group_anchor() {
         let got = handle_host_call(
             &mut store,
             HostCall::ContainerGet {
-                pos: anchor.to_array(),
+                at: anchor.to_array().into(),
             },
         );
         let HostRet::ContainerSlots(Some(slots)) = got else {
@@ -116,7 +116,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
             handle_host_call(
                 &mut store,
                 HostCall::ContainerInsert {
-                    pos: machine.to_array(),
+                    at: machine.to_array().into(),
                     stack: coal.clone()
                 }
             ),
@@ -126,7 +126,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
             handle_host_call(
                 &mut store,
                 HostCall::ContainerTake {
-                    pos: machine.to_array(),
+                    at: machine.to_array().into(),
                     slot: petramond_world::furnace::SLOT_FUEL as u32,
                     count: 2
                 }
@@ -138,7 +138,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
             handle_host_call(
                 &mut store,
                 HostCall::ContainerInsert {
-                    pos: machine.to_array(),
+                    at: machine.to_array().into(),
                     stack: stone.clone()
                 }
             ),
@@ -148,7 +148,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
             handle_host_call(
                 &mut store,
                 HostCall::ContainerInsert {
-                    pos: chest.to_array(),
+                    at: chest.to_array().into(),
                     stack: stone
                 }
             ),
@@ -158,7 +158,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
             handle_host_call(
                 &mut store,
                 HostCall::ContainerTake {
-                    pos: chest.to_array(),
+                    at: chest.to_array().into(),
                     slot: 0,
                     count: 9
                 }
@@ -170,7 +170,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
             handle_host_call(
                 &mut store,
                 HostCall::ContainerInsert {
-                    pos: [6, 64, 1],
+                    at: [6, 64, 1].into(),
                     stack: coal.clone()
                 }
             ),
@@ -195,11 +195,166 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
             handle_host_call(
                 &mut store,
                 HostCall::ContainerInsert {
-                    pos: chest.to_array(),
+                    at: chest.to_array().into(),
                     stack: incoming.clone()
                 }
             ),
             HostRet::ItemStack(Some(incoming))
         );
     });
+}
+
+/// A transfer is one move: what the destination's admission refuses stays in
+/// the source slot, so no item is ever in both containers or neither.
+#[test]
+fn a_transfer_moves_only_what_the_destination_admits() {
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
+    let mut world = World::new(1, 4);
+    world.clear_world();
+    world.insert_chunk_for_test(
+        ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
+    );
+    let machine = IVec3::new(1, 64, 1);
+    let chest = IVec3::new(3, 64, 1);
+    world.set_block_world(machine.x, machine.y, machine.z, Block::Furnace);
+    world.set_block_world(chest.x, chest.y, chest.z, Block::Chest);
+    let mut store = ModStoreData::new("transfer_test", 1);
+    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+    let mut feed = TickEvents::default();
+    let mut queue = PostQueue::default();
+    let mut gui = petramond_world::gui_state::empty_gui_state();
+    let coal = |count| mod_api::ItemStackData {
+        item: "petramond:coal".into(),
+        count,
+        data: Vec::new(),
+    };
+    let mut ctx = SimCtx {
+        world: &mut world,
+        player: &mut player,
+        gui_state: &mut gui,
+        feed: &mut feed,
+        queue: &mut queue,
+    };
+    scope::enter(&mut ctx, || {
+        let mut call = |c| handle_host_call(&mut store, c);
+        // The furnace's only coal cell is its fuel slot, nearly full.
+        assert_eq!(
+            call(HostCall::ContainerInsert {
+                at: machine.to_array().into(),
+                stack: coal(60),
+            }),
+            HostRet::ItemStack(None)
+        );
+        assert_eq!(
+            call(HostCall::ContainerInsert {
+                at: chest.to_array().into(),
+                stack: coal(64),
+            }),
+            HostRet::ItemStack(None)
+        );
+        assert_eq!(
+            call(HostCall::ContainerTransfer {
+                from: chest.to_array().into(),
+                slot: 0,
+                to: machine.to_array().into(),
+                count: 64,
+            }),
+            HostRet::ItemStack(Some(coal(4))),
+            "only the fuel slot's room moves"
+        );
+        let HostRet::ContainerSlots(Some(slots)) = call(HostCall::ContainerGet {
+            at: chest.to_array().into(),
+        }) else {
+            panic!("the chest has slots");
+        };
+        assert_eq!(slots[0], Some(coal(60)), "the refused part stayed put");
+        assert_eq!(
+            call(HostCall::ContainerTransfer {
+                from: chest.to_array().into(),
+                slot: 0,
+                to: [9, 64, 9].into(),
+                count: 1,
+            }),
+            HostRet::ItemStack(None),
+            "a destination with no slots takes nothing"
+        );
+    });
+}
+
+/// A mob's carried slots are an ordinary container addressed by its stable
+/// id, and whatever it still carries when it leaves the world scatters.
+#[test]
+fn a_mobs_carried_slots_are_a_container_and_spill_when_it_leaves() {
+    use petramond_math::math::IVec3;
+    use petramond_world::block::Block;
+    use petramond_world::container::Container;
+    use petramond_world::item::{ItemStack, ItemType};
+    let mut world = World::new(1, 4);
+    world.clear_world();
+    world.insert_chunk_for_test(
+        ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
+    );
+    let chest = IVec3::new(3, 64, 1);
+    world.set_block_world(chest.x, chest.y, chest.z, Block::Chest);
+    world.mobs_mut().restore([crate::mob::SavedMob {
+        kind: crate::mob::Mob::Owl,
+        pos: WorldPos::new(8.5, 64.0, 8.5),
+        yaw: 0.0,
+        tags: Default::default(),
+        container: Container {
+            slots: vec![
+                Some(ItemStack::new(ItemType::Coal, 5)),
+                Some(ItemStack::new(ItemType::Stone, 2)),
+            ],
+        },
+    }]);
+    let mob = world.mobs().instances()[0].id();
+    let mut store = ModStoreData::new("transfer_test", 1);
+    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+    let mut feed = TickEvents::default();
+    let mut queue = PostQueue::default();
+    let mut gui = petramond_world::gui_state::empty_gui_state();
+    let mut ctx = SimCtx {
+        world: &mut world,
+        player: &mut player,
+        gui_state: &mut gui,
+        feed: &mut feed,
+        queue: &mut queue,
+    };
+    scope::enter(&mut ctx, || {
+        let mut call = |c| handle_host_call(&mut store, c);
+        assert_eq!(
+            call(HostCall::ContainerTransfer {
+                from: mod_api::ContainerAddress::Mob(mob),
+                slot: 0,
+                to: chest.to_array().into(),
+                count: 5,
+            }),
+            HostRet::ItemStack(Some(mod_api::ItemStackData {
+                item: "petramond:coal".into(),
+                count: 5,
+                data: Vec::new(),
+            }))
+        );
+        assert!(
+            matches!(
+                call(HostCall::ContainerSet {
+                    at: mod_api::ContainerAddress::Mob(mob),
+                    slots: vec![(0, None)],
+                }),
+                HostRet::Bool(false)
+            ),
+            "writes stay with the species' own pack"
+        );
+    });
+    assert!(world.mobs_mut().remove(0));
+    let spills = world.mobs_mut().take_spills();
+    let spilled: Vec<_> = spills
+        .iter()
+        .flat_map(|s| s.stacks.iter().copied())
+        .collect();
+    assert_eq!(spilled, vec![ItemStack::new(ItemType::Stone, 2)]);
 }

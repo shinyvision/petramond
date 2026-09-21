@@ -9,11 +9,14 @@
 //! loop through [`remote::RemoteHub`] ("Open to LAN").
 
 pub mod actions;
+mod actors;
 pub mod attack;
 pub mod bed;
 pub mod breaking;
+mod cells;
 pub mod chat;
 pub mod commands;
+pub mod creative;
 pub mod daynight;
 pub mod deferred_actions;
 pub mod drops;
@@ -34,5 +37,6 @@ pub mod progression;
 pub mod projectiles;
 pub mod remote;
 pub mod riding;
+pub mod schematics;
 pub mod session_build;
 pub mod streaming;

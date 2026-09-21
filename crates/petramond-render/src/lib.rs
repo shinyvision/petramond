@@ -23,6 +23,7 @@ mod held_view;
 pub mod item_cube;
 pub mod item_entity;
 pub mod item_model;
+pub mod job;
 pub mod views;
 
 pub mod lighting;
@@ -34,6 +35,7 @@ pub mod renderer;
 pub mod resources;
 pub mod scene;
 pub mod selection;
+mod selection_highlight;
 pub mod shader_pack;
 pub mod ui;
 pub mod uniforms;
@@ -43,7 +45,7 @@ pub use renderer::new_offscreen_renderer;
 pub use renderer::new_renderer_from_target;
 #[allow(unused_imports)]
 pub use renderer::TerrainMemory;
-pub use renderer::{RenderedFrame, Renderer};
+pub use renderer::{GhostPiece, RenderedFrame, Renderer, SchematicThumbnailer};
 pub use views::BreakOverlayView;
 pub use views::EntityShadow;
 
@@ -325,6 +327,14 @@ pub struct ItemEntityInstance {
 /// that produces it (`world::draw`) and carried here UNCHANGED — see its doc.
 pub use petramond::world::draw::BlockDrawInstance;
 
+/// A mob's base animation: the clip its locomotion state selects, under
+/// every named layer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GaitClip {
+    Walk,
+    Idle(u8),
+}
+
 /// One animated mob to draw in the world this frame: a species (`kind`) posed at
 /// `anim_time` into its walk cycle (when `moving`; otherwise its rest pose), placed
 /// at `pos` (its feet) facing `yaw`, lit by the sampled `skylight`. The scene
@@ -349,6 +359,10 @@ pub struct MobRenderInstance {
     /// When idle, which `idle_*` animation is playing (index), or `None` for the
     /// neutral rest pose.
     pub idle_anim: Option<u8>,
+    /// How far the active gait (walk or idle) has eased in, 0..1.
+    pub gait_weight: f32,
+    /// Gaits eased out of and still fading: `(clip, held phase, weight)`.
+    pub gait_fades: Vec<(GaitClip, f32, f32)>,
     /// Head orientation relative to the body (radians): yaw swivel, pitch tilt.
     /// Applied to the model's `head` bone unless the active animation moves the head.
     pub head_yaw: f32,
@@ -380,6 +394,8 @@ pub struct MobRenderInstance {
     /// used over the authored rest pose. `None` for a live mob. `Arc` so cloning a
     /// visible instance into its per-species batch stays cheap.
     pub ragdoll: Option<Arc<[(Vec3, Quat)]>>,
+    /// The items drawn in the species' main and off hand bones.
+    pub held: [Option<petramond_world::item::ItemType>; 2],
 }
 
 /// One rig-bone offset, resolved to a bone INDEX by the caller.
@@ -602,3 +618,5 @@ pub struct SolidParticleInstance {
 /// The same row the gather produces — the frame carries one emitter type end to
 /// end, so nothing between the world and the vertex builder is a re-map.
 pub use petramond::world::PlacedEmitter as ParticleEmitterInstance;
+
+mod schematic;

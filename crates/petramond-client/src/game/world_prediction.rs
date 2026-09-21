@@ -379,9 +379,19 @@ impl Game {
         if look.normal == IVec3::ZERO {
             return PlacePrediction::No; // eye inside the cell — the server never places
         }
-        let Some(block) = self.predicted_held().and_then(|s| s.item.as_block()) else {
+        let Some(block) = self
+            .predicted_held()
+            .filter(|s| !s.item.creative_only() || self.creative_mode())
+            .and_then(|s| s.item.as_block())
+        else {
             return PlacePrediction::No;
         };
+        if self
+            .predicted_held()
+            .is_some_and(|s| !s.item.placement_variants().is_empty())
+        {
+            return PlacePrediction::Plausible;
+        }
         // A click the block's built-in consumer claims (the server's interact
         // chain — same shared rule) opens/uses it instead of placing — no
         // ghost, or the client would render a phantom block the server never
@@ -440,6 +450,7 @@ impl Game {
                     petramond_math::facing::Facing::West => mod_api::Facing::West,
                     petramond_math::facing::Facing::East => mod_api::Facing::East,
                 },
+                actor: mod_api::EntityRef::Player(mod_api::PlayerId(self.self_id.0)),
             };
             if self.predict_mod_claim(sneak, payload) {
                 return PlacePrediction::No;
@@ -545,7 +556,9 @@ impl Game {
         // light and geometry are installed before the ghost is exposed.
         self.replica.present_predicted_edit(&previous_cells);
         let hand = self.player.acting_hand;
-        self.self_view.inventory.decrement_held(hand);
+        if !self.player.is_creative() {
+            self.self_view.inventory.decrement_held(hand);
+        }
         self.place_ghost = Some((place_pos, block.0));
         self.local_placed_block = Some(block);
         self.local_placed_off_hand = hand == petramond_world::inventory::Hand::Off;
@@ -679,7 +692,9 @@ impl Game {
         // local light and geometry are installed before the ghost is exposed.
         self.replica.present_predicted_edit(&previous_cells);
         let hand = self.player.acting_hand;
-        self.self_view.inventory.decrement_held(hand);
+        if !self.player.is_creative() {
+            self.self_view.inventory.decrement_held(hand);
+        }
         self.place_ghost = Some((anchor, write_block.id()));
         self.local_placed_block = Some(write_block);
         self.local_placed_off_hand = hand == petramond_world::inventory::Hand::Off;

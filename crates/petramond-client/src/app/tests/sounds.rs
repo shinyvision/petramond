@@ -23,7 +23,10 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
         // local sound plays are gone.
         placed_block: Some(petramond_world::block::Block::Dirt),
         toggled_door: Some(true),
-        open_gui: Some((petramond_world::gui_state::GuiKind::Chest, Some(pos))),
+        open_gui: Some((
+            petramond_world::gui_state::GuiKind::Chest,
+            Some(petramond::menu::MenuAnchor::Block(pos)),
+        )),
         interacted: true,
         // The broadcast events every observer presents, positionally.
         world_events: vec![
@@ -141,6 +144,8 @@ fn mob_presentation(id: u64) -> MobPresentation {
         anim_time: 0.0,
         moving: false,
         idle_anim: None,
+        gait_weight: 1.0,
+        gait_fades: Vec::new(),
         prev_head_yaw: 0.0,
         head_yaw: 0.0,
         prev_head_pitch: 0.0,
@@ -155,6 +160,7 @@ fn mob_presentation(id: u64) -> MobPresentation {
         emitter_tint: [1.0; 3],
         emitter_self_lit: 0.0,
         ragdoll_pose: None,
+        held: [None; 2],
     }
 }
 

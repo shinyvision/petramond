@@ -117,6 +117,7 @@ fn section_record_roundtrips_mobs() {
         pos: WorldPos::new(-12.5, 65.0, 72.25),
         yaw: 1.75,
         tags: Default::default(),
+        container: Default::default(),
     });
 
     let blob = encode_snapshot(&snap);

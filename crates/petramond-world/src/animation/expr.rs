@@ -162,7 +162,10 @@ impl Expr {
         };
         parser.ternary()?;
         if parser.at != parser.tokens.len() {
-            return Err(format!("`{source}`: unexpected {:?}", parser.tokens[parser.at]));
+            return Err(format!(
+                "`{source}`: unexpected {:?}",
+                parser.tokens[parser.at]
+            ));
         }
         let expr = Expr {
             ops: parser.ops.into_boxed_slice(),
@@ -260,7 +263,11 @@ impl Expr {
                     match state.get_mut(slot..slot + s.slots()) {
                         Some(state) => advance(s, &args, state, dt),
                         None => {
-                            debug_assert!(false, "state slot {slot} past the reserved {}", state.len());
+                            debug_assert!(
+                                false,
+                                "state slot {slot} past the reserved {}",
+                                state.len()
+                            );
                             0.0
                         }
                     }
@@ -416,14 +423,17 @@ fn tokenize(src: &str) -> Result<Vec<Token>, String> {
         let c = bytes[i] as char;
         if c.is_whitespace() {
             i += 1;
-        } else if c.is_ascii_digit() || (c == '.' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit)) {
+        } else if c.is_ascii_digit()
+            || (c == '.' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
+        {
             let start = i;
             while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
                 i += 1;
             }
             let text = &src[start..i];
             out.push(Token::Num(
-                text.parse().map_err(|_| format!("`{src}`: bad number `{text}`"))?,
+                text.parse()
+                    .map_err(|_| format!("`{src}`: bad number `{text}`"))?,
             ));
         } else if c.is_ascii_alphabetic() || c == '_' {
             let start = i;
@@ -457,7 +467,9 @@ fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             i += 1;
         } else if let Some(op) = OPS.iter().find(|op| src[i..].starts_with(**op)) {
             if matches!(*op, "=" | "&") {
-                return Err(format!("`{src}`: `{op}` is not an operator (use `==` / `&&`)"));
+                return Err(format!(
+                    "`{src}`: `{op}` is not an operator (use `==` / `&&`)"
+                ));
             }
             out.push(Token::Op(op));
             i += op.len();
@@ -574,7 +586,8 @@ impl Parser<'_> {
                 "true" => self.ops.push(Op::Const(1.0)),
                 "false" => self.ops.push(Op::Const(0.0)),
                 _ => {
-                    let slot = (self.resolve)(&name).ok_or_else(|| format!("unknown input `{name}`"))?;
+                    let slot =
+                        (self.resolve)(&name).ok_or_else(|| format!("unknown input `{name}`"))?;
                     self.ops.push(Op::Var(slot));
                 }
             },

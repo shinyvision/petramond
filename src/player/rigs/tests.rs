@@ -59,13 +59,31 @@ fn a_broken_row_or_a_second_rig_for_a_presenter_is_refused_alone() {
     let names: Vec<&str> = rigs.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, ["a_body", "e_view"], "{errors:?}");
     assert_eq!(errors.len(), 3, "{errors:?}");
-    assert!(errors[0].starts_with("b_body") && errors[0].contains("presenter"), "{}", errors[0]);
-    assert!(errors[1].starts_with("c_view") && errors[1].contains("left_hand"), "{}", errors[1]);
-    assert!(errors[2].starts_with("d_view") && errors[2].contains("potion"), "{}", errors[2]);
+    assert!(
+        errors[0].starts_with("b_body") && errors[0].contains("presenter"),
+        "{}",
+        errors[0]
+    );
+    assert!(
+        errors[1].starts_with("c_view") && errors[1].contains("left_hand"),
+        "{}",
+        errors[1]
+    );
+    assert!(
+        errors[2].starts_with("d_view") && errors[2].contains("potion"),
+        "{}",
+        errors[2]
+    );
 
     let m = model();
     let body = &rigs[0];
-    assert_eq!(body.grips, [m.bone_named("left_item").unwrap(), m.bone_named("right_item").unwrap()]);
+    assert_eq!(
+        body.grips,
+        [
+            m.bone_named("left_item").unwrap(),
+            m.bone_named("right_item").unwrap()
+        ]
+    );
     assert_eq!(body.camera, m.bone_named("camera"));
     assert_eq!(body.twist, [m.bone_named("body").unwrap()]);
 }

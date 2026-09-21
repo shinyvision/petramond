@@ -359,6 +359,8 @@ pub(super) fn new_renderer_inner(
     );
 
     Renderer {
+        ghosts: Default::default(),
+        selection: Default::default(),
         surface,
         device,
         queue,

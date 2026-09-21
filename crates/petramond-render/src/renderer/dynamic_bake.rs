@@ -130,6 +130,8 @@ impl Renderer {
             all: &self.item_entity.block_draws,
             visible: &visible_draws,
             origin: render_origin,
+            time: self.view.visual_time,
+            eye: self.view.cam_pos.relative_to(render_origin),
         };
         let visible = &self.item_entity.visible;
         self.item_entity.draw.bake(
@@ -271,17 +273,29 @@ impl Renderer {
             }
         }
         let (device, queue) = (&self.device, &self.queue);
+        let mut mob_held = Vec::new();
         for g in &mut self.actor.mob_gpu {
             let model = g.model;
             let scale = g.scale;
             let visible = &g.visible;
+            let rig = &g.rig;
             g.draw.bake(
                 device,
                 queue,
                 &mut g.verts,
                 &mut g.indices,
                 |verts, indices| {
-                    build_mob_instances(model, scale, env, visible, render_origin, verts, indices)
+                    build_mob_instances(
+                        model,
+                        scale,
+                        env,
+                        visible,
+                        render_origin,
+                        verts,
+                        indices,
+                        &mut mob_held,
+                        rig,
+                    )
                 },
             );
         }
@@ -327,23 +341,25 @@ impl Renderer {
         // borrow them alongside `self` reads (restored after the uploads).
         let mut body_verts = std::mem::take(&mut self.actor.player_gpu.verts);
         let mut body_indices = std::mem::take(&mut self.actor.player_gpu.indices);
-        let mut sprite_verts = std::mem::take(&mut self.actor.item_verts);
-        let mut sprite_indices = std::mem::take(&mut self.actor.item_indices);
-        let mut model_verts = std::mem::take(&mut self.actor.model_item_verts);
-        let mut model_indices = std::mem::take(&mut self.actor.model_item_indices);
-        let mut block_verts = std::mem::take(&mut self.item_entity.verts);
-        let mut block_indices = std::mem::take(&mut self.item_entity.indices);
+        let mut streams = HeldStreams {
+            sprite_verts: std::mem::take(&mut self.actor.item_verts),
+            sprite_indices: std::mem::take(&mut self.actor.item_indices),
+            model_verts: std::mem::take(&mut self.actor.model_item_verts),
+            model_indices: std::mem::take(&mut self.actor.model_item_indices),
+            block_verts: std::mem::take(&mut self.item_entity.verts),
+            block_indices: std::mem::take(&mut self.item_entity.indices),
+            sprite_scratch: std::mem::take(&mut self.actor.sprite_verts),
+        };
         let mut scratch_verts = std::mem::take(&mut self.actor.body_verts);
         let mut scratch_indices = std::mem::take(&mut self.actor.body_indices);
-        let mut sprite_scratch = std::mem::take(&mut self.actor.sprite_verts);
         body_verts.clear();
         body_indices.clear();
-        sprite_verts.clear();
-        sprite_indices.clear();
-        model_verts.clear();
-        model_indices.clear();
-        block_verts.clear();
-        block_indices.clear();
+        streams.sprite_verts.clear();
+        streams.sprite_indices.clear();
+        streams.model_verts.clear();
+        streams.model_indices.clear();
+        streams.block_verts.clear();
+        streams.block_indices.clear();
         let body_rig = petramond::player::rigs::presented(petramond::player::Presenter::Body)
             .map(|(_, rig)| rig);
         let dt = self.hand.frame_dt;
@@ -377,7 +393,11 @@ impl Renderer {
             .iter()
             .any(|b| b.key == crate::player_model::LOCAL_BODY);
         if !local_drawn {
-            if let Some(animator) = self.actor.body_animators.body(crate::player_model::LOCAL_BODY) {
+            if let Some(animator) = self
+                .actor
+                .body_animators
+                .body(crate::player_model::LOCAL_BODY)
+            {
                 animator.advance(
                     self.actor.player_view.as_ref(),
                     self.hand.frames.as_ref(),
@@ -436,88 +456,40 @@ impl Renderer {
                 } else {
                     crate::player_model::Grip::body(hand_mat)
                 };
-                let item = (!inst.sleeping).then_some(view.item).flatten();
-                match item.map(|it| it.render_kind()) {
-                    Some(petramond_world::item::ItemRenderKind::BlockCube(block)) => {
-                        let m = if off_side {
-                            crate::player_model::held_block_off_at(grip)
-                        } else {
-                            crate::player_model::held_block_at(grip)
-                        };
-                        let start = block_verts.len();
-                        if block == petramond_world::block::Block::Chest {
-                            crate::chest_model::push_chest_item(
-                                &mut block_verts,
-                                &mut block_indices,
-                                glam::Vec3::splat(-0.5),
-                                1.0,
-                                light,
-                            );
-                        } else {
-                            crate::item_cube::push_block_item_cube_lit_with_state(
-                                &mut block_verts,
-                                &mut block_indices,
-                                block,
-                                view.block_state,
-                                glam::Vec3::splat(-0.5),
-                                1.0,
-                                light,
-                                false,
-                            );
-                        }
-                        // Instance-data tint on the held mini-cube (dyed wool
-                        // in a remote or third-person hand).
-                        crate::item_model::dye_block_verts(&mut block_verts[start..], view.variant);
-                        crate::player_model::transform_positions(
-                            block_verts[start..].iter_mut().map(|v| &mut v.pos),
-                            m,
-                        );
-                    }
-                    Some(petramond_world::item::ItemRenderKind::Sprite(tile)) => {
-                        // The extrusion clears its buffer and emits a non-indexed
-                        // triangle list; transform in place, then append with
-                        // sequential offset indices to ride the indexed draw.
-                        let m = if off_side {
-                            crate::player_model::held_sprite_off_at(grip)
-                        } else {
-                            crate::player_model::held_sprite_at(grip)
-                        };
-                        let count = crate::item_model::build_extruded_stack_lit(
-                            tile,
-                            view.variant,
-                            light,
-                            env,
-                            &mut sprite_scratch,
-                        );
-                        crate::player_model::transform_positions(
-                            sprite_scratch.iter_mut().map(|v| &mut v.pos),
-                            m,
-                        );
-                        let base = sprite_verts.len() as u32;
-                        sprite_verts.extend_from_slice(&sprite_scratch);
-                        sprite_indices.extend((0..count).map(|i| i + base));
-                    }
-                    Some(petramond_world::item::ItemRenderKind::Model(kind)) => {
-                        // Appends with absolute indices into the shared buffer.
-                        let m = if off_side {
-                            crate::player_model::held_model_off_at(grip, kind)
-                        } else {
-                            crate::player_model::held_model_at(grip, kind)
-                        };
-                        crate::item_model::build_block_model_item(
-                            kind,
-                            m,
-                            light,
-                            env,
-                            None,
-                            &mut model_verts,
-                            &mut model_indices,
-                        );
-                    }
-                    None => {}
-                }
+                let Some(item) = (!inst.sleeping).then_some(view.item).flatten() else {
+                    continue;
+                };
+                streams.push(
+                    item,
+                    view.variant,
+                    view.block_state,
+                    grip,
+                    off_side,
+                    light,
+                    env,
+                );
             }
         }
+        for held in mob_held {
+            streams.push(
+                held.item,
+                petramond_world::item::VariantId::NONE,
+                petramond_world::block_state::HeldBlockState::None,
+                held.grip,
+                held.off_side,
+                held.light,
+                env,
+            );
+        }
+        let HeldStreams {
+            mut block_verts,
+            mut block_indices,
+            mut sprite_verts,
+            mut sprite_indices,
+            sprite_scratch,
+            mut model_verts,
+            mut model_indices,
+        } = streams;
         // Edges, consumed by this bake: a redraw before the next
         // `set_local_animator` must not fire them again.
         self.hand.local_events.clear();
@@ -643,5 +615,111 @@ impl Renderer {
                 build_entity_shadows(&shadows, render_origin, verts)
             });
         self.shadow.instances = shadows;
+    }
+}
+
+/// The combined held-item streams of one frame, one per render kind, shared
+/// by every body and mob holding something.
+struct HeldStreams {
+    block_verts: Vec<petramond_mesh::Vertex>,
+    block_indices: Vec<u32>,
+    sprite_verts: Vec<ItemVertex>,
+    sprite_indices: Vec<u32>,
+    sprite_scratch: Vec<ItemVertex>,
+    model_verts: Vec<ItemVertex>,
+    model_indices: Vec<u32>,
+}
+
+impl HeldStreams {
+    /// Append one held item seated at `grip` (the off-hand twins mirror it).
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &mut self,
+        item: petramond_world::item::ItemType,
+        variant: petramond_world::item::VariantId,
+        block_state: petramond_world::block_state::HeldBlockState,
+        grip: crate::player_model::Grip,
+        off_side: bool,
+        light: crate::lighting::DynLight,
+        env: crate::lighting::LightEnv,
+    ) {
+        match item.render_kind() {
+            petramond_world::item::ItemRenderKind::BlockCube(block) => {
+                let m = if off_side {
+                    crate::player_model::held_block_off_at(grip)
+                } else {
+                    crate::player_model::held_block_at(grip)
+                };
+                let start = self.block_verts.len();
+                if block == petramond_world::block::Block::Chest {
+                    crate::chest_model::push_chest_item(
+                        &mut self.block_verts,
+                        &mut self.block_indices,
+                        glam::Vec3::splat(-0.5),
+                        1.0,
+                        light,
+                    );
+                } else {
+                    crate::item_cube::push_block_item_cube_lit_with_state(
+                        &mut self.block_verts,
+                        &mut self.block_indices,
+                        block,
+                        block_state,
+                        glam::Vec3::splat(-0.5),
+                        1.0,
+                        light,
+                        false,
+                    );
+                }
+                // Instance-data tint on the held mini-cube (dyed wool in a
+                // remote or third-person hand).
+                crate::item_model::dye_block_verts(&mut self.block_verts[start..], variant);
+                crate::player_model::transform_positions(
+                    self.block_verts[start..].iter_mut().map(|v| &mut v.pos),
+                    m,
+                );
+            }
+            petramond_world::item::ItemRenderKind::Sprite(tile) => {
+                // The extrusion clears its buffer and emits a non-indexed
+                // triangle list; transform in place, then append with
+                // sequential offset indices to ride the indexed draw.
+                let m = if off_side {
+                    crate::player_model::held_sprite_off_at(grip)
+                } else {
+                    crate::player_model::held_sprite_at(grip)
+                };
+                let count = crate::item_model::build_extruded_stack_lit(
+                    tile,
+                    variant,
+                    light,
+                    env,
+                    &mut self.sprite_scratch,
+                );
+                crate::player_model::transform_positions(
+                    self.sprite_scratch.iter_mut().map(|v| &mut v.pos),
+                    m,
+                );
+                let base = self.sprite_verts.len() as u32;
+                self.sprite_verts.extend_from_slice(&self.sprite_scratch);
+                self.sprite_indices.extend((0..count).map(|i| i + base));
+            }
+            petramond_world::item::ItemRenderKind::Model(kind) => {
+                // Appends with absolute indices into the shared buffer.
+                let m = if off_side {
+                    crate::player_model::held_model_off_at(grip, kind)
+                } else {
+                    crate::player_model::held_model_at(grip, kind)
+                };
+                crate::item_model::build_block_model_item(
+                    kind,
+                    m,
+                    light,
+                    env,
+                    None,
+                    &mut self.model_verts,
+                    &mut self.model_indices,
+                );
+            }
+        }
     }
 }

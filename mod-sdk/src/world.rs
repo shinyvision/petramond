@@ -24,6 +24,16 @@ host_fn! {
 }
 
 host_fn! {
+    /// The world's change log from entry `since` on: every cell announced
+    /// changed (a block, a fluid, a door's swing). `None` asks only where the
+    /// log stands. Pass the reply's `next` as the following `since`; `lost`
+    /// means entries are gone and every cell may have changed. Streaming is
+    /// not a change, and the numbering is a session's: never save it.
+    pub fn block_changes_since(since: Option<u64>) -> mod_api::BlockChanges
+        => BlockChangesSince { since } => BlockChanges
+}
+
+host_fn! {
     /// Every cell in the INCLUSIVE box `min..=max` currently holding one of
     /// `blocks`, resolved host-side in one scan — the neighbourhood-search
     /// primitive ("is there a filled trough near this mob", "where is the

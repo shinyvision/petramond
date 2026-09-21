@@ -267,6 +267,51 @@
       },
       "tags": [],
       "block": "farming:trough"
+    },
+    {
+      "patch": "petramond:creative/farming:farmland_dry",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Farmland"
+        }
+      }
+    },
+    {
+      "patch": "petramond:creative/farming:farmland_fertile_dry",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Fertile Farmland"
+        }
+      }
+    },
+    {
+      "patch": "petramond:creative/farming:wild_wheat",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Wild Wheat"
+        }
+      }
+    },
+    {
+      "patch": "petramond:creative/farming:wild_carrots",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Wild Carrots"
+        }
+      }
+    },
+    {
+      "patch": "petramond:creative/farming:wild_potatoes",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Wild Potatoes"
+        }
+      }
     }
   ]
 }

@@ -24,18 +24,6 @@ use petramond::entity::hash01;
 /// White (no tint): the multiply identity for a fleck cut from an untinted tile.
 const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
 
-/// Foliage tint for a fleck cut from `tile`, mirroring the out-of-world tile
-/// classification (the atlas manifest's `icon_tint`, defaulting to its in-world
-/// `tint`) so a fleck of grass-top / short-grass / fern reads green and a fleck
-/// of any leaf tile reads foliage-green; every other tile (dirt, stone, the
-/// pre-baked grass-block *side*, logs, water, ...) stays untinted (white = no
-/// change under the particle shader's multiply).
-///
-/// Render-agnostic on purpose: it uses only the low-level [`Tile`] / [`Biome`]
-/// data — never `petramond_render` (see the module-level rule) — and, like the
-/// icon/held-item path, picks the fixed temperate Plains colours since a fleck
-/// has no biome context.
-#[inline]
 /// Fold a cell's raw `petramond:tint` bytes into a fleck tint (multiply).
 fn mul_kv_tint(tint: [f32; 3], kv: Option<[u8; 3]>) -> [f32; 3] {
     match kv {
@@ -48,6 +36,18 @@ fn mul_kv_tint(tint: [f32; 3], kv: Option<[u8; 3]>) -> [f32; 3] {
     }
 }
 
+/// Foliage tint for a fleck cut from `tile`, mirroring the out-of-world tile
+/// classification (the atlas manifest's `icon_tint`, defaulting to its in-world
+/// `tint`) so a fleck of grass-top / short-grass / fern reads green and a fleck
+/// of any leaf tile reads foliage-green; every other tile (dirt, stone, the
+/// pre-baked grass-block *side*, logs, water, ...) stays untinted (white = no
+/// change under the particle shader's multiply).
+///
+/// Render-agnostic on purpose: it uses only the low-level [`Tile`] / [`Biome`]
+/// data — never `petramond_render` (see the module-level rule) — and, like the
+/// icon/held-item path, picks the fixed temperate Plains colours since a fleck
+/// has no biome context.
+#[inline]
 fn tile_tint(tile: Tile) -> [f32; 3] {
     match tile.icon_tint() {
         Some(petramond_world::tile::TileTint::Grass) => Biome::Plains.grass_color(),
@@ -60,13 +60,22 @@ fn tile_tint(tile: Tile) -> [f32; 3] {
 /// Downward acceleration on particles, m/s². Lighter than item gravity so dust
 /// hangs a touch longer.
 const PARTICLE_GRAVITY: f32 = -12.0;
-/// Fraction of the tile a particle's UV sub-patch covers (a 4×4 texel fleck on a
-/// 16px tile). Kept well inside the tile so a patch never spills past the edge.
-const PATCH_FRAC: f32 = 0.25;
-/// World-space size (edge length) of a particle quad, in metres.
-const PARTICLE_SIZE: f32 = 0.1;
 /// Fraction of lifetime over which a particle fades out at the end.
 const FADE_TAIL: f32 = 0.4;
+
+/// What a particle is cut from.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ParticleSource {
+    /// Nothing: a flat alpha-blended cube of the particle's tint (a splash
+    /// droplet), drawn with the looping-emitter particles.
+    Solid,
+    /// A sub-patch of a BLOCK-atlas tile, in `[0, 1]` tile fractions. `dyed`
+    /// samples the tile's dye-base twin for a fleck carrying a cell tint.
+    Tile { tile: Tile, dyed: bool },
+    /// A bbmodel block's own texture: absolute MODEL-atlas coords, so a broken
+    /// workbench throws workbench flecks.
+    Model(BlockModelKind),
+}
 
 /// One terrain particle: a tiny textured quad sampling a sub-patch of `tile`.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -79,16 +88,9 @@ pub struct Particle {
     /// 6-bit COLOURED block light, re-sampled alongside `skylight` —
     /// night-invariant, so a fleck near a coloured lamp takes its hue.
     pub blocklight: petramond_world::light::BlockLight6,
-    /// Block face tile this fleck is cut from (BLOCK-atlas flecks). Ignored when
-    /// [`model`](Self::model) is set — a bbmodel block has no block-atlas tile, so its
-    /// flecks sample the model atlas instead.
-    pub tile: Tile,
-    /// `Some(kind)` for a bbmodel block's fleck: it samples the MODEL atlas (the block's
-    /// own texture) rather than `tile` in the block atlas, so a broken workbench throws
-    /// workbench flecks, not the crafting-table placeholder. `None` = an ordinary
-    /// block-atlas fleck. For a model fleck `uv_min`/`uv_size` are ABSOLUTE model-atlas
-    /// coords (resolved at spawn via [`block_model::particle_patch`]).
-    pub model: Option<BlockModelKind>,
+    /// What the particle is cut from; decides the atlas it samples and what
+    /// `uv_min`/`uv_size` mean.
+    pub source: ParticleSource,
     /// Sub-tile patch origin in `[0, 1]` tile fractions (bottom-left) for a block fleck;
     /// the absolute model-atlas min for a model fleck.
     pub uv_min: [f32; 2],
@@ -99,16 +101,9 @@ pub struct Particle {
     /// RGB tint multiplied into the fleck's atlas colour (foliage-green for a
     /// fleck cut from a grass/leaf tile, white otherwise). Classified per-fleck
     /// from [`tile`](Self::tile) so e.g. grass-top dust is green but the
-    /// grass-block side/dirt dust is not. For a [`solid`](Self::solid) particle
-    /// this IS the color.
+    /// grass-block side/dirt dust is not. For a [`ParticleSource::Solid`]
+    /// particle this IS the color.
     pub tint: [f32; 3],
-    /// A SOLID-COLOR particle (an emitter burst — water splash): it samples no
-    /// atlas and presents [`tint`](Self::tint) as an alpha-blended cube through
-    /// the same pass as looping-emitter particles, instead of a cutout fleck.
-    pub solid: bool,
-    /// Sample the tile's dye-base twin (the fleck carries a `petramond:tint`
-    /// multiply — see the atlas's dye-base half). Block flecks only.
-    pub dyed: bool,
     /// Destroyed the instant it touches a collision box OR a fluid, instead of
     /// settling on solids like terrain dust (burst rows opt in — a splash
     /// droplet vanishes into the pool it fell out of).
@@ -133,14 +128,14 @@ impl Particle {
         // A model fleck already carries absolute model-atlas coords, inset at scan
         // time (the render side binds the model atlas for these); a block fleck maps
         // its sub-patch into the block atlas tile rect.
-        if self.model.is_some() {
+        let ParticleSource::Tile { tile, dyed } = self.source else {
             return (self.uv_min, self.uv_size);
-        }
-        let [u0, v0, u1, v1] = atlas::tile_uv(self.tile);
+        };
+        let [u0, v0, u1, v1] = atlas::tile_uv(tile);
         let tw = u1 - u0;
         let th = v1 - v0;
         // A dyed fleck samples the tile's dye-base twin (half a texture down).
-        let dye = if self.dyed { atlas::DYE_V_OFFSET } else { 0.0 };
+        let dye = if dyed { atlas::DYE_V_OFFSET } else { 0.0 };
         // Half a texel in tile fractions; `span` maps `[0, 1]` into the inset rect.
         let inset = 0.5 / atlas::TILE as f32;
         let span = 1.0 - 2.0 * inset;
@@ -320,270 +315,71 @@ impl ParticleSystem {
         hash01(self.seed)
     }
 
-    /// The face tile to fleck for `block`: top tile for an up/down face, side
-    /// tile otherwise. `tiles()` is `[top, bottom, side]`.
-    #[inline]
-    fn face_tile(block: Block, face_normal: IVec3) -> Tile {
-        let t = block.tiles();
-        if face_normal.y > 0 {
-            t[0] // top
-        } else if face_normal.y < 0 {
-            t[1] // bottom
-        } else {
-            t[2] // side
-        }
-    }
-
-    /// Emit a small random sub-patch origin keeping the patch inside the tile.
-    #[inline]
-    fn patch_min(&mut self) -> [f32; 2] {
-        let span = 1.0 - PATCH_FRAC;
-        [self.rand() * span, self.rand() * span]
-    }
-
-    /// Mining face dust: 2–4 flecks spat off the mined face, drifting outward
-    /// along the hit normal and falling under gravity. Lifetime 0.5–1.5 s.
-    ///
-    /// Test-only full-bright shorthand; live code calls [`spawn_mining_lit`] /
-    /// [`spawn_mining_model`] with sampled render light.
-    ///
-    /// [`spawn_mining_lit`]: Self::spawn_mining_lit
-    /// [`spawn_mining_model`]: Self::spawn_mining_model
-    #[cfg(test)]
-    pub fn spawn_mining(&mut self, block_pos: IVec3, face_normal: IVec3, block: Block) {
-        self.spawn_mining_lit(
-            block_pos,
-            face_normal,
-            block,
-            63,
-            petramond_world::light::BlockLight6::DARK,
-            None,
-        );
-    }
-
-    /// Same as `spawn_mining`, with caller-provided render
-    /// light (6-bit, coloured); both are re-sampled each tick.
-    pub fn spawn_mining_lit(
-        &mut self,
-        block_pos: IVec3,
-        face_normal: IVec3,
-        block: Block,
-        skylight: u8,
-        blocklight: petramond_world::light::BlockLight6,
-        kv_tint: Option<[u8; 3]>,
-    ) {
-        let tile = Self::face_tile(block, face_normal);
-        // Tint by the sampled face tile (a top-face grass fleck greens; the side does not),
-        // multiplied by the cell's `petramond:tint` (dyed wool dust matches the block).
-        let tint = mul_kv_tint(tile_tint(tile), kv_tint);
-        let n = Vec3::new(
-            face_normal.x as f32,
-            face_normal.y as f32,
-            face_normal.z as f32,
-        );
-        let count = 2 + (self.rand() * 3.0) as usize; // 2..=4 at full
-        let count = self.scaled_count(count);
-        let base = WorldPos::block_min(block_pos);
-        for _ in 0..count {
-            // Spawn just outside the mined face, jittered across it.
-            let face_center = base + Vec3::splat(0.5) + n * 0.55;
-            let jitter = Vec3::new(
-                (self.rand() - 0.5) * 0.6,
-                (self.rand() - 0.5) * 0.6,
-                (self.rand() - 0.5) * 0.6,
-            );
-            let pos = face_center + jitter;
-            let vel = n * (0.5 + self.rand() * 1.0)
-                + Vec3::new(
-                    (self.rand() - 0.5) * 1.0,
-                    self.rand() * 1.5,
-                    (self.rand() - 0.5) * 1.0,
-                );
-            let uv_min = self.patch_min();
-            let lifetime = 0.5 + self.rand() * 1.0;
-            self.push(Particle {
-                pos,
-                vel,
-                skylight: skylight.min(63),
-                blocklight,
-                tile,
-                model: None,
-                dyed: kv_tint.is_some(),
-                uv_min,
-                uv_size: [PATCH_FRAC; 2],
-                tint,
-                solid: false,
-                die_on_contact: false,
-                age: 0.0,
-                lifetime,
-                size: PARTICLE_SIZE,
-            });
-        }
-    }
-
-    /// Break burst: 16–32 flecks erupting from the block centre in all
-    /// directions. Lifetime 1–3 s. Mixes side/top tiles for visual variety.
-    ///
-    /// Test-only full-bright shorthand; live code calls [`spawn_break_burst_lit`] /
-    /// [`spawn_break_burst_model`] with sampled render light.
-    ///
-    /// [`spawn_break_burst_lit`]: Self::spawn_break_burst_lit
-    /// [`spawn_break_burst_model`]: Self::spawn_break_burst_model
-    #[cfg(test)]
-    pub fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
-        self.spawn_break_burst_lit(
-            block_pos,
-            block,
-            63,
-            petramond_world::light::BlockLight6::DARK,
-            None,
-        );
-    }
-
-    /// Same as `spawn_break_burst`, with caller-provided
-    /// render light (6-bit, coloured); both re-sampled each tick.
-    pub fn spawn_break_burst_lit(
-        &mut self,
-        block_pos: IVec3,
-        block: Block,
-        skylight: u8,
-        blocklight: petramond_world::light::BlockLight6,
-        kv_tint: Option<[u8; 3]>,
-    ) {
-        let tiles = block.tiles();
-        let center = WorldPos::block_center(block_pos);
-        let count = 16 + (self.rand() * 16.0) as usize; // 16..=31 at full
-        let count = self.scaled_count(count);
-        for _ in 0..count {
-            // Random point inside the block volume.
-            let pos = center
-                + Vec3::new(
-                    (self.rand() - 0.5) * 0.8,
-                    (self.rand() - 0.5) * 0.8,
-                    (self.rand() - 0.5) * 0.8,
-                );
-            // Outward velocity from the centre, plus an upward bias.
-            let dir = (pos - center).normalize_or_zero();
-            let speed = 1.0 + self.rand() * 2.5;
-            let vel = dir * speed + Vec3::new(0.0, 1.0 + self.rand() * 2.0, 0.0);
-            // Pick top vs side tile per fleck.
-            let tile = if self.rand() < 0.3 {
-                tiles[0]
-            } else {
-                tiles[2]
-            };
-            // Tint per-fleck by the chosen tile, so a grass-top fleck greens but a
-            // side/dirt fleck of the same block stays its raw atlas colour;
-            // the cell's `petramond:tint` multiplies on top (dyed wool).
-            let tint = mul_kv_tint(tile_tint(tile), kv_tint);
-            let uv_min = self.patch_min();
-            let lifetime = 1.0 + self.rand() * 2.0;
-            self.push(Particle {
-                pos,
-                vel,
-                skylight: skylight.min(63),
-                blocklight,
-                tile,
-                model: None,
-                dyed: kv_tint.is_some(),
-                uv_min,
-                uv_size: [PATCH_FRAC; 2],
-                tint,
-                solid: false,
-                die_on_contact: false,
-                age: 0.0,
-                lifetime,
-                size: PARTICLE_SIZE,
-            });
-        }
-    }
-
-    /// Break burst for a BBMODEL block (`kind`): the same 16–32-fleck eruption as
-    /// [`spawn_break_burst_lit`](Self::spawn_break_burst_lit), but every fleck samples an
-    /// opaque patch of the model's OWN texture (via [`block_model::particle_patch`]) so a
-    /// broken workbench throws workbench flecks, not the crafting-table placeholder.
-    pub fn spawn_break_burst_model(
-        &mut self,
-        block_pos: IVec3,
-        kind: BlockModelKind,
-        skylight: u8,
-        blocklight: petramond_world::light::BlockLight6,
-    ) {
-        let center = WorldPos::block_center(block_pos);
-        let count = 16 + (self.rand() * 16.0) as usize; // 16..=31 at full
-        let count = self.scaled_count(count);
-        for _ in 0..count {
-            let pos = center
-                + Vec3::new(
-                    (self.rand() - 0.5) * 0.8,
-                    (self.rand() - 0.5) * 0.8,
-                    (self.rand() - 0.5) * 0.8,
-                );
-            let dir = (pos - center).normalize_or_zero();
-            let speed = 1.0 + self.rand() * 2.5;
-            let vel = dir * speed + Vec3::new(0.0, 1.0 + self.rand() * 2.0, 0.0);
-            let lifetime = 1.0 + self.rand() * 2.0;
-            let patch_r = self.rand();
-            self.push(model_fleck(
-                kind, pos, vel, skylight, blocklight, lifetime, patch_r,
-            ));
-        }
-    }
-
-    /// One-shot emitter burst (a `particle_emitters.json` burst bundle — see
-    /// [`petramond_world::particle_emitters::BurstSpec`]): `count_per_intensity ×
-    /// intensity` solid-color cubes (capped) launched upward and outward in a
-    /// rough circle from `pos`, falling under gravity like every other
-    /// particle here. With `die_on_contact` they are destroyed the instant
-    /// they touch a collision box or a fluid.
-    pub fn spawn_emitter_burst(
+    /// One burst: the ONE way particles enter the system. The bundle row
+    /// (`spec`) owns how many there are and how they fly; `event` says where,
+    /// how hard, which way, and what they are cut from. Mining dust, a block
+    /// coming apart, a splash and a mod's burst differ only in their rows.
+    pub fn spawn_burst(
         &mut self,
         spec: &petramond_world::particle_emitters::BurstSpec,
-        pos: WorldPos,
-        intensity: f32,
-        skylight: u8,
-        blocklight: petramond_world::light::BlockLight6,
+        event: BurstEvent,
     ) {
-        let count = self.scaled_count(
-            ((spec.count_per_intensity * intensity.max(0.0)).round() as u32)
-                .clamp(1, spec.max_count) as usize,
-        );
+        let base = spec.count_per_intensity * event.intensity.max(0.0);
+        let count = (base * (1.0 + self.rand() * spec.count_spread)).round() as u32;
+        let count = self.scaled_count(count.max(1) as usize);
+        // The row's colour is the row's look: what an event names to be cut
+        // from keeps its own colours (grass flecks out of a brown burst).
+        let recolour = event.look == BurstLook::Row;
+        let look = match event.look {
+            BurstLook::Row => spec
+                .texture
+                .map_or(BurstLook::Row, |slice| BurstLook::Texture {
+                    slice,
+                    tint: NO_TINT,
+                }),
+            look => look,
+        };
+        let along = event.direction.map(|d| d.normalize_or_zero());
+        let pick = |range: [f32; 2], r: f32| range[0] + r * (range[1] - range[0]);
         for _ in 0..count {
+            let offset = Vec3::new(
+                (self.rand() - 0.5) * 2.0 * spec.spawn[0],
+                (self.rand() - 0.5) * 2.0 * spec.spawn[1],
+                (self.rand() - 0.5) * 2.0 * spec.spawn[2],
+            );
             let angle = self.rand() * std::f32::consts::TAU;
-            let radial =
-                spec.radial_speed[0] + self.rand() * (spec.radial_speed[1] - spec.radial_speed[0]);
-            let up = spec.up_speed[0] + self.rand() * (spec.up_speed[1] - spec.up_speed[0]);
-            let vel = Vec3::new(angle.cos() * radial, up, angle.sin() * radial);
+            let radial = pick(spec.radial_speed, self.rand());
+            let mut vel = Vec3::new(
+                angle.cos() * radial,
+                pick(spec.up_speed, self.rand()),
+                angle.sin() * radial,
+            );
+            vel += offset.normalize_or_zero() * pick(spec.outward_speed, self.rand());
+            if let Some(along) = along {
+                vel += along * pick(spec.along_speed, self.rand());
+            }
             // The bias skews the endpoint mix: >1 spends more draws near 0,
             // making the FIRST endpoint the prominent one.
             let mix = self.rand().powf(spec.color_bias);
-            let tint = [
-                spec.color[0][0] + (spec.color[1][0] - spec.color[0][0]) * mix,
-                spec.color[0][1] + (spec.color[1][1] - spec.color[0][1]) * mix,
-                spec.color[0][2] + (spec.color[1][2] - spec.color[0][2]) * mix,
-            ];
-            let lifetime = spec.lifetime[0] + self.rand() * (spec.lifetime[1] - spec.lifetime[0]);
-            let size = spec.size[0] + self.rand() * (spec.size[1] - spec.size[0]);
-            // A whisker of spawn jitter so the burst doesn't emanate from one
-            // mathematical point.
-            let jitter = Vec3::new(
-                (self.rand() - 0.5) * 0.3,
-                self.rand() * 0.1,
-                (self.rand() - 0.5) * 0.3,
-            );
+            let color: [f32; 3] = std::array::from_fn(|c| {
+                spec.color[0][c] + (spec.color[1][c] - spec.color[0][c]) * mix
+            });
+            let lifetime = pick(spec.lifetime, self.rand());
+            let size = pick(spec.size, self.rand());
+            let skin = self.skin(look, along, spec.patch);
             self.push(Particle {
-                pos: pos + jitter,
+                pos: event.pos + offset,
                 vel,
-                skylight: skylight.min(63),
-                blocklight,
-                // Atlas fields are inert for a solid particle.
-                tile: Tile::from_name("grass_top").unwrap(),
-                model: None,
-                dyed: false,
-                uv_min: [0.0, 0.0],
-                uv_size: [PATCH_FRAC; 2],
-                tint,
-                solid: true,
+                skylight: event.skylight.min(63),
+                blocklight: event.blocklight,
+                source: skin.source,
+                uv_min: skin.uv_min,
+                uv_size: skin.uv_size,
+                tint: if recolour {
+                    std::array::from_fn(|c| skin.tint[c] * color[c])
+                } else {
+                    skin.tint
+                },
                 die_on_contact: spec.die_on_contact,
                 age: 0.0,
                 lifetime,
@@ -592,81 +388,152 @@ impl ParticleSystem {
         }
     }
 
-    /// Mining-face dust for a BBMODEL block — the model counterpart of
-    /// [`spawn_mining_lit`](Self::spawn_mining_lit): 2–4 flecks spat off the mined face
-    /// drifting along its normal, sampling the model's own texture.
-    pub fn spawn_mining_model(
-        &mut self,
-        block_pos: IVec3,
-        face_normal: IVec3,
-        kind: BlockModelKind,
-        skylight: u8,
-        blocklight: petramond_world::light::BlockLight6,
-    ) {
-        let n = Vec3::new(
-            face_normal.x as f32,
-            face_normal.y as f32,
-            face_normal.z as f32,
-        );
-        let count = 2 + (self.rand() * 3.0) as usize; // 2..=4 at full
-        let count = self.scaled_count(count);
-        let base = WorldPos::block_min(block_pos);
-        for _ in 0..count {
-            let face_center = base + Vec3::splat(0.5) + n * 0.55;
-            let jitter = Vec3::new(
-                (self.rand() - 0.5) * 0.6,
-                (self.rand() - 0.5) * 0.6,
-                (self.rand() - 0.5) * 0.6,
-            );
-            let pos = face_center + jitter;
-            let vel = n * (0.5 + self.rand() * 1.0)
-                + Vec3::new(
-                    (self.rand() - 0.5) * 1.0,
-                    self.rand() * 1.5,
-                    (self.rand() - 0.5) * 1.0,
-                );
-            let lifetime = 0.5 + self.rand() * 1.0;
-            let patch_r = self.rand();
-            self.push(model_fleck(
-                kind, pos, vel, skylight, blocklight, lifetime, patch_r,
-            ));
+    /// What ONE particle of a burst shows.
+    fn skin(&mut self, look: BurstLook, along: Option<Vec3>, patch: f32) -> Skin {
+        match look {
+            BurstLook::Row => Skin {
+                source: ParticleSource::Solid,
+                uv_min: [0.0; 2],
+                uv_size: [patch; 2],
+                tint: NO_TINT,
+            },
+            BurstLook::Texture { slice, tint } => {
+                let [u0, v0, u1, v1] = slice.slice;
+                let size = [(u1 - u0) * patch, (v1 - v0) * patch];
+                let uv_min = [
+                    u0 + self.rand() * (u1 - u0 - size[0]),
+                    v0 + self.rand() * (v1 - v0 - size[1]),
+                ];
+                let base = tile_tint(slice.tile);
+                Skin {
+                    source: ParticleSource::Tile {
+                        tile: slice.tile,
+                        dyed: false,
+                    },
+                    uv_min,
+                    uv_size: size,
+                    tint: std::array::from_fn(|c| base[c] * tint[c]),
+                }
+            }
+            BurstLook::Block { block, kv_tint } => {
+                if let Some(kind) = block.model_kind() {
+                    let (uv_min, uv_size) = block_model::particle_patch(kind, self.rand());
+                    return Skin {
+                        source: ParticleSource::Model(kind),
+                        uv_min,
+                        uv_size,
+                        tint: NO_TINT,
+                    };
+                }
+                let tiles = block.tiles();
+                // Struck from one side, the flecks are that face's; coming
+                // apart whole, a mix of its top and sides.
+                let tile = match along {
+                    Some(d) if d.y.abs() >= d.x.abs().max(d.z.abs()) => {
+                        tiles[if d.y > 0.0 { 0 } else { 1 }]
+                    }
+                    Some(_) => tiles[2],
+                    None if self.rand() < 0.3 => tiles[0],
+                    None => tiles[2],
+                };
+                let span = 1.0 - patch;
+                Skin {
+                    source: ParticleSource::Tile {
+                        tile,
+                        dyed: kv_tint.is_some(),
+                    },
+                    uv_min: [self.rand() * span, self.rand() * span],
+                    uv_size: [patch; 2],
+                    // Per fleck, by its tile: grass-top dust greens, the dirt
+                    // side of the same block does not; a dyed cell multiplies.
+                    tint: mul_kv_tint(tile_tint(tile), kv_tint),
+                }
+            }
         }
     }
 }
 
-/// One model-texture fleck: resolves an opaque model-atlas patch for `kind` and builds
-/// the particle (no foliage tint — a model fleck carries its own texture). Free function
-/// (not a method) so a spawn can build it inside `push(...)` without a self-borrow clash.
-#[allow(clippy::too_many_arguments)]
-fn model_fleck(
-    kind: BlockModelKind,
-    pos: WorldPos,
-    vel: Vec3,
-    skylight: u8,
-    blocklight: petramond_world::light::BlockLight6,
-    lifetime: f32,
-    patch_r: f32,
-) -> Particle {
-    let (uv_min, uv_size) = block_model::particle_patch(kind, patch_r);
-    Particle {
-        pos,
-        vel,
-        skylight: skylight.min(63),
-        blocklight,
-        // `tile` is unused for a model fleck (the model atlas is sampled); a placeholder
-        // keeps the field populated.
-        tile: Tile::from_name("grass_top").unwrap(),
-        model: Some(kind),
-        dyed: false,
-        uv_min,
-        uv_size,
-        tint: NO_TINT,
-        solid: false,
-        die_on_contact: false,
-        age: 0.0,
-        lifetime,
-        size: PARTICLE_SIZE,
+/// The engine's own burst rows: what a struck block sheds, and a broken one.
+pub const BLOCK_DUST: &str = "petramond:block_dust";
+pub const BLOCK_BREAK: &str = "petramond:block_break";
+
+/// What a burst's particles are cut from.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum BurstLook {
+    /// The bundle row's own: its texture slice, else flat cubes of its colour.
+    Row,
+    /// Patches of a slice of an atlas tile, multiplied by `tint`.
+    Texture {
+        slice: petramond_world::particle_emitters::TextureSlice,
+        tint: [f32; 3],
+    },
+    /// A block's own look: per particle one of its face tiles, or its model's
+    /// texture, tinted as the block is (`kv_tint` = its cell's dye).
+    Block {
+        block: Block,
+        kv_tint: Option<[u8; 3]>,
+    },
+}
+
+/// One firing of a burst row.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BurstEvent {
+    pub pos: WorldPos,
+    pub intensity: f32,
+    /// Which way the event pushes (a struck face's normal), for rows with an
+    /// `along_speed`.
+    pub direction: Option<Vec3>,
+    pub look: BurstLook,
+    pub skylight: u8,
+    pub blocklight: petramond_world::light::BlockLight6,
+}
+
+impl BurstEvent {
+    /// A block struck on the face `normal`: just outside that face, pushed
+    /// along it.
+    pub fn struck(
+        cell: IVec3,
+        normal: IVec3,
+        block: Block,
+        kv_tint: Option<[u8; 3]>,
+        skylight: u8,
+        blocklight: petramond_world::light::BlockLight6,
+    ) -> Self {
+        let n = normal.as_vec3();
+        Self {
+            pos: WorldPos::block_center(cell) + n * 0.55,
+            intensity: 1.0,
+            direction: Some(n),
+            look: BurstLook::Block { block, kv_tint },
+            skylight,
+            blocklight,
+        }
     }
+
+    /// A block coming apart where it stood.
+    pub fn broken(
+        cell: IVec3,
+        block: Block,
+        kv_tint: Option<[u8; 3]>,
+        skylight: u8,
+        blocklight: petramond_world::light::BlockLight6,
+    ) -> Self {
+        Self {
+            pos: WorldPos::block_center(cell),
+            intensity: 1.0,
+            direction: None,
+            look: BurstLook::Block { block, kv_tint },
+            skylight,
+            blocklight,
+        }
+    }
+}
+
+struct Skin {
+    source: ParticleSource,
+    uv_min: [f32; 2],
+    uv_size: [f32; 2],
+    tint: [f32; 3],
 }
 
 impl Default for ParticleSystem {

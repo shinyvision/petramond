@@ -201,10 +201,11 @@ impl PaintCtx<'_> {
                 let text = inst.text.as_deref().unwrap_or("");
                 // A bound palette entry outranks the style — the colour IS
                 // state — but never the disabled face.
-                let color = match inst.palette.as_deref() {
+                let mut color = match inst.palette.as_deref() {
                     Some(key) if inst.enabled => text_color(key),
                     _ => label_color(part, inst.enabled),
                 };
+                color[3] *= inst.text_opacity;
                 if *scale > 1 {
                     p.text_scaled(text, rect.x, rect.y, *scale, color, clip);
                 } else if *small && *wrap {

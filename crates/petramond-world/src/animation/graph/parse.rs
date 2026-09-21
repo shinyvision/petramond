@@ -18,11 +18,15 @@ const DOC_KEYS: &[&str] = &[
     "params", "events", "slots", "masks", "markers", "gates", "layers", "rules",
 ];
 const LAYER_KEYS: &[&str] = &["name", "mode", "weight", "mask"];
-const KINDS: &[&str] = &["clip", "blend", "states", "layers", "slot", "bones", "mirror"];
+const KINDS: &[&str] = &[
+    "clip", "blend", "states", "layers", "slot", "bones", "mirror",
+];
 
 pub(super) fn compile(source: &str, rig: &Model, clips: ClipLibrary) -> Result<Graph, String> {
     let doc: Value = serde_json::from_str(source).map_err(|e| format!("json: {e}"))?;
-    let root = doc.as_object().ok_or("an animator graph is a JSON object")?;
+    let root = doc
+        .as_object()
+        .ok_or("an animator graph is a JSON object")?;
     only_keys(root, DOC_KEYS, "graph")?;
 
     let mut c = Compiler {
@@ -34,7 +38,12 @@ pub(super) fn compile(source: &str, rig: &Model, clips: ClipLibrary) -> Result<G
         masks: Vec::new(),
         mask_names: FxHashMap::default(),
         vars: FxHashMap::default(),
-        layout: VarLayout { events: 0, slots: 0, builtins: 0, len: 0 },
+        layout: VarLayout {
+            events: 0,
+            slots: 0,
+            builtins: 0,
+            len: 0,
+        },
         exprs: Vec::new(),
         expr_state: 0,
         nodes: Vec::new(),
@@ -90,7 +99,10 @@ pub(super) fn compile(source: &str, rig: &Model, clips: ClipLibrary) -> Result<G
         nodes,
         root: root_node,
         rules,
-        gates: gates.into_iter().map(|gate| Gate { when: gate.when }).collect(),
+        gates: gates
+            .into_iter()
+            .map(|gate| Gate { when: gate.when })
+            .collect(),
         templates,
         marker_events,
         vars: layout,
@@ -158,7 +170,12 @@ impl Compiler<'_> {
             return Err("graph: too many params, events and slots".into());
         }
         let mut names: Vec<(String, usize)> = Vec::new();
-        names.extend(self.params.iter().enumerate().map(|(i, (n, _))| (n.clone(), i)));
+        names.extend(
+            self.params
+                .iter()
+                .enumerate()
+                .map(|(i, (n, _))| (n.clone(), i)),
+        );
         names.extend(
             self.events
                 .iter()
@@ -208,7 +225,11 @@ impl Compiler<'_> {
                     .ok_or_else(|| format!("{path}: no mask named `{name}`"))
             }
             Value::Object(listed) => listed,
-            _ => return Err(format!("{path}: expected a mask name or {{ bone: weight }}")),
+            _ => {
+                return Err(format!(
+                    "{path}: expected a mask name or {{ bone: weight }}"
+                ))
+            }
         };
         let bones = self.rig.bones();
         let mut weights: FxHashMap<usize, f32> = FxHashMap::default();
@@ -268,7 +289,9 @@ impl Compiler<'_> {
                     .map_err(|e| format!("{path}: {e}"))?
             }
             Some(other) => {
-                return Err(format!("{path}: expected a number or a formula, found {other}"))
+                return Err(format!(
+                    "{path}: expected a number or a formula, found {other}"
+                ))
             }
         };
         self.expr_state += expr.state_slots();
@@ -298,11 +321,20 @@ impl Compiler<'_> {
     fn clip_node(&mut self, clip: ClipId, time: ClipTime, looping: bool) -> NodeId {
         let clock = self.clip_nodes;
         self.clip_nodes += 1;
-        self.push(Node::Clip(ClipNode { clip, time, looping, clock }))
+        self.push(Node::Clip(ClipNode {
+            clip,
+            time,
+            looping,
+            clock,
+        }))
     }
 
     fn node_object(&mut self, o: &Obj, extra: &[&str], path: &str) -> Result<NodeId, String> {
-        let kinds: Vec<&str> = KINDS.iter().copied().filter(|k| o.contains_key(*k)).collect();
+        let kinds: Vec<&str> = KINDS
+            .iter()
+            .copied()
+            .filter(|k| o.contains_key(*k))
+            .collect();
         let kind = match kinds.as_slice() {
             [kind] => *kind,
             [] => return Err(format!("{path}: a node needs one of: {}", KINDS.join(", "))),
@@ -328,7 +360,11 @@ impl Compiler<'_> {
             "layers" => self.layers(&o["layers"], &format!("{path}.layers")),
             "slot" => {
                 let slot = self.slot(o.get("slot"), &format!("{path}.slot"))?;
-                if self.nodes.iter().any(|n| matches!(n, Node::Slot(s) if *s == slot)) {
+                if self
+                    .nodes
+                    .iter()
+                    .any(|n| matches!(n, Node::Slot(s) if *s == slot))
+                {
                     return Err(format!(
                         "{path}.slot: `{}` already plays in another node",
                         self.slots[slot.index()]
@@ -355,7 +391,9 @@ impl Compiler<'_> {
             .filter(|k| o.contains_key(**k))
             .count();
         if timings > 1 {
-            return Err(format!("{path}: a clip takes one of `rate`, `time` or `progress`"));
+            return Err(format!(
+                "{path}: a clip takes one of `rate`, `time` or `progress`"
+            ));
         }
         let time = if o.contains_key("time") {
             ClipTime::Seconds(self.expr(o.get("time"), 0.0, &format!("{path}.time"))?)
@@ -388,7 +426,8 @@ impl Compiler<'_> {
                 .ok_or_else(|| format!("{at_path}: expected [threshold, node]"))?;
             let at = pair[0]
                 .as_f64()
-                .ok_or_else(|| format!("{at_path}: a threshold is a number"))? as f32;
+                .ok_or_else(|| format!("{at_path}: a threshold is a number"))?
+                as f32;
             if points.last().is_some_and(|(prev, _)| at <= *prev) {
                 return Err(format!("{at_path}: thresholds must ascend"));
             }
@@ -416,7 +455,12 @@ impl Compiler<'_> {
         };
         let phase = self.blend_nodes;
         self.blend_nodes += 1;
-        Ok(self.push(Node::Blend(BlendNode { by, points, sync, phase })))
+        Ok(self.push(Node::Blend(BlendNode {
+            by,
+            points,
+            sync,
+            phase,
+        })))
     }
 
     fn machine(&mut self, o: &Obj, path: &str) -> Result<NodeId, String> {
@@ -446,10 +490,20 @@ impl Compiler<'_> {
                 .as_array()
                 .ok_or_else(|| format!("{path}.transitions: expected a list"))?;
             for (i, t) in list.iter().enumerate() {
-                self.transition(t, &names, &mut transitions, &format!("{path}.transitions[{i}]"))?;
+                self.transition(
+                    t,
+                    &names,
+                    &mut transitions,
+                    &format!("{path}.transitions[{i}]"),
+                )?;
             }
         }
-        Ok(self.push(Node::Machine(MachineNode { index, initial, states, transitions })))
+        Ok(self.push(Node::Machine(MachineNode {
+            index,
+            initial,
+            states,
+            transitions,
+        })))
     }
 
     fn transition(
@@ -487,7 +541,11 @@ impl Compiler<'_> {
                 }
                 from
             }
-            _ => return Err(format!("{path}: `from` is a state, a list of states, or \"*\"")),
+            _ => {
+                return Err(format!(
+                    "{path}: `from` is a state, a list of states, or \"*\""
+                ))
+            }
         };
         if !o.contains_key("when") {
             return Err(format!("{path}: a transition needs `when`"));
@@ -498,9 +556,19 @@ impl Compiler<'_> {
         let inertial = inertial(o.get("blend"), &format!("{path}.blend"))?;
         for from in from {
             if from == Some(to) {
-                return Err(format!("{path}: `{}` cannot transition to itself", names[to]));
+                return Err(format!(
+                    "{path}: `{}` cannot transition to itself",
+                    names[to]
+                ));
             }
-            out.push(Transition { from, to, when, fade, ease, inertial });
+            out.push(Transition {
+                from,
+                to,
+                when,
+                fade,
+                ease,
+                inertial,
+            });
         }
         Ok(())
     }
@@ -533,7 +601,12 @@ impl Compiler<'_> {
                 None => None,
             };
             let node = self.node_object(o, LAYER_KEYS, &layer_path)?;
-            layers.push(Layer { node, additive, weight, mask });
+            layers.push(Layer {
+                node,
+                additive,
+                weight,
+                mask,
+            });
         }
         Ok(self.push(Node::Layers(layers)))
     }
@@ -550,7 +623,10 @@ impl Compiler<'_> {
                 .as_object()
                 .ok_or_else(|| format!("{bone_path}: expected {{ rotation, position }}"))?;
             only_keys(channels, &["rotation", "position"], &bone_path)?;
-            for (key, channel) in [("rotation", Channel::Rotation), ("position", Channel::Position)] {
+            for (key, channel) in [
+                ("rotation", Channel::Rotation),
+                ("position", Channel::Position),
+            ] {
                 let Some(v) = channels.get(key) else { continue };
                 let channel_path = format!("{bone_path}.{key}");
                 let xyz = v
@@ -562,7 +638,11 @@ impl Compiler<'_> {
                     self.expr(Some(&xyz[1]), 0.0, &format!("{channel_path}[1]"))?,
                     self.expr(Some(&xyz[2]), 0.0, &format!("{channel_path}[2]"))?,
                 ];
-                drives.push(BoneDrive { bone, channel, value });
+                drives.push(BoneDrive {
+                    bone,
+                    channel,
+                    value,
+                });
             }
         }
         Ok(self.push(Node::Bones(drives)))
@@ -626,6 +706,8 @@ fn inertial(value: Option<&Value>, path: &str) -> Result<bool, String> {
     match value.map(|v| v.as_str().unwrap_or("?")) {
         None | Some("crossfade") => Ok(false),
         Some("inertial") => Ok(true),
-        Some(other) => Err(format!("{path}: `{other}` is neither crossfade nor inertial")),
+        Some(other) => Err(format!(
+            "{path}: `{other}` is neither crossfade nor inertial"
+        )),
     }
 }

@@ -139,10 +139,7 @@ fn self_restore_from(player: &crate::player::Player) -> SelfRestore {
             yaw: player.yaw,
             pitch: player.pitch,
         },
-        mode: match player.mode() {
-            crate::player::PlayerMode::Survival => 0,
-            crate::player::PlayerMode::Spectator => 1,
-        },
+        mode: player.mode().to_u8(),
         health: player.health(),
         bed_spawn: player.bed_spawn.map(|b| (b.bed, b.spot)),
         effects: player

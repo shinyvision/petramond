@@ -7,7 +7,10 @@ use crate::bbmodel::Model;
 
 fn library(rig: &Model) -> ClipLibrary {
     let mut lib = ClipLibrary::new();
-    lib.insert("walk", clip(rig, 1.0, true, &[("leftArm", 0.0, Vec3::ZERO)]));
+    lib.insert(
+        "walk",
+        clip(rig, 1.0, true, &[("leftArm", 0.0, Vec3::ZERO)]),
+    );
     lib
 }
 
@@ -15,7 +18,10 @@ fn library(rig: &Model) -> ClipLibrary {
 fn a_bad_graph_is_refused_naming_what_is_wrong() {
     let m = rig();
     for (source, says) in [
-        (r#"{ "layers": [{ "clip": "wlak" }] }"#, "no clip named `wlak`"),
+        (
+            r#"{ "layers": [{ "clip": "wlak" }] }"#,
+            "no clip named `wlak`",
+        ),
         (
             r#"{ "layers": [{ "clip": "walk", "speed": 1 }] }"#,
             "`speed` is not a key of a clip node",
@@ -91,6 +97,10 @@ fn a_mask_weights_a_bone_with_its_descendants_unless_they_carry_their_own() {
     assert_eq!(weight("root"), 0.0);
     assert_eq!(weight("leftArm"), 1.0);
     assert_eq!(weight("leftHand"), 0.25);
-    assert_eq!(weight("leftFinger"), 0.25, "inherits the nearest listed ancestor");
+    assert_eq!(
+        weight("leftFinger"),
+        0.25,
+        "inherits the nearest listed ancestor"
+    );
     assert_eq!(weight("rightHand"), 0.0);
 }

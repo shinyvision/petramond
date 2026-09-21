@@ -225,7 +225,8 @@
         0.72,
         0.42
       ],
-      "particle_emitter": "forge:forge_fire"
+      "particle_emitter": "forge:forge_fire",
+      "data": { "petramond:construction": { "form": "forge:forging_furnace" } }
     },
     {
       "block": "forge:forging_furnace_pour",
@@ -272,7 +273,8 @@
         0.72,
         0.42
       ],
-      "particle_emitter": "forge:forge_pour"
+      "particle_emitter": "forge:forge_pour",
+      "data": { "petramond:construction": { "form": "forge:forging_furnace" } }
     },
     {
       "block": "forge:petramond_ore",

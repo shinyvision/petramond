@@ -23,7 +23,11 @@ fn precedence_logic_and_the_ternary_follow_c() {
     assert_eq!(eval("speed > 1 ? 10 : 20", &v), 10.0);
     assert_eq!(eval("speed > 5 ? 10 : sneaking ? 30 : 40", &v), 40.0);
     assert_eq!(eval("7 % 3 == 1", &v), 1.0);
-    assert_eq!(eval("1 / 0", &v), 0.0, "division by zero reads 0, never inf");
+    assert_eq!(
+        eval("1 / 0", &v),
+        0.0,
+        "division by zero reads 0, never inf"
+    );
 }
 
 #[test]
@@ -54,8 +58,12 @@ fn a_misspelled_input_or_a_bad_call_refuses_to_compile() {
 
 #[test]
 fn stateful_call_sites_take_their_own_slots_from_the_base() {
-    let e = Expr::compile("smooth(x, 0.1) + spring(x, 0.1) + rise(grounded)", &names, 5)
-        .expect("compiles");
+    let e = Expr::compile(
+        "smooth(x, 0.1) + spring(x, 0.1) + rise(grounded)",
+        &names,
+        5,
+    )
+    .expect("compiles");
     assert_eq!(e.state_slots(), 4);
     let mut state = vec![9.0; 9];
     e.eval(&[0.0, 1.0, 0.0, 0.0, 1.0], &mut state, 0.1);

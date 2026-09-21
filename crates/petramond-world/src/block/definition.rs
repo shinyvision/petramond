@@ -109,6 +109,10 @@ pub(super) struct BlockDef {
     /// value is the entry's canonical raw JSON text. The block interop
     /// surface — read via `Block::data_value` and the
     /// `BlockDataGet`/`BlocksWithData` host calls.
+    pub rotate_y: Option<Block>,
+    /// How paid construction builds this row, when the row says (the
+    /// `petramond:construction` data key); `None` = the ordinary rule.
+    pub construction: Option<Construction>,
     pub data: &'static [(&'static str, &'static str)],
     /// Cell-KV keys this block carries across break/place: on break the
     /// listed entries copy into the drop's per-stack instance data, on place
@@ -118,8 +122,8 @@ pub(super) struct BlockDef {
     pub carry: &'static [&'static str],
     /// Which neighbouring cell holds this block up (see [`SupportDir`]).
     pub support: SupportDir,
-    /// Ground tags this block accepts to be PLACED on, ANY of which satisfies
-    /// it — the open-vocabulary half of the substrate gate, so a pack declares
+    /// Ground tags accepted for placement and grounded fragile-block survival;
+    /// any match suffices. The open-vocabulary half of the substrate gate lets a pack declare
     /// "I grow on whatever carries my own `ns:tag`" without the engine
     /// learning the category. Empty on almost every row; combines with the
     /// `RootsIn*` tags by union (see [`Block::can_root_on`](super::Block::can_root_on)).
@@ -127,6 +131,19 @@ pub(super) struct BlockDef {
     /// What the SUPPORT cell's face toward this block has to look like for a
     /// placement to be allowed (see [`RootsFace`]).
     pub roots_face: RootsFace,
+}
+
+/// A row's own statement of how paid construction builds it, overriding the
+/// ordinary rule (the item linked to the row or to a sibling orientation).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Construction {
+    /// This item pays for the row.
+    Item(crate::item::ItemType),
+    /// Construction builds that row instead: a running machine is built idle,
+    /// a grown plant as its planted form.
+    Form(Block),
+    /// The row cannot be built from items, and why.
+    Unsupported(&'static str),
 }
 
 /// Which neighbouring cell a block's SUPPORT is in: the cell that has to hold

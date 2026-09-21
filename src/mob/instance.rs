@@ -53,6 +53,10 @@ const RANDOM_DESPAWN_MIN_DIST: f32 = super::PLAYER_REACTIVE_RANGE;
 /// Per-tick random-despawn chance once eligible: ~40 s expected lifetime at 20 TPS.
 const RANDOM_DESPAWN_CHANCE: f32 = 1.0 / 800.0;
 
+/// How far below an airborne arc's peak a route cell must lie for the body to
+/// brake over it: a step down, never the landing of a hop along the flat.
+const DROP_BRAKE_DEPTH: f64 = 0.9;
+
 /// A live mob. Render-facing fields (`pos`/`yaw`/`anim_time`/`moving`/`skylight` and
 /// their `prev_*` snapshots) are public for the scene adapter; the AI/physics state
 /// is private to the `mob` module (shared with the sibling `impl Instance` files).
@@ -78,6 +82,8 @@ pub struct Instance {
     /// AI's target. The renderer applies it to the model's `head` bone.
     pub head_yaw: f32,
     pub head_pitch: f32,
+    /// How fast the head is swinging (yaw, pitch; rad/s): its easing state.
+    pub(super) head_vel: [f32; 2],
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
     pub blocklight: petramond_world::light::BlockLight6,
@@ -114,6 +120,11 @@ pub struct Instance {
     /// feedback can compose knockback without forcing a red flash, or vice versa.
     pub(super) stagger_timer: f32,
     pub(super) walk_speed_scale: f32,
+    /// How fast the gait clip runs against the species' walking pace: below
+    /// 1 while a slow driven step carries the body.
+    pub(super) gait_pace: f32,
+    /// This tick's motion was a driven step under the body's own power.
+    pub(super) stepping: bool,
     /// Horizontal knockback velocity (m/s), decaying over the stagger. Kept separate
     /// from `vel` so the per-tick wish-velocity overwrite can't wipe it.
     pub(super) knockback: Vec3,
@@ -226,6 +237,36 @@ pub struct Instance {
     /// state, never persisted.
     unstick: super::nav::Unstick,
     pub(super) rng: MobRng,
+    /// Carried item storage, sized by the row's `container_slots`. Persisted
+    /// with the mob; its contents scatter when the mob leaves the world any
+    /// way other than a save.
+    container: petramond_world::container::Container,
+    /// The dig this mob is driven through, a tick at a time. Transient: a
+    /// reloaded mob starts its dig over.
+    dig: DrivenDig,
+    /// Items drawn in the main and off hands. Presentation only, never
+    /// persisted: whoever set it re-derives it.
+    held: [Option<petramond_world::item::ItemType>; 2],
+    /// The retained draw set this body wears (presentation only, never saved).
+    draw: crate::world::draw::BodyDraw,
+}
+
+/// A dig driven from outside, a tick at a time, on the mining clock a
+/// player's held button runs. One that misses a tick has stopped.
+#[derive(Clone, Debug, Default)]
+pub struct DrivenDig {
+    mining: petramond_world::mining::MiningState,
+    /// The last tick the dig advanced.
+    tick: u64,
+}
+
+/// What one tick of a driven dig came to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DigStep {
+    /// Still digging, this far through (0..1).
+    Digging(f32),
+    /// The block's whole break time has accrued.
+    Done(petramond_world::mining::BreakEvent),
 }
 
 impl Instance {
@@ -244,6 +285,7 @@ impl Instance {
             idle_anim: None,
             head_yaw: 0.0,
             head_pitch: 0.0,
+            head_vel: [0.0; 2],
             skylight: 63,
             blocklight: petramond_world::light::BlockLight6::DARK,
             prev_pos: pos,
@@ -263,6 +305,8 @@ impl Instance {
             hurt_timer: 0.0,
             stagger_timer: 0.0,
             walk_speed_scale: 1.0,
+            gait_pace: 1.0,
+            stepping: false,
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
             tags: std::sync::Arc::new(d.tags.clone()),
@@ -290,6 +334,10 @@ impl Instance {
                 .tolerating(d.tolerates.blocks),
             unstick: Default::default(),
             rng: MobRng::new(seed),
+            container: petramond_world::container::Container::with_len(d.container_slots),
+            dig: DrivenDig::default(),
+            held: [None; 2],
+            draw: Default::default(),
         }
     }
 
@@ -395,6 +443,90 @@ impl Instance {
     #[inline]
     pub fn tags(&self) -> &std::collections::BTreeMap<String, super::MobTagValue> {
         &self.tags
+    }
+
+    /// The mob's carried item slots.
+    #[inline]
+    pub fn container(&self) -> &petramond_world::container::Container {
+        &self.container
+    }
+
+    #[inline]
+    pub fn container_mut(&mut self) -> &mut petramond_world::container::Container {
+        &mut self.container
+    }
+
+    /// One tick (`now`) of digging `block` at `pos` with `tool`. Asked twice
+    /// in a tick, the second advances nothing.
+    pub fn advance_dig(
+        &mut self,
+        now: u64,
+        pos: IVec3,
+        block: petramond_world::block::Block,
+        tool: Option<petramond_world::item::Tool>,
+    ) -> DigStep {
+        use petramond_world::mining;
+        if self.dig.tick + 1 < now {
+            self.dig.mining.reset();
+        }
+        let dt = if self.dig.tick == now {
+            0.0
+        } else {
+            crate::events::tick::TICK_DT
+        };
+        self.dig.tick = now;
+        match self.dig.mining.advance(dt, pos, block, tool) {
+            Some(done) => DigStep::Done(done),
+            None => {
+                let elapsed = self.dig.mining.progress().map_or(0.0, |(_, t)| t);
+                DigStep::Digging(elapsed / mining::break_time(block, tool).max(f32::EPSILON))
+            }
+        }
+    }
+
+    /// The cell being dug and its crack stage, while the dig is running.
+    pub fn dig_overlay(&self, now: u64) -> Option<(IVec3, u8)> {
+        (self.dig.tick + 1 >= now)
+            .then(|| self.dig.mining.overlay())
+            .flatten()
+    }
+
+    /// The items drawn in the main and off hands.
+    pub fn held(&self) -> [Option<petramond_world::item::ItemType>; 2] {
+        self.held
+    }
+
+    pub fn draw(&self) -> &crate::world::draw::BodyDraw {
+        &self.draw
+    }
+
+    pub fn set_draw(&mut self, draw: crate::world::draw::BodyDraw) {
+        if self.draw != draw {
+            self.draw = draw;
+        }
+    }
+
+    pub fn set_held(&mut self, held: [Option<petramond_world::item::ItemType>; 2]) {
+        self.held = held;
+    }
+
+    /// Restore saved slots, grown to the row's declared capacity; saved slots
+    /// beyond a shrunken capacity are kept rather than thrown away.
+    pub fn restore_container(&mut self, mut saved: petramond_world::container::Container) {
+        let declared = def(self.kind).container_slots;
+        if saved.slots.len() < declared {
+            saved.slots.resize(declared, None);
+        }
+        self.container = saved;
+    }
+
+    /// Empty the carried slots, returning every stack they held.
+    pub fn take_container_items(&mut self) -> Vec<petramond_world::item::ItemStack> {
+        self.container
+            .slots
+            .iter_mut()
+            .filter_map(Option::take)
+            .collect()
     }
 
     /// The mob's tag map behind its shared handle — the AI snapshot's copy is
@@ -774,6 +906,17 @@ impl Instance {
             if self.nav.is_idle() {
                 self.air_walk = false;
             }
+            // Dropping to a lower cell of its route, the body stops drifting
+            // once it is over that cell. A level arc (a hop along flat
+            // ground) keeps its carry.
+            if self.vel.y < 0.0 {
+                if let Some(landing) = self.nav.landing_under(self.pos, self.vel) {
+                    if f64::from(landing.y) + DROP_BRAKE_DEPTH <= self.fall_peak_y {
+                        self.vel.x = 0.0;
+                        self.vel.z = 0.0;
+                    }
+                }
+            }
             (Vec3::ZERO, false)
         };
         // A wish driving straight into a touching body veers around it, so two
@@ -838,7 +981,9 @@ impl Instance {
         // at arrival instead of one step past it.
         if self.on_ground {
             self.nav.advance_cursor(self.pos);
-            if self.nav.is_idle() {
+            // A driven step walks with no route at all: it is not a walk
+            // that has arrived.
+            if self.nav.is_idle() && !self.stepping {
                 self.moving = false;
                 self.air_walk = false;
             }

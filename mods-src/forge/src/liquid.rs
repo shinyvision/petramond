@@ -273,7 +273,7 @@ impl Liquid {
             max,
             tile: tile.to_owned(),
             tint: rgb,
-            emissive: true,
+            emissive: false,
         };
         // Metal standing in the channel, rising off its floor as it fills —
         // BOTH legs, because the launder turns a corner and a stream that

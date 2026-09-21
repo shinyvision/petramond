@@ -1,6 +1,5 @@
 use super::{App, AppScreen};
 use crate::game::GameEvents;
-use petramond_math::math::IVec3;
 
 impl App {
     pub(super) fn toggle_inventory(&mut self) {
@@ -23,9 +22,9 @@ impl App {
         // A GUI session the server opened for us this frame — a block
         // interaction (engine container or mod `open_gui` row) or a mod's
         // `GuiOpen` request; one lane for every kind.
-        if let Some((kind, pos)) = events.open_gui {
+        if let Some((kind, anchor)) = events.open_gui {
             if self.screen.gameplay_enabled() || matches!(self.screen, AppScreen::Menu(_)) {
-                self.open_gui(kind, pos);
+                self.open_gui(kind, anchor);
             }
         }
         // A mod's `GuiClose` closes only an open MOD GUI (engine containers
@@ -78,7 +77,11 @@ impl App {
 
     fn open_inventory(&mut self) {
         self.enter_menu(AppScreen::Menu(
-            petramond_world::gui_state::GuiKind::Inventory,
+            if self.game.as_ref().is_some_and(|g| g.creative_mode()) {
+                petramond_world::gui_state::GuiKind::Creative
+            } else {
+                petramond_world::gui_state::GuiKind::Inventory
+            },
         ));
         if let Some(game) = self.game.as_mut() {
             game.request_open_inventory();
@@ -86,11 +89,15 @@ impl App {
     }
 
     /// Open the screen for a server-opened GUI session — any kind, engine
-    /// container or mod GUI. `pos` is the opening block, if any.
-    fn open_gui(&mut self, kind: petramond_world::gui_state::GuiKind, pos: Option<IVec3>) {
+    /// container or mod GUI. `anchor` is the block or mob it opened on, if any.
+    fn open_gui(
+        &mut self,
+        kind: petramond_world::gui_state::GuiKind,
+        anchor: Option<petramond::menu::MenuAnchor>,
+    ) {
         self.enter_menu(AppScreen::Menu(kind));
         if let Some(game) = self.game.as_mut() {
-            game.open_gui_screen(kind, pos);
+            game.open_gui_screen(kind, anchor);
         }
     }
 
@@ -116,8 +123,10 @@ impl App {
     /// now: the server's viewer release emits a positional `ChestClosed` world
     /// event on the tick this close lands on (so every observer hears it, at
     /// the chest).
-    fn close_menu(&mut self) {
+    pub(super) fn close_menu(&mut self) {
+        self.library_form.pending_delete = None;
         if let Some(game) = self.game.as_mut() {
+            game.cancel_pending_paste();
             game.close_open_menu();
         }
         self.screen = AppScreen::Game;
@@ -150,6 +159,13 @@ impl App {
             // Death cannot be escaped — only the screen's buttons leave.
             true
         } else if matches!(self.screen, AppScreen::Game) {
+            if self
+                .game
+                .as_mut()
+                .is_some_and(|game| game.cancel_world_tools())
+            {
+                return true;
+            }
             self.open_pause();
             true
         } else if matches!(self.screen, AppScreen::Pause) {

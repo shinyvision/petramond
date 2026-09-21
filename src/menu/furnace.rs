@@ -7,7 +7,7 @@
 //! pack's machine publishes through. The document binds a `gauge` node to the
 //! key; neither the wire nor the GUI vocabulary knows a furnace exists.
 
-use super::{ContainerMenu, ContainerTarget};
+use super::ContainerMenu;
 use crate::world::World;
 
 impl ContainerMenu {
@@ -18,7 +18,7 @@ impl ContainerMenu {
     /// Engine machines answer here rather than earning a wire variant of
     /// their own; a pack machine writes the same keys through its GUI state.
     pub fn open_gauges(&self, world: &World) -> Vec<(String, f32)> {
-        let ContainerTarget::Gui { pos: Some(pos), .. } = self.target else {
+        let Some(pos) = self.target.anchor().and_then(|a| a.block()) else {
             return Vec::new();
         };
         let Some(f) = world.furnace_at(pos) else {

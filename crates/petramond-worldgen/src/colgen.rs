@@ -164,7 +164,11 @@ pub fn write_records(colgen_dir: &Path, recs: Vec<ColumnGenRecord>) -> Vec<PathB
         let records = group
             .iter()
             .map(|rec| (local_index(rec.pos), encode_record(rec)));
-        let _ = petramond_world::region::merge_region(&path, records);
+        let _ = petramond_world::region::merge_region(
+            &path,
+            records,
+            petramond_world::region::MergePolicy::Rebuildable,
+        );
         touched.push(path);
     }
     touched

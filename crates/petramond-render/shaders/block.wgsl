@@ -385,8 +385,7 @@ fn terrain_variant_layer(in: VsOut, layer: u32, donor: vec2<i32>) -> u32 {
     return block_variant_layer(layer, cell, u.atlas_layout.w);
 }
 
-@fragment
-fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
+fn opaque_color(in: VsOut, cutout: f32) -> vec4<f32> {
     // One view length/direction per fragment, shared by the rim, the
     // fluid murk, and the atmosphere.
     let dist = length(in.view);
@@ -414,11 +413,12 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
             // leaf fringes sit below 0.25, opaque art at 1.0, and TRANSLUCENT
             // art (ice, world-rendered in fs_transparent) at ~0.49, so item
             // cubes riding this pass draw it solid instead of vanishing.
-            if (base.a < 0.25) { discard; }
+            if (base.a < cutout) { discard; }
             rgb = fluid_albedo(in.fluid, base.rgb) * in.tint;
         }
     }
     var color = rgb * cel_shaded_light(in, vdir);
+    color = selection_brighten(color, in.view + u.cam_pos.xyz, face_normal(in.ncode), u.render_origin.xyz);
     if (u.fog.w > 0.5) {
         return vec4<f32>(medium_murk(in.fluid, color, dist), 1.0);
     }
@@ -441,6 +441,16 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
 }
 
 @fragment
+fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
+    return opaque_color(in, 0.25);
+}
+
+@fragment
+fn fs_schematic(in: VsOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(opaque_color(in, 0.004).rgb, 0.55);
+}
+
+@fragment
 fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     let dist = length(in.view);
     let vdir = in.view / max(dist, 1e-4);
@@ -454,6 +464,7 @@ fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     var color = fluid_albedo(in.fluid, tex.rgb) * in.tint * cel_shaded_light(in, vdir);
+    color = selection_brighten(color, in.view + u.cam_pos.xyz, face_normal(in.ncode), u.render_origin.xyz);
     if (u.fog.w > 0.5) {
         return vec4<f32>(medium_murk(in.fluid, color, dist), alpha);
     }

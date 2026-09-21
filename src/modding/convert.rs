@@ -90,7 +90,8 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         | K::ItemUsePre
         | K::MobDamagePre
         | K::PlayerDamagePre
-        | K::ProjectileHit => return None,
+        | K::ProjectileHit
+        | K::CellsEditPre => return None,
         K::BlockPlaced => PostEventKind::BlockPlaced,
         K::BlockBroken => PostEventKind::BlockBroken,
         K::ItemUsed => PostEventKind::ItemUsed,
@@ -108,6 +109,9 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         K::ItemPickedUp => PostEventKind::ItemPickedUp,
         K::ItemObtained => PostEventKind::ItemObtained,
         K::MobDamaged => PostEventKind::MobDamaged,
+        K::ActorActed => PostEventKind::ActorActed,
+        K::SchematicChosen => PostEventKind::SchematicChosen,
+        K::SchematicPositioned => PostEventKind::SchematicPositioned,
         K::Interacted => PostEventKind::Interacted,
         K::ModEvent => PostEventKind::ModEvent,
     })
@@ -140,6 +144,21 @@ pub(super) fn gui_value(v: api::GuiValue) -> petramond_world::gui_state::GuiValu
                 .map(|row| row.into_iter().map(|(k, v)| (k, gui_value(v))).collect())
                 .collect(),
         ),
+    }
+}
+
+/// A menu session's anchor as the ABI's container address.
+pub(super) fn container_address(anchor: crate::menu::MenuAnchor) -> api::ContainerAddress {
+    match anchor {
+        crate::menu::MenuAnchor::Block(p) => api::ContainerAddress::Block(p.to_array()),
+        crate::menu::MenuAnchor::Mob(id) => api::ContainerAddress::Mob(id),
+    }
+}
+
+pub(super) fn menu_anchor(at: api::ContainerAddress) -> crate::menu::MenuAnchor {
+    match at {
+        api::ContainerAddress::Block(p) => crate::menu::MenuAnchor::Block(p.into()),
+        api::ContainerAddress::Mob(id) => crate::menu::MenuAnchor::Mob(id),
     }
 }
 
@@ -187,6 +206,16 @@ pub(super) fn block_place_pre(ev: &BlockPlacePre) -> api::EventPayload {
         pos: ivec(ev.pos),
         block: api::BlockId(ev.block.id()),
         facing: facing(ev.facing),
+        actor: entity_ref(ev.actor),
+    }
+}
+
+pub(super) fn cells_edit_pre(ev: &events::CellsEditPre) -> api::EventPayload {
+    api::EventPayload::CellsEditPre {
+        min: ivec(ev.min),
+        max: ivec(ev.max),
+        cells: ev.cells as u64,
+        actor: entity_ref(ev.actor),
     }
 }
 
@@ -195,7 +224,7 @@ pub(super) fn block_break_pre(ev: &BlockBreakPre) -> api::EventPayload {
         pos: ivec(ev.pos),
         block: api::BlockId(ev.block.id()),
         harvested: ev.harvested,
-        player: api::PlayerId(ev.player.0),
+        actor: entity_ref(ev.actor),
         // An earlier handler's override is part of the live event — later
         // handlers in the chain must see it to leave or replace it.
         drops: ev
@@ -415,13 +444,13 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             api::EventPayload::PlayerDamaged { amount, new_health }
         }
         PostEvent::PlayerDied => api::EventPayload::PlayerDied,
-        PostEvent::ContainerOpened { kind, pos } => api::EventPayload::ContainerOpened {
+        PostEvent::ContainerOpened { kind, anchor } => api::EventPayload::ContainerOpened {
             kind: container(kind),
-            pos: pos.map(ivec),
+            at: anchor.map(container_address),
         },
-        PostEvent::ContainerClosed { kind, pos } => api::EventPayload::ContainerClosed {
+        PostEvent::ContainerClosed { kind, anchor } => api::EventPayload::ContainerClosed {
             kind: container(kind),
-            pos: pos.map(ivec),
+            at: anchor.map(container_address),
         },
         PostEvent::SectionGenerated { pos } => {
             api::EventPayload::SectionGenerated { pos: section(pos) }
@@ -502,6 +531,39 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
         PostEvent::ModEvent { ref key, ref data } => api::EventPayload::ModEvent {
             key: key.clone(),
             data: data.clone(),
+        },
+        PostEvent::ActorActed {
+            actor,
+            pos,
+            action,
+            refusal,
+        } => api::EventPayload::ActorActed {
+            actor: entity_ref(actor),
+            pos: ivec(pos),
+            action,
+            refusal,
+        },
+        PostEvent::SchematicChosen {
+            player,
+            ref tag,
+            asset,
+        } => api::EventPayload::SchematicChosen {
+            player: api::PlayerId(player.0),
+            tag: tag.clone(),
+            asset,
+        },
+        PostEvent::SchematicPositioned {
+            player,
+            ref tag,
+            asset,
+            origin,
+            turns,
+        } => api::EventPayload::SchematicPositioned {
+            player: api::PlayerId(player.0),
+            tag: tag.clone(),
+            asset,
+            origin: ivec(origin),
+            turns,
         },
     }
 }

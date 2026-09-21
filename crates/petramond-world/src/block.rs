@@ -9,6 +9,7 @@ mod definition;
 mod interaction;
 pub mod item_shape_bake;
 mod load;
+pub mod rotation;
 pub mod shape;
 mod shape_kind;
 mod snow;
@@ -25,7 +26,7 @@ pub use definition::{BlockFlags, BlockMaterial};
 // currently name the type, so the lib build sees the re-export as unused.
 #[allow(unused_imports)]
 pub use definition::ColorRamp;
-pub use definition::{ParticleEmitter, ParticleEmitterAnchor, RootsFace, SupportDir};
+pub use definition::{Construction, ParticleEmitter, ParticleEmitterAnchor, RootsFace, SupportDir};
 pub use interaction::builtin_claims_click;
 pub use interaction::BlockInteraction;
 pub use load::validate_particle_emitter;

@@ -119,12 +119,19 @@ fn the_bow_holds_still_through_the_draw_and_shakes_only_under_strain() {
     assert_eq!(at(full).shake(), [0.0; 2]);
     let drawn = at(full).plays();
     assert_eq!(drawn.len(), 1, "the draw plays");
-    assert_eq!(drawn[0].rig, rig::PLAYER_BODY, "the pull frames alone show it in first person");
+    assert_eq!(
+        drawn[0].rig,
+        rig::PLAYER_BODY,
+        "the pull frames alone show it in first person"
+    );
     let progress = |p: &AnimatorPlay| match p.clock {
         AnimatorClock::Scrub(progress) => progress,
         AnimatorClock::Run { .. } => panic!("the draw scrubs"),
     };
-    assert!(progress(&at(1.0).plays()[0]) < progress(&drawn[0]), "the body's draw fills");
+    assert!(
+        progress(&at(1.0).plays()[0]) < progress(&drawn[0]),
+        "the body's draw fills"
+    );
     let late = at(full + draw().strain_ticks as f32 * 0.9);
     assert_ne!(late.pose(), at(full).pose(), "the strain trembles");
     let amp = |b: Bow| b.shake().iter().map(|v| v.abs()).sum::<f32>();

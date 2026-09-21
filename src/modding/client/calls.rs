@@ -59,6 +59,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::BlocksWithData { .. }
         | HostCall::BlockInfo { .. }
         | HostCall::BlockInfos { .. }
+        | HostCall::BlockRecordPlans { .. }
         | HostCall::StructureInfo { .. }
         | HostCall::LootRoll { .. }
         | HostCall::MobDataGet { .. }
@@ -206,6 +207,26 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ContainerSet { .. }
         | HostCall::ContainerInsert { .. }
         | HostCall::ContainerTake { .. }
+        | HostCall::ContainerTransfer { .. }
+        | HostCall::ContainerHold { .. }
+        | HostCall::WalkRegion { .. }
+        | HostCall::BlockRecordsAt { .. }
+        | HostCall::BlockRecordStatuses { .. }
+        | HostCall::ActorDig { .. }
+        | HostCall::ActorPlace { .. }
+        | HostCall::ActorPlaceCheck { .. }
+        | HostCall::ActorInteract { .. }
+        | HostCall::ActorAims { .. }
+        | HostCall::PathProbe { .. }
+        | HostCall::Footholds { .. }
+        | HostCall::MobHeldDisplay { .. }
+        | HostCall::SetMobDraw { .. }
+        | HostCall::BlockChangesSince { .. }
+        | HostCall::SchematicInfo { .. }
+        | HostCall::SchematicCells { .. }
+        | HostCall::SchematicChoose { .. }
+        | HostCall::SchematicPosition { .. }
+        | HostCall::SchematicGhostSet { .. }
         | HostCall::RecipeResult { .. }
         | HostCall::EffectApply { .. }
         | HostCall::EffectsActive
@@ -274,7 +295,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::EmitEvent { .. }
         | HostCall::ItemEntitiesInRadius { .. }
         | HostCall::ItemImpulses { .. }
-        | HostCall::Players => false,
+        | HostCall::Players
+        | HostCall::PlayerIdentity { .. } => false,
     }
 }
 
@@ -527,7 +549,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             };
             let keys: Vec<_> = plays.iter().map(|p| (p.rig, p.slot)).collect();
             if !client.body.set_animator_plays(&mod_id, plays) {
-                return HostRet::Error("SetPlayerAnimatorPlays: non-finite progress or rate".into());
+                return HostRet::Error(
+                    "SetPlayerAnimatorPlays: non-finite progress or rate".into(),
+                );
             }
             client.owns_animator.slots.extend(keys);
             HostRet::Bool(true)

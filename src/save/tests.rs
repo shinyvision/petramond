@@ -262,6 +262,7 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
         pos: WorldPos::new(-100.5, 65.0, 56.5),
         yaw: 0.5,
         tags: Default::default(),
+        container: Default::default(),
     });
     opened.save.save_sections(&mut opened.saved, vec![snap]);
     assert!(

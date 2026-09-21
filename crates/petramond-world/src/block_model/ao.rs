@@ -91,10 +91,21 @@ fn hemisphere_rays() -> Vec<[f32; 3]> {
     rays
 }
 
+/// One cuboid as the face bake sees it: its authored box, the transform that
+/// poses it among the others, which faces it draws, and whether it may
+/// darken its neighbours.
+pub struct AoBox {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub pose: Mat4,
+    pub faces: [bool; 6],
+    pub casts: bool,
+}
+
 /// Per-caster precomputation for the ray casts.
 struct Caster {
-    tilt: Mat4,
-    inv_tilt: Mat4,
+    pose: Mat4,
+    inv_pose: Mat4,
     mn: Vec3,
     mx: Vec3,
     weight: f32,
@@ -109,29 +120,60 @@ pub(super) fn bake_face_ao(
     cubes: &[ModelCube],
     face_opaque: impl Fn(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
 ) -> Vec<[[f32; 4]; 6]> {
-    let rays = hemisphere_rays();
-    let casters: Vec<Caster> = cubes
+    let boxes: Vec<AoBox> = cubes
         .iter()
-        .map(|c| {
-            let tilt = cube_tilt(c);
+        .map(|c| AoBox {
+            from: c.from,
+            to: c.to,
+            pose: cube_tilt(c),
+            faces: c.faces.map(|f| f.is_some()),
+            casts: true,
+        })
+        .collect();
+    bake_box_ao(&boxes, PX, 1.0, |i, face, mn, mx, hit| {
+        face_opaque(&cubes[i], face, mn, mx, hit)
+    })
+}
+
+/// The face bake over any posed boxes. `px` is one WORLD pixel (1/16 block) in
+/// the boxes' own units, so reach and the thin-caster guards mean the same
+/// distance on a block model in footprint space and a creature in authored
+/// pixels at its species' scale. `curve` shapes the response without moving
+/// its ends: a corner's occlusion (0..1) is raised to it before it darkens, so
+/// below 1 light occlusion bites sooner — a steeper falloff into the same
+/// darkest corner — and 1 is the linear response static models were tuned at.
+pub fn bake_box_ao(
+    boxes: &[AoBox],
+    px: f32,
+    curve: f32,
+    face_opaque: impl Fn(usize, Face, Vec3, Vec3, Vec3) -> bool,
+) -> Vec<[[f32; 4]; 6]> {
+    let unit = px / PX;
+    let (reach, lift, min_rise) = (REACH * unit, ORIGIN_LIFT * unit, MIN_RISE * unit);
+    let rays = hemisphere_rays();
+    let casters: Vec<Caster> = boxes
+        .iter()
+        .map(|b| {
+            let thick = (b.to - b.from).abs().min_element() / unit;
+            let weight = ((thick - THIN_MIN) / (THIN_FULL - THIN_MIN)).clamp(0.0, 1.0);
             Caster {
-                tilt,
-                inv_tilt: tilt.inverse(),
-                mn: c.from.min(c.to),
-                mx: c.from.max(c.to),
-                weight: caster_weight(c),
+                pose: b.pose,
+                inv_pose: b.pose.inverse(),
+                mn: b.from.min(b.to),
+                mx: b.from.max(b.to),
+                weight: if b.casts { weight } else { 0.0 },
             }
         })
         .collect();
 
-    cubes
+    boxes
         .iter()
         .enumerate()
         .map(|(ri, cube)| {
             let mut per_face = [[1.0f32; 4]; 6];
-            let tilt = &casters[ri].tilt;
+            let tilt = &casters[ri].pose;
             for (slot, face) in Face::ALL.into_iter().enumerate() {
-                if cube.faces[slot].is_none() {
+                if !cube.faces[slot] {
                     continue;
                 }
                 let local = face_corners(face, cube.from, cube.to);
@@ -147,7 +189,7 @@ pub(super) fn bake_face_ao(
                 let b_axis = normal.cross(t_axis);
                 for (ci, corner) in local.into_iter().enumerate() {
                     let posed = tilt.transform_point3(Vec3::from(corner));
-                    let origin = posed + normal * ORIGIN_LIFT;
+                    let origin = posed + normal * lift;
                     let mut occ_sum = 0.0f32;
                     for ray in &rays {
                         let dir = t_axis * ray[0] + b_axis * ray[1] + normal * ray[2];
@@ -156,29 +198,29 @@ pub(super) fn bake_face_ao(
                             if oi == ri || other.weight <= 0.0 {
                                 continue;
                             }
-                            let ol = other.inv_tilt.transform_point3(origin);
-                            let dl = other.inv_tilt.transform_vector3(dir);
+                            let ol = other.inv_pose.transform_point3(origin);
+                            let dl = other.inv_pose.transform_vector3(dir);
                             for hit_face in Face::ALL {
                                 let Some((t, hit)) =
                                     ray_box_face_hit(ol, dl, other.mn, other.mx, hit_face)
                                 else {
                                     continue;
                                 };
-                                if t > REACH {
+                                if t > reach {
                                     continue;
                                 }
-                                let contrib = other.weight * (1.0 - t / REACH);
+                                let contrib = other.weight * (1.0 - t / reach);
                                 if contrib <= best {
                                     continue;
                                 }
                                 // Only geometry genuinely RISING above the
                                 // receiving plane occludes; a flush coplanar
                                 // continuation of the same surface does not.
-                                let hit_fp = other.tilt.transform_point3(hit);
-                                if (hit_fp - posed).dot(normal) < MIN_RISE {
+                                let hit_fp = other.pose.transform_point3(hit);
+                                if (hit_fp - posed).dot(normal) < min_rise {
                                     continue;
                                 }
-                                if !face_opaque(&cubes[oi], hit_face, other.mn, other.mx, hit) {
+                                if !face_opaque(oi, hit_face, other.mn, other.mx, hit) {
                                     continue;
                                 }
                                 best = contrib;
@@ -186,7 +228,8 @@ pub(super) fn bake_face_ao(
                         }
                         occ_sum += best;
                     }
-                    per_face[slot][ci] = 1.0 - MAX_DARKEN * (occ_sum / rays.len() as f32);
+                    let occlusion = (occ_sum / rays.len() as f32).clamp(0.0, 1.0);
+                    per_face[slot][ci] = 1.0 - MAX_DARKEN * occlusion.powf(curve);
                 }
             }
             per_face

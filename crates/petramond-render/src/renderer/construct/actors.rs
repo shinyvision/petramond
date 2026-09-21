@@ -55,6 +55,8 @@ pub(super) fn build_mob_gpu(
             MobGpu {
                 model,
                 scale: d.scale,
+                rig: crate::mob_model::MobRig::resolve(model, d.hands, d.shear.map(|s| s.coat.0))
+                    .with_self_ao(model, d.scale, d.self_ao),
                 bind,
                 draw: DynamicDraw::new(device, mob_pipe.clone(), "mob"),
                 cull_r: r * d.scale + MOB_CULL_SLACK,

@@ -16,7 +16,10 @@ use super::guards::{
 /// machine, never someone else's block — and none of them may act on a cell
 /// whose streaming state is not final.
 ///
-/// `call` names the caller only so the error says which one refused.
+/// What stands at a position is the WORLD's to say, and it changes under a
+/// mod (its machine broken, a save from before it moved): a cell holding
+/// someone else's block answers `false` like any other write that found
+/// nothing to act on, never an error — an error ends the whole mod.
 fn owned_block_at(
     ctx: &mut crate::modding::SimCtx<'_>,
     mod_id: &str,
@@ -30,9 +33,8 @@ fn owned_block_at(
         .name(block.id())
         .unwrap_or("?");
     if !key_owned_by_namespace(mod_id, name) {
-        return Err(HostRet::Error(format!(
-            "{call}: block '{name}' at {pos:?} is not owned by mod '{mod_id}'"
-        )));
+        log::debug!("{call}: block '{name}' at {pos:?} is not mod '{mod_id}''s");
+        return Err(HostRet::Bool(false));
     }
     Ok(block)
 }
@@ -55,12 +57,25 @@ fn draw_prim_finite(prim: &mod_api::DrawPrim) -> bool {
             pitch,
             ..
         } => at.iter().chain([scale, yaw, pitch]).all(|v| v.is_finite()),
+        mod_api::DrawPrim::Sprite {
+            at,
+            scale,
+            yaw,
+            pitch,
+            spin,
+            bob,
+            ..
+        } => at
+            .iter()
+            .chain([scale, yaw, pitch, spin])
+            .chain(bob)
+            .all(|v| v.is_finite()),
     }
 }
 
 /// The per-set validation both draw calls run: the prim cap and finiteness.
 /// `what` names the caller for the error line.
-fn check_draw_set(what: &str, prims: &[mod_api::DrawPrim]) -> Option<HostRet> {
+pub(super) fn check_draw_set(what: &str, prims: &[mod_api::DrawPrim]) -> Option<HostRet> {
     const MAX: usize = mod_api::DRAW_PRIMS_MAX;
     if prims.len() > MAX {
         return Some(HostRet::Error(format!(
@@ -259,6 +274,17 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
+        HostCall::BlockChangesSince { since } => sim_query(|ctx| {
+            let (next, cells, lost) = match since {
+                Some(seq) => ctx.world.changes_since(seq),
+                None => (ctx.world.changes_since(u64::MAX).0, Vec::new(), false),
+            };
+            HostRet::BlockChanges(mod_api::BlockChanges {
+                next,
+                lost,
+                cells: cells.iter().map(|c| c.to_array()).collect(),
+            })
+        }),
         HostCall::Raycast {
             from,
             dir,
@@ -469,13 +495,13 @@ mod tests {
             (
                 "ContainerGetMany",
                 HostCall::ContainerGetMany {
-                    positions: vec![[0, 0, 0]; SIM_BATCH_MAX + 1],
+                    addresses: vec![[0, 0, 0].into(); SIM_BATCH_MAX + 1],
                 },
             ),
             (
                 "ContainerSet",
                 HostCall::ContainerSet {
-                    pos: [0, 0, 0],
+                    at: [0, 0, 0].into(),
                     slots: vec![(0, None); SIM_BATCH_MAX + 1],
                 },
             ),
@@ -724,18 +750,14 @@ mod tests {
         }
     }
 
-    /// THE TWO DRAW CALLS ANSWER A FOREIGN BLOCK DIFFERENTLY, and that is a
-    /// decision rather than an oversight — so it is pinned here, because three
-    /// doc comments had already drifted into describing the single call's
-    /// error as a `false`.
-    ///
-    /// A single submission naming a block the mod does not own is a mod bug:
-    /// it asked about one cell and got the cell wrong. A BATCHED submission is
-    /// the whole kind at once, and one of its machines being broken between
-    /// the read and the write is ordinary — erroring there would disable the
-    /// pack for losing a race it cannot avoid.
+    /// A block that is not the caller's answers `false` from both draw
+    /// calls, never an error. What stands at a position is the world's to
+    /// say, and it changes under a mod — a machine broken between the read
+    /// and the write, a position remembered from a save — so an error there
+    /// would end a whole pack for losing a race it cannot avoid. (A single
+    /// submission used to error; a mod died of exactly that.)
     #[test]
-    fn a_batched_draw_answers_per_entry_where_the_single_call_errors() {
+    fn a_draw_on_someone_elses_block_answers_false_and_the_mod_lives() {
         let mut store = ModStoreData::new("alpha", 1);
         let mut world = World::new(1, 4);
         world.clear_world();
@@ -752,8 +774,8 @@ mod tests {
                     prims: Vec::new(),
                 },
             ) {
-                HostRet::Error(e) => assert!(e.contains("not owned"), "got '{e}'"),
-                other => panic!("a foreign block answered {other:?}, not an error"),
+                HostRet::Bool(false) => {}
+                other => panic!("a foreign block answered {other:?}"),
             }
             match handle_host_call(
                 &mut store,

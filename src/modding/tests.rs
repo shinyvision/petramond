@@ -772,7 +772,7 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
     let anchor = IVec3::new(1, 64, 1);
     server.sessions[s]
         .menu
-        .open_document_gui(&mut server.world, first, Some(anchor));
+        .open_document_gui(&mut server.world, first, Some(anchor.into()));
     server.mods = ModHost::from_instances(vec![calling_guest(
         "hostile",
         &[
@@ -784,7 +784,7 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
             },
             HostCall::GuiOpen {
                 kind_key: "hostile:second".into(),
-                pos: Some(anchor.to_array()),
+                at: Some(mod_api::ContainerAddress::Block(anchor.to_array())),
             },
         ],
     )]);
@@ -803,7 +803,7 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
     server.tick_menu(s, &mut events);
     assert_eq!(
         server.sessions[s].request_open_gui,
-        Some((second, Some(anchor)))
+        Some((second, Some(anchor.into())))
     );
     assert_eq!(server.sessions[0].request_open_gui, None);
     assert_eq!(

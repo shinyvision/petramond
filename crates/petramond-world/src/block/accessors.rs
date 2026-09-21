@@ -526,6 +526,24 @@ impl Block {
     /// placement commit writes for a `WallPanel` plan. A row without the map
     /// (a facing variant, or a single-facing pack row) places as itself.
     #[inline]
+    pub fn rotated_wall_panel(self, facing: Facing) -> Block {
+        Block::all()
+            .iter()
+            .copied()
+            .find_map(|b| {
+                b.def()
+                    .facing_rows
+                    .filter(|rows| rows.contains(&self))
+                    .map(|rows| rows[facing.to_u8() as usize])
+            })
+            .unwrap_or(self)
+    }
+
+    /// The facing siblings of a placeable wall-panel row (`facing_rows`).
+    pub fn facing_rows(self) -> Option<&'static [Block; 4]> {
+        self.def().facing_rows
+    }
+
     pub fn wall_panel_row(self, facing: Facing) -> Block {
         match self.def().facing_rows {
             Some(rows) => rows[facing.to_u8() as usize],
@@ -571,19 +589,10 @@ impl Block {
         }
     }
 
-    /// Whether `ground` (the block directly below) is a surface this block may be PLACED
-    /// on. Almost everything has no substrate rule and accepts anything; the plants gate
-    /// by their `RootsIn*` tags, which COMBINE — a block accepts a ground if *any* of its
-    /// requirements is met: [`RootsInSoil`](BlockTag::ROOTS_IN_SOIL) → [`Soil`](BlockTag::SOIL)
-    /// (grass/dirt), [`RootsInSand`](BlockTag::ROOTS_IN_SAND) → [`Sand`](BlockTag::SAND)
-    /// (sand/red sand), [`RootsInStone`](BlockTag::ROOTS_IN_STONE) → any
-    /// [`BlockMaterial::Stone`] block. So a flower roots in soil, a cactus in sand, and a
-    /// mushroom (which carries both soil + stone) in soil or stone. `game::try_place`
-    /// refuses a spot this rejects. PLACEMENT only — whether an already-placed block
-    /// *stays* (its support wasn't dug out) is the separate physical
-    /// `FRAGILE` check, which asks merely whether something solid is
-    /// still beneath it, not what type. A block joins a substrate class by editing the
-    /// `RootsIn*` tags on its data row.
+    /// The material gate shared by placement and grounded fragile-block survival.
+    /// `RootsIn*` and open `roots_on` tags form a union: any matching substrate
+    /// suffices. Rows with no requirements accept any material; support geometry
+    /// is checked separately.
     pub fn can_root_on(self, ground: Block) -> bool {
         let soil = self.has_tag(BlockTag::ROOTS_IN_SOIL);
         let sand = self.has_tag(BlockTag::ROOTS_IN_SAND);
@@ -615,6 +624,17 @@ impl Block {
     #[inline]
     pub fn roots_face(self) -> crate::block::RootsFace {
         self.def().roots_face
+    }
+
+    /// The clockwise sibling row (`petramond:rotate_y`): the same object turned
+    /// a quarter clockwise when orientation is block identity.
+    pub fn rotated_row(self) -> Option<Block> {
+        self.def().rotate_y
+    }
+
+    /// The row's explicit construction rule (`petramond:construction`).
+    pub fn construction(self) -> Option<super::Construction> {
+        self.def().construction
     }
 
     /// Whether a placed directional block should rotate its authored front toward the

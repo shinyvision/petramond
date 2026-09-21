@@ -183,7 +183,11 @@ impl Guard {
             holds_press: self.raised,
             speed: self.speed_scale(),
             denied: self.denied(),
-            plays: [self.plays(0, self.main_holds), self.plays(1, self.off_holds)].concat(),
+            plays: [
+                self.plays(0, self.main_holds),
+                self.plays(1, self.off_holds),
+            ]
+            .concat(),
             cover: self.absorbs().then_some(GUARD_COVER),
             ..Default::default()
         }
@@ -345,7 +349,10 @@ mod tests {
         assert_eq!(both.claims().plays.len(), 4, "both hands, both rigs");
 
         let on = |plays: &[AnimatorPlay], rig: &str| {
-            plays.iter().find(|p| p.rig == rig).map(|p| (p.clip.clone(), p.clock))
+            plays
+                .iter()
+                .find(|p| p.rig == rig)
+                .map(|p| (p.clip.clone(), p.clock))
         };
         let down = main(guard(&actor(Some(SHIELD), None, false), None));
         let up = main(guard(&guarding(), None));
@@ -354,10 +361,18 @@ mod tests {
             on(&down, rig::PLAYER_FIRST_PERSON).is_some() && on(&down, rig::PLAYER_BODY).is_none(),
             "the body's hold is the carry"
         );
-        assert_ne!(on(&down, rig::PLAYER_FIRST_PERSON), on(&up, rig::PLAYER_FIRST_PERSON), "raising changes the view");
+        assert_ne!(
+            on(&down, rig::PLAYER_FIRST_PERSON),
+            on(&up, rig::PLAYER_FIRST_PERSON),
+            "raising changes the view"
+        );
         assert!(on(&up, rig::PLAYER_BODY).is_some(), "and the body");
         assert_ne!(on(&reeling, rig::PLAYER_BODY), on(&up, rig::PLAYER_BODY));
-        assert_eq!(on(&reeling, rig::PLAYER_BODY).unwrap().1, AnimatorClock::Scrub(0.4), "the recoil scrubs at the window's progress");
+        assert_eq!(
+            on(&reeling, rig::PLAYER_BODY).unwrap().1,
+            AnimatorClock::Scrub(0.4),
+            "the recoil scrubs at the window's progress"
+        );
         for held in [&down, &up] {
             assert!(
                 held.iter().all(|p| p.clock == AnimatorClock::Scrub(0.0)),

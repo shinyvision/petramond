@@ -76,7 +76,7 @@ pub fn load(dir: &Path) -> WorldSettings {
 pub fn store(dir: &Path, settings: &WorldSettings) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let bytes = serde_json::to_vec_pretty(settings).map_err(std::io::Error::other)?;
-    super::write_atomic(&dir.join("settings.json"), &bytes)
+    petramond_util::atomic_file::replace(&dir.join("settings.json"), &bytes)
 }
 
 #[cfg(test)]

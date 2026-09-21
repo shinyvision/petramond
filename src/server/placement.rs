@@ -26,11 +26,12 @@ impl ServerGame {
         // exactly the block placed, which the client maps to a place sound.
         // `held()` resolves the ACTING hand — the ladder's off-hand pass
         // places from the off-hand slot.
-        let held = self.sessions[s]
-            .player
-            .held()
-            .and_then(|st| st.item.as_block());
+        let stack = self.sessions[s].player.held().copied();
+        let mut held = stack.and_then(|st| st.item.as_block());
         let pos = self.try_place(s, target, events)?;
+        if stack.is_some_and(|st| !st.item.placement_variants().is_empty()) {
+            held = Some(Block::from_id(self.world.chunk_block(pos.x, pos.y, pos.z)));
+        }
         events.player(s).placed_block = held;
         let hand = self.sessions[s].player.acting_hand;
         self.sessions[s].latch_swing(hand, mod_api::SwingKind::Place);
@@ -68,7 +69,11 @@ impl ServerGame {
         }
 
         let stack = self.sessions[s].player.held()?;
-        let block = stack.item.as_block().filter(|&b| b != Block::Air)?;
+        if stack.item.creative_only() && !self.sessions[s].player.abilities().restricted_items {
+            return None;
+        }
+        let item = stack.item;
+        let mut block = item.as_block().filter(|&b| b != Block::Air)?;
 
         // Right-clicking a replaceable block (short grass, a fern…) while holding a block
         // places straight INTO its cell, overwriting it with no drop — the block just
@@ -76,10 +81,27 @@ impl ServerGame {
         // the clicked face. Air is replaceable too (a placement may overwrite it) but is
         // never itself a raycast hit, so exclude it. `p` then feeds the torch support
         // gate, the model footprint, and the final replaceable check uniformly.
-        let looked_at = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-        let replacing_in_place = crate::world::placement::replaces_in_place(looked_at);
-        let p = crate::world::placement::build_position(looked_at, h.block, h.normal);
         let player_facing = facing_from_forward(self.sessions[s].player.forward());
+        let inputs = crate::world::placement::PlaceInputs::of_click(
+            &self.world,
+            h.block,
+            h.normal,
+            player_facing,
+            self.sessions[s].held_rotation_snapshot(),
+            Some(item),
+        );
+        let p = inputs.place_pos;
+        let variants = item.placement_variants();
+        if !variants.is_empty() {
+            let mut rng = petramond_worldgen::rng::FeatureRng::positional(
+                self.world.seed,
+                0x706c_6163_656d_656e ^ self.world.current_tick(),
+                p.x,
+                p.y,
+                p.z,
+            );
+            block = variants[rng.next_i32(0, variants.len() as i32 - 1) as usize];
+        }
         let slab_stacks_in_hit = self
             .world
             .slab_stack_slot_in_hit(
@@ -101,6 +123,7 @@ impl ServerGame {
                 pos: place_pos_for_pre,
                 block,
                 facing: player_facing,
+                actor: crate::mob::EntityRef::Player(self.sessions[s].id),
             };
             let Self {
                 world,
@@ -125,15 +148,6 @@ impl ServerGame {
         // the client place ghost against its replica): validity + the exact
         // state write. Only the body-occupancy answer is authoritative-side
         // specific.
-        let inputs = crate::world::placement::PlaceInputs {
-            hit: h.block,
-            normal: h.normal,
-            place_pos: p,
-            replacing_in_place,
-            player_facing,
-            held_rotation: self.sessions[s].held_rotation_snapshot(),
-            held: self.sessions[s].player.held().map(|st| st.item),
-        };
         // A custom shape places through its OWN pack's WASM callback
         // (footprint + orientation + initial state are the shape's to decide),
         // not the engine ladder. A pack with no reachable owner (disabled /
@@ -148,15 +162,33 @@ impl ServerGame {
         let plan = self
             .world
             .placement_plan(block, &inputs, &mut |cell, boxes| {
-                self.placement_occupied_by_body(s, cell, boxes)
+                self.placement_occupied_by_body(Some(s), cell, boxes)
             })?;
+        self.touch_edit_cells(s, plan.cells());
         if !self.world.commit_placement(&plan, true) {
             return None;
         }
-        self.restore_carry(s, block, plan.anchor, plan.anchor_part());
-        let hand = self.sessions[s].player.acting_hand;
-        self.sessions[s].player.inventory.decrement_held(hand);
+        self.carry_held_into(s, block, plan.anchor, plan.anchor_part());
+        self.pay_for_placement(s);
         Some(plan.anchor)
+    }
+
+    /// The acting hand's stack hands its carried data to the cell it placed,
+    /// before the placement is paid for (the stack still carries it).
+    fn carry_held_into(&mut self, s: usize, block: Block, anchor: IVec3, part: CellPart) {
+        if let Some(held) = self.sessions[s].player.held().copied() {
+            self.world.carry_into_cell(&held, block, anchor, part);
+        }
+    }
+
+    /// A placement costs one of the acting hand's stack, unless the player
+    /// places for free.
+    fn pay_for_placement(&mut self, s: usize) {
+        let player = &mut self.sessions[s].player;
+        if !player.abilities().free_placement {
+            let hand = player.acting_hand;
+            player.inventory.decrement_held(hand);
+        }
     }
 
     /// Place a custom shape via its pack's `shape_placement_plan`
@@ -266,7 +298,7 @@ impl ServerGame {
                 .custom_shape_boxes(anchor)
                 .unwrap_or_else(|| write_block.collision_boxes()),
         };
-        if self.placement_occupied_by_body(s, anchor, boxes) {
+        if self.placement_occupied_by_body(Some(s), anchor, boxes) {
             return Some(None);
         }
         // A stateless single-cell write of the plan's validated row (held or
@@ -277,56 +309,30 @@ impl ServerGame {
             write_block,
             petramond_world::block::ShapeState::NONE,
         );
+        self.touch_edit_cells(s, plan.cells());
         if !self.world.commit_placement(&plan, true) {
             return Some(None);
         }
         // A custom shape's placement is single-cell and whole: part 0.
-        self.restore_carry(s, block, anchor, 0);
-        let hand = self.sessions[s].player.acting_hand;
-        self.sessions[s].player.inventory.decrement_held(hand);
+        self.carry_held_into(s, block, anchor, 0);
+        self.pay_for_placement(s);
         Some(Some(anchor))
     }
 
-    /// Carry courier (place side): copy the held stack's instance-data
-    /// entries listed in the placed row's `petramond:carry` back into cell KV
-    /// at the anchor, addressed to the PART the write claimed (so a slab
-    /// stacking into an occupied cell dyes its own layer and leaves the other
-    /// one alone). Runs AFTER the commit (a block write wipes the cell's
-    /// KV) and BEFORE `decrement_selected` (the held stack still carries the
-    /// variant). A non-writable section refuses silently — the block stands,
-    /// its carried data is lost, same as any racing KV write.
-    fn restore_carry(&mut self, s: usize, block: Block, anchor: IVec3, part: CellPart) {
-        let carry = block.carry();
-        if carry.is_empty() {
-            return;
-        }
-        let Some(held) = self.sessions[s].player.held() else {
-            return;
-        };
-        let Some(map) = petramond_world::item::variant::get(held.variant) else {
-            return;
-        };
-        for &key in carry {
-            if let Some(v) = map.get(key) {
-                self.world.cell_kv_set(
-                    anchor.x,
-                    anchor.y,
-                    anchor.z,
-                    petramond_world::block::part_kv_key(key, part),
-                    v.clone(),
-                );
-            }
-        }
-    }
-
     /// Whether the placed collision boxes at `cell` overlap a gameplay body that
-    /// blocks placement. The acting player always counts, preserving the
-    /// self-trapping guard. Other sessions count while alive and non-spectator;
-    /// sleeping players still count because sleep keeps the gameplay body on
-    /// the mattress. Dead mobs do not count, matching the ragdoll rule.
-    fn placement_occupied_by_body(&self, actor: usize, cell: IVec3, boxes: &[Aabb]) -> bool {
+    /// blocks placement, whoever places. A placing session (`placer`) always
+    /// counts, preserving the self-trapping guard. Other sessions count while
+    /// alive and non-spectator; sleeping players still count because sleep
+    /// keeps the gameplay body on the mattress. Dead mobs do not count,
+    /// matching the ragdoll rule.
+    pub(super) fn placement_occupied_by_body(
+        &self,
+        placer: Option<usize>,
+        cell: IVec3,
+        boxes: &[Aabb],
+    ) -> bool {
         self.sessions.iter().enumerate().any(|(i, sess)| {
-            (i == actor || (sess.player.health() > 0 && !sess.player.is_spectator()))
+            (Some(i) == placer || (sess.player.health() > 0 && !sess.player.is_spectator()))
                 && sess.player.body().overlaps_block_boxes(cell, boxes)
         }) || self.world.mobs().any_overlapping_boxes(cell, boxes)
     }

@@ -26,11 +26,13 @@ pub struct BlockPlacePre {
     pub block: Block,
     /// The player-derived placement facing; shape paths may orient it further.
     pub facing: Facing,
+    /// Who is placing: a player session or a mob acting for a mod.
+    pub actor: crate::mob::EntityRef,
 }
 
 /// `block_break_pre` — cancel = unbreakable (the block stays; the spent mining
-/// progress is the cost). Fires only for player mining; sim-destroyed blocks
-/// (natural breaks) are not cancellable.
+/// progress is the cost). Fires for player mining and mob actors;
+/// sim-destroyed blocks (natural breaks) are not cancellable.
 #[derive(Clone, Debug)]
 pub struct BlockBreakPre {
     pub pos: IVec3,
@@ -39,13 +41,26 @@ pub struct BlockBreakPre {
     /// a `drops` override is honored regardless, so a handler that only
     /// wants harvested breaks gates on this itself.
     pub harvested: bool,
-    /// The breaking session.
-    pub player: crate::player::PlayerId,
+    /// Who is breaking: a player session or a mob acting for a mod.
+    pub actor: crate::mob::EntityRef,
     /// Mutable: `None` = the engine's drop tables roll as usual;
     /// `Some(stacks)` = the break drops EXACTLY these stacks instead
     /// (empty = nothing), spawned verbatim — a stack of the broken block's
     /// own item still picks up the cell's carried data.
     pub drops: Option<Vec<petramond_world::item::ItemStack>>,
+}
+
+/// `cells_edit_pre` — a bulk cell edit is about to begin. Cancel = the whole
+/// edit is refused and nothing is written. Announced once per edit, however
+/// many ticks the write then spreads over.
+#[derive(Copy, Clone, Debug)]
+pub struct CellsEditPre {
+    /// Inclusive bounds of the requested cells. Compound blocks the edit
+    /// overwrites may clear cells just outside them.
+    pub min: IVec3,
+    pub max: IVec3,
+    pub cells: usize,
+    pub actor: crate::mob::EntityRef,
 }
 
 /// `interact_attempt` — the player's use click as its most PRIMITIVE gesture:
@@ -230,7 +245,7 @@ pub enum DeferredAction {
     OpenGui {
         player: crate::player::PlayerId,
         kind: petramond_world::gui_state::GuiKind,
-        pos: Option<petramond_math::math::IVec3>,
+        anchor: Option<crate::menu::MenuAnchor>,
     },
     /// A mod's `GuiClose` HostCall: close the open mod GUI, if one is open.
     CloseGui { player: crate::player::PlayerId },
@@ -240,6 +255,40 @@ pub enum DeferredAction {
     ChatSend {
         text: String,
         targets: Option<Vec<u8>>,
+    },
+    /// A mob's dig ran its duration (`ActorDig`): break the block through the
+    /// break funnel as that actor, once the world still matches `target`.
+    ActorBreak {
+        mob_id: u64,
+        pos: IVec3,
+        target: crate::world::actor::DigTarget,
+        tool_slot: Option<u32>,
+        collect: bool,
+    },
+    /// A mob builds a construction record (`ActorPlace`), revalidated at its
+    /// turn.
+    ActorPlace {
+        mob_id: u64,
+        pos: IVec3,
+        record: petramond_world::construction::Record,
+        pay: bool,
+    },
+    /// `ActorInteract`: a live mob uses the block at `pos` (a door swings).
+    ActorInteract { mob_id: u64, pos: IVec3 },
+    /// `ContainerHold`: a live mob holds a container open or lets it go.
+    ContainerHold { mob_id: u64, pos: IVec3, open: bool },
+    /// `SchematicChoose`: open a choice on that player's client.
+    SchematicChoose {
+        player: crate::player::PlayerId,
+        tag: String,
+    },
+    /// `SchematicPosition`: open positioning on that player's client.
+    SchematicPosition {
+        player: crate::player::PlayerId,
+        tag: String,
+        asset: crate::schematic::store::Digest,
+        origin: Option<IVec3>,
+        turns: u8,
     },
 }
 
@@ -315,11 +364,11 @@ pub enum PostEvent {
     /// carries the kind's key string.
     ContainerOpened {
         kind: petramond_world::gui_state::GuiKind,
-        pos: Option<IVec3>,
+        anchor: Option<crate::menu::MenuAnchor>,
     },
     ContainerClosed {
         kind: petramond_world::gui_state::GuiKind,
-        pos: Option<IVec3>,
+        anchor: Option<crate::menu::MenuAnchor>,
     },
     SectionGenerated {
         pos: SectionPos,
@@ -400,6 +449,28 @@ pub enum PostEvent {
         key: String,
         data: Vec<u8>,
     },
+    /// A queued actor action had its turn: it happened (`refusal: None`), or
+    /// the world, the actor or a pre-event handler stopped it.
+    ActorActed {
+        actor: crate::mob::EntityRef,
+        pos: IVec3,
+        action: mod_api::ActorAction,
+        refusal: Option<mod_api::ActionRefusal>,
+    },
+    /// A player chose a world-held schematic for an open choice.
+    SchematicChosen {
+        player: crate::player::PlayerId,
+        tag: String,
+        asset: crate::schematic::store::Digest,
+    },
+    /// A player anchored a schematic for an open positioning.
+    SchematicPositioned {
+        player: crate::player::PlayerId,
+        tag: String,
+        asset: crate::schematic::store::Digest,
+        origin: IVec3,
+        turns: u8,
+    },
 }
 
 /// Registration key for post handlers; one bit per kind gates enqueueing so an
@@ -425,10 +496,13 @@ pub enum PostEventKind {
     MobDamaged,
     Interacted,
     ModEvent,
+    ActorActed,
+    SchematicChosen,
+    SchematicPositioned,
 }
 
 impl PostEventKind {
-    pub const COUNT: usize = 19;
+    pub const COUNT: usize = 22;
 }
 
 impl PostEvent {
@@ -453,6 +527,9 @@ impl PostEvent {
             PostEvent::MobDamaged { .. } => PostEventKind::MobDamaged,
             PostEvent::Interacted { .. } => PostEventKind::Interacted,
             PostEvent::ModEvent { .. } => PostEventKind::ModEvent,
+            PostEvent::ActorActed { .. } => PostEventKind::ActorActed,
+            PostEvent::SchematicChosen { .. } => PostEventKind::SchematicChosen,
+            PostEvent::SchematicPositioned { .. } => PostEventKind::SchematicPositioned,
         }
     }
 }

@@ -1608,3 +1608,30 @@ fn typing_a_word_keeps_it_visible_instead_of_scrolling_to_the_last_glyph() {
         9
     );
 }
+
+#[test]
+fn bound_label_opacity_changes_painted_alpha_without_moving_text() {
+    let mut h = Harness::new();
+    h.rt = UiRuntime::new(
+        Arc::new(
+            Document::from_json(
+                r#"{
+        "format":1,"kind":"petramond:test","class":"hud",
+        "root":{"type":"label","text":"Region selection","bind":{"text_opacity":"alpha"}}
+    }"#,
+            )
+            .unwrap(),
+        ),
+        Arc::new(Theme::placeholder()),
+    );
+    h.frame(&[]);
+    let opaque = h.out.draw.vertices.clone();
+    assert!(!opaque.is_empty());
+    h.state.set("alpha", UiValue::F32(0.5));
+    h.frame(&[]);
+    assert_eq!(opaque.len(), h.out.draw.vertices.len());
+    for (a, b) in opaque.iter().zip(&h.out.draw.vertices) {
+        assert_eq!(a.pos, b.pos);
+        assert_eq!(a.color[3] * 0.5, b.color[3]);
+    }
+}

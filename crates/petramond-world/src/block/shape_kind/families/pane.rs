@@ -10,6 +10,10 @@ use super::*;
 pub struct PaneFamily;
 
 impl ShapeSim for PaneFamily {
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        crate::block::rotation::connection(block, state)
+    }
+
     fn default_boxes(&self, p: &ShapeParams, _b: Block) -> &'static [Aabb] {
         // The bare no-neighbour post.
         crate::connect::boxes_for_mask(conn(p).boxes, 0)

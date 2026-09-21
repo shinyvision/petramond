@@ -68,7 +68,35 @@ impl World {
         )
     }
 
-    /// Whether the support at `s` presents the face shape `block`'s row
+    /// The carry courier's place side: the entries of `stack`'s instance data
+    /// that `block`'s row carries land in the cell at `anchor`, addressed to
+    /// the `part` the write claimed (a slab stacking into an occupied cell
+    /// dyes its own layer and leaves the other alone). Runs after the commit
+    /// — a block write wipes the cell's data. A section that cannot be written
+    /// refuses silently: the block stands without its carried data.
+    pub fn carry_into_cell(
+        &mut self,
+        stack: &petramond_world::item::ItemStack,
+        block: Block,
+        anchor: IVec3,
+        part: petramond_world::block::CellPart,
+    ) {
+        let Some(map) = petramond_world::item::variant::get(stack.variant) else {
+            return;
+        };
+        for &key in block.carry() {
+            if let Some(v) = map.get(key) {
+                self.cell_kv_set(
+                    anchor.x,
+                    anchor.y,
+                    anchor.z,
+                    petramond_world::block::part_kv_key(key, part),
+                    v.clone(),
+                );
+            }
+        }
+    }
+
     /// Commit a validated plan's world write — ONE generic path for every
     /// family, the same write on both sides, which is what keeps a predicted
     /// ghost's mesh identical to the authoritative delta that confirms it.

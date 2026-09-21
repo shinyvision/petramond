@@ -266,6 +266,10 @@ impl App {
     /// [`petramond_world::gui_state::MenuSlot`] clicks — the same deterministic path the
     /// legacy hit-test used. Off-panel presses throw the cursor stack.
     pub(super) fn drive_doc_menu(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
+        if kind == GuiKind::Creative {
+            self.drive_creative_menu(screen, now);
+            return;
+        }
         self.ui.ensure_active(kind);
         let crafting_station = petramond_world::crafting::CraftingStation::of_kind(kind);
         if let (Some(station), Some(game)) = (crafting_station, self.game.as_ref()) {
@@ -303,14 +307,6 @@ impl App {
         }
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;
-        let to_button = |b: petramond_ui::PointerButton| match b {
-            petramond_ui::PointerButton::Primary => {
-                petramond_world::gui_state::PointerButton::Primary
-            }
-            petramond_ui::PointerButton::Secondary => {
-                petramond_world::gui_state::PointerButton::Secondary
-            }
-        };
         for ev in self.ui.take_events() {
             if is_widget_activation(&ev) && !is_secondary_activation(&ev) {
                 self.audio.play(Sound::UiClick);
@@ -338,54 +334,7 @@ impl App {
                 }
                 continue;
             }
-            match ev {
-                petramond_ui::UiEvent::SlotClick {
-                    role,
-                    index,
-                    button,
-                    shift,
-                } => {
-                    let Some(slot) = petramond::gui::Role::from_key(&role)
-                        .and_then(|r| r.menu_slot(index as usize))
-                    else {
-                        continue;
-                    };
-                    let button = to_button(button);
-                    let cursor_has_stack = self.game.as_ref().is_some_and(|g| g.cursor_has_stack());
-                    let gather =
-                        self.gui_router
-                            .doc_gather(slot, button, shift, now, cursor_has_stack);
-                    if let Some(game) = self.game.as_mut() {
-                        game.menu_click(slot, button, shift, gather);
-                    }
-                }
-                petramond_ui::UiEvent::SlotDrag { slots, button } => {
-                    self.gui_router.reset_click_streak();
-                    let slots = slots
-                        .into_iter()
-                        .filter_map(|(role, index)| {
-                            petramond::gui::Role::from_key(&role)
-                                .and_then(|role| role.menu_slot(index as usize))
-                        })
-                        .collect();
-                    if let Some(game) = self.game.as_mut() {
-                        game.menu_drag(kind, slots, to_button(button));
-                    }
-                }
-                petramond_ui::UiEvent::ClickOutside { button } => {
-                    self.gui_router.reset_click_streak();
-                    if let Some(game) = self.game.as_mut() {
-                        use petramond::net::protocol::ThrowAmount;
-                        game.throw_cursor(match to_button(button) {
-                            petramond_world::gui_state::PointerButton::Primary => ThrowAmount::All,
-                            petramond_world::gui_state::PointerButton::Secondary => {
-                                ThrowAmount::One
-                            }
-                        });
-                    }
-                }
-                _ => {}
-            }
+            self.handle_inventory_event(kind, ev, now);
         }
     }
 }

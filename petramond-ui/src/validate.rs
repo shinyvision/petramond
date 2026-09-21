@@ -353,6 +353,9 @@ fn walk<'a>(
             );
         }
     }
+    if node.bind.text_opacity.is_some() && !matches!(node.kind, NodeKind::Label { .. }) {
+        issue("'text_opacity' binding is only read on label nodes".into());
+    }
     if node.bind.palette.is_some() && !matches!(node.kind, NodeKind::Label { .. }) {
         issue("'palette' binding is only read on label nodes".into());
     }

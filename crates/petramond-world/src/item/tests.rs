@@ -384,6 +384,12 @@ fn drop_spec_none_is_empty() {
 #[test]
 fn block_item_links_round_trip() {
     for &it in ItemType::all() {
+        if it.creative_only() {
+            if let Some(block) = it.as_block() {
+                assert_eq!(ItemType::from_block(block), ItemType::Air);
+            }
+            continue;
+        }
         if let Some(b) = it.as_block() {
             assert_eq!(
                 ItemType::from_block(b),

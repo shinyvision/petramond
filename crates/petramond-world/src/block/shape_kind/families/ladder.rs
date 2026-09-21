@@ -9,6 +9,11 @@ use super::*;
 pub struct LadderFamily;
 
 impl ShapeSim for LadderFamily {
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        let to = crate::block::rotation::facing(block.panel_facing());
+        crate::block::rotation::CellRotation::unchanged(block.rotated_wall_panel(to), state)
+    }
+
     fn mount(
         &self,
         _p: &ShapeParams,

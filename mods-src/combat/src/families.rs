@@ -77,7 +77,9 @@ impl Family {
     /// The phase step `combo`'s recovery opens to the next attack: the
     /// authored `cancel_at`, never before the step's impact.
     pub fn cancel_at(&self, combo: usize) -> f32 {
-        self.pace.cancel_at.max(self.impact_phase(combo).unwrap_or(0.0))
+        self.pace
+            .cancel_at
+            .max(self.impact_phase(combo).unwrap_or(0.0))
     }
 }
 
@@ -221,7 +223,10 @@ mod tests {
         AnimationClipInfo {
             length,
             looping: false,
-            markers: impact.map(|at| ("impact".to_string(), at)).into_iter().collect(),
+            markers: impact
+                .map(|at| ("impact".to_string(), at))
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -234,20 +239,33 @@ mod tests {
         let doc = format!(
             r#"{{"hammer": {ROW}, "broken": {}, "bare": {}}}"#,
             ROW.replace(r#""work": {"fp": "m:fp_work", "body": "m:body_work"},"#, ""),
-            ROW.replace(r#"[{"fp": "m:fp_a", "body": "m:body_a"}, {"fp": "m:fp_b", "body": "m:body_b"}]"#, "[]"),
+            ROW.replace(
+                r#"[{"fp": "m:fp_a", "body": "m:body_a"}, {"fp": "m:fp_b", "body": "m:body_b"}]"#,
+                "[]"
+            ),
         );
         let (mut families, refused) = Families::parse(&doc);
-        assert_eq!(families.styles().count(), 1, "the broken rows are refused alone");
+        assert_eq!(
+            families.styles().count(),
+            1,
+            "the broken rows are refused alone"
+        );
         assert_eq!(refused, ["broken", "bare"]);
-        let hammer = families.of_kind("hammer").expect("the whole row is a family");
+        let hammer = families
+            .of_kind("hammer")
+            .expect("the whole row is a family");
         assert_eq!(families.of_kind("broken"), None);
         assert_eq!(families.of_kind("bare"), None);
         assert_eq!(Families::parse("[]").0.styles().count(), 0);
 
         let family = families.get(hammer);
-        assert_eq!(family.attack_window(3), 0.25, "windows are positional and wrap");
+        assert_eq!(
+            family.attack_window(3),
+            0.25,
+            "windows are positional and wrap"
+        );
         assert_eq!(family.impact_phase(0), None, "nothing resolved yet");
-        assert_eq!(family.profile.cleave, true);
+        assert!(family.profile.cleave);
 
         let unlanded = families.resolve_impacts(|rig, clip| match (rig, clip) {
             (rig::PLAYER_BODY, "m:body_a") => Some(info(2.0, Some(1.0))),
@@ -261,8 +279,16 @@ mod tests {
         assert_eq!(family.impacts, [0.5, 0.2], "phases, not seconds");
         assert_eq!(family.fp_impacts, [Some(0.6), None]);
         assert_eq!(family.impact_phase(2), Some(0.5), "wraps over the combo");
-        assert_eq!(family.cancel_at(0), 0.5, "the hold begins at the impact, whatever the row says");
-        assert_eq!(family.cancel_at(1), 0.3, "…and the row's cancel stands past it");
+        assert_eq!(
+            family.cancel_at(0),
+            0.5,
+            "the hold begins at the impact, whatever the row says"
+        );
+        assert_eq!(
+            family.cancel_at(1),
+            0.3,
+            "…and the row's cancel stands past it"
+        );
 
         // One step without a body marker: the whole family lands nothing.
         let unlanded = families.resolve_impacts(|rig, clip| match (rig, clip) {

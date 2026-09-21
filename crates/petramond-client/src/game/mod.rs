@@ -34,33 +34,41 @@ pub mod ambient;
 pub mod body_pose;
 mod client_mods;
 mod client_presentation;
+pub mod creative;
 #[cfg(test)]
 pub use petramond::menu as container;
 mod bone_ease;
+mod dig_feedback;
 pub mod environment;
 mod first_person;
 mod frame;
+mod ghosts;
 mod local_player;
+mod menu_actions;
 mod menu_prediction;
 pub mod prediction;
 pub mod presentation;
 pub mod remote_players;
 pub mod replicated;
+pub mod schematic_library;
+pub mod schematic_preview;
+pub mod schematics;
 pub mod section_cache;
+pub mod selection_tool;
 pub mod session;
+mod session_control;
 mod speed_fov;
 mod terrain_render;
 mod third_person;
 pub mod tick;
 mod view_bob;
 mod world_prediction;
+pub mod world_tool;
 
 use std::collections::{HashMap, VecDeque};
 
 use crate::particle::ParticleSystem;
-use petramond::net::protocol::{
-    ChatLine, ClientToServer, PlayerAction, SelfTransform, ThrowAmount,
-};
+use petramond::net::protocol::{ChatLine, ClientToServer, PlayerAction, SelfTransform};
 #[cfg(test)]
 use petramond::player::PlayerMode;
 use petramond::player::{Player, RaycastHit};
@@ -78,10 +86,22 @@ pub use tick::{
     GameEvents, GameInput, MobSoundEvent, MovementInput, SpatialSoundCommand, WorldEvent,
 };
 
-/// Mining-dust emission interval, seconds.
-const MINING_DUST_INTERVAL: f32 = 0.1;
-
 pub struct Game {
+    /// The shared background pool the replica streams on; presentation jobs
+    /// (ghost meshes, library I/O) run there too.
+    jobs: std::sync::Arc<petramond::worker::JobPool>,
+    /// A refusal or failure to show the player once; the app takes it.
+    pub notice: String,
+    pub world_tools: world_tool::WorldTools,
+    pub schematic_preview: schematic_preview::SchematicPreview,
+    pub schematic_library: schematic_library::SchematicLibrary,
+    /// A paste the player asked for went up (an edge the menu closes on).
+    paste_preview_ready: bool,
+    /// Captures arriving from, and pastes leaving for, the server.
+    flight_toggle: creative::FlightToggle,
+    break_repeat: creative::BreakRepeat,
+    pub schematics: schematics::SchematicShare,
+    ghosts: ghosts::Ghosts,
     cam: Camera,
     /// The client's LOCALLY-SIMULATED player: movement physics runs on this
     /// copy every frame and the camera mirrors its eye. Its transform is sent
@@ -306,9 +326,10 @@ pub struct Game {
     pub section_cache: section_cache::SectionCache,
     fallback_world: SurfaceDensitySystem,
     particles: ParticleSystem,
-    /// Wall-clock seconds banked toward the next mining-dust fleck while the
-    /// local player is actively mining (client presentation pacing).
-    mining_dust_t: f32,
+    /// Dust pacing while the local player is actively mining.
+    mining_feedback: dig_feedback::DigFeedback,
+    /// Dust and dig-hit pacing per digging mob.
+    mob_digging: HashMap<u64, dig_feedback::DigFeedback>,
     /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
     /// position. Eased toward open for the chest whose screen is up and toward closed
     /// for the rest; client-side animation only, never persisted. The render-side
@@ -442,336 +463,6 @@ impl Game {
     // read model renders from the REPLICATED `MenuView` and the screen-open
     // calls are requests/acks (menus open server-side on the tick).
 
-    /// Ask the server to persist everything (world chunks, level.dat,
-    /// per-player files, mod set) — a control message; the save happens on the
-    /// server thread. For the QUIT path use [`Game::shutdown`], which also
-    /// joins the thread.
-    pub fn save_all(&mut self) {
-        self.handle.save_all();
-    }
-
-    /// Quit this session: the server thread saves everything (what `save_all`
-    /// did) and exits; returns once it is joined.
-    pub fn shutdown(mut self) {
-        self.handle.shutdown_and_join();
-    }
-
-    /// Singleplayer pause (the pause menu): the server keeps draining
-    /// messages, streaming, and autosaving, but skips the fixed ticks and
-    /// banks no tick debt. Honored server-side only while it has never been
-    /// open to LAN (the sole connection is this local one); once opened, the
-    /// server ignores Pause. While paused the app must keep calling
-    /// [`Game::pump_network`] so server output is still consumed.
-    pub fn set_paused(&mut self, paused: bool) {
-        // A remote client never pauses the shared server (which also gates:
-        // once opened to LAN, Pause is ignored) — belt and braces.
-        if self.remote {
-            return;
-        }
-        if self.handle.send(ClientToServer::Pause(paused)).is_err() {
-            self.note_connection_lost();
-        }
-    }
-
-    pub fn send_chat(&mut self, text: String) {
-        self.outbox.push(ClientToServer::ChatSend { text });
-    }
-
-    /// Apply the particles graphics option to the client-local fleck system
-    /// (mining dust, break/splash bursts). Presentation-only; the same scale
-    /// gates the looping-emitter gather and thins each emitter's active
-    /// particle window in the renderer.
-    pub fn set_particles_mode(&mut self, mode: petramond::save::client::ParticlesMode) {
-        self.particles.set_count_scale(mode.density());
-    }
-
-    /// Change the client view distance live: the replica re-shapes its
-    /// mesh/light priority ring, and the server is asked to stream the new
-    /// radius (it clamps to its own maximum).
-    pub fn set_view_distance(&mut self, chunks: i32) {
-        let chunks = chunks.clamp(4, 64);
-        self.replica.set_render_dist(chunks);
-        let msg = ClientToServer::SetViewDistance {
-            chunks: chunks as u8,
-        };
-        if self.remote {
-            self.outbox.push(msg);
-        } else if self.handle.send(msg).is_err() {
-            self.note_connection_lost();
-        }
-    }
-
-    pub fn take_chat_lines(&mut self) -> Vec<ChatLine> {
-        std::mem::take(&mut self.pending_chat_lines)
-    }
-
-    /// Whether this session fronts a REMOTE server (joined over TCP) rather
-    /// than the in-process host thread.
-    #[inline]
-    pub fn is_remote(&self) -> bool {
-        self.remote
-    }
-
-    /// Open the running HOST server to LAN on `port`; `Ok` carries the
-    /// actual bound port. Host only — the pause menu hides the button for
-    /// remote sessions (and a remote handle has no control channel to ask).
-    pub fn open_to_lan(&mut self, port: u16) -> std::io::Result<u16> {
-        debug_assert!(!self.remote, "open_to_lan is a host action");
-        self.handle.open_to_lan(port)
-    }
-
-    /// One-shot: the latched connection-loss reason if it has not yet been
-    /// surfaced. `Game::tick` reports through `GameEvents::connection_lost`;
-    /// the app polls THIS on frames that skip the tick (shell screens over a
-    /// live game — the pause menu) so a loss detected by
-    /// [`Game::pump_network`] still reaches the Disconnected screen.
-    pub fn take_connection_lost(&mut self) -> Option<String> {
-        if self.connection_lost_reported {
-            return None;
-        }
-        let reason = self.connection_lost.clone()?;
-        self.connection_lost_reported = true;
-        log::error!("{reason}; nothing further will be saved");
-        Some(reason)
-    }
-
-    /// Latch the server as unreachable (crashed thread / closed channel /
-    /// lost TCP connection); reported exactly once through
-    /// `GameEvents::connection_lost`.
-    fn note_connection_lost(&mut self) {
-        self.note_connection_lost_because("world stopped: the server is gone");
-    }
-
-    /// [`note_connection_lost`](Self::note_connection_lost) with an explicit
-    /// reason (`ServerClosing` / a server `Disconnect`); the first reason
-    /// latched wins.
-    fn note_connection_lost_because(&mut self, reason: &str) {
-        if self.connection_lost.is_none() {
-            self.connection_lost = Some(reason.to_string());
-        }
-    }
-
-    /// Snapshot the predicted inventory and open a ledger entry for one
-    /// predicted mutating action: `(can, id)`. When `can` is false the entry
-    /// is track-only (no snapshot) and the caller must skip its local
-    /// mutation — the ledger is at capacity until the server catches up.
-    fn begin_inventory_prediction(&mut self) -> (bool, petramond::net::protocol::ClientRequestId) {
-        let can = self.prediction.can_predict();
-        let snapshot = if can {
-            prediction::PredictionSnapshot::Inventory(self.self_view.inventory.clone())
-        } else {
-            prediction::PredictionSnapshot::None
-        };
-        (can, self.prediction.begin(snapshot))
-    }
-
-    /// Like [`begin_inventory_prediction`](Self::begin_inventory_prediction),
-    /// but the snapshot also captures the open menu mirror — for predictions
-    /// that mutate a container-slot view alongside the cursor.
-    fn begin_menu_prediction(&mut self) -> (bool, petramond::net::protocol::ClientRequestId) {
-        let can = self.prediction.can_predict();
-        let snapshot = if can {
-            prediction::PredictionSnapshot::Menu {
-                inventory: self.self_view.inventory.clone(),
-                menu: self.menu_view.clone(),
-            }
-        } else {
-            prediction::PredictionSnapshot::None
-        };
-        (can, self.prediction.begin(snapshot))
-    }
-
-    /// Drop the player's held (active hotbar) item into the world via the in-game
-    /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
-    /// single item (Q). No-op with an empty hand.
-    pub fn drop_selected_item(&mut self, all: bool) {
-        // P0 throw animation is client-owned: trigger when the hand holds
-        // anything (the server never echoes the one-shot back).
-        let slot = self.self_view.inventory.active_slot() as usize;
-        self.local_hand_threw |= self.self_view.inventory.slot(slot).is_some();
-        let (can, request_id) = self.begin_inventory_prediction();
-        if can {
-            let slot = self.self_view.inventory.active_slot() as usize;
-            if all {
-                let _ = self
-                    .self_view
-                    .inventory
-                    .slot_mut(slot)
-                    .and_then(|c| c.take());
-            } else if let Some(cell) = self.self_view.inventory.slot_mut(slot) {
-                if let Some(stack) = cell.as_mut() {
-                    stack.count = stack.count.saturating_sub(1);
-                    if stack.count == 0 {
-                        *cell = None;
-                    }
-                }
-            }
-        }
-        self.outbox.push(ClientToServer::Action(PlayerAction::Drop {
-            all,
-            request_id,
-        }));
-    }
-
-    /// The F gesture in GAMEPLAY: swap the off-hand with the selected hotbar
-    /// slot — one face of the unified hovered-slot swap
-    /// ([`menu_swap_off_hand`](Self::menu_swap_off_hand)); the hotbar index
-    /// is client-owned, so the client names the concrete slot.
-    pub fn swap_off_hand(&mut self) {
-        // The index is client-owned and `player.inventory` is its stated
-        // owner (contents live on the replicated view; see the
-        // client-prediction "what not to do" list).
-        let active = self.player.inventory.active_slot() as usize;
-        self.menu_swap_off_hand(petramond_world::gui_state::MenuSlot::Inventory(active));
-    }
-
-    /// Throw from the cursor-held stack out into the world (inventory drag-out
-    /// then click outside the panel): the whole stack or a single item per
-    /// `amount`. No-op when the cursor is empty.
-    pub fn throw_cursor(&mut self, amount: ThrowAmount) {
-        self.local_hand_threw |= self.self_view.inventory.cursor().is_some();
-        let (can, request_id) = self.begin_inventory_prediction();
-        if can {
-            let cursor = self.self_view.inventory.cursor_mut();
-            match amount {
-                ThrowAmount::All => *cursor = None,
-                ThrowAmount::One => {
-                    if let Some(cur) = cursor.as_mut() {
-                        cur.count = cur.count.saturating_sub(1);
-                        if cur.count == 0 {
-                            *cursor = None;
-                        }
-                    }
-                }
-            }
-        }
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::ThrowCursor {
-                amount,
-                request_id,
-            }));
-    }
-
-    /// Request one explicit craft by stable recipe key (`bulk` = shift-craft
-    /// the maximum possible). The authoritative server revalidates station,
-    /// ingredients, and output fit.
-    pub fn craft_recipe(&mut self, recipe: &str, bulk: bool) {
-        let request_id = self.prediction.begin_track_only();
-        self.outbox.push(ClientToServer::CraftRecipe {
-            recipe: recipe.to_owned(),
-            bulk,
-            request_id,
-        });
-    }
-
-    /// The recipe browser's craftable-only filter preference (mirrored from
-    /// the world's player data at join; client-owned afterwards).
-    pub fn craft_craftable_only(&self) -> bool {
-        self.player.craft_craftable_only
-    }
-
-    /// Flip the craftable-only filter locally and tell the server, which
-    /// stores it on the player so it persists with the world's player data.
-    pub fn set_craft_craftable_only(&mut self, craftable_only: bool) {
-        if self.player.craft_craftable_only == craftable_only {
-            return;
-        }
-        self.player.craft_craftable_only = craftable_only;
-        self.outbox
-            .push(ClientToServer::SetCraftFilter { craftable_only });
-    }
-
-    pub fn crafting_catalog(&self) -> &petramond_world::crafting::CraftingCatalog {
-        &self.crafting
-    }
-
-    /// The local player's discovery record, mirrored from the server (the
-    /// unlocked half — see `SelfRestore::unlocked_recipes`). The browser lists
-    /// exactly these recipes.
-    pub fn progression(&self) -> &petramond::player::Progression {
-        &self.player.progression
-    }
-
-    #[cfg(test)]
-    pub fn replica_for_test(&self) -> &petramond::world::World {
-        &self.replica
-    }
-
-    /// Pin the locally-simulated player for tests that need a deterministic
-    /// sampling location (the server session is placed by the caller).
-    #[cfg(test)]
-    pub fn place_player_for_test(&mut self, feet: petramond_math::world_pos::WorldPos) {
-        self.player.pos = feet;
-        self.player.vel = petramond_math::math::Vec3::ZERO;
-    }
-
-    pub fn replicated_inventory_revision(&self) -> u64 {
-        self.self_view.inventory_revision
-    }
-
-    /// Install a browser catalog AND unlock all of it, the way a real session
-    /// arrives (catalog from the handshake, unlocked set from the player's
-    /// record). Tests about the browser are about presentation, not
-    /// discovery; a test that wants a LOCKED recipe unlocks selectively.
-    #[cfg(test)]
-    pub fn set_crafting_catalog_for_test(
-        &mut self,
-        catalog: petramond_world::crafting::CraftingCatalog,
-    ) {
-        for recipe in catalog.iter() {
-            self.player.progression.unlock(recipe.key());
-        }
-        self.crafting = catalog;
-    }
-
-    /// Whether the LOCAL cursor currently holds a stack, from the REPLICATED
-    /// inventory (cursor rides `SelfState`). Gates the double-click gather,
-    /// which only fires while a stack is being dragged; the gather verdict
-    /// ships in the `MenuClick` message.
-    pub fn cursor_has_stack(&self) -> bool {
-        self.self_view.inventory.cursor().is_some()
-    }
-
-    /// Read-only state needed to build the UI snapshot for the LOCAL player's
-    /// current menu — assembled from the client mirrors: replicated state plus
-    /// any unresolved P1 prediction. No server-session reads.
-    pub fn menu_read_model(&self) -> petramond::server::menu::MenuReadModel<'_> {
-        let view = &self.menu_view;
-        petramond::server::menu::MenuReadModel {
-            inventory: &self.self_view.inventory,
-            craft_output: view.craft_output,
-            gui_state: view.gui_state.clone(),
-            container: view.container.clone(),
-        }
-    }
-
-    // Block-menu sessions open server-side before their `OpenScreen` event.
-    // Inventory is the exception: the E key explicitly requests its session.
-
-    pub fn request_open_inventory(&mut self) {
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::OpenInventory));
-    }
-
-    /// Ack of a server-opened GUI session — any kind, engine container or mod
-    /// GUI (no-op; see above).
-    pub fn open_gui_screen(
-        &mut self,
-        kind: petramond_world::gui_state::GuiKind,
-        pos: Option<IVec3>,
-    ) {
-        let _ = (kind, pos);
-    }
-
-    /// Close the LOCAL player's open menu session. The server-side close
-    /// (cursor/output stash, transient-input return, viewer release) runs ON THE TICK the
-    /// message lands on; there is no client-side menu state to clear — the App
-    /// owns which screen is up.
-    pub fn close_open_menu(&mut self) {
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::CloseMenu));
-    }
-
     /// App-side wake request (ESC / "Leave bed"), latched to the next tick.
     pub fn request_wake(&mut self) {
         self.outbox.push(ClientToServer::Action(PlayerAction::Wake));
@@ -818,7 +509,7 @@ impl Game {
     /// The LOCAL player's health for the HUD hearts (replicated self view), or
     /// `None` when there is no survival bar to draw (a floating spectator).
     pub fn player_health(&self) -> Option<petramond_world::gui_state::HealthView> {
-        if self.self_view.mode == petramond::player::PlayerMode::Spectator {
+        if self.self_view.mode != petramond::player::PlayerMode::Survival {
             return None;
         }
         Some(petramond_world::gui_state::HealthView {
@@ -831,7 +522,7 @@ impl Game {
     /// application order (replicated self view). Empty for a spectator — the
     /// row hides with the hearts.
     pub fn player_effect_icons(&self) -> Vec<petramond_world::effect::Effect> {
-        if self.self_view.mode == petramond::player::PlayerMode::Spectator {
+        if self.self_view.mode != petramond::player::PlayerMode::Survival {
             return Vec::new();
         }
         self.self_view.effects.iter().map(|&(e, _)| e).collect()

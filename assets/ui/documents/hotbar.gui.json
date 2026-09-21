@@ -3,7 +3,7 @@
   "kind": "petramond:hotbar",
   "class": "hud",
   "root": {
-    "type": "row",
+    "type": "column",
     "layout": {
       "w": "auto",
       "h": "auto",
@@ -19,16 +19,30 @@
         0,
         1
       ],
-      "gap": 0,
+      "gap": 2,
       "dir": "column",
       "justify": "start",
       "anchor": {
         "h": "center",
         "v": "end"
-      }
+      },
+      "align": "center"
     },
-    "style": "list.row",
     "children": [
+      {
+        "type": "label",
+        "id": "creative_notice",
+        "small": true,
+        "bind": {
+          "text": "creative_notice",
+          "visible": "creative_notice_visible",
+          "text_opacity": "creative_notice_opacity"
+        },
+        "wrap": true,
+        "layout": {
+          "max_w": 280
+        }
+      },
       {
         "type": "row",
         "layout": {
@@ -49,7 +63,8 @@
               "selected": "active_slot"
             }
           }
-        ]
+        ],
+        "style": "list.row"
       }
     ]
   }

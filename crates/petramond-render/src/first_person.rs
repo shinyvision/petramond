@@ -77,15 +77,21 @@ impl FirstPersonRig {
         };
         rig.sprite_grips = [Hand::Main, Hand::Off].map(|hand| {
             let pivot = model.bones()[row.grips[hand as usize]].pivot;
-            let sprite = row.holds.iter().find(|(kind, _)| *kind == "sprite").map(|(_, clip)| *clip);
-            rig.from_hold(hand, sprite).inverse().transform_point3(pivot)
+            let sprite = row
+                .holds
+                .iter()
+                .find(|(kind, _)| *kind == "sprite")
+                .map(|(_, clip)| *clip);
+            rig.hold_inverse(hand, sprite)
+                .inverse()
+                .transform_point3(pivot)
         });
         rig
     }
 
     /// The inverse grip frame `hand` rests in holding what `clip` poses (the
     /// rig's rest for `None`).
-    fn from_hold(&self, hand: Hand, clip: Option<ClipId>) -> Mat4 {
+    fn hold_inverse(&self, hand: Hand, clip: Option<ClipId>) -> Mat4 {
         clip.and_then(|clip| self.holds[hand as usize].iter().find(|(c, _)| *c == clip))
             .map_or(self.rest[hand as usize], |(_, m)| *m)
     }
@@ -110,7 +116,7 @@ impl FirstPersonRig {
     pub fn carry(&self, bones: &[Mat4], hand: Hand, item: ItemType) -> Option<Mat4> {
         let grip = *bones.get(self.row.grips[hand as usize])?;
         let hold: Option<ClipId> = self.row.hold(item.render_kind());
-        Some(to_view() * grip * self.from_hold(hand, hold))
+        Some(to_view() * grip * self.hold_inverse(hand, hold))
     }
 
     /// Append the rig's cubes — the arms — in view-space blocks.
@@ -127,6 +133,7 @@ impl FirstPersonRig {
             to_view(),
             tint,
             |_| false,
+            None,
             verts,
             indices,
         );
@@ -163,7 +170,10 @@ impl FirstPersonHand {
 
     pub fn reset(&mut self) {
         self.driver.reset();
-        self.rig.row.model.resolve_local_into(&[], &[], &mut self.bones);
+        self.rig
+            .row
+            .model
+            .resolve_local_into(&[], &[], &mut self.bones);
     }
 
     /// Advance the animator one frame, `dt` seconds after the last, and pose

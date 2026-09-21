@@ -34,7 +34,15 @@ use super::{AnimatorParam, AnimatorPlay};
 const ENGINE_NAMESPACE: &str = "petramond";
 
 const DOC_KEYS: &[&str] = &[
-    "libraries", "params", "events", "slots", "masks", "markers", "gates", "layers", "rules",
+    "libraries",
+    "params",
+    "events",
+    "slots",
+    "masks",
+    "markers",
+    "gates",
+    "layers",
+    "rules",
 ];
 
 /// A rig graph's declared vocabulary in id order — what a session hands a
@@ -142,8 +150,11 @@ pub fn resolve_event(rig: &str, event: &str) -> Result<(RigId, u16), String> {
 pub fn clip_info(rig: &str, name: &str) -> Option<AnimationClipInfo> {
     let clips = rig_graph(rig).ok()?.1.clips();
     let clip = clips.get(clips.id(name)?);
-    let mut markers: Vec<(String, f32)> =
-        clip.markers().iter().map(|m| (m.name.clone(), m.time)).collect();
+    let mut markers: Vec<(String, f32)> = clip
+        .markers()
+        .iter()
+        .map(|m| (m.name.clone(), m.time))
+        .collect();
     markers.sort_by(|a, b| a.1.total_cmp(&b.1));
     Some(AnimationClipInfo {
         length: clip.length,
@@ -285,16 +296,20 @@ pub fn animator_layers(path: &str) -> Vec<AnimatorSource> {
     let packs = assets::layers();
     assets::read_catalog_layers(path)
         .into_iter()
-        .map(|CatalogLayer { text, path, owner, .. }| AnimatorSource {
-            text,
-            // An id-less pack files its clips under the engine's namespace
-            // but is still a pack: only the copy outside every pack directory
-            // is the rig's own document.
-            engine: owner.is_none() && !packs.iter().any(|l| path.starts_with(&l.dir)),
-            namespace: owner.unwrap_or_else(|| ENGINE_NAMESPACE.to_string()),
-            origin: path.display().to_string(),
-            dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
-        })
+        .map(
+            |CatalogLayer {
+                 text, path, owner, ..
+             }| AnimatorSource {
+                text,
+                // An id-less pack files its clips under the engine's namespace
+                // but is still a pack: only the copy outside every pack directory
+                // is the rig's own document.
+                engine: owner.is_none() && !packs.iter().any(|l| path.starts_with(&l.dir)),
+                namespace: owner.unwrap_or_else(|| ENGINE_NAMESPACE.to_string()),
+                origin: path.display().to_string(),
+                dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+            },
+        )
         .collect()
 }
 

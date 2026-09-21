@@ -51,13 +51,7 @@ pub fn encode(player: &Player) -> Vec<u8> {
     put_vec3(&mut b, player.vel);
     put_f32(&mut b, player.yaw);
     put_f32(&mut b, player.pitch);
-    put_u8(
-        &mut b,
-        match player.mode() {
-            PlayerMode::Survival => 0,
-            PlayerMode::Spectator => 1,
-        },
-    );
+    put_u8(&mut b, player.mode().to_u8());
     put_u32(&mut b, player.health() as u32);
     // The bed spawn point: presence byte + bed base cell + wake spot.
     match player.bed_spawn {
@@ -128,10 +122,7 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
     let pos = get_world_pos(&mut r)?;
     let vel = get_vec3(&mut r)?;
     let (yaw, pitch) = (r.f32()?, r.f32()?);
-    let mode = match r.u8()? {
-        1 => PlayerMode::Spectator,
-        _ => PlayerMode::Survival,
-    };
+    let mode = PlayerMode::from_u8(r.u8()?);
     let health = r.u32()? as i32;
 
     let bed_spawn = if r.u8()? == 1 {

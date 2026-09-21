@@ -263,6 +263,15 @@
     "active_slot": {
      "type": "i32",
      "doc": "the selected hotbar slot (bind on the slot_grid's `selected`)"
+    },
+    "creative_notice": {
+     "type": "str"
+    },
+    "creative_notice_visible": {
+     "type": "bool"
+    },
+    "creative_notice_opacity": {
+     "type": "f32"
     }
    },
    "handles": {},
@@ -304,7 +313,7 @@
     },
     "craft_tip_name": {
      "type": "str",
-     "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
+     "doc": "hovered recipe's result name + \u00d7count, shown in the tooltip (drawn one gui-scale step smaller)"
     },
     "craft_tip_ingredients_w": {
      "type": "i32",
@@ -357,7 +366,7 @@
     "recipe": "click (per grid cell): select the stable recipe key",
     "craft": "click: request one authoritative craft (shift: craft the maximum possible)"
    },
-   "notes": "container: inventory/output slots route by role; recipe and tooltip icons occupy host hooks (recipe_result, craft_tip_result/_ingredients). The SELECTION is shown by the grid cell's own selected face, not by a detail line — that line cost two rows of the grid."
+   "notes": "container: inventory/output slots route by role; recipe and tooltip icons occupy host hooks (recipe_result, craft_tip_result/_ingredients). The SELECTION is shown by the grid cell's own selected face, not by a detail line \u2014 that line cost two rows of the grid."
   },
   "petramond:crafting_table": {
    "state": {
@@ -395,7 +404,7 @@
     },
     "craft_tip_name": {
      "type": "str",
-     "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
+     "doc": "hovered recipe's result name + \u00d7count, shown in the tooltip (drawn one gui-scale step smaller)"
     },
     "craft_tip_ingredients_w": {
      "type": "i32",
@@ -448,7 +457,7 @@
     "recipe": "click (per grid cell): select the stable recipe key",
     "craft": "click: request one authoritative craft (shift: craft the maximum possible)"
    },
-   "notes": "container: inventory/output slots route by role; recipe and tooltip icons occupy host hooks (recipe_result, craft_tip_result/_ingredients). The SELECTION is shown by the grid cell's own selected face, not by a detail line — that line cost two rows of the grid."
+   "notes": "container: inventory/output slots route by role; recipe and tooltip icons occupy host hooks (recipe_result, craft_tip_result/_ingredients). The SELECTION is shown by the grid cell's own selected face, not by a detail line \u2014 that line cost two rows of the grid."
   },
   "petramond:chest": {
    "state": {
@@ -555,19 +564,19 @@
     },
     "<bind.item on a hook node>": {
      "type": "str",
-     "doc": "an ordered comma-list of item registry names the host draws composited into the hook's rect, first name bottom-most (empty = nothing; unknown names skipped) — the generic layered item view, same list convention as petramond:overlay instance data; first user: the forge anvil's enlarged tool + augment overlays"
+     "doc": "an ordered comma-list of item registry names the host draws composited into the hook's rect, first name bottom-most (empty = nothing; unknown names skipped) \u2014 the generic layered item view, same list convention as petramond:overlay instance data; first user: the forge anvil's enlarged tool + augment overlays"
     },
     "<bind.min_w on any node>": {
      "type": "i32",
-     "doc": "this frame's MINIMUM width for the node, logical px — how a box whose content the layout engine cannot measure (a host-drawn hook) reserves the room it needs, so ancestors grow around it. Only ever RAISES the authored layout.min_w; first user: the recipe tooltip's ingredient strip"
+     "doc": "this frame's MINIMUM width for the node, logical px \u2014 how a box whose content the layout engine cannot measure (a host-drawn hook) reserves the room it needs, so ancestors grow around it. Only ever RAISES the authored layout.min_w; first user: the recipe tooltip's ingredient strip"
     },
     "<bind.abs_x / bind.abs_y on a layout.abs node>": {
      "type": "i32",
-     "doc": "per-frame override of the node's authored abs position, logical px from the parent's content rect — a widget whose place is machine state; generic and tested, currently no shipping user (built for a floated-slot anvil design later dropped)"
+     "doc": "per-frame override of the node's authored abs position, logical px from the parent's content rect \u2014 a widget whose place is machine state; generic and tested, currently no shipping user (built for a floated-slot anvil design later dropped)"
     },
     "show_item_tip": {
      "type": "bool",
-     "doc": "host-populated for EVERY menu kind: a filled slot is hovered while the cursor holds nothing. The engine injects the tooltip chrome into every container-class document at load — a pack ships no node; binding `show_item_tip` in its own document opts OUT and keeps its custom chrome"
+     "doc": "host-populated for EVERY menu kind: a filled slot is hovered while the cursor holds nothing. The engine injects the tooltip chrome into every container-class document at load \u2014 a pack ships no node; binding `show_item_tip` in its own document opts OUT and keeps its custom chrome"
     },
     "item_tip_name": {
      "type": "str",
@@ -583,7 +592,7 @@
     },
     "slot{N}:tip": {
      "type": "str",
-     "doc": "per-slot BOUND tooltip a machine publishes for container cell N (in-role index): lines separated by newline, each line split into SPANS by tab, each span 'palette|text' (palette = theme palette entry) — spans colour one word without painting the line; shown by the injected slot tooltip while that cell is hovered EMPTY; empty/absent = no tip. Lines and spans past what the injected tooltip carries (gui::documents SLOT_TIP_LINES / SLOT_TIP_SPANS) are dropped. The three separators — newline, tab, '|' — are RESERVED and have NO escape: strip them from published text, or a line splits where you did not mean it to"
+     "doc": "per-slot BOUND tooltip a machine publishes for container cell N (in-role index): lines separated by newline, each line split into SPANS by tab, each span 'palette|text' (palette = theme palette entry) \u2014 spans colour one word without painting the line; shown by the injected slot tooltip while that cell is hovered EMPTY; empty/absent = no tip. Lines and spans past what the injected tooltip carries (gui::documents SLOT_TIP_LINES / SLOT_TIP_SPANS) are dropped. The three separators \u2014 newline, tab, '|' \u2014 are RESERVED and have NO escape: strip them from published text, or a line splits where you did not mean it to"
     },
     "show_slot_tip": {
      "type": "bool",
@@ -666,7 +675,7 @@
     },
     "connect_phase": {
      "type": "str",
-     "doc": "worker progress: \"Connecting…\" then \"Joining world…\""
+     "doc": "worker progress: \"Connecting\u2026\" then \"Joining world\u2026\""
     },
     "connecting": {
      "type": "bool",
@@ -835,6 +844,163 @@
     "anti_aliasing": "slider: preview Off/MSAA 4x/MSAA 8x/SSAA 4x/SSAA 16x; release applies and persists the mode",
     "back": "click: back to the Options root"
    }
+  },
+  "petramond:creative": {
+   "state": {
+    "tab": {
+     "type": "i32"
+    },
+    "active_slot": {
+     "type": "i32"
+    },
+    "catalog_tab": {
+     "type": "bool"
+    },
+    "selection_tab": {
+     "type": "bool"
+    },
+    "library_tab": {
+     "type": "bool"
+    },
+    "include_air": {
+     "type": "bool"
+    },
+    "can_save": {
+     "type": "bool"
+    },
+    "empty_library": {
+     "type": "bool"
+    },
+    "search": {
+     "type": "str"
+    },
+    "schematic_name": {
+     "type": "str"
+    },
+    "selection_count": {
+     "type": "str"
+    },
+    "creative_notice": {
+     "type": "str"
+    },
+    "creative_notice_visible": {
+     "type": "bool"
+    },
+    "creative_notice_opacity": {
+     "type": "f32"
+    },
+    "items": {
+     "type": "list",
+     "item": {
+      "item_icon": "str"
+     }
+    },
+    "schematics": {
+     "type": "list",
+     "item": {
+      "name": "str",
+      "thumbnail": "str",
+      "details": "str"
+     }
+    },
+    "browsing": {
+     "type": "bool"
+    },
+    "confirming_delete": {
+     "type": "bool"
+    },
+    "delete_question": {
+     "type": "str"
+    },
+    "can_clear": {
+     "type": "bool"
+    },
+    "cursor_has_stack": {
+     "type": "bool"
+    }
+   },
+   "handles": {
+    "creative_item": "click: pick up a catalog stack onto the inventory cursor",
+    "save_schematic": "click",
+    "place_schematic": "click: place this schematic row",
+    "creative_tabs": "tab selection",
+    "creative_search": "text change",
+    "schematic_name": "text change",
+    "include_air": "toggle",
+    "hotbar": "ordinary inventory slot click, split, swap and drag",
+    "clear_selection": "click: clear selection (undoable)",
+    "delete_schematic": "click: confirm deletion of this schematic row",
+    "confirm_delete": "click: delete the confirmed schematic and thumbnail",
+    "cancel_delete": "click: cancel deletion",
+    "new_schematic": "click: open the save UI",
+    "back_to_schematics": "click: return to the schematic library",
+    "discard_creative_cursor": "click: destroy the inventory cursor stack"
+   }
+  },
+  "petramond:schematics": {
+   "state": {
+    "library_page": {
+     "type": "bool"
+    },
+    "save_page": {
+     "type": "bool"
+    },
+    "can_author": {
+     "type": "bool",
+     "doc": "whether this choice offers saving the current wand selection"
+    },
+    "browsing": {
+     "type": "bool"
+    },
+    "empty_library": {
+     "type": "bool"
+    },
+    "confirming_delete": {
+     "type": "bool"
+    },
+    "delete_question": {
+     "type": "str"
+    },
+    "can_save": {
+     "type": "bool"
+    },
+    "can_clear": {
+     "type": "bool"
+    },
+    "include_air": {
+     "type": "bool"
+    },
+    "schematic_name": {
+     "type": "str"
+    },
+    "selection_count": {
+     "type": "str"
+    },
+    "notice": {
+     "type": "str"
+    },
+    "schematics": {
+     "type": "list",
+     "item": {
+      "name": "str",
+      "thumbnail": "str",
+      "details": "str"
+     }
+    }
+   },
+   "handles": {
+    "use_schematic": "click: choose this schematic row for the open choice",
+    "delete_schematic": "click: confirm deletion of this schematic row",
+    "confirm_delete": "click: delete the confirmed schematic and thumbnail",
+    "cancel_delete": "click: cancel deletion",
+    "new_schematic": "click: open the save page",
+    "back_to_schematics": "click: back to the library",
+    "clear_selection": "click: clear the wand selection",
+    "save_schematic": "click: save the wand selection",
+    "schematic_name": "text change",
+    "include_air": "toggle"
+   },
+   "notes": "screen: the schematic library a mod's choice opens in any game mode; choosing uploads the design to the world if it lacks it"
   }
  }
 }

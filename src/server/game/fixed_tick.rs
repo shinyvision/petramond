@@ -41,6 +41,7 @@ impl ServerGame {
         self.pump_stream_events();
         self.publish_dismounted();
         self.apply_deferred_actions(events);
+        self.release_absent_holders(events);
         self.drain_post_events(events);
 
         // Keep action intent before world/entity simulation so inputs resolve
@@ -68,7 +69,9 @@ impl ServerGame {
         self.begin_stage(Stage::Placement, events);
         for s in 0..self.sessions.len() {
             self.tick_place(s, events);
+            self.tick_creative(s, events);
         }
+        self.tick_schematics();
         self.end_stage(Stage::Placement, events);
 
         self.begin_stage(Stage::Attack, events);
@@ -84,6 +87,7 @@ impl ServerGame {
         self.end_stage(Stage::Drops, events);
 
         self.begin_stage(Stage::Menu, events);
+        self.close_menus_on_absent_anchors(events);
         for s in 0..self.sessions.len() {
             self.tick_menu(s, events);
         }
@@ -215,7 +219,10 @@ impl ServerGame {
         // positional one-shot.
         for fx in step.fx {
             if let Some(bundle) = fx.burst {
-                events.world.emitter_bursts.push((bundle, fx.pos, 1.0));
+                events
+                    .world
+                    .emitter_bursts
+                    .push(crate::events::tick::BurstFired::plain(bundle, fx.pos, 1.0));
             }
             if let Some(sound) = fx.sound {
                 events.world.sounds.push(crate::events::tick::SoundEvent {
@@ -399,7 +406,12 @@ impl ServerGame {
         let others: Vec<SessionPlayerRef> = left
             .iter_mut()
             .enumerate()
-            .chain(right.iter_mut().enumerate().map(|(i, s)| (acting + 1 + i, s)))
+            .chain(
+                right
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(i, s)| (acting + 1 + i, s)),
+            )
             .map(|(index, sess)| SessionPlayerRef {
                 id: sess.id,
                 index,
@@ -417,8 +429,8 @@ impl ServerGame {
     fn open_gui_of(sess: &ConnectedPlayer) -> Option<crate::events::OpenGui> {
         match sess.menu.target() {
             crate::menu::ContainerTarget::None => None,
-            crate::menu::ContainerTarget::Gui { kind, pos } => {
-                Some(crate::events::OpenGui { kind, anchor: pos })
+            crate::menu::ContainerTarget::Gui { kind, anchor } => {
+                Some(crate::events::OpenGui { kind, anchor })
             }
         }
     }
@@ -468,10 +480,11 @@ impl ServerGame {
     fn end_stage(&mut self, stage: Stage, events: &mut TickEvents) {
         self.run_systems(Attach::After(stage), events);
         self.apply_deferred_actions(events);
+        self.scatter_mob_spills();
         self.drain_post_events(events);
     }
 
-    fn drain_post_events(&mut self, events: &mut TickEvents) {
+    pub(in crate::server) fn drain_post_events(&mut self, events: &mut TickEvents) {
         if !self.bus.has_queued_posts() {
             return;
         }

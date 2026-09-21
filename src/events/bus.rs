@@ -14,8 +14,8 @@ use crate::player::PlayerId;
 use crate::world::World;
 
 use super::payload::{
-    AttackAttempt, BlockBreakPre, BlockPlacePre, DeferredAction, InteractAttempt, ItemUsePre,
-    MobDamagePre, PlayerDamagePre, PostEvent, PostEventKind, ProjectileHit,
+    AttackAttempt, BlockBreakPre, BlockPlacePre, CellsEditPre, DeferredAction, InteractAttempt,
+    ItemUsePre, MobDamagePre, PlayerDamagePre, PostEvent, PostEventKind, ProjectileHit,
 };
 
 /// A pre handler's verdict. The first `Cancel` wins AND ends the dispatch:
@@ -72,7 +72,7 @@ pub struct SessionPlayerRef<'a> {
     /// tick system's gauges belong to whoever is LOOKING, and the acting
     /// session (host, session 0) is nobody in particular on a server.
     pub gui_state: &'a mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
-    /// The open GUI session: kind, and the cell it was opened on. `None` =
+    /// The open GUI session: kind, and the block or mob it was opened on. `None` =
     /// nothing open (or a non-mod screen).
     pub gui: Option<OpenGui>,
 }
@@ -81,7 +81,7 @@ pub struct SessionPlayerRef<'a> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct OpenGui {
     pub kind: petramond_world::gui_state::GuiKind,
-    pub anchor: Option<petramond_math::math::IVec3>,
+    pub anchor: Option<crate::menu::MenuAnchor>,
 }
 
 struct ScopeEntry {
@@ -356,6 +356,7 @@ impl PostQueue {
 pub struct EventBus {
     pre_block_place: Vec<PreHandler<BlockPlacePre>>,
     pre_block_break: Vec<PreHandler<BlockBreakPre>>,
+    pre_cells_edit: Vec<PreHandler<CellsEditPre>>,
     pre_interact_attempt: Vec<PreHandler<InteractAttempt>>,
     pre_use_unclaimed: Vec<PreHandler<InteractAttempt>>,
     pre_attack_attempt: Vec<PreHandler<AttackAttempt>>,
@@ -429,6 +430,12 @@ pre_events!(
         block_break_pre,
         pre_block_break,
         BlockBreakPre
+    ),
+    (
+        on_cells_edit_pre,
+        cells_edit_pre,
+        pre_cells_edit,
+        CellsEditPre
     ),
     (
         on_interact_attempt,

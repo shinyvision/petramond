@@ -101,7 +101,10 @@ impl App {
         // document runtime (there is no other click route) — and the
         // simulation continues below. Clearing the pointer edges keeps a
         // menu-consumed click from also firing block break/placement.
-        else if self.screen.client_ui_open() {
+        else if self.screen == super::AppScreen::Schematics {
+            self.drive_schematics_screen(screen_size, now);
+            self.pointer.clear_edges();
+        } else if self.screen.client_ui_open() {
             if let Some(kind) = self.doc_ui_kind() {
                 self.drive_client_doc_ui(kind, screen_size, now);
             }
@@ -137,6 +140,7 @@ impl App {
             .tick(dt, &game_input);
         self.adopt_chat_lines(now);
         self.handle_open_screen_events(&events);
+        self.open_requested_schematic_library();
         // The tick above just drained the server: an open menu's read model
         // (slot mirrors, mod gui_state) may have moved. RE-SOLVE the panel so
         // THIS frame presents this tick's answer — solved only before the

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::{ItemStackData, MobTagValue};
+use crate::data::{EntityRef, ItemStackData, MobTagValue};
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
 
 /// A pre-event handler's verdict. The first `Cancel` wins AND ends the
@@ -105,6 +105,15 @@ pub enum EventKind {
     /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
     /// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity
     ProjectileHit,
+    ActorActed,
+    SchematicChosen,
+    SchematicPositioned,
+    /// PRE — a bulk cell edit (an operator's fill, paste, undo) is about to
+    /// begin. Cancel refuses the WHOLE edit: nothing is written. Announced
+    /// once per edit, however many ticks the write then spreads over — a
+    /// protection mod guards a region here, where per-block pre events never
+    /// fire.
+    CellsEditPre,
 }
 
 /// What becomes of a flying item once its [`EventKind::ProjectileHit`]
@@ -290,10 +299,14 @@ pub enum EventPayload {
         pos: [i32; 3],
         block: BlockId,
         facing: Facing,
+        /// Who is placing: a player's click or a mob acting through
+        /// [`HostCall::ActorPlace`](crate::HostCall::ActorPlace).
+        actor: EntityRef,
     },
-    /// PRE — a player break that is about to clear the cell. Cancel =
-    /// unbreakable (the block stays). Fires for player mining only;
-    /// sim-destroyed blocks (natural breaks) never dispatch it.
+    /// PRE — a break about to clear the cell, by a player's mining or a mob
+    /// acting through [`HostCall::ActorDig`](crate::HostCall::ActorDig).
+    /// Cancel = unbreakable (the block stays). Sim-destroyed blocks (natural
+    /// breaks) never dispatch it.
     BlockBreakPre {
         pos: [i32; 3],
         block: BlockId,
@@ -302,11 +315,11 @@ pub enum EventPayload {
         /// regardless, so a handler that only wants harvested breaks gates
         /// on this itself.
         harvested: bool,
-        /// The breaking session's player id (for per-player calls such as
-        /// [`HostCall::PlayerHeld`]).
+        /// Who is breaking: a player (whose held tool [`HostCall::PlayerHeld`]
+        /// reads) or a mob.
         ///
         /// [`HostCall::PlayerHeld`]: crate::HostCall::PlayerHeld
-        player: PlayerId,
+        actor: EntityRef,
         /// Mutable: written back by the engine after the dispatch. `None` =
         /// the engine's own drop tables roll as usual; `Some(stacks)` = the
         /// break drops EXACTLY these stacks instead (empty = nothing), the
@@ -423,11 +436,11 @@ pub enum EventPayload {
     PlayerDied,
     ContainerOpened {
         kind: ContainerKind,
-        pos: Option<[i32; 3]>,
+        at: Option<crate::ContainerAddress>,
     },
     ContainerClosed {
         kind: ContainerKind,
-        pos: Option<[i32; 3]>,
+        at: Option<crate::ContainerAddress>,
     },
     SectionGenerated {
         /// Section coordinates (16³ units).
@@ -598,6 +611,50 @@ pub enum EventPayload {
         /// as the engine's default; the echoed value is applied.
         fate: ProjectileFate,
     },
+    /// POST — a queued actor action ([`HostCall::ActorDig`]'s break,
+    /// [`HostCall::ActorPlace`]) had its turn. `refusal` is `None` when it
+    /// happened, else why it did not: the world or the actor changed since
+    /// the request, or a pre-event handler cancelled it.
+    ///
+    /// [`HostCall::ActorDig`]: crate::HostCall::ActorDig
+    /// [`HostCall::ActorPlace`]: crate::HostCall::ActorPlace
+    ActorActed {
+        actor: EntityRef,
+        pos: [i32; 3],
+        action: crate::data::ActorAction,
+        refusal: Option<crate::data::ActionRefusal>,
+    },
+    /// POST — `player` chose `asset` for the open choice `tag`
+    /// ([`HostCall::SchematicChoose`]); the world holds it.
+    ///
+    /// [`HostCall::SchematicChoose`]: crate::HostCall::SchematicChoose
+    SchematicChosen {
+        player: PlayerId,
+        tag: String,
+        asset: crate::data::SchematicId,
+    },
+    /// POST — `player` anchored `asset` for the open positioning `tag`
+    /// ([`HostCall::SchematicPosition`]) with its turned minimum corner at
+    /// `origin`.
+    ///
+    /// [`HostCall::SchematicPosition`]: crate::HostCall::SchematicPosition
+    SchematicPositioned {
+        player: PlayerId,
+        tag: String,
+        asset: crate::data::SchematicId,
+        origin: [i32; 3],
+        turns: u8,
+    },
+    /// See [`EventKind::CellsEditPre`]. Nothing is mutable.
+    CellsEditPre {
+        /// Inclusive bounds of the requested cells. Compound blocks the edit
+        /// overwrites may clear cells just outside them.
+        min: [i32; 3],
+        max: [i32; 3],
+        /// How many cells the edit writes (its bounds may be mostly holes).
+        cells: u64,
+        actor: EntityRef,
+    },
 }
 
 impl EventPayload {
@@ -631,6 +688,10 @@ impl EventPayload {
             EventPayload::Interacted { .. } => EventKind::Interacted,
             EventPayload::ModEvent { .. } => EventKind::ModEvent,
             EventPayload::ProjectileHit { .. } => EventKind::ProjectileHit,
+            EventPayload::ActorActed { .. } => EventKind::ActorActed,
+            EventPayload::SchematicChosen { .. } => EventKind::SchematicChosen,
+            EventPayload::SchematicPositioned { .. } => EventKind::SchematicPositioned,
+            EventPayload::CellsEditPre { .. } => EventKind::CellsEditPre,
         }
     }
 }

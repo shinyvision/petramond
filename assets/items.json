@@ -1258,6 +1258,7 @@
         "roll": 0.5
       },
       "sprite": "stone_shovel",
+      "sprite_face_leads": true,
       "tags": [
         "shovels"
       ],
@@ -1279,6 +1280,7 @@
         "roll": 0.5
       },
       "sprite": "iron_shovel",
+      "sprite_face_leads": true,
       "tags": [
         "shovels"
       ],
@@ -1300,6 +1302,7 @@
         "roll": 0.5
       },
       "sprite": "diamond_shovel",
+      "sprite_face_leads": true,
       "tags": [
         "shovels"
       ],
@@ -2076,6 +2079,81 @@
       "sprite": "ladder",
       "tags": [],
       "block": "petramond:ladder"
+    },
+    {
+      "item": "petramond:schematic_wand",
+      "key": "petramond:schematic_wand",
+      "name": "Schematic Wand",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "schematic_wand",
+      "data": {
+        "petramond:creative_only": true,
+        "petramond:creative_tool": "schematic"
+      }
+    },
+    {
+      "item": "petramond:paper",
+      "key": "petramond:paper",
+      "name": "Paper",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "paper",
+      "tags": []
+    },
+    {
+      "patch": "petramond:creative/petramond:fallen_branch",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Fallen Branch",
+          "placement_variants": [
+            "petramond:fallen_branch",
+            "petramond:fallen_branch_2",
+            "petramond:fallen_branch_3"
+          ]
+        }
+      }
+    },
+    {
+      "patch": "petramond:creative/petramond:pebbles_small",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Pebbles",
+          "placement_variants": [
+            "petramond:pebbles_small",
+            "petramond:pebbles_medium",
+            "petramond:pebbles_large"
+          ]
+        }
+      }
+    },
+    {
+      "patch": "petramond:creative/petramond:hemp",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Hemp Plant"
+        }
+      }
+    },
+    {
+      "patch": "petramond:creative/petramond:snow_layer",
+      "data": {
+        "petramond:creative": {
+          "visible": true,
+          "name": "Snow Layer"
+        }
+      }
     }
   ]
 }

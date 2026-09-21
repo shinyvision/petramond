@@ -280,6 +280,11 @@ pub struct ShapeMount {
 }
 
 pub trait ShapeSim: Send + Sync + 'static {
+    /// Rotate cell identity and state clockwise as viewed from above.
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        crate::block::rotation::common(block, state)
+    }
+
     /// The block's position-aware collision boxes — the resolve behind
     /// `World::collision_boxes_at`. The default is the row's position-less
     /// [`Block::collision_boxes`] (right for cube/cross/crop/torch/lowered);
@@ -383,6 +388,20 @@ pub trait ShapeSim: Send + Sync + 'static {
         _pos: IVec3,
         _block: Block,
     ) -> Option<Vec<(CellPart, Block)>> {
+        None
+    }
+
+    /// The row and state of a cell of `block` in `state` holding only the
+    /// parts in `keep`: what stands once some of a composed cell's parts are
+    /// laid and the rest are not. `None` for a family whose cells are whole,
+    /// or when `keep` names no part the state holds.
+    fn keeping_parts(
+        &self,
+        _params: &ShapeParams,
+        _block: Block,
+        _state: ShapeState,
+        _keep: &[CellPart],
+    ) -> Option<(Block, ShapeState)> {
         None
     }
 

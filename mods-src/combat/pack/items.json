@@ -63,7 +63,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "combat:sword_fang",
@@ -76,7 +81,12 @@
         "yaw": 0,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "combat:bow",
@@ -113,7 +123,12 @@
       "name": "Bow (drawing)",
       "max_stack_size": 1,
       "sprite": "combat:bow_pull_1",
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "combat:bow_pull_2",
@@ -121,7 +136,12 @@
       "name": "Bow (drawn)",
       "max_stack_size": 1,
       "sprite": "combat:bow_pull_2",
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "combat:bow_pull_3",
@@ -129,7 +149,12 @@
       "name": "Bow (fully drawn)",
       "max_stack_size": 1,
       "sprite": "combat:bow_pull_3",
-      "tags": []
+      "tags": [],
+      "data": {
+        "petramond:creative": {
+          "visible": false
+        }
+      }
     },
     {
       "item": "combat:arrow",

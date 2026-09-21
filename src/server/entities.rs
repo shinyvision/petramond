@@ -251,7 +251,14 @@ impl ServerGame {
             f64::from(surface.surface_y.floor() + 1.02),
             feet.z,
         );
-        events.world.emitter_bursts.push((splash.burst, pos, fall));
+        events
+            .world
+            .emitter_bursts
+            .push(crate::events::tick::BurstFired::plain(
+                splash.burst,
+                pos,
+                fall,
+            ));
         let sound = if fall >= SPLASH_BIG_FALL {
             splash.sound_big
         } else {
@@ -273,10 +280,24 @@ impl ServerGame {
         pos: petramond_math::math::IVec3,
         kind: crate::mob::NoiseKind,
     ) {
+        self.push_noise_from(
+            crate::mob::EntityRef::Player(self.sessions[s].id),
+            pos,
+            kind,
+        );
+    }
+
+    /// A block noise at `pos` made by `source`, for the next mob AI batch.
+    pub fn push_noise_from(
+        &mut self,
+        source: crate::mob::EntityRef,
+        pos: petramond_math::math::IVec3,
+        kind: crate::mob::NoiseKind,
+    ) {
         self.world.push_noise(crate::mob::Noise {
             pos: petramond_math::world_pos::WorldPos::block_center(pos),
             kind,
-            source: crate::mob::EntityRef::Player(self.sessions[s].id),
+            source,
         });
     }
 
@@ -300,6 +321,21 @@ impl ServerGame {
                     source: crate::mob::EntityRef::Player(self.sessions[s].id),
                 };
                 self.world.push_noise(noise);
+            }
+        }
+    }
+
+    /// Scatter the carried stacks of every mob that died or despawned since
+    /// the last stage boundary, at the body they left.
+    pub fn scatter_mob_spills(&mut self) {
+        for spill in self.world.mobs_mut().take_spills() {
+            let centre = spill.pos + Vec3::new(0.0, 0.3, 0.0);
+            for stack in spill.stacks {
+                self.spawn_counter = self.spawn_counter.wrapping_add(1);
+                let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
+                drop.skylight = spill.skylight;
+                drop.blocklight = spill.blocklight;
+                self.world.spawn_item(drop);
             }
         }
     }

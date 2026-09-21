@@ -89,7 +89,12 @@ fn a_strike_that_lands_holds_the_swing_for_the_graphs_hitstop_and_a_whiff_does_n
         );
         let (mut last, mut frozen) = (None, 0);
         for _ in 0..40 {
-            d.update(&hands(false), &standing(target), AnimatorInputs::default(), DT);
+            d.update(
+                &hands(false),
+                &standing(target),
+                AnimatorInputs::default(),
+                DT,
+            );
             let time = d.animator().playing(slot).map(|p| p.time);
             if time.is_some() && time == last {
                 frozen += 1;

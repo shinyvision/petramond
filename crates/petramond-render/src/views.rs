@@ -146,6 +146,10 @@ pub struct MobPresentation {
     pub anim_time: f32,
     pub moving: bool,
     pub idle_anim: Option<u8>,
+    /// The active gait's eased-in weight and the gaits still fading out
+    /// (`(clip, held phase, weight)`): a body never snaps between gaits.
+    pub gait_weight: f32,
+    pub gait_fades: Vec<(crate::GaitClip, f32, f32)>,
     pub prev_head_yaw: f32,
     pub head_yaw: f32,
     pub prev_head_pitch: f32,
@@ -169,6 +173,8 @@ pub struct MobPresentation {
     /// Body self-lighting from the active bundles (`0..=1`, strongest wins).
     pub emitter_self_lit: f32,
     pub ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
+    /// The items drawn in the species' main and off hand bones.
+    pub held: [Option<petramond_world::item::ItemType>; 2],
 }
 
 /// Water movement shares a stroke clock across treading and directional styles.

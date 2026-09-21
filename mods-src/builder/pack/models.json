@@ -1,0 +1,21 @@
+{
+  "models": [
+    {
+      "key": "builder:schematic_table",
+      "model_file": "models/schematic_table.bbmodel",
+      "cells": [
+        1,
+        1,
+        1
+      ],
+      "orientation": "left_to_right",
+      "parts": [
+        "blueprint_sheet",
+        "paperweight_1",
+        "paperweight_2",
+        "paperweight_3",
+        "paperweight_4"
+      ]
+    }
+  ]
+}

@@ -138,7 +138,8 @@
           0.7
         ],
         "self_lit": 1.0
-      }
+      },
+      "data": { "petramond:construction": { "form": "kitchen:oven" } }
     },
     {
       "block": "kitchen:miller",
@@ -212,7 +213,8 @@
           "max": 1,
           "chance": 1.0
         }
-      ]
+      ],
+      "data": { "petramond:construction": { "form": "kitchen:miller" } }
     }
   ]
 }

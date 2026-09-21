@@ -25,9 +25,16 @@ impl ItemType {
         data::from_id(id)
     }
 
-    /// The item registered under registry NAME `name` (`"petramond:coal"`,
-    /// `"kitchen:raw_mutton"`), or `None`. O(1) through the shared name
-    /// table's hash index — the lookup behind every name-addressed mod call.
+    /// The stable registry name used by portable saves and mod calls.
+    #[inline]
+    pub fn registry_name(self) -> &'static str {
+        crate::registry::names()
+            .items
+            .name(self.id())
+            .expect("registered item")
+    }
+
+    /// Look up an item by its namespaced registry name.
     #[inline]
     pub fn by_name(name: &str) -> Option<ItemType> {
         crate::registry::names().items.id(name).map(ItemType)
@@ -49,6 +56,24 @@ impl ItemType {
     #[inline]
     pub fn from_block(b: Block) -> ItemType {
         data::item_for_block(b)
+    }
+
+    pub fn creative_visible(self) -> bool {
+        self != ItemType::Air && data::def(self).creative_visible
+    }
+
+    pub fn placement_variants(self) -> &'static [Block] {
+        data::def(self).placement_variants
+    }
+
+    pub fn creative_only(self) -> bool {
+        self != ItemType::Air && data::def(self).creative_only
+    }
+
+    /// The world tool this item is while held, by name (see
+    /// [`ItemDef::world_tool`](super::ItemDef::world_tool)).
+    pub fn world_tool(self) -> Option<&'static str> {
+        data::def(self).world_tool
     }
 
     /// The block this item places (its row's `block` field in `items.json`),
@@ -215,6 +240,9 @@ impl ItemType {
             Some(block) => {
                 let k = block.shape_kind_def();
                 match k.render.item_render(&k.params, block) {
+                    ItemRender::ItemSprite if self.creative_only() => {
+                        ItemRenderKind::Sprite(block.tiles()[0])
+                    }
                     ItemRender::ItemSprite => ItemRenderKind::Sprite(self.item_sprite()),
                     ItemRender::Tile(tile) => ItemRenderKind::Sprite(tile),
                     ItemRender::BlockForm(b) => ItemRenderKind::BlockCube(b),
@@ -246,6 +274,12 @@ impl ItemType {
     #[inline]
     pub fn sprite_axis_roll(self) -> f32 {
         -self.def().sprite_axis_degrees.to_radians()
+    }
+
+    /// Whether the sprite's flat face, not its edge, leads a swing.
+    #[inline]
+    pub fn sprite_face_leads(self) -> bool {
+        self.def().sprite_face_leads
     }
 
     /// The flat atlas sprite for an item drawn as a billboard — item-only items

@@ -10,7 +10,11 @@ fn shipped_player_animators_compile_against_their_rigs() {
     let rigs = crate::player::rigs::all();
     assert!(!rigs.is_empty(), "the rigs catalog loads");
     for rig in rigs {
-        assert!(!rig.model.bones().is_empty(), "{}: the model loads", rig.name);
+        assert!(
+            !rig.model.bones().is_empty(),
+            "{}: the model loads",
+            rig.name
+        );
         let layers = animator_layers(&rig.animator);
         assert!(!layers.is_empty(), "{} ships", rig.animator);
         compile_animator(&layers, &rig.model, |path| std::fs::read(path).ok())
@@ -93,13 +97,22 @@ fn a_pack_layer_merges_into_the_engine_document_by_key() {
     let graph = compile_animator(
         &[source(base, "petramond"), source(pack, "spears")],
         &rig,
-        |path| (path == Path::new("spears/spear.animation.json")).then(|| JAB_LIBRARY.as_bytes().to_vec()),
+        |path| {
+            (path == Path::new("spears/spear.animation.json"))
+                .then(|| JAB_LIBRARY.as_bytes().to_vec())
+        },
     )
     .expect("the merged document compiles");
     assert!(graph.param("spear").is_some() && graph.param("held").is_some());
     assert_eq!(graph.event_names(), ["swing", "thrust"]);
-    assert!(graph.clips().id("spears:jab").is_some(), "library clips take the pack's namespace");
-    assert!(graph.clips().id("petramond:wave").is_some(), "rig clips take the engine's");
+    assert!(
+        graph.clips().id("spears:jab").is_some(),
+        "library clips take the pack's namespace"
+    );
+    assert!(
+        graph.clips().id("petramond:wave").is_some(),
+        "rig clips take the engine's"
+    );
 
     let mut animator = petramond_world::animation::Animator::new(std::sync::Arc::new(graph), 1);
     let main = animator.graph().slot("main").unwrap();
@@ -112,7 +125,9 @@ fn a_pack_layer_merges_into_the_engine_document_by_key() {
     );
     animator.fire_named("thrust");
     animator.update(0.016);
-    let playing = animator.playing(main).expect("the pack's rule plays its library clip");
+    let playing = animator
+        .playing(main)
+        .expect("the pack's rule plays its library clip");
     assert_eq!(animator.graph().clips().name(playing.clip), "spears:jab");
 }
 
@@ -124,19 +139,34 @@ fn a_misplaced_or_unkeyed_row_is_refused_naming_the_layer() {
     let rig = rig();
     let base = r#"{ "slots": ["main"], "layers": [{ "name": "action", "slot": "main" }] }"#;
     let bad_before = r#"{ "layers": [{ "name": "x", "before": "nope", "slot": "main" }] }"#;
-    let err = compile_animator(&[source(base, "petramond"), source(bad_before, "p")], &rig, |_| None)
-        .err()
-        .expect("refused");
+    let err = compile_animator(
+        &[source(base, "petramond"), source(bad_before, "p")],
+        &rig,
+        |_| None,
+    )
+    .err()
+    .expect("refused");
     assert!(err.starts_with("p:") && err.contains("nope"), "{err}");
     let moved = r#"{ "layers": [{ "name": "action", "before": "action", "slot": "main" }] }"#;
-    let err = compile_animator(&[source(base, "petramond"), source(moved, "p")], &rig, |_| None)
-        .err()
-        .expect("refused");
-    assert!(err.starts_with("p:") && err.contains("replaces `action`"), "{err}");
+    let err = compile_animator(
+        &[source(base, "petramond"), source(moved, "p")],
+        &rig,
+        |_| None,
+    )
+    .err()
+    .expect("refused");
+    assert!(
+        err.starts_with("p:") && err.contains("replaces `action`"),
+        "{err}"
+    );
     let unkeyed = r#"{ "rules": [{ "on": "swing" }] }"#;
-    let err = compile_animator(&[source(base, "petramond"), source(unkeyed, "p")], &rig, |_| None)
-        .err()
-        .expect("refused");
+    let err = compile_animator(
+        &[source(base, "petramond"), source(unkeyed, "p")],
+        &rig,
+        |_| None,
+    )
+    .err()
+    .expect("refused");
     assert!(err.contains("`id`"), "{err}");
 }
 
@@ -152,17 +182,31 @@ fn a_refused_pack_layer_is_left_out_and_the_rest_still_load() {
     let broken = r#"{ "rules": [{ "id": "typo", "on": "swing", "slot": "main", "play": "petramond:wvae" }] }"#;
     let good = r#"{ "params": { "spear": 0 } }"#;
     let (graph, refused) = compile_layers(
-        &[source(base, "petramond"), source(broken, "typos"), source(good, "spears")],
+        &[
+            source(base, "petramond"),
+            source(broken, "typos"),
+            source(good, "spears"),
+        ],
         &rig,
         |_| None,
     );
     let graph = graph.expect("the rig still has its animator");
-    assert!(graph.param("spear").is_some(), "the layer after the broken one loads");
+    assert!(
+        graph.param("spear").is_some(),
+        "the layer after the broken one loads"
+    );
     assert_eq!(refused.len(), 1, "{refused:?}");
-    assert!(refused[0].contains("typos") && refused[0].contains("wvae"), "{}", refused[0]);
+    assert!(
+        refused[0].contains("typos") && refused[0].contains("wvae"),
+        "{}",
+        refused[0]
+    );
 
     let (graph, refused) = compile_layers(&[source(broken, "petramond")], &rig, |_| None);
-    assert!(graph.is_none() && refused.len() == 1, "a broken own document leaves no animator");
+    assert!(
+        graph.is_none() && refused.len() == 1,
+        "a broken own document leaves no animator"
+    );
 }
 
 /// A library path is relative to the layer that states it: two layers naming
@@ -185,20 +229,37 @@ fn a_library_resolves_under_its_own_layer_and_a_pack_may_not_replace_a_clip() {
         let clip = if dir == "petramond" { "wave" } else { "jab" };
         Some(library(clip).into_bytes())
     };
-    let graph = compile_animator(&[source(doc, "petramond"), source(doc, "a"), source(doc, "b")], &rig, read)
-        .expect("each layer reads its own library");
+    let graph = compile_animator(
+        &[source(doc, "petramond"), source(doc, "a"), source(doc, "b")],
+        &rig,
+        read,
+    )
+    .expect("each layer reads its own library");
     assert!(graph.clips().id("a:jab").is_some() && graph.clips().id("b:jab").is_some());
-    let wave = graph.clips().get(graph.clips().id("petramond:wave").unwrap());
-    assert!((wave.length - 0.25).abs() < 1e-6, "the rig's own document may restate a rig clip");
+    let wave = graph
+        .clips()
+        .get(graph.clips().id("petramond:wave").unwrap());
+    assert!(
+        (wave.length - 0.25).abs() < 1e-6,
+        "the rig's own document may restate a rig clip"
+    );
 
     let both = r#"{ "libraries": ["one.animation.json", "two.animation.json"] }"#;
-    let err = compile_animator(&[source(both, "spears")], &rig, |_| Some(library("jab").into_bytes()))
-        .err()
-        .expect("a second library restating `jab` is refused");
-    assert!(err.starts_with("spears: library 'two.animation.json'") && err.contains("`spears:jab`"), "{err}");
+    let err = compile_animator(&[source(both, "spears")], &rig, |_| {
+        Some(library("jab").into_bytes())
+    })
+    .err()
+    .expect("a second library restating `jab` is refused");
+    assert!(
+        err.starts_with("spears: library 'two.animation.json'") && err.contains("`spears:jab`"),
+        "{err}"
+    );
 
     let err = compile_animator(&[source(doc, "spears")], &rig, |_| None)
         .err()
         .expect("a missing library");
-    assert!(err.starts_with("spears: library 'extra.animation.json': not found"), "{err}");
+    assert!(
+        err.starts_with("spears: library 'extra.animation.json': not found"),
+        "{err}"
+    );
 }

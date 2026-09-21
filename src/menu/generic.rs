@@ -8,9 +8,8 @@
 //! only the furnace keeps an engine-owned spec set, because its filters are
 //! machine state rather than authored layout.
 
-use super::{ContainerMenu, ContainerTarget};
+use super::{ContainerMenu, ContainerTarget, MenuAnchor};
 use crate::world::World;
-use petramond_math::math::IVec3;
 use petramond_world::container::{Container, SlotSpec};
 use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
 use petramond_world::gui_state::ContainerView;
@@ -49,25 +48,41 @@ pub fn slot_specs_for_kind(kind: petramond_world::gui_state::GuiKind) -> Arc<Vec
 
 impl ContainerMenu {
     /// The open session's container slots for the render view, or `None` when
-    /// no block-backed container is open. The engine chest and a pack's own
+    /// no anchor-backed container is open. The engine chest and a pack's own
     /// container publish through this ONE view — the chest is not a kind the
     /// render path knows by name. (The furnace still draws its own view; it
     /// carries cook/burn gauges the plain slot view has no room for.)
     pub fn open_container_view(&self, world: &World) -> Option<ContainerView> {
-        let pos = self.container_pos()?;
         Some(ContainerView {
-            slots: world.container_at(pos)?.slots.clone(),
+            slots: self.open_container(world)?.slots.clone(),
         })
     }
 
-    /// The open session's container position: the block a block-backed kind's
-    /// session is anchored on (`None` for a programmatic open or a transient
-    /// station with no block-entity slots).
-    pub(super) fn container_pos(&self) -> Option<IVec3> {
+    /// What holds the open session's container slots: the block or mob an
+    /// anchor-backed kind's session was opened on (`None` for an unanchored
+    /// open or a transient station, whose stacks live on the menu).
+    pub(super) fn container_anchor(&self) -> Option<MenuAnchor> {
         match self.target {
-            ContainerTarget::Gui { kind, pos } if ContainerTarget::kind_block_backed(kind) => pos,
+            ContainerTarget::Gui { kind, anchor } if ContainerTarget::kind_anchor_backed(kind) => {
+                anchor
+            }
             _ => None,
         }
+    }
+
+    /// The open session's backing container, read-only.
+    pub(super) fn open_container<'a>(&self, world: &'a World) -> Option<&'a Container> {
+        self.container_anchor()?.container(world)
+    }
+
+    /// The ONE write path to the open session's backing container, whatever
+    /// it is anchored on.
+    pub(super) fn edit_open_container<R>(
+        &self,
+        world: &mut World,
+        edit: impl FnOnce(&mut Container) -> R,
+    ) -> Option<R> {
+        self.container_anchor()?.edit_container(world, edit)
     }
 
     /// The open session's slot semantics (empty when no slot-bearing GUI is
@@ -80,21 +95,6 @@ impl ContainerMenu {
             Some(kind) => slot_specs_for_kind(kind),
             None => Arc::default(),
         }
-    }
-
-    fn edit_open_container(
-        &self,
-        world: &mut World,
-        inv: &mut Inventory,
-        edit: impl FnOnce(&mut Inventory, &mut Container),
-    ) {
-        let Some(pos) = self.container_pos() else {
-            return;
-        };
-        if let Some(container) = world.container_at_mut(pos) {
-            edit(inv, container);
-        }
-        world.mark_chunk_modified(pos);
     }
 
     /// One container slot's full click decode: shift quick-moves the slot to
@@ -130,7 +130,7 @@ impl ContainerMenu {
         secondary: bool,
     ) {
         let specs = self.slot_specs();
-        self.edit_open_container(world, inv, |inv, c| {
+        self.edit_open_container(world, |c| {
             let Some(slot) = c.slots.get_mut(i) else {
                 return;
             };
@@ -139,7 +139,7 @@ impl ContainerMenu {
     }
 
     fn container_shift_slot(&self, world: &mut World, inv: &mut Inventory, i: usize) {
-        self.edit_open_container(world, inv, |inv, c| {
+        self.edit_open_container(world, |c| {
             if let Some(slot) = c.slots.get_mut(i) {
                 inv.pull_from(slot);
             }
@@ -150,7 +150,7 @@ impl ContainerMenu {
     /// container's slots AND the inventory onto the cursor — or the inventory
     /// alone when no block-entity container is open.
     pub(super) fn collect_to_cursor(&self, world: &mut World, inv: &mut Inventory) {
-        if self.container_pos().is_some() {
+        if self.container_anchor().is_some() {
             self.collect_to_cursor_in_container(world, inv);
         } else {
             inv.collect_to_cursor();
@@ -158,9 +158,7 @@ impl ContainerMenu {
     }
 
     fn collect_to_cursor_in_container(&self, world: &mut World, inv: &mut Inventory) {
-        self.edit_open_container(world, inv, |inv, c| {
-            inv.collect_to_cursor_including(&mut c.slots)
-        });
+        self.edit_open_container(world, |c| inv.collect_to_cursor_including(&mut c.slots));
     }
 
     /// Shift-click of inventory slot `i` with a container GUI open: route the
@@ -178,10 +176,10 @@ impl ContainerMenu {
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         i: usize,
     ) {
-        let Some(pos) = self.container_pos() else {
+        if self.container_anchor().is_none() {
             inv.shift_move_slot(i);
             return;
-        };
+        }
         let Some(item) = inv.slot(i).map(|s| s.item) else {
             return;
         };
@@ -190,12 +188,10 @@ impl ContainerMenu {
             inv.shift_move_slot(i);
             return;
         }
-        if let Some(container) = world.container_at_mut(pos) {
-            let Some(src) = inv.slot_mut(i) else {
-                return;
-            };
-            petramond_world::container::route_into(src, &mut container.slots, &specs, gui);
-        }
-        world.mark_chunk_modified(pos);
+        self.edit_open_container(world, |container| {
+            if let Some(src) = inv.slot_mut(i) {
+                petramond_world::container::route_into(src, &mut container.slots, &specs, gui);
+            }
+        });
     }
 }

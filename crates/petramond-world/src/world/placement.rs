@@ -54,6 +54,20 @@ fn rotation_count(block: crate::block::Block) -> u8 {
     }
 }
 
+impl HeldRotation {
+    /// Every rotation the R key reaches with `item` in hand, unrotated first.
+    pub fn each(item: ItemType) -> impl Iterator<Item = HeldRotation> {
+        let count = match item.as_block() {
+            Some(block) if rotatable_block(block) => rotation_count(block),
+            _ => 1,
+        };
+        (0..count).map(move |rotation| HeldRotation {
+            item: (rotation != 0).then_some(item),
+            rotation,
+        })
+    }
+}
+
 fn rotatable_block(block: crate::block::Block) -> bool {
     matches!(block.shape_family(), ShapeFamily::Stair | ShapeFamily::Slab) || block.is_log()
 }
@@ -211,10 +225,34 @@ pub struct PlaceInputs {
     pub held: Option<crate::item::ItemType>,
 }
 
+impl PlaceInputs {
+    /// The inputs of a click on `hit`'s `normal` face, whoever makes it:
+    /// where it builds is [`build_position`]'s to say.
+    pub fn of_click(
+        w: &WorldData,
+        hit: IVec3,
+        normal: IVec3,
+        player_facing: Facing,
+        held_rotation: HeldRotation,
+        held: Option<ItemType>,
+    ) -> Self {
+        let looked_at = Block::from_id(w.chunk_block(hit.x, hit.y, hit.z));
+        Self {
+            hit,
+            normal,
+            place_pos: build_position(looked_at, hit, normal),
+            replacing_in_place: replaces_in_place(looked_at),
+            player_facing,
+            held_rotation,
+            held,
+        }
+    }
+}
+
 /// One cell a [`PlacementPlan`] writes: the block row and the opaque initial
 /// cell-state bytes, plus whether the write claims the WHOLE cell or just one
 /// of its parts.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct CellWrite {
     pub cell: IVec3,
     pub block: Block,
@@ -243,6 +281,7 @@ pub struct CellWrite {
 /// A family may write sibling block rows (a wall panel's facing row, a
 /// chain's axis row) or several cells (a door's pair, a model's footprint) —
 /// the engine never knows which family it is committing.
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlacementPlan {
     pub anchor: IVec3,
     pub writes: Vec<CellWrite>,
@@ -308,6 +347,14 @@ impl PlacementPlan {
     }
 }
 
+/// A construction record's cells (see [`ShapePlacement::construction_writes`]).
+pub enum ConstructionWrites {
+    /// The record anchors an object: these are all of its writes.
+    Anchor(PlacementPlan),
+    /// The record is a member of an object anchored at this cell.
+    Member(IVec3),
+}
+
 /// A shape family's answer to a placement click — the SEAM that replaced the
 /// engine's per-family placement match. A family either fully owns the
 /// placement (a stair's facing+half, a slab's stack slot, a door's two cells)
@@ -328,6 +375,38 @@ pub enum PlacementOutcome {
 /// per-family placement dispatch: `World::placement_plan` asks the cell's
 /// shape kind, and a mod family answers exactly as an engine one does.
 pub trait ShapePlacement: Send + Sync + 'static {
+    /// The construction INTENT a stored state carries: what a built copy of
+    /// the cell reproduces and what an existing cell must hold to count as
+    /// already built. State a player toggles in ordinary use (a door standing
+    /// open) is not intent. The default keeps the whole state.
+    fn authored_state(&self, _block: Block, state: ShapeState) -> ShapeState {
+        state
+    }
+
+    /// Every cell a construction record at `pos` builds, each with its
+    /// authored state: the whole object the cell belongs to, anchored where
+    /// it is paid for. A cell that is a MEMBER of an object anchored at
+    /// another cell answers that anchor instead, since the anchor builds it.
+    fn construction_writes(
+        &self,
+        block: Block,
+        state: ShapeState,
+        pos: IVec3,
+    ) -> ConstructionWrites {
+        ConstructionWrites::Anchor(PlacementPlan::single(
+            pos,
+            block,
+            self.authored_state(block, state),
+        ))
+    }
+
+    /// The state a MEMBER cell recorded as `state` holds once the object it
+    /// belongs to is built: its own, unless the object is built another way
+    /// than it was recorded (see [`construction_writes`](Self::construction_writes)).
+    fn member_state(&self, _block: Block, state: ShapeState, _pos: IVec3) -> ShapeState {
+        state
+    }
+
     /// Pure authored layout, without player, support or live-world checks.
     /// The caller validates containment and commits the resulting footprint.
     fn authored_plan(
@@ -416,6 +495,9 @@ impl WorldData {
         match dir {
             SupportDir::Below => {
                 let ground = self.physics_block(s.x, s.y, s.z);
+                if !block.can_root_on(ground) {
+                    return false;
+                }
                 // DECLARED beats derived. A row that stated what its floor must
                 // look like keeps that same rule once placed, so the gate that
                 // let it be placed and the rule that keeps it there cannot

@@ -56,6 +56,9 @@ impl GuiKind {
     pub const OptionsControls: GuiKind = GuiKind(20);
     pub const OptionsGraphics: GuiKind = GuiKind(21);
     /// The not-a-container sentinel; compares equal to no registered kind.
+    pub const Creative: GuiKind = GuiKind(22);
+    /// The schematic library a player chooses a design from outside creative.
+    pub const Schematics: GuiKind = GuiKind(23);
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
     /// Whether this is a pack-registered (namespaced) kind, as opposed to an
@@ -68,7 +71,7 @@ impl GuiKind {
 
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
-const ENGINE_GUI_KIND_NAMES: [&str; 22] = [
+const ENGINE_GUI_KIND_NAMES: [&str; 24] = [
     "petramond:chest",
     "petramond:inventory",
     "petramond:crafting_table",
@@ -91,6 +94,8 @@ const ENGINE_GUI_KIND_NAMES: [&str; 22] = [
     "petramond:options_sound",
     "petramond:options_controls",
     "petramond:options_graphics",
+    "petramond:creative",
+    "petramond:schematics",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a

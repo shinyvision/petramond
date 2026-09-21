@@ -92,18 +92,11 @@ impl ContainerMenu {
                     return;
                 };
                 let specs = self.slot_specs();
-                let Some(pos) = self.container_pos() else {
-                    return;
-                };
-                let Some(cell) = world
-                    .container_at_mut(pos)
-                    .and_then(|container| container.slots.get_mut(i))
-                else {
-                    return;
-                };
-                if inv.swap_off_hand_with_cell(specs.get(i), gui, cell) {
-                    world.mark_chunk_modified(pos);
-                }
+                self.edit_open_container(world, |container| {
+                    if let Some(cell) = container.slots.get_mut(i) {
+                        inv.swap_off_hand_with_cell(specs.get(i), gui, cell);
+                    }
+                });
             }
             MenuSlot::OffHand | MenuSlot::CraftResult | MenuSlot::Widget(_) => {}
         }
@@ -113,10 +106,10 @@ impl ContainerMenu {
     /// role can never address another target's backing container.
     fn open_container_index(&self, slot: MenuSlot) -> Option<usize> {
         match (self.target.kind()?, slot) {
-            // Every block-backed container addresses its slots by plain index
+            // Every anchor-backed container addresses its slots by plain index
             // — engine chest, engine furnace, and a pack's alike. What each
             // index MEANS is the document's `SlotSpec`, not a role name.
-            (kind, MenuSlot::Container(i)) if ContainerTarget::kind_block_backed(kind) => Some(i),
+            (kind, MenuSlot::Container(i)) if ContainerTarget::kind_anchor_backed(kind) => Some(i),
             _ => None,
         }
     }
@@ -147,8 +140,7 @@ impl ContainerMenu {
                 if !self.slot_admits(i, Some(held.item), gui) {
                     return 0;
                 }
-                self.container_pos()
-                    .and_then(|pos| world.container_at(pos))
+                self.open_container(world)
                     .and_then(|container| container.slots.get(i))
                     .map(|cell| slot_capacity(cell, held))
                     .unwrap_or(0)
@@ -193,17 +185,11 @@ impl ContainerMenu {
                 if !self.slot_admits(i, held, gui) {
                     return;
                 }
-                let Some(pos) = self.container_pos() else {
-                    return;
-                };
-                let moved = world
-                    .container_at_mut(pos)
-                    .and_then(|container| container.slots.get_mut(i))
-                    .map(|cell| inv.place_cursor_count_in_external_slot(cell, wanted))
-                    .unwrap_or(0);
-                if moved > 0 {
-                    world.mark_chunk_modified(pos);
-                }
+                self.edit_open_container(world, |container| {
+                    if let Some(cell) = container.slots.get_mut(i) {
+                        inv.place_cursor_count_in_external_slot(cell, wanted);
+                    }
+                });
             }
             MenuSlot::CraftResult | MenuSlot::Widget(_) => {}
         }
@@ -216,14 +202,12 @@ impl ContainerMenu {
         all: bool,
     ) -> Option<ItemStack> {
         let i = self.open_container_index(slot)?;
-        let pos = self.container_pos()?;
-        let dropped = world
-            .container_at_mut(pos)
-            .and_then(|container| container.slots.get_mut(i))
-            .and_then(|cell| take_slot_stack(cell, all));
-        if dropped.is_some() {
-            world.mark_chunk_modified(pos);
-        }
-        dropped
+        self.edit_open_container(world, |container| {
+            container
+                .slots
+                .get_mut(i)
+                .and_then(|cell| take_slot_stack(cell, all))
+        })
+        .flatten()
     }
 }

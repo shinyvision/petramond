@@ -100,7 +100,6 @@
       "emitter": "weather:rain_splash",
       "burst": {
         "count_per_intensity": 3.0,
-        "max_count": 8,
         "up_speed": [
           0.9,
           1.9

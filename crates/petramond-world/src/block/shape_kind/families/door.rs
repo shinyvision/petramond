@@ -9,6 +9,12 @@ use super::*;
 pub struct DoorFamily;
 
 impl ShapeSim for DoorFamily {
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        let mut door = crate::door::DoorState::from_cell(state);
+        door.facing = crate::block::rotation::facing(door.facing);
+        crate::block::rotation::CellRotation::unchanged(block, door.to_cell())
+    }
+
     fn collision_boxes(
         &self,
         _p: &ShapeParams,
@@ -42,6 +48,44 @@ impl ShapeRender for DoorFamily {
 }
 
 impl ShapePlacement for DoorFamily {
+    fn authored_state(&self, _block: Block, state: ShapeState) -> ShapeState {
+        crate::door::DoorState {
+            open: false,
+            ..crate::door::DoorState::from_cell(state)
+        }
+        .to_cell()
+    }
+
+    fn construction_writes(
+        &self,
+        block: Block,
+        state: ShapeState,
+        pos: IVec3,
+    ) -> crate::world::placement::ConstructionWrites {
+        let door = crate::door::DoorState::from_cell(state);
+        if door.top {
+            return crate::world::placement::ConstructionWrites::Member(pos - IVec3::Y);
+        }
+        crate::world::placement::ConstructionWrites::Anchor(PlacementPlan {
+            anchor: pos,
+            writes: [false, true]
+                .into_iter()
+                .map(|top| {
+                    PlacementPlan::whole(
+                        pos + IVec3::Y * i32::from(top),
+                        block,
+                        crate::door::DoorState {
+                            open: false,
+                            top,
+                            ..door
+                        }
+                        .to_cell(),
+                    )
+                })
+                .collect(),
+        })
+    }
+
     fn authored_plan(
         &self,
         block: Block,

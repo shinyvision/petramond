@@ -31,8 +31,10 @@ pub(in crate::modding) mod module_cache;
 
 pub(in crate::modding) use module_cache::module_for;
 
+mod actors;
 mod blocks;
 mod conditions;
+mod construction;
 mod containers;
 mod core;
 mod entities;
@@ -42,6 +44,7 @@ mod kv;
 pub(in crate::modding) mod memo;
 pub(in crate::modding) mod player;
 mod registry;
+mod schematics;
 mod sounds;
 pub(in crate::modding) mod tags;
 mod worldgen;
@@ -234,9 +237,11 @@ pub(in crate::modding) struct ModStoreData {
     /// guest/host split for slow-dispatch diagnostics (target
     /// `petramond::modding::perf`).
     pub(in crate::modding) dispatch_host_wall: std::time::Duration,
-    /// Bounded rendering of the dispatch's most recent host call and whether
-    /// it returned — diagnostics for disable messages.
-    pub(in crate::modding) last_host_call: Option<(String, bool)>,
+    /// The dispatch's most recent host call as it came over the wire, and
+    /// whether it returned — diagnostics for disable messages, rendered only
+    /// when one is written ([`Self::last_host_call`]): this is set on every
+    /// host call of every mod.
+    last_host_call: Option<(Vec<u8>, bool)>,
 }
 
 impl ModStoreData {
@@ -281,6 +286,14 @@ impl ModStoreData {
         self.dispatch_host_calls = 0;
         self.dispatch_host_wall = std::time::Duration::ZERO;
         self.last_host_call = None;
+    }
+
+    /// A bounded rendering of the dispatch's most recent host call, and
+    /// whether it returned.
+    pub(in crate::modding) fn last_host_call(&self) -> Option<(String, bool)> {
+        let (request, returned) = self.last_host_call.as_ref()?;
+        let call: HostCall = mod_api::decode(request).ok()?;
+        Some((short_debug(&call, DIAG_DEBUG_CAP), *returned))
     }
 
     pub(in crate::modding) fn dispatch_host_calls(&self) -> u32 {
@@ -458,6 +471,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ShaderSetParam { .. } => core::handle_core_call(data, call),
         HostCall::GetBlock { .. }
         | HostCall::GetBlocks { .. }
+        | HostCall::BlockChangesSince { .. }
         | HostCall::SetBlock { .. }
         | HostCall::SetBlocks { .. }
         | HostCall::ScheduleTick { .. }
@@ -483,6 +497,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         HostCall::SpawnMob { .. }
         | HostCall::MobInfo { .. }
         | HostCall::MobCanReach { .. }
+        | HostCall::PathProbe { .. }
+        | HostCall::WalkRegion { .. }
+        | HostCall::Footholds { .. }
+        | HostCall::MobHeldDisplay { .. }
+        | HostCall::SetMobDraw { .. }
         | HostCall::SiteOpen { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
@@ -515,6 +534,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::EffectsActive
         | HostCall::PlayerInput { .. }
         | HostCall::Players
+        | HostCall::PlayerIdentity { .. }
         | HostCall::UnlockRecipe { .. }
         | HostCall::RecipeUnlocked { .. }
         | HostCall::PlayerHeld { .. }
@@ -552,7 +572,23 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobTagDelete { .. }
         | HostCall::MobTagsGet { .. }
         | HostCall::MobsWithTag { .. } => tags::handle_tag_call(&data.mod_id, call),
-        HostCall::StructureInfo { .. }
+        HostCall::SchematicInfo { .. }
+        | HostCall::SchematicCells { .. }
+        | HostCall::SchematicChoose { .. }
+        | HostCall::SchematicPosition { .. }
+        | HostCall::SchematicGhostSet { .. } => {
+            schematics::handle_schematic_call(&data.mod_id, call)
+        }
+        HostCall::BlockRecordsAt { .. } | HostCall::BlockRecordStatuses { .. } => {
+            construction::handle_construction_call(call)
+        }
+        HostCall::ActorDig { .. }
+        | HostCall::ActorPlace { .. }
+        | HostCall::ActorPlaceCheck { .. }
+        | HostCall::ActorInteract { .. }
+        | HostCall::ActorAims { .. } => actors::handle_actor_call(&data.mod_id, call),
+        HostCall::BlockRecordPlans { .. }
+        | HostCall::StructureInfo { .. }
         | HostCall::LootRoll { .. }
         | HostCall::MobDataGet { .. }
         | HostCall::MobsWithData { .. }
@@ -601,6 +637,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ContainerSet { .. }
         | HostCall::ContainerInsert { .. }
         | HostCall::ContainerTake { .. }
+        | HostCall::ContainerTransfer { .. }
+        | HostCall::ContainerHold { .. }
         | HostCall::RecipeResult { .. } => containers::handle_container_call(&data.mod_id, call),
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
@@ -676,7 +714,7 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                             "dispatch exhausted its guest compute budget",
                         ));
                     }
-                    data.last_host_call = Some((short_debug(&call, DIAG_DEBUG_CAP), false));
+                    data.last_host_call = Some((buf, false));
                 }
                 let host_started = std::time::Instant::now();
                 let ret = handle_host_call(caller.data_mut(), call);

@@ -31,6 +31,11 @@ pub(super) struct ItemDef {
     /// [`super::DEFAULT_SPRITE_AXIS_DEGREES`]) — see
     /// [`ItemType::sprite_axis_roll`](super::ItemType::sprite_axis_roll).
     pub sprite_axis_degrees: f32,
+    /// Which part of the sprite slab leads a swing: its edge (the default —
+    /// blades, picks, hoes cut with the rim of the art) or its flat face (a
+    /// shovel's scoop). A rig that declares how it rolls a held tool turns
+    /// face-led ones a quarter back, flat side to the work.
+    pub sprite_face_leads: bool,
     /// The flat atlas sprite this item draws as a billboard (slots / in-hand /
     /// dropped) — carried by the item-only items (tools, raw drops) and the
     /// block-items whose in-world model has no usable icon face (doors, the
@@ -46,6 +51,14 @@ pub(super) struct ItemDef {
     /// [`ItemType::as_block`](super::ItemType::as_block) and the reverse LUT
     /// in `data`). `None` for item-only items (tools, raw drops, ingots).
     pub block: Option<Block>,
+    pub creative_visible: bool,
+    /// Never obtained or placed in survival (`petramond:creative_only` data).
+    pub creative_only: bool,
+    /// The world tool this item is while held, by name
+    /// (`petramond:creative_tool` data): its holder's clicks drive that tool
+    /// instead of the item's ordinary use.
+    pub world_tool: Option<&'static str>,
+    pub placement_variants: &'static [Block],
     /// The bbmodel an ITEM-ONLY item renders as — held, dropped, and as its
     /// slot icon (`"model"` in `items.json`, a `models.json` key like
     /// `petramond:bucket`). `None` for sprite items; block-items carry their

@@ -33,7 +33,7 @@ impl ContainerMenu {
                     // a container target tag-routes the stack into its slots per its
                     // SlotSpecs, and otherwise it shuffles hotbar↔main-grid.
                     match self.target.kind() {
-                        Some(kind) if ContainerTarget::kind_block_backed(kind) => {
+                        Some(kind) if ContainerTarget::kind_anchor_backed(kind) => {
                             self.container_shift_from_inventory(world, inv, gui, i)
                         }
                         _ => inv.shift_move_slot(i),

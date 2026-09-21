@@ -19,6 +19,8 @@ fn instance(anim_time: f32, moving: bool) -> MobRenderInstance {
         anim_time,
         moving,
         idle_anim: None,
+        gait_weight: 1.0,
+        gait_fades: Vec::new(),
         head_yaw: 0.0,
         head_pitch: 0.0,
         skylight: 63,
@@ -29,6 +31,7 @@ fn instance(anim_time: f32, moving: bool) -> MobRenderInstance {
         emitter_self_lit: 0.0,
         anims: Vec::new(),
         ragdoll: None,
+        held: [None; 2],
     }
 }
 
@@ -45,7 +48,9 @@ fn empty_instances_produce_no_geometry() {
             &[],
             petramond_math::math::IVec3::ZERO,
             &mut v,
-            &mut i
+            &mut i,
+            &mut Vec::new(),
+            &MobRig::resolve(&m, None, None),
         ),
         0
     );
@@ -65,6 +70,8 @@ fn self_lit_mobs_and_ragdolls_keep_their_tints_in_darkness() {
             petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
+            &mut Vec::new(),
+            &MobRig::resolve(&model, None, None),
         );
         assert!(!v.is_empty());
         v
@@ -126,6 +133,8 @@ fn one_mob_bakes_quads_with_matched_indices() {
         petramond_math::math::IVec3::ZERO,
         &mut v,
         &mut i,
+        &mut Vec::new(),
+        &MobRig::resolve(&m, None, None),
     );
     assert!(n > 0);
     assert_eq!(v.len() % 4, 0);
@@ -147,6 +156,8 @@ fn scale_sizes_the_baked_model() {
         petramond_math::math::IVec3::ZERO,
         &mut v1,
         &mut i1,
+        &mut Vec::new(),
+        &MobRig::resolve(&m, None, None),
     );
     build_mob_instances(
         &m,
@@ -156,6 +167,8 @@ fn scale_sizes_the_baked_model() {
         petramond_math::math::IVec3::ZERO,
         &mut v2,
         &mut i2,
+        &mut Vec::new(),
+        &MobRig::resolve(&m, None, None),
     );
     // Same geometry, double scale -> double the vertical extent above the feet.
     let span = |v: &[ItemVertex]| v.iter().map(|x| x.pos[1]).fold(f32::MIN, f32::max) - 64.0;
@@ -181,6 +194,8 @@ fn moving_plays_walk_idle_uses_rest_pose() {
             petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
+            &mut Vec::new(),
+            &MobRig::resolve(&m, None, None),
         );
         v
     };
@@ -204,14 +219,14 @@ fn moving_plays_walk_idle_uses_rest_pose() {
 fn shorn_hides_exactly_the_wool_named_cubes() {
     // A shorn sheep bakes without its `wool` cubes; a model with no wool-named
     // cubes (the owl) bakes identically shorn or not — proving the skip keys on
-    // the authored cube name, not on the shorn flag alone.
+    // the cubes the rig names as coat, not on the shorn flag alone.
     let sheep = Model::load(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../assets/models/sheep.bbmodel"
     )))
     .expect("sheep model");
     assert!(
-        sheep.cubes.iter().any(|c| c.name == COAT_CUBE_NAME),
+        sheep.cubes.iter().any(|c| c.name == "wool"),
         "fixture must author its fleece as `wool` cubes"
     );
     let bake = |model: &Model, kind: Mob, shorn: bool| {
@@ -227,6 +242,8 @@ fn shorn_hides_exactly_the_wool_named_cubes() {
             petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
+            &mut Vec::new(),
+            &MobRig::resolve(model, None, Some("wool")),
         );
         v
     };
@@ -240,7 +257,7 @@ fn shorn_hides_exactly_the_wool_named_cubes() {
     );
 
     let owl = owl_model();
-    assert!(owl.cubes.iter().all(|c| c.name != COAT_CUBE_NAME));
+    assert!(owl.cubes.iter().all(|c| c.name != "wool"));
     let owl_plain = bake(&owl, Mob::Owl, false);
     let owl_shorn = bake(&owl, Mob::Owl, true);
     assert_eq!(
@@ -267,6 +284,8 @@ fn head_look_rotates_the_head_when_idle() {
             petramond_math::math::IVec3::ZERO,
             &mut v,
             &mut i,
+            &mut Vec::new(),
+            &MobRig::resolve(&m, None, None),
         );
         v
     };

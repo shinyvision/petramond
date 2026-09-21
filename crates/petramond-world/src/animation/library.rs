@@ -45,7 +45,10 @@ impl ClipLibrary {
         names.sort();
         let mut lib = Self::new();
         for name in names {
-            lib.insert(&format!("{namespace}:{name}"), model.animations[name].clone());
+            lib.insert(
+                &format!("{namespace}:{name}"),
+                model.animations[name].clone(),
+            );
         }
         lib
     }
@@ -53,7 +56,12 @@ impl ClipLibrary {
     /// Add every clip in a Bedrock animation library under `namespace`,
     /// bones resolved by name on `rig`. Answers how many clips it added or
     /// replaced.
-    pub fn add_bedrock(&mut self, text: &str, rig: &Model, namespace: &str) -> Result<usize, String> {
+    pub fn add_bedrock(
+        &mut self,
+        text: &str,
+        rig: &Model,
+        namespace: &str,
+    ) -> Result<usize, String> {
         let clips = bedrock::parse_library(text, |name| rig.bone_named(name))?;
         let count = clips.len();
         for (name, clip) in clips {

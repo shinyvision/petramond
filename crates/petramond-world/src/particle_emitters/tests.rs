@@ -25,18 +25,18 @@ fn shipped_particle_emitters_json_loads_fully() {
 
 #[test]
 fn burst_bundles_validate() {
-    // (count, max, up_speed, bias) — the fields the bad cases vary.
-    let splash = |count: &str, max: &str, up: &str, bias: &str| {
+    // (count, up_speed, bias) — the fields the bad cases vary.
+    let splash = |count: &str, up: &str, bias: &str| {
         format!(
             r#"{{"emitters": [{{"emitter": "mymod:pop", "burst": {{
-                    "count_per_intensity": {count}, "max_count": {max},
+                    "count_per_intensity": {count},
                     "up_speed": {up}, "radial_speed": [0.5, 1.5],
                     "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
                     "color": [[0.1, 0.1, 0.5], [0.4, 0.8, 1.0]],
                     "color_bias": {bias}, "die_on_contact": true }} }}]}}"#
         )
     };
-    let ok = splash("3.0", "24", "[1.0, 2.0]", "2.0");
+    let ok = splash("3.0", "[1.0, 2.0]", "2.0");
     let defs = parse_layers(&[&base(), ok.as_str()])
         .expect("burst bundle loads")
         .rows();
@@ -44,19 +44,12 @@ fn burst_bundles_validate() {
     assert!(d.burst.is_some() && d.rows.is_empty());
 
     for (bad, why) in [
-        (
-            splash("0.0", "24", "[1.0, 2.0]", "2.0"),
-            "zero count scaling",
-        ),
-        (splash("3.0", "0", "[1.0, 2.0]", "2.0"), "zero cap"),
-        (splash("3.0", "24", "[2.0, 1.0]", "2.0"), "reversed range"),
-        (
-            splash("3.0", "24", "[1.0, 2.0]", "100.0"),
-            "out-of-range bias",
-        ),
+        (splash("0.0", "[1.0, 2.0]", "2.0"), "zero count scaling"),
+        (splash("3.0", "[2.0, 1.0]", "2.0"), "reversed range"),
+        (splash("3.0", "[1.0, 2.0]", "100.0"), "out-of-range bias"),
         (
             r#"{"emitters": [{"emitter": "mymod:pop", "burst": {
-                    "count_per_intensity": 3.0, "max_count": 24,
+                    "count_per_intensity": 3.0,
                     "up_speed": [1.0, 2.0], "radial_speed": [0.5, 1.5],
                     "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
                     "color": [[0.1, 0.1, 0.5], [0.4, 0.8, 1.0]] },
@@ -377,7 +370,7 @@ fn ambient_bundles_validate_and_resolve_hit_bursts() {
                         "radius": 24, "height": [4, 20], "fall_speed": [16, 22],
                         "size": [0.03, 0.05], "alpha": [0.4, 0.7],
                         "color": [[0.5, 0.5, 0.5], [0.7, 0.7, 0.7]]},
-                    "burst": {"count_per_intensity": 3.0, "max_count": 24,
+                    "burst": {"count_per_intensity": 3.0,
                         "up_speed": [1.0, 2.0], "radial_speed": [0.5, 1.5],
                         "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
                         "color": [[0.1, 0.1, 0.5], [0.4, 0.8, 1.0]]} }]}"#

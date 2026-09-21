@@ -127,7 +127,7 @@ impl Mod for Forge {
                 EventPayload::BlockBreakPre {
                     block,
                     harvested,
-                    player,
+                    actor: EntityRef::Player(player),
                     drops,
                     ..
                 },
@@ -152,9 +152,9 @@ impl Mod for Forge {
                 self.furnace.on_placed(*pos, *block);
                 self.anvil.on_placed(*pos, *block);
             }
-            (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, pos }) => {
-                self.furnace.on_container_opened(kind, *pos);
-                self.anvil.on_container_opened(kind, *pos);
+            (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, at }) => {
+                self.furnace.on_container_opened(kind, *at);
+                self.anvil.on_container_opened(kind, *at);
             }
             (ON_ITEM_OBTAINED, EventPayload::ItemObtained { player, item }) => {
                 self.unlocks.on_item_obtained(*player, *item);
@@ -166,9 +166,9 @@ impl Mod for Forge {
 
     /// A widget in one of this pack's documents was clicked: the forging
     /// furnace's pour lever, or the anvil's Augment button.
-    fn gui_click(&mut self, kind_key: &str, widget_id: &str, pos: Option<[i32; 3]>) {
+    fn gui_click(&mut self, kind_key: &str, widget_id: &str, at: Option<ContainerAddress>) {
         use machine_core::MachineSpec;
-        let Some(pos) = pos else {
+        let Some(ContainerAddress::Block(pos)) = at else {
             return;
         };
         if kind_key == furnace::ForgingFurnaceSpec::KIND_KEY && widget_id == furnace::WIDGET_LEVER {

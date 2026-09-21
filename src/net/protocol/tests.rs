@@ -13,6 +13,9 @@ fn roundtrip<T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::De
 
 #[test]
 fn representative_messages_roundtrip_through_postcard() {
+    roundtrip(&ClientToServer::Action(PlayerAction::Creative(
+        crate::schematic::CreativeAction::Redo,
+    )));
     roundtrip(&ClientToServer::Hello { protocol: 1 });
     roundtrip(&ClientToServer::Join {
         player_name: "Rachel".into(),
@@ -205,6 +208,18 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
 #[test]
 fn tick_updates_roundtrip() {
     roundtrip(&ServerToClient::Tick(Box::new(TickUpdate {
+        creative: vec![crate::schematic::CreativeReply::Message(
+            "Schematic placed".into(),
+        )],
+        schematics: vec![crate::schematic::share::SchematicNotice::Ghost {
+            key: "fixture:ghost".into(),
+            placement: Some(crate::schematic::share::GhostPlacement {
+                digest: [7; 32],
+                origin: [-4, 60, 9],
+                turns: 3,
+                yields_to_positioning: false,
+            }),
+        }],
         tick: 812,
         clock: 6_600,
         block_deltas: vec![
@@ -274,6 +289,9 @@ fn tick_updates_roundtrip() {
             conditions: vec![(0, 1)],
             anims: Vec::new(),
             ragdoll: Some(vec![([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0])]),
+            dig: None,
+            held: [None; 2],
+            draw: Default::default(),
         }],
         items: vec![ItemStateRow {
             id: 7,
@@ -387,7 +405,10 @@ fn tick_updates_roundtrip() {
                     rig: crate::player::RigId(1),
                     slot: 0,
                     clip: 3,
-                    clock: crate::player::AnimatorClock::Run { rate: 1.0, looping: false },
+                    clock: crate::player::AnimatorClock::Run {
+                        rate: 1.0,
+                        looping: false,
+                    },
                     mirror: false,
                     priority: 0,
                 }],
@@ -433,7 +454,7 @@ fn tick_updates_roundtrip() {
             picked_up_item: true,
             open_screen: Some(OpenScreen::Gui {
                 kind_key: "kitchen:oven".into(),
-                pos: Some(IVec3::new(4, 65, 4)),
+                anchor: Some(crate::menu::MenuAnchor::Mob(7)),
             }),
             animator_events: vec![(crate::player::RigId(1), 2)],
             ..Default::default()
@@ -446,7 +467,7 @@ fn tick_updates_roundtrip() {
         menu_sync: Some(MenuSyncMsg {
             target: MenuTargetWire::Container {
                 kind_key: "kitchen:oven".into(),
-                pos: Some(IVec3::new(4, 65, 4)),
+                anchor: Some(IVec3::new(4, 65, 4).into()),
                 slots: Some(vec![
                     Some(ItemSlotWire {
                         item_id: 5,

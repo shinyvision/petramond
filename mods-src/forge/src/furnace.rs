@@ -333,7 +333,7 @@ fn wants_heat(state: &State, can_melt: bool) -> bool {
 /// The click path has no slot snapshot of its own — the tick's is a tick old
 /// and belongs to a different call.
 fn mould_in(anchor: [i32; 3]) -> Option<String> {
-    container_get(anchor)?
+    container_get(anchor.into())?
         .get(SLOT_MOULD)?
         .as_ref()
         .map(|s| s.item.clone())

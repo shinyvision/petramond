@@ -20,11 +20,12 @@
 use std::collections::BTreeMap;
 
 use rustc_hash::FxHashMap;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::chunk::{SectionPos, SECTION_MIN_CY};
+use petramond_util::atomic_file::{self, Durability};
 use petramond_util::bytecodec::{read_u16, read_u32, write_u16, write_u32};
 
 /// Columns per region edge (32 → 1024 columns per region, each a vertical stack).
@@ -99,6 +100,14 @@ impl RegionReader {
             }
             Err(e) => return Err(e),
         };
+        // A file too short for its own table is as corrupt as a bad magic.
+        Self::index(file).map_err(|e| match e.kind() {
+            io::ErrorKind::UnexpectedEof => corrupt_region(),
+            _ => e,
+        })
+    }
+
+    fn index(file: File) -> io::Result<Self> {
         let file_len = file.metadata()?.len();
         let mut r = io::BufReader::with_capacity(64 << 10, file);
         let magic = read_u32(&mut r)?;
@@ -181,13 +190,28 @@ pub fn read_region_indices(path: &Path) -> io::Result<Vec<u16>> {
     Ok(indices)
 }
 
+/// What a region file's records are worth, which decides how carefully a
+/// merge treats the old file and the new one.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MergePolicy {
+    /// The records exist nowhere else. An old file that cannot be read fails
+    /// the merge (starting fresh would drop every record not being
+    /// replaced), and the new file is flushed to disk before it replaces
+    /// the old one.
+    Durable,
+    /// The records can be rebuilt. An unreadable old file starts fresh and
+    /// nothing is flushed.
+    Rebuildable,
+}
+
 /// Merge replacement records into a region while copying every unchanged
 /// compressed body directly from the old file to the new one. This keeps a flush
 /// proportional to bytes written without allocating the old region as a map of
-/// blobs. A corrupt old region starts fresh, matching the previous save policy.
+/// blobs.
 pub fn merge_region(
     path: &Path,
     replacements: impl IntoIterator<Item = (u16, Vec<u8>)>,
+    policy: MergePolicy,
 ) -> io::Result<()> {
     let mut replacements: BTreeMap<u16, Vec<u8>> = replacements.into_iter().collect();
     // Nothing to rewrite: leave the existing file alone (or the absent path as
@@ -195,63 +219,71 @@ pub fn merge_region(
     if replacements.is_empty() {
         return Ok(());
     }
-    let mut old = RegionReader::open(path).unwrap_or_else(|_| RegionReader {
-        file: None,
-        records: FxHashMap::default(),
-    });
+    let mut old = match (RegionReader::open(path), policy) {
+        (Ok(old), _) => old,
+        (Err(e), MergePolicy::Durable) => return Err(e),
+        (Err(_), MergePolicy::Rebuildable) => RegionReader {
+            file: None,
+            records: FxHashMap::default(),
+        },
+    };
     let mut keys: Vec<u16> = old.indices().collect();
     keys.extend(replacements.keys().copied());
     keys.sort_unstable();
     keys.dedup();
-    if keys.len() > u16::MAX as usize {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "too many region records",
-        ));
-    }
+    let count = u16::try_from(keys.len()).map_err(|_| too_large("too many region records"))?;
+    let durability = match policy {
+        MergePolicy::Durable => Durability::Synced,
+        MergePolicy::Rebuildable => Durability::Unsynced,
+    };
 
-    let tmp = path.with_extension("tmp");
-    let mut out = BufWriter::with_capacity(256 << 10, File::create(&tmp)?);
-    write_u32(&mut out, MAGIC)?;
-    write_u16(&mut out, VERSION)?;
-    write_u16(&mut out, keys.len() as u16)?;
-    // Pass 1: contiguous header table (lengths known without reading bodies).
-    for &lidx in &keys {
-        let len = replacements
-            .get(&lidx)
-            .map(|b| b.len() as u32)
-            .or_else(|| old.records.get(&lidx).map(|loc| loc.len))
-            .ok_or_else(corrupt_region)?;
-        write_u16(&mut out, lidx)?;
-        write_u32(&mut out, len)?;
-    }
-    // Pass 2: packed bodies in the same order — replacements from RAM,
-    // unchanged records seek+copied from the old file.
-    let mut copy_buf = [0u8; 64 << 10];
-    for lidx in keys {
-        if let Some(record) = replacements.remove(&lidx) {
-            out.write_all(&record)?;
-            continue;
+    atomic_file::replace_with(path, durability, |file| {
+        let mut out = BufWriter::with_capacity(256 << 10, file);
+        write_u32(&mut out, MAGIC)?;
+        write_u16(&mut out, VERSION)?;
+        write_u16(&mut out, count)?;
+        // Pass 1: contiguous header table (lengths known without reading bodies).
+        for &lidx in &keys {
+            let len = match replacements.get(&lidx) {
+                Some(body) => {
+                    u32::try_from(body.len()).map_err(|_| too_large("region record too large"))?
+                }
+                None => old.records.get(&lidx).ok_or_else(corrupt_region)?.len,
+            };
+            write_u16(&mut out, lidx)?;
+            write_u32(&mut out, len)?;
         }
-        let loc = old.records.get(&lidx).copied().ok_or_else(corrupt_region)?;
-        let file = old.file.as_mut().ok_or_else(corrupt_region)?;
-        file.seek(SeekFrom::Start(loc.offset))?;
-        let mut remaining = loc.len as u64;
-        while remaining > 0 {
-            let chunk = remaining.min(copy_buf.len() as u64) as usize;
-            file.read_exact(&mut copy_buf[..chunk])?;
-            out.write_all(&copy_buf[..chunk])?;
-            remaining -= chunk as u64;
+        // Pass 2: packed bodies in the same order — replacements from RAM,
+        // unchanged records seek+copied from the old file.
+        let mut copy_buf = [0u8; 64 << 10];
+        for lidx in keys {
+            if let Some(record) = replacements.remove(&lidx) {
+                out.write_all(&record)?;
+                continue;
+            }
+            let loc = old.records.get(&lidx).copied().ok_or_else(corrupt_region)?;
+            let file = old.file.as_mut().ok_or_else(corrupt_region)?;
+            file.seek(SeekFrom::Start(loc.offset))?;
+            let mut remaining = loc.len as u64;
+            while remaining > 0 {
+                let chunk = remaining.min(copy_buf.len() as u64) as usize;
+                file.read_exact(&mut copy_buf[..chunk])?;
+                out.write_all(&copy_buf[..chunk])?;
+                remaining -= chunk as u64;
+            }
         }
-    }
-    out.flush()?;
-    drop(out);
-    fs::rename(tmp, path)
+        out.flush()
+    })
+}
+
+fn too_large(what: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, what)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn region_math_roundtrips() {
@@ -284,7 +316,7 @@ mod tests {
             std::thread::current().name().unwrap_or("test")
         ));
         let _ = fs::remove_file(&path);
-        merge_region(&path, []).expect("empty merge");
+        merge_region(&path, [], MergePolicy::Durable).expect("empty merge");
         assert!(
             !path.exists(),
             "an empty replacement set must not create a region file"
@@ -300,19 +332,40 @@ mod tests {
         ));
         let _ = fs::remove_file(&path);
 
-        merge_region(&path, [(9, vec![1, 2, 3]), (2, vec![4, 5])]).expect("initial write");
+        merge_region(
+            &path,
+            [(9, vec![1, 2, 3]), (2, vec![4, 5])],
+            MergePolicy::Durable,
+        )
+        .expect("initial write");
         assert_eq!(
             read_region_indices(&path).expect("index"),
             vec![2, 9],
             "container order is stable"
         );
 
-        merge_region(&path, [(9, vec![8, 7, 6, 5])]).expect("merge");
+        merge_region(&path, [(9, vec![8, 7, 6, 5])], MergePolicy::Durable).expect("merge");
         let mut reader = RegionReader::open(&path).expect("open merged region");
         assert_eq!(reader.read_record(2).unwrap().unwrap(), vec![4, 5]);
         assert_eq!(reader.read_record(9).unwrap().unwrap(), vec![8, 7, 6, 5]);
         assert_eq!(reader.read_record(100).unwrap(), None);
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_unreadable_region_fails_a_durable_merge_and_is_left_alone() {
+        let path = std::env::temp_dir().join(format!(
+            "petramond-region-unreadable-{}.dat",
+            std::process::id()
+        ));
+        fs::write(&path, b"not a region").unwrap();
+        let err = merge_region(&path, [(1, vec![1])], MergePolicy::Durable).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&path).unwrap(), b"not a region");
+
+        merge_region(&path, [(1, vec![1])], MergePolicy::Rebuildable).expect("starts fresh");
+        assert_eq!(read_region_indices(&path).unwrap(), vec![1]);
         let _ = fs::remove_file(path);
     }
 
@@ -332,6 +385,7 @@ mod tests {
                 (2, vec![0xBB; 20]),
                 (3, vec![0xCC; 30]),
             ],
+            MergePolicy::Durable,
         )
         .expect("write");
         let bytes = fs::read(&path).expect("read");

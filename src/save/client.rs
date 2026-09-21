@@ -184,7 +184,7 @@ fn store_to(path: &Path, settings: &ClientSettings) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let bytes = serde_json::to_vec_pretty(settings).map_err(std::io::Error::other)?;
-    super::write_atomic(path, &bytes)
+    petramond_util::atomic_file::replace(path, &bytes)
 }
 
 #[cfg(test)]

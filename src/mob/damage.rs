@@ -281,7 +281,8 @@ mod tests {
             horizontal: Some([2.0, 0.0]),
             vertical: None,
             yaw: Some(1.0),
-            while_walking: false
+            while_walking: false,
+            gait: false,
         }));
         assert!(owl.drive_pending());
         assert!(owl.damage(

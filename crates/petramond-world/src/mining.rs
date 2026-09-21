@@ -135,6 +135,19 @@ impl MiningState {
             return None;
         }
 
+        self.advance(dt, pos, block, tool)
+    }
+
+    /// The clock alone: `dt` more of mining `block` at `pos` with `tool`, for
+    /// whoever drives it (a held button, a mob told to dig this tick).
+    /// `Some` on the advance that breaks the block.
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        pos: IVec3,
+        block: Block,
+        tool: Option<Tool>,
+    ) -> Option<BreakEvent> {
         // New target, OR a tool switch on the same cell: restart the timer (the
         // break time depends on the tool, so switching mid-break starts over).
         if self.target != Some(pos) || self.tool != tool {
@@ -202,7 +215,7 @@ impl MiningState {
     }
 
     #[inline]
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.target = None;
         self.block = None;
         self.tool = None;

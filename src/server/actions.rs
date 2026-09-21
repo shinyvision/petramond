@@ -63,17 +63,46 @@ impl ServerGame {
                     sess.pending_fall = 0.0;
                 }
             }
+            PlayerAction::ToggleCreative | PlayerAction::ToggleFlight => {
+                if self.is_operator(s) && self.sessions[s].player.health() > 0 {
+                    let sess = &mut self.sessions[s];
+                    if action == PlayerAction::ToggleCreative {
+                        sess.player.toggle_creative();
+                    } else if sess.mount.is_none() {
+                        sess.player.toggle_creative_flight();
+                    }
+                    sess.fall.reset(sess.player.pos.y);
+                    sess.pending_fall = 0.0;
+                }
+            }
+            PlayerAction::Creative(action) => {
+                if let crate::schematic::CreativeAction::Place {
+                    digest,
+                    origin,
+                    turns,
+                } = action
+                {
+                    self.request_placement(s, digest, origin, turns);
+                    return;
+                }
+                self.sessions[s]
+                    .creative
+                    .try_enqueue(super::creative::Pending::Action(action));
+            }
+            PlayerAction::Schematic(request) => self.apply_schematic_request(s, request),
             PlayerAction::Wake => self.sessions[s].wake_requested = true,
             PlayerAction::Respawn => self.sessions[s].respawn_requested = true,
             // Menu transitions join clicks and crafts in one ordered queue so
             // arrival order remains authoritative on the fixed tick.
             PlayerAction::OpenInventory => {
+                let kind = if self.sessions[s].player.abilities().item_catalog {
+                    petramond_world::gui_state::GuiKind::Creative
+                } else {
+                    petramond_world::gui_state::GuiKind::Inventory
+                };
                 self.sessions[s]
                     .pending_menu_actions
-                    .push(PendingMenuAction::OpenGui {
-                        kind: petramond_world::gui_state::GuiKind::Inventory,
-                        pos: None,
-                    })
+                    .push(PendingMenuAction::OpenGui { kind, anchor: None })
             }
             PlayerAction::CloseMenu => self.sessions[s]
                 .pending_menu_actions

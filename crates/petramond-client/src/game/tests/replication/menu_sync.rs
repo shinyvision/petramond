@@ -354,8 +354,8 @@ fn menu_sync_ships_on_change_only() {
     let up3 = pump_one_tick(&mut game);
     let sync = up3.menu_sync.expect("the open ships the new view");
     assert!(
-        matches!(&sync.target, MenuTargetWire::Container { pos: p, kind_key, .. }
-            if *p == Some(pos) && kind_key == "petramond:chest"),
+        matches!(&sync.target, MenuTargetWire::Container { anchor, kind_key, .. }
+            if *anchor == Some(pos.into()) && kind_key == "petramond:chest"),
         "the chest target replicates, got {:?}",
         sync.target
     );
@@ -484,7 +484,7 @@ fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
     let pos = petramond_math::math::IVec3::new(4, 64, 4);
 
     game.server
-        .open_registered_gui_screen_for(remote, kind, Some(pos));
+        .open_registered_gui_screen_for(remote, kind, Some(pos.into()));
     petramond_world::gui_state::gui_state_set(
         &mut game.server.sessions[0].gui_state,
         "kitchen:cook01".into(),
@@ -519,12 +519,12 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
     // The tick's request site (interaction arm) writes this outbox field;
     // seed it directly to isolate the SelfEvents → GameEvents pipe.
     game.server.sessions[0].request_open_gui =
-        Some((petramond_world::gui_state::GuiKind::Chest, Some(pos)));
+        Some((petramond_world::gui_state::GuiKind::Chest, Some(pos.into())));
 
     let events = game.tick(TICK_DT, &GameInput::default());
     assert_eq!(
         events.open_gui,
-        Some((petramond_world::gui_state::GuiKind::Chest, Some(pos))),
+        Some((petramond_world::gui_state::GuiKind::Chest, Some(pos.into()))),
         "the one-shot rode SelfEvents.open_screen into GameEvents"
     );
     assert!(

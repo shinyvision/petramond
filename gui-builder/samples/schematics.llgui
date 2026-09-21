@@ -1,0 +1,865 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:schematics",
+    "class": "screen",
+    "root": {
+      "type": "column",
+      "layout": {
+        "w": 304,
+        "h": 230,
+        "pad": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 3,
+        "dir": "column",
+        "align": "stretch",
+        "justify": "start",
+        "anchor": {
+          "h": "center",
+          "v": "center"
+        }
+      },
+      "style": "panel.large",
+      "children": [
+        {
+          "type": "frame",
+          "layout": {
+            "w": "auto",
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "min_h": 60
+          },
+          "children": [
+            {
+              "type": "column",
+              "layout": {
+                "w": "auto",
+                "h": {
+                  "grow": 1
+                },
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 3,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "bind": {
+                "visible": "save_page"
+              },
+              "children": [
+                {
+                  "id": "schematics_selection_scroll",
+                  "type": "scroll",
+                  "axis": "vertical",
+                  "layout": {
+                    "w": "auto",
+                    "h": {
+                      "grow": 1
+                    },
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 3,
+                    "dir": "column",
+                    "align": "stretch",
+                    "justify": "start",
+                    "min_h": 40
+                  },
+                  "children": [
+                    {
+                      "type": "label",
+                      "bind": {
+                        "text": "selection_count"
+                      }
+                    },
+                    {
+                      "id": "schematic_name",
+                      "type": "text_input",
+                      "placeholder": "Schematic name…",
+                      "max_chars": 64,
+                      "bind": {
+                        "text": "schematic_name"
+                      }
+                    },
+                    {
+                      "type": "row",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 4,
+                        "dir": "column",
+                        "align": "center",
+                        "justify": "start"
+                      },
+                      "children": [
+                        {
+                          "id": "include_air",
+                          "type": "checkbox",
+                          "bind": {
+                            "value": "include_air"
+                          }
+                        },
+                        {
+                          "type": "label",
+                          "text": "Include air"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 3,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "id": "back_to_schematics",
+                      "type": "button",
+                      "text": "Back"
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "id": "clear_selection",
+                      "type": "button",
+                      "text": "Clear",
+                      "bind": {
+                        "enabled": "can_clear"
+                      }
+                    },
+                    {
+                      "id": "save_schematic",
+                      "type": "button",
+                      "text": "Save",
+                      "style": "button.success",
+                      "bind": {
+                        "enabled": "can_save"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "column",
+              "layout": {
+                "w": "auto",
+                "h": {
+                  "grow": 1
+                },
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 3,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "bind": {
+                "visible": "library_page"
+              },
+              "children": [
+                {
+                  "id": "schematics_library_scroll",
+                  "type": "scroll",
+                  "axis": "vertical",
+                  "layout": {
+                    "w": "auto",
+                    "h": {
+                      "grow": 1
+                    },
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 3,
+                    "dir": "column",
+                    "align": "stretch",
+                    "justify": "start",
+                    "min_h": 40
+                  },
+                  "children": [
+                    {
+                      "type": "label",
+                      "text": "No saved schematics yet.",
+                      "wrap": true,
+                      "bind": {
+                        "visible": "empty_library"
+                      }
+                    },
+                    {
+                      "id": "schematic_list",
+                      "type": "list",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 3,
+                        "dir": "column",
+                        "align": "stretch",
+                        "justify": "start"
+                      },
+                      "bind": {
+                        "items": "schematics"
+                      },
+                      "children": [
+                        {
+                          "id": "schematic_card",
+                          "type": "frame",
+                          "layout": {
+                            "w": "auto",
+                            "h": 68,
+                            "pad": [
+                              3,
+                              3,
+                              3,
+                              3
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 6,
+                            "dir": "row",
+                            "align": "start",
+                            "justify": "start"
+                          },
+                          "style": "panel.inset",
+                          "children": [
+                            {
+                              "type": "image",
+                              "image": "",
+                              "layout": {
+                                "w": 84,
+                                "h": 56,
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              },
+                              "bind": {
+                                "image": "thumbnail"
+                              }
+                            },
+                            {
+                              "type": "column",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": {
+                                  "grow": 1
+                                },
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 3,
+                                "dir": "column",
+                                "justify": "center",
+                                "min_w": 0
+                              },
+                              "children": [
+                                {
+                                  "type": "label",
+                                  "layout": {
+                                    "w": {
+                                      "grow": 1
+                                    },
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      56,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start",
+                                    "min_w": 0
+                                  },
+                                  "bind": {
+                                    "text": "name"
+                                  }
+                                },
+                                {
+                                  "type": "label",
+                                  "small": true,
+                                  "layout": {
+                                    "w": {
+                                      "grow": 1
+                                    },
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start",
+                                    "min_w": 0
+                                  },
+                                  "bind": {
+                                    "text": "details"
+                                  }
+                                },
+                                {
+                                  "type": "row",
+                                  "layout": {
+                                    "w": {
+                                      "grow": 1
+                                    },
+                                    "h": 24,
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 2,
+                                    "dir": "column",
+                                    "align": "start",
+                                    "justify": "end",
+                                    "abs": {
+                                      "x": 0,
+                                      "y": 0
+                                    }
+                                  },
+                                  "children": [
+                                    {
+                                      "id": "use_schematic",
+                                      "type": "button",
+                                      "icon": "icon.cube",
+                                      "layout": {
+                                        "w": 24,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      }
+                                    },
+                                    {
+                                      "id": "delete_schematic",
+                                      "type": "button",
+                                      "icon": "icon.trash",
+                                      "layout": {
+                                        "w": 24,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "style": "button.danger"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "new_schematic",
+                  "type": "button",
+                  "icon": "icon.plus",
+                  "layout": {
+                    "w": "auto",
+                    "h": 22,
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "align": "stretch",
+                    "justify": "start"
+                  },
+                  "style": "button.success",
+                  "bind": {
+                    "visible": "can_author"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "schematic_delete_confirmation",
+              "type": "column",
+              "layout": {
+                "w": "auto",
+                "h": {
+                  "grow": 1
+                },
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 8,
+                "dir": "column",
+                "align": "center",
+                "justify": "center"
+              },
+              "bind": {
+                "visible": "confirming_delete"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "wrap": true,
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "max_w": 260
+                  },
+                  "bind": {
+                    "text": "delete_question"
+                  }
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 4,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "id": "cancel_delete",
+                      "type": "button",
+                      "text": "Cancel"
+                    },
+                    {
+                      "id": "confirm_delete",
+                      "type": "button",
+                      "text": "Delete",
+                      "style": "button.danger"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "schematics_notice",
+          "type": "label",
+          "wrap": true,
+          "small": true,
+          "bind": {
+            "text": "notice",
+            "visible": "notice"
+          }
+        },
+        {
+          "id": "use_schematic_tooltip",
+          "type": "tooltip",
+          "hover": "use_schematic",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "browsing"
+          },
+          "children": [
+            {
+              "type": "label",
+              "text": "Use schematic",
+              "wrap": true,
+              "small": true
+            }
+          ]
+        },
+        {
+          "id": "delete_schematic_tooltip",
+          "type": "tooltip",
+          "hover": "delete_schematic",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "browsing"
+          },
+          "children": [
+            {
+              "type": "label",
+              "text": "Delete schematic",
+              "wrap": true,
+              "small": true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "browsing": {
+        "bool": true
+      },
+      "can_author": {
+        "bool": true
+      },
+      "can_clear": {
+        "bool": true
+      },
+      "can_save": {
+        "bool": true
+      },
+      "confirming_delete": {
+        "bool": true
+      },
+      "delete_question": {
+        "str": "Sample text"
+      },
+      "empty_library": {
+        "bool": true
+      },
+      "include_air": {
+        "bool": true
+      },
+      "library_page": {
+        "bool": true
+      },
+      "notice": {
+        "str": "Sample text"
+      },
+      "save_page": {
+        "bool": true
+      },
+      "schematic_name": {
+        "str": "Sample text"
+      },
+      "schematics": {
+        "list": [
+          {
+            "details": {
+              "str": "First item"
+            },
+            "name": {
+              "str": "First item"
+            },
+            "thumbnail": {
+              "str": "First item"
+            }
+          },
+          {
+            "details": {
+              "str": "Second item"
+            },
+            "name": {
+              "str": "Second item"
+            },
+            "thumbnail": {
+              "str": "Second item"
+            }
+          },
+          {
+            "details": {
+              "str": "Third item"
+            },
+            "name": {
+              "str": "Third item"
+            },
+            "thumbnail": {
+              "str": "Third item"
+            }
+          }
+        ]
+      },
+      "selection_count": {
+        "str": "Sample text"
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

@@ -288,3 +288,55 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     server.tick_attack(0, &mut events);
     assert!(events.player_at(0).swung_hand);
 }
+
+#[test]
+fn a_mob_holding_a_chest_open_lifts_its_lid_until_it_lets_go_or_leaves() {
+    use crate::events::tick::TickEvents;
+    use petramond_math::math::IVec3;
+    use petramond_math::world_pos::WorldPos;
+
+    let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+    let feet = server.sessions[0].player.pos;
+    let chest = IVec3::new(
+        feet.x.floor() as i32 + 2,
+        feet.y.floor() as i32,
+        feet.z.floor() as i32,
+    );
+    server.world.set_block_world(
+        chest.x,
+        chest.y,
+        chest.z,
+        petramond_world::block::Block::Chest,
+    );
+    assert!(server.world.mobs_mut().spawn(
+        crate::mob::Mob::Sheep,
+        WorldPos::new(feet.x + 1.0, feet.y, feet.z),
+        0.0
+    ));
+    let mob = server.world.mobs().instances()[0].id();
+
+    let mut events = TickEvents::default();
+    server.hold_container(mob, chest, true, &mut events);
+    server.hold_container(mob, chest, true, &mut events);
+    assert_eq!(
+        server.chest_viewers.get(&chest),
+        Some(&1),
+        "a mob is one viewer however often it asks"
+    );
+    assert_eq!(events.world.chest_changed, vec![(chest, true)]);
+
+    server.hold_container(mob, chest, false, &mut events);
+    assert!(!server.chest_viewers.contains_key(&chest));
+    server.hold_container(mob, chest, true, &mut events);
+
+    server.world.mobs_mut().remove(0);
+    server.release_absent_holders(&mut events);
+    assert!(
+        !server.chest_viewers.contains_key(&chest),
+        "a mob gone from the world lets go"
+    );
+    assert_eq!(
+        events.world.chest_changed,
+        vec![(chest, true), (chest, false), (chest, true), (chest, false)]
+    );
+}

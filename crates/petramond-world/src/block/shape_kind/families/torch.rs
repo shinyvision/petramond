@@ -10,6 +10,18 @@ use super::*;
 pub struct TorchFamily;
 
 impl ShapeSim for TorchFamily {
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        let mount = crate::torch::TorchPlacement::from_cell(state);
+        let turned = match mount {
+            crate::torch::TorchPlacement::Floor => mount,
+            crate::torch::TorchPlacement::North => crate::torch::TorchPlacement::East,
+            crate::torch::TorchPlacement::East => crate::torch::TorchPlacement::South,
+            crate::torch::TorchPlacement::South => crate::torch::TorchPlacement::West,
+            crate::torch::TorchPlacement::West => crate::torch::TorchPlacement::North,
+        };
+        crate::block::rotation::CellRotation::unchanged(block, turned.to_cell())
+    }
+
     fn mount(
         &self,
         _p: &ShapeParams,

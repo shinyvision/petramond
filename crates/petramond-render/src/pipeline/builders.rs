@@ -52,6 +52,21 @@ const _: () = assert!(
 /// `Depth32Float` attachment, so the presets below all use this.
 pub(super) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// Polygon offset for depth-WRITING geometry drawn in exactly the planes of
+/// geometry already in the depth buffer (a schematic ghost over a cell that
+/// holds a different block). The bias makes the later draw win that tie
+/// everywhere instead of per pixel.
+const COPLANAR_WIN_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: -10,
+    slope_scale: -1.0,
+    clamp: 0.0,
+};
+
+const _: () = assert!(
+    COPLANAR_WIN_DEPTH_BIAS.constant < 0 && COPLANAR_WIN_DEPTH_BIAS.slope_scale < 0.0,
+    "a bias that wins coplanar ties must be negative (toward camera)"
+);
+
 /// A named depth-stencil configuration for [`world_pipeline`]. The world passes
 /// only ever vary along three axes — whether depth is written, the compare
 /// function, and the polygon-offset bias — so each variant captures one real
@@ -62,6 +77,10 @@ pub(super) enum DepthPreset {
     /// particles, and the hand variants that self-sort against a cleared depth
     /// buffer.
     WriteLess,
+    /// Depth test `LessEqual` + WRITE, with the coplanar-win polygon offset:
+    /// the geometry sorts against itself like opaque geometry and wins over
+    /// an already-drawn face it is coincident with.
+    WriteLessEqualCoplanarBiased,
     /// Depth test `Less`, NO write. Translucent fluids and emitter particles:
     /// sort behind solid geometry without occluding the surfaces drawn after.
     ReadLess,
@@ -83,6 +102,11 @@ impl DepthPreset {
                 true,
                 wgpu::CompareFunction::Less,
                 wgpu::DepthBiasState::default(),
+            ),
+            DepthPreset::WriteLessEqualCoplanarBiased => (
+                true,
+                wgpu::CompareFunction::LessEqual,
+                COPLANAR_WIN_DEPTH_BIAS,
             ),
             DepthPreset::ReadLess => (
                 false,

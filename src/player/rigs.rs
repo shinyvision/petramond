@@ -31,13 +31,22 @@ pub use mod_api::rig::{PLAYER_BODY, PLAYER_FIRST_PERSON};
 const CATALOG_PATH: &str = "animations/rigs.json";
 
 const ROW_KEYS: &[&str] = &[
-    "model", "animator", "observed", "presenter", "grips", "camera", "twist", "holds",
+    "model",
+    "animator",
+    "observed",
+    "presenter",
+    "grips",
+    "camera",
+    "twist",
+    "holds",
 ];
 
 /// A rig's index in this process's registry — the compact id every runtime
 /// path carries below the ABI. Both mirrors resolve names against the same
 /// registry; a peer whose table differs remaps by name at the transport.
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord,
+)]
 pub struct RigId(pub u16);
 
 impl RigId {
@@ -107,7 +116,9 @@ static RIGS: LazyLock<Vec<Rig>> = LazyLock::new(|| {
     for layer in petramond_world::assets::read_catalog_layers(CATALOG_PATH) {
         match serde_json::from_str::<Value>(&layer.text) {
             Ok(value) => {
-                if let Err(e) = petramond_world::assets::merge_object(&mut doc, Some(&value), "rigs") {
+                if let Err(e) =
+                    petramond_world::assets::merge_object(&mut doc, Some(&value), "rigs")
+                {
                     log::error!("rigs catalog {}: {e}", layer.path.display());
                 }
             }
@@ -191,7 +202,10 @@ fn rig_from(
             .bone_named(name)
             .ok_or_else(|| format!("`{key}`: the model has no bone `{name}`"))
     };
-    let grips = row.get("grips").and_then(Value::as_object).ok_or("`grips` is { main, off }")?;
+    let grips = row
+        .get("grips")
+        .and_then(Value::as_object)
+        .ok_or("`grips` is { main, off }")?;
     let grip = |hand: &str| {
         grips
             .get(hand)
@@ -202,18 +216,28 @@ fn rig_from(
     let camera = row.get("camera").map(|v| bone(v, "camera")).transpose()?;
     let twist = match row.get("twist") {
         None => Vec::new(),
-        Some(Value::Array(list)) => list.iter().map(|v| bone(v, "twist")).collect::<Result<_, _>>()?,
+        Some(Value::Array(list)) => list
+            .iter()
+            .map(|v| bone(v, "twist"))
+            .collect::<Result<_, _>>()?,
         Some(_) => return Err("`twist` is a list of bones".into()),
     };
     let graph = load_graph(&animator, &model);
     let mut holds = Vec::new();
     if let Some(listed) = row.get("holds") {
-        let listed = listed.as_object().ok_or("`holds` is { render kind: clip }")?;
+        let listed = listed
+            .as_object()
+            .ok_or("`holds` is { render kind: clip }")?;
         for (kind, clip) in listed {
             let kind = ItemRenderKind::NAMES
                 .into_iter()
                 .find(|k| *k == kind.as_str())
-                .ok_or_else(|| format!("`holds.{kind}`: not a render kind ({})", ItemRenderKind::NAMES.join(", ")))?;
+                .ok_or_else(|| {
+                    format!(
+                        "`holds.{kind}`: not a render kind ({})",
+                        ItemRenderKind::NAMES.join(", ")
+                    )
+                })?;
             let clip = clip
                 .as_str()
                 .ok_or_else(|| format!("`holds.{kind}` names a clip"))?;

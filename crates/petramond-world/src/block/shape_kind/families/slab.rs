@@ -9,6 +9,24 @@ use super::*;
 pub struct SlabFamily;
 
 impl ShapeSim for SlabFamily {
+    fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
+        let mut slab = SlabState::from_cell(state);
+        let swap = slab.split == crate::block_state::SlabSplit::Z;
+        slab.split = match slab.split {
+            crate::block_state::SlabSplit::X => crate::block_state::SlabSplit::Z,
+            crate::block_state::SlabSplit::Z => crate::block_state::SlabSplit::X,
+            other => other,
+        };
+        if swap {
+            slab.layers.swap(0, 1);
+        }
+        crate::block::rotation::CellRotation {
+            block,
+            state: slab.to_cell(),
+            swap_parts: swap,
+        }
+    }
+
     fn default_boxes(&self, _p: &ShapeParams, _b: Block) -> &'static [Aabb] {
         crate::slab::default_boxes()
     }
@@ -73,6 +91,22 @@ impl ShapeSim for SlabFamily {
                 .map(|(slot, block)| (slot.index as crate::block::CellPart, block))
                 .collect(),
         )
+    }
+
+    fn keeping_parts(
+        &self,
+        _p: &ShapeParams,
+        b: Block,
+        state: ShapeState,
+        keep: &[crate::block::CellPart],
+    ) -> Option<(Block, ShapeState)> {
+        let whole = crate::slab::normalize_state(b, SlabState::from_cell(state));
+        let kept = crate::slab::layer_slots(whole)
+            .filter(|(slot, _)| keep.contains(&(slot.index as crate::block::CellPart)))
+            .try_fold(SlabState::default(), |kept, (slot, block)| {
+                crate::slab::add_layer(kept, slot, block)
+            })?;
+        (!kept.is_empty()).then(|| (crate::slab::representative_block(kept), kept.to_cell()))
     }
 }
 

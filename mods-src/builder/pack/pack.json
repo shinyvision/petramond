@@ -1,0 +1,8 @@
+{
+  "name": "Builder",
+  "id": "builder",
+  "version": "0.1.0",
+  "description": "Put a blueprint in a schematic table, choose a saved schematic and anchor its ghost. Stock the chests touching the table with every block the design needs, then press Start: a Mason Golem digs itself out of the ground, fetches blocks and tools, clears what is in the way and builds the design, then burrows back down.",
+  "summary": "Schematic table, blueprints and the Mason Golem.",
+  "wasm": "mod.wasm"
+}

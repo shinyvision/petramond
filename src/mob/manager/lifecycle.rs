@@ -180,15 +180,18 @@ impl Mobs {
         {
             if let Some(inst) = self.list.last_mut() {
                 inst.overlay_tags(m.tags);
+                inst.restore_container(m.container);
             }
         }
     }
 
     /// Remove the mob at `index` from the live set immediately — the mod
-    /// `DespawnMob` HostCall (no death, no loot, not saved). `swap_remove`, so
+    /// `DespawnMob` HostCall (no death, no loot table, not saved; carried stacks
+    /// still scatter). `swap_remove`, so
     /// it renumbers the last mob into the hole; callers must re-query indices.
     pub fn remove(&mut self, index: usize) -> bool {
         if index < self.list.len() {
+            self.spill_container(index);
             self.list.swap_remove(index);
             true
         } else {

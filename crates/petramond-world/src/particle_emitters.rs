@@ -47,6 +47,8 @@ const ENGINE_EMITTER_NAMES: &[&str] = &[
     "petramond:water_splash",
     "petramond:butterfly",
     "petramond:lava_embers",
+    "petramond:block_dust",
+    "petramond:block_break",
 ];
 
 /// Most particle rows one bundle may declare.
@@ -90,8 +92,6 @@ pub struct EmitterBundle {
 pub struct BurstSpec {
     /// Particles per unit of event intensity (result rounded, min 1).
     pub count_per_intensity: f32,
-    /// Hard per-burst cap.
-    pub max_count: u32,
     /// Min/max upward launch speed, m/s.
     pub up_speed: [f32; 2],
     /// Min/max horizontal launch speed, m/s — each particle picks a random
@@ -101,8 +101,32 @@ pub struct BurstSpec {
     pub lifetime: [f32; 2],
     /// Min/max cube edge length, blocks.
     pub size: [f32; 2],
-    /// RGB endpoints; each particle draws a mix at spawn.
+    /// How far the count may run over its base, as a fraction drawn per burst
+    /// (`1` = up to double): a punch sheds two to four flecks, not always three.
+    #[serde(default)]
+    pub count_spread: f32,
+    /// Half extents of the box particles spawn in, around the burst point.
+    #[serde(default = "default_spawn")]
+    pub spawn: [f32; 3],
+    /// Min/max speed AWAY from the burst point, through where the particle
+    /// spawned, m/s — a thing coming apart in every direction.
+    #[serde(default)]
+    pub outward_speed: [f32; 2],
+    /// Min/max speed along the event's own direction (a struck face's normal),
+    /// m/s. Nothing for an event that names none.
+    #[serde(default)]
+    pub along_speed: [f32; 2],
+    /// RGB endpoints; each particle draws a mix at spawn. A textured particle
+    /// is multiplied by it.
+    #[serde(default = "default_color")]
     pub color: [[f32; 3]; 2],
+    /// The texture particles are cut from, when the event firing the burst
+    /// names none; with neither, particles are flat cubes of `color`.
+    #[serde(default)]
+    pub texture: Option<TextureSlice>,
+    /// How much of its texture slice one particle shows, per axis.
+    #[serde(default = "default_patch")]
+    pub patch: f32,
     /// Skews the color mix: `>1` favors the FIRST endpoint (`mix^bias`), `1`
     /// (default) is uniform.
     #[serde(default = "default_color_bias")]
@@ -115,6 +139,64 @@ pub struct BurstSpec {
 
 fn default_color_bias() -> f32 {
     1.0
+}
+
+fn default_spawn() -> [f32; 3] {
+    [0.15, 0.05, 0.15]
+}
+
+fn default_color() -> [[f32; 3]; 2] {
+    [[1.0; 3]; 2]
+}
+
+fn default_patch() -> f32 {
+    0.25
+}
+
+/// A named atlas tile and the part of it (`[u0, v0, u1, v1]` in tile
+/// fractions) particles are cut from.
+#[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
+#[serde(try_from = "RawTextureSlice")]
+pub struct TextureSlice {
+    pub tile: crate::tile::Tile,
+    pub slice: [f32; 4],
+}
+
+impl TextureSlice {
+    pub const WHOLE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+
+    /// `None` = an unknown tile or a slice outside the tile.
+    pub fn named(tile: &str, slice: [f32; 4]) -> Option<Self> {
+        let [u0, v0, u1, v1] = slice;
+        let inside = slice
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v));
+        (inside && u0 < u1 && v0 < v1).then_some(Self {
+            tile: crate::tile::Tile::from_name(tile)?,
+            slice,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTextureSlice {
+    tile: String,
+    #[serde(default = "whole_slice")]
+    slice: [f32; 4],
+}
+
+fn whole_slice() -> [f32; 4] {
+    TextureSlice::WHOLE
+}
+
+impl TryFrom<RawTextureSlice> for TextureSlice {
+    type Error = String;
+
+    fn try_from(raw: RawTextureSlice) -> Result<Self, String> {
+        Self::named(&raw.tile, raw.slice)
+            .ok_or_else(|| format!("texture '{}': unknown tile or a slice outside it", raw.tile))
+    }
 }
 
 /// A world-anchored ambience volume around the local camera, DERIVED
@@ -762,12 +844,11 @@ fn validate_burst(key: &str, b: &BurstSpec) -> Result<(), String> {
     if !b.count_per_intensity.is_finite() || b.count_per_intensity <= 0.0 {
         return err("count_per_intensity must be positive and finite");
     }
-    if !(1..=256).contains(&b.max_count) {
-        return err("max_count must be in 1..=256");
-    }
     for (label, range, min) in [
         ("up_speed", b.up_speed, 0.0),
         ("radial_speed", b.radial_speed, 0.0),
+        ("outward_speed", b.outward_speed, 0.0),
+        ("along_speed", b.along_speed, 0.0),
         ("lifetime", b.lifetime, f32::EPSILON),
         ("size", b.size, f32::EPSILON),
     ] {
@@ -783,6 +864,18 @@ fn validate_burst(key: &str, b: &BurstSpec) -> Result<(), String> {
                 return err("color channels must be in 0..=1");
             }
         }
+    }
+    if !b.count_spread.is_finite() || !(0.0..=4.0).contains(&b.count_spread) {
+        return err("count_spread must be in 0..=4");
+    }
+    if b.spawn
+        .iter()
+        .any(|v| !v.is_finite() || !(0.0..=2.0).contains(v))
+    {
+        return err("spawn half extents must be in 0..=2");
+    }
+    if !b.patch.is_finite() || !(0.01..=1.0).contains(&b.patch) {
+        return err("patch must be in 0.01..=1");
     }
     if !b.color_bias.is_finite() || !(0.25..=8.0).contains(&b.color_bias) {
         return err("color_bias must be in 0.25..=8");

@@ -263,6 +263,7 @@ pub fn contract_for(kind: GuiKind) -> SlotContract {
             // order, since the in-role index IS the container index.
             ("container", petramond_world::furnace::FURNACE_SLOTS),
         ]),
+        GuiKind::Creative => SlotContract::new(&[("hotbar", 9)]),
         GuiKind::Hotbar => SlotContract::new(&[("hotbar", 9), ("off_hand", 1)]),
         GuiKind::Demo => SlotContract::new(&[("demo_slots", 9)]),
         _ => SlotContract::default(),
