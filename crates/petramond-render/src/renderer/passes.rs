@@ -519,6 +519,51 @@ impl Renderer {
                 }
             }
         }
+        // MODEL-BREAK PASS: the destroy crack over a mined bbmodel block, drawn
+        // as a decal over the model's OWN triangles — the same column model
+        // stream the model pass drew, re-rasterized with the crack pipeline and
+        // masked in the shader to the cracked model's outline box. Nothing
+        // re-derives the model's form, so the decal is depth-coincident and
+        // hugs every cube, however small or rotated. Immediately before the
+        // cell-shaped blocks' crack pass, which it shares its ordering
+        // constraints with (after translucent blocks, before water).
+        if self.model_break.active() {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.targets.depth,
+                "model break pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
+            );
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.model_atlas_bind, &[]);
+            pass.set_bind_group(2, &self.model_break.bind, &[]);
+            pass.set_pipeline(self.model_break.pipe.get(samples));
+            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
+            for pos in &self.model_break.columns {
+                let Some(col) = self.terrain.columns.get(pos) else {
+                    continue;
+                };
+                // The whole column's model stream, opaque range and blend range
+                // together: the mask discards every fragment outside the cracked
+                // model, so the pass never needs to know which section holds it.
+                let total = col.model_idx_count + col.model_blend_idx_count;
+                if total == 0 {
+                    continue;
+                }
+                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    let slot = col.origin_slot.index();
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_index_buffer(
+                        self.terrain.geometry.slice(&ib.alloc, ib.len),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..total, 0, slot..slot + 1);
+                }
+            }
+        }
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
         // AFTER translucent blocks (the crack must sit on mined ice) but BEFORE
         // the transparent water pass — it is a decal on the block, so water must

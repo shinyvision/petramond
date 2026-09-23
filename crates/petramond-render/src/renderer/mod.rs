@@ -588,6 +588,9 @@ pub struct Renderer {
     /// own coplanar bias); draws the packed columns' contact streams between
     /// the opaque and sky passes.
     contact_pipe: crate::pipeline::SampledPipeline,
+    /// The bbmodel-block break crack: pipeline + per-frame mask uniform + the
+    /// columns whose model streams the decal pass re-draws.
+    model_break: crate::model_break::ModelBreak,
     model_atlas_bind: wgpu::BindGroup,
     terrain: TerrainPass,
     view: ViewState,

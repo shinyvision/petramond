@@ -288,6 +288,9 @@ impl Player {
             return;
         }
         let was_on_ground = self.on_ground;
+        if self.escape_geometry(dt, env) {
+            return;
+        }
         let medium = self.sample_medium(env, input);
         self.vertical_velocity(dt, input, medium, was_on_ground);
         self.move_vertical(dt, env);
@@ -370,20 +373,45 @@ impl Player {
         }
     }
 
-    fn move_vertical(&mut self, dt: f32, env: &Surroundings<'_>) {
-        // Heal shallow foot penetration first — a block that GREW under the
-        // standing feet (farmland pressed back to full-cube dirt, a machine
-        // variant swap) would otherwise be skipped by the sweep and the
-        // player tunnels through the floor (see `collision::depenetrate_up`).
-        let (mn, mx) = (self.aabb_min(), self.aabb_max());
-        self.pos.y += f64::from(collision::depenetrate_up_dyn(
-            mn,
-            mx,
-            collision::STEP_HEIGHT,
-            env.boxes,
+    /// Get out of geometry the body is already inside before anything sweeps
+    /// — the same pre-pass mobs and dropped items run, on the same committed
+    /// route (see `collision::escape_pre_pass`). A block that GREW under the
+    /// standing feet, a door shut on the body, terrain streamed in around it:
+    /// no sweep resolves any of it, since sweeps ignore boxes the body
+    /// already overlaps.
+    ///
+    /// Both sides run this: the search is deterministic, so the server's own
+    /// integration escapes exactly as the client predicted and the claim it
+    /// reports stays inside the drift ring.
+    /// Returns whether the body is STILL inside geometry after this step —
+    /// in which case the escape owns the frame and the caller does nothing
+    /// else. Sweeping an embedded body is meaningless (a sweep ignores the
+    /// boxes it already overlaps), so letting gravity run alongside the
+    /// escape just drags the body back down as fast as it climbs.
+    pub(super) fn escape_geometry(&mut self, dt: f32, env: &Surroundings<'_>) -> bool {
+        let (mut mn, mut mx) = (self.aabb_min(), self.aabb_max());
+        let (off, escaping) = collision::escape_pre_pass(
+            &mut mn,
+            &mut mx,
+            dt,
+            &mut self.escape,
+            &env.boxes,
             env.obstacles,
             collision::NOT_AN_ENTITY,
-        ));
+        );
+        self.pos += Vec3::from(off);
+        if escaping {
+            self.vel = Vec3::ZERO;
+            self.on_ground = false;
+            self.jumping = false;
+            // Being carried out of rock is not a fall: re-anchor as the body
+            // travels, so surfacing never lands as damage.
+            self.fall_peak_y = self.pos.y;
+        }
+        escaping
+    }
+
+    fn move_vertical(&mut self, dt: f32, env: &Surroundings<'_>) {
         let dy = self.vel.y * dt;
         if self.sweep_boxes_dyn(Axis::Y, dy, &env.boxes, env.obstacles) {
             // Landed if we were moving down; bonked head if moving up. Either way

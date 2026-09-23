@@ -9,6 +9,7 @@ use super::{item_model, particles, resources, shader_pack, ui};
 
 mod builders;
 mod sampling;
+pub(crate) use builders::{texture_sampler_bind_entries, texture_sampler_layout_entries};
 pub(crate) use sampling::SampledPipeline;
 mod entity_models;
 mod environment;
@@ -39,7 +40,9 @@ pub(super) use self::environment::{
 pub(super) use self::grade::create_grade_bind;
 
 use self::builders::{pipeline_layout, shader_module, texture_sampler_bgl_bind, uniform_entry};
-use self::entity_models::{create_mob_pipeline, create_world_model_pipeline};
+use self::entity_models::{
+    create_mob_pipeline, create_model_break_pipeline, create_world_model_pipeline,
+};
 use self::environment::{create_env_scaler, create_environment_pipelines};
 use self::grade::create_grade_pipeline;
 use self::model3d::{create_item3d_pipeline, create_model3d_pipelines};
@@ -146,6 +149,11 @@ pub(super) struct PipelineResources {
     /// layout and depth test+write, drawn in the model-blend pass after the
     /// translucent-block pass.
     pub world_model_blend_pipe: crate::pipeline::SampledPipeline,
+    /// The bbmodel-block break crack: a decal over the model's own triangles
+    /// (see [`crate::model_break`]), with its own group(2) layout for the
+    /// frame's crack masks + the block atlas.
+    pub model_break_pipe: crate::pipeline::SampledPipeline,
+    pub model_break_bgl: wgpu::BindGroupLayout,
     /// Break-overlay pipeline: the cracked-block destroy quad. Reuses the block
     /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
     /// LessEqual / no-write over geometry coincident with the block faces.
@@ -403,6 +411,23 @@ pub(super) fn create_pipeline_resources(
         &mob_shader,
         true,
     );
+    // The model-break decal binds the model pipeline's two groups plus its own.
+    let model_break_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("model break bgl"),
+        entries: &crate::model_break::layout_entries(),
+    });
+    let model_break_layout = pipeline_layout(
+        device,
+        "model break pipe layout",
+        &[&shared.uniform_bgl, &shared.atlas_bgl, &model_break_bgl],
+    );
+    let model_break_pipe = create_model_break_pipeline(
+        device,
+        format,
+        max_samples,
+        &model_break_layout,
+        &mob_shader,
+    );
     let break_pipe =
         create_break_overlay_pipeline(device, format, max_samples, &shared.layout, &vbuf_layout);
     let contact_pipe = create_contact_pipeline(device, format, max_samples, &shared.uniform_bgl);
@@ -451,6 +476,8 @@ pub(super) fn create_pipeline_resources(
         mob_pipe,
         world_model_pipe,
         world_model_blend_pipe,
+        model_break_pipe,
+        model_break_bgl,
         break_pipe,
         contact_pipe,
         entity_shadow_pipe,

@@ -245,19 +245,6 @@ impl Animation {
 /// Two times this close are the same instant — Blockbench's `1/1200` s.
 const KEY_EPSILON: f32 = 1.0 / 1200.0;
 
-/// Sample a sorted channel track at clip-local time `t`, by Blockbench's own
-/// `interpolate()` rules so a clip plays exactly as its preview shows:
-///
-/// - `before` is the last key strictly before `t`, `after` the first at or
-///   past it; a key within [`KEY_EPSILON`] of `t` answers its arriving value.
-/// - A `step` key holds; outside the keyed range the nearest key holds.
-/// - Linear when `before` is linear and `after` linear or step, else
-///   Catmull-Rom when either is, else Bezier when either is.
-/// - `before` contributes its leaving value (`post`), `after` its arriving
-///   one (`pre`).
-///
-/// No Minecraft format enables Blockbench's loop wrapping, so a looping clip
-/// does not interpolate across its end — only its Catmull-Rom neighbours wrap.
 fn sample_track(kfs: &[Keyframe], t: f32, looping: bool) -> Vec3 {
     if kfs.is_empty() {
         return Vec3::ZERO;
@@ -398,11 +385,6 @@ pub fn euler_quat(deg: Vec3) -> Quat {
         * Quat::from_rotation_x(deg.x.to_radians())
 }
 
-/// Quaternion from a DISPLAY TRANSFORM's euler degrees — a `.bbmodel` `display`
-/// slot (the held/GUI pose) and the engine's pose-offset seams, which are
-/// authored in the same vocabulary. Z turns first here, matching Minecraft's
-/// own item transform; a display slot is not an outliner node and Blockbench
-/// does not preview it under `Format.euler_order`.
 pub fn display_euler_quat(deg: Vec3) -> Quat {
     Quat::from_euler(
         glam::EulerRot::XYZ,

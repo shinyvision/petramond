@@ -109,13 +109,29 @@ fn push_chest_world(
 ) {
     let sky = super::lighting::DynLight::new(inst.skylight, inst.blocklight);
     let start = verts.len();
-    push_box_faces_lit(verts, indices, body_faces(), BODY_MIN, BODY_MAX, sky);
+    push_box_faces_lit(
+        verts,
+        indices,
+        body_faces(),
+        [0; 6],
+        BODY_MIN,
+        BODY_MAX,
+        sky,
+    );
 
     // Lid + latch hinge together about the rear-bottom seam edge: append both, then
     // rotate that range by the open angle so the front edge swings up and back.
     let lid_start = verts.len();
-    push_box_faces_lit(verts, indices, lid_faces(), LID_MIN, LID_MAX, sky);
-    push_box_faces_lit(verts, indices, latch_faces(), LATCH_MIN, LATCH_MAX, sky);
+    push_box_faces_lit(verts, indices, lid_faces(), [0; 6], LID_MIN, LID_MAX, sky);
+    push_box_faces_lit(
+        verts,
+        indices,
+        latch_faces(),
+        [0; 6],
+        LATCH_MIN,
+        LATCH_MAX,
+        sky,
+    );
     let angle = inst.lid01.clamp(0.0, 1.0) * LID_OPEN_RADIANS;
     if angle != 0.0 {
         let (s, c) = angle.sin_cos();
@@ -157,6 +173,7 @@ pub(super) fn push_chest_item(
         verts,
         indices,
         body_faces(),
+        [0; 6],
         map(BODY_MIN),
         map(BODY_MAX),
         light,
@@ -165,6 +182,7 @@ pub(super) fn push_chest_item(
         verts,
         indices,
         lid_faces(),
+        [0; 6],
         map(LID_MIN),
         map(LID_MAX),
         light,
@@ -173,6 +191,7 @@ pub(super) fn push_chest_item(
         verts,
         indices,
         latch_faces(),
+        [0; 6],
         map(LATCH_MIN),
         map(LATCH_MAX),
         light,

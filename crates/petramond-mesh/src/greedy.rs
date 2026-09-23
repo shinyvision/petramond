@@ -12,8 +12,8 @@ use super::face::{Face, FACES};
 use petramond_world::light::BlockLight6;
 
 use super::vertex::{
-    pack_greedy_span, pack_normal_code, pack_overlay, pack_vertex, Vertex, UV_MODE_NONE,
-    UV_MODE_SHIFT,
+    pack_greedy_span, pack_normal_code, pack_overlay, pack_uv_turn, pack_uv_turn2, pack_vertex,
+    Vertex, UV_MODE_NONE, UV_MODE_SHIFT,
 };
 
 // Long greedy edges can meet subdivided neighbour faces as T-junctions, which rasterize
@@ -36,9 +36,11 @@ use super::vertex::{
 #[derive(Copy, Clone, PartialEq)]
 pub(super) struct FlatFace {
     pub(super) gen: u32,
-    /// Tile id, with the DYED flag folded into bit 31 (see
-    /// [`super::vertex::DYED_FLAG2`]) so it participates in the merge key and
-    /// splits back out at quad emit.
+    /// Tile id, with the row-declared UV turn folded into bits 12..13 and the
+    /// DYED flag into bit 31 (see [`super::vertex::DYED_FLAG2`]) so both
+    /// participate in the merge key — two faces sharing a tile but sampling
+    /// it at different turns must never merge — and split back out at quad
+    /// emit.
     pub(super) tile: u32,
     /// AO (2 bits) | sky light (6) | the block-light CHANNELS (18), packed into
     /// one word. Merges require every one of them equal, so a merged quad's
@@ -238,6 +240,7 @@ fn push_greedy_quad(
 ) {
     let corners = face.quad_box(min, max);
     let shade_idx = face.shade_idx();
+    let turn = (key.tile >> 12) & 0x3;
     let dyed = if key.tile & (1 << 31) != 0 {
         super::vertex::DYED_FLAG2
     } else {
@@ -255,11 +258,13 @@ fn push_greedy_quad(
                 key.ao(),
                 key.light6(),
             ) | key.block().packed_bits()
-                | (UV_MODE_NONE << UV_MODE_SHIFT),
+                | (UV_MODE_NONE << UV_MODE_SHIFT)
+                | pack_uv_turn(turn),
             packed2: key.block().packed2_bits()
                 | pack_overlay(pack_greedy_span(w, h))
                 | pack_normal_code(face.normal_code())
-                | dyed,
+                | dyed
+                | pack_uv_turn2(turn),
         });
     }
 }

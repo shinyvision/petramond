@@ -158,6 +158,55 @@ mod terrain_vertex_tests {
             assert_eq!((packed2 >> 20) & 0x7FF, 0, "uv must not reach the overlay");
         }
 
+        // The row-declared UV turn: two bits split across each word's last bit
+        // (the WGSL decode is `((packed >> 31) & 1) | (((packed2 >> 31) & 1) << 1)`).
+        // They must survive every other tenant of both words and not disturb
+        // the overlay payload or the chroma nibble beside them.
+        for turn in 0..4u32 {
+            // A COLOURED light: grey writes no chroma bits at all, so it could
+            // not prove the turn bit sits beside a live chroma nibble.
+            let light = BlockLight6::new(63, 12, 40);
+            let packed = pack_vertex(TILE_MASK, 3, 3, true, 3, 63)
+                | light.packed_bits()
+                | pack_uv_turn(turn);
+            let packed2 = BlockLight6::grey(63).packed2_bits()
+                | pack_overlay(OVERLAY_MASK)
+                | pack_cell_uv(16, 16)
+                | pack_uv_turn2(turn);
+            assert_eq!(
+                ((packed >> 31) & 0x1) | (((packed2 >> 31) & 0x1) << 1),
+                turn,
+                "uv turn {turn}"
+            );
+            assert_eq!(packed & 0x7FF, TILE_MASK, "tile survives the turn bit");
+            assert_eq!(
+                (packed >> 27) & 0xF,
+                (light.packed_bits() >> 27) & 0xF,
+                "chroma nibble survives the turn bit"
+            );
+            assert_eq!(
+                decode_vertex_light(&Vertex {
+                    pos: [0.0; 3],
+                    tint: light.tint_word([1.0; 3]),
+                    packed,
+                    packed2
+                }),
+                light,
+                "light decode survives the turn bits"
+            );
+            assert_eq!(
+                (packed2 >> 20) & 0x7FF,
+                OVERLAY_MASK,
+                "overlay survives the turn bit"
+            );
+            assert_eq!(
+                (packed2 >> 6) & 0x1F,
+                16,
+                "cell-local uv survives the turn bit"
+            );
+            assert_eq!(packed2 & 0x3F, 63, "block light survives the turn bit");
+        }
+
         // --- mirror of the tint word ---
         // `tint` is one `Unorm8x4` attribute: the GPU splits it into four
         // little-endian unorm bytes; the shaders declare it `vec4<f32>`, take
@@ -238,6 +287,7 @@ mod terrain_vertex_tests {
                 CHROMA_HI_MASK,
                 "chroma high nibble",
             ),
+            ("packed", 31, 0x1, "uv turn low bit"),
             ("packed2", 0, BLOCK_LIGHT_MASK, "block light red"),
             ("packed2", CELL_UV_U_SHIFT, CELL_UV_MASK, "cell-local u"),
             ("packed2", CELL_UV_V_SHIFT, CELL_UV_MASK, "cell-local v"),
@@ -260,6 +310,7 @@ mod terrain_vertex_tests {
                 "normal code",
             ),
             ("packed2", DYED_FLAG2.trailing_zeros(), 0x1, "dyed flag"),
+            ("packed2", 31, 0x1, "uv turn high bit"),
             ("packed2", OVERLAY_SHIFT2, OVERLAY_MASK, "overlay tile"),
             ("packed2", OVERLAY_SHIFT2, 0xF, "greedy width"),
             ("packed2", OVERLAY_SHIFT2 + 4, 0xF, "greedy height"),
@@ -573,7 +624,7 @@ pub fn unpack_tint(tint: u32) -> [f32; 3] {
 ///   0..11 tile id | 11..13 corner (0..3) | 13..15 shade index (into `SHADES`)
 ///   15..17 AO (0 dark..3 bright) | 17..23 SKYLIGHT ONLY (0 dark..63 full sky)
 ///   23..26 UV mode | 26 has-overlay flag | 27..31 block-light chroma high
-///   nibble ([`CHROMA_HI_SHIFT`]) | 31 free
+///   nibble ([`CHROMA_HI_SHIFT`]) | 31 uv-turn low bit ([`pack_uv_turn`])
 ///
 /// Block light moved to `packed2` bits 0..6 + the chroma split (see
 /// [`BlockLight6`]) so the shader can dim the sky term (day/night mods) without
@@ -672,11 +723,11 @@ pub fn unpack_greedy_span(packed2: u32) -> (u32, u32) {
 ///        OR, on a [`UV_MODE_NONE`] fluid face, its medium ([`pack_fluid_face`])
 ///   | 16..19 face-normal code ([`pack_normal_code`])
 ///   | 19 dyed flag ([`DYED_FLAG2`])
-///   | 20..31 overlay payload ([`pack_overlay`]) | 31 RESERVED (zero)
+///   | 20..31 overlay payload ([`pack_overlay`]) | 31 uv-turn high bit
+///   ([`pack_uv_turn2`])
 ///
 /// Each block channel is 6 bits like the sky channel so the shader's per-channel
-/// `block_term` mirrors the sky curve exactly; bit 31 is reserved for future
-/// per-vertex data and MUST stay zero until a new owner is documented here.
+/// `block_term` mirrors the sky curve exactly.
 ///
 /// Width of the block-light lane at bits 0..6.
 pub const BLOCK_LIGHT_MASK: u32 = 0x3F;
@@ -744,6 +795,36 @@ pub const UV_MODE_THIN_U: u32 = 1;
 pub const UV_MODE_THIN_V: u32 = 2;
 /// The vertex carries an explicit tile-local UV in `packed2` (see [`pack_cell_uv`]).
 pub const UV_MODE_CELL_LOCAL: u32 = 3;
+
+/// A plain cube face's row-declared UV quarter turn (0..4) — the shader twin
+/// of [`ShapeFace::uv_turns`](petramond_world::block::ShapeFace). Two bits,
+/// split across each word's last free bit: low bit in `packed` bit 31, high
+/// bit in `packed2` bit 31 (both documented free/reserved). Read ONLY on
+/// `UV_MODE_NONE` non-overlay non-fluid faces — every other UV lane
+/// (`CELL_LOCAL` faces, box sets, the log remap) bakes its mapping into the
+/// explicit UV it carries, so its turn bits stay zero.
+///
+/// `block.wgsl` applies it to the tile-local uv in the same order
+/// `ShapeFace::texel_uv` does CPU-side (carve, then turn — the greedy span
+/// multiply happens BEFORE the turn), and `model3d.wgsl` to the held/dropped/
+/// icon cube's tile rect. A row's `uv_rotation` rides wherever the row's tiles
+/// go, so a placed block, its held cube and its icon cannot disagree.
+pub const UV_TURN_LO_FLAG: u32 = 1 << 31;
+pub const UV_TURN_HI_FLAG2: u32 = 1 << 31;
+
+/// The low bit of a face's UV turn, OR-ed into `Vertex::packed` (bit 31).
+#[inline]
+pub fn pack_uv_turn(turn: u32) -> u32 {
+    debug_assert!(turn < 4, "uv turn is two bits");
+    (turn & 1) << 31
+}
+
+/// The high bit of a face's UV turn, OR-ed into `Vertex::packed2` (bit 31).
+#[inline]
+pub fn pack_uv_turn2(turn: u32) -> u32 {
+    debug_assert!(turn < 4, "uv turn is two bits");
+    (turn >> 1) << 31
+}
 
 /// GPU vertex for the chunk's bbmodel-block geometry, `pos` in mesh space like
 /// [`Vertex`]'s: EXPLICIT attributes

@@ -219,7 +219,7 @@ pub(super) fn buffer_bind_group(
 
 /// The layout-entry pair of a fragment-sampled float texture (at `binding`)
 /// plus its filtering sampler (at `binding + 1`).
-pub(super) fn texture_sampler_layout_entries(
+pub(crate) fn texture_sampler_layout_entries(
     binding: u32,
     dim: wgpu::TextureViewDimension,
 ) -> [wgpu::BindGroupLayoutEntry; 2] {
@@ -244,7 +244,7 @@ pub(super) fn texture_sampler_layout_entries(
 }
 
 /// The bind-group entry pair matching [`texture_sampler_layout_entries`].
-pub(super) fn texture_sampler_bind_entries<'a>(
+pub(crate) fn texture_sampler_bind_entries<'a>(
     binding: u32,
     view: &'a wgpu::TextureView,
     sampler: &'a wgpu::Sampler,

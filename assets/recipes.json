@@ -217,8 +217,31 @@
     },
     {
       "type": "crafting",
-      "recipe": "petramond:oak_stairs",
+      "recipe": "petramond:chiseling_station",
       "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:stone",
+          "count": 4
+        },
+        {
+          "tag": "petramond:planks",
+          "count": 8
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:chiseling_station",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:oak_stairs",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:oak_planks",
@@ -233,7 +256,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:spruce_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:spruce_planks",
@@ -248,7 +271,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:birch_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:birch_planks",
@@ -263,7 +286,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:jungle_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:jungle_planks",
@@ -278,7 +301,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:acacia_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:acacia_planks",
@@ -293,7 +316,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:redwood_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:redwood_planks",
@@ -308,7 +331,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:cobblestone_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:cobblestone",
@@ -323,7 +346,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:stone_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:stone",
@@ -338,7 +361,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:dirt_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:dirt",
@@ -353,7 +376,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:oak_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:oak_planks",
@@ -368,7 +391,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:spruce_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:spruce_planks",
@@ -383,7 +406,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:birch_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:birch_planks",
@@ -398,7 +421,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:jungle_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:jungle_planks",
@@ -413,7 +436,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:acacia_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:acacia_planks",
@@ -428,7 +451,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:redwood_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:redwood_planks",
@@ -443,7 +466,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:cobblestone_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:cobblestone",
@@ -458,7 +481,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:stone_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:stone",
@@ -473,7 +496,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:dirt_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:dirt",
@@ -503,7 +526,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:wool_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:wool_block",
@@ -518,7 +541,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:wool_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:wool_block",
@@ -548,7 +571,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:marble_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:marble",
@@ -563,7 +586,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:marble_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:marble",
@@ -578,7 +601,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:polished_marble_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:polished_marble",
@@ -593,7 +616,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:polished_marble_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:polished_marble",
@@ -602,6 +625,51 @@
       ],
       "result": {
         "item": "petramond:polished_marble_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_bricks",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:stone",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_bricks",
+        "count": 4
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_bricks_stairs",
+      "station": "petramond:chiseling_station",
+      "ingredients": [
+        {
+          "item": "petramond:stone_bricks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_bricks_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_bricks_slab",
+      "station": "petramond:chiseling_station",
+      "ingredients": [
+        {
+          "item": "petramond:stone_bricks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_bricks_slab",
         "count": 6
       }
     },
@@ -946,7 +1014,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:oak_fence",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:oak_planks",
@@ -961,7 +1029,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:spruce_fence",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:spruce_planks",
@@ -976,7 +1044,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:birch_fence",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:birch_planks",
@@ -991,7 +1059,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:jungle_fence",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:jungle_planks",
@@ -1006,7 +1074,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:acacia_fence",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:acacia_planks",
@@ -1021,7 +1089,7 @@
     {
       "type": "crafting",
       "recipe": "petramond:redwood_fence",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "petramond:redwood_planks",

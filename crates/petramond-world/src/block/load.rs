@@ -98,6 +98,14 @@ pub(super) struct RawBlockDef {
     #[serde(default)]
     pub particle_emitter: Option<RawEmitterRef>,
     pub tiles: [String; 3],
+    /// Per-slot UV rotation in degrees (`0`, `90`, `180`, `270` — clockwise on
+    /// the face), keyed by tile slot: `{"top": 90, "bottom": 90}`. How one
+    /// tile serves differently oriented faces (a bricks row whose top/bottom
+    /// courses run across instead of along). Tile-slot families only
+    /// (cube/stair/slab) — a box row rotates per box instead, so declaring it
+    /// anywhere else is a load error, never a silent no-op.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uv_rotation: Option<std::collections::BTreeMap<String, u16>>,
     /// Tile shown on the placed entity-facing face (furnace/chest fronts).
     /// Only valid together with the `directional_view` flag.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -330,6 +338,9 @@ impl RawInteraction {
                 "open_chest" => BlockInteraction::OpenGui(crate::gui_state::GuiKind::Chest),
                 "open_furniture_workbench" => {
                     BlockInteraction::OpenGui(crate::gui_state::GuiKind::FurnitureWorkbench)
+                }
+                "open_chiseling_station" => {
+                    BlockInteraction::OpenGui(crate::gui_state::GuiKind::ChiselingStation)
                 }
                 "toggle_door" => BlockInteraction::ToggleDoor,
                 "sleep" => BlockInteraction::Sleep,
@@ -714,6 +725,48 @@ fn parse_facing(name: &str) -> Result<Facing, String> {
     }
 }
 
+/// A row's `uv_rotation` map as per-slot quarter turns `[top, bottom, side]`.
+/// Degrees must be quarter turns and the keys must name slots; only the
+/// tile-slot families (cube/stair/slab) may declare it — every other shape
+/// textures through its own UV vocabulary (a box set rotates per box), where
+/// a row-level map could only be a silent no-op.
+fn resolve_uv_turns(r: &RawBlockDef, family: ShapeFamily) -> Result<[u8; 3], String> {
+    let Some(map) = &r.uv_rotation else {
+        return Ok([0; 3]);
+    };
+    if !matches!(
+        family,
+        ShapeFamily::Cube | ShapeFamily::Stair | ShapeFamily::Slab
+    ) {
+        return Err(
+            "'uv_rotation' rotates the row's [top, bottom, side] tiles and only \
+             applies to the cube/stair/slab shapes (a box set rotates per box, \
+             via 'uv_rotation' on each box)"
+                .into(),
+        );
+    }
+    let mut turns = [0u8; 3];
+    for (name, deg) in map {
+        let slot = match name.as_str() {
+            "top" => 0,
+            "bottom" => 1,
+            "side" => 2,
+            other => {
+                return Err(format!(
+                    "unknown uv_rotation slot '{other}' (expected top, bottom or side)"
+                ))
+            }
+        };
+        if *deg > 270 || deg % 90 != 0 {
+            return Err(format!(
+                "uv_rotation '{name}' {deg} must be 0, 90, 180 or 270"
+            ));
+        }
+        turns[slot] = (deg / 90) as u8;
+    }
+    Ok(turns)
+}
+
 fn convert(
     r: RawBlockDef,
     block: Block,
@@ -731,6 +784,7 @@ fn convert(
     // Resolve the composable shape kind once; its family/params drive every
     // shape-keyed flag and validation below, and it interns into the table.
     let (family, params, shape_key) = r.shape.resolve(r.corners)?;
+    let uv_turns = resolve_uv_turns(&r, family)?;
     let mut flags = BlockFlags::NONE;
     for f in &r.flags {
         flags = flags.with(f.to_flag());
@@ -1110,6 +1164,7 @@ fn convert(
         emission_rgb: resolve_emission_rgb(r.emission, r.light_color)?,
         particle_emitter,
         tiles,
+        uv_turns,
         front,
         side_overlay,
         covered_side,
@@ -1300,6 +1355,43 @@ mod tests {
         // sleepable block that anchors no spawn — legal.
         let sleep_only = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": [], "behavior": "inert", "interaction": "sleep", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "hardness": 1, "drops": [] } ] }"#;
         parse_test_layers(&[&base, sleep_only]).expect("sleep without the bed tag loads");
+    }
+
+    /// `uv_rotation` lands on the row's tile slots as quarter turns, and
+    /// anything it cannot mean — an unknown slot, a non-quarter turn, or a
+    /// shape that textures through its own per-face vocabulary — is a load
+    /// error rather than a silent no-op.
+    #[test]
+    fn uv_rotation_resolves_to_slot_turns_and_rejects_the_rest() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let row = |uv: &str, shape: &str| {
+            format!(
+                r#"{{ "blocks": [ {{ "block": "petramond:stone", "shape": {shape}, "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{{"min": [0, 0, 0], "max": [1, 1, 1]}}], "emission": 0, "tiles": ["stone", "stone", "stone"], "uv_rotation": {uv}, "material": "stone", "hardness": 1, "drops": [] }} ] }}"#
+            )
+        };
+        let reg = parse_test_layers(&[&base, &row(r#"{"top": 90, "bottom": 270}"#, r#""cube""#)])
+            .expect("a quarter-turn uv_rotation loads");
+        assert_eq!(
+            reg.defs[Block::Stone.id() as usize].uv_turns,
+            [1, 3, 0],
+            "top 90, bottom 270, side unturned"
+        );
+
+        let err = parse_test_layers(&[&base, &row(r#"{"top": 45}"#, r#""cube""#)])
+            .err()
+            .expect("a non-quarter turn refused");
+        assert!(err.contains("must be 0, 90, 180 or 270"), "{err}");
+        let err = parse_test_layers(&[&base, &row(r#"{"up": 90}"#, r#""cube""#)])
+            .err()
+            .expect("an unknown slot refused");
+        assert!(err.contains("unknown uv_rotation slot"), "{err}");
+        // Box sets rotate per box: a row-level map there could only be dead data.
+        let boxes_row = r#"{"blocks": [{"block": "mymod:slab", "shape": {"boxes": [{"to": [16, 8, 16]}]}, "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "uv_rotation": {"top": 90}, "material": "stone", "hardness": 1, "drops": []}]}"#;
+        let err = parse_test_layers(&[&base, boxes_row])
+            .err()
+            .expect("uv_rotation on a box row refused");
+        assert!(err.contains("cube/stair/slab"), "{err}");
     }
 
     #[test]

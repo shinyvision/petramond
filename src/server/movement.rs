@@ -149,7 +149,19 @@ impl ServerGame {
         let accept_claim = fresh
             && velocity_plausible
             && claim_within_drift(spectator, gap, claimed_pos - self.sessions[s].player.pos)
-            && claim_not_deeply_penetrating(claimed_pos, &self.world, obstacles, spectator);
+            && (claim_not_deeply_penetrating(claimed_pos, &self.world, obstacles, spectator)
+                // A body ESCAPING geometry is inside it by definition, so the
+                // anti-noclip rule cannot apply while the server's own
+                // integration is in there too: both sides run the same
+                // deterministic escape, and rejecting the claim would fight
+                // it with corrections for as long as it takes to get out.
+                // The drift ring still bounds where the claim may be.
+                || !claim_not_deeply_penetrating(
+                    self.sessions[s].player.pos,
+                    &self.world,
+                    obstacles,
+                    spectator,
+                ));
 
         let sess = &mut self.sessions[s];
         if accept_claim {

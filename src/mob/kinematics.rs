@@ -60,8 +60,9 @@ pub(super) struct Surroundings<'a> {
     pub boxes: &'a dyn Fn(i32, i32, i32) -> &'static [Aabb],
     /// Solid entity boxes the body collides with.
     pub obstacles: &'a [DynBox],
-    /// Solid entity boxes the shallow-foot heal may lift the body onto.
-    pub healing_obstacles: &'a [DynBox],
+    /// Solid entity boxes the escape pre-pass must get the body out of, and
+    /// may land it on.
+    pub escape_obstacles: &'a [DynBox],
     pub immersion: Option<Immersion>,
     pub current: FluidCurrent,
 }
@@ -73,7 +74,7 @@ impl<'a> Surroundings<'a> {
         Surroundings {
             boxes,
             obstacles: &[],
-            healing_obstacles: &[],
+            escape_obstacles: &[],
             immersion: None,
             current: FluidCurrent::NONE,
         }
@@ -248,14 +249,14 @@ impl Instance {
     /// one-block ledge. The mob faces its **wish** direction — where it wants
     /// to go — so it keeps facing forward even when pressed against a wall
     /// (where its actual velocity would be zero). Returns the mandatory
-    /// shallow-foot healing lift separately for the peer-motion proposal.
+    /// escape pre-pass displacement separately for the peer-motion proposal.
     pub(super) fn integrate_locomotion(
         &mut self,
         dt: f32,
         d: &MobDef,
         loco: Locomotion,
         env: &Surroundings<'_>,
-    ) -> f32 {
+    ) -> [f32; 3] {
         let was_grounded = self.on_ground;
         let incoming = self.vel;
         let nav_jumped = loco.jump && self.on_ground && env.immersion.is_none();
@@ -513,7 +514,7 @@ impl Instance {
         shore: Option<ShoreClimb>,
         carried: Option<[f32; 2]>,
         env: &Surroundings<'_>,
-    ) -> f32 {
+    ) -> [f32; 3] {
         let step = match shore {
             Some(ShoreClimb::Step(height)) => height.max(collision::STEP_HEIGHT),
             _ => collision::STEP_HEIGHT,
@@ -526,9 +527,10 @@ impl Instance {
             dt,
             step,
             matches!(shore, Some(ShoreClimb::Step(_))),
+            &mut self.escape,
             &env.boxes,
             env.obstacles,
-            env.healing_obstacles,
+            env.escape_obstacles,
             self.id,
         );
         self.pos += Vec3::from(moved);
@@ -587,6 +589,14 @@ impl Instance {
     /// so a mod gait policy can decide a vertical-drive launch.
     pub fn on_ground(&self) -> bool {
         self.on_ground
+    }
+
+    /// Whether the body is ENTOMBED: inside collision geometry with nowhere
+    /// free to escape to (see `collision::EscapeRoute`). The engine reports
+    /// it and holds the body still; what happens to a buried mob is a mod's
+    /// decision.
+    pub fn entombed(&self) -> bool {
+        self.escape.entombed()
     }
 }
 

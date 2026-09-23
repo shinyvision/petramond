@@ -62,6 +62,7 @@ pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapsho
         half_width: size.half_width,
         height: size.height,
         half_length: size.half_length.unwrap_or(size.half_width),
+        entombed: m.entombed(),
         conditions: crate::exposure::condition_data(m.exposure().conditions()),
     }
 }

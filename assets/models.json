@@ -49,6 +49,17 @@
         2
       ],
       "orientation": "left_to_right"
+    },
+    {
+      "key": "petramond:chiseling_station",
+      "model_file": "models/blocks/chiseling_station.bbmodel",
+      "cells": [
+        2,
+        2,
+        2
+      ],
+      "orientation": "back_to_front",
+      "fit": "native"
     }
   ]
 }

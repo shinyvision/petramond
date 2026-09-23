@@ -34,6 +34,9 @@ pub(super) fn create_mob_pipeline(
             &super::flipbook::model_declarations(),
             crate::selection_highlight::SHADER,
             include_str!("../../shaders/mob.wgsl"),
+            // The break-crack decal over a model block: same module, so it
+            // draws with the model's own vertex stage and texture sampling.
+            include_str!("../../shaders/model_break.wgsl"),
         ]
         .concat(),
     );
@@ -51,6 +54,25 @@ pub(super) fn create_mob_pipeline(
         max_samples,
     );
     (mob_pipe, mob_shader)
+}
+
+/// `ModelVertex`'s attributes: pos / uv / shade / packed light / packed tint.
+/// Shared, because the break-crack decal MUST draw the model stream with the
+/// same layout it was drawn with.
+const WORLD_MODEL_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x2,
+    2 => Float32,
+    3 => Uint32,
+    4 => Uint32,
+];
+
+fn world_model_vbuf_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<petramond_mesh::ModelVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &WORLD_MODEL_ATTRS,
+    }
 }
 
 /// world-model pipeline (chunk bbmodel-block stream).
@@ -83,38 +105,7 @@ pub(super) fn create_world_model_pipeline(
         }),
         wgpu::ColorWrites::ALL,
     );
-    let world_model_vbuf_attrs = [
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 0,
-            shader_location: 0,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: 12,
-            shader_location: 1,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32,
-            offset: 20,
-            shader_location: 2,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 24,
-            shader_location: 3,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 28,
-            shader_location: 4,
-        },
-    ];
-    let world_model_vbuf_layout = wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<petramond_mesh::ModelVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &world_model_vbuf_attrs,
-    };
+    let world_model_vbuf_layout = world_model_vbuf_layout();
     world_pipeline(
         device,
         if blended {
@@ -146,6 +137,45 @@ pub(super) fn create_world_model_pipeline(
             ..Default::default()
         },
         Some(DepthPreset::WriteLess),
+        max_samples,
+    )
+}
+
+/// model-break pipeline: the destroy crack over a bbmodel block, drawn as a
+/// decal over the model's OWN triangles (see `model_break.wgsl`). Same shader
+/// module, same vertex layout and same back-face culling as the world-model
+/// pipeline, so it rasterizes exactly the fragments the model pass rasterized;
+/// MULTIPLY blend and depth `LessEqual` / no write make it darken that surface.
+/// group(2) carries the frame's crack masks + the block atlas.
+pub(super) fn create_model_break_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    max_samples: u32,
+    layout: &wgpu::PipelineLayout,
+    mob_shader: &wgpu::ShaderModule,
+) -> crate::pipeline::SampledPipeline {
+    let targets = color_target(
+        format,
+        Some(super::overlays::MULTIPLY_BLEND),
+        wgpu::ColorWrites::ALL,
+    );
+    world_pipeline(
+        device,
+        "model break pipe",
+        layout,
+        mob_shader,
+        "vs_model_break",
+        "fs_model_break",
+        &[
+            world_model_vbuf_layout(),
+            crate::resources::COLUMN_ORIGIN_LAYOUT,
+        ],
+        &targets,
+        wgpu::PrimitiveState {
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        Some(DepthPreset::ReadLessEqualBiased),
         max_samples,
     )
 }

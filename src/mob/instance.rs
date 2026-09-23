@@ -236,6 +236,10 @@ pub struct Instance {
     /// Crowd-veer side commitment (see `nav::Unstick`) — transient steering
     /// state, never persisted.
     unstick: super::nav::Unstick,
+    /// The committed way out of geometry this body is stuck inside (see
+    /// `collision::EscapeRoute`) — derived from the world every tick, so
+    /// never persisted.
+    pub(super) escape: petramond_world::collision::EscapeRoute,
     pub(super) rng: MobRng,
     /// Carried item storage, sized by the row's `container_slots`. Persisted
     /// with the mob; its contents scatter when the mob leaves the world any
@@ -333,6 +337,7 @@ impl Instance {
             nav: Navigator::new(d.size.head_cells(), d.size.half_width, d.size.height)
                 .tolerating(d.tolerates.blocks),
             unstick: Default::default(),
+            escape: Default::default(),
             rng: MobRng::new(seed),
             container: petramond_world::container::Container::with_len(d.container_slots),
             dig: DrivenDig::default(),
@@ -967,7 +972,7 @@ impl Instance {
             &super::kinematics::Surroundings {
                 boxes: &boxes,
                 obstacles: inputs.solid,
-                healing_obstacles: inputs.solid_heal,
+                escape_obstacles: inputs.solid_escape,
                 immersion,
                 current,
             },
@@ -989,7 +994,7 @@ impl Instance {
             }
         }
         self.apply_expression(dt, d, named_anims, &decision);
-        Some((was_on_ground, motion_start + Vec3::Y * healed))
+        Some((was_on_ground, motion_start + Vec3::from(healed)))
     }
 }
 

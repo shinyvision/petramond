@@ -292,6 +292,16 @@ pub(super) fn new_renderer_inner(
     let world_model_pipe = pipelines.world_model_pipe.clone();
     let world_model_blend_pipe = pipelines.world_model_blend_pipe.clone();
     let contact_pipe = pipelines.contact_pipe.clone();
+    // The bbmodel break crack draws the same model stream a second time; its own
+    // group(2) holds the frame's crack masks and the BLOCK atlas (the destroy
+    // tiles live there, not in the model atlas).
+    let model_break = crate::model_break::ModelBreak::new(
+        &device,
+        pipelines.model_break_pipe,
+        &pipelines.model_break_bgl,
+        &atlas_view,
+        &atlas_sampler,
+    );
     // A custom-shape block's inventory icon is its baked ITEM geometry (a chair,
     // not a plank cube), which comes from the pack's WASM — bake all installed
     // custom item shapes into the item cache NOW, before the icon atlas reads it.
@@ -381,6 +391,7 @@ pub(super) fn new_renderer_inner(
         world_model_pipe,
         world_model_blend_pipe,
         contact_pipe,
+        model_break,
         model_atlas_bind,
         item_entity: ItemEntityPass {
             block_draws: Vec::new(),

@@ -193,7 +193,7 @@ type RowFilter = (&'static str, &'static str);
 /// A catalog's own check over its raw file text, beyond the shared row rules.
 type ExtraValidate = fn(&str) -> Result<(), String>;
 
-const CATALOGS: [CatalogSpec; 16] = {
+const CATALOGS: [CatalogSpec; 17] = {
     const fn plain(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
         CatalogSpec {
             rel,
@@ -207,6 +207,7 @@ const CATALOGS: [CatalogSpec; 16] = {
         plain("blocks.json", "blocks", "block"),
         plain("items.json", "items", "item"),
         plain("sounds.json", "sounds", "sound"),
+        plain("music.json", "tracks", "track"),
         plain("models.json", "models", "key"),
         CatalogSpec {
             // `brain_extensions` register nothing but must fail admission

@@ -79,7 +79,7 @@ impl Renderer {
                             _ => seat,
                         };
                         rig.carry(bones, hand, item)
-                            .map(|carry| (item.render_kind(), carry * seat))
+                            .map(|carry| (item.render_kind(), crate::hand::carried(seat, carry)))
                     });
             if let Some((kind, at)) = seated {
                 match kind {

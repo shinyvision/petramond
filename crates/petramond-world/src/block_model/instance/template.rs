@@ -25,11 +25,6 @@ pub(super) fn bake_cell_template(
     let mut segments = Vec::new();
     let part_of =
         |ci: u32| -> Option<usize> { parts.iter().position(|p| *p == cubes[ci as usize].name) };
-    // An authored cullface direction is model-space; rotate it by the facing into
-    // a WORLD direction (a vector transform, so the footprint shift drops out).
-    // Deliberately NOT rotated by the cube's own static tilt: a cullface names
-    // the voxel neighbour that suppresses the face, and a tilted face's authored
-    // direction is the nearest axis — the same reading Blockbench/Minecraft give it.
     let world_face = |face: Face| -> Face {
         let (dx, dy, dz) = face.dir();
         let w = base_xform.transform_vector3(Vec3::new(dx as f32, dy as f32, dz as f32));

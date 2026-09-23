@@ -62,12 +62,17 @@ pub fn base_from_cell(cell: IVec3, kind: BlockModelKind, offset: [u8; 3], facing
     cell - cell_rel_for_offset(footprint(kind), offset, facing)
 }
 
-/// Placement anchor used by the player: the clicked cell is the model's front-left
-/// bottom authored cell. Since authored model fronts are -Z, that cell is
-/// `[footprint_x - 1, 0, 0]`.
+/// Placement anchor used by the player: the clicked cell is the model's near-left
+/// bottom authored cell — the footprint cell nearest the placer, on their left.
+/// Which authored cell that is depends on the pose: a standard authored front
+/// (−Z) presents `[fp_x − 1, 0, 0]`; a back-to-front model meets the player with
+/// its authored +Z face, so its near-left cell is `[0, 0, fp_z − 1]`.
 pub fn base_from_front_left_anchor(anchor: IVec3, kind: BlockModelKind, facing: Facing) -> IVec3 {
     let fp = footprint(kind);
-    let front_left = [fp[0].saturating_sub(1), 0, 0];
+    let front_left = match super::def(kind).orientation {
+        super::PlacementOrientation::BackToFront => [0, 0, fp[2].saturating_sub(1)],
+        _ => [fp[0].saturating_sub(1), 0, 0],
+    };
     anchor - cell_rel_for_offset(fp, front_left, facing)
 }
 
@@ -206,6 +211,7 @@ pub fn transform_footprint_point(p: Vec3, footprint: [u8; 3], facing: Facing) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block_model::PlacementOrientation;
 
     #[test]
     fn placement_transform_maps_authored_front_to_facing() {
@@ -222,6 +228,69 @@ mod tests {
                 got.distance(want) < 1e-5,
                 "{facing:?} maps authored front to {got:?}, want {want:?}"
             );
+        }
+    }
+
+    /// A back-to-front model stores the half-turned facing, so its authored +Z
+    /// working face — not the convention's −Z — ends up on the placer's side.
+    #[test]
+    fn a_back_to_front_model_meets_the_player_with_its_authored_pos_z_face() {
+        assert_eq!(
+            PlacementOrientation::BackToFront.apply(Facing::North),
+            Facing::South
+        );
+        assert_eq!(
+            PlacementOrientation::BackToFront.apply(Facing::East),
+            Facing::West
+        );
+        // The chiseling station is the shipped back-to-front row: a player
+        // looking along +Z stores South, whose transform maps the authored +Z
+        // boundary onto the near (z = 0) footprint edge — the face the player
+        // sees — while `left_to_right` would have buried it on the far side.
+        let kind = BlockModelKind::ChiselingStation;
+        let fp = footprint(kind);
+        assert_eq!(
+            super::super::def(kind).orientation,
+            PlacementOrientation::BackToFront
+        );
+        let player_side =
+            transform_footprint_point(Vec3::new(0.0, 0.0, fp[2] as f32), fp, Facing::South);
+        assert_eq!(
+            player_side.z, 0.0,
+            "authored +Z face must land nearest the player"
+        );
+        let far_side = transform_footprint_point(Vec3::new(0.0, 0.0, 0.0), fp, Facing::South);
+        assert_eq!(far_side.z, fp[2] as f32);
+    }
+
+    /// The clicked cell is the footprint's near-left bottom cell under BOTH
+    /// poses: min world Z (nearest the placer) and max world X (their left),
+    /// with the model growing away from them. Each pose uses its shipped row:
+    /// the workbench for the standard authored front, the chiseling station
+    /// for back-to-front.
+    #[test]
+    fn the_anchor_cell_is_the_footprints_near_left_cell_for_both_poses() {
+        let anchor = IVec3::new(50, 40, 30);
+        for (kind, facing) in [
+            (BlockModelKind::FurnitureWorkbench, Facing::North),
+            (BlockModelKind::ChiselingStation, Facing::South),
+        ] {
+            let base = base_from_front_left_anchor(anchor, kind, facing);
+            let cells: Vec<IVec3> = oriented_footprint_cells(base, kind, facing)
+                .into_iter()
+                .map(|(cell, _)| cell)
+                .collect();
+            assert!(cells.contains(&anchor), "{kind:?}: anchor not in footprint");
+            let min_z = cells.iter().map(|c| c.z).min().unwrap();
+            let max_x = cells.iter().map(|c| c.x).max().unwrap();
+            assert_eq!(
+                (anchor.x, anchor.z),
+                (max_x, min_z),
+                "{kind:?}: anchor must be the footprint's near-left corner"
+            );
+            // And the model never grows toward the player.
+            assert_eq!(min_z, anchor.z, "{kind:?}: footprint behind the click");
+            assert_eq!(base.y, anchor.y);
         }
     }
 }

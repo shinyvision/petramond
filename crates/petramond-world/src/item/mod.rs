@@ -212,6 +212,9 @@ impl ItemType {
     pub const AcaciaFence: ItemType = ItemType(145);
     pub const RedwoodFence: ItemType = ItemType(146);
     pub const ClayBlock: ItemType = ItemType(147);
+    /// The chiseling station's block item: its name is the station screen's
+    /// title, and its key doubles as the crafting station key.
+    pub const ChiselingStation: ItemType = ItemType(154);
 }
 
 impl std::fmt::Debug for ItemType {

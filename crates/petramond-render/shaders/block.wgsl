@@ -133,6 +133,16 @@ fn corner_local(corner: u32) -> vec2<f32> {
     return vec2<f32>(0.0, 0.0);
 }
 
+// A row-declared UV quarter turn (0..3), the WGSL twin of
+// `ShapeFace::turn_uv` — applied to a plain cube face's tile-local uv AFTER
+// the carve (the greedy span multiply included), exactly like the CPU mapping.
+fn turn_uv(turn: u32, uv: vec2<f32>) -> vec2<f32> {
+    if (turn == 1u) { return vec2<f32>(uv.y, 1.0 - uv.x); }
+    if (turn == 2u) { return vec2<f32>(1.0 - uv.x, 1.0 - uv.y); }
+    if (turn == 3u) { return vec2<f32>(1.0 - uv.y, uv.x); }
+    return uv;
+}
+
 // Explicit tile-local UV carried in packed2 bits 6..11 (u) / 11..16 (v), in
 // 1/16ths of a tile. Read only for UV_MODE_CELL_LOCAL vertices.
 fn cell_local_uv(packed2: u32) -> vec2<f32> {
@@ -175,6 +185,11 @@ fn vs_common(local_pos: vec3<f32>, world_y: f32, tint: vec4<f32>, packed: u32, p
     if (transition) { shade_idx = face_shade_idx(ncode); }
 
     let atile = tile;
+    // A row-declared UV quarter turn: low bit in packed bit 31, high bit in
+    // packed2 bit 31 (see mesh::vertex::pack_uv_turn). Applied to plain cube
+    // faces below; every other UV lane bakes its mapping into the UV it
+    // carries, so its turn bits are zero.
+    let uv_turn = ((packed >> 31u) & 0x1u) | (((packed2 >> 31u) & 0x1u) << 1u);
     // A fluid face is always UV mode NONE; the cell-local uv lane then carries
     // its medium + 1 and bit 15 whether it shows the flow strip.
     let fluid = select(0u, (packed2 >> 6u) & 0x1FFu, uv_mode == UV_MODE_NONE);
@@ -226,12 +241,15 @@ fn vs_common(local_pos: vec3<f32>, world_y: f32, tint: vec4<f32>, packed: u32, p
         // packed2 bits 20..28 so its layer tiles W×H across the merge under the REPEAT sampler;
         // a normal 1×1 face has 0 there → ×(1,1), a no-op. Fluid tops (flow
         // heading) and grass-side overlays reuse those bits for other data, so exclude
-        // them (they are never greedy-merged by the mesher).
+        // them (they are never greedy-merged by the mesher). The row's UV turn
+        // rides the same faces, applied after the span multiply (carve, then
+        // turn — the ShapeFace order); overlay faces composite the plain
+        // corner uv in uv2, so they never turn.
         let has_overlay = (packed >> 26u) & 0x1u;
         if (has_overlay == 0u && fluid == 0u) {
             let gw = f32(((packed2 >> 20u) & 0xFu) + 1u);
             let gh = f32(((packed2 >> 24u) & 0xFu) + 1u);
-            uv = corner_local(corner) * vec2<f32>(gw, gh);
+            uv = turn_uv(uv_turn, corner_local(corner) * vec2<f32>(gw, gh));
         }
     }
     out.uv = uv;

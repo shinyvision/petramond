@@ -72,6 +72,9 @@ impl Game {
             half_width: petramond::player::HALF_W,
             height: petramond::player::HEIGHT,
             eye_height: petramond::player::EYE,
+            // The client predicts its own escape from geometry, so this is
+            // the predicted body's own answer, like `on_ground` above.
+            entombed: self.player.entombed(),
             // Condition timers are server-only; replication carries stages alone.
             conditions: Vec::new(),
         }

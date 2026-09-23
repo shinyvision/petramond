@@ -179,7 +179,16 @@ pub(super) fn push_cube_textured_lit(
     size: f32,
     light: DynLight,
 ) {
-    push_cube_faces_lit(verts, indices, expand_tiles(tiles), origin, size, light);
+    // Raw tiles, not a row's slots — no row-declared turn exists here.
+    push_cube_faces_lit(
+        verts,
+        indices,
+        expand_tiles(tiles),
+        [0; 6],
+        origin,
+        size,
+        light,
+    );
 }
 
 /// Expand the `[top, bottom, side]` model into the 6 per-face tiles in `ALL_FACES`
@@ -229,39 +238,71 @@ pub(super) fn block_icon_faces_with_state(block: Block, state: HeldBlockState) -
     faces
 }
 
+/// The 6 per-face row-declared UV quarter turns (`ALL_FACES` order) — the twin
+/// of [`block_icon_faces_with_state`]'s tile expansion, so a turned slot
+/// rotates wherever its tile is drawn: the held/dropped/icon cube reads
+/// exactly like the placed block. The icon's `front` face (index 4) always
+/// draws unturned: the front tile is authored for that face.
+fn block_icon_uv_turns(block: Block, state: HeldBlockState) -> [u8; 6] {
+    let [top, bottom, side] = block.uv_turns();
+    if block.is_log() {
+        let axis = match state {
+            HeldBlockState::Log(axis) => axis,
+            _ => LogAxis::Y,
+        };
+        return match axis {
+            LogAxis::X => [top, bottom, side, side, side, side],
+            LogAxis::Y => [side, side, top, bottom, side, side],
+            LogAxis::Z => [side, side, side, side, top, bottom],
+        };
+    }
+    let mut turns = [side, side, top, bottom, side, side];
+    if block.front_tile().is_some() {
+        turns[4] = 0;
+    }
+    turns
+}
+
 pub(super) fn push_cube_faces_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     faces: [Tile; 6],
+    uv_turns: [u8; 6],
     origin: Vec3,
     size: f32,
     light: DynLight,
 ) {
     let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
-    push_box_faces_lit(verts, indices, faces, origin, max, light);
+    push_box_faces_lit(verts, indices, faces, uv_turns, origin, max, light);
 }
 
 /// Append a textured box spanning `[min, max]` with explicit per-face tiles
 /// (`ALL_FACES` order: PosX, NegX, PosY, NegY, PosZ, NegZ), lit by `skylight`. Like
 /// [`push_cube_faces_lit`] but for an arbitrary (non-cube) box — used to build the
 /// chest's inset body and hinged lid. 24 verts / 36 indices, back-face culled.
+/// `uv_turns` carries each face's row-declared UV quarter turn (zeros on every
+/// caller whose tiles are not a row's `[top, bottom, side]` slots).
 pub(super) fn push_box_faces_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     faces: [Tile; 6],
+    uv_turns: [u8; 6],
     min: Vec3,
     max: Vec3,
     light: DynLight,
 ) {
-    for (tile, face) in faces.into_iter().zip(ALL_FACES) {
+    for ((tile, face), turn) in faces.into_iter().zip(ALL_FACES).zip(uv_turns) {
         let mat = foliage_tint::face_material(tile);
         push_quad(
             verts,
             indices,
             face.quad_box(min.to_array(), max.to_array()),
             light.block.tint_word(mat.tint),
-            face_bits_textured_lit(mat, face, light),
-            light.block.packed2_bits() | face_bits2(mat),
+            face_bits_textured_lit(mat, face, light)
+                | petramond_mesh::vertex::pack_uv_turn(turn as u32),
+            light.block.packed2_bits()
+                | face_bits2(mat)
+                | petramond_mesh::vertex::pack_uv_turn2(turn as u32),
         );
     }
 }
@@ -270,17 +311,20 @@ fn push_log_cube_faces_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     faces: [Tile; 6],
+    uv_turns: [u8; 6],
     axis: LogAxis,
     origin: Vec3,
     size: f32,
     light: DynLight,
 ) {
     let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
-    for (tile, face) in faces.into_iter().zip(ALL_FACES) {
+    for (i, (tile, face)) in faces.into_iter().zip(ALL_FACES).enumerate() {
         let mat = foliage_tint::face_material(tile);
         let corners = face.quad_box(origin.to_array(), max.to_array());
         let word2 = light.block.packed2_bits() | face_bits2(mat);
         if let Some(cell_uvs) = log_side_cell_uvs(axis, face) {
+            // The remap carries the whole mapping; no turn bits on a
+            // CELL_LOCAL vertex.
             push_quad_cell_uvs(
                 verts,
                 indices,
@@ -291,13 +335,15 @@ fn push_log_cube_faces_lit(
                 word2,
             );
         } else {
+            let turn = uv_turns[i] as u32;
             push_quad(
                 verts,
                 indices,
                 corners,
                 light.block.tint_word(mat.tint),
-                face_bits_textured_lit(mat, face, light),
-                word2,
+                face_bits_textured_lit(mat, face, light)
+                    | petramond_mesh::vertex::pack_uv_turn(turn),
+                word2 | petramond_mesh::vertex::pack_uv_turn2(turn),
             );
         }
     }
@@ -520,10 +566,27 @@ pub(super) fn push_block_item_cube_lit_with_state(
             HeldBlockState::Log(axis) => axis,
             _ => LogAxis::Y,
         };
-        push_log_cube_faces_lit(verts, indices, faces, axis, origin, size, light);
+        push_log_cube_faces_lit(
+            verts,
+            indices,
+            faces,
+            block_icon_uv_turns(block, state),
+            axis,
+            origin,
+            size,
+            light,
+        );
         return;
     }
-    push_cube_faces_lit(verts, indices, faces, origin, size, light);
+    push_cube_faces_lit(
+        verts,
+        indices,
+        faces,
+        block_icon_uv_turns(block, state),
+        origin,
+        size,
+        light,
+    );
 }
 
 /// One `face` of the cell-local box `[min, max]` scaled into `[origin, origin +

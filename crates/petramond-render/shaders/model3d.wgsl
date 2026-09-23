@@ -122,11 +122,26 @@ fn clamp_uv(uv: vec2<f32>, b: vec4<f32>) -> vec2<f32> {
 }
 
 // Same corner mapping as block.wgsl: 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
+fn corner_unit(corner: u32) -> vec2<f32> {
+    if (corner == 0u) { return vec2<f32>(0.0, 1.0); }
+    if (corner == 1u) { return vec2<f32>(1.0, 1.0); }
+    if (corner == 2u) { return vec2<f32>(1.0, 0.0); }
+    return vec2<f32>(0.0, 0.0);
+}
+
 fn corner_uv(r: vec4<f32>, corner: u32) -> vec2<f32> {
-    if (corner == 0u) { return vec2<f32>(r.x, r.w); }
-    if (corner == 1u) { return vec2<f32>(r.z, r.w); }
-    if (corner == 2u) { return vec2<f32>(r.z, r.y); }
-    return vec2<f32>(r.x, r.y);
+    return mix(r.xy, r.zw, corner_unit(corner));
+}
+
+// A row-declared UV quarter turn (0..3), the WGSL twin of `ShapeFace::turn_uv`
+// (mirror of block.wgsl's) — applied to a plain cube face's unit uv BEFORE it
+// is lerped into the tile rect, so a held/dropped/icon cube turns exactly like
+// the placed block.
+fn turn_uv(turn: u32, uv: vec2<f32>) -> vec2<f32> {
+    if (turn == 1u) { return vec2<f32>(uv.y, 1.0 - uv.x); }
+    if (turn == 2u) { return vec2<f32>(1.0 - uv.x, 1.0 - uv.y); }
+    if (turn == 3u) { return vec2<f32>(1.0 - uv.y, uv.x); }
+    return uv;
 }
 
 // Mirror of block.wgsl's block_light_rgb: RED in packed2 bits 0..6, GREEN and
@@ -172,7 +187,11 @@ fn vs_model(in: VsIn) -> VsOut {
         ) / 16.0;
         out.uv = mix(r.xy, r.zw, c);
     } else {
-        out.uv = corner_uv(r, corner);
+        // The row's UV quarter turn (packed bit 31 + packed2 bit 31, see
+        // mesh::vertex::pack_uv_turn); CELL_LOCAL faces bake their mapping
+        // into the explicit uv above, so only plain faces turn here.
+        let uv_turn = ((in.packed >> 31u) & 0x1u) | (((in.packed2 >> 31u) & 0x1u) << 1u);
+        out.uv = mix(r.xy, r.zw, turn_uv(uv_turn, corner_unit(corner)));
     }
     let r2 = uv_rects[overlay_tile];
     out.uv2 = corner_uv(r2, corner);

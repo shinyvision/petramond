@@ -273,7 +273,7 @@ impl ServerGame {
         events: &mut TickEvents,
     ) -> bool {
         let pos = anchor.and_then(MenuAnchor::block);
-        // Any registered crafting station — the engine pair or a pack
+        // Any registered crafting station — an engine station or a pack
         // workbench kind — opens the ordinary crafting session, never a mod
         // GUI session.
         if let Some(station) = CraftingStation::of_kind(kind) {

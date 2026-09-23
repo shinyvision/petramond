@@ -27,7 +27,7 @@ use entity_emitters::{body_emitters, emitter_self_lit, emitter_tint};
 pub use petramond_render::views::{
     BreakOverlayView, ChestPresentation, CrackBox, CrackBoxes, DoorPresentation,
     DroppedItemPresentation, EntityShadow, FootstepSource, GamePresentation, MobPresentation,
-    ParticleAtlas, ParticlePresentation, PlayerPresentation, MAX_CRACK_BOXES,
+    ModelCrack, ParticleAtlas, ParticlePresentation, PlayerPresentation, MAX_CRACK_BOXES,
 };
 
 /// The local player's [`FootstepSource`] key. Remotes are `1 + PlayerId`, so
@@ -872,14 +872,13 @@ fn push_bones(
 /// from replicated state (the own `SelfState::mining` or a remote row's); the
 /// shape details are derived from the REPLICA world at that cell.
 fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
-    let block_type = Block::from_id(game.replica.chunk_block(block.x, block.y, block.z));
-    let model = block_type.model_kind().map(|kind| {
-        (
-            kind,
-            game.replica.model_offset_at(block.x, block.y, block.z),
-            game.replica.model_facing_at(block.x, block.y, block.z),
-        )
-    });
+    // A model block's crack is a decal over the model's own drawn triangles, so
+    // the view carries only the outline box the decal is masked to — from the
+    // one producer that answers for a placed model's world extent.
+    let model = game
+        .replica
+        .model_outline_box(block)
+        .map(|(base, min, max)| ModelCrack { base, min, max });
     // The ONE box producer answers for every box family at once; nothing here
     // asks which family it is.
     let mut resolved = Vec::new();

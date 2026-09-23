@@ -21,8 +21,8 @@ use super::cell_class::{
     cell_classes, BOXES, CROP, CROSS, FAST_CUBE, FLUID, MODEL, PAD_OPAQUE_FLUID, SKIP, TORCH,
 };
 use super::cube_face::{
-    boundary_plane, cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face,
-    log_side_cell_uvs, log_side_uvs_apply,
+    boundary_plane, cube_face_lighting, cube_face_tile, cube_face_uv_turn, face_axes, face_index,
+    facing_face, log_side_cell_uvs, log_side_uvs_apply,
 };
 use super::exposed_masks::{build_exposed_masks, mask_has, VISIT_ALL};
 use super::fluid_faces::{emit_fluid_cell, FluidNeighbourhood, FluidProbe, FluidStreams};
@@ -657,6 +657,16 @@ pub(super) fn section_geometry(
                     let front_faces = block
                         .front_tile()
                         .map(|front| (facing_face(section.entity_facing(lx, ly, lz)), front));
+                    // The row's per-slot UV turn for one face (mirrors
+                    // `cube_face_tile`'s slot mapping); zero on the faces a
+                    // horizontal log's explicit cell UVs already remap.
+                    let face_uv_turn = |face: Face| -> u32 {
+                        if log_side_uvs_apply(log_axis, face) {
+                            0
+                        } else {
+                            cube_face_uv_turn(block, face, front_faces.map(|(f, _)| f), log_axis)
+                        }
+                    };
                     let base_x = (wx - ox) as f32;
                     let base_z = (wz - oz) as f32;
                     let base_y = wy as f32;
@@ -776,8 +786,10 @@ pub(super) fn section_geometry(
                                     let fi = face_index(face);
                                     greedy.faces[fi * SECTION_VOLUME + cell] = FlatFace {
                                         gen: greedy_gen,
-                                        // Dyed flag in bit 31 (part of the merge key).
+                                        // UV turn in bits 12..13, dyed flag in bit
+                                        // 31 (both part of the merge key).
                                         tile: base_tile.index() as u32
+                                            | (face_uv_turn(face) << 12)
                                             | ((cell_tinted(cell) as u32) << 31),
                                         shade: FlatFace::shade(ao[0], light6[0], block6[0]),
                                         tint: block6[0].tint_word(tint),
@@ -800,6 +812,7 @@ pub(super) fn section_geometry(
                                         has_overlay,
                                         UV_MODE_NONE,
                                         log_uvs,
+                                        face_uv_turn(face),
                                         tint,
                                         face,
                                         ao,
@@ -889,8 +902,10 @@ pub(super) fn section_geometry(
                             greedy.faces[fi * SECTION_VOLUME + section_idx(lx, ly, lz)] =
                                 FlatFace {
                                     gen: greedy_gen,
-                                    // Dyed flag in bit 31 (part of the merge key).
+                                    // UV turn in bits 12..13, dyed flag in bit
+                                    // 31 (both part of the merge key).
                                     tile: base_tile.index() as u32
+                                        | (face_uv_turn(face) << 12)
                                         | ((cell_tinted(section_idx(lx, ly, lz)) as u32) << 31),
                                     shade: FlatFace::shade(ao[0], light6[0], block6[0]),
                                     tint: block6[0].tint_word(tint),
@@ -916,6 +931,7 @@ pub(super) fn section_geometry(
                                 has_overlay,
                                 UV_MODE_NONE,
                                 log_uvs,
+                                face_uv_turn(face),
                                 tint,
                                 face,
                                 ao,

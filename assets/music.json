@@ -1,0 +1,29 @@
+{
+  "tracks": [
+    {
+      "track": "petramond:firefly",
+      "file": "music/firefly.ogg",
+      "gain": 1.0
+    },
+    {
+      "track": "petramond:footsteps",
+      "file": "music/footsteps.ogg",
+      "gain": 1.0
+    },
+    {
+      "track": "petramond:journey",
+      "file": "music/journey.ogg",
+      "gain": 1.0
+    },
+    {
+      "track": "petramond:little_me",
+      "file": "music/little_me.ogg",
+      "gain": 1.0
+    },
+    {
+      "track": "petramond:lullaby",
+      "file": "music/lullaby.ogg",
+      "gain": 1.0
+    }
+  ]
+}

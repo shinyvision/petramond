@@ -28,6 +28,7 @@ pub mod views;
 
 pub mod lighting;
 pub mod mob_model;
+mod model_break;
 pub mod particles;
 pub mod pipeline;
 pub mod player_model;

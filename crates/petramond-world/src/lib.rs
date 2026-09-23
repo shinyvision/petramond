@@ -48,6 +48,7 @@ pub mod ladder;
 pub mod light;
 pub mod loot;
 pub mod mining;
+pub mod music_registry;
 pub mod pack_manifest;
 pub mod pane;
 pub mod particle_emitters;

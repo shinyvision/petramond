@@ -5,15 +5,13 @@ use super::{
     arc_component_bounds, body_boxes, segment_centre, segment_offsets, wrap_angle, WorldBox,
 };
 
-/// How far (m) an embedded body slides out per tick.
-const EMBEDDED_ESCAPE_STEP: f32 = 0.1;
-
 /// Resolve one tick of terrain/dynamic-body motion for the shared mob body
 /// geometry. Ordinary mobs retain the one-box resolver (including step-up).
 /// A long body sweeps all of its segments with one common displacement, so
 /// contact at the bow or stern conservatively clamps the whole hull. The last
-/// return value is the mandatory shallow-foot healing lift, exposed separately
-/// so peer solving cannot roll it back into grown terrain.
+/// return value is the mandatory escape pre-pass displacement, exposed
+/// separately so peer solving cannot roll it back into the geometry the body
+/// was stuck in.
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_body_motion<F>(
     pos: WorldPos,
@@ -23,11 +21,12 @@ pub fn resolve_body_motion<F>(
     dt: f32,
     step_height: f32,
     step_supported: bool,
+    route: &mut petramond_world::collision::EscapeRoute,
     boxes_fn: &F,
     dyn_boxes: &[petramond_world::collision::DynBox],
-    healing_dyn_boxes: &[petramond_world::collision::DynBox],
+    escape_dyn_boxes: &[petramond_world::collision::DynBox],
     ignore: u64,
-) -> ([f32; 3], bool, [bool; 3], f32)
+) -> ([f32; 3], bool, [bool; 3], [f32; 3])
 where
     F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
@@ -35,90 +34,47 @@ where
         let hw = f64::from(size.half_width);
         let mut min = [pos.x - hw, pos.y, pos.z - hw];
         let mut max = [pos.x + hw, pos.y + f64::from(size.height), pos.z + hw];
-        // A body embedded past the heal's reach slides out sideways (see
-        // `collision::embedded_escape`) and is NOT lifted — the lift is what
-        // bobs it. Capped per tick so it reads as being squeezed out.
-        let escape = petramond_world::collision::embedded_escape(
+        let (escape, escaping) = petramond_world::collision::escape_pre_pass(
+            &mut min,
+            &mut max,
+            dt,
+            route,
+            boxes_fn,
+            escape_dyn_boxes,
+            ignore,
+        );
+        if escaping {
+            // Still inside geometry: the escape owns this tick, sweeps and
+            // all (see `collision::EscapeRoute::in_progress`).
+            return (escape, false, [false; 3], escape);
+        }
+        let (mut moved, grounded, hit) = petramond_world::collision::resolve_body_dyn_escaped(
             min,
             max,
-            petramond_world::collision::STEP_HEIGHT,
+            vel,
+            dt,
+            step_height,
+            step_supported,
             boxes_fn,
+            dyn_boxes,
+            ignore,
         );
-        let escape = if escape == [0.0; 2] {
-            escape
-        } else {
-            let len = (escape[0] * escape[0] + escape[1] * escape[1]).sqrt();
-            let s = (EMBEDDED_ESCAPE_STEP / len).min(1.0);
-            [escape[0] * s, escape[1] * s]
-        };
-        min[0] += f64::from(escape[0]);
-        max[0] += f64::from(escape[0]);
-        min[2] += f64::from(escape[1]);
-        max[2] += f64::from(escape[1]);
-        let healed = if escape == [0.0; 2] {
-            petramond_world::collision::depenetrate_up_dyn(
-                min,
-                max,
-                petramond_world::collision::STEP_HEIGHT,
-                boxes_fn,
-                healing_dyn_boxes,
-                ignore,
-            )
-        } else {
-            0.0
-        };
-        min[1] += f64::from(healed);
-        max[1] += f64::from(healed);
-        let (mut moved, grounded, hit) =
-            petramond_world::collision::resolve_body_dyn_from_depenetrated(
-                min,
-                max,
-                vel,
-                dt,
-                step_height,
-                step_supported,
-                boxes_fn,
-                dyn_boxes,
-                ignore,
-            );
-        moved[0] += escape[0];
-        moved[1] += healed;
-        moved[2] += escape[1];
-        return (moved, grounded, hit, healed);
+        for axis in 0..3 {
+            moved[axis] += escape[axis];
+        }
+        return (moved, grounded, hit, escape);
     }
 
     let body: Vec<WorldBox> = body_boxes(pos, yaw, size).collect();
-    let mut moved = [0.0; 3];
     let mut hit = [false; 3];
 
-    // Mirror the shared resolver's shallow-foot healing, but lift every
-    // segment by one common amount and respect the tightest headroom.
-    let wanted_lift = body
-        .iter()
-        .map(|&(min, max)| {
-            petramond_world::collision::depenetrate_up_dyn(
-                min,
-                max,
-                step_height,
-                boxes_fn,
-                healing_dyn_boxes,
-                ignore,
-            )
-        })
-        .fold(0.0, f32::max);
-    if wanted_lift > 0.0 {
-        moved[1] = compound_sweep_axis(
-            &body,
-            moved,
-            1,
-            wanted_lift,
-            boxes_fn,
-            healing_dyn_boxes,
-            ignore,
-        )
-        .max(0.0);
+    // The whole run escapes as one body: a wedged hull is free only where
+    // bow, middle and stern all are.
+    let mut moved = route.advance(&body, dt, boxes_fn, escape_dyn_boxes, ignore);
+    if route.in_progress() {
+        return (moved, false, [false; 3], moved);
     }
-    let healed = moved[1];
+    let healed = moved;
 
     let dy = vel[1] * dt;
     if dy != 0.0 {

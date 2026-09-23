@@ -116,10 +116,11 @@ pub struct TickInputs<'a> {
     /// start-of-tick solid snapshot; a moving solid receives only exact peer
     /// supports, with every other solid handled by the simultaneous solver.
     pub solid: &'a [petramond_world::collision::DynBox],
-    /// Complete start-of-tick solid snapshot used only to clamp the mandatory
-    /// shallow-foot healing lift. Moving solids otherwise receive just their
-    /// exact supports here and meet all other peers in the simultaneous solve.
-    pub solid_heal: &'a [petramond_world::collision::DynBox],
+    /// Complete start-of-tick solid snapshot the ESCAPE pre-pass judges
+    /// against (what a body stuck inside geometry must get out of, and where
+    /// it may land). Moving solids otherwise receive just their exact
+    /// supports here and meet all other peers in the simultaneous solve.
+    pub solid_escape: &'a [petramond_world::collision::DynBox],
 }
 
 /// Per-tick context a behavior reads to decide what the mob should do. Behaviors

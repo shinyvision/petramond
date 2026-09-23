@@ -5,7 +5,7 @@
 //! a compile error in `--no-default-features` builds (the Makefile's
 //! `run-server` target is one).
 
-use super::{Sound, SpatialListener, SpatialSoundSource};
+use super::{MusicTrack, Sound, SpatialListener, SpatialSoundSource};
 
 /// The silent stand-in for the playback engine. See the module doc.
 pub struct Audio;
@@ -25,6 +25,15 @@ impl Audio {
     pub fn set_loop(&mut self, _sound: Option<Sound>, _now: f64) {}
     pub fn update_gain_loops(&mut self, _desired: &[(Sound, f32)], _dt: f32) {}
     pub fn stop_gain_loops(&mut self) {}
+
+    pub fn play_music(&mut self, _track: MusicTrack) -> bool {
+        false
+    }
+    pub fn stop_music(&mut self) {}
+    pub fn music_playing(&self) -> Option<MusicTrack> {
+        None
+    }
+    pub fn update_music(&mut self, _dt: f32) {}
 
     pub fn play(&mut self, _sound: Sound) {}
 

@@ -96,6 +96,7 @@ impl ServerGame {
                     ..std::mem::take(&mut sess.swing_events)
                 },
                 conditions: crate::exposure::condition_data(sess.player.conditions()),
+                entombed: sess.player.entombed(),
             })
             .collect();
         roster.sort_by_key(|p| p.id);

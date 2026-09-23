@@ -14,8 +14,8 @@ use petramond_world::block::Block;
 use super::builder::{mesh_pad_idx, SectionMeshPad};
 use super::face::{quad_ao, should_flip, Face};
 use super::vertex::{
-    pack_cell_uv, pack_normal_code, pack_overlay, pack_vertex, Vertex, UV_MODE_CELL_LOCAL,
-    UV_MODE_SHIFT,
+    pack_cell_uv, pack_normal_code, pack_overlay, pack_uv_turn, pack_uv_turn2, pack_vertex, Vertex,
+    UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
 };
 
 /// Fold a cell's (or neighbourhood-summed) skylight + block-light into the
@@ -296,6 +296,7 @@ pub(super) fn push_cube_face_with_cell_uvs(
     has_overlay: bool,
     uv_mode: u32,
     cell_uvs: Option<[(u32, u32); 4]>,
+    uv_turn: u32,
     tint: [f32; 3],
     face: Face,
     ao: [u32; 4],
@@ -310,6 +311,10 @@ pub(super) fn push_cube_face_with_cell_uvs(
     } else {
         uv_mode
     };
+    // A CELL_LOCAL face carries its full mapping in the explicit UV it packs
+    // (box sets, the log remap), so its turn bits stay zero — the shaders
+    // apply the packed turn to plain cube faces only.
+    let packed_turn = if cell_uvs.is_some() { 0 } else { uv_turn };
     let start = vbuf.len() as u32;
     // The AO split must run along the darker diagonal. With an implied
     // triangulation there is no second index pattern to switch to, so the
@@ -337,12 +342,14 @@ pub(super) fn push_cube_face_with_cell_uvs(
                 ao[corner],
                 light6[corner],
             ) | light.packed_bits()
-                | (packed_uv_mode << UV_MODE_SHIFT),
+                | (packed_uv_mode << UV_MODE_SHIFT)
+                | pack_uv_turn(packed_turn),
             packed2: light.packed2_bits()
                 | pack_overlay(overlay)
                 | explicit_uv
                 | pack_normal_code(face.normal_code())
-                | dyed,
+                | dyed
+                | pack_uv_turn2(packed_turn),
         });
     }
     start

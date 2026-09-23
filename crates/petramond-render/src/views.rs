@@ -12,7 +12,6 @@ use petramond::mob::Mob;
 use petramond::world::PlacedEmitter;
 use petramond_math::facing::Facing;
 use petramond_math::math::Tilt;
-use petramond_world::block_model::BlockModelKind;
 use petramond_world::door::DoorState;
 use petramond_world::item::ItemType;
 use petramond_world::tile::Tile;
@@ -32,11 +31,24 @@ pub struct BreakOverlayView {
     /// One field for every box family, because they all answer through the one
     /// box producer — a family is never named here.
     pub shape_boxes: Option<CrackBoxes>,
-    /// A model block cracks over its cell's actual model cubes, including the targeted
-    /// cell's authored footprint offset and placed facing.
-    pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
+    /// A model block cracks over the model's OWN drawn triangles (the decal
+    /// pass re-draws them), masked to this world-space outline box — so the
+    /// whole piece cracks as one object and nothing is cracked in mid-air.
+    pub model: Option<ModelCrack>,
     /// 0..=9 crack stage.
     pub stage: u8,
+}
+
+/// The world outline box of a cracked bbmodel block: the rotated-footprint
+/// `base` cell plus the model's tight bounds relative to it, exactly as
+/// [`WorldData::model_outline_box`](petramond_world::world::WorldData::model_outline_box)
+/// answers. The decal pass masks the model's own geometry to this box, so a
+/// multi-cell piece cracks as ONE object however many cells it spans.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ModelCrack {
+    pub base: IVec3,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
 }
 
 /// The most cell-local boxes a crack traces (a chair is 7). A shape with more

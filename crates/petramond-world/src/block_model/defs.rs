@@ -31,6 +31,7 @@ impl BlockModelKind {
     pub const Bucket: BlockModelKind = BlockModelKind(1);
     pub const WaterBucket: BlockModelKind = BlockModelKind(2);
     pub const Bed: BlockModelKind = BlockModelKind(3);
+    pub const ChiselingStation: BlockModelKind = BlockModelKind(5);
 }
 
 /// Engine model keys in frozen id order — the completeness oracle
@@ -41,6 +42,7 @@ const ENGINE_MODEL_KEYS: &[&str] = &[
     "petramond:water_bucket",
     "petramond:bed",
     "petramond:lava_bucket",
+    "petramond:chiseling_station",
 ];
 
 impl std::fmt::Debug for BlockModelKind {
@@ -90,13 +92,19 @@ pub enum CollisionSpec {
 /// How a placed model orients its authored X axis relative to the placing player
 /// (multi-cell models and `DIRECTIONAL_VIEW` blocks orient on placement — see
 /// `game::placement`).
-#[derive(Copy, Clone, Deserialize, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlacementOrientation {
     #[default]
     /// Authored X spans LEFT-TO-RIGHT across the player's view; the authored front
     /// (−Z) faces the player. Furniture you stand in front of (the workbench).
     LeftToRight,
+    /// The half turn of [`LeftToRight`](Self::LeftToRight): the authored +Z side
+    /// faces the player, so a model authored with its working front on +Z (the
+    /// chiseling station) presents that front when placed. The clicked cell is
+    /// still the near-left bottom cell, which for this pose is authored
+    /// `[0, 0, fp_z − 1]`.
+    BackToFront,
     /// Quarter-turned from [`LeftToRight`](Self::LeftToRight): authored X runs
     /// FRONT-TO-BACK along the player's view, with the clicked cell at the near,
     /// authored-max-X end and authored −X growing away — a bed placed foot-first,
@@ -116,6 +124,15 @@ impl PlacementOrientation {
     pub fn apply(self, player_facing: Facing) -> Facing {
         match self {
             PlacementOrientation::LeftToRight => player_facing,
+            // The half turn that keeps the clicked cell the model's near side
+            // while pointing the authored −Z front AWAY from the player (the
+            // authored +Z face meets them instead).
+            PlacementOrientation::BackToFront => match player_facing {
+                Facing::North => Facing::South,
+                Facing::South => Facing::North,
+                Facing::West => Facing::East,
+                Facing::East => Facing::West,
+            },
             // The quarter turn that sends the authored −X (far) end away from the
             // player: N→W, W→S, S→E, E→N.
             PlacementOrientation::FrontToBack => match player_facing {

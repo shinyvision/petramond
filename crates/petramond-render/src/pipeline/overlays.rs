@@ -133,6 +133,25 @@ pub(super) fn create_crosshair_pipeline(
     (crosshair_pipe, crosshair_vbuf)
 }
 
+/// MULTIPLY blend (result = src.rgb * dst.rgb): a crack fragment outputs WHITE
+/// where the destroy tile is transparent (×1 = no change) and dark where the
+/// crack texels are, so the cracks darken the surface instead of
+/// alpha-compositing a flat overlay. `color = Dst * src + Zero * dst = src*dst`.
+/// Alpha is preserved (Zero/One) — the colour target keeps its existing alpha.
+/// Shared with the model-break decal, which darkens a model the same way.
+pub(super) const MULTIPLY_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Dst,
+        dst_factor: wgpu::BlendFactor::Zero,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
 /// Break-overlay pipeline (the destroy crack).
 /// Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
 /// (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
@@ -156,24 +175,7 @@ pub(super) fn create_break_overlay_pipeline(
             include_str!("../../shaders/break_overlay.wgsl")
         ),
     );
-    // MULTIPLY blend (result = src.rgb * dst.rgb): the crack fragment outputs WHITE
-    // where the destroy tile is transparent (×1 = no change) and dark where the
-    // crack texels are, so the cracks darken the block face instead of
-    // alpha-compositing a flat overlay. `color = Dst * src + Zero * dst = src*dst`.
-    // Alpha is preserved (Zero/One) — the colour target keeps its existing alpha.
-    let multiply_blend = wgpu::BlendState {
-        color: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::Dst,
-            dst_factor: wgpu::BlendFactor::Zero,
-            operation: wgpu::BlendOperation::Add,
-        },
-        alpha: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::Zero,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        },
-    };
-    let break_targets = color_target(format, Some(multiply_blend), wgpu::ColorWrites::ALL);
+    let break_targets = color_target(format, Some(MULTIPLY_BLEND), wgpu::ColorWrites::ALL);
     // group0 = block uniform layout (Uniforms + uv_rects); group1 = atlas. Same
     // layout object as the opaque/transparent pipes (`layout`). Depth `LessEqual`,
     // NO write, with the BREAK_DEPTH_BIAS polygon offset (DepthPreset::

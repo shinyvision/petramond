@@ -233,146 +233,404 @@ where
     travel as f32
 }
 
-/// Lift a body straight up out of SHALLOW foot penetration. Swept collision
-/// deliberately ignores boxes a body already overlaps (that is what lets it
-/// slide off contact without sticking), so when a block GROWS under standing
-/// feet — a mod pressing 15/16 farmland back to full-cube dirt, a machine
-/// variant swap — the next downward sweep would tunnel straight through the
-/// floor. This pre-pass heals that: any box whose vertical span contains the
-/// FEET line (and overlaps the body on X/Z) lifts the body onto its top,
-/// capped by `max_lift` and clamped by the actual headroom above (via an
-/// upward sweep, so a low ceiling gives a partial lift instead of clipping
-/// the head). Boxes higher up in the body are not healed — you cannot climb
-/// out of a block materialised at chest height. Returns the applied lift
-/// (`0.0` almost always: a body flush ON a box top does not count as inside
-/// it).
-/// World-only form of [`depenetrate_up_dyn`] (see [`sweep_axis`]).
-#[cfg(any(test, feature = "test-support"))]
-pub fn depenetrate_up<F>(min: [f64; 3], max: [f64; 3], max_lift: f32, boxes_fn: F) -> f32
-where
-    F: Fn(i32, i32, i32) -> &'static [Aabb],
-{
-    depenetrate_up_dyn(min, max, max_lift, boxes_fn, &[], 0)
+/// A body as the escape search sees it: one world-space AABB per segment
+/// (`(min, max)`). A simple body is a single box; a long one its whole run.
+pub type BodyBox = ([f64; 3], [f64; 3]);
+
+/// How fast (m/s) a body squeezes along its escape route. At the fixed tick
+/// this is 0.1 m per tick — a visible slide out, never a teleport.
+pub const ESCAPE_SPEED: f32 = 2.0;
+
+/// How fast (m/s) a body BORES its way out when there is no clean way out at
+/// all (see [`Escape::Bore`]). Faster than the squeeze: this is not a body
+/// being nudged free of a door, it is a body buried in rock, and every tick
+/// of it is a tick the player is not playing.
+pub const BORE_SPEED: f32 = 8.0;
+
+/// How far from its current pose the search looks for somewhere free. Three
+/// blocks covers being shut in a door, walled into a one-block pocket, or
+/// grown into by a trunk. Nothing free in reach does NOT mean "give up" — it
+/// means bore (see [`Escape::Bore`]).
+const ESCAPE_RADIUS: f64 = 3.0;
+
+/// Spacing of the route validity samples (see [`escape_pose`]).
+const ESCAPE_PATH_SAMPLE: f64 = 0.25;
+
+/// An escape no longer than this is taken in ONE tick rather than squeezed
+/// along: a body standing on a block that grew under its feet is a step's
+/// worth of overlap and must be out of it before the same tick's downward
+/// sweep runs, or it tunnels through the floor it is standing on. Longer
+/// routes are a visible slide (see [`ESCAPE_SPEED`]).
+const ESCAPE_SNAP: f32 = STEP_HEIGHT;
+
+/// What a body inside geometry can do about it.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Escape {
+    /// Nothing to escape: the body overlaps no collision box.
+    Free,
+    /// The shortest offset to a pose that overlaps nothing, reachable without
+    /// passing through geometry the body is not already inside.
+    Route([f32; 3]),
+    /// No clean way out: the shortest offset to a free pose REGARDLESS of
+    /// what the way there passes through — or, when nothing free is in reach
+    /// at all, one block straight up.
+    ///
+    /// A body buried in rock has no clean way out by definition, and that is
+    /// the ordinary case underground, not an exotic one. Holding it still
+    /// there is the same as losing it: the body must keep making progress
+    /// toward open air, and boring is the only progress available. It still
+    /// stops the moment a pose is genuinely free, and a body that is boring
+    /// reports itself [`entombed`](EscapeRoute::entombed) the whole way, so
+    /// gameplay can charge for it.
+    Bore([f32; 3]),
 }
 
-/// `depenetrate_up` that also heals out of dynamic boxes — a solid entity
-/// surfacing under standing feet (a boat rising beneath a swimmer) lifts the
-/// body onto its top exactly like a grown block.
-pub fn depenetrate_up_dyn<F>(
-    min: [f64; 3],
-    max: [f64; 3],
-    max_lift: f32,
-    boxes_fn: F,
+/// Every world box (cell-local boxes of the cells the body spans, plus the
+/// participating dynamic bodies) that `body` overlaps when translated by
+/// `off`. `f` returning true stops the walk; the return value is whether it
+/// did — so `visit_overlaps(.., |_| true)` is "does this pose overlap
+/// anything".
+fn visit_overlaps<F>(
+    body: &[BodyBox],
+    off: [f64; 3],
+    boxes_fn: &F,
     dyn_boxes: &[DynBox],
     ignore: u64,
-) -> f32
+    mut f: impl FnMut(BodyBox) -> bool,
+) -> bool
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
-    let mut need = 0.0f64;
-    for cx in min[0].floor() as i32..=max[0].floor() as i32 {
-        for cy in min[1].floor() as i32..=max[1].floor() as i32 {
-            for cz in min[2].floor() as i32..=max[2].floor() as i32 {
-                let cell = [cx, cy, cz];
-                for b in boxes_fn(cx, cy, cz) {
-                    // Overlap on X/Z (touching within EPS doesn't count) —
-                    // the same cross test the sweep uses.
-                    let mut cross = true;
-                    for i in [0, 2] {
-                        let wlo = at_cell(cell[i], b.min[i]);
-                        let whi = at_cell(cell[i], b.max[i]);
-                        if !(max[i] > wlo + EPS && min[i] < whi - EPS) {
-                            cross = false;
-                            break;
+    for &(min, max) in body {
+        // Shrunk by the contact epsilon, like every other overlap test here:
+        // a body flush against a face — or a hair inside one after a sweep
+        // clamped to it — is touching, not stuck, and must not set the whole
+        // search going every tick.
+        let min: [f64; 3] = std::array::from_fn(|i| min[i] + off[i] + EPS);
+        let max: [f64; 3] = std::array::from_fn(|i| max[i] + off[i] - EPS);
+        for cx in min[0].floor() as i32..=max[0].floor() as i32 {
+            for cy in min[1].floor() as i32..=max[1].floor() as i32 {
+                for cz in min[2].floor() as i32..=max[2].floor() as i32 {
+                    let cell = [cx, cy, cz];
+                    for b in boxes_fn(cx, cy, cz) {
+                        let lo: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.min[i]));
+                        let hi: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.max[i]));
+                        if aabb_overlaps(min, max, lo, hi) && f((lo, hi)) {
+                            return true;
                         }
                     }
-                    if !cross {
-                        continue;
-                    }
-                    let wbot = at_cell(cy, b.min[1]);
-                    let wtop = at_cell(cy, b.max[1]);
-                    if wbot <= min[1] + EPS && wtop > min[1] + EPS {
-                        need = need.max(wtop - min[1]);
-                    }
                 }
             }
         }
-    }
-    for d in DynBox::against(dyn_boxes, ignore) {
-        let cross = [0, 2]
-            .iter()
-            .all(|&i| max[i] > d.min[i] + EPS && min[i] < d.max[i] - EPS);
-        if cross && d.min[1] <= min[1] + EPS && d.max[1] > min[1] + EPS {
-            need = need.max(d.max[1] - min[1]);
+        for d in DynBox::against(dyn_boxes, ignore) {
+            if aabb_overlaps(min, max, d.min, d.max) && f((d.min, d.max)) {
+                return true;
+            }
         }
     }
-    let need = need.min(f64::from(max_lift));
-    if need <= EPS {
-        return 0.0;
-    }
-    // Respect headroom: the boxes being escaped sit behind an upward sweep
-    // (their bottoms are below the head), so only a real ceiling clamps.
-    sweep_axis_dyn(min, max, 1, need as f32, boxes_fn, dyn_boxes, ignore).max(0.0)
+    false
 }
 
-/// A body is EMBEDDED when a world box it overlaps tops out more than this
-/// many heal lifts above its feet: the upward heal converges on anything
-/// closer (lift, fall a hair, lift again) and can never clear anything
-/// farther — a trunk that grew around the body, a door that shut on it.
-const EMBEDDED_HEAL_REACH: f64 = 2.0;
-
-/// The shortest horizontal translation that frees `[min, max]` from every
-/// world box it is embedded in (see [`EMBEDDED_HEAL_REACH`]); zero when it is
-/// not embedded. For such a body the upward heal is worse than useless: it
-/// lifts by its cap, the next sweep ignores the still-overlapped box and drops
-/// the body straight back, and the pair repeat every tick — a mob bobbing in
-/// place for as long as the block stands. Sideways there is always a face
-/// within half a block, so the caller slides the body out along the cheapest
-/// axis instead (capped per tick — a slide, not a teleport).
-pub fn embedded_escape<F>(min: [f64; 3], max: [f64; 3], max_lift: f32, boxes_fn: F) -> [f32; 2]
+/// Whether the body overlaps nothing at `off`.
+fn pose_is_free<F>(
+    body: &[BodyBox],
+    off: [f64; 3],
+    boxes_fn: &F,
+    dyn_boxes: &[DynBox],
+    ignore: u64,
+) -> bool
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
-    // Needed travel per direction: +x, −x, +z, −z.
-    let mut need = [0.0f64; 4];
-    let mut any = false;
-    for cx in min[0].floor() as i32..=max[0].floor() as i32 {
-        for cy in min[1].floor() as i32..=max[1].floor() as i32 {
-            for cz in min[2].floor() as i32..=max[2].floor() as i32 {
-                let cell = [cx, cy, cz];
-                for b in boxes_fn(cx, cy, cz) {
-                    let lo: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.min[i]));
-                    let hi: [f64; 3] = std::array::from_fn(|i| at_cell(cell[i], b.max[i]));
-                    let overlaps = (0..3).all(|i| max[i] > lo[i] + EPS && min[i] < hi[i] - EPS);
-                    let reach = EMBEDDED_HEAL_REACH * f64::from(max_lift);
-                    if !overlaps || hi[1] <= min[1] + reach + EPS {
-                        continue;
-                    }
-                    any = true;
-                    need[0] = need[0].max(hi[0] - min[0]);
-                    need[1] = need[1].max(max[0] - lo[0]);
-                    need[2] = need[2].max(hi[2] - min[2]);
-                    need[3] = need[3].max(max[2] - lo[2]);
-                }
+    !visit_overlaps(body, off, boxes_fn, dyn_boxes, ignore, |_| true)
+}
+
+/// The shortest way out of geometry the body is already inside.
+///
+/// Swept collision deliberately ignores boxes a body already overlaps — that
+/// is what lets it slide along contact instead of sticking — so a body that
+/// ends up INSIDE one (a trunk grew around it, a door shut on it, a block was
+/// placed on it, terrain streamed in under a claim) has no ordinary way back
+/// out: every sweep passes straight through the box it started in.
+///
+/// The search is over POSES, never over axes: a shortest-penetration guess is
+/// only a way out when the place it points at is empty, and in a one-wide slot
+/// it points at the opposite wall. Candidates are tried nearest-first and each
+/// is accepted only when the destination overlaps nothing AND the straight
+/// path there passes through nothing the body is not already inside (so an
+/// escape can never pop a body through a wall into the pocket beyond it).
+///
+/// Candidates come in two rounds. First the exits of the boxes the body is
+/// actually in: the distance that clears every one of them along each of the
+/// six directions, and the combinations of those — minimal moves that keep
+/// the body's alignment, which is what frees a body pressed into a corner or
+/// a floor. Then, when none of those land anywhere empty, the canonical
+/// standing poses of the nearby cells (centred, feet on the cell floor),
+/// which is what frees a body whose own alignment does not fit anywhere.
+///
+/// `Sealed` means the body is entombed; the engine reports that and holds it
+/// still, because what should happen to it is a gameplay decision.
+pub fn escape_pose<F>(body: &[BodyBox], boxes_fn: &F, dyn_boxes: &[DynBox], ignore: u64) -> Escape
+where
+    F: Fn(i32, i32, i32) -> &'static [Aabb],
+{
+    // The boxes the body starts inside: both what it must clear and the only
+    // geometry a route is allowed to travel through.
+    let mut inside: Vec<BodyBox> = Vec::new();
+    visit_overlaps(body, [0.0; 3], boxes_fn, dyn_boxes, ignore, |b| {
+        if !inside.contains(&b) {
+            inside.push(b);
+        }
+        false
+    });
+    if inside.is_empty() {
+        return Escape::Free;
+    }
+
+    // Travel that clears every one of them, per direction (+x, -x, +y, -y, +z, -z).
+    let mut need = [0.0f64; 6];
+    for &(min, max) in body {
+        for &(lo, hi) in &inside {
+            if !aabb_overlaps(min, max, lo, hi) {
+                continue;
+            }
+            for axis in 0..3 {
+                need[axis * 2] = need[axis * 2].max(hi[axis] - min[axis] + EPS);
+                need[axis * 2 + 1] = need[axis * 2 + 1].max(max[axis] - lo[axis] + EPS);
             }
         }
     }
-    if !any {
-        return [0.0; 2];
-    }
-    let (mut best, mut best_need) = (0usize, f64::INFINITY);
-    for (i, n) in need.iter().enumerate() {
-        if *n < best_need {
-            best = i;
-            best_need = *n;
+
+    let mut candidates: Vec<[f64; 3]> = Vec::new();
+    for sx in -1i32..=1 {
+        for sy in -1i32..=1 {
+            for sz in -1i32..=1 {
+                let signs = [sx, sy, sz];
+                if signs == [0, 0, 0] {
+                    continue;
+                }
+                candidates.push(std::array::from_fn(|axis| match signs[axis] {
+                    1 => need[axis * 2],
+                    -1 => -need[axis * 2 + 1],
+                    _ => 0.0,
+                }));
+            }
         }
     }
-    let d = (best_need + EPS) as f32;
-    match best {
-        0 => [d, 0.0],
-        1 => [-d, 0.0],
-        2 => [0.0, d],
-        _ => [0.0, -d],
+    sort_by_distance(&mut candidates);
+    if let Some(off) = first_usable(&candidates, body, &inside, boxes_fn, dyn_boxes, ignore) {
+        return Escape::Route(off.map(|v| v as f32));
+    }
+    let exits = candidates.clone();
+
+    // Round two: stand in a nearby cell instead of keeping our alignment.
+    let mut umin = body[0].0;
+    let mut umax = body[0].1;
+    for &(min, max) in &body[1..] {
+        for axis in 0..3 {
+            umin[axis] = umin[axis].min(min[axis]);
+            umax[axis] = umax[axis].max(max[axis]);
+        }
+    }
+    let here = [
+        (umin[0] + umax[0]) * 0.5,
+        umin[1],
+        (umin[2] + umax[2]) * 0.5,
+    ];
+    let reach = ESCAPE_RADIUS.ceil() as i32;
+    let base = here.map(|v| v.floor() as i32);
+    candidates.clear();
+    for dx in -reach..=reach {
+        for dy in -reach..=reach {
+            for dz in -reach..=reach {
+                let cell = [base[0] + dx, base[1] + dy, base[2] + dz];
+                // The canonical standing pose of that cell: centred on it,
+                // feet a hair above its floor.
+                let target = [
+                    f64::from(cell[0]) + 0.5,
+                    f64::from(cell[1]) + EPS,
+                    f64::from(cell[2]) + 0.5,
+                ];
+                candidates.push(std::array::from_fn(|axis| target[axis] - here[axis]));
+            }
+        }
+    }
+    sort_by_distance(&mut candidates);
+    if let Some(off) = first_usable(&candidates, body, &inside, boxes_fn, dyn_boxes, ignore) {
+        return Escape::Route(off.map(|v| v as f32));
+    }
+
+    // No clean way out. Take the nearest free pose anyway and bore toward it
+    // — through rock if that is what stands between the body and open air.
+    // Every candidate from both rounds is back in play, judged on its
+    // destination alone.
+    for round in [&exits[..], &candidates[..]] {
+        let bore = round.iter().copied().find(|&off| {
+            length_squared(off) > EPS && pose_is_free(body, off, boxes_fn, dyn_boxes, ignore)
+        });
+        if let Some(off) = bore {
+            return Escape::Bore(off.map(|v| v as f32));
+        }
+    }
+    // Nothing free within reach either: head for the sky, which always is.
+    Escape::Bore([0.0, 1.0, 0.0])
+}
+
+/// Nearest first, with a fixed tie-break so two identical worlds always pick
+/// the same way out (the client predicts this and the server verifies it).
+fn sort_by_distance(candidates: &mut [[f64; 3]]) {
+    candidates.sort_by(|a, b| {
+        let (da, db) = (length_squared(*a), length_squared(*b));
+        da.total_cmp(&db)
+            .then_with(|| a[0].total_cmp(&b[0]))
+            .then_with(|| a[1].total_cmp(&b[1]))
+            .then_with(|| a[2].total_cmp(&b[2]))
+    });
+}
+
+#[inline]
+fn length_squared(v: [f64; 3]) -> f64 {
+    v[0] * v[0] + v[1] * v[1] + v[2] * v[2]
+}
+
+/// The first candidate whose destination is free and whose straight path only
+/// crosses `inside` — the geometry the body is already in. Beyond the point
+/// the body gets free the path must STAY free: a route that leaves one box
+/// and enters another has tunnelled, however empty its far end is.
+fn first_usable<F>(
+    candidates: &[[f64; 3]],
+    body: &[BodyBox],
+    inside: &[BodyBox],
+    boxes_fn: &F,
+    dyn_boxes: &[DynBox],
+    ignore: u64,
+) -> Option<[f64; 3]>
+where
+    F: Fn(i32, i32, i32) -> &'static [Aabb],
+{
+    candidates.iter().copied().find(|&off| {
+        let len = length_squared(off).sqrt();
+        if len <= EPS || !pose_is_free(body, off, boxes_fn, dyn_boxes, ignore) {
+            return false;
+        }
+        let steps = (len / ESCAPE_PATH_SAMPLE).ceil() as i32;
+        let mut freed = false;
+        for i in 1..steps {
+            let t = f64::from(i) / f64::from(steps);
+            let at = off.map(|v| v * t);
+            let mut touched_any = false;
+            let hit_new = visit_overlaps(body, at, boxes_fn, dyn_boxes, ignore, |b| {
+                touched_any = true;
+                !inside.contains(&b)
+            });
+            if !touched_any {
+                freed = true;
+            } else if freed || hit_new {
+                return false;
+            }
+        }
+        true
+    })
+}
+
+/// A body's committed way out (see [`escape_pose`]), held across ticks.
+///
+/// The plan is committed on purpose. Re-deciding every tick is what makes a
+/// body oscillate: as it slides, the nearest way out changes under it, and a
+/// route that takes more than one tick never completes. So the route is
+/// planned once, walked at [`ESCAPE_SPEED`], and re-planned only when the
+/// world moves the destination out from under it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EscapeRoute {
+    remaining: [f32; 3],
+    boring: bool,
+}
+
+impl EscapeRoute {
+    /// Whether the body is still on its way out of geometry: this tick's
+    /// offset did not finish the route. Sweeping such a body is meaningless
+    /// — a sweep ignores the boxes it already overlaps, so gravity simply
+    /// drags it back down whatever the escape gained — so its drivers give
+    /// the tick to the escape and skip their own motion.
+    pub fn in_progress(&self) -> bool {
+        self.remaining != [0.0; 3]
+    }
+
+    /// Whether the body is ENTOMBED: inside geometry with no clean way out,
+    /// boring toward open air (see [`Escape::Bore`]). A gameplay fact, not a
+    /// physics one — the engine reports it and keeps the body moving; what a
+    /// body pays for being buried is a mod's decision.
+    pub fn entombed(&self) -> bool {
+        self.boring
+    }
+
+    /// Advance the route by one tick of `dt` and return the offset to apply
+    /// (zero only when the body is free).
+    pub fn advance<F>(
+        &mut self,
+        body: &[BodyBox],
+        dt: f32,
+        boxes_fn: &F,
+        dyn_boxes: &[DynBox],
+        ignore: u64,
+    ) -> [f32; 3]
+    where
+        F: Fn(i32, i32, i32) -> &'static [Aabb],
+    {
+        if pose_is_free(body, [0.0; 3], boxes_fn, dyn_boxes, ignore) {
+            *self = Self::default();
+            return [0.0; 3];
+        }
+        // A committed route is kept while its destination stands — re-deciding
+        // every tick is what oscillates. A BORING body is the exception: it is
+        // travelling through solid, so every tick it should ask again whether
+        // a clean way out has come into reach.
+        let keep = !self.boring
+            && self.remaining != [0.0; 3]
+            && pose_is_free(
+                body,
+                self.remaining.map(f64::from),
+                boxes_fn,
+                dyn_boxes,
+                ignore,
+            );
+        if !keep {
+            match escape_pose(body, boxes_fn, dyn_boxes, ignore) {
+                Escape::Free => {
+                    *self = Self::default();
+                    return [0.0; 3];
+                }
+                Escape::Route(off) => {
+                    *self = Self {
+                        remaining: off,
+                        boring: false,
+                    }
+                }
+                Escape::Bore(off) => {
+                    *self = Self {
+                        remaining: off,
+                        boring: true,
+                    }
+                }
+            }
+        }
+        let len = (length_squared(self.remaining.map(f64::from)).sqrt()) as f32;
+        // A clean escape shorter than a step happens at once (a heal, not a
+        // squeeze). Boring is never instant: it passes through solid, so it
+        // stays a visible, interruptible crawl however short the hop.
+        let fraction = if !self.boring && len <= ESCAPE_SNAP {
+            1.0
+        } else {
+            let speed = if self.boring {
+                BORE_SPEED
+            } else {
+                ESCAPE_SPEED
+            };
+            (speed * dt / len).min(1.0)
+        };
+        let off = self.remaining.map(|v| v * fraction);
+        self.remaining = std::array::from_fn(|axis| self.remaining[axis] - off[axis]);
+        off
     }
 }
 
@@ -490,12 +748,13 @@ pub fn resolve_body<F>(
     vel: [f32; 3],
     dt: f32,
     step_height: f32,
+    route: &mut EscapeRoute,
     boxes_fn: F,
 ) -> ([f32; 3], bool, [bool; 3])
 where
     F: Fn(i32, i32, i32) -> &'static [Aabb],
 {
-    resolve_body_dyn(min, max, vel, dt, step_height, boxes_fn, &[], 0)
+    resolve_body_dyn(min, max, vel, dt, step_height, route, boxes_fn, &[], 0)
 }
 
 /// [`resolve_body`] that also resolves against dynamic boxes — how a mob
@@ -508,6 +767,7 @@ pub fn resolve_body_dyn<F>(
     vel: [f32; 3],
     dt: f32,
     step_height: f32,
+    route: &mut EscapeRoute,
     boxes_fn: F,
     dyn_boxes: &[DynBox],
     ignore: u64,
@@ -517,17 +777,14 @@ where
 {
     let mut mn = min;
     let mut mx = max;
-
-    // Heal shallow foot penetration first (a block grew under the body —
-    // see `depenetrate_up`), so the Y sweep lands ON the new top instead of
-    // tunnelling through the box it started inside.
-    let lift = depenetrate_up_dyn(mn, mx, STEP_HEIGHT, &boxes_fn, dyn_boxes, ignore);
-    if lift > 0.0 {
-        mn[1] += f64::from(lift);
-        mx[1] += f64::from(lift);
+    let (escape, escaping) =
+        escape_pre_pass(&mut mn, &mut mx, dt, route, &boxes_fn, dyn_boxes, ignore);
+    if escaping {
+        // Still inside geometry: the escape owns this tick (see `in_progress`).
+        return (escape, false, [false; 3]);
     }
 
-    let (mut moved, grounded, hit) = resolve_body_dyn_from_depenetrated(
+    let (mut moved, grounded, hit) = resolve_body_dyn_escaped(
         mn,
         mx,
         vel,
@@ -538,16 +795,47 @@ where
         dyn_boxes,
         ignore,
     );
-    moved[1] += lift;
+    for axis in 0..3 {
+        moved[axis] += escape[axis];
+    }
     (moved, grounded, hit)
 }
 
-/// Resolve a body known to have completed the shallow-foot depenetration
-/// pre-pass. `step_supported` also permits stepping without a solid landing.
+/// The pre-pass every moving body runs before its sweeps: get OUT of geometry
+/// it is already inside, because no sweep will (they ignore boxes the body
+/// already overlaps).
+///
+/// It always makes progress. A body with a clean way out walks its
+/// [`EscapeRoute`]; a body buried in rock bores toward the nearest open air,
+/// and failing that toward the sky. Nothing here can leave a body standing
+/// still inside geometry — that is the one outcome a stuck player cannot
+/// recover from. Displaces `[mn, mx]` and returns the applied offset.
+pub fn escape_pre_pass<F>(
+    mn: &mut [f64; 3],
+    mx: &mut [f64; 3],
+    dt: f32,
+    route: &mut EscapeRoute,
+    boxes_fn: &F,
+    dyn_boxes: &[DynBox],
+    ignore: u64,
+) -> ([f32; 3], bool)
+where
+    F: Fn(i32, i32, i32) -> &'static [Aabb],
+{
+    let off = route.advance(&[(*mn, *mx)], dt, boxes_fn, dyn_boxes, ignore);
+    for axis in 0..3 {
+        mn[axis] += f64::from(off[axis]);
+        mx[axis] += f64::from(off[axis]);
+    }
+    (off, route.in_progress())
+}
+
+/// Resolve a body known to have completed the escape pre-pass (and to be
+/// out of geometry — see [`escape_pre_pass`]). `step_supported` also permits stepping without a solid landing.
 /// Used by compound-body orchestration that must
 /// preserve that mandatory lift as a separate motion waypoint.
 #[allow(clippy::too_many_arguments)]
-pub fn resolve_body_dyn_from_depenetrated<F>(
+pub fn resolve_body_dyn_escaped<F>(
     mut mn: [f64; 3],
     mut mx: [f64; 3],
     vel: [f32; 3],

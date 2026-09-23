@@ -63,6 +63,7 @@ fn resolve_body_lands_grounded_on_a_floor() {
         [0.0, -5.0, 0.0],
         0.1,
         0.0,
+        &mut Default::default(),
         floor,
     );
     assert!(grounded, "a downward stop is grounded");
@@ -83,37 +84,30 @@ fn resolve_body_lands_grounded_on_a_floor() {
 fn a_block_growing_underfoot_lifts_the_body_instead_of_tunnelling() {
     let floor = |_x: i32, y: i32, _z: i32| if y == 0 { FULL } else { &[][..] };
     // Feet at the old farmland top (15/16), now 1/16 inside the dirt cube.
+    // The escape must finish INSIDE this tick — the downward sweep runs
+    // straight after it and would otherwise pass through the box the body
+    // started in (sweeps ignore boxes a body already overlaps).
     let (min, max) = ([0.2, 0.9375, 0.2], [0.8, 2.7375, 0.8]);
-    let lift = depenetrate_up(min, max, STEP_HEIGHT, floor);
-    assert!(
-        (lift - 0.0625).abs() < 1e-3,
-        "lifts exactly the penetration, got {lift}"
+    let (moved, grounded, _) = resolve_body(
+        min,
+        max,
+        [0.0, -5.0, 0.0],
+        0.1,
+        0.0,
+        &mut Default::default(),
+        floor,
     );
-    let (moved, grounded, _) = resolve_body(min, max, [0.0, -5.0, 0.0], 0.1, 0.0, floor);
     assert!(grounded, "the healed body lands on the grown block");
     assert!(
         (moved[1] - 0.0625).abs() < 1e-3,
         "net movement is the upward heal, not a fall, got {}",
         moved[1]
     );
-    // A body flush ON a box top is not inside it: nothing to heal.
-    let rest = depenetrate_up([0.2, 1.0, 0.2], [0.8, 2.8, 0.8], STEP_HEIGHT, floor);
-    assert_eq!(rest, 0.0, "standing on top never lifts");
-    // Headroom clamps the heal: a ceiling one texel above the head turns
-    // the lift into a partial one instead of clipping into the ceiling.
-    let tight = move |x: i32, y: i32, z: i32| -> &'static [Aabb] {
-        if y == 3 {
-            FULL
-        } else {
-            floor(x, y, z)
-        }
-    };
-    // (A taller body whose head sits 0.02 under the ceiling.)
-    let clamped = depenetrate_up([0.2, 0.9375, 0.2], [0.8, 2.98, 0.8], STEP_HEIGHT, tight);
-    assert!(
-        clamped < 0.0625 && clamped > 0.0,
-        "a low ceiling caps the lift, got {clamped}"
-    );
+
+    // A body flush ON a box top is not inside it: nothing to escape.
+    let mut route = EscapeRoute::default();
+    let rest = route.advance(&[([0.2, 1.0, 0.2], [0.8, 2.8, 0.8])], 0.05, &floor, &[], 0);
+    assert_eq!(rest, [0.0; 3], "standing on top never moves");
 }
 
 #[test]
@@ -263,6 +257,7 @@ fn dynamic_boxes_block_land_and_skip_their_owner() {
         [0.0, -5.0, 0.0],
         1.0,
         0.0,
+        &mut Default::default(),
         empty,
         &[hull],
         0,
@@ -359,8 +354,160 @@ fn a_far_body_resolves_exactly_like_one_at_the_origin() {
             [0.05, -5.0, 0.0],
             0.1,
             0.0,
+            &mut Default::default(),
             floor,
         )
     };
     assert_eq!(run(0), run(1 << 29));
+}
+
+#[test]
+fn an_escape_leaves_by_an_open_face_not_the_nearest_one() {
+    // The body is inside the cube at x = 1. Its SHALLOWEST way out is −x
+    // (0.7 m), but the cube at x = 0 is sitting there: a shortest-penetration
+    // guess walks straight into it and the body never gets out. The open side
+    // is +x, 0.9 m away.
+    let boxes = |x: i32, y: i32, _z: i32| {
+        if y == 0 && (x == 0 || x == 1) {
+            FULL
+        } else {
+            &[][..]
+        }
+    };
+    let body = [([1.1, 0.0, 0.2], [1.7, 1.8, 0.8])];
+    let Escape::Route(off) = escape_pose(&body, &boxes, &[], 0) else {
+        panic!("a body with an open face beside it is not sealed");
+    };
+    assert!(
+        off[0] > 0.0,
+        "escaped toward the open side, not into the neighbouring cube: {off:?}"
+    );
+    assert!(
+        pose_is_free(&body, off.map(f64::from), &boxes, &[], 0),
+        "the destination is genuinely empty"
+    );
+}
+
+#[test]
+fn an_escape_never_crosses_geometry_the_body_is_not_already_in() {
+    // Solid everywhere but a pocket two cells away: the only free pose in
+    // reach sits BEHIND a wall. A clean route may not pop through it — but
+    // the body is buried, so it BORES toward that pocket rather than being
+    // left standing in rock, and says it is entombed while it does.
+    let boxes = |x: i32, y: i32, z: i32| {
+        if x == 2 && (0..2).contains(&y) && z == 0 {
+            &[][..]
+        } else {
+            FULL
+        }
+    };
+    let body = [([0.2, 0.0, 0.2], [0.8, 1.8, 0.8])];
+    let Escape::Bore(off) = escape_pose(&body, &boxes, &[], 0) else {
+        panic!("a buried body bores; it is never left standing in rock");
+    };
+    assert!(off[0] > 0.0, "bored toward the only open air: {off:?}");
+    assert!(
+        pose_is_free(&body, off.map(f64::from), &boxes, &[], 0),
+        "and it is aimed at a genuinely free pose"
+    );
+
+    // Open that wall and the same pocket becomes reachable.
+    let opened = |x: i32, y: i32, z: i32| {
+        if x >= 1 && (0..2).contains(&y) && z == 0 {
+            &[][..]
+        } else {
+            FULL
+        }
+    };
+    let Escape::Route(off) = escape_pose(&body, &opened, &[], 0) else {
+        panic!("a clear corridor is an escape");
+    };
+    assert!(off[0] > 0.0, "left along the corridor: {off:?}");
+}
+
+#[test]
+fn a_committed_route_walks_out_without_re_deciding() {
+    // A 3-high column grew around the body (the classic bob): it slides out
+    // along ONE committed route. Re-deciding every tick is what oscillates,
+    // so the offsets must never reverse, and the walk must finish.
+    let boxes = |x: i32, y: i32, z: i32| {
+        if y < 0 || (x == 0 && z == 0 && (0..3).contains(&y)) {
+            FULL
+        } else {
+            &[][..]
+        }
+    };
+    let body = [([0.1, 0.0, 0.2], [0.7, 1.8, 0.8])];
+    let mut route = EscapeRoute::default();
+    let mut total = [0.0f32; 3];
+    let mut ticks = 0;
+    loop {
+        let shifted = [(
+            std::array::from_fn(|axis| body[0].0[axis] + f64::from(total[axis])),
+            std::array::from_fn(|axis| body[0].1[axis] + f64::from(total[axis])),
+        )];
+        let off = route.advance(&shifted, ESCAPE_SPEED * 0.05, &boxes, &[], 0);
+        if off == [0.0; 3] {
+            break;
+        }
+        assert!(off[0] <= 0.0, "the route never reverses: {off:?}");
+        assert!(off[1] <= 0.0, "the feet never lift on the way out: {off:?}");
+        for axis in 0..3 {
+            total[axis] += off[axis];
+        }
+        ticks += 1;
+        assert!(ticks < 100, "the escape finished");
+    }
+    assert!(!route.entombed(), "it got out");
+    assert!(total[0] < -0.5, "it left the column sideways: {total:?}");
+}
+
+#[test]
+fn a_body_buried_in_solid_rock_climbs_out_instead_of_sitting_there() {
+    // THE underground case: stone in every direction, nothing free within
+    // reach. There is no clean way out and there never will be one until the
+    // body moves, so "hold still" loses the body for good. It heads up, and
+    // stops the moment a pose is genuinely free.
+    let bedrock_to_y = 8;
+    let boxes = move |_x: i32, y: i32, _z: i32| {
+        if y < bedrock_to_y {
+            FULL
+        } else {
+            &[][..]
+        }
+    };
+    let body = ([0.2, 2.0, 0.2], [0.8, 3.8, 0.8]);
+    let mut route = EscapeRoute::default();
+    let mut lift = 0.0f32;
+    let mut ticks = 0;
+    let (mut was_entombed, mut escaped_cleanly) = (false, false);
+    loop {
+        let shifted = [(
+            [body.0[0], body.0[1] + f64::from(lift), body.0[2]],
+            [body.1[0], body.1[1] + f64::from(lift), body.1[2]],
+        )];
+        let off = route.advance(&shifted, 0.05, &boxes, &[], 0);
+        if off == [0.0; 3] {
+            break;
+        }
+        assert!(off[1] > 0.0, "it climbs, tick after tick: {off:?}");
+        // Buried while there is no clean way out; once open air comes within
+        // reach the ordinary verified route takes over and finishes the job,
+        // and the body stops reporting itself entombed.
+        was_entombed |= route.entombed();
+        assert!(
+            !route.entombed() || !escaped_cleanly,
+            "entombed never comes BACK once a clean route was found"
+        );
+        escaped_cleanly |= !route.entombed();
+        lift += off[1];
+        ticks += 1;
+        assert!(ticks < 200, "it got out in bounded time");
+    }
+    assert!(
+        (f64::from(lift) + body.0[1] - f64::from(bedrock_to_y)).abs() < 0.2,
+        "it stopped at the surface, not one block short or a mile up: {lift}"
+    );
+    assert!(was_entombed, "it knew it was buried on the way");
+    assert!(!route.entombed(), "free bodies are not entombed");
 }

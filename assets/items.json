@@ -834,6 +834,19 @@
       "block": "petramond:cobblestone"
     },
     {
+      "item": "petramond:stone_bricks",
+      "key": "petramond:stone_bricks",
+      "name": "Stone Bricks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:stone_bricks"
+    },
+    {
       "item": "petramond:oak_planks",
       "key": "petramond:oak_planks",
       "name": "Oak Planks",
@@ -1327,6 +1340,19 @@
       "block": "petramond:furniture_workbench"
     },
     {
+      "item": "petramond:chiseling_station",
+      "key": "petramond:chiseling_station",
+      "name": "Chiseling Station",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:chiseling_station"
+    },
+    {
       "item": "petramond:oak_sapling",
       "key": "petramond:oak_sapling",
       "name": "Oak Sapling",
@@ -1623,6 +1649,19 @@
       "block": "petramond:stone_stairs"
     },
     {
+      "item": "petramond:stone_bricks_stairs",
+      "key": "petramond:stone_bricks_stairs",
+      "name": "Stone Brick Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:stone_bricks_stairs"
+    },
+    {
       "item": "petramond:dirt_stairs",
       "key": "petramond:dirt_stairs",
       "name": "Dirt Stairs",
@@ -1843,6 +1882,19 @@
       },
       "tags": [],
       "block": "petramond:stone_slab"
+    },
+    {
+      "item": "petramond:stone_bricks_slab",
+      "key": "petramond:stone_bricks_slab",
+      "name": "Stone Brick Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:stone_bricks_slab"
     },
     {
       "item": "petramond:dirt_slab",

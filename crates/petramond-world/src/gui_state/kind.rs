@@ -59,6 +59,9 @@ impl GuiKind {
     pub const Creative: GuiKind = GuiKind(22);
     /// The schematic library a player chooses a design from outside creative.
     pub const Schematics: GuiKind = GuiKind(23);
+    /// The chiseling station: a crafting station for shaped block variants
+    /// (stairs, slabs, fences) carved from full blocks.
+    pub const ChiselingStation: GuiKind = GuiKind(24);
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
     /// Whether this is a pack-registered (namespaced) kind, as opposed to an
@@ -71,7 +74,7 @@ impl GuiKind {
 
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
-const ENGINE_GUI_KIND_NAMES: [&str; 24] = [
+const ENGINE_GUI_KIND_NAMES: [&str; 25] = [
     "petramond:chest",
     "petramond:inventory",
     "petramond:crafting_table",
@@ -96,6 +99,7 @@ const ENGINE_GUI_KIND_NAMES: [&str; 24] = [
     "petramond:options_graphics",
     "petramond:creative",
     "petramond:schematics",
+    "petramond:chiseling_station",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a
@@ -184,6 +188,7 @@ impl std::fmt::Debug for GuiKind {
             3 => write!(f, "Furnace"),
             4 => write!(f, "Hotbar"),
             5 => write!(f, "FurnitureWorkbench"),
+            24 => write!(f, "ChiselingStation"),
             _ if *self == GuiKind::Other => write!(f, "Other"),
             i => match kind_key(*self) {
                 Some(key) => write!(f, "GuiKind({key:?})"),

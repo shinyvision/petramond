@@ -363,6 +363,21 @@ impl ShapeBox {
         }
     }
 
+    /// The same box with its `±Y` faces' UVs turned by the row's per-slot
+    /// turns (`[top, bottom, side]`): the tile-slot families (stair/slab)
+    /// build every horizontal face through `uniform`, so the row's
+    /// `uv_rotation` reaches the world mesh and the item form through the
+    /// same `ShapeFace::uv_turns` a box set authors.
+    pub fn with_slot_uv_turns(mut self, turns: [u8; 3]) -> Self {
+        if let Some(face) = self.faces[2].as_mut() {
+            face.uv_turns = turns[0];
+        }
+        if let Some(face) = self.faces[3].as_mut() {
+            face.uv_turns = turns[1];
+        }
+        self
+    }
+
     /// The same box drawn from both sides (see
     /// [`double_sided`](Self::double_sided)).
     pub fn double_sided(mut self) -> Self {

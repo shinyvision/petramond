@@ -101,7 +101,7 @@ impl ShapeRender for StairFamily {
     fn item_boxes(
         &self,
         _p: &ShapeParams,
-        _b: Block,
+        b: Block,
         state: crate::block_state::HeldBlockState,
         out: &mut Vec<crate::block::ItemBox>,
     ) {
@@ -109,21 +109,25 @@ impl ShapeRender for StairFamily {
             crate::block_state::HeldBlockState::Stair(s) => s,
             _ => StairState::new(crate::facing::Facing::South, Default::default()),
         };
+        let turns = b.uv_turns();
         out.extend(
             crate::stair::boxes_for_shape(crate::stair::shape(held))
                 .iter()
-                .map(|b| crate::block::ItemBox::solid(b.min, b.max)),
+                .map(|b| {
+                    let mut item = crate::block::ItemBox::solid(b.min, b.max);
+                    item.uv_turns[2] = turns[0];
+                    item.uv_turns[3] = turns[1];
+                    item
+                }),
         );
     }
 
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         let tiles = ctx.block.tiles();
         let shape = stair_shape_at(ctx.nb, ctx.pos);
-        out.extend(
-            crate::stair::boxes_for_shape(shape)
-                .iter()
-                .map(|a| ShapeBox::uniform(*a, tiles, ctx.tint_for)),
-        );
+        out.extend(crate::stair::boxes_for_shape(shape).iter().map(|a| {
+            ShapeBox::uniform(*a, tiles, ctx.tint_for).with_slot_uv_turns(ctx.block.uv_turns())
+        }));
     }
 
     fn picks_by_boxes(&self, _p: &ShapeParams) -> bool {

@@ -285,6 +285,7 @@ mod tests {
             half_width: 0.3,
             height: 1.8,
             eye_height: 1.62,
+            entombed: false,
             conditions: Vec::new(),
         }
     }

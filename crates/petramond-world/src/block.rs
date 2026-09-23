@@ -244,6 +244,12 @@ impl Block {
     /// worldgen water until disturbed; flowing cells quench to stone on
     /// contact with water.
     pub const Lava: Block = Block(143);
+    pub const StoneBricks: Block = Block(144);
+    pub const StoneBricksStairs: Block = Block(145);
+    pub const StoneBricksSlab: Block = Block(146);
+    /// The chiseling station: a 2×2×2 model block whose menu session is the
+    /// crafting station for shaped block variants (stairs, slabs, fences).
+    pub const ChiselingStation: Block = Block(147);
 }
 
 impl std::fmt::Debug for Block {

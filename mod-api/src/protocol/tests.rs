@@ -525,8 +525,10 @@ fn abi_roundtrip_host_and_guest_calls() {
         half_width: 0.4,
         height: 1.2,
         half_length: 0.4,
+        entombed: false,
     }]));
     roundtrip(HostRet::Player(Box::new(PlayerSnapshot {
+        entombed: true,
         id: Some(PlayerId(1)),
         pos: [0.5, 80.0, 0.5],
         vel: [0.0, -1.0, 0.0],

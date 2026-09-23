@@ -207,6 +207,11 @@ pub struct DroppedItem {
     /// like mobs). Transient — never saved; reconstructed equal to `pos`/`spin`.
     pub prev_pos: petramond_math::world_pos::WorldPos,
     pub prev_spin: f32,
+    /// The committed way out of geometry this drop is stuck inside (see
+    /// `collision::EscapeRoute`) — a block placed or grown on top of a pile
+    /// buries it exactly like it buries a mob. Derived from the world every
+    /// tick, so never persisted.
+    escape: petramond_world::collision::EscapeRoute,
 }
 
 impl DroppedItem {
@@ -233,6 +238,7 @@ impl DroppedItem {
             motion,
             prev_pos: pos,
             prev_spin: 0.0,
+            escape: Default::default(),
         }
     }
 
@@ -461,8 +467,15 @@ impl DroppedItem {
         let h = f64::from(ITEM_HALF_EXTENT);
         let min = [self.pos.x - h, self.pos.y - h, self.pos.z - h];
         let max = [self.pos.x + h, self.pos.y + h, self.pos.z + h];
-        let (moved, grounded, hit) =
-            petramond_world::collision::resolve_body(min, max, self.vel.to_array(), dt, 0.0, boxes);
+        let (moved, grounded, hit) = petramond_world::collision::resolve_body(
+            min,
+            max,
+            self.vel.to_array(),
+            dt,
+            0.0,
+            &mut self.escape,
+            boxes,
+        );
         self.pos += Vec3::from(moved);
         if hit[0] {
             self.vel.x = 0.0;

@@ -1,12 +1,12 @@
 //! The crafting-station registry.
 //!
 //! A station is the context a player-crafting recipe requires, identified by
-//! the [`GuiKind`] whose open menu session admits it. The engine ships three
+//! the [`GuiKind`] whose open menu session admits it. The engine ships four
 //! (`petramond:inventory`, `petramond:crafting_table`,
-//! `petramond:furniture_workbench`); packs ADD stations by
-//! naming a namespaced key in a `recipes.json` `station` field — the same
-//! key an `open_gui` block interaction uses, so a pack workbench is pure
-//! data: block row opens the kind, recipe rows require it, and the engine
+//! `petramond:furniture_workbench`, `petramond:chiseling_station`); packs ADD
+//! stations by naming a namespaced key in a `recipes.json` `station` field —
+//! the same key an `open_gui` block interaction uses, so a pack workbench is
+//! pure data: block row opens the kind, recipe rows require it, and the engine
 //! runs the ordinary crafting session (browser, planner, output slot) for it.
 //! Like every interning registry, registration is process-wide and ids are
 //! session-scoped; the stable identity is the key string.
@@ -19,7 +19,7 @@ use crate::gui_state::GuiKind;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CraftingStation(GuiKind);
 
-/// Pack-registered station kinds (the engine pair lives in the consts).
+/// Pack-registered station kinds (the engine stations live in the consts).
 static REGISTERED_STATIONS: Mutex<Vec<GuiKind>> = Mutex::new(Vec::new());
 
 #[allow(non_upper_case_globals)]
@@ -27,10 +27,12 @@ impl CraftingStation {
     pub const Inventory: CraftingStation = CraftingStation(GuiKind::Inventory);
     pub const CraftingTable: CraftingStation = CraftingStation(GuiKind::CraftingTable);
     pub const FurnitureWorkbench: CraftingStation = CraftingStation(GuiKind::FurnitureWorkbench);
+    pub const ChiselingStation: CraftingStation = CraftingStation(GuiKind::ChiselingStation);
 
     pub const INVENTORY_KEY: &'static str = "petramond:inventory";
     pub const CRAFTING_TABLE_KEY: &'static str = "petramond:crafting_table";
     pub const FURNITURE_WORKBENCH_KEY: &'static str = "petramond:furniture_workbench";
+    pub const CHISELING_STATION_KEY: &'static str = "petramond:chiseling_station";
 
     /// Resolve `key` to its station, REGISTERING a namespaced non-engine key
     /// on first sight (the recipe-loading path — a recipe declaring a station
@@ -40,6 +42,7 @@ impl CraftingStation {
             Self::INVENTORY_KEY => Some(Self::Inventory),
             Self::CRAFTING_TABLE_KEY => Some(Self::CraftingTable),
             Self::FURNITURE_WORKBENCH_KEY => Some(Self::FurnitureWorkbench),
+            Self::CHISELING_STATION_KEY => Some(Self::ChiselingStation),
             _ => {
                 let kind = crate::gui_state::intern_kind(key)?;
                 let mut stations = REGISTERED_STATIONS.lock().unwrap();
@@ -52,12 +55,13 @@ impl CraftingStation {
     }
 
     /// The station whose menu session `kind` opens, if `kind` is one —
-    /// engine pair or a registered pack station. Never registers.
+    /// engine stations or a registered pack station. Never registers.
     pub fn of_kind(kind: GuiKind) -> Option<Self> {
         match kind {
             GuiKind::Inventory => Some(Self::Inventory),
             GuiKind::CraftingTable => Some(Self::CraftingTable),
             GuiKind::FurnitureWorkbench => Some(Self::FurnitureWorkbench),
+            GuiKind::ChiselingStation => Some(Self::ChiselingStation),
             _ => REGISTERED_STATIONS
                 .lock()
                 .unwrap()
@@ -76,6 +80,7 @@ impl CraftingStation {
             Self::Inventory => Self::INVENTORY_KEY,
             Self::CraftingTable => Self::CRAFTING_TABLE_KEY,
             Self::FurnitureWorkbench => Self::FURNITURE_WORKBENCH_KEY,
+            Self::ChiselingStation => Self::CHISELING_STATION_KEY,
             Self(kind) => crate::gui_state::kind_key(kind).unwrap_or("?"),
         }
     }
@@ -108,6 +113,10 @@ mod tests {
             CraftingStation::from_key("petramond:furniture_workbench"),
             Some(CraftingStation::FurnitureWorkbench)
         );
+        assert_eq!(
+            CraftingStation::from_key("petramond:chiseling_station"),
+            Some(CraftingStation::ChiselingStation)
+        );
         assert_eq!(CraftingStation::from_key("petramond:not_a_station"), None);
         assert_eq!(CraftingStation::from_key("bare_name"), None);
     }
@@ -132,7 +141,7 @@ mod tests {
         assert!(!bench.admits(CraftingStation::CraftingTable));
         assert!(!CraftingStation::CraftingTable.admits(bench));
         assert!(!CraftingStation::Inventory.admits(bench));
-        // The engine pair keeps its shipped behavior: the table admits both
+        // The engine stations keep their shipped behavior: the table admits both
         // engine tiers, the inventory only its own.
         assert!(CraftingStation::CraftingTable.admits(CraftingStation::Inventory));
         assert!(CraftingStation::CraftingTable.admits(CraftingStation::CraftingTable));

@@ -537,9 +537,13 @@ impl Renderer {
         self.actor.sprite_verts = sprite_scratch;
 
         // Break-overlay (destroy crack) geometry: ONE combined stream over
-        // every active overlay (the local miner's own + every remote's),
-        // each baked exactly like the single overlay always was.
+        // every active CELL-SHAPED overlay (the local miner's own + every
+        // remote's), each baked exactly like the single overlay always was. A
+        // cracked bbmodel block bakes nothing — the decal pass re-draws the
+        // model's own triangles under its outline mask.
         let break_overlays = std::mem::take(&mut self.hand.break_overlays);
+        self.model_break
+            .upload(&self.queue, &break_overlays, render_origin);
         self.hand.break_draw.bake(
             &self.device,
             &self.queue,

@@ -138,6 +138,8 @@ pub struct PlayerRosterSnapshot {
     pub swing: mod_api::HandSwing,
     /// Active body conditions, the ABI view.
     pub conditions: Vec<mod_api::ConditionData>,
+    /// Whether the body is entombed (see [`Player::entombed`]).
+    pub entombed: bool,
     /// The player's stable name (the save key), for state a mod keeps past
     /// this session.
     pub name: String,
@@ -215,6 +217,10 @@ pub struct Player {
     /// resolves to the off-hand without the attempt payload ever naming a
     /// hand. Always reset to `Main` when the dispatch returns.
     pub acting_hand: petramond_world::inventory::Hand,
+    /// The committed way out of geometry the body is stuck inside (see
+    /// `collision::EscapeRoute`). Derived from the world every frame on both
+    /// sides, so it is never saved or replicated.
+    pub(super) escape: petramond_world::collision::EscapeRoute,
     /// Bed spawn point, if a bed interaction set one (see [`BedSpawn`]).
     pub bed_spawn: Option<BedSpawn>,
     /// The recipe browser's craftable-only filter — a per-player UI preference
@@ -256,6 +262,7 @@ impl Player {
             fall_distance: 0.0,
             inventory: petramond_world::inventory::Inventory::new(),
             acting_hand: petramond_world::inventory::Hand::Main,
+            escape: Default::default(),
             bed_spawn: None,
             craft_craftable_only: false,
             progression: Default::default(),
@@ -328,6 +335,14 @@ impl Player {
     #[inline]
     pub fn clear_damage_immunity(&mut self) {
         self.damage_immunity.clear();
+    }
+
+    /// Whether the body is ENTOMBED: inside collision geometry with nowhere
+    /// free to escape to (see `collision::EscapeRoute`). The engine reports
+    /// it and holds the body still; what it costs the player is gameplay's
+    /// decision, not physics'.
+    pub fn entombed(&self) -> bool {
+        self.escape.entombed()
     }
 
     /// The body's active conditions (burning and friends).

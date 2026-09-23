@@ -317,7 +317,7 @@ impl Mobs {
                 noises: &self.heard,
                 mobs: &ai_mobs,
                 solid: peer_obstacles,
-                solid_heal: &solid,
+                solid_escape: &solid,
             };
             motion_finish[i] = mob.tick(
                 dt,

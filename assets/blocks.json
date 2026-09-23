@@ -2822,6 +2822,57 @@
       ]
     },
     {
+      "block": "petramond:stone_bricks",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "stone_bricks",
+        "stone_bricks",
+        "stone_bricks"
+      ],
+      "uv_rotation": {
+        "top": 0,
+        "bottom": 0
+      },
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:stone_bricks",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
       "block": "petramond:oak_planks",
       "shape": "cube",
       "flags": [
@@ -4073,6 +4124,44 @@
       ]
     },
     {
+      "block": "petramond:stone_bricks_stairs",
+      "shape": "stair",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "stone_bricks",
+        "stone_bricks",
+        "stone_bricks"
+      ],
+      "uv_rotation": {
+        "top": 0,
+        "bottom": 0
+      },
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:stone_bricks_stairs",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
       "block": "petramond:dirt_stairs",
       "shape": "stair",
       "flags": [
@@ -4370,6 +4459,44 @@
       "drops": [
         {
           "item": "petramond:stone_slab",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:stone_bricks_slab",
+      "shape": "slab",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "stone_bricks",
+        "stone_bricks",
+        "stone_bricks"
+      ],
+      "uv_rotation": {
+        "top": 0,
+        "bottom": 0
+      },
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "petramond:stone_bricks_slab",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -6023,6 +6150,43 @@
         }
       ],
       "roots_face": "solid_face"
+    },
+    {
+      "block": "petramond:chiseling_station",
+      "shape": {
+        "model": "petramond:chiseling_station"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "open_chiseling_station",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "stone_bricks",
+        "oak_planks",
+        "stone_bricks"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 3.5,
+      "drops": [
+        {
+          "item": "petramond:chiseling_station",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     }
   ]
 }

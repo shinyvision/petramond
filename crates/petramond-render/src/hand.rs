@@ -55,6 +55,36 @@ pub(crate) fn rest_seat(view: &HeldItemView, off: bool) -> Option<Mat4> {
     })
 }
 
+/// Compose the rig's `carry` over an item's rest `seat` under the viewmodel's
+/// one composition rule: **a swing may bring a held item toward the eye, never
+/// push it further away than the distance its seat sits at.**
+///
+/// The carry welds the item to the fist, which is right — but the fist is a rig
+/// locator and the seats are view-space compositions, so the two are ~3 blocks
+/// apart. A weld across that lever turns the arm's rotation into a large
+/// translation, and an item seated close to the eye rides it far away: the
+/// bbmodel seat is the vanilla hand anchor (0.7 blocks, pulled nearer still by a
+/// model's authored display translation), so a punch or the swim stance — which
+/// drop the hold clip that the seat was composed against — sent a held bbmodel
+/// to ~9x its distance, i.e. a ninth of its size (2026-09-23: the furniture
+/// workbench shrinking to a speck on a punch or on entering water).
+///
+/// Clamping the DISTANCE only, along the view ray, keeps every approved swing:
+/// the legacy block and sprite seats swing toward the eye, never away, so their
+/// composition is unchanged to the float. Nothing here knows a render kind.
+pub(crate) fn carried(seat: Mat4, carry: Mat4) -> Mat4 {
+    let at = carry * seat;
+    let seat_depth = -seat.w_axis.z;
+    let depth = -at.w_axis.z;
+    if seat_depth <= 0.0 || depth <= seat_depth {
+        return at;
+    }
+    // Pulling the origin back along its own ray keeps the item's ANGULAR place
+    // (and so the whole lateral sweep of the swing); only the recession goes.
+    let pulled = at.w_axis.truncate() * (seat_depth / depth);
+    Mat4::from_translation(pulled - at.w_axis.truncate()) * at
+}
+
 /// A held block: a corner toward the camera (three-quarter view).
 fn block_base() -> Mat4 {
     Mat4::from_scale_rotation_translation(
@@ -177,4 +207,32 @@ pub(crate) fn model_hand_view_proj(aspect: f32) -> Mat4 {
     );
     let view = Mat4::look_at_rh(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), Vec3::Y);
     proj * view
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The seat sits 2 blocks down the view ray; a carry that would push it to
+    /// 6 pulls back to 2 along the SAME ray — the swing keeps its whole
+    /// angular sweep and loses only the recession (which reads as shrinking).
+    #[test]
+    fn a_carry_may_pull_a_held_item_closer_but_never_push_it_away() {
+        let seat = Mat4::from_translation(Vec3::new(0.5, -0.3, -2.0));
+        let away = carried(seat, Mat4::from_translation(Vec3::new(1.0, 0.0, -4.0)));
+        let at = away.w_axis.truncate();
+        assert!(
+            (-at.z - 2.0).abs() < 1e-4,
+            "a receding carry is clamped to the seat's distance, got {at:?}"
+        );
+        // Same direction as the unclamped weld: only the distance changed.
+        let unclamped = Vec3::new(1.5, -0.3, -6.0);
+        assert!(
+            at.normalize().dot(unclamped.normalize()) > 0.9999,
+            "the clamp must keep the item on its ray, got {at:?}"
+        );
+        // Toward the eye is the approved swing and passes through untouched.
+        let closer = carried(seat, Mat4::from_translation(Vec3::new(0.0, 0.0, 1.2)));
+        assert!((-closer.w_axis.z - 0.8).abs() < 1e-4);
+    }
 }

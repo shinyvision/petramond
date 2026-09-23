@@ -106,7 +106,7 @@ impl App {
     /// can't register a phantom double.
     fn enter_menu(&mut self, screen: AppScreen) {
         // The player-crafting browser is the compound controller behind
-        // every crafting-station kind (engine pair or pack workbench).
+        // every crafting-station kind (engine station or pack workbench).
         if matches!(
             screen,
             AppScreen::Menu(k) if petramond_world::crafting::CraftingStation::of_kind(k).is_some()

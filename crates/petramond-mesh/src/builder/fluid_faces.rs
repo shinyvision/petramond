@@ -272,6 +272,7 @@ pub(super) fn emit_fluid_cell<B, M, N, C, F>(
             false,
             UV_MODE_NONE,
             None,
+            0,
             tint,
             face,
             ao,

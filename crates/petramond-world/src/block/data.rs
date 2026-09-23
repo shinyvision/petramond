@@ -164,6 +164,10 @@ pub const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:fallen_branch_2",
     "petramond:fallen_branch_3",
     "petramond:lava",
+    "petramond:stone_bricks",
+    "petramond:stone_bricks_stairs",
+    "petramond:stone_bricks_slab",
+    "petramond:chiseling_station",
 ];
 
 /// The JSON-loaded block table. Loads exactly once, on first access from any

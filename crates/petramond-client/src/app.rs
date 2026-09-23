@@ -17,6 +17,7 @@ mod input;
 mod inventory_menu;
 mod item_tooltip;
 mod menu_lifecycle;
+mod music;
 mod options;
 mod pointer;
 mod presentation_events;
@@ -90,6 +91,9 @@ pub struct App {
     /// Client-side sound engine. Drains the sim's per-tick [`petramond_audio::SoundEvent`]s
     /// each frame and plays them; never part of the deterministic simulation.
     audio: Audio,
+    /// WHEN the soundtrack plays. Owns the gap between pieces and the choice
+    /// of the next one; `audio` owns the streaming.
+    music: music::MusicDirector,
     last: f64,
     input: InputController,
     pointer: PointerState,
@@ -252,6 +256,7 @@ impl App {
             mob_sound_state: HashMap::new(),
             footstep_next_tick: HashMap::new(),
             loop_gain_scratch: Vec::new(),
+            music: music::MusicDirector::new(),
             next_mob_sound_handle: MOB_SOUND_HANDLE_START,
             audio,
             last: now_seconds(),

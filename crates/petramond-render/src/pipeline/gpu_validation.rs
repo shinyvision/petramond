@@ -147,6 +147,10 @@ fn packed_vertex_pipeline_validates() {
         let _ = ghost.get(1);
     }
 
+    // The model-break decal: its own group(2) layout over the model vertex
+    // stream, and the only pipeline nothing else in this test instantiates.
+    let _ = resources.model_break_pipe.get(1);
+
     let err = pollster::block_on(device.pop_error_scope());
     assert!(err.is_none(), "real-pipeline validation error: {err:?}");
     // Confirm the assumption baked into the packing: tile ids fit the packed

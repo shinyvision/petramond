@@ -588,6 +588,7 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        entombed: false,
         conditions: Vec::new(),
     };
 
@@ -677,6 +678,7 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        entombed: false,
         conditions: Vec::new(),
     };
     let want = crate::player::model::bone_id(mod_api::bone::MAIN_SHOULDER)
@@ -844,6 +846,7 @@ fn blank_snapshot() -> mod_api::PlayerSnapshot {
         half_width: 0.3,
         height: 1.8,
         eye_height: 1.62,
+        entombed: false,
         conditions: Vec::new(),
     }
 }

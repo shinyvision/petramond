@@ -143,6 +143,12 @@ pub struct MobSnapshot {
     pub half_width: f32,
     pub height: f32,
     pub half_length: f32,
+    /// Whether this body is ENTOMBED: standing inside collision geometry
+    /// with nowhere free to escape to within reach (walled in, buried,
+    /// grown into by a trunk). The engine reports the fact and holds the
+    /// body still; what should happen to it — suffocation, a rescue, a
+    /// slow crush — is a mod's decision.
+    pub entombed: bool,
     /// Active body conditions in condition-id order, separate from attached
     /// particle bundles.
     pub conditions: Vec<ConditionData>,
@@ -673,6 +679,12 @@ pub struct PlayerSnapshot {
     pub half_width: f32,
     pub height: f32,
     pub eye_height: f32,
+    /// Whether this body is ENTOMBED: standing inside collision geometry
+    /// with nowhere free to escape to within reach (walled in, buried,
+    /// grown into by a trunk). The engine reports the fact and holds the
+    /// body still; what should happen to it — suffocation, a rescue, a
+    /// slow crush — is a mod's decision.
+    pub entombed: bool,
     /// Active body conditions in condition-id order.
     pub conditions: Vec<ConditionData>,
 }

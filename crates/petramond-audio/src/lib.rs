@@ -22,6 +22,8 @@
 #![allow(clippy::too_many_arguments)]
 
 #[cfg_attr(not(feature = "playback"), allow(unused_imports))]
+pub use petramond_world::music_registry::MusicTrack;
+#[cfg_attr(not(feature = "playback"), allow(unused_imports))]
 pub use petramond_world::sound_registry::{Sound, SoundCategory};
 
 #[cfg(feature = "playback")]

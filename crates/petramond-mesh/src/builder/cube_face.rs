@@ -52,6 +52,38 @@ pub(super) fn cube_face_tile(
     }
 }
 
+/// The row-declared UV quarter turn of the tile [`cube_face_tile`] hands this
+/// face — the same slot mapping, so a turned slot rotates wherever its tile is
+/// drawn as a plain cube face (the shaders apply the packed turn to
+/// `UV_MODE_NONE` faces only). The `front` tile is authored for its own face
+/// and always draws unturned.
+#[inline]
+pub(super) fn cube_face_uv_turn(
+    block: Block,
+    face: Face,
+    front: Option<Face>,
+    log_axis: LogAxis,
+) -> u32 {
+    let [top, bottom, side] = block.uv_turns().map(u32::from);
+    if block.is_log() {
+        return match (log_axis, face) {
+            (LogAxis::X, Face::PosX) | (LogAxis::Y, Face::PosY) | (LogAxis::Z, Face::PosZ) => top,
+            (LogAxis::X, Face::NegX) | (LogAxis::Y, Face::NegY) | (LogAxis::Z, Face::NegZ) => {
+                bottom
+            }
+            _ => side,
+        };
+    }
+    match face {
+        Face::PosY => top,
+        Face::NegY => bottom,
+        _ => match front {
+            Some(front_face) if face == front_face => 0,
+            _ => side,
+        },
+    }
+}
+
 #[inline]
 fn uv_16ths(value: f32) -> u32 {
     (value.clamp(0.0, 1.0) * 16.0).round() as u32

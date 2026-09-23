@@ -458,6 +458,7 @@ mod tests {
     fn a_long_body_is_struck_along_its_whole_length() {
         let hull = MobSnapshot {
             conditions: Vec::new(),
+            entombed: false,
             index: 0,
             kind: MobId(0),
             pos: [0.0, 0.0, 2.0],

@@ -411,3 +411,63 @@ fn chest_collides_as_its_inset_box() {
         walker.aabb_max()[0]
     );
 }
+
+#[test]
+fn a_walled_in_player_squeezes_out_the_open_side() {
+    use petramond_world::block::Aabb;
+    // A block was placed on the player (or terrain streamed in around it):
+    // the body is INSIDE solid geometry, which no sweep resolves — sweeps
+    // ignore boxes the body already overlaps. Lifting cannot free it either
+    // (the wall is two cubes tall), so it must leave by the one open side.
+    let still = Input {
+        wishdir: Vec3::ZERO,
+        jump: false,
+        sprint: false,
+        sneak: false,
+    };
+    let walls = |x: i32, y: i32, _z: i32| -> &'static [Aabb] {
+        if y == 0 || (x <= 0 && (y == 1 || y == 2)) {
+            Block::Stone.collision_boxes()
+        } else {
+            &[]
+        }
+    };
+    let mut pl = p(WorldPos::new(0.6, 1.0, 0.5));
+    for _ in 0..180 {
+        pl.simulate(1.0 / 60.0, &Surroundings::dry(&walls), still);
+    }
+    assert!(
+        pl.pos.x - f64::from(HALF_W) >= 1.0 - 1e-3,
+        "the body left the wall on its open side: x={}",
+        pl.pos.x
+    );
+    assert!(pl.on_ground && !pl.entombed(), "and is standing free again");
+
+    // Buried underground: stone in every direction, no free pose within
+    // reach and no clean way out — which is the ORDINARY case below the
+    // surface, not an exotic one. Holding the body still there loses it, so
+    // it climbs out through the rock and stops standing on the surface.
+    let underground = |_x: i32, y: i32, _z: i32| -> &'static [Aabb] {
+        if y < 8 {
+            Block::Stone.collision_boxes()
+        } else {
+            &[]
+        }
+    };
+    let mut buried = p(WorldPos::new(0.5, 2.0, 0.5));
+    assert!(!buried.entombed());
+    buried.simulate(1.0 / 60.0, &Surroundings::dry(&underground), still);
+    assert!(buried.entombed(), "a buried body knows it is buried");
+    for _ in 0..600 {
+        buried.simulate(1.0 / 60.0, &Surroundings::dry(&underground), still);
+    }
+    assert!(
+        (buried.pos.y - 8.0).abs() < 1e-3,
+        "it surfaced and stopped there: y={}",
+        buried.pos.y
+    );
+    assert!(
+        buried.on_ground && !buried.entombed(),
+        "standing free on the surface"
+    );
+}

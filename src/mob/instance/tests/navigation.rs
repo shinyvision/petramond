@@ -204,7 +204,7 @@ fn tick(
             noises: &[],
             mobs: &[],
             solid: &[],
-            solid_heal: &[],
+            solid_escape: &[],
         },
         regions,
         &anchors[0],

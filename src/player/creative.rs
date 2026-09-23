@@ -34,6 +34,9 @@ impl Player {
 
     pub(super) fn update_creative_flight(&mut self, dt: f32, env: &Surroundings<'_>, input: Input) {
         let dt = dt.max(0.0);
+        if self.escape_geometry(dt, env) {
+            return;
+        }
         let wish = Vec3::new(
             input.wishdir.x,
             input.jump as u8 as f32 - input.sneak as u8 as f32,

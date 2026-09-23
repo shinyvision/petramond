@@ -124,10 +124,13 @@ impl ShapeRender for SlabFamily {
         };
         // Each occupied layer draws in its OWN material — a stacked two-tone
         // slab's item shows both.
-        for (slot, block) in crate::slab::layer_slots(held) {
+        for (slot, layer_block) in crate::slab::layer_slots(held) {
             let (min, max) = crate::shape_mesh::slab::slot_box(slot);
             let mut item = crate::block::ItemBox::solid(min, max);
-            item.material = Some(block);
+            item.material = Some(layer_block);
+            let turns = layer_block.uv_turns();
+            item.uv_turns[2] = turns[0];
+            item.uv_turns[3] = turns[1];
             out.push(item);
         }
     }
@@ -154,6 +157,7 @@ impl ShapeRender for SlabFamily {
             let (min, max) = crate::shape_mesh::slab::slot_box(slot);
             out.push(
                 ShapeBox::uniform(Aabb { min, max }, layer_block.tiles(), ctx.tint_for)
+                    .with_slot_uv_turns(layer_block.uv_turns())
                     .with_part(slot.index as crate::block::CellPart),
             );
         }

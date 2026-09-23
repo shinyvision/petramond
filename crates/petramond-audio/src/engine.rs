@@ -11,13 +11,18 @@ use rodio::source::Source;
 use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, SpatialPlayer};
 
 use super::keep_alive::KeepAlive;
-use super::{Sound, SoundCategory, SpatialListener, SpatialSoundSource};
+use super::{MusicTrack, Sound, SoundCategory, SpatialListener, SpatialSoundSource};
 use petramond_world::sound_registry::defs as sound_defs;
 
 /// Mining punch sounds retrigger at a fixed cadence while held. Each trigger is a
 /// one-shot mixed over any previous trigger, so long clips can overlap naturally.
 const MINING_REPEAT_INTERVAL: f64 = 0.300;
 const EAR_HALF_SPACING: f32 = 0.18;
+
+/// Seconds a music track takes to fade to silence when it is stopped early
+/// (leaving a world, the volume slider reaching zero). A track that plays to
+/// its own end never fades — it finishes as it was mastered.
+const MUSIC_FADE_SECONDS: f32 = 1.5;
 
 /// A sound decoded into memory once at startup, replayed by cloning the sample
 /// buffer (a memcpy — far cheaper than re-decoding the OGG on every play).
@@ -100,6 +105,23 @@ pub struct Audio {
     /// Gain-controlled continuous loops driven by client mods
     /// (`ClientLoopSet`): resolved sound → its infinite sink + eased gain.
     gain_loops: HashMap<Sound, ActiveGainLoop>,
+    /// The music channel: at most one track sounding at a time. `None` between
+    /// tracks. Deliberately outside the spatial table — music has no place in
+    /// the world, so it neither attenuates nor freezes with a paused world.
+    music: Option<ActiveMusic>,
+}
+
+/// The music channel's current track. Unlike every other sound, it is
+/// STREAMED: the sink holds a decoder over the compressed file and pulls PCM
+/// on the audio thread, so a three-minute piece costs its few megabytes of
+/// OGG rather than the tens of megabytes its PCM would.
+struct ActiveMusic {
+    sink: rodio::Player,
+    track: MusicTrack,
+    /// Linear 0..=1 envelope over the row gain, ramped down by
+    /// [`Audio::stop_music`] so a track never cuts mid-phrase.
+    envelope: f32,
+    fading_out: bool,
 }
 
 /// One continuous mod-driven loop: an infinite repeating sink whose volume
@@ -169,6 +191,7 @@ impl Audio {
             spatial: HashMap::new(),
             spatial_paused: false,
             gain_loops: HashMap::new(),
+            music: None,
         }
     }
 
@@ -295,6 +318,86 @@ impl Audio {
         for (_, active) in self.gain_loops.drain() {
             active.sink.stop();
         }
+    }
+
+    /// Start `track` on the music channel, replacing whatever was playing.
+    /// Returns whether it actually started — a missing or undecodable file
+    /// answers `false` so the scheduler can move on to another track instead
+    /// of waiting out a silent piece.
+    ///
+    /// The clip is read and decoded HERE, not at startup: music is streamed
+    /// (see [`ActiveMusic`]).
+    pub fn play_music(&mut self, track: MusicTrack) -> bool {
+        let Some(sink) = self.sink.as_ref() else {
+            return false;
+        };
+        let def = track.def();
+        let Some((bytes, _)) = petramond_world::assets::read_bytes(def.file) else {
+            log::warn!("music {track:?} clip '{}' not found", def.file);
+            return false;
+        };
+        let decoder = match rodio::Decoder::try_from(Cursor::new(bytes)) {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("music {track:?} failed to decode: {e}");
+                return false;
+            }
+        };
+        let player = rodio::Player::connect_new(sink.mixer());
+        player.set_volume(self.mix_gain(SoundCategory::Music) * def.gain);
+        player.append(decoder);
+        if let Some(replaced) = self.music.replace(ActiveMusic {
+            sink: player,
+            track,
+            envelope: 1.0,
+            fading_out: false,
+        }) {
+            replaced.sink.stop();
+        }
+        true
+    }
+
+    /// Fade the current track out and drop it. Inert when nothing is playing
+    /// or the fade already started, so a caller may say it every frame.
+    pub fn stop_music(&mut self) {
+        if let Some(music) = self.music.as_mut() {
+            music.fading_out = true;
+        }
+    }
+
+    /// The track sounding right now, or `None` between tracks. A track that
+    /// has been asked to stop is already `None` here: the scheduler's next gap
+    /// starts when the music ENDS, not when its fade finishes.
+    pub fn music_playing(&self) -> Option<MusicTrack> {
+        self.music
+            .as_ref()
+            .filter(|m| !m.fading_out)
+            .map(|m| m.track)
+    }
+
+    /// Advance the music channel by `dt` seconds: run any fade, re-read the
+    /// mixer volumes (so a slider drag is live, like every other sound), and
+    /// retire a track that has finished. Call every frame.
+    pub fn update_music(&mut self, dt: f32) {
+        // Read out before the mutable borrow: the channel re-reads the mixer
+        // volumes every frame, so a slider drag is live mid-track.
+        let mix = self.mix_gain(SoundCategory::Music);
+        let Some(music) = self.music.as_mut() else {
+            return;
+        };
+        if music.fading_out {
+            music.envelope -= dt.clamp(0.0, 0.25) / MUSIC_FADE_SECONDS;
+        }
+        // A finished track retires itself: `Player::empty` is the only honest
+        // signal that a streamed decoder ran out.
+        if music.envelope <= 0.0 || music.sink.empty() {
+            music.sink.stop();
+            self.music = None;
+            return;
+        }
+        music
+            .sink
+            .set_volume(mix * music.track.def().gain * music.envelope);
     }
 
     /// Play a one-shot sound (e.g. a block being placed): a random variant at a random
@@ -607,6 +710,7 @@ mod tests {
             spatial: HashMap::new(),
             spatial_paused: false,
             gain_loops: HashMap::new(),
+            music: None,
         }
     }
 

@@ -76,6 +76,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 half_width: crate::player::HALF_W,
                 height: crate::player::HEIGHT,
                 eye_height: crate::player::EYE,
+                entombed: p.entombed(),
                 conditions: crate::exposure::condition_data(p.conditions()),
             }))
         }),
@@ -118,6 +119,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                             half_width: crate::player::HALF_W,
                             height: crate::player::HEIGHT,
                             eye_height: crate::player::EYE,
+                            entombed: p.entombed,
                             conditions: p.conditions.clone(),
                         },
                     })

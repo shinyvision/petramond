@@ -172,6 +172,10 @@ pub const ENGINE_ITEM_NAMES: &[&str] = &[
     "petramond:lava_bucket",
     "petramond:schematic_wand",
     "petramond:paper",
+    "petramond:stone_bricks",
+    "petramond:stone_bricks_stairs",
+    "petramond:stone_bricks_slab",
+    "petramond:chiseling_station",
 ];
 
 /// The JSON-loaded item table. Loads exactly once, on first access; the loader

@@ -47,6 +47,16 @@ pub(super) struct BlockDef {
     pub particle_emitter: Option<&'static [ParticleEmitter]>,
     /// Per-face tile: [top, bottom, side].
     pub tiles: [Tile; 3],
+    /// Extra UV quarter turns (`0..4`) for the tile each tile-slot face draws:
+    /// `[top, bottom, side]`, the row-level twin of a static box's
+    /// `uv_rotation` (one tile serves differently oriented faces — a bricks
+    /// row whose top and bottom run their courses the other way). Applied
+    /// wherever the slot's tile is drawn as a plain cube face (the mesher's
+    /// cube path) or through [`ShapeBox::with_slot_uv_turns`]
+    /// (stair/slab); a row-declared `front` tile is authored for its face and
+    /// always draws unturned. Loader-restricted to the tile-slot families
+    /// (cube/stair/slab); box sets rotate per box instead.
+    pub uv_turns: [u8; 3],
     /// Tile drawn on the ONE horizontal face the block's placed entity facing
     /// points to (the furnace/chest front); the other sides keep `tiles[2]`.
     /// Row-listed only with the `directional_view` flag (load-enforced) —

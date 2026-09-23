@@ -18,7 +18,7 @@
     {
       "type": "crafting",
       "recipe": "exploration:mushroom_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "exploration:mushroom_planks",
@@ -33,7 +33,7 @@
     {
       "type": "crafting",
       "recipe": "exploration:mushroom_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "exploration:mushroom_planks",
@@ -154,7 +154,7 @@
     {
       "type": "crafting",
       "recipe": "exploration:dripstone_stairs",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "exploration:dripstone_block",
@@ -169,7 +169,7 @@
     {
       "type": "crafting",
       "recipe": "exploration:dripstone_slab",
-      "station": "petramond:crafting_table",
+      "station": "petramond:chiseling_station",
       "ingredients": [
         {
           "item": "exploration:dripstone_block",

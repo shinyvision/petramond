@@ -99,6 +99,7 @@
     {"name": "destroy_stage_8", "file": "destroy_stage_8.png"},
     {"name": "destroy_stage_9", "file": "destroy_stage_9.png"},
     {"name": "cobblestone", "file": "cobblestone.png"},
+    {"name": "stone_bricks", "file": "stone_bricks.png"},
     {"name": "oak_planks", "file": "oak_planks.png"},
     {"name": "spruce_planks", "file": "spruce_planks.png"},
     {"name": "birch_planks", "file": "birch_planks.png"},

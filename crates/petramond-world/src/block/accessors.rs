@@ -651,6 +651,13 @@ impl Block {
         self.def().tiles
     }
 
+    /// The row's per-slot UV quarter turns (`[top, bottom, side]`; all zero on
+    /// every row that declares no `uv_rotation`).
+    #[inline]
+    pub fn uv_turns(self) -> [u8; 3] {
+        self.def().uv_turns
+    }
+
     /// The still surface tile of a FLUID row (`tiles[0]`, the top-face tile).
     #[inline]
     pub fn fluid_still_tile(self) -> Tile {

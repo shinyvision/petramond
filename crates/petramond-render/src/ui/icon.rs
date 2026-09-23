@@ -362,11 +362,14 @@ mod tests {
         // mappings (e.g. when calibrating the hand pass — the icon shows
         // std(RotY180 · rot), so preview a hand rotation Q by passing
         // rot = RotY180 · Q), swap the quats below.
-        let candidates: Vec<(String, BlockModelKind, Quat)> =
-            [BlockModelKind::FurnitureWorkbench, BlockModelKind::Bed]
-                .into_iter()
-                .map(|kind| (format!("{kind:?}"), kind, gui_rotation(kind)))
-                .collect();
+        let candidates: Vec<(String, BlockModelKind, Quat)> = [
+            BlockModelKind::FurnitureWorkbench,
+            BlockModelKind::Bed,
+            BlockModelKind::ChiselingStation,
+        ]
+        .into_iter()
+        .map(|kind| (format!("{kind:?}"), kind, gui_rotation(kind)))
+        .collect();
 
         const CELL: usize = 460;
         let cols = 3usize;

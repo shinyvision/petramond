@@ -456,7 +456,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
-        half_width: 0.4, height: 1.2, half_length: 0.4,
+        half_width: 0.4, height: 1.2, half_length: 0.4, entombed: false,
         conditions: vec![ConditionData { condition: ConditionId(0), stage: 1, remaining: 120, elapsed: 3 }],
     }]));
     s.pin("HostRet::Player", &HostRet::Player(Box::new(PlayerSnapshot {
@@ -466,7 +466,7 @@ fn samples() -> Samples {
         off_held: None, use_held: false, holds_use: false,
         pose_anchor: Some([1.5, 2.0, -3.5]),
         swing: crate::HandSwing { mining: true, main: Some(crate::SwingKind::Attack), off: None },
-        half_width: 0.3, height: 1.8, eye_height: 1.62, conditions: Vec::new(),
+        half_width: 0.3, height: 1.8, eye_height: 1.62, entombed: false, conditions: Vec::new(),
     })));
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
     s.pin("HostRet::MobTag", &HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
@@ -530,7 +530,7 @@ fn samples() -> Samples {
             off_held: Some(ItemId(5)), use_held: true, holds_use: false,
             pose_anchor: None,
             swing: crate::HandSwing::default(),
-            half_width: 0.3, height: 1.8, eye_height: 1.62, conditions: Vec::new(),
+            half_width: 0.3, height: 1.8, eye_height: 1.62, entombed: false, conditions: Vec::new(),
         },
     }]));
     s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
@@ -547,7 +547,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Mob", &HostRet::Mob(Some(MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
-        half_width: 0.4, height: 1.2, half_length: 0.4,
+        half_width: 0.4, height: 1.2, half_length: 0.4, entombed: false,
         conditions: vec![ConditionData { condition: ConditionId(0), stage: 1, remaining: 120, elapsed: 3 }],
     })));
     s.pin("HostRet::ItemEntity", &HostRet::ItemEntity(Some(Box::new(ItemEntityData {
@@ -1247,8 +1247,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203030201"),
-    ("HostRet::Mobs", "07010102000000000000f03f0000000000000040000000000000084000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e0100017803"),
-    ("HostRet::Player", "080101000000000000f03f000000000000004000000000000008400000000000000000000000000000003f0000803e2801000101020000000301000000000000f83f00000000000000400000000000000cc0010100009a99993e6666e63f295ccf3f00"),
+    ("HostRet::Mobs", "07010102000000000000f03f0000000000000040000000000000084000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e000100017803"),
+    ("HostRet::Player", "080101000000000000f03f000000000000004000000000000008400000000000000000000000000000003f0000803e2801000101020000000301000000000000f83f00000000000000400000000000000cc0010100009a99993e6666e63f295ccf3f0000"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
@@ -1269,7 +1269,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobAnimState", "1a010000c03f0000403f0100000040"),
     ("HostRet::MaybeByte", "1b0104"),
     ("HostRet::MaybeI32", "1c010d"),
-    ("HostRet::Players", "1d01010101000000000000f03f000000000000004000000000000008400000000000000000000000000000003f0000803e28010000000105010000000000009a99993e6666e63f295ccf3f00"),
+    ("HostRet::Players", "1d01010101000000000000f03f000000000000004000000000000008400000000000000000000000000000003f0000803e28010000000105010000000000009a99993e6666e63f295ccf3f0000"),
     ("HostRet::EnvParams", "1e0200010000803f000000400000404000008040"),
     ("HostRet::BlockList", "1f020109"),
     ("HostRet::ItemList", "20020109"),
@@ -1279,7 +1279,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTags", "240101036d3a6b0001"),
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
-    ("HostRet::Mob", "27010102000000000000f03f0000000000000040000000000000084000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e0100017803"),
+    ("HostRet::Mob", "27010102000000000000f03f0000000000000040000000000000084000008040050000003f00000000000000000000803f00000000000000400100cdcccc3e9a99993fcdcccc3e000100017803"),
     ("HostRet::ItemEntity", "280109036d3a690101036d3a6b0107010000000000000000f03f000000000000004000000000000008400000000000000000000080c001"),
     ("HostRet::BytesMany", "29020102010200"),
     ("HostRet::ItemDataRows", "2a0103027b7d"),
