@@ -70,14 +70,11 @@ pub struct Clock {
     /// The in-flight play was started by an Attack edge — the only plays
     /// whose arc the spent rule protects from attack mashing.
     attacking: bool,
-    /// The phase the in-flight attack opens its recovery to the next
-    /// attack ([`Family::cancel_at`] of its step).
-    cancel_at: f32,
     /// The in-flight play's combo step (see [`Play::combo`]).
     combo: usize,
-    /// An attack pressed while the arc still barred it, held for the arc's
-    /// recovery: ONE deep, so a hack-and-slash mash never has to land on
-    /// the cancel boundary. Dies with the claim like everything else here.
+    /// An attack pressed while the arc still barred it, held for the step
+    /// the arc finishes: ONE deep, so a hack-and-slash mash never has to
+    /// land on the beat. Dies with the claim like everything else here.
     queued: bool,
     /// How many quick consecutive attacks deep the chain is. Only Attack
     /// edges advance or reset it; the mining loop in between neither
@@ -131,11 +128,10 @@ impl Clock {
             Some(SwingKind::Place | SwingKind::Throw | SwingKind::Interact) => None,
             edge => edge,
         };
-        // An attack's arc is protected THROUGH its impact and hold: a
-        // mid-arc attack click never restarts or chains NOW, so a mash
-        // never clips the impact out of its own animation — it is QUEUED
-        // (one deep) for the recovery instead. The RECOVERY past the hold
-        // is cancellable — the next chained attack starts there.
+        // An attack's arc is protected WHOLE — through its impact, its hold
+        // and its recovery home: a mid-arc attack click never restarts or
+        // chains NOW, so a mash never clips a swing out of its own
+        // animation — it is QUEUED (one deep) for the arc's end instead.
         // [`Clock::bars_attack`] is this same predicate.
         let edge = match edge {
             Some(SwingKind::Attack) if self.bars_attack() => {
@@ -144,8 +140,8 @@ impl Clock {
             }
             edge => edge,
         };
-        // …and a QUEUED press fires the moment the recovery opens (or the
-        // arc rests), exactly as a perfectly timed click would have: the
+        // …and a QUEUED press fires the step the arc rests, exactly as a
+        // perfectly timed click would have: the
         // chain window is measured from the last edge, so it chains.
         let edge = match edge {
             None if self.queued && !self.bars_attack() => {
@@ -182,7 +178,6 @@ impl Clock {
             } else {
                 family.pace.mine
             };
-            self.cancel_at = family.cancel_at(self.combo);
         } else if !self.playing && mining {
             // The held mining level starts the loop on a fresh arc — the
             // level RISE only gets here; while mining continues the arc
@@ -231,18 +226,18 @@ impl Clock {
         })
     }
 
-    /// Whether the in-flight play bars the NEXT attack: an attack's arc is
-    /// protected through its impact and hold, and only its recovery may be
-    /// cancelled by the follow-up. ONE predicate, two enforcers — the clock
-    /// queues mid-arc attack edges behind it (both mirrors), and the server
-    /// half publishes it as an Attack denial for a paced tool the engine
-    /// still hits for (a tool landing its own hits keeps the press flowing
-    /// so the queue can hear it). With the engine's attack cooldown negated
-    /// while the pack paces a tool, this predicate IS the attack pace:
-    /// damage can land exactly as often as the animation reaches its
-    /// recovery.
+    /// Whether the in-flight play bars the NEXT attack: an attack FOLLOWS
+    /// THROUGH before the hand may attack again, so the whole arc — impact,
+    /// hold and the recovery home — is protected. ONE predicate, two
+    /// enforcers — the clock queues mid-arc attack edges behind it (both
+    /// mirrors), and the server half publishes it as an Attack denial for a
+    /// paced tool the engine still hits for (a tool landing its own hits
+    /// keeps the press flowing so the queue can hear it). With the engine's
+    /// attack cooldown negated while the pack paces a tool, this predicate
+    /// IS the attack pace: damage lands exactly as often as the animation
+    /// finishes.
     pub fn bars_attack(&self) -> bool {
-        self.attacking && self.phase < self.cancel_at
+        self.attacking
     }
 
     /// Whether the play in flight was started by an Attack edge — else it
@@ -332,7 +327,7 @@ mod tests {
     }
 
     /// A synthetic family: two attack steps, one work loop.
-    fn family(attack: &[f32], mine: f32, cancel_at: f32, impact: &[f32]) -> Family {
+    fn family(attack: &[f32], mine: f32, impact: &[f32]) -> Family {
         let motion = |name: &str| Motion {
             first_person: format!("t:fp_{name}"),
             body: format!("t:body_{name}"),
@@ -344,7 +339,6 @@ mod tests {
             pace: Pace {
                 attack: attack.to_vec(),
                 mine,
-                cancel_at,
             },
             profile: Profile {
                 reach: 3.0,
@@ -360,10 +354,9 @@ mod tests {
         }
     }
 
-    /// The plain family: 0.4 s attacks, 0.3 s work, the recovery at 0.72,
-    /// no impacts.
+    /// The plain family: 0.4 s attacks, 0.3 s work, no impacts.
     fn plain() -> Family {
-        family(&[0.4], 0.3, 0.72, &[])
+        family(&[0.4], 0.3, &[])
     }
 
     /// A play's clips follow the clock: an attack runs its combo step
@@ -440,7 +433,7 @@ mod tests {
             last = p;
         }
 
-        let mut family = family(&[0.4], 0.3, 0.72, &[0.5, 0.25]);
+        let mut family = family(&[0.4], 0.3, &[0.5, 0.25]);
         family.fp_impacts = vec![Some(0.6), None];
         let fp = |family: &Family, phase: f32, combo: usize, attacking: bool| match plays(
             family,
@@ -507,7 +500,7 @@ mod tests {
     /// work an attack's.
     #[test]
     fn authored_windows_pace_attacks_per_step_and_mining_by_the_work_window() {
-        let family = family(&[0.5, 0.25], 0.42, 0.72, &[]);
+        let family = family(&[0.5, 0.25], 0.42, &[]);
         let attack = |hand: &mut Clock| {
             hand.step(Some((AXE, &family)), Some(SwingKind::Attack), false, dt())
                 .expect("an attack always plays")
@@ -570,11 +563,12 @@ mod tests {
 
         // The first attack ever is the chain's opening swing.
         assert_eq!(attack(&mut hand).combo, 0);
-        // Re-clicked as the recovery opens (~0.3 s): it chains, and keeps
-        // counting — the pose side wraps it over the steps shipped.
-        idle(&mut hand, 18);
+        // Re-clicked once the arc has followed through (0.4 s): it chains,
+        // and keeps counting — the pose side wraps it over the steps
+        // shipped.
+        idle(&mut hand, 25);
         assert_eq!(attack(&mut hand).combo, 1);
-        idle(&mut hand, 18);
+        idle(&mut hand, 25);
         assert_eq!(attack(&mut hand).combo, 2);
 
         // A pause past the window restarts the chain.
@@ -597,13 +591,12 @@ mod tests {
         );
     }
 
-    /// An attack's arc is protected THROUGH its impact and hold: a mid-arc
-    /// attack click neither restarts nor chains right away — it is QUEUED,
-    /// one deep, and fires the moment the recovery opens, so a mash chains
-    /// without having to land on the cancel boundary. A click in the
-    /// RECOVERY chains at once. A claim change drops the queue.
+    /// An attack's arc is protected WHOLE: a mid-arc attack click neither
+    /// restarts nor chains right away — it is QUEUED, one deep, and fires
+    /// the step the arc has followed through, so a mash chains without
+    /// having to land on the beat. A claim change drops the queue.
     #[test]
-    fn a_mid_arc_attack_queues_until_the_recovery_opens() {
+    fn a_mid_arc_attack_queues_until_the_arc_follows_through() {
         let family = plain();
         let mut hand = Clock::default();
         let attack = |hand: &mut Clock| {
@@ -626,23 +619,21 @@ mod tests {
             "a second mid-arc press is not a second queue entry"
         );
 
-        // …and the instant the hold has fully played, the queued press
+        // …and the instant the arc has fully played, the queued press
         // fires as the chained step — no further click needed.
+        let mut steps = 0;
         while hand.bars_attack() {
-            idle(&mut hand).unwrap();
+            idle(&mut hand);
+            steps += 1;
+            assert!(steps < 1000, "the arc ends");
         }
-        assert!(hand.phase >= 0.72, "the recovery opens at the row's cancel");
         let chained = idle(&mut hand).expect("the queued attack starts");
         assert_eq!(chained.combo, 1, "the queued press chains");
         assert!(chained.phase < 0.1, "a fresh arc");
         assert!(!hand.queued, "the queue is spent");
         assert!(hand.bars_attack(), "the chained arc bars in turn");
 
-        // Nothing queued: the recovery plays out to rest on its own.
-        while hand.bars_attack() {
-            idle(&mut hand).unwrap();
-        }
-        assert!(hand.playing, "still mid-arc — only the tail remains");
+        // Nothing queued: the arc plays out to rest on its own.
         let mut at_rest = None;
         for _ in 0..200 {
             at_rest = idle(&mut hand);
@@ -650,7 +641,8 @@ mod tests {
                 break;
             }
         }
-        assert!(at_rest.is_none(), "the tail rests without a queued press");
+        assert!(at_rest.is_none(), "the arc rests without a queued press");
+        assert!(!hand.bars_attack(), "a rested hand bars nothing");
 
         // A queued press dies with the claim: switching off the weapon
         // mid-arc leaves nothing to fire.
@@ -679,34 +671,25 @@ mod tests {
         );
     }
 
-    /// The hold begins at the step's IMPACT whatever the row's cancel says:
-    /// a `cancel_at` authored before the impact would let a mash cut the
-    /// hit out of its own animation. Past the impact the row's cancel is
-    /// the boundary.
+    /// An arc bars the next attack until it has FOLLOWED THROUGH: the bar
+    /// outlives the step's impact and lifts only where the play rests, so a
+    /// mash can never cut a swing — hit or recovery — out of its own
+    /// animation.
     #[test]
-    fn the_recovery_never_opens_before_the_impact() {
-        let family = family(&[0.4], 0.3, 0.2, &[0.5, 0.1]);
+    fn the_arc_bars_the_next_attack_until_it_has_followed_through() {
+        let family = family(&[0.4], 0.3, &[0.5, 0.1]);
         let mut hand = Clock::default();
         hand.step(Some((AXE, &family)), Some(SwingKind::Attack), false, dt());
         let mut landed = false;
+        let mut steps = 0;
         while hand.bars_attack() {
             hand.step(Some((AXE, &family)), None, false, dt());
             landed |= hand.impact();
+            steps += 1;
+            assert!(steps < 1000, "the arc ends");
         }
         assert!(landed, "the arc stayed barred through its impact");
-        assert!(hand.phase >= 0.5 && hand.phase < 0.6, "{}", hand.phase);
-
-        // Step 1's impact is before the row's cancel: the row stands.
-        let mut hand = Clock::default();
-        hand.step(Some((AXE, &family)), Some(SwingKind::Attack), false, dt());
-        while hand.playing {
-            hand.step(Some((AXE, &family)), None, false, dt());
-        }
-        hand.step(Some((AXE, &family)), Some(SwingKind::Attack), false, dt());
-        while hand.bars_attack() {
-            hand.step(Some((AXE, &family)), None, false, dt());
-        }
-        assert!(hand.phase >= 0.2 && hand.phase < 0.3, "{}", hand.phase);
+        assert!(!hand.playing, "…and to the end of the play");
     }
 
     /// The clock reports an attack's impact on exactly ONE step — the one
@@ -716,7 +699,7 @@ mod tests {
     /// that landed would strike whatever stood near a wall being dug.
     #[test]
     fn an_attack_lands_its_impact_once_and_work_never_lands() {
-        let family = family(&[0.4], 0.3, 0.72, &[0.5, 0.25]);
+        let family = family(&[0.4], 0.3, &[0.5, 0.25]);
         let mut hand = Clock::default();
         hand.step(Some((AXE, &family)), Some(SwingKind::Attack), false, dt());
         let mut landed = usize::from(hand.impact());

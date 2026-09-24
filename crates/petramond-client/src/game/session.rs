@@ -200,6 +200,8 @@ impl Game {
             local_hand_presents_itself: false,
             local_hand_places: false,
             local_hand_swing: false,
+            local_attack_recovery: 0.0,
+            local_attack_queued: false,
             local_hand_threw: false,
             swing_events: Default::default(),
             local_broke_block: None,

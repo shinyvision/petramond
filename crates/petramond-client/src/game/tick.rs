@@ -128,6 +128,7 @@ impl Game {
         self.world_tool_input(&mut tool_input);
         let input = &tool_input;
         self.tick_local_mining(dt, input);
+        self.local_attack_recovery = (self.local_attack_recovery - dt).max(0.0);
 
         let update = self.build_player_update(input);
         self.build_outgoing_messages(input, update);
@@ -487,6 +488,51 @@ impl Game {
         }
     }
 
+    /// Whether the primary button swings the hand THIS frame: a fresh press,
+    /// or one held over from the swing still following through.
+    ///
+    /// A swing plays WHOLE — `local_attack_recovery` mirrors the server's
+    /// attack window, scaled by the same claimed attribute (a pack pacing a
+    /// tool off its own animation claims it to zero and paces the hand
+    /// itself, so its mid-arc press flows straight through to its clock).
+    /// A press landing inside that window is neither spent nor predicted on
+    /// the spot — it is HELD, one deep, and fires by itself the frame the
+    /// hand comes home, exactly as a perfectly timed click would. The server
+    /// holds the press it receives the same way, so a queued swing cannot
+    /// die in the gap between the two clocks.
+    ///
+    /// A mining press swings nothing (that arc is the dig loop's), so it
+    /// neither arms the recovery nor is held by one — packs listen for that
+    /// echo on every press.
+    fn attack_press(&mut self, input: &GameInput) -> bool {
+        if self
+            .player
+            .denied_actions()
+            .denies(mod_api::BodyAction::Attack)
+        {
+            // A denied action did not happen: nothing of it is held over.
+            self.local_attack_queued = false;
+            return false;
+        }
+        if self.self_view.mining.is_some() {
+            return input.attack_clicked;
+        }
+        if self.local_attack_recovery > 0.0 {
+            self.local_attack_queued |= input.attack_clicked;
+            return false;
+        }
+        if !input.attack_clicked && !self.local_attack_queued {
+            return false;
+        }
+        self.local_attack_queued = false;
+        self.local_attack_recovery = petramond::events::tick::TICK_DT
+            * self.player.scaled_ticks(
+                mod_api::PlayerAttribute::AttackCooldown,
+                petramond::server::game::ATTACK_COOLDOWN_TICKS,
+            ) as f32;
+        true
+    }
+
     /// Assemble this frame's message batch into `frame_messages`, in
     /// consumption order: the `PlayerUpdate` first (so the edge-drop rule and
     /// slot-dependent actions see this frame's state), then this frame's click
@@ -498,16 +544,15 @@ impl Game {
             .place_clicked
             .then(|| self.targeted_mob_id())
             .flatten();
-        let attack_mob = input
-            .attack_clicked
-            .then(|| self.targeted_mob_id())
-            .flatten();
+        // The swing this frame: a fresh press, or the one held over from the
+        // hand's follow-through. Resolved BEFORE the targets so a queued
+        // press takes the crosshair it fires at, not the one it was pressed
+        // at — the authority validates the target at the same instant.
+        let attacks = input.gameplay_enabled && self.attack_press(input);
+        let attack_mob = attacks.then(|| self.targeted_mob_id()).flatten();
         // At most one of mob/player is targeted per frame (refresh_target's
         // nearest-wins pick), so the click carries at most one.
-        let attack_player = input
-            .attack_clicked
-            .then_some(self.targeted_player)
-            .flatten();
+        let attack_player = attacks.then_some(self.targeted_player).flatten();
         self.frame_messages
             .push(ClientToServer::PlayerUpdate(update));
         if input.gameplay_enabled {
@@ -545,8 +590,9 @@ impl Game {
                     }));
             }
             // Same for the swing — it would be the one visible thing a denied
-            // action is allowed to leave behind.
-            if input.attack_clicked && !denied.denies(mod_api::BodyAction::Attack) {
+            // action is allowed to leave behind ([`Self::attack_press`] reads
+            // the same denial).
+            if attacks {
                 self.local_hand_swing = true;
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::AttackClick {

@@ -34,10 +34,6 @@ pub struct Pace {
     /// retriggers its dig thunk every 0.300 s while mining, so a work
     /// window near that lands the impact frame on the sound.
     pub mine: f32,
-    /// The phase of an attack's arc past which the NEXT attack may cut the
-    /// recovery. The hold from the impact to here always plays whole:
-    /// [`Family::cancel_at`] lifts it to the step's impact phase.
-    pub cancel_at: f32,
 }
 
 /// One family.
@@ -72,14 +68,6 @@ impl Family {
     /// family lands nothing of its own.
     pub fn impact_phase(&self, combo: usize) -> Option<f32> {
         (!self.impacts.is_empty()).then(|| self.impacts[combo % self.impacts.len()])
-    }
-
-    /// The phase step `combo`'s recovery opens to the next attack: the
-    /// authored `cancel_at`, never before the step's impact.
-    pub fn cancel_at(&self, combo: usize) -> f32 {
-        self.pace
-            .cancel_at
-            .max(self.impact_phase(combo).unwrap_or(0.0))
     }
 }
 
@@ -178,19 +166,14 @@ fn parse_family(kind: &str, row: &json::Value) -> Option<Family> {
         return None;
     }
     let mine = num(pace, "window_mine")?;
-    let cancel_at = num(pace, "cancel_at")?;
-    if mine <= 0.0 || !(0.0..=1.0).contains(&cancel_at) {
+    if mine <= 0.0 {
         return None;
     }
     Some(Family {
         kind: kind.to_owned(),
         attacks,
         work: motion(row.get("work")?)?,
-        pace: Pace {
-            attack,
-            mine,
-            cancel_at,
-        },
+        pace: Pace { attack, mine },
         profile: Profile::parse(row.get("profile")?)?,
         impacts: Vec::new(),
         fp_impacts: Vec::new(),
@@ -215,7 +198,7 @@ mod tests {
     const ROW: &str = r#"{
         "attacks": [{"fp": "m:fp_a", "body": "m:body_a"}, {"fp": "m:fp_b", "body": "m:body_b"}],
         "work": {"fp": "m:fp_work", "body": "m:body_work"},
-        "pace": {"window_attack": [0.5, 0.25], "window_mine": 0.4, "cancel_at": 0.3},
+        "pace": {"window_attack": [0.5, 0.25], "window_mine": 0.4},
         "profile": {"reach": 3, "sweet": 2, "arc_yaw": 30, "arc_pitch": 20, "peak": 1.5, "floor": 0.5, "cleave": true}
     }"#;
 
@@ -279,16 +262,6 @@ mod tests {
         assert_eq!(family.impacts, [0.5, 0.2], "phases, not seconds");
         assert_eq!(family.fp_impacts, [Some(0.6), None]);
         assert_eq!(family.impact_phase(2), Some(0.5), "wraps over the combo");
-        assert_eq!(
-            family.cancel_at(0),
-            0.5,
-            "the hold begins at the impact, whatever the row says"
-        );
-        assert_eq!(
-            family.cancel_at(1),
-            0.3,
-            "…and the row's cancel stands past it"
-        );
 
         // One step without a body marker: the whole family lands nothing.
         let unlanded = families.resolve_impacts(|rig, clip| match (rig, clip) {
@@ -297,6 +270,5 @@ mod tests {
         });
         assert_eq!(unlanded, ["hammer"]);
         assert!(families.get(hammer).impacts.is_empty());
-        assert_eq!(families.get(hammer).cancel_at(0), 0.3);
     }
 }

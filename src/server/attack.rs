@@ -52,33 +52,45 @@ const CONSUMERS: &[Consumer] = &[
 impl ServerGame {
     /// Attack, on the tick: resolve a buffered primary-button press (consumed once, so a
     /// press never lands more than one hit). The damage lands the tick *after* the click —
-    /// `pending_attack` is latched per frame and consumed here. Rate-limited by
-    /// [`ATTACK_COOLDOWN_TICKS`]: the cooldown counts down one tick at a time and an attack
-    /// is refused (no swing, no damage) while it's running, so mashing the button can't
-    /// land a hit every tick — only one swing per cooldown connects, so an owl can't be
-    /// spam-clicked to death. A press that a consumer claims (a mob hit, a punch at the
-    /// air, a pack taking the swing) arms the cooldown and reports `swung_hand`; a click
-    /// on a block (mining) does neither.
+    /// `pending_attack` is latched per frame and consumed here. Paced by
+    /// [`ATTACK_COOLDOWN_TICKS`]: the cooldown counts down one tick at a time and the swing
+    /// plays whole before the next one begins, so mashing the button can't land a hit every
+    /// tick — only one swing per cooldown connects, so an owl can't be spam-clicked to
+    /// death. A press arriving inside that window is HELD (one deep) and resolves the tick
+    /// the cooldown clears, so a mash chains instead of being eaten. A press that a consumer
+    /// claims (a mob hit, a punch at the air, a pack taking the swing) arms the cooldown and
+    /// reports `swung_hand`; a click on a block (mining) does neither.
     pub fn tick_attack(&mut self, s: usize, events: &mut TickEvents) {
         let sess = &mut self.sessions[s];
         sess.attack_cooldown = sess.attack_cooldown.saturating_sub(1);
-        // Consume the press AND its targets whether or not it lands (no
-        // queuing past one tick); it only resolves once the cooldown elapsed.
-        let mob_target = std::mem::take(&mut sess.pending_attack_mob);
-        let player_target = std::mem::take(&mut sess.pending_attack_player);
-        let pressed = std::mem::take(&mut sess.pending_attack);
         // A mod-denied swing is CONSUMED and dropped, never queued: the press
-        // is spent the same as one the cooldown ate, so releasing the claim
-        // cannot fire a stored punch. It arms no cooldown either — a denied
-        // action did not happen, so nothing about it may be felt afterwards.
+        // is spent, so releasing the claim cannot fire a stored punch. It arms
+        // no cooldown either — a denied action did not happen, so nothing
+        // about it may be felt afterwards.
         if sess
             .player
             .denied_actions()
             .denies(mod_api::BodyAction::Attack)
         {
+            sess.pending_attack = false;
+            sess.pending_attack_mob = None;
+            sess.pending_attack_player = None;
             return;
         }
-        if !pressed || sess.attack_cooldown != 0 {
+        // A press landing while the hand is still following through is HELD,
+        // not spent: the swing plays whole and the held press resolves the
+        // tick the cooldown clears, exactly as a perfectly timed click would.
+        // ONE deep — a further press only replaces the targets it will be
+        // validated against. The client holds its own press the same way, so
+        // the two clocks queue the same swing rather than racing over whose
+        // window ended first.
+        if sess.attack_cooldown != 0 {
+            return;
+        }
+        let mob_target = std::mem::take(&mut sess.pending_attack_mob);
+        let player_target = std::mem::take(&mut sess.pending_attack_player);
+        let pressed = std::mem::take(&mut sess.pending_attack);
+        if !pressed {
             return;
         }
         // The claimed targets resolve through the authoritative validators

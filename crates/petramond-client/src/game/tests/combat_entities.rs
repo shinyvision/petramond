@@ -630,6 +630,49 @@ fn click_attack_at(game: &mut super::common::TestGame, index: usize) {
     game.server.sessions[0].pending_attack_mob = Some(id);
 }
 
+/// A swing FOLLOWS THROUGH before the hand may attack again, and the CLIENT
+/// predicts that gate: mashing the button animates one swing per arc, not one
+/// per frame (the prediction used to restart the arc every frame while the
+/// server's cooldown quietly ate the presses). The press that lands mid-swing
+/// is not thrown away — it is HELD, one deep, and fires by itself the frame
+/// the hand comes home.
+#[test]
+fn a_mashed_attack_queues_one_swing_behind_the_follow_through() {
+    let mut game = game();
+    let pressed = crate::game::GameInput {
+        gameplay_enabled: true,
+        attack_clicked: true,
+        ..Default::default()
+    };
+    let idle = crate::game::GameInput {
+        attack_clicked: false,
+        ..pressed
+    };
+    let dt = TICK_DT / 4.0;
+    let frames = |game: &mut common::TestGame, n: usize, input: &crate::game::GameInput| {
+        (0..n).filter(|_| game.tick(dt, input).swung_hand).count()
+    };
+    let recovery = (ATTACK_COOLDOWN_TICKS * 4) as usize;
+
+    assert_eq!(
+        frames(&mut game, recovery, &pressed),
+        1,
+        "the whole follow-through is one swing, however hard it is mashed"
+    );
+    // The button is up from here: the swing that follows is the QUEUED press,
+    // and it is the only one — a mash is one deep, not a stored volley.
+    assert_eq!(
+        frames(&mut game, recovery + 2, &idle),
+        1,
+        "the held press fires by itself, once"
+    );
+    assert_eq!(
+        frames(&mut game, recovery, &idle),
+        0,
+        "and an empty queue swings nothing"
+    );
+}
+
 #[test]
 fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
     let mut game = game();
@@ -646,7 +689,7 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
     assert!(ev.player_at(0).swung_hand, "the click lands on the tick");
 
     // For the rest of the cooldown, a fresh click each tick lands nothing — even
-    // spamming can't beat the 6-tick gate.
+    // spamming can't beat the gate.
     for _ in 0..ATTACK_COOLDOWN_TICKS - 1 {
         ev.player(0).swung_hand = false;
         click_attack_at(&mut game, 0);

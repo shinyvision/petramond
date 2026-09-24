@@ -298,6 +298,16 @@ pub struct Game {
     /// the interact one. Meaningless while `local_hand_jab` is false.
     local_hand_places: bool,
     local_hand_swing: bool,
+    /// Seconds of the local hand's swing still to FOLLOW THROUGH: the
+    /// client's mirror of the server's attack cooldown, armed by the same
+    /// attribute-scaled window. Without it the press predicted a swing the
+    /// server's cooldown was about to refuse, so a mash restarted the
+    /// animation mid-arc while the hits kept the server's pace.
+    local_attack_recovery: f32,
+    /// A press held over the follow-through, ONE deep: it fires by itself
+    /// the frame the recovery ends (see `attack_press`), so a mash chains
+    /// without having to land on the beat.
+    local_attack_queued: bool,
     local_hand_threw: bool,
     /// Hand-swing one-shots latched at event assembly for the client-mod
     /// frame hook (the ABI's swing facts, `PlayerSnapshot::swing`) and taken
