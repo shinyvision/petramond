@@ -984,3 +984,72 @@ fn the_screen_shake_checkbox_toggles_the_setting_and_reaches_the_renderer() {
         );
     }
 }
+
+/// A tool-adjust chord that finds nothing to adjust must step the hotbar the
+/// way that same wheel notch always does.
+///
+/// Sprint defaults to Left Ctrl and tool adjust to Ctrl + wheel, so EVERY
+/// notch taken while sprinting resolves to the more specific tool chord. The
+/// two pairs are bound independently, so when a player binds tool adjust the
+/// opposite way round from the hotbar the old fallback (reusing the tool
+/// step's own sign) ran their hotbar backwards for as long as they held
+/// sprint. The bindings here are set explicitly rather than relying on the
+/// shipped defaults: the rule under test is "the hotbar's binding decides",
+/// not any particular default.
+#[test]
+fn a_tool_adjust_with_nothing_to_adjust_steps_the_hotbar_the_way_the_wheel_does() {
+    use petramond_world::controls::{
+        BindMods, BindableAction, Binding, BoundInput, Modifiers, ScrollDir,
+    };
+    let chord = |dir| Binding {
+        mods: BindMods {
+            ctrl: true,
+            ..Default::default()
+        },
+        input: BoundInput::Scroll(dir),
+    };
+    for (adjust_next, adjust_prev) in [
+        // Tool adjust agreeing with the wheel, and opposed to it.
+        (ScrollDir::Down, ScrollDir::Up),
+        (ScrollDir::Up, ScrollDir::Down),
+    ] {
+        let mut app = super::app();
+        assert!(app.screen.gameplay_enabled());
+        app.settings
+            .bindings
+            .set(BindableAction::HotbarNext, Binding::scroll(ScrollDir::Down));
+        app.settings
+            .bindings
+            .set(BindableAction::HotbarPrev, Binding::scroll(ScrollDir::Up));
+        app.settings
+            .bindings
+            .set(BindableAction::AdjustToolNext, chord(adjust_next));
+        app.settings
+            .bindings
+            .set(BindableAction::AdjustToolPrev, chord(adjust_prev));
+        app.rebuild_action_table();
+
+        for notch in [-1.0, 1.0] {
+            app.set_modifiers(Modifiers::default());
+            app.add_scroll_delta(notch);
+            let plain = app.input.take_hotbar_steps();
+            assert_ne!(plain, 0, "the bare wheel steps the hotbar");
+
+            // Sprinting holds Ctrl, so this notch matches the tool chord.
+            app.handle_raw_key(petramond_world::keycode::KeyCode::ControlLeft, true);
+            app.set_modifiers(Modifiers {
+                ctrl: true,
+                ..Default::default()
+            });
+            app.add_scroll_delta(notch);
+            let sprinting = app.input.take_hotbar_steps();
+            app.handle_raw_key(petramond_world::keycode::KeyCode::ControlLeft, false);
+
+            assert_eq!(
+                sprinting, plain,
+                "notch {notch} moved the hotbar {sprinting} while sprinting \
+                 but {plain} otherwise (tool adjust next = {adjust_next:?})"
+            );
+        }
+    }
+}

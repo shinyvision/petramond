@@ -23,9 +23,15 @@ const GAP: (f64, f64) = (180.0, 420.0);
 
 /// Per-session music scheduling state.
 pub struct MusicDirector {
-    /// Wall-clock time the next track is due. `None` = not scheduled yet (no
-    /// session, or the session just started and the first gap is unset).
-    next_at: Option<f64>,
+    /// Seconds of quiet still owed before the next track. `None` = no gap
+    /// rolled yet (no session, or a track is playing and the next gap is
+    /// rolled when it ends).
+    ///
+    /// A countdown rather than a wall-clock deadline, because the clock this
+    /// schedule runs on is UNPAUSED session time: a paused game simply does
+    /// not tick it down, which is both the pause rule and the reason a long
+    /// pause cannot bank a track for the instant you resume.
+    remaining: Option<f64>,
     /// The piece that played last, never picked twice running while any other
     /// is available.
     last: Option<MusicTrack>,
@@ -37,46 +43,57 @@ pub struct MusicDirector {
 impl MusicDirector {
     pub fn new() -> Self {
         Self {
-            next_at: None,
+            remaining: None,
             last: None,
             rng: seed(),
         }
     }
 
     /// Drive the music channel for this frame. `in_session` is whether a world
-    /// is loaded at all; `now` is the wall clock and `dt` the frame's seconds.
+    /// is loaded at all, `paused` whether the game is actually frozen behind a
+    /// shell screen, and `dt` the frame's seconds.
     ///
-    /// Call it EVERY frame regardless of the open screen: a pause menu, an
-    /// inventory or a container is still the same session, and music that
-    /// stopped because you opened a chest would be a bug.
-    pub fn update(&mut self, audio: &mut Audio, in_session: bool, now: f64, dt: f32) {
+    /// Call it EVERY frame regardless of the open screen: an inventory, a
+    /// container or a chat box is still a running session, and music that
+    /// stopped because you opened a chest would be a bug. A PAUSED game is the
+    /// one exception, and only for STARTING: a track already playing is left
+    /// to finish, but no new one is scheduled while the world is frozen.
+    pub fn update(&mut self, audio: &mut Audio, in_session: bool, paused: bool, dt: f32) {
         if !in_session {
             // Leaving a world takes its music with it — faded, not cut — and
             // the next session starts its own schedule from silence.
             audio.stop_music();
-            self.next_at = None;
+            self.remaining = None;
             self.last = None;
         } else if audio.music_playing().is_some() {
-            // A playing track owns the channel; the next gap is measured from
-            // the moment it ENDS, so it is scheduled once it does.
-            self.next_at = None;
-        } else {
-            match self.next_at {
-                None => self.next_at = Some(now + self.gap(self.last.is_none())),
-                Some(due) if now >= due => {
-                    if let Some(track) = self.pick() {
-                        if audio.play_music(track) {
-                            self.last = Some(track);
+            // A playing track owns the channel and is allowed to finish,
+            // paused or not; the next gap is rolled once it ends.
+            self.remaining = None;
+        } else if !paused {
+            match self.remaining {
+                None => self.remaining = Some(self.gap(self.last.is_none())),
+                Some(left) => {
+                    // A stalled or very long frame must not burn a whole gap.
+                    let left = left - dt.clamp(0.0, 1.0) as f64;
+                    if left > 0.0 {
+                        self.remaining = Some(left);
+                    } else {
+                        if let Some(track) = self.pick() {
+                            if audio.play_music(track) {
+                                self.last = Some(track);
+                            }
                         }
+                        // Re-rolled whether or not the track started: a
+                        // missing or broken file must not stall the channel
+                        // forever, and a track that DID start clears this the
+                        // next frame.
+                        self.remaining = Some(self.gap(false));
                     }
-                    // Re-rolled whether or not the track started: a missing or
-                    // broken file must not stall the channel forever, and a
-                    // track that DID start replaces this the next frame.
-                    self.next_at = Some(now + self.gap(false));
                 }
-                Some(_) => {}
             }
         }
+        // Runs even while paused: that is what lets a playing track stream on
+        // to its end and keeps the volume slider live.
         audio.update_music(dt);
     }
 
@@ -104,6 +121,12 @@ impl MusicDirector {
             _ => MusicTrack(pick),
         };
         Some(track)
+    }
+
+    /// The quiet still owed before the next track (tests).
+    #[cfg(test)]
+    fn remaining(&self) -> Option<f64> {
+        self.remaining
     }
 
     #[inline]
@@ -143,7 +166,7 @@ mod tests {
 
     fn director(seed: u64) -> MusicDirector {
         MusicDirector {
-            next_at: None,
+            remaining: None,
             last: None,
             rng: seed,
         }
@@ -179,6 +202,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A paused game must not schedule music. The countdown is the whole
+    /// mechanism — a paused frame that ticks it down would eventually start a
+    /// track behind the pause menu, and a paused frame that let it reach zero
+    /// would bank one for the instant you resume.
+    #[test]
+    fn a_paused_game_holds_the_gap_and_starts_nothing() {
+        let mut audio = Audio::new();
+        let mut d = director(0x5EED_1234_ABCD_9876);
+
+        // One unpaused frame rolls the opening gap; the next counts it down.
+        d.update(&mut audio, true, false, 0.0);
+        let rolled = d.remaining().expect("a gap is owed");
+        d.update(&mut audio, true, false, 1.0);
+        let ticked = d.remaining().expect("still owed");
+        assert!(
+            (rolled - ticked - 1.0).abs() < 1e-6,
+            "an unpaused second should spend a second of the gap: {rolled} -> {ticked}"
+        );
+
+        // Paused frames spend none of it, however many and however long.
+        for _ in 0..100 {
+            d.update(&mut audio, true, true, 1.0);
+        }
+        assert_eq!(
+            d.remaining(),
+            Some(ticked),
+            "the pause must not count toward the gap"
+        );
+
+        // And a pause entered before any gap was rolled schedules nothing.
+        let mut fresh = director(0x1111_2222_3333_4445);
+        for _ in 0..100 {
+            fresh.update(&mut audio, true, true, 1.0);
+        }
+        assert_eq!(
+            fresh.remaining(),
+            None,
+            "nothing may be scheduled while paused"
+        );
     }
 
     /// Gaps must land inside their declared range — an inverted or overflowing

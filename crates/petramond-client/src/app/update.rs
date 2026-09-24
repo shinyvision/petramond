@@ -75,11 +75,14 @@ impl App {
             && (self.doc_shell_kind().is_some() || self.screen.shell_open());
         self.audio.set_spatial_paused(world_frozen);
         // The soundtrack is driven HERE, above every screen's early return:
-        // music belongs to the SESSION, not to the world's clock or to
-        // whatever screen is open over it. A pause menu freezes the world's
-        // own sounds (above) and the music plays on.
+        // music belongs to the SESSION, not to whatever screen is open over
+        // it — an inventory or a chest must never stop it. `world_frozen` is
+        // reused as the pause rule because it is already the honest answer to
+        // "is the game actually stopped" (a multiplayer pause menu runs the
+        // sim on, so it is not a pause): a frozen world lets the current
+        // track finish but schedules no new one.
         self.music
-            .update(&mut self.audio, self.game.is_some(), now, dt);
+            .update(&mut self.audio, self.game.is_some(), world_frozen, dt);
         if let Some(kind) = self.doc_shell_kind() {
             self.audio.set_loop(None, now);
             self.pointer.clear_edges();

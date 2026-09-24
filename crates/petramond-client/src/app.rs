@@ -43,7 +43,7 @@ use crate::game::Game;
 use petramond_audio::Audio;
 use petramond_render::camera::Camera;
 use petramond_render::Scene;
-use petramond_world::controls::{Control, Modifiers};
+use petramond_world::controls::{BindableAction, Control, Modifiers};
 
 const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
 
@@ -391,7 +391,7 @@ impl App {
                         .as_mut()
                         .is_some_and(|game| game.adjust_tool(steps));
                 if !taken {
-                    self.input.step_hotbar(steps);
+                    self.input.step_hotbar(self.hotbar_step_for_adjust(steps));
                 }
                 true
             }
@@ -500,6 +500,37 @@ impl App {
     /// Meta) from the platform's modifier-changed event. Independent of the
     /// rebindable controls — but a lifted modifier releases any held binding
     /// CHORD that required it (Ctrl+B sprint stops when Ctrl lifts).
+    /// The hotbar step a tool-adjust that found nothing to adjust should make.
+    ///
+    /// It is decided by the HOTBAR's own bindings, never by the tool step's
+    /// sign: the two pairs are bound independently, and a player who binds
+    /// tool adjust the opposite way round from the wheel (scroll up raises)
+    /// must not have their hotbar run backwards whenever the chord's modifier
+    /// happens to be held — which sprint's default Ctrl means is *while
+    /// sprinting*. So the input is asked what it means to the hotbar. An
+    /// adjust bound to something the hotbar does not share (a key) keeps its
+    /// own step; there is no wheel convention to defer to.
+    fn hotbar_step_for_adjust(&self, steps: i32) -> i32 {
+        let input = self
+            .settings
+            .bindings
+            .binding(if steps >= 0 {
+                BindableAction::AdjustToolNext
+            } else {
+                BindableAction::AdjustToolPrev
+            })
+            .input;
+        for (action, step) in [
+            (BindableAction::HotbarNext, 1),
+            (BindableAction::HotbarPrev, -1),
+        ] {
+            if self.settings.bindings.binding(action).input == input {
+                return step;
+            }
+        }
+        steps
+    }
+
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
         let mut out = Vec::new();
