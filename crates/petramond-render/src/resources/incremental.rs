@@ -156,13 +156,18 @@ pub(super) fn repack(
 ) -> GpuColumnMesh {
     let (ox, oz) = (prev.col_ox, prev.col_oz);
     let mut opaque = LayerPlan::new();
-    let mut far = LayerPlan::new();
     let mut transparent = LayerPlan::new();
     let mut transparent_ts = LayerPlan::new();
     let mut translucent = LayerPlan::new();
     let mut model = LayerPlan::new();
     let mut contact = LayerPlan::new();
     let mut sections = Vec::with_capacity(meshes.len());
+    // The opaque plan is filled in TWO passes — every section's far region,
+    // then every section's leaf tail — so the packed column keeps the
+    // far-region-first layout a whole-column far draw needs. The retained
+    // tail ranges are collected here because the second pass no longer has
+    // the first's `retained`.
+    let mut retained_tails: Vec<Option<(u32, u32)>> = Vec::with_capacity(meshes.len());
     let mut indices = Vec::new();
     let mut blend = Vec::new();
     for &(pos, mesh) in meshes {
@@ -184,13 +189,17 @@ pub(super) fn repack(
                     $plan.terrain(&mesh.$src, retained.map(|s| (s.$start, s.$count)));
             };
         }
-        terrain!(opaque, opaque, opaque_vertex_start, opaque_vertex_count);
-        terrain!(
-            far,
-            far_opaque,
-            far_opaque_vertex_start,
-            far_opaque_vertex_count
+        let far = far_len(mesh) as usize;
+        (section.opaque_vertex_start, section.opaque_vertex_count) = opaque.terrain(
+            &mesh.opaque[..far],
+            retained.map(|s| (s.opaque_vertex_start, s.opaque_vertex_count)),
         );
+        // A retained section keeps the flag its record already carries: its
+        // mesh may have been released, and a released mesh reports no far LOD.
+        if retained.is_none() {
+            section.has_far_lod = mesh.far_opaque_len > 0;
+        }
+        retained_tails.push(retained.map(|s| (s.opaque_tail_start, s.opaque_tail_count)));
         terrain!(
             transparent,
             transparent,
@@ -240,6 +249,15 @@ pub(super) fn repack(
         );
         sections.push((pos, section));
     }
+    // Second opaque pass: the leaf tails, after every far region.
+    let opaque_far_quads = opaque.count / 4;
+    for (i, &(_, mesh)) in meshes.iter().enumerate() {
+        let far = far_len(mesh) as usize;
+        let (start, count) = opaque.terrain(&mesh.opaque[far..], retained_tails[i]);
+        let section = &mut sections[i].1;
+        section.opaque_tail_start = start;
+        section.opaque_tail_count = count;
+    }
     let model_idx_count = indices.len() as u32;
     let model_blend_idx_count = blend.len() as u32;
     for (_, s) in &mut sections {
@@ -251,7 +269,6 @@ pub(super) fn repack(
         queue,
         opaque
             .count
-            .max(far.count)
             .max(transparent.count)
             .max(transparent_ts.count)
             .max(translucent.count)
@@ -266,7 +283,6 @@ pub(super) fn repack(
         })
     });
     let opaque_vbuf = opaque.upload(device, queue, arena, encoder, prev.opaque_vbuf, retired);
-    let far_opaque_vbuf = far.upload(device, queue, arena, encoder, prev.far_opaque_vbuf, retired);
     let transparent_vbuf = transparent.upload(
         device,
         queue,
@@ -305,7 +321,7 @@ pub(super) fn repack(
     GpuColumnMesh {
         opaque_vbuf,
         opaque_quads,
-        far_opaque_vbuf,
+        opaque_far_quads,
         transparent_vbuf,
         transparent_ts_vbuf,
         translucent_vbuf,

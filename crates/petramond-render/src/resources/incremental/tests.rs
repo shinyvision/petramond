@@ -12,7 +12,10 @@ fn mesh(cy: i32, quads: usize, value: u32) -> ChunkMesh {
         })
         .collect();
     mesh.opaque = vertices.clone();
-    mesh.far_opaque = vertices.clone();
+    // A real leaf tail: the opaque stream is packed as two per-column regions
+    // (every section's far LOD, then every section's tail), and a fixture with
+    // an empty tail would never exercise the second one.
+    mesh.far_opaque_len = ((quads.max(1) - quads / 2) * 4) as u32;
     mesh.transparent = vertices.clone();
     mesh.transparent_two_sided = vertices.clone();
     mesh.translucent = vertices;
@@ -126,7 +129,6 @@ fn updates_and_repacking_preserve_released_siblings_in_every_layer() {
         }
         same!(
             opaque_vbuf,
-            far_opaque_vbuf,
             transparent_vbuf,
             transparent_ts_vbuf,
             translucent_vbuf,
@@ -134,12 +136,18 @@ fn updates_and_repacking_preserve_released_siblings_in_every_layer() {
             model_ibuf,
             contact_vbuf
         );
+        assert_eq!(actual.opaque_quads, expected.opaque_quads);
+        assert_eq!(actual.opaque_far_quads, expected.opaque_far_quads);
         assert_eq!(actual.model_idx_count, expected.model_idx_count);
         assert_eq!(actual.model_blend_idx_count, expected.model_blend_idx_count);
         for ((ap, a), (bp, b)) in actual.sections.iter().zip(&expected.sections) {
             assert_eq!(ap, bp);
             assert_eq!(a.model_vertex_start, b.model_vertex_start);
             assert_eq!(a.model_blend_index_start, b.model_blend_index_start);
+            assert_eq!(a.opaque_vertex_start, b.opaque_vertex_start);
+            assert_eq!(a.opaque_vertex_count, b.opaque_vertex_count);
+            assert_eq!(a.opaque_tail_start, b.opaque_tail_start);
+            assert_eq!(a.opaque_tail_count, b.opaque_tail_count);
         }
     }
 }

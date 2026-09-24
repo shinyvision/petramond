@@ -13,6 +13,13 @@ use wasmtime::{Memory, Module, Store, TypedFunc};
 
 use crate::events::SimCtx;
 
+/// Whether the per-dispatch wall-time diagnostic is switched on (see
+/// [`ModInstance::log_slow_dispatch`]).
+#[inline]
+fn slow_dispatch_logging() -> bool {
+    log::log_enabled!(target: "petramond::modding::perf", log::Level::Debug)
+}
+
 use super::host::{self, ModStoreData, Phase, Registration, DISPATCH_DEADLINE_EPOCHS};
 use super::scope;
 
@@ -28,6 +35,12 @@ pub(super) struct ModInstance {
     /// Successful guest dispatches (init + tick systems + events), for tests
     /// and diagnostics.
     dispatches: u64,
+    /// Reused request/reply staging. A dispatch is the engine's most frequent
+    /// mod interaction — every AI node of every mob, every tick, among others
+    /// — and each one used to allocate a fresh `Vec` for the encoded request
+    /// and another (zero-filled) for the reply.
+    request_buf: Vec<u8>,
+    reply_buf: Vec<u8>,
 }
 
 impl ModInstance {
@@ -78,6 +91,8 @@ impl ModInstance {
             fn_alloc,
             fn_free,
             fn_dispatch,
+            request_buf: Vec::new(),
+            reply_buf: Vec::new(),
             disabled: false,
             dispatches: 0,
         })
@@ -158,20 +173,29 @@ impl ModInstance {
         if self.disabled {
             return None;
         }
-        let request = match mod_api::encode(call) {
-            Ok(bytes) => bytes,
+        let mut request = std::mem::take(&mut self.request_buf);
+        let request_len = match mod_api::encode_into(call, &mut request) {
+            Ok(len) => len,
             Err(e) => {
                 // Host-side bug, but never let it poison the sim either.
+                self.request_buf = request;
                 self.disable(&format!("encode guest call: {e}"));
                 return None;
             }
         };
         self.arm_dispatch();
-        let started = std::time::Instant::now();
-        match self.dispatch_protocol(&request) {
+        // Only timed when the diagnostic that reads it is switched on: a clock
+        // read per dispatch is real cost on a path that runs thousands of
+        // times a tick.
+        let started = slow_dispatch_logging().then(std::time::Instant::now);
+        let result = self.dispatch_protocol(&request[..request_len]);
+        self.request_buf = request;
+        match result {
             Ok(ret) => {
                 self.dispatches += 1;
-                self.log_slow_dispatch(call, started.elapsed());
+                if let Some(started) = started {
+                    self.log_slow_dispatch(call, started.elapsed());
+                }
                 Some(ret)
             }
             Err(e) => {
@@ -188,9 +212,7 @@ impl ModInstance {
     /// spent its time on.
     fn log_slow_dispatch(&self, call: &GuestCall, total: std::time::Duration) {
         const SLOW_DISPATCH: std::time::Duration = std::time::Duration::from_millis(2);
-        if total < SLOW_DISPATCH
-            || !log::log_enabled!(target: "petramond::modding::perf", log::Level::Debug)
-        {
+        if total < SLOW_DISPATCH {
             return;
         }
         let data = self.store.data();
@@ -269,14 +291,21 @@ impl ModInstance {
         if reply_len as usize > self.memory.data_size(&self.store) {
             return Err("reply exceeds guest memory".to_owned());
         }
-        let mut reply = vec![0u8; reply_len as usize];
-        self.memory
+        let mut reply = std::mem::take(&mut self.reply_buf);
+        reply.clear();
+        reply.resize(reply_len as usize, 0);
+        let read = self
+            .memory
             .read(&self.store, reply_ptr as usize, &mut reply)
-            .map_err(|e| format!("read reply: {e:#}"))?;
-        self.fn_free
-            .call(&mut self.store, (reply_ptr, reply_len))
-            .map_err(|e| format!("mod_free: {e:#}"))?;
-        mod_api::decode(&reply).map_err(|e| format!("malformed guest reply: {e}"))
+            .map_err(|e| format!("read reply: {e:#}"));
+        let decoded = read.and_then(|()| {
+            self.fn_free
+                .call(&mut self.store, (reply_ptr, reply_len))
+                .map_err(|e| format!("mod_free: {e:#}"))?;
+            mod_api::decode(&reply).map_err(|e| format!("malformed guest reply: {e}"))
+        });
+        self.reply_buf = reply;
+        decoded
     }
 
     /// Session-scoped kill switch: one visible error line, then the mod stops

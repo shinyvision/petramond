@@ -444,6 +444,9 @@ pub(super) fn new_renderer_inner(
             chest_visible: Vec::new(),
             doors: Vec::new(),
             door_visible: Vec::new(),
+            chest_baked: Vec::new(),
+            door_baked: Vec::new(),
+            baked_origin: glam::IVec3::MIN,
         },
         hand: HandPass {
             model3d_pipe: pipelines.model3d_hand_pipe,
@@ -561,7 +564,7 @@ pub(super) fn new_renderer_inner(
             proj_y_scale: 1.0,
         },
         terrain: TerrainPass {
-            columns: HashMap::new(),
+            columns: ColumnStore::default(),
             column_origins,
             geometry: super::super::geometry_arena::GeometryArena::new(),
             quad_index,
@@ -583,7 +586,11 @@ pub(super) fn new_renderer_inner(
             planned_view_key: None,
             plan_any_model: false,
             plan_any_transparent: false,
-            far_leaf_lod_state: HashMap::new(),
+            sort_scratch: Vec::new(),
+            sorted_scratch: Vec::new(),
+            cull_index: Vec::new(),
+            cull_regions: Vec::new(),
+            cull_index_revision: u64::MAX,
         },
         particle: ParticlePass {
             emitter_draw: emitter_particle_draw,

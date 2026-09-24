@@ -168,10 +168,7 @@ mod parallel_parity_tests {
                 bytemuck::cast_slice::<Vertex, u8>(&s.transparent),
                 bytemuck::cast_slice::<Vertex, u8>(&p.transparent),
             );
-            assert_eq!(
-                bytemuck::cast_slice::<Vertex, u8>(&s.far_opaque),
-                bytemuck::cast_slice::<Vertex, u8>(&p.far_opaque),
-            );
+            assert_eq!(s.far_opaque_len, p.far_opaque_len);
         }
     }
 }
@@ -407,10 +404,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         bytemuck::cast_slice::<Vertex, u8>(&serial.transparent),
         bytemuck::cast_slice::<Vertex, u8>(&pad.transparent)
     );
-    assert_eq!(
-        bytemuck::cast_slice::<Vertex, u8>(&serial.far_opaque),
-        bytemuck::cast_slice::<Vertex, u8>(&pad.far_opaque)
-    );
+    assert_eq!(serial.far_opaque_len, pad.far_opaque_len);
     assert_eq!(
         bytemuck::cast_slice::<ModelVertex, u8>(&serial.model),
         bytemuck::cast_slice::<ModelVertex, u8>(&pad.model)

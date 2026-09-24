@@ -21,6 +21,29 @@ pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, postcard::Error> {
     postcard::to_allocvec(value)
 }
 
+/// Encode into a REUSED buffer, returning the encoded length (the bytes are
+/// `buf[..len]`). The dispatch path runs this per guest call — per AI node,
+/// per mob, per tick among others — where a fresh `Vec` per call is an
+/// allocation the caller can simply keep.
+pub fn encode_into<T: Serialize>(value: &T, buf: &mut Vec<u8>) -> Result<usize, postcard::Error> {
+    /// Enough for the great majority of calls, so the growth loop almost never
+    /// runs twice.
+    const INITIAL: usize = 1024;
+    loop {
+        if buf.is_empty() {
+            buf.resize(INITIAL, 0);
+        }
+        match postcard::to_slice(value, buf.as_mut_slice()) {
+            Ok(used) => return Ok(used.len()),
+            Err(postcard::Error::SerializeBufferFull) => {
+                let grown = buf.len() * 2;
+                buf.resize(grown, 0);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 /// Decode any ABI value from the wire.
 pub fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, postcard::Error> {
     postcard::from_bytes(bytes)

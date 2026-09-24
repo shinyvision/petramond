@@ -41,8 +41,10 @@ pub(super) fn section_index_hash(mesh: &ChunkMesh) -> u64 {
 }
 
 fn layer_sizes_match(mesh: &ChunkMesh, gpu: &GpuSectionMesh) -> bool {
-    mesh.opaque.len() as u32 == gpu.opaque_vertex_count
-        && mesh.far_opaque.len() as u32 == gpu.far_opaque_vertex_count
+    // The opaque stream is packed as two regions (far, then leaf tail), so the
+    // split must land in the same place as well as the total.
+    super::far_len(mesh) == gpu.opaque_vertex_count
+        && mesh.opaque.len() as u32 - super::far_len(mesh) == gpu.opaque_tail_count
         && mesh.transparent.len() as u32 == gpu.transparent_vertex_count
         && mesh.transparent_two_sided.len() as u32 == gpu.transparent_ts_vertex_count
         && mesh.translucent.len() as u32 == gpu.translucent_vertex_count
@@ -94,18 +96,19 @@ pub(super) fn try_patch_column_verts(
         if !mesh.mesh_dirty {
             continue;
         }
+        let far = super::far_len(mesh) as usize;
         if !patch_terrain_verts(
             queue,
             arena,
             &prev.opaque_vbuf,
             gpu.opaque_vertex_start,
-            &mesh.opaque,
+            &mesh.opaque[..far],
         ) || !patch_terrain_verts(
             queue,
             arena,
-            &prev.far_opaque_vbuf,
-            gpu.far_opaque_vertex_start,
-            &mesh.far_opaque,
+            &prev.opaque_vbuf,
+            gpu.opaque_tail_start,
+            &mesh.opaque[far..],
         ) || !patch_terrain_verts(
             queue,
             arena,

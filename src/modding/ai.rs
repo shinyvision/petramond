@@ -72,15 +72,20 @@ pub fn with_detached_tick<T>(tick: u64, f: impl FnOnce() -> T) -> T {
 /// One node decision for one mob. `None` when the key has no live
 /// registration (mod never claimed it, disabled, or mid-load) — the node
 /// contributes no opinion, exactly like an engine node returning defaults.
-pub fn dispatch(key: &str, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
+///
+/// Takes the snapshot BY VALUE: its caller builds a fresh one per mob per
+/// tick and has no use for it afterwards, and it carries the mob's whole tag
+/// map, so cloning it here copied every key string a second time.
+pub fn dispatch(key: &str, ctx: AiNodeCtx) -> Option<AiNodeDecision> {
     INSTALLED.with(|cell| {
         let map = cell.borrow();
         let reg = map.get(key)?;
+        let tick = ctx.tick;
         let call = GuestCall::AiNode {
             callback_id: reg.callback_id,
-            ctx: ctx.clone(),
+            ctx,
         };
-        let reply = with_detached_tick(ctx.tick, || {
+        let reply = with_detached_tick(tick, || {
             reg.instance.lock().unwrap().call_guest_detached(&call)
         });
         match reply? {

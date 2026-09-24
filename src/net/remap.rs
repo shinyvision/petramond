@@ -293,7 +293,7 @@ impl IdRemap {
                 // Unknown mob/item rows are DROPPED (skip semantics — a
                 // disabled server-side mod's residue), like every non-block
                 // unknown.
-                t.mobs.retain_mut(|m| match self.mob(m.kind_id) {
+                t.mobs = retain_shared(&t.mobs, |m| match self.mob(m.kind_id) {
                     Some(id) => {
                         m.kind_id = id;
                         self.remap_conditions(&mut m.conditions);
@@ -315,7 +315,7 @@ impl IdRemap {
                     }
                     None => false,
                 });
-                t.items.retain_mut(|i| match self.item(i.item_id) {
+                t.items = retain_shared(&t.items, |i| match self.item(i.item_id) {
                     Some(id) => {
                         i.item_id = id;
                         true
@@ -328,7 +328,7 @@ impl IdRemap {
                 // graph ids. Of the `player_actions` kinds only the fired
                 // graph event carries one; `env` entries are param NAME
                 // strings + floats.
-                for p in &mut t.players {
+                t.players = retain_shared(&t.players, |p| {
                     self.remap_conditions(&mut p.conditions);
                     p.held_item = p.held_item.and_then(|id| self.item(id));
                     p.off_hand_item = p.off_hand_item.and_then(|id| self.item(id));
@@ -336,8 +336,9 @@ impl IdRemap {
                         *shown = shown.and_then(|id| self.item(id));
                     }
                     self.remap_animator(&mut p.animator);
-                }
-                t.player_actions.retain_mut(|(_, kind)| match kind {
+                    true
+                });
+                t.player_actions = retain_shared(&t.player_actions, |(_, kind)| match kind {
                     super::protocol::PlayerActionKind::Animator { rig, event } => {
                         match self.animator_event(*rig, *event) {
                             Some((local_rig, local)) => {
@@ -541,6 +542,20 @@ impl IdRemap {
 
 /// THIS process's registry names, in id order — what a server sends as its
 /// wire vocabulary at join.
+/// Rewrite-and-filter a shared row set. The batch's rows arrive from the
+/// server as one `Arc` shared by every recipient; a REMOTE recipient may then
+/// have to rewrite ids into its own registry and drop rows it cannot name, and
+/// this decoded batch is the sole owner, so it rebuilds the run in place of
+/// the one it was handed.
+fn retain_shared<T: Clone>(
+    rows: &std::sync::Arc<[T]>,
+    mut keep: impl FnMut(&mut T) -> bool,
+) -> std::sync::Arc<[T]> {
+    let mut out: Vec<T> = rows.to_vec();
+    out.retain_mut(&mut keep);
+    out.into()
+}
+
 pub fn local_name_tables() -> NameTables {
     let names = petramond_world::registry::names();
     NameTables {
@@ -754,7 +769,7 @@ mod tests {
         let map = IdRemap {
             blocks,
             items: (0..1200u16).map(|i| Some(i + 700)).collect(),
-            mobs: Vec::new(),
+            mobs: [].into(),
             sounds: Vec::new(),
             effects: Vec::new(),
             emitters: Vec::new(),
@@ -907,9 +922,9 @@ mod tests {
             mount: None,
         };
         let mut msg = ServerToClient::Tick(Box::new(crate::net::protocol::TickUpdate {
-            mobs: vec![mob_row(0), mob_row(unknown_mob)],
-            items: vec![item_row(2), item_row(unknown_item)],
-            players: vec![player_row(Some(2)), player_row(Some(unknown_item))],
+            mobs: vec![mob_row(0), mob_row(unknown_mob)].into(),
+            items: vec![item_row(2), item_row(unknown_item)].into(),
+            players: vec![player_row(Some(2)), player_row(Some(unknown_item))].into(),
             self_state: Some(SelfState {
                 conditions: Vec::new(),
                 health: 20,
@@ -1039,8 +1054,8 @@ mod tests {
         assert!(luts[2].is_none(), "an unknown rig maps to nothing");
         let map = IdRemap {
             blocks: Vec::new(),
-            items: Vec::new(),
-            mobs: Vec::new(),
+            items: [].into(),
+            mobs: [].into(),
             sounds: Vec::new(),
             effects: Vec::new(),
             emitters: Vec::new(),

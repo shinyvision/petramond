@@ -59,10 +59,10 @@ pub const ATTACK_COOLDOWN_TICKS: u32 = 6;
 pub struct SharedTickRows {
     tick: u64,
     clock: u64,
-    mobs: Vec<MobStateRow>,
-    items: Vec<ItemStateRow>,
-    players: Vec<PlayerStateRow>,
-    player_actions: Vec<(PlayerId, PlayerActionKind)>,
+    mobs: std::sync::Arc<[MobStateRow]>,
+    items: std::sync::Arc<[ItemStateRow]>,
+    players: std::sync::Arc<[PlayerStateRow]>,
+    player_actions: std::sync::Arc<[(PlayerId, PlayerActionKind)]>,
     open_chests: Vec<IVec3>,
     /// The full shader-param map when anything changed since the last window
     /// (`None` = unchanged) — see [`crate::net::protocol::TickUpdate::env`].

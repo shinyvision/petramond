@@ -67,9 +67,9 @@ impl Renderer {
         enc: &mut wgpu::CommandEncoder,
         swapchain: &wgpu::TextureView,
         order: &[VisibleSection],
-        opaque_columns: &[(f32, ChunkPos)],
-        model_columns: &[(f32, ChunkPos)],
-        contact_columns: &[(f32, ChunkPos)],
+        opaque_columns: &[OpaqueColumnDraw],
+        model_columns: &[(f32, ChunkPos, ColumnSlot)],
+        contact_columns: &[(f32, ChunkPos, ColumnSlot)],
         stats: &mut RenderStats,
         any_model_visible: bool,
         any_transparent_visible: bool,
@@ -116,47 +116,54 @@ impl Renderer {
             // as `base_vertex`.
             pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
             pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
-            for (_, pos) in opaque_columns {
-                let Some(col) = self.terrain.columns.get(pos) else {
-                    continue;
+            for &(_, _, slot, far) in opaque_columns {
+                let col = self.terrain.columns.at(slot);
+                // Far LOD draws the column's leading far region; detailed
+                // draws the whole stream. Both are one contiguous range.
+                let quads = if far {
+                    col.opaque_far_quads
+                } else {
+                    col.opaque_quads
                 };
-                if col.opaque_quads == 0 {
+                if quads == 0 {
                     continue;
                 }
                 if let Some(vb) = &col.opaque_vbuf {
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     stats.opaque_draws += 1;
-                    stats.opaque_indices += col.opaque_quads as u64 * 6;
+                    stats.opaque_indices += quads as u64 * 6;
                     let slot = col.origin_slot.index();
-                    pass.draw_indexed(0..col.opaque_quads * 6, 0, slot..slot + 1);
+                    pass.draw_indexed(0..quads * 6, 0, slot..slot + 1);
                 }
             }
             for item in order.iter() {
                 if item.opaque_batched {
                     continue;
                 }
-                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
-                    continue;
-                };
+                let col = self.terrain.columns.at(item.column_slot);
                 // near -> far (early-Z)
-                let (vbuf, vertex_start, quads) = if item.use_far_leaf_lod {
-                    (
-                        &col.far_opaque_vbuf,
-                        item.far_opaque_vertex_start,
-                        item.far_opaque_quads,
-                    )
-                } else {
-                    (
-                        &col.opaque_vbuf,
-                        item.opaque_vertex_start,
-                        item.opaque_quads,
-                    )
-                };
-                if quads == 0 {
+                // The section's far region always draws; its leaf tail joins
+                // only at detailed LOD. The tail is empty for every section
+                // without leaves, so this is one draw in the common case.
+                let Some(vb) = &col.opaque_vbuf else {
                     continue;
+                };
+                let mut ranges = [
+                    (item.opaque_vertex_start, item.opaque_quads),
+                    (item.opaque_tail_start, item.opaque_tail_quads),
+                ];
+                if item.use_far_leaf_lod {
+                    ranges[1].1 = 0;
                 }
-                if let Some(vb) = vbuf {
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
+                let mut bound = false;
+                for (vertex_start, quads) in ranges {
+                    if quads == 0 {
+                        continue;
+                    }
+                    if !bound {
+                        pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
+                        bound = true;
+                    }
                     stats.opaque_draws += 1;
                     stats.opaque_indices += quads as u64 * 6;
                     let slot = col.origin_slot.index();
@@ -186,10 +193,8 @@ impl Renderer {
             pass.set_pipeline(self.contact_pipe.get(samples));
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            for (_, pos) in contact_columns {
-                let Some(col) = self.terrain.columns.get(pos) else {
-                    continue;
-                };
+            for &(_, _, slot) in contact_columns {
+                let col = self.terrain.columns.at(slot);
                 if col.contact_vertex_count == 0 {
                     continue;
                 }
@@ -269,10 +274,8 @@ impl Renderer {
             // day/night sky scale (meshes don't rebake at sunset).
             pass.set_pipeline(self.world_model_pipe.get(samples));
             pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            for (_, pos) in model_columns {
-                let Some(col) = self.terrain.columns.get(pos) else {
-                    continue;
-                };
+            for &(_, _, slot) in model_columns {
+                let col = self.terrain.columns.at(slot);
                 if col.model_idx_count == 0 {
                     continue;
                 }
@@ -290,9 +293,7 @@ impl Renderer {
                 if item.model_batched || item.model_idx_count == 0 {
                     continue;
                 }
-                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
-                    continue;
-                };
+                let col = self.terrain.columns.at(item.column_slot);
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
                     let slot = col.origin_slot.index();
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
@@ -436,9 +437,7 @@ impl Renderer {
                 if item.translucent_quads == 0 {
                     continue;
                 }
-                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
-                    continue;
-                };
+                let col = self.terrain.columns.at(item.column_slot);
                 // near -> far: depth-writing, so early-Z applies like opaque.
                 if let Some(vb) = &col.translucent_vbuf {
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
@@ -475,10 +474,8 @@ impl Renderer {
             pass.set_bind_group(1, &self.model_atlas_bind, &[]);
             pass.set_pipeline(self.world_model_blend_pipe.get(samples));
             pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            for (_, pos) in model_columns {
-                let Some(col) = self.terrain.columns.get(pos) else {
-                    continue;
-                };
+            for &(_, _, slot) in model_columns {
+                let col = self.terrain.columns.at(slot);
                 if col.model_blend_idx_count == 0 {
                     continue;
                 }
@@ -500,9 +497,7 @@ impl Renderer {
                 if item.model_batched || item.model_blend_idx_count == 0 {
                     continue;
                 }
-                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
-                    continue;
-                };
+                let col = self.terrain.columns.at(item.column_slot);
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
                     let slot = col.origin_slot.index();
                     pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
@@ -664,9 +659,7 @@ impl Renderer {
                 if item.transparent_quads == 0 && item.transparent_ts_quads == 0 {
                     continue;
                 }
-                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
-                    continue;
-                };
+                let col = self.terrain.columns.at(item.column_slot);
                 let slot = col.origin_slot.index();
                 // far -> near (alpha order)
                 for (vbuf, start, quads, two_sided) in [

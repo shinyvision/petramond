@@ -214,14 +214,23 @@ impl Renderer {
                 self.block_entity.chest_visible.push(*inst);
             }
         }
-        let chest_visible = &self.block_entity.chest_visible;
-        self.block_entity.chest_draw.bake(
-            &self.device,
-            &self.queue,
-            &mut self.item_entity.verts,
-            &mut self.item_entity.indices,
-            |verts, indices| build_chests(chest_visible, render_origin, verts, indices),
-        );
+        // Static geometry: rebake only when the visible set or the origin its
+        // vertices are relative to actually changed (see `chest_baked`).
+        let origin_moved = self.block_entity.baked_origin != render_origin;
+        if origin_moved || self.block_entity.chest_visible != self.block_entity.chest_baked {
+            let chest_visible = &self.block_entity.chest_visible;
+            self.block_entity.chest_draw.bake(
+                &self.device,
+                &self.queue,
+                &mut self.item_entity.verts,
+                &mut self.item_entity.indices,
+                |verts, indices| build_chests(chest_visible, render_origin, verts, indices),
+            );
+            self.block_entity.chest_baked.clear();
+            self.block_entity
+                .chest_baked
+                .extend_from_slice(&self.block_entity.chest_visible);
+        }
 
         // Doors (2-tall hinged slab), frustum-culled and baked exactly like chests,
         // reusing the same CPU scratch. Drawn by the EXISTING opaque pipeline.
@@ -234,14 +243,21 @@ impl Renderer {
                 self.block_entity.door_visible.push(*inst);
             }
         }
-        let door_visible = &self.block_entity.door_visible;
-        self.block_entity.door_draw.bake(
-            &self.device,
-            &self.queue,
-            &mut self.item_entity.verts,
-            &mut self.item_entity.indices,
-            |verts, indices| build_doors(door_visible, render_origin, verts, indices),
-        );
+        if origin_moved || self.block_entity.door_visible != self.block_entity.door_baked {
+            let door_visible = &self.block_entity.door_visible;
+            self.block_entity.door_draw.bake(
+                &self.device,
+                &self.queue,
+                &mut self.item_entity.verts,
+                &mut self.item_entity.indices,
+                |verts, indices| build_doors(door_visible, render_origin, verts, indices),
+            );
+            self.block_entity.door_baked.clear();
+            self.block_entity
+                .door_baked
+                .extend_from_slice(&self.block_entity.door_visible);
+        }
+        self.block_entity.baked_origin = render_origin;
 
         // Mobs (animated entity models), grouped by species and frustum-culled, baked
         // into each species' OWN `ItemVertex` buffers (a different vertex type from the

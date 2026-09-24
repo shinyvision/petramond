@@ -27,7 +27,7 @@ const FAR_HEADROOM: f32 = 102.0;
 /// `32.0 * 17.0 * 24.0 * 2.0 * 2.0`.
 const CAMERA_FAR: f32 = LOADED_WORLD_DIAMETER * FAR_HEADROOM;
 
-pub use petramond_world::view_volume::{aabb_distance_sq, Frustum, ViewVolume};
+pub use petramond_world::view_volume::{aabb_distance_sq, Containment, Frustum, ViewVolume};
 
 #[derive(Clone)]
 pub struct Camera {

@@ -915,10 +915,14 @@ pub struct ChunkMesh {
     /// depth to resolve its own face order (buffer order is arbitrary within
     /// a section), which water's read-only convention cannot give it.
     pub translucent: Vec<Vertex>,
-    /// Optional opaque LOD used for far chunks. This keeps the normal mesh
-    /// byte-identical nearby while allowing far foliage to cull leaf-to-leaf
-    /// internals once texture mips make the cutouts read as a dense canopy.
-    pub far_opaque: Vec<Vertex>,
+    /// Optional opaque LOD for far chunks, expressed as a PREFIX LENGTH of
+    /// [`opaque`](Self::opaque) rather than a stream of its own: the simplified
+    /// canopy differs from the detailed one only by culling leaf-to-leaf
+    /// internal faces, so the mesher emits those faces LAST and this records
+    /// where they start. Drawing the far LOD is the same buffer with a shorter
+    /// quad count — no second bake, no second upload, no duplicated VRAM.
+    /// `0` means the section has no far LOD (nothing would be culled).
+    pub far_opaque_len: u32,
     /// bbmodel-block geometry (explicit-UV [`ModelVertex`], sampling the model atlas),
     /// drawn in the renderer's dedicated model pass. Baked here at remesh like the rest
     /// of the chunk; empty for the common chunk with no bbmodel blocks.
@@ -960,7 +964,7 @@ impl ChunkMesh {
             transparent: vec![],
             transparent_two_sided: vec![],
             translucent: vec![],
-            far_opaque: vec![],
+            far_opaque_len: 0,
             model: vec![],
             model_idx: vec![],
             model_blend_idx: vec![],
@@ -992,7 +996,8 @@ impl ChunkMesh {
 
     /// Per-stream used bytes of the retained CPU buffers: `(opaque v, opaque i,
     /// far v, far i, transparent v, transparent i, translucent v, translucent i,
-    /// model v, model i, contact v)`. For the memory census.
+    /// model v, model i, contact v)`. For the memory census. The far lanes are
+    /// always zero — the far LOD shares the opaque buffer.
     pub fn stream_bytes(&self) -> [u64; 11] {
         const V: usize = std::mem::size_of::<Vertex>();
         const M: usize = std::mem::size_of::<ModelVertex>();
@@ -1000,7 +1005,9 @@ impl ChunkMesh {
         [
             (self.opaque.len() * V) as u64,
             0,
-            (self.far_opaque.len() * V) as u64,
+            // The far LOD is a prefix of the opaque stream, so it owns no
+            // bytes of its own — counting them again would double-count.
+            0,
             0,
             ((self.transparent.len() + self.transparent_two_sided.len()) * V) as u64,
             0,
@@ -1022,7 +1029,6 @@ impl ChunkMesh {
             + self.transparent.len() * V
             + self.transparent_two_sided.len() * V
             + self.translucent.len() * V
-            + self.far_opaque.len() * V
             + self.model.len() * M
             + self.contact.len() * C
             + self.model_idx.len() * 4
@@ -1031,7 +1037,6 @@ impl ChunkMesh {
             + self.transparent.capacity() * V
             + self.transparent_two_sided.capacity() * V
             + self.translucent.capacity() * V
-            + self.far_opaque.capacity() * V
             + self.model.capacity() * M
             + self.contact.capacity() * C
             + self.model_idx.capacity() * 4
@@ -1049,7 +1054,7 @@ impl ChunkMesh {
         self.transparent = Vec::new();
         self.transparent_two_sided = Vec::new();
         self.translucent = Vec::new();
-        self.far_opaque = Vec::new();
+        self.far_opaque_len = 0;
         self.model = Vec::new();
         self.model_idx = Vec::new();
         self.model_blend_idx = Vec::new();

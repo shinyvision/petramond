@@ -1,8 +1,8 @@
 use super::gpu_timer;
-use crate::camera::{Camera, Frustum, ViewVolume};
+use crate::camera::{Camera, Containment, Frustum, ViewVolume};
 use petramond::world::TerrainRenderHandoff;
 use petramond_math::math::SelectionShape;
-use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::ChunkPos;
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -11,6 +11,8 @@ use wgpu::util::DeviceExt;
 mod actor_pass;
 use actor_pass::{ActorPass, MobGpu, PlayerGpu, VisibleBody};
 mod client_overlay;
+mod column_store;
+use column_store::{ColumnSlot, ColumnStore};
 mod construct;
 mod ghosts;
 pub use ghosts::GhostPiece;
@@ -56,7 +58,7 @@ use super::particles::{build_particles_split, build_transparent_emitter_particle
 use super::pipeline::{create_pipeline_resources, EnvPassResources};
 use super::resources::{
     create_atlas, create_atlas_array, create_gui_panel, create_model_texture, create_scene_color,
-    upload_column_mesh, ColumnOrigins, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
+    upload_column_mesh, ColumnOrigins, ColumnUploadScratch, GpuSectionMesh,
 };
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
@@ -71,7 +73,7 @@ use petramond_world::bbmodel::Model;
 
 const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 struct TerrainViewKey {
     view_proj: [u32; 16],
     cam: [u64; 3],
@@ -116,6 +118,9 @@ pub(crate) struct RenderStats {
 pub(crate) struct VisibleSection {
     dist_sq: f32,
     column_pos: ChunkPos,
+    /// The owning column's slab slot, resolved once by the planner so no
+    /// encode loop has to look the column up again.
+    column_slot: ColumnSlot,
     opaque_batched: bool,
     model_batched: bool,
     use_far_leaf_lod: bool,
@@ -123,8 +128,11 @@ pub(crate) struct VisibleSection {
     /// streams (see [`petramond_mesh::QuadIdx`]).
     opaque_vertex_start: u32,
     opaque_quads: u32,
-    far_opaque_vertex_start: u32,
-    far_opaque_quads: u32,
+    /// The section's leaf-to-leaf internal faces, in the column's tail region.
+    /// Drawn only at detailed LOD; empty for a section without leaves, which
+    /// is why nearly every section still draws its opaque share in one call.
+    opaque_tail_start: u32,
+    opaque_tail_quads: u32,
     transparent_vertex_start: u32,
     transparent_quads: u32,
     transparent_ts_vertex_start: u32,
@@ -282,6 +290,17 @@ struct BlockEntityPass {
     doors: Vec<DoorInstance>,
     /// Reusable scratch for the frustum-visible subset of `doors`.
     door_visible: Vec<DoorInstance>,
+    /// The visible sets the live GPU buffers were baked from, and the render
+    /// origin their vertices are relative to.
+    ///
+    /// Unlike every other dynamic subsystem, these two do not move: a chest or
+    /// a door changes only when it opens, its light changes, or it comes into
+    /// view. Everything that can alter a vertex is in the instance or in the
+    /// origin, so an unchanged visible set means the buffers already hold this
+    /// frame's geometry and the whole build-and-upload is dead work.
+    chest_baked: Vec<ChestInstance>,
+    door_baked: Vec<DoorInstance>,
+    baked_origin: glam::IVec3,
 }
 
 impl BlockEntityPass {
@@ -292,6 +311,10 @@ impl BlockEntityPass {
         self.chest_visible.clear();
         self.doors.clear();
         self.door_visible.clear();
+        // The buffers no longer describe anything: the next frame must bake.
+        self.chest_baked.clear();
+        self.door_baked.clear();
+        self.baked_origin = glam::IVec3::MIN;
     }
 }
 
@@ -304,7 +327,7 @@ impl BlockEntityPass {
 type UploadKey = (u8, u32, i32, i32, u64);
 
 struct TerrainPass {
-    columns: HashMap<ChunkPos, GpuColumnMesh>,
+    columns: ColumnStore,
     /// Shared instance-step table of per-column world XZ origins, bound once
     /// per terrain pass; each column draw selects its row via `first_instance`.
     column_origins: ColumnOrigins,
@@ -323,24 +346,69 @@ struct TerrainPass {
     /// stays section-granular; opaque/model passes can mark sections covered by a single
     /// packed column draw.
     draw_order: Vec<VisibleSection>,
+    /// Reusable `(distance, column, index)` keys for the section depth sort,
+    /// and the gather buffer the sorted records land in.
+    sort_scratch: Vec<(f32, ChunkPos, u32)>,
+    sorted_scratch: Vec<VisibleSection>,
     /// Reusable near→far list of packed columns that can draw their whole opaque index
     /// stream in one call this frame.
-    opaque_column_order: Vec<(f32, ChunkPos)>,
+    opaque_column_order: Vec<OpaqueColumnDraw>,
     /// Reusable near→far list of packed columns that can draw their whole model index
     /// stream in one call this frame.
-    model_column_order: Vec<(f32, ChunkPos)>,
+    model_column_order: Vec<(f32, ChunkPos, ColumnSlot)>,
     /// Reusable near→far list of packed columns with a VISIBLE contact-shadow
     /// stream this frame.
-    contact_column_order: Vec<(f32, ChunkPos)>,
+    contact_column_order: Vec<(f32, ChunkPos, ColumnSlot)>,
     gpu_revision: u64,
     planned_gpu_revision: u64,
     view_key: TerrainViewKey,
     planned_view_key: Option<TerrainViewKey>,
     plan_any_model: bool,
     plan_any_transparent: bool,
-    /// Sections currently drawing the far leaf mesh. Stored only for active far-LOD
-    /// sections so the transition has hysteresis instead of flipping at one threshold.
-    far_leaf_lod_state: HashMap<SectionPos, bool>,
+    /// Dense mirror of the column set for the per-frame cull: just the AABB
+    /// inputs, in one contiguous array. The planner rejects the great majority
+    /// of columns and the rejection must not walk a hash map of
+    /// [`GpuColumnMesh`]es — each is a large record owning a separately
+    /// allocated section list, so the scan used to chase a pointer per column
+    /// to read two integers. Rebuilt only when the column set changes.
+    cull_index: Vec<ColumnCull>,
+    /// [`cull_index`](Self::cull_index) grouped into square regions, each
+    /// naming a contiguous run of it.
+    cull_regions: Vec<CullRegion>,
+    cull_index_revision: u64,
+}
+
+/// Columns per side of one cull region. A region test rejects up to its square
+/// in one AABB test; too small and the regions cost as much as the columns,
+/// too large and few regions reject wholly.
+const CULL_REGION_SHIFT: i32 = 3;
+const CULL_REGION_COLUMNS: i32 = 1 << CULL_REGION_SHIFT;
+
+/// A whole-column opaque draw: `(distance, column, slot, far LOD)`. The flag
+/// picks the column's leading far region over its whole opaque stream.
+pub(crate) type OpaqueColumnDraw = (f32, ChunkPos, ColumnSlot, bool);
+
+/// One region of [`TerrainPass::cull_index`]: its bounds and the run of column
+/// entries it covers (`first..last`).
+#[derive(Copy, Clone)]
+struct CullRegion {
+    cx: i32,
+    cz: i32,
+    min_cy: i32,
+    max_cy: i32,
+    first: u32,
+    last: u32,
+}
+
+/// One column's entry in [`TerrainPass::cull_index`]: everything
+/// [`Renderer::column_visible`] reads, and nothing else.
+#[derive(Copy, Clone)]
+struct ColumnCull {
+    pos: ChunkPos,
+    slot: ColumnSlot,
+    /// The column's installed section span, or `min > max` when it holds none.
+    min_cy: i32,
+    max_cy: i32,
 }
 
 impl TerrainPass {
@@ -352,7 +420,9 @@ impl TerrainPass {
         self.upload_heap.clear();
         self.gpu_revision = self.gpu_revision.wrapping_add(1);
         self.planned_view_key = None;
-        self.far_leaf_lod_state.clear();
+        self.cull_index.clear();
+        self.cull_regions.clear();
+        self.cull_index_revision = u64::MAX;
         self.draw_order.clear();
         self.opaque_column_order.clear();
         self.model_column_order.clear();

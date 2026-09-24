@@ -28,27 +28,6 @@ pub use foliage::FOLIAGE_OVERHANG;
 use geometry::section_geometry;
 pub use transition::{SamplingHalo, SAMPLING_HALO};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum LeafMeshMode {
-    Detailed,
-    Simplified,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct MeshOptions {
-    pub leaf_mesh_mode: LeafMeshMode,
-}
-
-impl MeshOptions {
-    pub const DETAILED: Self = Self {
-        leaf_mesh_mode: LeafMeshMode::Detailed,
-    };
-
-    pub const FAR_LEAVES: Self = Self {
-        leaf_mesh_mode: LeafMeshMode::Simplified,
-    };
-}
-
 /// Build the mesh for one cubic [`Section`] from world-coordinate closures. All
 /// neighbour lookups route to the owning section (including this one), so the
 /// same closure handles in-section and cross-section reads; out-of-world /
@@ -84,7 +63,7 @@ pub fn build_section_mesh(
             )
             .is_some()
     };
-    let mut mesh = section_geometry(
+    section_geometry(
         section,
         pos,
         &neighbour_block,
@@ -96,33 +75,9 @@ pub fn build_section_mesh(
         &blocked,
         rules,
         tints.as_ref(),
-        MeshOptions::DETAILED,
         None,
         &|| false,
-    );
-    if !section.blocks_iter().any(|id| Block(id).is_leaves()) {
-        return mesh;
-    }
-    let far = section_geometry(
-        section,
-        pos,
-        &neighbour_block,
-        &neighbour_cell_state,
-        &neighbour_fluid_meta,
-        &neighbour_light,
-        &neighbour_blocklight,
-        &neighbour_loaded,
-        &blocked,
-        rules,
-        tints.as_ref(),
-        MeshOptions::FAR_LEAVES,
-        None,
-        &|| false,
-    );
-    if far.opaque.len() < mesh.opaque.len() {
-        mesh.far_opaque = far.opaque;
-    }
-    mesh
+    )
 }
 
 /// [`build_section_mesh_cancellable`] that always finishes.
@@ -158,7 +113,7 @@ pub fn build_section_mesh_cancellable(
     let nb_loaded = |wx, wy, wz| pad.loaded_world(ox, oy, oz, wx, wy, wz);
     let tints =
         transition::needs_tint(section, rules).then(|| tint::biome_window(ox, oz, nb_biome));
-    let mut mesh = section_geometry(
+    let mesh = section_geometry(
         section,
         pos,
         nb_block,
@@ -170,34 +125,8 @@ pub fn build_section_mesh_cancellable(
         &blocked,
         rules,
         tints.as_ref(),
-        MeshOptions::DETAILED,
         Some(&pad),
         cancelled,
     );
-    if cancelled() {
-        return None;
-    }
-    if !section.blocks_iter().any(|id| Block(id).is_leaves()) {
-        return (!cancelled()).then_some(mesh);
-    }
-    let far = section_geometry(
-        section,
-        pos,
-        nb_block,
-        nb_cell_state,
-        nb_fluid_meta,
-        nb_skylight,
-        nb_blocklight,
-        nb_loaded,
-        &blocked,
-        rules,
-        tints.as_ref(),
-        MeshOptions::FAR_LEAVES,
-        None,
-        cancelled,
-    );
-    if far.opaque.len() < mesh.opaque.len() {
-        mesh.far_opaque = far.opaque;
-    }
     (!cancelled()).then_some(mesh)
 }

@@ -66,7 +66,6 @@ impl Renderer {
         for col in self.terrain.columns.values() {
             for b in [
                 &col.opaque_vbuf,
-                &col.far_opaque_vbuf,
                 &col.transparent_vbuf,
                 &col.transparent_ts_vbuf,
                 &col.translucent_vbuf,

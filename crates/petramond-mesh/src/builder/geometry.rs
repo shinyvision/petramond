@@ -30,7 +30,6 @@ use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
 use super::plant::emit_plant;
 use super::{foliage, transition};
-use super::{LeafMeshMode, MeshOptions};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn section_geometry(
@@ -45,11 +44,16 @@ pub(super) fn section_geometry(
     neighbour_transition_blocked: &dyn Fn(i32, i32, i32) -> bool,
     transition_rules: &petramond_world::texture_transition::Rules,
     tints: Option<&tint::BiomeTints>,
-    options: MeshOptions,
     pad: Option<&SectionMeshPad<'_>>,
     cancelled: &dyn Fn() -> bool,
 ) -> ChunkMesh {
     let mut opaque = vec![];
+    // Leaf faces that sit against another cell of the SAME leaves. They are
+    // the ONLY thing the far (simplified-canopy) LOD drops, so they are
+    // emitted into their own buffer and appended to `opaque` last — which
+    // makes the far LOD exactly the opaque stream's leading prefix, built in
+    // this one traversal instead of a second whole-section pass.
+    let mut leaf_interior = vec![];
     let mut transparent = vec![];
     let mut transparent_two_sided = vec![];
     let mut translucent = vec![];
@@ -268,9 +272,7 @@ pub(super) fn section_geometry(
         })
     });
     let greedy_gen = greedy.begin();
-    let exposed_masks = pad
-        .filter(|_| options.leaf_mesh_mode == LeafMeshMode::Detailed)
-        .map(|pad| build_exposed_masks(pad, (ox, oy, oz), &seals_floor));
+    let exposed_masks = pad.map(|pad| build_exposed_masks(pad, (ox, oy, oz), &seals_floor));
 
     let pad_classes = super::cell_class::pad_classes();
     // A full cell of an opaque medium hides the faces behind it like stone:
@@ -804,8 +806,21 @@ pub(super) fn section_geometry(
                                         corners,
                                         [base_x, base_y, base_z],
                                     );
+                                    // Leaves reach this path (they are cube-shaped
+                                    // but cutout, so never greedy-merged); a face
+                                    // against the SAME leaves is what the far LOD
+                                    // drops. Same rule as the generic loop below.
+                                    // Leaves reach this path (they are cube-shaped
+                                    // but cutout, so never greedy-merged); a face
+                                    // against the SAME leaves is what the far LOD
+                                    // drops. Same rule as the generic loop below.
+                                    let vbuf = if block.is_leaves() && pad.blocks[fpi] == id {
+                                        &mut leaf_interior
+                                    } else {
+                                        &mut opaque
+                                    };
                                     let start = push_cube_face_with_cell_uvs(
-                                        &mut opaque,
+                                        vbuf,
                                         corners,
                                         base_tile,
                                         overlay,
@@ -821,7 +836,7 @@ pub(super) fn section_geometry(
                                         cell_tinted(cell),
                                     );
                                     finish_face(
-                                        &mut opaque,
+                                        vbuf,
                                         start,
                                         face,
                                         transition,
@@ -845,16 +860,14 @@ pub(super) fn section_geometry(
                         // A block that MERGES WITH ITSELF draws no interior face
                         // against its own kind: a glass wall reads as one pane
                         // rather than stacked frames, and an ice sheet as one
-                        // volume rather than double-blended slabs. Leaves opt out
-                        // — their interior faces are the canopy's depth — except
-                        // under the Simplified leaf LOD, which asks for exactly
-                        // this cull.
-                        let merges = block.merges_with_self()
-                            || (options.leaf_mesh_mode == LeafMeshMode::Simplified
-                                && block.is_leaves());
-                        if merges && nb == block {
+                        // volume rather than double-blended slabs. Leaves opt
+                        // out — their interior faces are the canopy's depth
+                        // near the camera, and are exactly what the far LOD
+                        // drops once mips read the cutouts as a dense canopy.
+                        if block.merges_with_self() && nb == block {
                             continue;
                         }
+                        let leaf_interior_face = block.is_leaves() && nb == block;
 
                         let (base_tile, overlay_tile, tint) = if let (true, Some(style)) =
                             (is_side, side_style)
@@ -920,6 +933,8 @@ pub(super) fn section_geometry(
                             // there, and the fluid pass draws after them.
                             let vbuf = if block.is_translucent() {
                                 &mut translucent
+                            } else if leaf_interior_face {
+                                &mut leaf_interior
                             } else {
                                 &mut opaque
                             };
@@ -958,8 +973,20 @@ pub(super) fn section_geometry(
     emit_greedy_quads(&mut greedy, &mut opaque, IVec3::new(0, oy, 0));
     GREEDY.with(|g| *g.borrow_mut() = greedy);
 
+    // The far LOD is everything emitted so far; the leaf internals follow it.
+    // A section with none of them has no far LOD to offer (0 = "no far mesh"),
+    // which is the same verdict the old two-pass build reached by comparing
+    // the two meshes' lengths.
+    let far_opaque_len = if leaf_interior.is_empty() {
+        0
+    } else {
+        opaque.len() as u32
+    };
+    opaque.append(&mut leaf_interior);
+
     ChunkMesh {
         opaque,
+        far_opaque_len,
         transparent,
         transparent_two_sided,
         translucent,

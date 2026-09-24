@@ -28,10 +28,23 @@ pub struct GpuSectionMesh {
     model_local_blend_indices: std::sync::Arc<[u32]>,
     /// World-space minimum corner `(x, y, z)` of this section.
     pub origin: (i32, i32, i32),
+    /// The section's opaque geometry MINUS its leaf-to-leaf internal faces —
+    /// which is exactly its far (simplified-canopy) LOD, and a prefix of what
+    /// the mesher emitted. Every column packs all its sections' far regions
+    /// first and all their leaf tails after, so a column drawn wholly at far
+    /// LOD is ONE contiguous range, exactly as a column drawn wholly detailed
+    /// is. Without that, one distant leafy section forced its whole column
+    /// onto per-section draws.
     pub opaque_vertex_start: u32,
     pub opaque_vertex_count: u32,
-    pub far_opaque_vertex_start: u32,
-    pub far_opaque_vertex_count: u32,
+    /// The section's leaf-to-leaf internal faces, in the column's tail region.
+    /// Empty for every section without leaves — which is nearly all of them,
+    /// so nearly every section still draws its opaque geometry in one call.
+    pub opaque_tail_start: u32,
+    pub opaque_tail_count: u32,
+    /// Whether this section HAS a far LOD (i.e. its tail is non-empty). Kept
+    /// as its own bit so the planner need not re-derive it.
+    pub has_far_lod: bool,
     pub transparent_vertex_start: u32,
     pub transparent_vertex_count: u32,
     /// The cull-none fluid-top stream (see [`petramond_mesh::ChunkMesh`]).
@@ -56,6 +69,15 @@ pub struct GpuSectionMesh {
     /// be inferred from the model range.
     pub contact_vertex_start: u32,
     pub contact_vertex_count: u32,
+    /// Whether this section drew its far (simplified-canopy) LOD on the last
+    /// planned frame — the hysteresis input of [`far_leaf_lod_active`]. It
+    /// lives on the section rather than in a side map because the planner asks
+    /// it for every visible far-capable section every frame, and because a
+    /// section that goes away must take its LOD state with it. An incremental
+    /// repack clones the record, so the state survives one.
+    ///
+    /// [`far_leaf_lod_active`]: crate::renderer::far_leaf_lod_active
+    pub far_lod_active: bool,
     /// Fingerprint of the section-local index streams (see
     /// `section_index_hash`). Guards the vertex-only patch path: equal layer
     /// counts pin every start offset, but NOT the index topology — plant quads
@@ -72,7 +94,10 @@ pub struct GpuColumnMesh {
     /// Quads in the column's opaque stream — the draw's index count is six per
     /// quad against the shared quad index buffer.
     pub opaque_quads: u32,
-    pub far_opaque_vbuf: Option<Layer>,
+    /// Quads of the column's leading FAR region (every section's far LOD, in
+    /// section order). Drawing `0..opaque_far_quads` renders the whole column
+    /// at far LOD; `0..opaque_quads` renders it detailed.
+    pub opaque_far_quads: u32,
     pub transparent_vbuf: Option<Layer>,
     pub transparent_ts_vbuf: Option<Layer>,
     pub translucent_vbuf: Option<Layer>,
@@ -101,10 +126,20 @@ pub struct GpuColumnMesh {
     pub cy_span: (i32, i32),
 }
 
+impl GpuColumnMesh {
+    /// The column's own chunk position, from the world origin it was packed
+    /// with — so a column can name itself without the map that stores it.
+    pub fn column_pos(&self) -> petramond_world::chunk::ChunkPos {
+        petramond_world::chunk::ChunkPos::new(self.col_ox >> 4, self.col_oz >> 4)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ColumnUploadScratch {
     opaque: Vec<TerrainVertex>,
-    far_opaque: Vec<TerrainVertex>,
+    /// The opaque stream's trailing leaf-tail region, built beside the far
+    /// region and appended to it once the column is walked.
+    opaque_tail: Vec<TerrainVertex>,
     transparent: Vec<TerrainVertex>,
     transparent_two_sided: Vec<TerrainVertex>,
     translucent: Vec<TerrainVertex>,
@@ -117,7 +152,7 @@ pub(super) struct ColumnUploadScratch {
 impl ColumnUploadScratch {
     fn clear(&mut self) {
         self.opaque.clear();
-        self.far_opaque.clear();
+        self.opaque_tail.clear();
         self.transparent.clear();
         self.transparent_two_sided.clear();
         self.translucent.clear();
@@ -130,8 +165,6 @@ impl ColumnUploadScratch {
     fn reserve_for(&mut self, meshes: &[(SectionPos, &ChunkMesh)]) {
         self.opaque
             .reserve(meshes.iter().map(|(_, mesh)| mesh.opaque.len()).sum());
-        self.far_opaque
-            .reserve(meshes.iter().map(|(_, mesh)| mesh.far_opaque.len()).sum());
         self.transparent
             .reserve(meshes.iter().map(|(_, mesh)| mesh.transparent.len()).sum());
         self.transparent_two_sided.reserve(
@@ -251,6 +284,18 @@ fn append_quad_layer(verts: &mut Vec<TerrainVertex>, src_verts: &[Vertex]) -> (u
     (vertex_start, src_verts.len() as u32)
 }
 
+/// A section's FAR-LOD vertex count: its opaque stream without the leaf-to-leaf
+/// internal faces the mesher appended last. A section with no far LOD keeps its
+/// whole stream, so it lands entirely in the column's far region and draws
+/// identically under either LOD.
+pub(super) fn far_len(mesh: &ChunkMesh) -> u32 {
+    if mesh.far_opaque_len > 0 {
+        mesh.far_opaque_len
+    } else {
+        mesh.opaque.len() as u32
+    }
+}
+
 /// `(min_cy, max_cy)` over a column's installed sections, inverted when empty.
 fn cy_span(sections: &[(SectionPos, GpuSectionMesh)]) -> (i32, i32) {
     sections
@@ -290,12 +335,21 @@ pub(super) fn upload_column_mesh(
     // contiguous range per column. The total is needed up front to place each
     // section's blend range.
     let model_opaque_total: u32 = meshes.iter().map(|(_, m)| m.model_idx.len() as u32).sum();
+    // Likewise for the opaque stream's two regions: every section's far LOD
+    // first, every section's leaf tail after, so each region is one contiguous
+    // per-column range (see [`GpuSectionMesh::opaque_vertex_start`]).
+    let opaque_far_total: u32 = meshes.iter().map(|(_, m)| far_len(m)).sum();
 
     for &(sp, mesh) in meshes {
         let (opaque_vertex_start, opaque_vertex_count) =
-            append_quad_layer(&mut scratch.opaque, &mesh.opaque);
-        let (far_opaque_vertex_start, far_opaque_vertex_count) =
-            append_quad_layer(&mut scratch.far_opaque, &mesh.far_opaque);
+            append_quad_layer(&mut scratch.opaque, &mesh.opaque[..far_len(mesh) as usize]);
+        let opaque_tail_start = opaque_far_total + scratch.opaque_tail.len() as u32;
+        let opaque_tail_count = mesh.opaque.len() as u32 - far_len(mesh);
+        scratch.opaque_tail.extend(
+            mesh.opaque[far_len(mesh) as usize..]
+                .iter()
+                .map(TerrainVertex::from_mesh),
+        );
         let (transparent_vertex_start, transparent_vertex_count) =
             append_quad_layer(&mut scratch.transparent, &mesh.transparent);
         let (transparent_ts_vertex_start, transparent_ts_vertex_count) = append_quad_layer(
@@ -329,8 +383,9 @@ pub(super) fn upload_column_mesh(
                 origin: (sp.cx * 16, sp.cy * 16, sp.cz * 16),
                 opaque_vertex_start,
                 opaque_vertex_count,
-                far_opaque_vertex_start,
-                far_opaque_vertex_count,
+                opaque_tail_start,
+                opaque_tail_count,
+                has_far_lod: mesh.far_opaque_len > 0,
                 transparent_vertex_start,
                 transparent_vertex_count,
                 transparent_ts_vertex_start,
@@ -345,20 +400,25 @@ pub(super) fn upload_column_mesh(
                 model_vertex_count,
                 contact_vertex_start,
                 contact_vertex_count,
+                far_lod_active: false,
                 index_hash: section_index_hash(mesh),
             },
         ));
     }
 
+    // Fold the leaf tails onto the far region: one opaque buffer, far region
+    // first (see [`GpuSectionMesh::opaque_vertex_start`]).
+    let opaque_far_quads = (scratch.opaque.len() / 4) as u32;
+    scratch.opaque.append(&mut scratch.opaque_tail);
+
     // The largest implied-triangulation draw this column can submit: the whole
-    // column's opaque stream, or one section's far-LOD stream.
+    // column's opaque stream (the far region is a prefix of it).
     quad_index.ensure(
         device,
         queue,
         (scratch
             .opaque
             .len()
-            .max(scratch.far_opaque.len())
             .max(scratch.transparent.len())
             .max(scratch.transparent_two_sided.len())
             .max(scratch.translucent.len())
@@ -379,13 +439,7 @@ pub(super) fn upload_column_mesh(
             bytemuck::cast_slice(&scratch.opaque),
         ),
         opaque_quads: (scratch.opaque.len() / 4) as u32,
-        far_opaque_vbuf: upload_layer(
-            device,
-            queue,
-            arena,
-            None,
-            bytemuck::cast_slice(&scratch.far_opaque),
-        ),
+        opaque_far_quads,
         transparent_vbuf: upload_layer(
             device,
             queue,

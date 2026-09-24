@@ -22,7 +22,7 @@ fn every_terrain_stream_is_a_whole_number_of_quads() {
 
     for (name, len) in [
         ("opaque", m.opaque.len()),
-        ("far_opaque", m.far_opaque.len()),
+        ("far_opaque", m.far_opaque_len as usize),
         ("transparent", m.transparent.len()),
         ("transparent_two_sided", m.transparent_two_sided.len()),
         ("translucent", m.translucent.len()),

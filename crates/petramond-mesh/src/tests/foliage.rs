@@ -47,57 +47,66 @@ fn leaves_go_to_opaque_pass() {
 
 #[test]
 fn distant_canopy_keeps_exterior_sprays_and_materials() {
-    for leaf in [Block::OakLeaves, Block::SpruceLeaves] {
-        let mut section = Section::new(0, 0, 0);
-        for x in 6..10 {
-            for y in 6..10 {
-                for z in 6..10 {
-                    section.set_block(x, y, z, leaf);
+    // BOTH emitters: cube-family leaves take the exposure-mask fast path when a
+    // pad is present and the generic per-face path when it is not, and each has
+    // to split the leaf-to-leaf internals off the far LOD's prefix for itself.
+    type Mesher = fn(&Section) -> ChunkMesh;
+    for (path, build) in [
+        ("closures", mesh as Mesher),
+        ("pad", mesh_via_pad as Mesher),
+    ] {
+        for leaf in [Block::OakLeaves, Block::SpruceLeaves] {
+            let mut section = Section::new(0, 0, 0);
+            for x in 6..10 {
+                for y in 6..10 {
+                    for z in 6..10 {
+                        section.set_block(x, y, z, leaf);
+                    }
                 }
             }
-        }
-        let near = mesh(&section);
-        assert!(!near.far_opaque.is_empty());
-        let near_quads: std::collections::HashSet<Vec<u8>> = near
-            .opaque
-            .chunks_exact(4)
-            .map(|q| bytemuck::cast_slice::<Vertex, u8>(q).to_vec())
-            .collect();
-        for q in near.far_opaque.chunks_exact(4) {
+            let near = build(&section);
             assert!(
-                near_quads.contains(bytemuck::cast_slice::<Vertex, u8>(q)),
-                "distant foliage must preserve exterior shape, UVs and lighting"
+                near.far_opaque_len > 0 && near.far_opaque_len < near.opaque.len() as u32,
+                "{path}: a solid leaf cube has internal faces for the far LOD to drop"
             );
-        }
-        let is_spray = |q: &[Vertex]| {
-            uv_mode(&q[0]) == crate::vertex::UV_MODE_NONE
-                && q.iter()
-                    .any(|v| v.pos.iter().any(|&p| !(6.0..=10.0).contains(&p)))
-        };
-        let sprays: Vec<_> = near
-            .opaque
-            .chunks_exact(4)
-            .filter(|q| is_spray(q))
-            .collect();
-        assert!(!sprays.is_empty());
-        let far_sprays: Vec<_> = near
-            .far_opaque
-            .chunks_exact(4)
-            .filter(|q| is_spray(q))
-            .collect();
-        assert_eq!(sprays.len(), far_sprays.len());
-        for (near, far) in sprays.iter().zip(far_sprays) {
-            assert_eq!(
-                bytemuck::cast_slice::<Vertex, u8>(near),
-                bytemuck::cast_slice::<Vertex, u8>(far)
-            );
-        }
-        for q in sprays {
-            assert!(
-                q.iter()
-                    .any(|v| v.pos.iter().any(|&p| !(6.0..=10.0).contains(&p))),
-                "sprays belong on the outside of the crown"
-            );
+            let far_opaque = &near.opaque[..near.far_opaque_len as usize];
+            let near_quads: std::collections::HashSet<Vec<u8>> = near
+                .opaque
+                .chunks_exact(4)
+                .map(|q| bytemuck::cast_slice::<Vertex, u8>(q).to_vec())
+                .collect();
+            for q in far_opaque.chunks_exact(4) {
+                assert!(
+                    near_quads.contains(bytemuck::cast_slice::<Vertex, u8>(q)),
+                    "distant foliage must preserve exterior shape, UVs and lighting"
+                );
+            }
+            let is_spray = |q: &[Vertex]| {
+                uv_mode(&q[0]) == crate::vertex::UV_MODE_NONE
+                    && q.iter()
+                        .any(|v| v.pos.iter().any(|&p| !(6.0..=10.0).contains(&p)))
+            };
+            let sprays: Vec<_> = near
+                .opaque
+                .chunks_exact(4)
+                .filter(|q| is_spray(q))
+                .collect();
+            assert!(!sprays.is_empty());
+            let far_sprays: Vec<_> = far_opaque.chunks_exact(4).filter(|q| is_spray(q)).collect();
+            assert_eq!(sprays.len(), far_sprays.len());
+            for (near, far) in sprays.iter().zip(far_sprays) {
+                assert_eq!(
+                    bytemuck::cast_slice::<Vertex, u8>(near),
+                    bytemuck::cast_slice::<Vertex, u8>(far)
+                );
+            }
+            for q in sprays {
+                assert!(
+                    q.iter()
+                        .any(|v| v.pos.iter().any(|&p| !(6.0..=10.0).contains(&p))),
+                    "sprays belong on the outside of the crown"
+                );
+            }
         }
     }
 }

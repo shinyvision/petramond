@@ -51,7 +51,7 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
     for dead in [false, true] {
         row.dead = dead;
         row.ragdoll = dead.then(|| vec![([0.0; 3], [0.0, 0.0, 0.0, 1.0])]);
-        game.replicated_mobs.apply(vec![row.clone()]);
+        game.replicated_mobs.apply(&[row.clone()]);
         let presentation = scratch.snapshot(&game, 0.0, &view);
         assert!(presentation.particle_emitters.is_empty());
         assert_eq!(presentation.mobs[0].emitter_self_lit, expected);
@@ -59,7 +59,7 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
         row.emitters.reverse();
     }
     row.emitters.clear();
-    game.replicated_mobs.apply(vec![row]);
+    game.replicated_mobs.apply(&[row]);
     assert_eq!(
         scratch.snapshot(&game, 0.0, &view).mobs[0].emitter_self_lit,
         0.0
@@ -74,12 +74,12 @@ fn replicated_store_pairs_consecutive_batches_and_drops_absent_ids() {
     let p1 = WorldPos::new(1.0, 70.0, 1.0);
     let p2 = WorldPos::new(1.5, 69.0, 1.0);
 
-    store.apply(vec![mob_row(7, p1, 0.3), mob_row(9, p1, 0.0)]);
+    store.apply(&[mob_row(7, p1, 0.3), mob_row(9, p1, 0.0)]);
     let fresh = store.iter().find(|e| e.curr.id == 7).expect("stored");
     assert_eq!(fresh.prev.pos, p1, "a fresh id interpolates from itself");
     assert_eq!(store.len(), 2);
 
-    store.apply(vec![mob_row(7, p2, 0.25)]);
+    store.apply(&[mob_row(7, p2, 0.25)]);
     assert_eq!(store.len(), 1, "id 9 was absent from the batch: dropped");
     let paired = store.iter().next().expect("id 7 kept");
     assert_eq!(paired.prev.pos, p1, "previous batch became the prev row");
@@ -98,7 +98,7 @@ fn burst_before_a_boundary_does_not_shift_the_committed_pair() {
     let mut game = game();
     let update = |tick: u64, x: f32| TickUpdate {
         tick,
-        mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)],
+        mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)].into(),
         ..Default::default()
     };
 
@@ -161,7 +161,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         let x = tick as f32;
         TickUpdate {
             tick,
-            mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)],
+            mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)].into(),
             items: vec![ItemStateRow {
                 id: 9,
                 item_id: ItemType::Dirt.0,
@@ -170,7 +170,8 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 pos: WorldPos::new(f64::from(x), 69.0, 0.0),
                 spin: 0.0,
                 flight: None,
-            }],
+            }]
+            .into(),
             players: vec![PlayerStateRow {
                 conditions: Vec::new(),
                 id: remote_id,
@@ -201,7 +202,8 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 hurt_recent: false,
                 snap: false,
                 mount: None,
-            }],
+            }]
+            .into(),
             player_actions: action.into_iter().map(|kind| (remote_id, kind)).collect(),
             ..Default::default()
         }
@@ -242,8 +244,8 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         "overflow collapses the pending backlog to its newest snapshot"
     );
     assert_eq!(
-        game.game.staged_rows.front().unwrap().actions,
-        expected_actions,
+        &*game.game.staged_rows.front().unwrap().actions,
+        expected_actions.as_slice(),
         "actions from every collapsed batch survive in arrival order"
     );
     let resync_tick = burst_len as u64 + 1;
@@ -341,7 +343,8 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
                     7,
                     WorldPos::new(f64::from(applied as f32 * speed), 70.0, 0.0),
                     0.0,
-                )],
+                )]
+                .into(),
                 ..Default::default()
             };
             game.game.apply_tick_update(Box::new(update));
@@ -541,9 +544,9 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     };
     let mut row = mob_row(7, WorldPos::new(4.25, 65.0, 4.0), 0.0);
     row.draw = worn.clone();
-    game.replicated_mobs.apply(vec![row.clone()]);
+    game.replicated_mobs.apply(&[row.clone()]);
     row.pos = WorldPos::new(5.25, 65.0, 4.0);
-    game.replicated_mobs.apply(vec![row.clone()]);
+    game.replicated_mobs.apply(&[row.clone()]);
 
     let presentation = scratch.snapshot(&game, 0.5, &view);
     let [draw] = presentation.block_draws else {
@@ -559,6 +562,6 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     assert!((feet.x - body.x).abs() < 1e-4, "{} vs {}", feet.x, body.x);
 
     row.draw = Default::default();
-    game.replicated_mobs.apply(vec![row]);
+    game.replicated_mobs.apply(&[row]);
     assert!(scratch.snapshot(&game, 0.5, &view).block_draws.is_empty());
 }

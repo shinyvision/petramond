@@ -40,10 +40,14 @@ use super::Game;
 /// is what keeps interpolated motion — and a rider's camera glued to it —
 /// free of arrival-jitter rubber-banding.
 pub struct StagedRows {
-    pub mobs: Vec<MobStateRow>,
-    pub items: Vec<ItemStateRow>,
-    pub players: Vec<PlayerStateRow>,
-    pub actions: Vec<(PlayerId, PlayerActionKind)>,
+    // Shared straight off the batch: the server builds one copy of each row
+    // set per tick window and the FIFO holds up to four windows, so staging
+    // them is four refcount bumps rather than four deep copies of every
+    // entity in the world.
+    pub mobs: std::sync::Arc<[MobStateRow]>,
+    pub items: std::sync::Arc<[ItemStateRow]>,
+    pub players: std::sync::Arc<[PlayerStateRow]>,
+    pub actions: std::sync::Arc<[(PlayerId, PlayerActionKind)]>,
     /// An overflow collapsed older pending snapshots into this newest one.
     /// Its first boundary commit must seed prev == curr rather than lerp over
     /// the dropped gap.
@@ -132,9 +136,9 @@ impl ReplicatedMobs {
     /// Apply one batch: a known id shifts curr→prev and adopts the new row, a
     /// fresh id starts with prev == curr (no interpolation from nowhere), and
     /// an id absent from the batch is dropped (killed/despawned server-side).
-    pub fn apply(&mut self, batch: Vec<MobStateRow>) {
+    pub fn apply(&mut self, batch: &[MobStateRow]) {
         let mut old = std::mem::take(&mut self.rows);
-        for row in batch {
+        for row in batch.iter().cloned() {
             // A fresh id starts its animations at FULL weight (a mob streamed
             // in mid-row must not fade in from rest); a known id keeps its
             // blend state and eases toward the new target set.
@@ -181,7 +185,7 @@ impl ReplicatedMobs {
     }
 
     /// Replace a discontinuous backlog with one fresh interpolation seed.
-    fn resync(&mut self, batch: Vec<MobStateRow>) {
+    fn resync(&mut self, batch: &[MobStateRow]) {
         self.rows.clear();
         self.apply(batch);
     }
@@ -291,9 +295,9 @@ pub struct ReplicatedItems {
 }
 
 impl ReplicatedItems {
-    pub fn apply(&mut self, batch: Vec<ItemStateRow>) {
+    pub fn apply(&mut self, batch: &[ItemStateRow]) {
         let mut old = std::mem::take(&mut self.rows);
-        for row in batch {
+        for row in batch.iter().cloned() {
             let prev = match old.remove(&row.id) {
                 Some(entry) => entry.curr,
                 None => row.clone(),
@@ -303,7 +307,7 @@ impl ReplicatedItems {
     }
 
     /// Replace a discontinuous backlog with one fresh interpolation seed.
-    fn resync(&mut self, batch: Vec<ItemStateRow>) {
+    fn resync(&mut self, batch: &[ItemStateRow]) {
         self.rows.clear();
         self.apply(batch);
     }
@@ -748,7 +752,7 @@ impl Game {
         let StagedRows {
             mobs,
             items,
-            mut players,
+            players,
             actions,
             resync,
         } = staged;
@@ -756,17 +760,28 @@ impl Game {
         if let Some(own) = players.iter().find(|row| row.id == self.self_id) {
             self.self_mount = own.mount;
         }
-        if resync {
-            self.replicated_mobs.resync(mobs);
-            self.replicated_items.resync(items);
-            for row in &mut players {
-                row.snap = true;
-            }
+        // A resync's player rows snap rather than interpolate across the
+        // dropped gap. The batch's rows are shared with every other holder of
+        // this snapshot, so the flagged copy is this path's own.
+        let snapped: Vec<PlayerStateRow>;
+        let players: &[PlayerStateRow] = if resync {
+            self.replicated_mobs.resync(&mobs);
+            self.replicated_items.resync(&items);
+            snapped = players
+                .iter()
+                .cloned()
+                .map(|mut row| {
+                    row.snap = true;
+                    row
+                })
+                .collect();
+            &snapped
         } else {
-            self.replicated_mobs.apply(mobs);
-            self.replicated_items.apply(items);
-        }
-        self.remote_players.apply(&players, &actions, self.self_id);
+            self.replicated_mobs.apply(&mobs);
+            self.replicated_items.apply(&items);
+            &players
+        };
+        self.remote_players.apply(players, &actions, self.self_id);
         if was_mounted && self.self_mount.is_none() {
             self.predict_dismount_placement();
         }
@@ -784,11 +799,11 @@ impl Game {
                 .sum::<usize>()
                 + staged.actions.len();
             let mut actions = Vec::with_capacity(action_count);
-            for mut rows in self.staged_rows.drain(..) {
-                actions.append(&mut rows.actions);
+            for rows in self.staged_rows.drain(..) {
+                actions.extend(rows.actions.iter().cloned());
             }
-            actions.append(&mut staged.actions);
-            staged.actions = actions;
+            actions.extend(staged.actions.iter().cloned());
+            staged.actions = actions.into();
             staged.resync = true;
         }
         self.staged_rows.push_back(staged);

@@ -455,9 +455,7 @@ impl Renderer {
         let upload_frame = self.terrain.upload_frame;
         // Drop packed GPU columns whose CPU meshes are gone.
         let before_columns = self.terrain.columns.len();
-        self.terrain
-            .columns
-            .retain(|p, _| terrain.has_column_mesh(*p));
+        self.terrain.columns.retain(|p| terrain.has_column_mesh(p));
         if self.terrain.columns.len() != before_columns {
             self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
         }
@@ -635,17 +633,5 @@ impl Renderer {
                     .push(Reverse((hidden, distance, cx, cz, revision)));
             }
         }
-        let terrain_columns = &self.terrain.columns;
-        // A section that lost its far mesh must lose its LOD state too: the
-        // planner only consults (and only maintains) the map for sections that
-        // still own one.
-        self.terrain.far_leaf_lod_state.retain(|sp, _| {
-            terrain_columns.get(&sp.chunk_pos()).is_some_and(|column| {
-                column
-                    .sections
-                    .iter()
-                    .any(|(pos, s)| pos == sp && s.far_opaque_vertex_count > 0)
-            })
-        });
     }
 }

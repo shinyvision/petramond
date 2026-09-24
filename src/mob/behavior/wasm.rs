@@ -81,7 +81,7 @@ impl AiBehavior for WasmNodeAi {
                 .map(|(k, v)| (k.clone(), mod_api::MobTagValue::from(v)))
                 .collect(),
         };
-        let Some(d) = crate::modding::ai::dispatch(self.key, &snapshot) else {
+        let Some(d) = crate::modding::ai::dispatch(self.key, snapshot) else {
             return BehaviorOutput::default();
         };
         // Every channel an engine node fills, converted 1:1. A scripted strike

@@ -537,14 +537,20 @@ pub struct TickUpdate {
     pub block_draws: Vec<BlockDrawDelta>,
     /// Every live mob's state (interest scoping lands with per-player
     /// streaming).
-    pub mobs: Vec<MobStateRow>,
+    ///
+    /// These four are IDENTICAL for every recipient of a tick window, so the
+    /// server builds them once and every batch shares the one allocation
+    /// instead of deep-copying every entity row per connected player. In
+    /// process that is the whole cost; on the wire each connection still
+    /// encodes its own copy.
+    pub mobs: std::sync::Arc<[MobStateRow]>,
     /// Every active dropped item's state.
-    pub items: Vec<ItemStateRow>,
+    pub items: std::sync::Arc<[ItemStateRow]>,
     /// Every connected session's player state (recipient included — the
     /// client skips its own id).
-    pub players: Vec<PlayerStateRow>,
+    pub players: std::sync::Arc<[PlayerStateRow]>,
     /// This window's one-shot player animation events, in emission order.
-    pub player_actions: Vec<(PlayerId, PlayerActionKind)>,
+    pub player_actions: std::sync::Arc<[(PlayerId, PlayerActionKind)]>,
     /// The recipient's own player state (per-recipient; in-process there is
     /// one recipient — session 0).
     pub self_state: Option<SelfState>,

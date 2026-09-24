@@ -16,6 +16,14 @@ pub struct Frustum {
     planes: [Vec4; 6],
 }
 
+/// Where a box sits relative to a frustum (see [`Frustum::aabb_containment`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Containment {
+    Outside,
+    Intersect,
+    Inside,
+}
+
 impl Frustum {
     /// Build from a `view_proj` matrix. Assumes wgpu/DX/Metal/Vulkan clip space
     /// (NDC z in `[0,1]`, which `glam::Mat4::perspective_rh` produces) — hence the
@@ -53,14 +61,52 @@ impl Frustum {
     /// True if the axis-aligned box `[min,max]` is at least partially inside the
     /// frustum. Uses the positive-vertex test: if the AABB corner farthest along a
     /// plane's normal is still behind that plane, the whole box is outside.
-    pub fn aabb_visible(&self, min: Vec3, max: Vec3) -> bool {
+    ///
+    /// `#[inline]` because the terrain planner calls this once per loaded
+    /// column and once per section of every visible one — thousands of times
+    /// per frame, across a crate boundary. Left to a cross-crate call it costs
+    /// a real call plus a 96-byte copy of the plane set each time, which
+    /// measured as the single largest item in the frame's draw planning.
+    /// How the axis-aligned box `[min,max]` sits against the frustum.
+    /// [`Containment::Inside`] means every point of the box is in front of
+    /// every plane, so nothing the box encloses can be culled — a caller
+    /// walking a hierarchy can then stop testing the frustum below it and
+    /// keep only whatever range test it has of its own.
+    #[inline]
+    pub fn aabb_containment(&self, min: Vec3, max: Vec3) -> Containment {
+        let c = (min + max) * 0.5;
+        let e = (max - min) * 0.5;
+        let mut inside = true;
         for p in &self.planes {
-            let pv = Vec3::new(
-                if p.x >= 0.0 { max.x } else { min.x },
-                if p.y >= 0.0 { max.y } else { min.y },
-                if p.z >= 0.0 { max.z } else { min.z },
-            );
-            if p.x * pv.x + p.y * pv.y + p.z * pv.z + p.w < 0.0 {
+            let n = Vec3::new(p.x, p.y, p.z);
+            let d = n.dot(c) + p.w;
+            let r = n.abs().dot(e);
+            if d + r < 0.0 {
+                return Containment::Outside;
+            }
+            inside &= d - r >= 0.0;
+        }
+        if inside {
+            Containment::Inside
+        } else {
+            Containment::Intersect
+        }
+    }
+
+    #[inline]
+    pub fn aabb_visible(&self, min: Vec3, max: Vec3) -> bool {
+        // Centre/extent form of the same positive-vertex test: the positive
+        // vertex is `c + sign(n) * e`, so its signed distance is
+        // `dot(n, c) + dot(|n|, e) + w`. Selecting per component instead costs
+        // three data-dependent branches per plane — eighteen per box — which
+        // the branch predictor cannot learn, and this is the single most
+        // executed operation in a frame (once per loaded column, once per
+        // section of every visible one).
+        let c = (min + max) * 0.5;
+        let e = (max - min) * 0.5;
+        for p in &self.planes {
+            let n = Vec3::new(p.x, p.y, p.z);
+            if n.dot(c) + n.abs().dot(e) + p.w < 0.0 {
                 return false;
             }
         }

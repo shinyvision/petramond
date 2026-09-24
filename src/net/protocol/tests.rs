@@ -292,7 +292,8 @@ fn tick_updates_roundtrip() {
             dig: None,
             held: [None; 2],
             draw: Default::default(),
-        }],
+        }]
+        .into(),
         items: vec![ItemStateRow {
             id: 7,
             item_id: 3,
@@ -301,7 +302,8 @@ fn tick_updates_roundtrip() {
             pos: WorldPos::new(0.5, 65.0, 0.5),
             spin: 1.25,
             flight: None,
-        }],
+        }]
+        .into(),
         players: vec![PlayerStateRow {
             conditions: Vec::new(),
             id: PlayerId(1),
@@ -354,7 +356,8 @@ fn tick_updates_roundtrip() {
             hurt_recent: true,
             snap: true,
             mount: None,
-        }],
+        }]
+        .into(),
         player_actions: vec![
             (PlayerId(1), PlayerActionKind::Died),
             (PlayerId(0), PlayerActionKind::Respawned),
@@ -365,7 +368,8 @@ fn tick_updates_roundtrip() {
                     event: 5,
                 },
             ),
-        ],
+        ]
+        .into(),
         self_state: Some(SelfState {
             conditions: Vec::new(),
             health: 14,
