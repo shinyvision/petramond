@@ -113,6 +113,9 @@ pub enum ShapeFamily {
     Ladder,
     Model,
     Door,
+    /// A thin panel lying flat across a cell that swings up onto one of its
+    /// vertical edges — the door's horizontal sibling (see `crate::trapdoor`).
+    Trapdoor,
     /// A mod-defined procedural shape, meshed/collided from the WASM bake
     /// cache. The [`ShapeParams::Custom`] payload carries its declaration.
     Custom,
@@ -617,6 +620,7 @@ impl<'de> Deserialize<'de> for RawShape {
                 "fence" => Ok(RawShape::Fence),
                 "ladder" => Ok(RawShape::Ladder),
                 "door" => Ok(RawShape::Door),
+                "trapdoor" => Ok(RawShape::Trapdoor),
                 other if crate::registry::is_namespaced(other) => {
                     Ok(RawShape::Named(other.to_owned()))
                 }

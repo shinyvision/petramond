@@ -346,13 +346,14 @@ pub struct Game {
     /// presentation snapshot reads the angle (via [`Game::chest_lid_angle`]) to bake the lid;
     /// the easing in [`Game::advance_chest_lids`] is the owning sim/animation state.
     chest_lids: HashMap<IVec3, f32>,
-    /// Transient per-door swing angle (`0.0` closed .. `1.0` open), keyed by the door's
-    /// LOWER cell. A door enters the map when right-click toggles it and is eased toward
-    /// its (now flipped) logical open state by [`Game::advance_door_swings`]; once it
-    /// reaches the target it is dropped (the renderer then reads the resting angle
-    /// straight from the door state). Client-side animation only, never persisted — the
-    /// authoritative open/closed bit lives in the chunk door map. See [`petramond_world::door`].
-    door_swings: HashMap<IVec3, f32>,
+    /// Transient per-panel swing angle (`0.0` closed .. `1.0` open) for doors and
+    /// trapdoors alike, keyed by the panel's anchor cell (a door's LOWER half, a
+    /// trapdoor's own cell). A panel enters the map when a use click toggles it and is
+    /// eased toward its (now flipped) logical open state by [`Game::advance_panel_swings`];
+    /// once it reaches the target it is dropped (the renderer then reads the resting angle
+    /// straight from the cell state). Client-side animation only, never persisted — the
+    /// authoritative open/closed bit lives in the cell-state store.
+    panel_swings: HashMap<IVec3, f32>,
 }
 
 impl Game {
@@ -550,6 +551,7 @@ impl Game {
         self.look = Some(RaycastHit {
             block,
             normal,
+            spot: petramond_math::math::Vec3::splat(0.5),
             outline: petramond_math::math::SelectionShape::full_block(block),
         });
         // The full click composition (mod interact predictors first), so
@@ -576,6 +578,7 @@ impl Game {
         self.look = Some(RaycastHit {
             block,
             normal,
+            spot: petramond_math::math::Vec3::splat(0.5),
             outline: petramond_math::math::SelectionShape::full_block(block),
         });
         let mut input = crate::game::tick::GameInput::default();

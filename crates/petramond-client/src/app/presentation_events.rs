@@ -43,13 +43,13 @@ impl App {
                 WorldEvent::BlockBroken { pos, block, .. } => block
                     .sound(BlockSoundAction::Break)
                     .map(|s| (s, cell_centre(pos))),
-                WorldEvent::DoorToggled { lower, open } => Some((
+                WorldEvent::PanelToggled { anchor, open } => Some((
                     if open {
                         Sound::DoorOpen
                     } else {
                         Sound::DoorClose
                     },
-                    cell_centre(lower),
+                    cell_centre(anchor),
                 )),
                 WorldEvent::ChestOpened { pos } => Some((Sound::ChestOpen, cell_centre(pos))),
                 WorldEvent::ChestClosed { pos } => Some((Sound::ChestClose, cell_centre(pos))),

@@ -87,6 +87,7 @@ pub(super) fn cell_classes() -> &'static [u8] {
                     || block.flags().invisible()
                     || block == Block::Chest
                     || family == ShapeFamily::Door
+                    || family == ShapeFamily::Trapdoor
                 {
                     SKIP
                 } else if family == ShapeFamily::Cross {

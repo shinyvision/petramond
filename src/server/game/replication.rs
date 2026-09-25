@@ -311,7 +311,7 @@ impl ServerGame {
             respawned: p.respawned,
             open_screen,
             close_document_gui: std::mem::take(&mut sess.request_close_gui),
-            toggled_door: p.toggled_door,
+            toggled_panel: p.toggled_panel,
             used_unpredicted: p.used_unpredicted,
             used_unpredicted_off: p.used_unpredicted && p.click_off_hand,
             // Addressed by player id rather than by session index: a mod names
@@ -526,8 +526,8 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
             block_id: block.0,
         });
     }
-    for (lower, open) in world.door_changed.drain(..) {
-        out.push(WorldEventMsg::DoorToggled { lower, open });
+    for (anchor, open) in world.panel_changed.drain(..) {
+        out.push(WorldEventMsg::PanelToggled { anchor, open });
     }
     for (pos, open) in world.chest_changed.drain(..) {
         out.push(if open {

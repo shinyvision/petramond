@@ -38,6 +38,7 @@ pub mod scene;
 pub mod selection;
 mod selection_highlight;
 pub mod shader_pack;
+pub mod trapdoor_model;
 pub mod ui;
 pub mod uniforms;
 
@@ -564,6 +565,33 @@ pub struct DoorInstance {
     /// front art, e.g. a plank strip).
     side_tile: petramond_world::tile::Tile,
     /// 6-bit skylight sampled from the world at the door's lower cell.
+    skylight: u8,
+    /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
+    blocklight: petramond_world::light::BlockLight6,
+}
+
+/// A placed trapdoor to draw in the world this frame: a thin panel across cell
+/// `pos`, lying on its floor (or, when `top`, its ceiling) and swung up onto
+/// the `facing` edge by `open01` (`0` closed .. `1` fully open). The game fills
+/// a slice of these from the loaded chunks' trapdoor state; the renderer
+/// frustum-culls + bakes them alongside the doors.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct TrapdoorInstance {
+    /// The trapdoor's cell.
+    pos: petramond_math::math::IVec3,
+    /// The edge the panel is hinged on — and stands on when open.
+    facing: petramond_math::facing::Facing,
+    /// The closed panel lies against the cell's ceiling rather than its floor.
+    top: bool,
+    /// Swing fraction: `0.0` lying flat, `1.0` standing on the hinged edge.
+    open01: f32,
+    /// Atlas tile for the panel's upper wide face.
+    top_tile: petramond_world::tile::Tile,
+    /// Atlas tile for the panel's under wide face.
+    bottom_tile: petramond_world::tile::Tile,
+    /// Atlas tile for the four thin EDGE faces (a plank strip).
+    side_tile: petramond_world::tile::Tile,
+    /// 6-bit skylight sampled from the world at the panel's cell.
     skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
     blocklight: petramond_world::light::BlockLight6,

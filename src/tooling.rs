@@ -43,6 +43,7 @@ pub mod stream {
         let inputs = crate::world::placement::PlaceInputs {
             hit: p - petramond_math::math::IVec3::Y,
             normal: petramond_math::math::IVec3::Y,
+            spot: [0.5; 3],
             place_pos: p,
             replacing_in_place: false,
             player_facing,

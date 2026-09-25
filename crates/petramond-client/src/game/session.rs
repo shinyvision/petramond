@@ -215,7 +215,7 @@ impl Game {
             mining_feedback: Default::default(),
             mob_digging: HashMap::new(),
             chest_lids: HashMap::new(),
-            door_swings: HashMap::new(),
+            panel_swings: HashMap::new(),
         }
     }
 }

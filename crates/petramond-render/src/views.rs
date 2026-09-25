@@ -15,6 +15,7 @@ use petramond_math::math::Tilt;
 use petramond_world::door::DoorState;
 use petramond_world::item::ItemType;
 use petramond_world::tile::Tile;
+use petramond_world::trapdoor::TrapdoorState;
 
 /// The block-break overlay to draw this frame: a cracked-texture overlay over
 /// `block` at crack `stage` (0..=9, where 9 is fully cracked / about to break).
@@ -91,6 +92,16 @@ pub struct ChestPresentation {
 pub struct DoorPresentation {
     pub pos: IVec3,
     pub state: DoorState,
+    pub tiles: [Tile; 3],
+    pub swing_progress: f32,
+    pub skylight: u8,
+    pub blocklight: petramond_world::light::BlockLight6,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct TrapdoorPresentation {
+    pub pos: IVec3,
+    pub state: TrapdoorState,
     pub tiles: [Tile; 3],
     pub swing_progress: f32,
     pub skylight: u8,
@@ -396,6 +407,7 @@ pub struct GamePresentation<'a> {
     /// gather's own rows, handed on without a re-spelling copy.
     pub block_draws: &'a [petramond::world::draw::BlockDrawInstance],
     pub doors: &'a [DoorPresentation],
+    pub trapdoors: &'a [TrapdoorPresentation],
     pub mobs: &'a [MobPresentation],
     /// Every OTHER connected player's body + held item for this frame,
     /// already interpolated and posed — the render input rows themselves

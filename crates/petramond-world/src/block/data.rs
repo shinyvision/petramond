@@ -168,6 +168,12 @@ pub const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:stone_bricks_stairs",
     "petramond:stone_bricks_slab",
     "petramond:chiseling_station",
+    "petramond:oak_trapdoor",
+    "petramond:spruce_trapdoor",
+    "petramond:birch_trapdoor",
+    "petramond:jungle_trapdoor",
+    "petramond:acacia_trapdoor",
+    "petramond:redwood_trapdoor",
 ];
 
 /// The JSON-loaded block table. Loads exactly once, on first access from any

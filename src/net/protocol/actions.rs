@@ -84,6 +84,39 @@ pub struct PlayerUpdate {
 pub struct TargetRef {
     pub block: IVec3,
     pub normal: IVec3,
+    /// WHERE on the block the click landed, cell-local to `block` and
+    /// quantized to 1/255 per axis. Placement rules that care which PART of a
+    /// face was clicked read it; it rides the click so the client's ghost and
+    /// the server's write resolve from the identical spot. Quantized rather
+    /// than float so the ref stays `Eq` (clicks are compared) — a texel is
+    /// 1/16, sixteen times coarser than this.
+    pub spot: [u8; 3],
+}
+
+impl TargetRef {
+    /// The click this raycast hit describes.
+    pub fn of_hit(hit: &crate::player::RaycastHit) -> Self {
+        Self {
+            block: hit.block,
+            normal: hit.normal,
+            spot: std::array::from_fn(|a| (hit.spot[a].clamp(0.0, 1.0) * 255.0).round() as u8),
+        }
+    }
+
+    /// A click on the MIDDLE of `block`'s `normal` face — the spot-free form,
+    /// for callers that have only a cell and a face (tests, tooling).
+    pub fn face(block: IVec3, normal: IVec3) -> Self {
+        Self {
+            block,
+            normal,
+            spot: [127; 3],
+        }
+    }
+
+    /// The click spot as cell-local fractions of `block`.
+    pub fn spot_fraction(&self) -> [f32; 3] {
+        std::array::from_fn(|a| f32::from(self.spot[a]) / 255.0)
+    }
 }
 
 /// How much a cursor throw takes off the held stack: the whole stack

@@ -347,6 +347,12 @@ impl Renderer {
         self.block_entity.doors.extend_from_slice(v);
     }
 
+    /// Store the placed trapdoors to draw this frame, alongside the doors.
+    pub(crate) fn set_trapdoors(&mut self, v: &[TrapdoorInstance]) {
+        self.block_entity.trapdoors.clear();
+        self.block_entity.trapdoors.extend_from_slice(v);
+    }
+
     /// Store the mobs to draw this frame (already interpolated by the scene adapter).
     /// Reuses the existing `Vec` capacity.
     pub fn set_mobs(&mut self, v: &[MobRenderInstance]) {

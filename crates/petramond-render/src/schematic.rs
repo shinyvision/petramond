@@ -96,6 +96,7 @@ impl Geometry {
         }
         let mut chests = Vec::new();
         let mut doors = Vec::new();
+        let mut trapdoors = Vec::new();
         for (p, cell) in &scene.cells {
             if only.is_some_and(|only| SectionPos::from_world(p.x, p.y, p.z) != Some(only)) {
                 continue;
@@ -105,6 +106,21 @@ impl Geometry {
                     pos: *p,
                     facing: petramond_world::block_state::EntityFront::from_cell(cell.state).0,
                     lid01: 0.0,
+                    skylight: 63,
+                    blocklight: petramond_world::light::BlockLight6::DARK,
+                });
+            }
+            if cell.block.shape_family() == ShapeFamily::Trapdoor {
+                let panel = petramond_world::trapdoor::TrapdoorState::from_cell(cell.state);
+                let tiles = cell.block.tiles();
+                trapdoors.push(crate::TrapdoorInstance {
+                    pos: *p,
+                    facing: panel.facing,
+                    top: panel.top,
+                    open01: if panel.open { 1.0 } else { 0.0 },
+                    top_tile: tiles[0],
+                    bottom_tile: tiles[1],
+                    side_tile: tiles[2],
                     skylight: 63,
                     blocklight: petramond_world::light::BlockLight6::DARK,
                 });
@@ -131,6 +147,7 @@ impl Geometry {
         out.append(verts, indices);
         let (mut verts, mut indices) = (Vec::new(), Vec::new());
         crate::door_model::build_doors(&doors, IVec3::ZERO, &mut verts, &mut indices);
+        crate::trapdoor_model::push_trapdoors(&trapdoors, IVec3::ZERO, &mut verts, &mut indices);
         out.append(verts, indices);
         for vertex in &mut out.blocks {
             for axis in 0..3 {

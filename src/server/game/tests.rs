@@ -240,10 +240,10 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     server
         .world
         .set_block_world(cell.x, cell.y, cell.z, petramond_world::block::Block::Stone);
-    server.sessions[0].look = Some(crate::net::protocol::TargetRef {
-        block: cell,
-        normal: IVec3::new(0, 1, 0),
-    });
+    server.sessions[0].look = Some(crate::net::protocol::TargetRef::face(
+        cell,
+        IVec3::new(0, 1, 0),
+    ));
     server.sessions[0].intent_break_held = true;
 
     let mut events = TickEvents::default();

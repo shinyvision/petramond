@@ -56,10 +56,7 @@ fn representative_messages_roundtrip_through_postcard() {
         gameplay: true,
         break_held: true,
         use_held: false,
-        target: Some(TargetRef {
-            block: IVec3::new(4, 63, -2),
-            normal: IVec3::new(0, 1, 0),
-        }),
+        target: Some(TargetRef::face(IVec3::new(4, 63, -2), IVec3::new(0, 1, 0))),
         hotbar_slot: 3,
         held_rotation: 1,
         wishdir: Vec3::ZERO,
@@ -68,10 +65,7 @@ fn representative_messages_roundtrip_through_postcard() {
     }));
     roundtrip(&ClientToServer::Action(PlayerAction::UseClick {
         mob: Some(812),
-        target: Some(TargetRef {
-            block: IVec3::new(4, 65, -2),
-            normal: IVec3::Y,
-        }),
+        target: Some(TargetRef::face(IVec3::new(4, 65, -2), IVec3::Y)),
         request_id: Some(7),
         predicted: true,
         jabbed: false,

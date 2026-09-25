@@ -24,9 +24,7 @@
 //! `view_proj`, like the block pipeline) and full-bright. Built into a
 //! caller-owned `Vec` whose capacity is reused frame to frame.
 
-use glam::Vec3;
-
-use super::item_cube::{push_box_faces_lit, push_cube_textured};
+use super::views::CrackBox;
 use super::BreakOverlayView;
 use petramond_mesh::Vertex;
 use petramond_world::tile::Tile;
@@ -98,52 +96,49 @@ fn append_break_overlay(
 ) {
     let tile = destroy_tile(view.stage);
     let base = (view.block - render_origin).as_vec3();
-    if let Some(cb) = view.shape_boxes {
-        // Every box family cracks the same way: over the boxes its shape
-        // resolved to, with cell-local UVs, emitting only the faces the family
-        // emits. A stair's steps, a slab's occupied halves, a fence's post and
-        // rails, a ladder's panel (minus the face buried in the wall) and a
-        // chair's legs are all this one loop — the crack cannot disagree with
-        // the meshed form because it reads the same producer.
-        for b in cb.boxes.iter().take(cb.len as usize) {
-            for (fi, face) in petramond_math::face::Face::ALL.into_iter().enumerate() {
-                if !b.faces[fi] {
-                    continue;
-                }
-                super::item_cube::push_cell_local_face_styled(
-                    verts,
-                    indices,
-                    tile,
-                    base,
-                    1.0,
-                    b.min,
-                    b.max,
-                    face,
-                    super::lighting::DynLight::FULL,
-                    super::item_cube::FaceArt {
-                        pose: b.pose,
-                        ..Default::default()
-                    },
-                );
-            }
+    // EVERY cell cracks the same way: over the boxes it occupies, with
+    // CELL-LOCAL UVs, emitting only the faces that are drawn. A stair's steps,
+    // a slab's occupied halves, a fence's post and rails, a hinged panel's
+    // slab, a chest's inset body and a plain cube's six faces are all this one
+    // loop, so the crack cannot disagree with the form it lands on — and a
+    // face's texels stay the size they are everywhere else instead of a whole
+    // tile being squashed across a 3-texel edge. (Cell-local is also the ONLY
+    // UV mode `break_overlay.wgsl` decodes; a thin-slice mode packed here would
+    // read as a plain stretched face.)
+    let whole;
+    let boxes: &[CrackBox] = match (&view.shape_boxes, view.visual_box) {
+        (Some(cb), _) => &cb.boxes[..cb.len as usize],
+        (None, other) => {
+            let (min, max) = other.unwrap_or(([0.0; 3], [1.0; 3]));
+            whole = [CrackBox {
+                min,
+                max,
+                faces: [true; 6],
+                pose: None,
+            }];
+            &whole
         }
-    } else {
-        match view.visual_box {
-            // A non-full-cube block (the chest) cracks over its inset visual box.
-            Some((mn, mx)) => {
-                let min = base + Vec3::new(mn[0], mn[1], mn[2]);
-                let max = base + Vec3::new(mx[0], mx[1], mx[2]);
-                push_box_faces_lit(
-                    verts,
-                    indices,
-                    [tile; 6],
-                    [0; 6],
-                    min,
-                    max,
-                    super::lighting::DynLight::FULL,
-                );
+    };
+    for b in boxes {
+        for (fi, face) in petramond_math::face::Face::ALL.into_iter().enumerate() {
+            if !b.faces[fi] {
+                continue;
             }
-            None => push_cube_textured(verts, indices, [tile; 3], base, 1.0),
+            super::item_cube::push_cell_local_face_styled(
+                verts,
+                indices,
+                tile,
+                base,
+                1.0,
+                b.min,
+                b.max,
+                face,
+                super::lighting::DynLight::FULL,
+                super::item_cube::FaceArt {
+                    pose: b.pose,
+                    ..Default::default()
+                },
+            );
         }
     }
 }
@@ -197,6 +192,82 @@ mod tests {
             .fold(f32::NEG_INFINITY, f32::max);
         assert_eq!(min_x, 3.0, "cube min lands exactly on the block boundary");
         assert_eq!(max_x, 4.0, "cube max lands exactly on the block boundary");
+    }
+
+    /// The cell-local `(u, v)` texel span, in 16ths, of each face's four
+    /// corners — what the break shader reconstructs from `packed2`.
+    fn face_uv_spans(v: &[Vertex]) -> Vec<(u32, u32)> {
+        v.chunks(4)
+            .map(|face| {
+                let lane = |shift: u32| {
+                    let vals = face.iter().map(|vert| (vert.packed2 >> shift) & 0x1F);
+                    vals.clone().max().unwrap() - vals.min().unwrap()
+                };
+                (lane(6), lane(11))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_thin_panels_crack_covers_only_the_texels_that_face_is_deep() {
+        // The reported bug: a hinged panel's 3-texel-deep edge faces showed a
+        // WHOLE destroy tile squashed across them. Cell-local UVs give each
+        // face exactly the texels it spans, so an edge carves 3 of 16 and the
+        // wide faces carve all 16.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        let view = BreakOverlayView {
+            block: IVec3::new(2, 70, 3),
+            // A closed floor trapdoor: full on X and Z, a panel thick on Y.
+            visual_box: Some(([0.0, 0.0, 0.0], [1.0, 3.0 / 16.0, 1.0])),
+            shape_boxes: None,
+            model: None,
+            stage: 3,
+        };
+        build_break_overlay(&view, &mut v, &mut i);
+        // Faces are emitted in `Face::ALL` order [PosX, NegX, PosY, NegY,
+        // PosZ, NegZ]; the edge faces are thin along Y, which every one of
+        // them maps to V.
+        let spans = face_uv_spans(&v);
+        for face in [0, 1, 4, 5] {
+            assert_eq!(spans[face], (16, 3), "edge face {face} is 3 texels deep");
+        }
+        for face in [2, 3] {
+            assert_eq!(spans[face], (16, 16), "wide panel face {face} is whole");
+        }
+    }
+
+    #[test]
+    fn the_overlay_only_speaks_a_uv_mode_its_shader_decodes() {
+        // `break_overlay.wgsl` reconstructs ONE uv mode; anything else reads
+        // as a plain stretched face there however carefully it was packed.
+        // That is exactly how the squished panel edge survived a passing test
+        // (2026-09-24): the slice mode was emitted and silently ignored.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        build_break_overlay(
+            &BreakOverlayView {
+                block: IVec3::ZERO,
+                visual_box: Some(([0.0, 0.0, 0.0], [1.0, 3.0 / 16.0, 1.0])),
+                shape_boxes: None,
+                model: None,
+                stage: 1,
+            },
+            &mut v,
+            &mut i,
+        );
+        for vert in &v {
+            assert_eq!(
+                (vert.packed >> petramond_mesh::UV_MODE_SHIFT) & 0x7,
+                petramond_mesh::UV_MODE_CELL_LOCAL,
+                "the crack must carve cell-local UVs"
+            );
+        }
+        let src = include_str!("../shaders/break_overlay.wgsl");
+        assert!(
+            src.contains("uv_mode == UV_MODE_CELL_LOCAL"),
+            "break_overlay.wgsl must decode the mode the overlay emits"
+        );
     }
 
     /// Build a view whose cell resolved to `boxes` — `(min, max, faces)` in

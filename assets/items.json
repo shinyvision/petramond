@@ -2206,6 +2206,90 @@
           "name": "Snow Layer"
         }
       }
+    },
+    {
+      "item": "petramond:oak_trapdoor",
+      "key": "petramond:oak_trapdoor",
+      "name": "Oak Trapdoor",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "oak_trapdoor",
+      "tags": [],
+      "block": "petramond:oak_trapdoor"
+    },
+    {
+      "item": "petramond:spruce_trapdoor",
+      "key": "petramond:spruce_trapdoor",
+      "name": "Spruce Trapdoor",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "spruce_trapdoor",
+      "tags": [],
+      "block": "petramond:spruce_trapdoor"
+    },
+    {
+      "item": "petramond:birch_trapdoor",
+      "key": "petramond:birch_trapdoor",
+      "name": "Birch Trapdoor",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "birch_trapdoor",
+      "tags": [],
+      "block": "petramond:birch_trapdoor"
+    },
+    {
+      "item": "petramond:jungle_trapdoor",
+      "key": "petramond:jungle_trapdoor",
+      "name": "Jungle Trapdoor",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "jungle_trapdoor",
+      "tags": [],
+      "block": "petramond:jungle_trapdoor"
+    },
+    {
+      "item": "petramond:acacia_trapdoor",
+      "key": "petramond:acacia_trapdoor",
+      "name": "Acacia Trapdoor",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "acacia_trapdoor",
+      "tags": [],
+      "block": "petramond:acacia_trapdoor"
+    },
+    {
+      "item": "petramond:redwood_trapdoor",
+      "key": "petramond:redwood_trapdoor",
+      "name": "Redwood Trapdoor",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "redwood_trapdoor",
+      "tags": [],
+      "block": "petramond:redwood_trapdoor"
     }
   ]
 }

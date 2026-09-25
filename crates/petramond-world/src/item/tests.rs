@@ -324,7 +324,7 @@ fn render_kind_matches_shape_family() {
                 }
             }
             // The thin / flat-art shapes render as a flat sprite (their row art).
-            ShapeFamily::Door | ShapeFamily::Pane | ShapeFamily::Ladder => {
+            ShapeFamily::Door | ShapeFamily::Trapdoor | ShapeFamily::Pane | ShapeFamily::Ladder => {
                 assert!(
                     matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
                     "{block:?} renders as a flat sprite"

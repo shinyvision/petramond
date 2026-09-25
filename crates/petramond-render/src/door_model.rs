@@ -15,10 +15,10 @@
 
 use glam::Vec3;
 
-use super::item_cube::{orient_faces_to_block, push_box_faces_lit_mirrored};
+use super::item_cube::{orient_faces_to_block, push_box_faces_lit_mirrored, thin_face_slice_modes};
 use super::DoorInstance;
 use petramond_math::facing::Facing;
-use petramond_mesh::{Vertex, UV_MODE_THIN_U, UV_MODE_THIN_V};
+use petramond_mesh::Vertex;
 use petramond_world::door::{self, THICKNESS};
 
 /// Canonical closed-door slab extent on the thin (Z) axis: flush with the `+Z` face.
@@ -35,10 +35,21 @@ pub fn build_doors(
 ) -> u32 {
     verts.clear();
     indices.clear();
+    push_doors(instances, render_origin, verts, indices);
+    indices.len() as u32
+}
+
+/// Append every instance's geometry to `verts`/`indices` (NOT cleared — the
+/// doors share one stream with the trapdoors).
+pub fn push_doors(
+    instances: &[DoorInstance],
+    render_origin: glam::IVec3,
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+) {
     for inst in instances {
         push_door_world(verts, indices, inst, render_origin);
     }
-    indices.len() as u32
 }
 
 /// Append one placed door (lower + upper slab halves) for `inst`, swung by its angle,
@@ -69,19 +80,11 @@ fn push_door_world(
     // Mirror ONLY the back face (NegZ, index 5) so the door reads identically (hinge on
     // the hinge side) from front AND back, instead of flipping handedness behind.
     const MIRROR_BACK: [bool; 6] = [false, false, false, false, false, true];
-    // Thin-face UV mode (ALL_FACES order [PosX, NegX, PosY, NegY, PosZ, NegZ]): the four
-    // 3/16-deep EDGE faces would squish a whole tile across that thin edge, so each crops
-    // its tile to a matching strip. The side edges (±X) are thin along Z, which maps to
-    // the face's U axis → crop-U (mode 1); the top/bottom edges (±Y) are thin along Z,
-    // which maps to V → crop-V (mode 2). The wide front/back art (±Z) is full-tile (0).
-    const SLICE: [u32; 6] = [
-        UV_MODE_THIN_U,
-        UV_MODE_THIN_U,
-        UV_MODE_THIN_V,
-        UV_MODE_THIN_V,
-        0,
-        0,
-    ];
+    // The four 3/16-deep EDGE faces would squish a whole tile across that thin
+    // edge, so each crops its tile to a matching strip; the wide front/back art
+    // stays full-tile. Derived from the slab's own extent by the one rule the
+    // crack overlay reads too.
+    let slice = thin_face_slice_modes(Vec3::new(0.0, 0.0, Z_BACK), Vec3::new(1.0, 1.0, Z_FRONT));
     // Canonical south-facing slab: lower half (bottom art) then upper half (top art).
     push_box_faces_lit_mirrored(
         verts,
@@ -91,7 +94,7 @@ fn push_door_world(
         Vec3::new(1.0, 1.0, Z_FRONT),
         sky,
         MIRROR_BACK,
-        SLICE,
+        slice,
     );
     push_box_faces_lit_mirrored(
         verts,
@@ -101,7 +104,7 @@ fn push_door_world(
         Vec3::new(1.0, 2.0, Z_FRONT),
         sky,
         MIRROR_BACK,
-        SLICE,
+        slice,
     );
 
     // Swing about the canonical hinge pivot (inset from the corner so the open slab

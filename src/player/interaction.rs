@@ -62,6 +62,12 @@ pub struct RaycastHit {
     /// Face normal pointing back toward the eye. `block + normal` is the empty
     /// cell to place into. Zero when the eye started inside the selected cell.
     pub normal: IVec3,
+    /// WHERE on the block the ray landed, in cell-local coordinates of
+    /// [`block`](Self::block) (`0..1` per axis). Placement rules that care
+    /// which PART of a face was clicked — which half a trapdoor hangs in —
+    /// read this; it rides the wire so the client's ghost and the server's
+    /// write resolve from the identical click.
+    pub spot: Vec3,
     pub outline: SelectionShape,
 }
 
@@ -336,14 +342,25 @@ impl Player {
                 // torch pole, a stair's resolved steps) only registers when
                 // the ray actually crosses its precise shape — otherwise the
                 // ray sees past the empty parts of its cell.
-                if shape_box.is_none() && !precise_only {
-                    return Some((hit(pos, entry_normal, block), t_enter));
-                }
                 let local_eye = eye - WorldPos::block_min(pos);
+                if shape_box.is_none() && !precise_only {
+                    return Some((
+                        hit(pos, entry_normal, block, local_eye + dir * t_enter),
+                        t_enter,
+                    ));
+                }
                 if let Some(shape) = shape_hit(local_eye, dir, pos, block) {
                     let t = shape.t;
                     if t <= max && hit_in_cell(local_eye, dir, t) {
-                        return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
+                        return Some((
+                            hit(
+                                pos,
+                                shape.normal.unwrap_or(entry_normal),
+                                block,
+                                local_eye + dir * t,
+                            ),
+                            t,
+                        ));
                     }
                 }
             } else if let Some((mn, mx)) = plant_selection_aabb(block) {
@@ -356,7 +373,15 @@ impl Player {
                 if let Some(shape) = ray_vs_aabb_hit(local_eye, dir, mn, mx) {
                     let t = shape.t;
                     if t <= max && hit_in_cell(local_eye, dir, t) {
-                        return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
+                        return Some((
+                            hit(
+                                pos,
+                                shape.normal.unwrap_or(entry_normal),
+                                block,
+                                local_eye + dir * t,
+                            ),
+                            t,
+                        ));
                     }
                 }
             }
@@ -396,10 +421,13 @@ impl Player {
     }
 }
 
-fn hit(block_pos: IVec3, normal: IVec3, block: Block) -> RaycastHit {
+fn hit(block_pos: IVec3, normal: IVec3, block: Block, spot: Vec3) -> RaycastHit {
     RaycastHit {
         block: block_pos,
         normal,
+        // A grazing hit can land a hair outside the cell in float; clamping
+        // keeps "which half of the face" a question about this cell only.
+        spot: spot.clamp(Vec3::ZERO, Vec3::ONE),
         outline: outline_shape(block_pos, block),
     }
 }
@@ -508,12 +536,12 @@ fn precise_shape_hit(
         )
         .map(ShapeHit::distance);
     }
-    // A door's thin slab depends on its facing + open state (the chunk door map), and
+    // A door's or trapdoor's thin panel depends on its facing + open state, and
     // a ladder's panel on its facing row, so test the resolved panel box
     // rather than the block row's position-less default.
     if matches!(
         block.shape_family(),
-        ShapeFamily::Door | ShapeFamily::Ladder
+        ShapeFamily::Door | ShapeFamily::Trapdoor | ShapeFamily::Ladder
     ) {
         let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
         return ray_vs_aabb_hit(eye, dir, Vec3::from(mn), Vec3::from(mx));

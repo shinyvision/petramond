@@ -22,7 +22,7 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
         // The actor's own one-shots (hand animation feeds) — their former
         // local sound plays are gone.
         placed_block: Some(petramond_world::block::Block::Dirt),
-        toggled_door: Some(true),
+        toggled_panel: Some(true),
         open_gui: Some((
             petramond_world::gui_state::GuiKind::Chest,
             Some(petramond::menu::MenuAnchor::Block(pos)),
@@ -34,8 +34,8 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
                 pos,
                 block: petramond_world::block::Block::Dirt,
             },
-            WorldEvent::DoorToggled {
-                lower: pos,
+            WorldEvent::PanelToggled {
+                anchor: pos,
                 open: true,
             },
             WorldEvent::ChestOpened { pos },

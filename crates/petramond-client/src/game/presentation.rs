@@ -27,7 +27,8 @@ use entity_emitters::{body_emitters, emitter_self_lit, emitter_tint};
 pub use petramond_render::views::{
     BreakOverlayView, ChestPresentation, CrackBox, CrackBoxes, DoorPresentation,
     DroppedItemPresentation, EntityShadow, FootstepSource, GamePresentation, MobPresentation,
-    ModelCrack, ParticleAtlas, ParticlePresentation, PlayerPresentation, MAX_CRACK_BOXES,
+    ModelCrack, ParticleAtlas, ParticlePresentation, PlayerPresentation, TrapdoorPresentation,
+    MAX_CRACK_BOXES,
 };
 
 /// The local player's [`FootstepSource`] key. Remotes are `1 + PlayerId`, so
@@ -124,8 +125,16 @@ pub struct GamePresentationScratch {
         u8,
         petramond_world::light::BlockLight6,
     )>,
+    trapdoor_rows: Vec<(
+        IVec3,
+        petramond_world::trapdoor::TrapdoorState,
+        [Tile; 3],
+        u8,
+        petramond_world::light::BlockLight6,
+    )>,
     chests: Vec<ChestPresentation>,
     doors: Vec<DoorPresentation>,
+    trapdoors: Vec<TrapdoorPresentation>,
     mobs: Vec<MobPresentation>,
     remote_players: Vec<RemotePlayerRender>,
     /// Every drawn body's eased bone offsets, back to back — each body's
@@ -170,6 +179,7 @@ impl GamePresentationScratch {
         self.collect_block_draws(game, view);
         self.collect_mob_draws(game, tick_alpha, view);
         self.collect_doors(game);
+        self.collect_trapdoors(game);
         self.collect_mobs(game, tick_alpha);
         if game.particles.count_scale() > 0.0 {
             self.collect_mob_emitters(tick_alpha, view);
@@ -195,6 +205,7 @@ impl GamePresentationScratch {
             chests: &self.chests,
             block_draws: &self.block_draws,
             doors: &self.doors,
+            trapdoors: &self.trapdoors,
             mobs: &self.mobs,
             remote_players: &self.remote_players,
             bone_offsets: &self.bone_offsets,
@@ -365,7 +376,22 @@ impl GamePresentationScratch {
                 pos,
                 state,
                 tiles,
-                swing_progress: game.door_swing_angle(pos),
+                swing_progress: game.panel_swing_angle(pos),
+                skylight,
+                blocklight,
+            },
+        ));
+    }
+
+    fn collect_trapdoors(&mut self, game: &Game) {
+        game.replica.collect_trapdoors(&mut self.trapdoor_rows);
+        self.trapdoors.clear();
+        self.trapdoors.extend(self.trapdoor_rows.iter().map(
+            |&(pos, state, tiles, skylight, blocklight)| TrapdoorPresentation {
+                pos,
+                state,
+                tiles,
+                swing_progress: game.panel_swing_angle(pos),
                 skylight,
                 blocklight,
             },

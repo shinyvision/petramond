@@ -250,6 +250,12 @@ impl Block {
     /// The chiseling station: a 2×2×2 model block whose menu session is the
     /// crafting station for shaped block variants (stairs, slabs, fences).
     pub const ChiselingStation: Block = Block(147);
+    pub const OakTrapdoor: Block = Block(148);
+    pub const SpruceTrapdoor: Block = Block(149);
+    pub const BirchTrapdoor: Block = Block(150);
+    pub const JungleTrapdoor: Block = Block(151);
+    pub const AcaciaTrapdoor: Block = Block(152);
+    pub const RedwoodTrapdoor: Block = Block(153);
 }
 
 impl std::fmt::Debug for Block {

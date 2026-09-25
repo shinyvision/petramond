@@ -1032,6 +1032,9 @@ pub enum BlockUse {
     ToggleDoor,
     /// Puts a player to sleep in it.
     Sleep,
+    /// Swings a flat panel up off the floor (or down from the ceiling),
+    /// changing what falls through it.
+    ToggleTrapdoor,
 }
 
 /// A fluid block row's rule facts (see [`BlockInfoData::fluid`]).

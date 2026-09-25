@@ -1235,6 +1235,96 @@
         "item": "petramond:packed_ice",
         "count": 1
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:oak_trapdoor",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:oak_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:oak_trapdoor",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:spruce_trapdoor",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:spruce_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:spruce_trapdoor",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:birch_trapdoor",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:birch_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:birch_trapdoor",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:jungle_trapdoor",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:jungle_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:jungle_trapdoor",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:acacia_trapdoor",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:acacia_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:acacia_trapdoor",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:redwood_trapdoor",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:redwood_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:redwood_trapdoor",
+        "count": 1
+      }
     }
   ]
 }

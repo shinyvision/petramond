@@ -13,6 +13,7 @@ pub enum BlockInteraction {
     /// behind the `GuiKind` contract lookup, not here.
     OpenGui(crate::gui_state::GuiKind),
     ToggleDoor,
+    ToggleTrapdoor,
     /// Right-click puts the player to sleep in this block (a bed): sets the
     /// spawn point beside it and starts the sleep fade (see `game::bed`).
     Sleep,

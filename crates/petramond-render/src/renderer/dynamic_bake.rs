@@ -232,8 +232,10 @@ impl Renderer {
                 .extend_from_slice(&self.block_entity.chest_visible);
         }
 
-        // Doors (2-tall hinged slab), frustum-culled and baked exactly like chests,
-        // reusing the same CPU scratch. Drawn by the EXISTING opaque pipeline.
+        // Hinged panels (2-tall doors, single-cell trapdoors), frustum-culled
+        // and baked exactly like chests, reusing the same CPU scratch. ONE
+        // stream: both are drawn by the EXISTING opaque pipeline off the same
+        // atlas bind, so splitting them would only cost a second draw call.
         self.block_entity.door_visible.clear();
         for inst in &self.block_entity.doors {
             // Cull box: the door's two-cell column (its swung slab stays within it).
@@ -243,19 +245,42 @@ impl Renderer {
                 self.block_entity.door_visible.push(*inst);
             }
         }
-        if origin_moved || self.block_entity.door_visible != self.block_entity.door_baked {
+        self.block_entity.trapdoor_visible.clear();
+        for inst in &self.block_entity.trapdoors {
+            // Cull box: the panel's own cell — the swung panel stays within it.
+            let min = petramond_math::world_pos::WorldPos::block_min(inst.pos);
+            let max = min + glam::Vec3::splat(1.0);
+            if visible_world_aabb(min, max) {
+                self.block_entity.trapdoor_visible.push(*inst);
+            }
+        }
+        if origin_moved
+            || self.block_entity.door_visible != self.block_entity.door_baked
+            || self.block_entity.trapdoor_visible != self.block_entity.trapdoor_baked
+        {
             let door_visible = &self.block_entity.door_visible;
-            self.block_entity.door_draw.bake(
+            let trapdoor_visible = &self.block_entity.trapdoor_visible;
+            self.block_entity.panel_draw.bake(
                 &self.device,
                 &self.queue,
                 &mut self.item_entity.verts,
                 &mut self.item_entity.indices,
-                |verts, indices| build_doors(door_visible, render_origin, verts, indices),
+                |verts, indices| {
+                    verts.clear();
+                    indices.clear();
+                    push_doors(door_visible, render_origin, verts, indices);
+                    push_trapdoors(trapdoor_visible, render_origin, verts, indices);
+                    indices.len() as u32
+                },
             );
             self.block_entity.door_baked.clear();
             self.block_entity
                 .door_baked
                 .extend_from_slice(&self.block_entity.door_visible);
+            self.block_entity.trapdoor_baked.clear();
+            self.block_entity
+                .trapdoor_baked
+                .extend_from_slice(&self.block_entity.trapdoor_visible);
         }
         self.block_entity.baked_origin = render_origin;
 

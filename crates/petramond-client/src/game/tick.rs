@@ -193,7 +193,7 @@ impl Game {
         let digging = self.tick_mob_digging(dt);
         self.tick_entities(dt);
         self.advance_chest_lids(dt);
-        self.advance_door_swings(dt);
+        self.advance_panel_swings(dt);
         self.tick_mesh_budget();
 
         let mut out = self.assemble_game_events(events, dt);
@@ -303,7 +303,7 @@ impl Game {
             picked_up_item: se.picked_up_item,
             threw_item: local_threw,
             close_document_gui: se.close_document_gui,
-            toggled_door: se.toggled_door,
+            toggled_panel: se.toggled_panel,
             bed_interacted: se.bed_interacted,
             interacted: local_jab,
             interacted_off_hand: local_jab && local_jab_off,
@@ -393,10 +393,7 @@ impl Game {
             gameplay: input.gameplay_enabled,
             break_held: input.break_held,
             use_held: input.use_held,
-            target: self.look.map(|h| TargetRef {
-                block: h.block,
-                normal: h.normal,
-            }),
+            target: self.look.map(|h| TargetRef::of_hit(&h)),
             hotbar_slot: self.player.inventory.active_slot(),
             held_rotation: self.held_rotation.rotation,
             wishdir: intent.wishdir,
@@ -567,10 +564,7 @@ impl Game {
                 // a click racing the crosshair must land where the ghost is.
                 // `use_look` == `look` unless the held item declares a
                 // water-stopping use ray (see `refresh_target`).
-                let target = self.use_look.map(|h| TargetRef {
-                    block: h.block,
-                    normal: h.normal,
-                });
+                let target = self.use_look.map(|h| TargetRef::of_hit(&h));
                 let verdict = self.predict_click_verdict(input, use_mob);
                 let request_id = match verdict.place {
                     PlacePrediction::Predicted(id) | PlacePrediction::TrackOnly(id) => Some(id),

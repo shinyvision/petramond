@@ -114,6 +114,10 @@ impl ServerGame {
                 .swing_door(pos, events)
                 .map(drop)
                 .ok_or(ActionRefusal::NothingToDo),
+            petramond_world::block::BlockInteraction::ToggleTrapdoor => self
+                .swing_trapdoor(pos, events)
+                .map(drop)
+                .ok_or(ActionRefusal::NothingToDo),
             _ => Err(ActionRefusal::NothingToDo),
         }
     }

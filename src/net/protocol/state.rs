@@ -352,9 +352,10 @@ pub enum WorldEventMsg {
         pos: IVec3,
         block_id: u16,
     },
-    /// A door toggled: the LOWER cell + its NEW open state.
-    DoorToggled {
-        lower: IVec3,
+    /// A hinged panel toggled: the cell its swing is keyed on (a door's LOWER
+    /// half, a trapdoor's own cell) + its NEW open state.
+    PanelToggled {
+        anchor: IVec3,
         open: bool,
     },
     /// A chest's viewer count crossed 0→1 (first screen opened on it).
@@ -465,8 +466,8 @@ pub struct SelfEvents {
     pub open_screen: Option<OpenScreen>,
     pub close_document_gui: bool,
     /// The door toggle's NEW open state — only the TOGGLER gets this one-shot
-    /// (the world-anchored `DoorToggled` event reaches every observer).
-    pub toggled_door: Option<bool>,
+    /// (the world-anchored `PanelToggled` event reaches every observer).
+    pub toggled_panel: Option<bool>,
     /// A use click was CONSUMED server-side (mod-cancelled item use / block
     /// interact) but the initiator's own jab verdict was silent — play the
     /// hand jab now. See the header note on the no-echo rule.
@@ -514,7 +515,7 @@ impl SelfEvents {
             self.open_screen = other.open_screen;
         }
         self.close_document_gui |= other.close_document_gui;
-        self.toggled_door = other.toggled_door.or(self.toggled_door);
+        self.toggled_panel = other.toggled_panel.or(self.toggled_panel);
         self.used_unpredicted |= other.used_unpredicted;
         self.used_unpredicted_off |= other.used_unpredicted_off;
         self.animator_events.extend(other.animator_events);

@@ -27,7 +27,10 @@ use super::lighting::{self, DynLight};
 use petramond_math::face::Face;
 use petramond_math::facing::Facing;
 use petramond_mesh::vertex::BlockLightVertexExt;
-use petramond_mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
+use petramond_mesh::{
+    pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT, UV_MODE_THIN_U,
+    UV_MODE_THIN_V,
+};
 use petramond_world::block::Block;
 use petramond_world::block_state::{HeldBlockState, LogAxis};
 use petramond_world::tile::Tile;
@@ -382,6 +385,34 @@ pub(super) fn orient_faces_to_block(verts: &mut [Vertex], start: usize, facing: 
 /// and 2 = crop V; chunk-meshed stairs use the remaining modes for cell-local
 /// side UVs.
 pub(super) const UV_SLICE_SHIFT: u32 = UV_MODE_SHIFT;
+
+/// The per-face UV-slice modes (`ALL_FACES` order) a box of this extent needs.
+///
+/// A face only a panel's THICKNESS deep on one of its two in-plane axes would
+/// squish a whole tile flat across that strip, so it crops its tile to a
+/// matching slice instead. The shader's crop is a fixed 3/16 (`THIN_SLICE` in
+/// `block.wgsl`), so ONLY a box that thin qualifies — everything else stays
+/// full-tile. One derivation for both hinged panels, replacing the door's
+/// hand-written table.
+///
+/// These modes are for geometry drawn by the BLOCK pipeline. The crack overlay
+/// runs its own shader, which decodes only cell-local UVs, so it carves thin
+/// faces that way instead (see [`crate::break_overlay`]).
+pub(super) fn thin_face_slice_modes(min: Vec3, max: Vec3) -> [u32; 6] {
+    let size = max - min;
+    let thin = |axis: usize| (size[axis] - petramond_world::door::THICKNESS).abs() < 1e-4;
+    // Each face's (U axis, V axis), in `ALL_FACES` order.
+    const UV_AXES: [(usize, usize); 6] = [(2, 1), (2, 1), (0, 2), (0, 2), (0, 1), (0, 1)];
+    UV_AXES.map(|(u, v)| {
+        if thin(v) {
+            UV_MODE_THIN_V
+        } else if thin(u) {
+            UV_MODE_THIN_U
+        } else {
+            0
+        }
+    })
+}
 
 /// As [`push_box_faces_lit`] but, per face (`ALL_FACES` order):
 /// - MIRRORS the texture horizontally where `mirror_u` is set — used by the door so

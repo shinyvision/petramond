@@ -14,11 +14,11 @@
 use super::{
     ChestInstance, DoorInstance, EntityShadow, ItemEntityInstance, MobRenderInstance,
     ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
-    SolidParticleInstance,
+    SolidParticleInstance, TrapdoorInstance,
 };
 use crate::views::{
     ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
-    MobPresentation, ParticleAtlas, ParticlePresentation,
+    MobPresentation, ParticleAtlas, ParticlePresentation, TrapdoorPresentation,
 };
 use petramond_math::math::lerp_angle;
 
@@ -47,6 +47,8 @@ pub struct Scene {
     block_draws: Vec<crate::BlockDrawInstance>,
     /// Baked placed-door instances for this frame.
     doors: Vec<DoorInstance>,
+    /// Baked placed-trapdoor instances for this frame.
+    trapdoors: Vec<TrapdoorInstance>,
     /// Entity blob-shadow rows for this frame — the gather's own rows, a copy
     /// (they are already resolved; nothing to interpolate).
     shadows: Vec<EntityShadow>,
@@ -87,6 +89,7 @@ impl Scene {
         self.chests.clear();
         self.block_draws.clear();
         self.doors.clear();
+        self.trapdoors.clear();
         self.mobs.clear();
         self.shadows.clear();
         self.player = None;
@@ -126,6 +129,7 @@ impl Scene {
             .extend_from_slice(presentation.particle_emitters);
         self.bake_chests(presentation.chests);
         self.bake_doors(presentation.doors);
+        self.bake_trapdoors(presentation.trapdoors);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
         self.shadows.clear();
         self.shadows.extend_from_slice(presentation.shadows);
@@ -209,6 +213,27 @@ impl Scene {
         }
     }
 
+    /// The placed trapdoors to draw this frame, gathered from the loaded
+    /// chunks. The linear swing is smoothstepped like the door's.
+    fn bake_trapdoors(&mut self, trapdoors: &[TrapdoorPresentation]) {
+        self.trapdoors.clear();
+        for panel in trapdoors {
+            let [top_tile, bottom_tile, side_tile] = panel.tiles;
+            let raw = panel.swing_progress;
+            self.trapdoors.push(TrapdoorInstance {
+                pos: panel.pos,
+                facing: panel.state.facing,
+                top: panel.state.top,
+                open01: raw * raw * (3.0 - 2.0 * raw),
+                top_tile,
+                bottom_tile,
+                side_tile,
+                skylight: panel.skylight,
+                blocklight: panel.blocklight,
+            });
+        }
+    }
+
     /// Hand the baked instances + held-item light to the renderer for this
     /// frame. The per-body arenas are SWAPPED in rather than copied: the
     /// renderer's last-frame buffers come back here for the next bake to
@@ -219,6 +244,7 @@ impl Scene {
         renderer.set_chests(&self.chests);
         renderer.set_block_draws(&self.block_draws);
         renderer.set_doors(&self.doors);
+        renderer.set_trapdoors(&self.trapdoors);
         renderer.set_mobs(&self.mobs);
         renderer.set_shadows(&self.shadows);
         renderer.set_player(self.player);

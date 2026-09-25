@@ -504,7 +504,16 @@ impl ServerGame {
             .door_state_at(lower.x, lower.y, lower.z)
             .map(|st| st.open)
             .unwrap_or(true);
-        events.world.door_changed.push((lower, now_open));
+        events.world.panel_changed.push((lower, now_open));
+        Some(now_open)
+    }
+
+    /// Swing the trapdoor at `pos`, whoever used it — the door's single-cell
+    /// sibling, announced on the same panel event. `None` when the cell holds
+    /// no trapdoor.
+    pub(super) fn swing_trapdoor(&mut self, pos: IVec3, events: &mut TickEvents) -> Option<bool> {
+        let now_open = self.world.toggle_trapdoor(pos)?;
+        events.world.panel_changed.push((pos, now_open));
         Some(now_open)
     }
 
@@ -554,7 +563,15 @@ impl ServerGame {
                     return Claim::Pass;
                 };
                 // The TOGGLER's own one-shot (hand flick).
-                events.player(s).toggled_door = Some(now_open);
+                events.player(s).toggled_panel = Some(now_open);
+                true
+            }
+            // A trapdoor swings on the same act, one cell instead of two.
+            BlockInteraction::ToggleTrapdoor => {
+                let Some(now_open) = self.swing_trapdoor(pos, events) else {
+                    return Claim::Pass;
+                };
+                events.player(s).toggled_panel = Some(now_open);
                 true
             }
 
@@ -860,10 +877,7 @@ mod tests {
             0,
             PlayerAction::UseClick {
                 mob: None,
-                target: Some(TargetRef {
-                    block: hit.block,
-                    normal: hit.normal,
-                }),
+                target: Some(TargetRef::face(hit.block, hit.normal)),
                 request_id: None,
                 predicted: false,
                 jabbed: false,

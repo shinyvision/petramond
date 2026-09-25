@@ -191,20 +191,23 @@ fn directional_view_is_block_data_for_blocks_with_a_front() {
 }
 
 #[test]
-fn door_shaped_blocks_advertise_toggle_interaction() {
-    let mut checked_any = false;
-    for &block in Block::all() {
-        if block.shape_family() != ShapeFamily::Door {
-            continue;
+fn hinged_panel_shapes_advertise_their_toggle_interaction() {
+    // A panel row that forgets its interaction is a door you cannot open —
+    // inert, and indistinguishable from a decorative slab in play.
+    for (family, expected) in [
+        (ShapeFamily::Door, BlockInteraction::ToggleDoor),
+        (ShapeFamily::Trapdoor, BlockInteraction::ToggleTrapdoor),
+    ] {
+        let mut checked_any = false;
+        for &block in Block::all() {
+            if block.shape_family() != family {
+                continue;
+            }
+            checked_any = true;
+            assert_eq!(block.interaction(), expected, "{block:?}");
         }
-        checked_any = true;
-        assert_eq!(
-            block.interaction(),
-            BlockInteraction::ToggleDoor,
-            "{block:?}"
-        );
+        assert!(checked_any, "expected at least one {family:?} block");
     }
-    assert!(checked_any, "expected at least one door block");
 }
 
 #[test]

@@ -86,7 +86,7 @@ pub struct PlayerTickEvents {
     pub sleep_ended: bool,
     pub respawned: bool,
     /// The door toggle's NEW open state, latched for the TOGGLER only.
-    pub toggled_door: Option<bool>,
+    pub toggled_panel: Option<bool>,
     /// A use click was consumed but the initiator's own jab verdict
     /// (`UseClick::jabbed`) was silent — echo the hand jab back to them
     /// (`SelfEvents::used_unpredicted`). Observers are unaffected (they get
@@ -137,7 +137,7 @@ pub struct BlockBrokenEvent {
 /// The WORLD-anchored slice of what the tick did: non-lossy queues every
 /// observer cares about, independent of which player acted. `sounds`/
 /// `spatial_sounds`/`mob_sounds` are the existing presentation feeds;
-/// `block_broken`/`door_changed` are consumed client-side
+/// `block_broken`/`panel_changed` are consumed client-side
 /// after the tick (particles, swing/lid animation seeds) and become broadcast
 /// messages when the wire exists.
 #[derive(Clone, Debug)]
@@ -149,7 +149,7 @@ pub struct WorldEvents {
     /// A block placed by a player: (anchor cell, block).
     pub block_placed: Vec<(IVec3, Block)>,
     /// A door toggled: (lower cell, new open state).
-    pub door_changed: Vec<(IVec3, bool)>,
+    pub panel_changed: Vec<(IVec3, bool)>,
     /// A chest's viewer count crossed 0↔1: (chest cell, now open).
     pub chest_changed: Vec<(IVec3, bool)>,
     /// A player collected at least one drop: (their body centre, player id).
@@ -168,7 +168,7 @@ impl WorldEvents {
             mob_sounds: Vec::new(),
             block_broken: Vec::new(),
             block_placed: Vec::new(),
-            door_changed: Vec::new(),
+            panel_changed: Vec::new(),
             chest_changed: Vec::new(),
             item_picked_up: Vec::new(),
             emitter_bursts: Vec::new(),

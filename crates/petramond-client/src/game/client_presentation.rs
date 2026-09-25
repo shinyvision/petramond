@@ -16,9 +16,10 @@ use super::Game;
 /// Chest-lid open/close speed (fraction per second)
 const CHEST_LID_SPEED: f32 = 3.5;
 
-/// Door swing open/close speed (fraction per second). A touch slower than the chest
-/// lid so the 90 degree swing reads as a deliberate door, not a snap.
-const DOOR_SWING_SPEED: f32 = 4.5;
+/// Hinged-panel (door, trapdoor) swing open/close speed (fraction per second).
+/// A touch slower than the chest lid so the 90 degree swing reads as a
+/// deliberate door, not a snap.
+const PANEL_SWING_SPEED: f32 = 4.5;
 
 impl Game {
     /// Spawn the presentation consequences of this frame's fixed ticks from
@@ -42,20 +43,23 @@ impl Game {
                         crate::particle::BLOCK_BREAK,
                         crate::particle::BurstEvent::broken(pos, block, tint, sky, blk),
                     );
-                    // A broken door's swing entry dies with it (client-owned
+                    // A broken panel's swing entry dies with it (client-owned
                     // state the sim can no longer clear). The event carries
-                    // the mined cell — either half — so the LOWER cell (the
-                    // swing key) is that cell or the one below.
-                    if block.shape_family() == ShapeFamily::Door {
-                        self.door_swings.remove(&pos);
-                        self.door_swings.remove(&(pos + IVec3::new(0, -1, 0)));
+                    // the mined cell — either half of a door — so the swing
+                    // key is that cell or, for a door, the one below.
+                    if matches!(
+                        block.shape_family(),
+                        ShapeFamily::Door | ShapeFamily::Trapdoor
+                    ) {
+                        self.panel_swings.remove(&pos);
+                        self.panel_swings.remove(&(pos + IVec3::new(0, -1, 0)));
                     }
                 }
-                super::tick::WorldEvent::DoorToggled { lower, open } => {
-                    // Seed the swing from the door's OLD resting pose so it
+                super::tick::WorldEvent::PanelToggled { anchor, open } => {
+                    // Seed the swing from the panel's OLD resting pose so it
                     // eases to the new one; a mid-swing entry keeps its angle.
-                    self.door_swings
-                        .entry(lower)
+                    self.panel_swings
+                        .entry(anchor)
                         .or_insert(if open { 0.0 } else { 1.0 });
                 }
                 super::tick::WorldEvent::EmitterBurst {
@@ -229,39 +233,39 @@ impl Game {
         });
     }
 
-    /// The transient swing angle (`0.0` closed .. `1.0` open) of the door whose LOWER
-    /// cell is `lower`. While a door is mid-swing the eased value is read from
-    /// [`door_swings`](Self::door_swings); once it settles the entry is dropped and the
-    /// door rests at its logical open state (read straight from the door map). The
-    /// presentation snapshot calls this per visible door to bake its hinge.
+    /// The transient swing angle (`0.0` closed .. `1.0` open) of the hinged
+    /// panel keyed on `anchor` (a door's LOWER cell, a trapdoor's own cell).
+    /// While a panel is mid-swing the eased value is read from
+    /// [`panel_swings`](Self::panel_swings); once it settles the entry is
+    /// dropped and the panel rests at its logical open state (read straight
+    /// from the replica). The presentation snapshot calls this per visible
+    /// panel to bake its hinge.
     #[inline]
-    pub(super) fn door_swing_angle(&self, lower: IVec3) -> f32 {
-        if let Some(&a) = self.door_swings.get(&lower) {
+    pub(super) fn panel_swing_angle(&self, anchor: IVec3) -> f32 {
+        if let Some(&a) = self.panel_swings.get(&anchor) {
             return a;
         }
-        // Not animating: rest at the door's logical state (replica door map).
-        match self.replica.door_state_at(lower.x, lower.y, lower.z) {
-            Some(s) if s.open => 1.0,
+        // Not animating: rest at the panel's logical state.
+        match self.replica.panel_open_at(anchor) {
+            Some(true) => 1.0,
             _ => 0.0,
         }
     }
 
-    /// Advance the transient door-swing animation by `dt`: each tracked door eases
-    /// toward its current logical open state (flipped on the tick by
-    /// [`World::toggle_door`] server-side, mirrored onto the REPLICA's door map by
-    /// the `Door` state deltas), and a door that reaches its target is dropped (it
-    /// then rests at that state). Purely client-side, never saved, like
+    /// Advance the transient panel-swing animation by `dt`: each tracked door
+    /// or trapdoor eases toward its current logical open state (flipped on the
+    /// tick server-side, mirrored onto the REPLICA by the cell-state deltas),
+    /// and a panel that reaches its target is dropped (it then rests at that
+    /// state). Purely client-side, never saved, like
     /// [`advance_chest_lids`](Self::advance_chest_lids).
-    ///
-    /// [`World::toggle_door`]: petramond::world::World::toggle_door
-    pub(super) fn advance_door_swings(&mut self, dt: f32) {
-        let step = (dt * DOOR_SWING_SPEED).clamp(0.0, 1.0);
+    pub(super) fn advance_panel_swings(&mut self, dt: f32) {
+        let step = (dt * PANEL_SWING_SPEED).clamp(0.0, 1.0);
         let world = &self.replica;
-        self.door_swings.retain(|&lower, angle| {
-            let target = match world.door_state_at(lower.x, lower.y, lower.z) {
-                Some(s) if s.open => 1.0,
-                Some(_) => 0.0,
-                // The door was removed while swinging: stop tracking it.
+        self.panel_swings.retain(|&anchor, angle| {
+            let target = match world.panel_open_at(anchor) {
+                Some(true) => 1.0,
+                Some(false) => 0.0,
+                // The panel was removed while swinging: stop tracking it.
                 None => return false,
             };
             if *angle < target {

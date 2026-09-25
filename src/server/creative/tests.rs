@@ -222,10 +222,10 @@ fn instant_mining_keeps_a_repeat_delay_and_creative_placement_keeps_the_stack() 
         .count;
     let placed = server.try_place(
         0,
-        Some(crate::net::protocol::TargetRef {
-            block: a - IVec3::Y,
-            normal: IVec3::Y,
-        }),
+        Some(crate::net::protocol::TargetRef::face(
+            a - IVec3::Y,
+            IVec3::Y,
+        )),
         &mut events,
     );
     assert_eq!(placed, Some(a));
@@ -370,10 +370,10 @@ fn grouped_placement_variants_vary_and_replay_without_consuming_the_creative_sta
             assert!(server
                 .try_place(
                     0,
-                    Some(crate::net::protocol::TargetRef {
-                        block: p - IVec3::Y,
-                        normal: IVec3::Y,
-                    }),
+                    Some(crate::net::protocol::TargetRef::face(
+                        p - IVec3::Y,
+                        IVec3::Y
+                    )),
                     &mut TickEvents::default()
                 )
                 .is_some());

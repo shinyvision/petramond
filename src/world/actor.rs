@@ -11,7 +11,9 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::block::{Aabb, Block};
 use petramond_world::construction::{self, Record};
 use petramond_world::item::ItemStack;
-use petramond_world::world::placement::{self, HeldRotation, PlaceInputs, PlacementPlan};
+use petramond_world::world::placement::{
+    self, click_spots, HeldRotation, PlaceInputs, PlacementPlan,
+};
 
 use crate::player::{Player, RayFilter, RaycastHit};
 
@@ -252,31 +254,37 @@ impl World {
         };
         // A click the placement rules refuse is the wrong click: another may
         // do. Support the row declares is judged before any click is tried.
+        // The aimed-at spot leads, so a click that lands first costs exactly
+        // what it always did; only a refused one pays for the other halves of
+        // the face (which is where a trapdoor's half comes from).
         let mut refusal = ActionRefusal::Misaligned;
-        for stack in paying {
-            let paid = ItemStack { count: 1, ..*stack };
-            let block = clicked_row(paid.item, anchor.block);
-            for held_rotation in HeldRotation::each(paid.item) {
-                let inputs = PlaceInputs::of_click(
-                    self,
-                    hit.block,
-                    hit.normal,
-                    facing,
-                    held_rotation,
-                    Some(paid.item),
-                );
-                let mut body = false;
-                let plan = self.placement_plan(block, &inputs, &mut |cell, boxes| {
-                    let hit = occupied(cell, boxes);
-                    body |= hit;
-                    hit
-                });
-                match plan {
-                    Some(plan) if construction::advances(self, &plan, want, record, &paid) => {
-                        return Ok((plan, paid));
+        for spot in click_spots(hit.spot.to_array(), hit.normal) {
+            for stack in paying {
+                let paid = ItemStack { count: 1, ..*stack };
+                let block = clicked_row(paid.item, anchor.block);
+                for held_rotation in HeldRotation::each(paid.item) {
+                    let inputs = PlaceInputs::of_click(
+                        self,
+                        hit.block,
+                        hit.normal,
+                        spot,
+                        facing,
+                        held_rotation,
+                        Some(paid.item),
+                    );
+                    let mut body = false;
+                    let plan = self.placement_plan(block, &inputs, &mut |cell, boxes| {
+                        let hit = occupied(cell, boxes);
+                        body |= hit;
+                        hit
+                    });
+                    match plan {
+                        Some(plan) if construction::advances(self, &plan, want, record, &paid) => {
+                            return Ok((plan, paid));
+                        }
+                        None if body => refusal = ActionRefusal::BodyInTheWay,
+                        _ => {}
                     }
-                    None if body => refusal = ActionRefusal::BodyInTheWay,
-                    _ => {}
                 }
             }
         }

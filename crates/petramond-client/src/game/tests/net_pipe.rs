@@ -48,10 +48,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
     let mut u = common::player_update(&game, true);
     u.transform.pos = WorldPos::new(8.5, 64.0, 8.5);
-    u.target = Some(TargetRef {
-        block: IVec3::new(8, 63, 8),
-        normal: IVec3::Y,
-    });
+    u.target = Some(TargetRef::face(IVec3::new(8, 63, 8), IVec3::Y));
     apply_update(&mut game, u);
     assert!(
         game.server.sessions[0].look.is_some(),
@@ -62,10 +59,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     game.server.sessions[0].player.pos = WorldPos::new(20.0, 64.0, 20.0);
     let mut far = common::player_update(&game, true);
     far.transform.pos = WorldPos::new(20.0, 64.0, 20.0);
-    far.target = Some(TargetRef {
-        block: IVec3::new(8, 63, 8),
-        normal: IVec3::Y,
-    });
+    far.target = Some(TargetRef::face(IVec3::new(8, 63, 8), IVec3::Y));
     apply_update(&mut game, far);
     assert!(
         game.server.sessions[0].look.is_none(),
@@ -83,10 +77,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
         0,
         ClientToServer::Action(PlayerAction::UseClick {
             mob: None,
-            target: Some(TargetRef {
-                block: IVec3::new(8, 63, 8),
-                normal: IVec3::Y,
-            }),
+            target: Some(TargetRef::face(IVec3::new(8, 63, 8), IVec3::Y)),
             request_id: None,
             predicted: false,
             jabbed: false,

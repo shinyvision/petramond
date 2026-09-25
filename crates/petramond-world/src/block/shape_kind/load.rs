@@ -30,6 +30,7 @@ pub enum RawShape {
     Ladder,
     Model(BlockModelKind),
     Door,
+    Trapdoor,
     /// A mod-parameterized connection shape: `{"custom": {"family":
     /// "fence", "post_thickness": 6, …}}`.
     Custom(RawCustomShape),
@@ -628,6 +629,11 @@ impl RawShape {
                 ShapeFamily::Door,
                 ShapeParams::None,
                 "petramond:door".into(),
+            ),
+            RawShape::Trapdoor => (
+                ShapeFamily::Trapdoor,
+                ShapeParams::None,
+                "petramond:trapdoor".into(),
             ),
             RawShape::Custom(c) => c.resolve()?,
             RawShape::Named(key) => {

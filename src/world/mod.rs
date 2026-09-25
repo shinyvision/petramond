@@ -34,6 +34,7 @@ mod mesh_pool;
 mod mesh_queue;
 mod mobs;
 mod model;
+mod panel;
 mod particle_emitters;
 pub mod placement;
 mod prediction_render;
@@ -56,6 +57,7 @@ pub use petramond_world::world::SavedIndex;
 pub mod fluid;
 mod surface_tint;
 mod tick;
+pub mod trapdoor;
 mod visibility;
 
 pub use cursor::SectionCursor;

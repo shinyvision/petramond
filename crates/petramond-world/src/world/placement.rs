@@ -72,6 +72,19 @@ fn rotatable_block(block: crate::block::Block) -> bool {
     matches!(block.shape_family(), ShapeFamily::Stair | ShapeFamily::Slab) || block.is_log()
 }
 
+/// The click spots on `normal`'s face a placer can deliberately aim at, most
+/// likely first: the spot actually clicked, then — on a VERTICAL face, the
+/// only one with halves to distinguish — the middles of its lower and upper
+/// halves. Placement rules read the spot (which half a trapdoor hangs in), so
+/// a placer that cannot aim by eye, an actor working from a plan, enumerates
+/// these the way it enumerates [`HeldRotation::each`].
+pub fn click_spots(spot: [f32; 3], normal: IVec3) -> impl Iterator<Item = [f32; 3]> {
+    let count = if normal.y == 0 { 3 } else { 1 };
+    [spot, [spot[0], 0.25, spot[2]], [spot[0], 0.75, spot[2]]]
+        .into_iter()
+        .take(count)
+}
+
 /// The held block's placement-rotation state (the R-key cycle): which item the
 /// cycle was armed on and the raw counter. Lives BOTH client-side (the client
 /// owns the R key and previews the rotated held block) and session-side (the
@@ -210,6 +223,11 @@ pub struct PlaceInputs {
     pub hit: IVec3,
     /// The clicked face's outward normal.
     pub normal: IVec3,
+    /// WHERE on `hit` the click landed, in that cell's local coordinates
+    /// (`0..1` per axis). A family reads whichever component its own rule
+    /// cares about — a trapdoor asks which HALF of a wall face was clicked.
+    /// GENERIC click input: the engine pre-derives nothing from it.
+    pub spot: [f32; 3],
     /// The build cell: the hit cell when replacing a plant in place, else
     /// `hit + normal`.
     pub place_pos: IVec3,
@@ -228,10 +246,12 @@ pub struct PlaceInputs {
 impl PlaceInputs {
     /// The inputs of a click on `hit`'s `normal` face, whoever makes it:
     /// where it builds is [`build_position`]'s to say.
+    #[allow(clippy::too_many_arguments)]
     pub fn of_click(
         w: &WorldData,
         hit: IVec3,
         normal: IVec3,
+        spot: [f32; 3],
         player_facing: Facing,
         held_rotation: HeldRotation,
         held: Option<ItemType>,
@@ -240,12 +260,22 @@ impl PlaceInputs {
         Self {
             hit,
             normal,
+            spot,
             place_pos: build_position(looked_at, hit, normal),
             replacing_in_place: replaces_in_place(looked_at),
             player_facing,
             held_rotation,
             held,
         }
+    }
+
+    /// The horizontal direction from the build cell back to the block the
+    /// click built AGAINST — what a shape that ATTACHES to that block hinges
+    /// or mounts on. `None` for a click on a horizontal face, which leaves no
+    /// wall to attach to.
+    #[inline]
+    pub fn support_side(&self) -> Option<Facing> {
+        Facing::from_horizontal_normal(-self.normal)
     }
 }
 

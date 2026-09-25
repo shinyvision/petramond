@@ -499,6 +499,9 @@ impl Game {
         let inputs = petramond::world::placement::PlaceInputs {
             hit: look.block,
             normal: look.normal,
+            // Through the wire's QUANTIZER, so the ghost resolves from the
+            // exact spot the server will read back off the click.
+            spot: petramond::net::protocol::TargetRef::of_hit(&look).spot_fraction(),
             // Replace-in-place classified Plausible above, so the build cell
             // is always `hit + normal` here — the ghost convention's cell.
             place_pos,

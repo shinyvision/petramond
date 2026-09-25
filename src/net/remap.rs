@@ -434,7 +434,7 @@ impl IdRemap {
                 *block_id = self.block(*block_id);
                 true
             }
-            WorldEventMsg::DoorToggled { .. }
+            WorldEventMsg::PanelToggled { .. }
             | WorldEventMsg::ChestOpened { .. }
             | WorldEventMsg::ChestClosed { .. }
             | WorldEventMsg::ItemPickedUp { .. } => true,

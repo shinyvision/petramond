@@ -55,12 +55,12 @@ impl ServerGame {
             return claimed;
         };
 
+        // The CELL and FACE are what the claim is judged on, never the spot:
+        // the server re-casts from its own latched look, so its hit point
+        // differs by a hair from the client's on every legitimate click.
         let authoritative = Player::raycast_use_ray(eye, sess.player.forward(), &self.world, ray)
-            .map(|(hit, _)| TargetRef {
-                block: hit.block,
-                normal: hit.normal,
-            });
-        if claimed == authoritative {
+            .map(|(hit, _)| (hit.block, hit.normal));
+        if claimed.map(|c| (c.block, c.normal)) == authoritative {
             claimed
         } else {
             None

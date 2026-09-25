@@ -1096,8 +1096,8 @@ impl Game {
                     block: petramond_world::block::Block::from_id(block_id),
                 });
             }
-            WorldEventMsg::DoorToggled { lower, open } => {
-                ev.world.push(WorldEvent::DoorToggled { lower, open })
+            WorldEventMsg::PanelToggled { anchor, open } => {
+                ev.world.push(WorldEvent::PanelToggled { anchor, open })
             }
             WorldEventMsg::ChestOpened { pos } => ev.world.push(WorldEvent::ChestOpened { pos }),
             WorldEventMsg::ChestClosed { pos } => ev.world.push(WorldEvent::ChestClosed { pos }),

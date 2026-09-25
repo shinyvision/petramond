@@ -1,6 +1,19 @@
+use petramond_world::block::{Block, ShapeFamily};
 use petramond_world::chunk::SectionPos;
 
 use super::World;
+
+/// Whether a cell holding `block` puts its section in the block-entity index:
+/// the render fan-outs that draw OUTSIDE the chunk mesh (hinged panels, chest
+/// lids) walk that index, so a block they draw must be admitted by it. Shared
+/// by the index refresh and by every writer that must notice a fresh one —
+/// a panel missing from the index is simply invisible.
+pub(in crate::world) fn indexes_block_entity(block: Block) -> bool {
+    matches!(
+        block.shape_family(),
+        ShapeFamily::Door | ShapeFamily::Trapdoor
+    ) || block.directional_view()
+}
 
 impl World {
     /// [`refresh_block_entity_index`](Self::refresh_block_entity_index) for the
@@ -18,13 +31,9 @@ impl World {
         let has = self.sections.get(&pos).is_some_and(|s| {
             !s.containers().is_empty()
                 || !s.furnaces().is_empty()
-                // The render fan-outs (door slabs, chest lids) visit this
-                // index: a section belongs when any stateful cell is a door
-                // or a directional block-entity front.
                 || s.cell_states().keys().any(|&idx| {
                     let (lx, ly, lz) = petramond_world::chunk::section_local(idx as usize);
-                    let b = s.block(lx, ly, lz);
-                    b.shape_family() == petramond_world::block::ShapeFamily::Door || b.directional_view()
+                    indexes_block_entity(s.block(lx, ly, lz))
                 })
         });
         if has {

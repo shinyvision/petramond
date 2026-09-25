@@ -333,10 +333,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         gameplay: true,
         break_held: false,
         use_held: false,
-        target: Some(TargetRef {
-            block: target,
-            normal: IVec3::Y,
-        }),
+        target: Some(TargetRef::face(target, IVec3::Y)),
         hotbar_slot: 0,
         held_rotation: 0,
         wishdir: Vec3::ZERO,
@@ -349,10 +346,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     remote
         .send(ClientToServer::Action(PlayerAction::UseClick {
             mob: None,
-            target: Some(TargetRef {
-                block: target,
-                normal: IVec3::Y,
-            }),
+            target: Some(TargetRef::face(target, IVec3::Y)),
             request_id: None,
             predicted: false,
             jabbed: false,

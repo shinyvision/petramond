@@ -343,6 +343,7 @@ impl RawInteraction {
                     BlockInteraction::OpenGui(crate::gui_state::GuiKind::ChiselingStation)
                 }
                 "toggle_door" => BlockInteraction::ToggleDoor,
+                "toggle_trapdoor" => BlockInteraction::ToggleTrapdoor,
                 "sleep" => BlockInteraction::Sleep,
                 other => return Err(format!("unknown interaction '{other}'")),
             }),

@@ -27,9 +27,10 @@ pub enum WorldEvent {
         pos: IVec3,
         block: Block,
     },
-    /// A door toggled: the LOWER cell + its NEW open state.
-    DoorToggled {
-        lower: IVec3,
+    /// A hinged panel toggled: the cell its swing is keyed on (a door's LOWER
+    /// half, a trapdoor's own cell) + its NEW open state.
+    PanelToggled {
+        anchor: IVec3,
         open: bool,
     },
     ChestOpened {
@@ -86,12 +87,12 @@ pub struct GameEvents {
     /// A mod asked to close the open mod GUI this frame (`GuiClose`); the app
     /// honours it only while a mod GUI screen is actually up.
     pub close_document_gui: bool,
-    /// The player right-clicked a door this frame. Carries the door's NEW open
-    /// state (after the toggle applied). The open/close SOUND is driven by the
-    /// positional [`WorldEvent::DoorToggled`] every observer receives; this
-    /// one-shot remains for the toggler's own presentation. `None` = no door
-    /// toggle this frame.
-    pub toggled_door: Option<bool>,
+    /// The player right-clicked a door or trapdoor this frame. Carries the
+    /// panel's NEW open state (after the toggle applied). The open/close SOUND
+    /// is driven by the positional [`WorldEvent::PanelToggled`] every observer
+    /// receives; this one-shot remains for the toggler's own presentation.
+    /// `None` = no panel toggle this frame.
+    pub toggled_panel: Option<bool>,
     /// The player right-clicked a bed this frame. This fires even in daytime,
     /// when the click sets the spawn point but does not start sleep.
     pub bed_interacted: bool,

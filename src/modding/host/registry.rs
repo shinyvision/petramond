@@ -243,6 +243,9 @@ fn block_info_data(block: mod_api::BlockId) -> Option<mod_api::BlockInfoData> {
             petramond_world::block::BlockInteraction::ToggleDoor => {
                 Some(mod_api::BlockUse::ToggleDoor)
             }
+            petramond_world::block::BlockInteraction::ToggleTrapdoor => {
+                Some(mod_api::BlockUse::ToggleTrapdoor)
+            }
             petramond_world::block::BlockInteraction::Sleep => Some(mod_api::BlockUse::Sleep),
         },
     })

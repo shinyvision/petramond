@@ -293,7 +293,7 @@ pub(super) fn apply_drop_actions(game: &mut TestGame) -> TickEvents {
 
 /// A latched look target, as `apply_player_update` would leave it.
 pub(super) fn hit(pos: IVec3, normal: IVec3) -> TargetRef {
-    TargetRef { block: pos, normal }
+    TargetRef::face(pos, normal)
 }
 
 pub(super) fn install_empty_chunk(game: &mut TestGame) {

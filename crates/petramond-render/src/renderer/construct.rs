@@ -344,7 +344,7 @@ pub(super) fn new_renderer_inner(
     let item_sprite_entity_draw =
         DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "item sprite entity");
     let chest_draw = DynamicDraw::new(&device, chest_pipe, "chest");
-    let door_draw = DynamicDraw::new(&device, door_pipe, "door");
+    let panel_draw = DynamicDraw::new(&device, door_pipe, "hinged panel");
     let break_draw = DynamicDraw::new(&device, pipelines.break_pipe, "break overlay");
     let emitter_particle_draw = DynamicVertexDraw::new(
         &device,
@@ -439,13 +439,16 @@ pub(super) fn new_renderer_inner(
         },
         block_entity: BlockEntityPass {
             chest_draw,
-            door_draw,
+            panel_draw,
             chests: Vec::new(),
             chest_visible: Vec::new(),
             doors: Vec::new(),
             door_visible: Vec::new(),
+            trapdoors: Vec::new(),
+            trapdoor_visible: Vec::new(),
             chest_baked: Vec::new(),
             door_baked: Vec::new(),
+            trapdoor_baked: Vec::new(),
             baked_origin: glam::IVec3::MIN,
         },
         hand: HandPass {

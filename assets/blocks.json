@@ -6187,6 +6187,258 @@
           "chance": 1
         }
       ]
+    },
+    {
+      "block": "petramond:oak_trapdoor",
+      "shape": "trapdoor",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "toggle_trapdoor",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.1875,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "oak_trapdoor",
+        "oak_trapdoor",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "petramond:oak_trapdoor",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:spruce_trapdoor",
+      "shape": "trapdoor",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "toggle_trapdoor",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.1875,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "spruce_trapdoor",
+        "spruce_trapdoor",
+        "spruce_planks"
+      ],
+      "material": "wood",
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "petramond:spruce_trapdoor",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:birch_trapdoor",
+      "shape": "trapdoor",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "toggle_trapdoor",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.1875,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "birch_trapdoor",
+        "birch_trapdoor",
+        "birch_planks"
+      ],
+      "material": "wood",
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "petramond:birch_trapdoor",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:jungle_trapdoor",
+      "shape": "trapdoor",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "toggle_trapdoor",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.1875,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "jungle_trapdoor",
+        "jungle_trapdoor",
+        "jungle_planks"
+      ],
+      "material": "wood",
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "petramond:jungle_trapdoor",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:acacia_trapdoor",
+      "shape": "trapdoor",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "toggle_trapdoor",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.1875,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "acacia_trapdoor",
+        "acacia_trapdoor",
+        "acacia_planks"
+      ],
+      "material": "wood",
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "petramond:acacia_trapdoor",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:redwood_trapdoor",
+      "shape": "trapdoor",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "toggle_trapdoor",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.1875,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "redwood_trapdoor",
+        "redwood_trapdoor",
+        "redwood_planks"
+      ],
+      "material": "wood",
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "petramond:redwood_trapdoor",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     }
   ]
 }

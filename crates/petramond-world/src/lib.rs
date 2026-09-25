@@ -65,5 +65,6 @@ pub mod texture_transition;
 pub mod tile;
 pub mod tile_alpha;
 pub mod torch;
+pub mod trapdoor;
 pub mod view_volume;
 pub mod world;

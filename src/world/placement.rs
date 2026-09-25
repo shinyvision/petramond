@@ -152,7 +152,10 @@ impl World {
             // block write owes (the cube path had them via `set_block_world`;
             // the old per-family commits skipped them).
             self.mark_custom_bake_edit(c.x, c.y, c.z, b);
-            if b.directional_view() {
+            // A block the render fan-outs draw outside the chunk mesh must
+            // enter the block-entity index with the write, or the placed
+            // panel/front is invisible until its section is reloaded.
+            if crate::world::store::block_entity_index::indexes_block_entity(b) {
                 self.note_block_entity_change(c);
             }
             if with_block_entities {

@@ -25,10 +25,10 @@ fn single_block_edits_made_in_one_tick_undo_as_one_edit() {
     server
         .try_place(
             0,
-            Some(crate::net::protocol::TargetRef {
-                block: placed - IVec3::Y,
-                normal: IVec3::Y,
-            }),
+            Some(crate::net::protocol::TargetRef::face(
+                placed - IVec3::Y,
+                IVec3::Y,
+            )),
             &mut events,
         )
         .unwrap();

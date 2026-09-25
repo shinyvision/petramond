@@ -337,18 +337,19 @@ impl Renderer {
                 self.item_entity.sprite_draw.draw(&mut pass, samples);
             }
         }
-        // CHEST + DOOR PASS: placed chests (inset body + hinged lid) and doors (2-tall
-        // hinged slab) drawn as full opaque geometry by the EXISTING opaque pipeline
-        // with the same uniform + atlas binds, loading color + depth so they occlude and
-        // are occluded by terrain — exactly like the item-entity pass above.
+        // CHEST + PANEL PASS: placed chests (inset body + hinged lid) and hinged
+        // panels (2-tall doors, single-cell trapdoors) drawn as full opaque
+        // geometry by the EXISTING opaque pipeline with the same uniform +
+        // atlas binds, loading color + depth so they occlude and are occluded
+        // by terrain — exactly like the item-entity pass above.
         if self.block_entity.chest_draw.index_count > 0
-            || self.block_entity.door_draw.index_count > 0
+            || self.block_entity.panel_draw.index_count > 0
         {
             let mut pass = color_depth_pass(
                 enc,
                 view,
                 &self.targets.depth,
-                "chest+door pass",
+                "chest+panel pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
@@ -356,7 +357,7 @@ impl Renderer {
             pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             self.block_entity.chest_draw.draw(&mut pass, samples);
-            self.block_entity.door_draw.draw(&mut pass, samples);
+            self.block_entity.panel_draw.draw(&mut pass, samples);
         }
         // MOB PASS: animated entity models, one draw per visible species. Loads color
         // + depth (test + WRITE) so mobs occlude and are occluded by terrain — like

@@ -97,7 +97,7 @@ fn right_clicking_a_door_toggles_it_through_block_interaction() {
         "door click should not place"
     );
     assert!(
-        events.player_at(0).toggled_door.is_some(),
+        events.player_at(0).toggled_panel.is_some(),
         "door click should report a toggle event to the toggler"
     );
     assert!(

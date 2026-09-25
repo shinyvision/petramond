@@ -18,6 +18,7 @@ use crate::block_state::{EntityFront, LogAxis, SlabState, StairState};
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::torch::TorchPlacement;
+use crate::trapdoor::TrapdoorState;
 
 use super::Section;
 
@@ -95,6 +96,15 @@ impl Section {
     }
 
     pub fn set_door_state(&mut self, x: usize, y: usize, z: usize, state: DoorState) {
+        self.set_state_of(x, y, z, &state);
+    }
+
+    #[inline]
+    pub fn trapdoor_state(&self, x: usize, y: usize, z: usize) -> Option<TrapdoorState> {
+        self.state_of::<Option<TrapdoorState>>(x, y, z)
+    }
+
+    pub fn set_trapdoor_state(&mut self, x: usize, y: usize, z: usize, state: TrapdoorState) {
         self.set_state_of(x, y, z, &state);
     }
 

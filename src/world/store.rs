@@ -26,7 +26,7 @@ pub use petramond_world::world::load_targets::{
     LoadAnchor, LoadTarget, RENDER_DIST, VERTICAL_LOAD_RADIUS,
 };
 
-mod block_entity_index;
+pub(in crate::world) mod block_entity_index;
 mod evict;
 mod memory;
 mod mesh_index;

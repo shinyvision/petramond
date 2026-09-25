@@ -70,6 +70,14 @@ fn door_state_at(nb: &dyn ShapeNeighborhood, q: IVec3) -> Option<crate::door::Do
     state_of_at::<Option<crate::door::DoorState>>(nb, q)
 }
 
+/// The trapdoor state a cell carries, or `None` (no state stored / not one).
+fn trapdoor_state_at(
+    nb: &dyn ShapeNeighborhood,
+    q: IVec3,
+) -> Option<crate::trapdoor::TrapdoorState> {
+    state_of_at::<Option<crate::trapdoor::TrapdoorState>>(nb, q)
+}
+
 /// Whether the pocket `(lo, hi)` overlaps any half-cell octant the predicate
 /// reports occupied — the quantized occupancy test the stair and slab
 /// families share.
@@ -171,6 +179,7 @@ mod plant;
 mod slab;
 mod stair;
 mod torch;
+mod trapdoor;
 
 use boxset::BoxSetFamily;
 use cube::CubeFamily;
@@ -184,6 +193,7 @@ use plant::{CropFamily, CrossFamily};
 use slab::SlabFamily;
 use stair::StairFamily;
 use torch::TorchFamily;
+use trapdoor::TrapdoorFamily;
 
 /// The box list of a box-set kind — a family invariant, so an absence is a
 /// loader bug.
@@ -327,6 +337,7 @@ static FENCE: FenceFamily = FenceFamily;
 static LADDER: LadderFamily = LadderFamily;
 static MODEL: ModelFamily = ModelFamily;
 static DOOR: DoorFamily = DoorFamily;
+static TRAPDOOR: TrapdoorFamily = TrapdoorFamily;
 static CUSTOM: CustomFamily = CustomFamily;
 
 /// A connection shape (fence / pane / wall) occupies only its resolved post +
@@ -371,6 +382,7 @@ pub fn singletons(
         ShapeFamily::Ladder => (&LADDER, &LADDER, &LADDER),
         ShapeFamily::Model => (&MODEL, &MODEL, &MODEL),
         ShapeFamily::Door => (&DOOR, &DOOR, &DOOR),
+        ShapeFamily::Trapdoor => (&TRAPDOOR, &TRAPDOOR, &TRAPDOOR),
         ShapeFamily::Custom => (&CUSTOM, &CUSTOM, &CUSTOM),
     }
 }

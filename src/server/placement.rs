@@ -86,6 +86,7 @@ impl ServerGame {
             &self.world,
             h.block,
             h.normal,
+            h.spot_fraction(),
             player_facing,
             self.sessions[s].held_rotation_snapshot(),
             Some(item),
