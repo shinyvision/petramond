@@ -189,7 +189,7 @@ impl TestGame {
     /// replace whole `Inventory` values, which resets the revision the
     /// on-change gate compares).
     pub(super) fn sync_self_view_for_test(&mut self) {
-        self.server.sessions_mut()[0].replication_mut().last_sent_inventory_revision = None;
+        self.server.sessions_mut()[0].replication_mut().force_inventory_resync();
         let state = self.server.build_self_state(0);
         self.game.self_view.apply(&state, true);
     }

@@ -39,11 +39,19 @@ impl ServerGame {
         inbox: &mut Vec<(PlayerId, ClientToServer)>,
         headroom: &[(PlayerId, usize)],
     ) -> PumpOutput {
+        // Each message applies isolated: a panic kicks its sender (see
+        // `isolation`), whose residue then drops like a leaver's.
         for (id, msg) in inbox.drain(..) {
-            if let Some(s) = self.sessions.index_of(id) {
-                self.apply_message(s, msg);
+            let Some(s) = self.sessions.index_of(id) else {
+                continue;
+            };
+            if !self.sessions.is_faulted(s) {
+                self.isolated(s, "message handling", |server| server.apply_message(s, msg));
             }
         }
+        // Before the ticks, while no per-session events are outstanding: a
+        // leave now shifts no event index.
+        let mut kicked = self.evict_faulted();
         // Snapshot for the teleport detector below (bed tuck, wake, respawn,
         // a mod Teleport): those tick-side position WRITES are teleports,
         // never falls, so the tracker re-anchors across them.
@@ -126,20 +134,25 @@ impl ServerGame {
             let draw_deltas = self.world.take_block_draw_deltas();
             let shared = self.shared_tick_rows(&events);
             for (s, out) in per_session.iter_mut().enumerate() {
-                out.push(ServerToClient::Tick(Box::new(self.build_tick_update(
-                    s,
-                    &events,
-                    &world_events,
-                    &deltas,
-                    &kv_deltas,
-                    &draw_deltas,
-                    &shared,
-                ))));
+                if self.sessions.is_faulted(s) {
+                    continue;
+                }
+                let update = self.isolated(s, "replication", |server| {
+                    server.build_tick_update(
+                        s,
+                        &events,
+                        &world_events,
+                        &deltas,
+                        &kv_deltas,
+                        &draw_deltas,
+                        &shared,
+                    )
+                });
+                if let Some(update) = update {
+                    out.push(ServerToClient::Tick(Box::new(update)));
+                }
             }
         }
-        // Autosave is server-owned (wall-clock dt fed by the thread's loop);
-        // it keeps running while paused.
-        self.maybe_autosave(dt);
 
         let mut per_session = per_session.into_iter();
         let msgs = if self.sessions.has_local_session() {
@@ -147,14 +160,26 @@ impl ServerGame {
         } else {
             Vec::new()
         };
-        let remote = self
+        let mut remote: Vec<(PlayerId, Vec<ServerToClient>)> = self
             .sessions
             .iter()
             .skip(usize::from(self.sessions.has_local_session()))
             .map(|sess| sess.id)
             .zip(per_session)
             .collect();
-        PumpOutput { msgs, remote }
+        // Sessions that faulted during the ticks or replication leave now,
+        // after every recipient's batch was cut (indices are settled), and
+        // before autosave could persist their failed state.
+        kicked.extend(self.evict_faulted());
+        remote.retain(|(id, _)| kicked.iter().all(|(gone, _)| gone != id));
+        // Autosave is server-owned (wall-clock dt fed by the thread's loop);
+        // it keeps running while paused.
+        self.maybe_autosave(dt);
+        PumpOutput {
+            msgs,
+            remote,
+            kicked,
+        }
     }
 
     /// Apply one message from session `s`, latching intents/edges the fixed
@@ -164,9 +189,7 @@ impl ServerGame {
             ClientToServer::PlayerUpdate(u) => self.apply_player_update(s, &u),
             ClientToServer::Action(action) => self.apply_action(s, action),
             ClientToServer::CreativeCursor { item, request_id } => {
-                self.sessions[s]
-                    .input.pending_menu_actions
-                    .push(PendingMenuAction::CreativeCursor { item, request_id });
+                self.queue_menu_action(s, PendingMenuAction::CreativeCursor { item, request_id });
             }
             ClientToServer::MenuClick {
                 slot,
@@ -175,9 +198,7 @@ impl ServerGame {
                 gather,
                 request_id,
             } => {
-                self.sessions[s]
-                    .input.pending_menu_actions
-                    .push(PendingMenuAction::SlotClick {
+                self.queue_menu_action(s, PendingMenuAction::SlotClick {
                         slot: slot.to_menu_slot(),
                         button: crate::net::protocol::button_from_wire(button),
                         shift,
@@ -186,9 +207,7 @@ impl ServerGame {
                     });
             }
             ClientToServer::MenuSwapOffHand { slot, request_id } => {
-                self.sessions[s]
-                    .input.pending_menu_actions
-                    .push(PendingMenuAction::SwapOffHand {
+                self.queue_menu_action(s, PendingMenuAction::SwapOffHand {
                         slot: slot.to_menu_slot(),
                         request_id,
                     });
@@ -203,9 +222,7 @@ impl ServerGame {
                     .take(petramond_world::gui_state::MAX_MENU_DRAG_SLOTS)
                     .map(|slot| slot.to_menu_slot())
                     .collect();
-                self.sessions[s]
-                    .input.pending_menu_actions
-                    .push(PendingMenuAction::SlotDrag {
+                self.queue_menu_action(s, PendingMenuAction::SlotDrag {
                         slots,
                         button: crate::net::protocol::button_from_wire(button),
                         request_id,
@@ -215,9 +232,7 @@ impl ServerGame {
                 slot,
                 all,
                 request_id,
-            } => self.sessions[s]
-                .input.pending_menu_actions
-                .push(PendingMenuAction::DropSlot {
+            } => self.queue_menu_action(s, PendingMenuAction::DropSlot {
                     slot: slot.to_menu_slot(),
                     all,
                     request_id,
@@ -226,9 +241,7 @@ impl ServerGame {
                 recipe,
                 bulk,
                 request_id,
-            } => self.sessions[s]
-                .input.pending_menu_actions
-                .push(PendingMenuAction::CraftRecipe {
+            } => self.queue_menu_action(s, PendingMenuAction::CraftRecipe {
                     recipe,
                     bulk,
                     request_id,
@@ -237,6 +250,15 @@ impl ServerGame {
                 self.sessions[s].player.craft_craftable_only = craftable_only;
             }
             ClientToServer::ChatSend { text } => {
+                if !self.sessions[s].input.allow_chat(std::time::Instant::now()) {
+                    let id = self.sessions[s].id;
+                    self.chat.plain(
+                        "You are sending messages too fast.",
+                        crate::net::protocol::ChatColor::Red,
+                        crate::server::chat::ChatTargets::Players(vec![id]),
+                    );
+                    return;
+                }
                 // A slash is a command prefix only at byte zero. Leading
                 // whitespace deliberately turns it into ordinary player chat.
                 if text.starts_with('/') {
@@ -245,8 +267,10 @@ impl ServerGame {
                         self.execute_player_command(id, clean.strip_prefix('/').unwrap_or(""));
                     }
                 } else {
-                    let name = self.sessions[s].name.clone();
-                    self.enqueue_player_chat(&name, &text);
+                    // A headless server echoes chat to its log: it has no
+                    // local client that would otherwise show it.
+                    let echo = !self.sessions.has_local_session();
+                    self.chat.player(&self.sessions[s].name, &text, echo);
                 }
             }
             // Pause is honorable only while the sole connection has always
@@ -333,21 +357,13 @@ impl ServerGame {
             sess.input.intent_break_held = u.break_held;
             sess.input.intent_use_held = u.use_held;
         } else {
-            // Menu focus drops queued action edges so clicks cannot fire behind screens.
-            sess.input.intent_break_held = false;
-            sess.input.intent_use_held = false;
-            sess.input.pending_attack = false;
-            sess.input.pending_attack_mob = None;
-            sess.input.pending_attack_player = None;
-            // The dropped click still owes its outcome: deny, so the client
-            // rolls its place ghost back instead of leaking the ledger entry.
-            if let Some(id) = sess
-                .input.pending_use_click
-                .take()
-                .and_then(|click| click.request_id)
-            {
-                sess.replication.pending_action_outcomes
-                    .push(crate::net::protocol::ActionOutcome::deny(
+            // Menu focus drops queued action edges so clicks cannot fire
+            // behind screens. The dropped use click still owes its outcome:
+            // deny, so the client rolls its place ghost back instead of
+            // leaking the ledger entry.
+            if let Some(id) = sess.input.drop_action_edges() {
+                sess.replication
+                    .push_outcome(crate::net::protocol::ActionOutcome::deny(
                         id,
                         crate::net::protocol::ActionDenyReason::Denied,
                     ));

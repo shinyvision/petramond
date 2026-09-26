@@ -232,6 +232,9 @@ pub enum NameError {
     Empty,
     TooLong,
     BadChar(char),
+    /// A name the server speaks as, or that would read as it in chat and
+    /// logs (see [`RESERVED_NAMES`]).
+    Reserved,
 }
 
 impl fmt::Display for NameError {
@@ -245,16 +248,25 @@ impl fmt::Display for NameError {
                 f,
                 "Player names may only use letters, digits, spaces, '_', '-' and '.' (not {c:?})"
             ),
+            NameError::Reserved => write!(f, "That player name is reserved"),
         }
     }
 }
+
+/// Names no player may take, compared through [`canonical_name`]: the voices
+/// the server itself speaks with in chat, logs and command feedback, so a
+/// player line can never pass for one of them.
+pub const RESERVED_NAMES: &[&str] = &["server", "console", "system", "admin", "petramond"];
 
 fn name_char_allowed(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | '.')
 }
 
 /// Validate a requested display name: trimmed, 1..=[`MAX_NAME_CHARS`]
-/// characters of `[A-Za-z0-9 _.-]`. Returns the trimmed name.
+/// characters of `[A-Za-z0-9 _.-]`, none of the [`RESERVED_NAMES`]. The
+/// character set is also what keeps a name inert everywhere it is echoed:
+/// no chat markup (`$[`), no control characters, nothing a log line or a
+/// path would interpret. Returns the trimmed name.
 pub fn validate_player_name(raw: &str) -> Result<String, NameError> {
     let name = raw.trim();
     if name.is_empty() {
@@ -265,6 +277,9 @@ pub fn validate_player_name(raw: &str) -> Result<String, NameError> {
     }
     if name.chars().count() > MAX_NAME_CHARS {
         return Err(NameError::TooLong);
+    }
+    if RESERVED_NAMES.contains(&canonical_name(name).as_str()) {
+        return Err(NameError::Reserved);
     }
     Ok(name.to_string())
 }
@@ -379,5 +394,20 @@ mod tests {
             "coercion truncates"
         );
         assert_eq!(canonical_name(" RaChel "), "rachel");
+    }
+
+    /// The server's own voices are never a player's name, whatever the case
+    /// or padding; coercion falls back rather than keep one.
+    #[test]
+    fn reserved_names_are_refused() {
+        assert_eq!(validate_player_name(" SERVER "), Err(NameError::Reserved));
+        assert_eq!(validate_player_name("Console"), Err(NameError::Reserved));
+        assert_eq!(validate_player_name("Servers"), Ok("Servers".into()));
+        assert_eq!(coerce_player_name("server"), "Player");
+        assert_eq!(
+            validate_player_name("$[fg=red]x"),
+            Err(NameError::BadChar('$')),
+            "markup never survives validation"
+        );
     }
 }

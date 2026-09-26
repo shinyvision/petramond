@@ -1,7 +1,8 @@
 //! The internal game server.
 //!
 //! Owns the authoritative simulation ([`game::ServerGame`], a coordinator over
-//! owned subsystems: the world, the [`sessions::SessionRegistry`], the
+//! owned subsystems: the world, the [`sessions::SessionRegistry`], join
+//! [`admissions::Admissions`], the
 //! [`mod_runtime::ModRuntime`], [`viewers::ContainerViewers`], chat, and the
 //! 20 TPS fixed-tick stage ladder) plus the per-connected-player state
 //! ([`player::ConnectedPlayer`]). The `ServerGame` runs on its OWN
@@ -11,6 +12,7 @@
 //! loop through [`remote::RemoteHub`] ("Open to LAN").
 
 pub mod accounts;
+pub mod admissions;
 pub mod actions;
 mod actors;
 pub mod attack;

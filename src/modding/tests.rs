@@ -768,14 +768,15 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
         ],
     )]));
     server.sessions_mut()[s]
-        .input_mut().pending_menu_actions
-        .push(PendingMenuAction::SlotClick {
+        .input_mut()
+        .queue_menu_action(PendingMenuAction::SlotClick {
             slot: MenuSlot::Widget("navigate"),
             button: PointerButton::Primary,
             shift: false,
             gather: false,
             request_id: 0,
-        });
+        })
+        .expect("room");
     let mut events = TickEvents::default();
     server.tick_menu(s, &mut events);
     server.apply_deferred_actions(&mut events);

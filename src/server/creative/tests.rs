@@ -198,16 +198,20 @@ fn instant_mining_keeps_a_repeat_delay_and_creative_placement_keeps_the_stack() 
         tool_item_id: None,
         predicted: false,
     };
-    server.sessions[0]
-        .input.pending_break_finished
-        .extend([request(1, a), request(2, b)]);
+    for req in [request(1, a), request(2, b)] {
+        server.sessions[0]
+            .input
+            .queue_break_finished(req)
+            .expect("room");
+    }
     server.tick_mining(0, &mut events);
     assert_eq!(server.world.data().chunk_block(a.x, a.y, a.z), Block::Air.id());
     assert_eq!(server.world.data().chunk_block(b.x, b.y, b.z), Block::Stone.id());
     server.world.restore_tick(server.world.current_tick() + 10);
     server.sessions[0]
-        .input.pending_break_finished
-        .push(request(3, b));
+        .input
+        .queue_break_finished(request(3, b))
+        .expect("room");
     server.tick_mining(0, &mut events);
     assert_eq!(server.world.data().chunk_block(b.x, b.y, b.z), Block::Air.id());
     *server.sessions[0].player.inventory.slot_mut(0).unwrap() = Some(ItemStack::new(
@@ -316,16 +320,16 @@ fn creative_catalog_pickup_requires_a_creative_menu_and_authorized_player() {
         item: Some(ItemType::Stone.registry_name().into()),
         request_id: 1,
     };
-    server.sessions[0].input.pending_menu_actions.push(pick());
+    server.queue_menu_action(0, pick());
     server.tick_menu(0, &mut events);
     assert!(server.sessions[0].player.inventory.cursor().is_none());
-    server.sessions[0].input.pending_menu_actions.push(
+    server.queue_menu_action(0, 
         crate::server::player::PendingMenuAction::OpenGui {
             kind: petramond_world::gui_state::GuiKind::Creative,
             anchor: None,
         },
     );
-    server.sessions[0].input.pending_menu_actions.push(pick());
+    server.queue_menu_action(0, pick());
     server.tick_menu(0, &mut events);
     assert_eq!(
         server.sessions[0].player.inventory.cursor().unwrap().item,
@@ -335,18 +339,18 @@ fn creative_catalog_pickup_requires_a_creative_menu_and_authorized_player() {
         item: None,
         request_id: 2,
     };
-    server.sessions[0].input.pending_menu_actions.push(discard());
+    server.queue_menu_action(0, discard());
     server.tick_menu(0, &mut events);
     assert!(server.sessions[0].player.inventory.cursor().is_none());
     server.sessions[0]
         .player
         .set_mode(crate::player::PlayerMode::Survival);
-    server.sessions[0].input.pending_menu_actions.push(pick());
+    server.queue_menu_action(0, pick());
     server.tick_menu(0, &mut events);
     assert!(server.sessions[0].player.inventory.cursor().is_none());
     let held = ItemStack::new(ItemType::Dirt, 7);
     *server.sessions[0].player.inventory.cursor_mut() = Some(held);
-    server.sessions[0].input.pending_menu_actions.push(discard());
+    server.queue_menu_action(0, discard());
     server.tick_menu(0, &mut events);
     assert_eq!(server.sessions[0].player.inventory.cursor(), Some(&held));
 }

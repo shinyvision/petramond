@@ -112,7 +112,7 @@ impl ContainerMenu {
             mob @ MenuAnchor::Mob(_) => mob,
         });
         if let Some(MenuAnchor::Block(p)) = anchor {
-            let specs = crate::gui::documents::container_slot_specs(kind);
+            let specs = super::slot_specs_for_kind(kind);
             if !specs.is_empty() {
                 world.ensure_container(p, specs.len());
             }

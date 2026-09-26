@@ -221,6 +221,7 @@ pub fn build_server_with_pool(
         accounts,
         catalog,
         mods,
+        jobs: pool.clone(),
     });
     server.install_core_systems();
     // Reconcile the restored record against THIS world's catalog before the

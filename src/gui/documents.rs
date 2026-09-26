@@ -4,26 +4,25 @@
 //! Load rules: a namespaced document kind must ship from the pack that owns
 //! the namespace; engine kinds may ship from anywhere (re-skin packs).
 //! Documents validate against the engine's per-kind
-//! [`SlotContract`] and the theme's style set — a bad document is skipped
+//! [`SlotContract`], the theme's style set, and the server-owned slot
+//! contract table ([`crate::menu::slots`]) — a bad document is skipped
 //! loudly, never trusted to route clicks. Every rule lives in
 //! [`petramond_ui::contract`], shared with the gui-builder.
 //!
-//! In debug builds the registry re-reads changed files (~1s poll), so editing
-//! a document (or re-exporting from the gui-builder) shows up without a
-//! restart.
+//! Documents are PRESENTATION: what a container's slots admit is decided by
+//! the slot contract table, built once and never reloaded. In debug builds
+//! this registry re-reads changed files (~1s poll), so editing a document
+//! (or re-exporting from the gui-builder) shows up without a restart — a
+//! layout change, never a rules change.
 
 use super::GuiKind;
-use petramond_ui::contract::{
-    self, image_refs, slot_semantics_issues, validate_for_engine, EngineCatalog, EngineCheck,
-};
+use crate::menu::slots::{doc_container_specs, ItemTags, DOCUMENTS_DIR};
+use petramond_ui::contract::{self, image_refs, validate_for_engine, EngineCheck};
 use petramond_ui::{DocClass, Document, Node, NodeKind, SlotContract};
-use petramond_world::container::{SlotSpec, MAX_CONTAINER_SLOTS, MAX_SLOT_FILTERS};
+use petramond_world::container::{MAX_CONTAINER_SLOTS, MAX_SLOT_FILTERS};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
-
-/// Where GUI documents live, relative to the asset roots.
-const DOCUMENTS_DIR: &str = "ui/documents";
 
 pub struct DocEntry {
     pub kind: GuiKind,
@@ -32,10 +31,6 @@ pub struct DocEntry {
     /// first-reference order): the index is the `TexId::DocImage` id both
     /// layout (natural sizes) and the renderer (bind groups) use.
     pub images: Arc<Vec<DocImageRef>>,
-    /// A mod document's `container` role slot semantics, in-role index order
-    /// (empty for engine kinds and widgets-only mod GUIs). Resolved once at
-    /// load from the slot nodes' `accepts`/`take_only` fields.
-    pub container_slots: Arc<Vec<SlotSpec>>,
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +45,6 @@ pub struct DocImageRef {
 pub struct DocRef {
     pub doc: Arc<Document>,
     pub images: Arc<Vec<DocImageRef>>,
-    pub container_slots: Arc<Vec<SlotSpec>>,
 }
 
 struct Registry {
@@ -102,13 +96,12 @@ fn doc_entry_for(kind: GuiKind) -> Option<DocRef> {
         .map(|e| DocRef {
             doc: e.doc.clone(),
             images: e.images.clone(),
-            container_slots: e.container_slots.clone(),
         })
 }
 
-/// Every LOADED document's kind key with the number of `container` role slots
-/// it declares — the developer-tool view of "was this pack's document
-/// accepted?".
+/// Every LOADED document's kind key with the number of `container` slots the
+/// slot contract table gives its kind — the developer-tool view of "was this
+/// pack's document accepted?".
 ///
 /// A rejected document is the one failure in this area with no symptom: the
 /// kind still opens, the specs come back empty, and the pack machine silently
@@ -122,20 +115,12 @@ pub fn loaded_documents() -> Vec<(&'static str, usize)> {
         .filter_map(|e| {
             Some((
                 petramond_world::gui_state::kind_key(e.kind)?,
-                e.container_slots.len(),
+                crate::menu::slot_specs_for_kind(e.kind).len(),
             ))
         })
         .collect();
     out.sort_unstable();
     out
-}
-
-/// A document's `container` role slot semantics, in-role index order — for
-/// ENGINE kinds as well as mod ones (the chest's 27 unfiltered cells come from
-/// here; only the furnace's are hardcoded, in `ContainerMenu::slot_specs`).
-/// Empty for widgets-only mod GUIs and unknown kinds.
-pub fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
-    doc_for(kind).map(|d| d.container_slots).unwrap_or_default()
 }
 
 // The GUI-facing statement of the engine's limits lives in
@@ -153,61 +138,6 @@ const _: () = {
     assert!(ui::IMAGE_MAX_SIDE == mod_api::GUI_IMAGE_MAX_SIDE);
     assert!(ui::IMAGE_MAX_FRAMES == mod_api::GUI_IMAGE_MAX_FRAMES);
 };
-
-/// The item-tag registry as the shared validator sees it. The check stays on
-/// the non-interning QUERY lookup: the interning resolve would register a
-/// misspelled tag as a fresh empty one and the slot would silently accept
-/// nothing.
-struct ItemTags;
-
-impl EngineCatalog for ItemTags {
-    fn item_tag_exists(&self, name: &str) -> bool {
-        petramond_world::item::ItemTag::lookup(name).is_some()
-    }
-}
-
-/// A mod document's `container` slot semantics in in-role index order.
-///
-/// The rules (semantics only on `container` slots, the filter cap, tag
-/// existence, namespaced data keys) are the shared
-/// [`slot_semantics_issues`]; this resolves the authored filters to runtime
-/// ones once they pass. `Err` skips the document loudly.
-fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
-    let issues = slot_semantics_issues(doc, &ItemTags);
-    if !issues.is_empty() {
-        return Err(issues.join("; "));
-    }
-    let mut specs = Vec::new();
-    for cell in doc.slot_semantics() {
-        if cell.role != "container" {
-            continue;
-        }
-        let mut filters = Vec::new();
-        for accept in &cell.accepts {
-            filters.push(resolve_slot_filter(accept)?);
-        }
-        specs.push(SlotSpec {
-            accepts: filters,
-            take_only: cell.take_only,
-            accepts_bind: cell.accepts_bind.as_deref().map(super::intern_str),
-        });
-    }
-    Ok(specs)
-}
-
-/// One validated `accepts` entry → the runtime filter.
-fn resolve_slot_filter(
-    accept: &petramond_ui::doc::Accept,
-) -> Result<petramond_world::container::SlotFilter, String> {
-    match accept {
-        petramond_ui::doc::Accept::Tag(name) => petramond_world::item::ItemTag::lookup(name)
-            .map(petramond_world::container::SlotFilter::Tag)
-            .ok_or_else(|| format!("unknown item tag '{name}' in a slot's accepts")),
-        petramond_ui::doc::Accept::Data { data } => Ok(
-            petramond_world::container::SlotFilter::Data(super::intern_str(data)),
-        ),
-    }
-}
 
 /// The engine's slot expectations per kind, from the shared engine kind
 /// table. Mod kinds derive their contract from their own document; shell
@@ -429,14 +359,14 @@ fn load() -> Registry {
         let mut doc = match Document::from_json(&text) {
             Ok(doc) => doc,
             Err(e) => {
-                eprintln!("gui: ignoring {} — {e}", found.json.display());
+                log::warn!("gui: ignoring {} — {e}", found.json.display());
                 continue;
             }
         };
         inject_item_tooltip(&mut doc);
         inject_slot_tooltip(&mut doc);
         let Some(kind) = super::intern_kind(&doc.kind) else {
-            eprintln!(
+            log::warn!(
                 "gui: ignoring {} — unknown kind '{}'",
                 found.json.display(),
                 doc.kind
@@ -456,24 +386,35 @@ fn load() -> Registry {
         );
         if !issues.is_empty() {
             for issue in &issues {
-                eprintln!("gui: {} — {issue}", found.json.display());
+                log::warn!("gui: {} — {issue}", found.json.display());
             }
             continue;
         }
-        let container_slots = match doc_container_specs(&doc) {
-            Ok(specs) => specs,
+        // Presentation must match the rules: a document whose container
+        // slots disagree with the kind's contract would draw slots the
+        // server does not have (or hide ones it does).
+        let declared = match doc_container_specs(&doc) {
+            Ok(specs) => specs.len(),
             Err(e) => {
-                eprintln!("gui: ignoring {} — {e}", found.json.display());
+                log::warn!("gui: ignoring {} — {e}", found.json.display());
                 continue;
             }
         };
+        let contracted = crate::menu::slot_specs_for_kind(kind).len();
+        if declared != 0 && declared != contracted {
+            log::warn!(
+                "gui: ignoring {} — {declared} container slots, but the kind's contract has {contracted}",
+                found.json.display()
+            );
+            continue;
+        }
         // Collect referenced images (resolved beside the document) with
         // their pixel sizes for layout naturals. The art was validated
         // above; a file that vanished since still rejects the document.
         let images = match collect_doc_images(&doc, &found.dir) {
             Ok(images) => images,
             Err(e) => {
-                eprintln!("gui: ignoring {} — {e}", found.json.display());
+                log::warn!("gui: ignoring {} — {e}", found.json.display());
                 continue;
             }
         };
@@ -481,7 +422,6 @@ fn load() -> Registry {
             kind,
             doc: Arc::new(doc),
             images: Arc::new(images),
-            container_slots: Arc::new(container_slots),
         });
     }
     Registry {

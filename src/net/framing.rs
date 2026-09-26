@@ -90,12 +90,24 @@ fn decode_body<T: DeserializeOwned>(flags: u8, body: &[u8], max_body: usize) -> 
 /// EOF/timeout/reset. Reads exactly the frame's bytes (no over-read), so a
 /// handshake over the raw stream can hand off to a buffered reader safely.
 pub fn read_msg<T: DeserializeOwned, R: Read>(r: &mut R) -> io::Result<T> {
+    read_msg_bounded(r, MAX_FRAME).map(|(msg, _)| msg)
+}
+
+/// [`read_msg`] under a tighter cap: frames (and decompressed bodies) larger
+/// than `max_body` are `InvalidData` as soon as the header arrives. Also
+/// reports the frame's size on the wire, for a caller metering a peer's
+/// byte rate.
+pub fn read_msg_bounded<T: DeserializeOwned, R: Read>(
+    r: &mut R,
+    max_body: usize,
+) -> io::Result<(T, usize)> {
+    let max_body = max_body.min(MAX_FRAME);
     let mut header = [0u8; HEADER_LEN];
     r.read_exact(&mut header)?;
-    let (len, flags) = parse_header(&header, MAX_FRAME)?;
+    let (len, flags) = parse_header(&header, max_body)?;
     let mut body = vec![0u8; len];
     r.read_exact(&mut body)?;
-    decode_body(flags, &body, MAX_FRAME)
+    Ok((decode_body(flags, &body, max_body)?, HEADER_LEN + len))
 }
 
 /// Decode the first frame at the front of `buf` without blocking — the

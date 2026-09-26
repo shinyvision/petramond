@@ -49,14 +49,23 @@ fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
     assert!(dir.join("players/Bob.dat").exists());
 
     assert_eq!(opened.save.load_player_registry(), None);
-    opened
-        .save
-        .store_player_registry(b"{}")
-        .expect("registry writes");
+    let files = opened.save.player_files();
+    assert!(files.store_player_registry(2, b"{}").expect("registry writes"));
     assert_eq!(
         opened.save.load_player_registry().as_deref(),
         Some(&b"{}"[..])
     );
+    assert!(
+        !files
+            .store_player_registry(1, br#"{"stale": "x"}"#)
+            .expect("a stale generation is not an error"),
+        "an older registry snapshot never replaces a newer one"
+    );
+    assert_eq!(
+        opened.save.load_player_registry().as_deref(),
+        Some(&b"{}"[..])
+    );
+    drop(files);
     let mut save = opened.save;
     save.shutdown();
     let _ = std::fs::remove_dir_all(&dir);

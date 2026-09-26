@@ -45,7 +45,7 @@ impl ServerGame {
             .retain(|_, broke_at| now.saturating_sub(*broke_at) <= BREAK_ACK_TTL_TICKS);
         // Last tick's single-block edits have had their hooks run by now.
         self.close_open_edit(s, events);
-        for req in std::mem::take(&mut self.sessions[s].input.pending_break_finished) {
+        for req in self.sessions[s].input.take_break_finished() {
             self.resolve_break_finished(s, req, events);
         }
 

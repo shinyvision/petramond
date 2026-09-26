@@ -15,6 +15,7 @@ pub mod handle;
 pub mod handshake;
 pub mod identity;
 pub mod protocol;
+pub mod rate;
 pub mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —

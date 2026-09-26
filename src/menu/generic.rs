@@ -3,48 +3,17 @@
 //! split, take-only outputs, shift-routing by the [`SlotSpec`] item tags,
 //! gather double-clicks); what the slots MEAN stays with the container's
 //! owner — engine machine state like the furnace's, or the opening mod's tick
-//! logic. The chest rides the same path as a pack document — its slot
-//! semantics come from its own GUI document, not from a hardcoded role — and
-//! only the furnace keeps an engine-owned spec set, because its filters are
-//! machine state rather than authored layout.
+//! logic. Every kind's slot semantics come from the server-owned contract
+//! table ([`super::slots`]), never from the GUI layer.
 
+use super::slots::slot_specs_for_kind;
 use super::{ContainerMenu, ContainerTarget, MenuAnchor};
 use crate::world::ServerWorld;
 use petramond_world::container::{Container, SlotSpec};
-use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
 use petramond_world::gui_state::ContainerView;
 use petramond_world::gui_state::PointerButton;
 use petramond_world::inventory::Inventory;
-use petramond_world::item::ItemTag;
-use std::sync::{Arc, OnceLock};
-
-/// The furnace's semantics: a smeltable-filtered input, a fuel-filtered fuel
-/// slot, and a take-only output, in the `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT`
-/// index convention.
-fn furnace_slot_specs() -> Arc<Vec<SlotSpec>> {
-    static SPECS: OnceLock<Arc<Vec<SlotSpec>>> = OnceLock::new();
-    SPECS
-        .get_or_init(|| {
-            let mut specs = vec![SlotSpec::default(); petramond_world::furnace::FURNACE_SLOTS];
-            specs[SLOT_INPUT].accepts = vec![petramond_world::container::SlotFilter::Tag(
-                ItemTag::SMELTABLE,
-            )];
-            specs[SLOT_FUEL].accepts =
-                vec![petramond_world::container::SlotFilter::Tag(ItemTag::FUEL)];
-            specs[SLOT_OUTPUT].take_only = true;
-            Arc::new(specs)
-        })
-        .clone()
-}
-
-/// Slot admission shared by player menus and automated container transfers.
-pub fn slot_specs_for_kind(kind: petramond_world::gui_state::GuiKind) -> Arc<Vec<SlotSpec>> {
-    if kind == petramond_world::gui_state::GuiKind::Furnace {
-        furnace_slot_specs()
-    } else {
-        crate::gui::documents::container_slot_specs(kind)
-    }
-}
+use std::sync::Arc;
 
 impl ContainerMenu {
     /// The open session's container slots for the render view, or `None` when

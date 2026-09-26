@@ -53,7 +53,7 @@ pub(super) fn apply_menu_drag_preview(
     let Some(held) = snapshot.cursor else {
         return;
     };
-    let specs = petramond::gui::documents::container_slot_specs(snapshot.kind);
+    let specs = petramond::menu::slot_specs_for_kind(snapshot.kind);
     let plan = plan_drag_distribution(
         slots,
         held.count,

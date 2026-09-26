@@ -10,6 +10,7 @@
 use crate::events::{EventBus, TickSystems};
 use crate::net::protocol::{ServerToClient, SleepTally};
 use crate::player::PlayerId;
+use crate::server::admissions::Admissions;
 use crate::server::chat::ChatService;
 use crate::server::drops::DropSeeds;
 use crate::server::mod_runtime::ModRuntime;
@@ -25,6 +26,7 @@ mod clock;
 mod entity_rows;
 mod fixed_tick;
 mod interest;
+mod isolation;
 mod player_actions;
 mod pump;
 mod replication;
@@ -53,6 +55,10 @@ pub struct PumpOutput {
     /// Each REMOTE session's messages, tagged by `PlayerId` — the server
     /// thread routes them to the matching TCP connection.
     pub remote: Vec<(PlayerId, Vec<ServerToClient>)>,
+    /// Remote sessions evicted this pump because their work panicked (see
+    /// `isolation`), with their names when the leave path completed. The
+    /// server thread disconnects them and announces the leave.
+    pub kicked: Vec<(PlayerId, Option<String>)>,
 }
 
 /// One tick window's replication parts: built once per window by
@@ -82,6 +88,9 @@ pub struct ServerGame {
     pub(in crate::server) world: ServerWorld,
     /// The connected players' simulation sessions (see [`SessionRegistry`]).
     pub(in crate::server) sessions: SessionRegistry,
+    /// Joins whose player is being restored off the server thread (see
+    /// [`crate::server::admissions`]).
+    pub(in crate::server) admissions: Admissions,
     /// Player identities promoted through `op`. Persisted in the world's
     /// engine KV map; the listen server's local session is always an
     /// operator independently of this set.
@@ -120,6 +129,8 @@ pub(in crate::server) struct ServerParts {
     pub accounts: crate::server::accounts::PlayerRegistry,
     pub catalog: RecipeCatalog,
     pub mods: crate::modding::ModHost,
+    /// The shared job pool admissions restore joining players on.
+    pub jobs: std::sync::Arc<crate::worker::JobPool>,
 }
 
 impl ServerGame {
@@ -131,6 +142,7 @@ impl ServerGame {
         Self {
             world: parts.world,
             sessions: SessionRegistry::new(parts.local),
+            admissions: Admissions::new(parts.jobs),
             operators: parts.operators,
             accounts: parts.accounts,
             catalog: parts.catalog,
@@ -173,6 +185,18 @@ impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn world_and_sessions_mut(&mut self) -> (&mut ServerWorld, &mut SessionRegistry) {
         (&mut self.world, &mut self.sessions)
+    }
+
+    /// Cap concurrent players (a headless server's `max_players`): further
+    /// joins are refused with `ServerFull`.
+    pub fn set_max_players(&mut self, max_players: usize) {
+        self.sessions.set_capacity(max_players);
+    }
+
+    /// How far from the nearest player mobs simulate (a headless server's
+    /// `simulation_distance`).
+    pub fn set_sim_distance(&mut self, distance: crate::mob::SimDistance) {
+        self.world.mobs_mut().set_sim_distance(distance);
     }
 
     /// The loaded recipe catalog.

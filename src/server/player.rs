@@ -17,99 +17,18 @@ use crate::server::bed::SleepState;
 use crate::server::drops::DropQueue;
 use crate::server::item_use::EatingState;
 use petramond_math::math::IVec3;
-use petramond_world::gui_state::MenuSlot;
-use petramond_world::gui_state::PointerButton;
 use petramond_world::item::ItemType;
 use petramond_world::mining::MiningState;
 
+mod latches;
+
 pub use crate::player::PlayerId;
+pub use latches::{
+    AttackClick, InputLatches, PendingBreakFinished, PendingMenuAction, PendingUseClick,
+    BREAK_QUEUE_DEPTH, MENU_ACTIONS_PER_TICK, MENU_QUEUE_DEPTH,
+};
 
 pub use crate::world::placement_types::HeldRotation;
-
-/// One latched `BreakFinished` request, resolved by the mining stage against
-/// the server's own observed mining window. Only the fields the resolution
-/// needs — never the whole `PlayerAction` (the latch site would otherwise have
-/// to re-prove the variant).
-#[derive(Copy, Clone, Debug)]
-pub struct PendingBreakFinished {
-    pub request_id: crate::net::protocol::ClientRequestId,
-    pub pos: IVec3,
-    /// Wire item id of the tool the client claims it used (`None` = bare hand).
-    pub tool_item_id: Option<u16>,
-    /// Whether the client presented the break optimistically — gates the
-    /// initiator echo strip on accept (see `finish_player_break`).
-    pub predicted: bool,
-}
-
-/// One buffered secondary-button press. The click-time selection is part of
-/// the intent: receipt-time targeting and tick-time mutation must describe the
-/// same held slot/item, even when a newer `PlayerUpdate` changes the hotbar
-/// before the Placement stage consumes the click.
-#[derive(Copy, Clone, Debug)]
-pub struct PendingUseClick {
-    pub mob: Option<u64>,
-    pub target: Option<TargetRef>,
-    pub request_id: Option<crate::net::protocol::ClientRequestId>,
-    pub predicted: bool,
-    pub jabbed: bool,
-    held_slot: u8,
-    held_item: Option<ItemType>,
-    off_hand_item: Option<ItemType>,
-}
-
-impl PendingUseClick {
-    pub fn capture(
-        player: &Player,
-        mob: Option<u64>,
-        target: Option<TargetRef>,
-        request_id: Option<crate::net::protocol::ClientRequestId>,
-        predicted: bool,
-        jabbed: bool,
-    ) -> Self {
-        Self {
-            mob,
-            target,
-            request_id,
-            predicted,
-            jabbed,
-            held_slot: player.inventory.active_slot(),
-            held_item: player.inventory.selected().map(|stack| stack.item),
-            off_hand_item: player.inventory.off_hand().map(|stack| stack.item),
-        }
-    }
-
-    #[inline]
-    pub fn held_item(self) -> Option<ItemType> {
-        self.held_item
-    }
-
-    #[inline]
-    pub fn off_hand_item(self) -> Option<ItemType> {
-        self.off_hand_item
-    }
-
-    /// The item that selects the click's RAY: the first hand (main, then off)
-    /// holding an item whose `use_ray` sees fluid, else the main-hand item. The
-    /// off-hand boat needs the water target for the ladder's second pass.
-    pub fn ray_item(self) -> Option<ItemType> {
-        let fluid_ray = |item: Option<ItemType>| item.filter(|i| i.use_ray().sees_fluid());
-        fluid_ray(self.held_item)
-            .or_else(|| fluid_ray(self.off_hand_item))
-            .or(self.held_item)
-    }
-
-    /// Both hands must still hold what the click captured: which hand acts is
-    /// decided during dispatch (main pass first, then off), so a change to
-    /// EITHER hand between receipt and the Placement stage denies the whole
-    /// attempt instead of letting the ladder act on an item the click never
-    /// aimed.
-    #[inline]
-    pub fn selection_still_matches(self, player: &Player) -> bool {
-        player.inventory.active_slot() == self.held_slot
-            && player.inventory.selected().map(|stack| stack.item) == self.held_item
-            && player.inventory.off_hand().map(|stack| stack.item) == self.off_hand_item
-    }
-}
 
 /// Server-side fall measurement from the per-tick transform samples of
 /// `tick_movement` — the replicated-transform mirror of `Player::track_fall`
@@ -176,54 +95,6 @@ pub enum FallOutcome {
     Splashed(f32),
 }
 
-/// One ordered menu intent. Open, close, slot clicks, and explicit crafts
-/// share a queue so network arrival order is also simulation order.
-#[derive(Clone, Debug)]
-pub enum PendingMenuAction {
-    /// Open the GUI session for `kind` — engine containers and mod GUIs ride
-    /// this one lane. `anchor` is the block or mob the session opens on (`None`
-    /// for the inventory key and unanchored `GuiOpen`s); per-kind session semantics
-    /// resolve at the menu stage's kind dispatch, not here.
-    OpenGui {
-        kind: petramond_world::gui_state::GuiKind,
-        anchor: Option<crate::menu::MenuAnchor>,
-    },
-    Close,
-    CreativeCursor {
-        item: Option<String>,
-        request_id: crate::net::protocol::ClientRequestId,
-    },
-    SlotClick {
-        slot: MenuSlot,
-        button: PointerButton,
-        shift: bool,
-        gather: bool,
-        request_id: crate::net::protocol::ClientRequestId,
-    },
-    SlotDrag {
-        slots: Vec<MenuSlot>,
-        button: PointerButton,
-        request_id: crate::net::protocol::ClientRequestId,
-    },
-    DropSlot {
-        slot: MenuSlot,
-        all: bool,
-        request_id: crate::net::protocol::ClientRequestId,
-    },
-    CraftRecipe {
-        recipe: String,
-        bulk: bool,
-        request_id: crate::net::protocol::ClientRequestId,
-    },
-    /// Swap the off-hand with a concrete slot (the F gesture — the selected
-    /// hotbar slot in gameplay, the hovered slot in a menu). Rides this queue
-    /// so it serializes with clicks against the same slots.
-    SwapOffHand {
-        slot: MenuSlot,
-        request_id: crate::net::protocol::ClientRequestId,
-    },
-}
-
 /// One player's simulation session: the authoritative player plus every
 /// per-player latch, timer, and menu session the tick stages consume,
 /// grouped by who owns it — the sim ([`SessionSim`]), the latched client
@@ -287,84 +158,6 @@ pub struct SessionSim {
     /// `GuiStateSet`, cleared by the menu funnels on open/close). Snapshotted
     /// behind the `Arc` per replication batch — copy-on-write on writes.
     pub gui_state: std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
-}
-
-/// Input intent latched from the most recent messages, consumed on the fixed
-/// tick.
-pub struct InputLatches {
-    /// Block under this player's crosshair (block + face normal), latched from
-    /// the most recent `PlayerUpdate` and reach-validated at the latch. `None`
-    /// when a mob is the closer target.
-    pub look: Option<TargetRef>,
-    pub intent_break_held: bool,
-    pub intent_use_held: bool,
-    pub intent_sneak: bool,
-    pub intent_gameplay: bool,
-    /// Ticks until a HELD use button re-runs the use-click ladder — paces
-    /// the hold-to-interact repeat (see `tick_use_repeat`).
-    pub use_repeat_cooldown: u32,
-    pub pending_attack: bool,
-    /// The STABLE id of the mob the attack click targeted, resolved client-side
-    /// at click time and re-resolved to an index at consume time (despawns
-    /// shift indices between the click and the tick).
-    pub pending_attack_mob: Option<u64>,
-    /// The `PlayerId` byte of the PLAYER the attack click targeted (PvP; at
-    /// most one of mob/player rides a click). Validated at consume time —
-    /// exists, alive, non-spectator, within reach.
-    pub pending_attack_player: Option<u8>,
-    /// The complete buffered use click, including its click-time held
-    /// slot/item. Keeping the fields together makes supersede, menu-drop, and
-    /// tick consumption atomic: no target/request/selection fragment can
-    /// survive after the click itself is gone.
-    pub pending_use_click: Option<PendingUseClick>,
-    /// The held block's placement rotation, fed from `PlayerUpdate`'s raw
-    /// counter (see [`HeldRotation::apply_wire`]). The placement paths read
-    /// THIS copy, never the client's.
-    pub held_rotation: HeldRotation,
-    /// Menu transitions and mutations latched since the last tick, applied in
-    /// one arrival-ordered stream.
-    pub pending_menu_actions: Vec<PendingMenuAction>,
-    /// Latched `BreakFinished` requests, applied by the mining stage in
-    /// arrival order. A queue, not a single slot: instabreak blocks can
-    /// legitimately finish two cells in one tick window, so each finish must
-    /// resolve independently rather than supersede the last.
-    pub pending_break_finished: Vec<PendingBreakFinished>,
-    /// A `BreakFinished` that arrived before the server's observed mining
-    /// window was full (`TooFast`). Kept until the hold-path timer finishes
-    /// the same cell (then accepted + presentation stripped) or mining
-    /// abandons the cell (then denied + corrective). Avoids deny→restore→
-    /// hold-path double presentation on slow links.
-    pub deferred_break_finished: Option<PendingBreakFinished>,
-    /// Cells this session already broke (hold-path or BreakFinished) that
-    /// still owe a `BreakFinished` accept, with the world tick each was
-    /// broken on. A lagged finish for an already-air cell in this set is
-    /// accepted (no restore); air without an entry is a real deny. Cleared
-    /// when the matching finish is answered, or expired after
-    /// `BREAK_ACK_TTL_TICKS` (a hold-path break whose finish never arrives
-    /// must not grow the set forever).
-    pub pending_break_ack: rustc_hash::FxHashMap<IVec3, u64>,
-    /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).
-    pub move_wishdir: petramond_math::math::Vec3,
-    pub move_jump: bool,
-    pub move_sprint: bool,
-    /// Last tick's sneak level — the rising edge while mounted is the
-    /// dismount gesture (there is deliberately no other server-side sneak
-    /// edge state; see `ConnectedPlayer::sneaking`).
-    pub prev_sneak: bool,
-    /// Client-predicted transform from the latest `PlayerUpdate` (F1 soft accept).
-    pub claim_pos: petramond_math::world_pos::WorldPos,
-    pub claim_vel: petramond_math::math::Vec3,
-    pub claim_on_ground: bool,
-    /// Set by `PlayerUpdate`; cleared after `tick_movement` consumes the claim.
-    /// Stale claims must not yank the player back every tick.
-    pub claim_fresh: bool,
-    /// Ticks integrated since the last consumed claim — how stale the
-    /// client's report is. A slow client legitimately drifts further from the
-    /// server's free-running integration, so both the F1 closeness ring and
-    /// the `SelfTransform` correction deadband scale with this.
-    pub ticks_since_claim: u32,
-    pub wake_requested: bool,
-    pub respawn_requested: bool,
 }
 
 /// Per-recipient replication: the one-shot outbox the tick fills for this
@@ -456,6 +249,30 @@ pub struct SessionTransport {
     pub view_radius: i32,
 }
 
+impl SessionReplication {
+    /// Ship the full inventory with the next batch even if its revision did
+    /// not move: a predicted menu action must reconcile from exactly that
+    /// batch, whatever the on-change gate thinks.
+    pub fn force_inventory_resync(&mut self) {
+        self.last_sent_inventory_revision = None;
+    }
+
+    /// Ship the menu sync with the next batch even if it compares equal.
+    pub fn force_menu_resync(&mut self) {
+        self.last_menu_sync = None;
+    }
+
+    /// Ship the open GUI's state map with the next menu sync.
+    pub fn force_gui_state_resync(&mut self) {
+        self.last_sent_gui_state = None;
+    }
+
+    /// Queue `outcome` for this recipient's next batch.
+    pub fn push_outcome(&mut self, outcome: crate::net::protocol::ActionOutcome) {
+        self.pending_action_outcomes.push(outcome);
+    }
+}
+
 impl ConnectedPlayer {
     pub fn new(
         id: PlayerId,
@@ -487,34 +304,7 @@ impl ConnectedPlayer {
                 sleep: None,
                 gui_state: petramond_world::gui_state::empty_gui_state(),
             },
-            input: InputLatches {
-                look: None,
-                intent_break_held: false,
-                intent_use_held: false,
-                intent_sneak: false,
-                intent_gameplay: false,
-                use_repeat_cooldown: 0,
-                pending_attack: false,
-                pending_attack_mob: None,
-                pending_attack_player: None,
-                pending_use_click: None,
-                held_rotation: HeldRotation::default(),
-                pending_menu_actions: Vec::new(),
-                pending_break_finished: Vec::new(),
-                deferred_break_finished: None,
-                pending_break_ack: Default::default(),
-                move_wishdir: petramond_math::math::Vec3::ZERO,
-                move_jump: false,
-                move_sprint: false,
-                prev_sneak: false,
-                claim_pos: pos_before_ticks,
-                claim_vel: petramond_math::math::Vec3::ZERO,
-                claim_on_ground: false,
-                claim_fresh: false,
-                ticks_since_claim: 0,
-                wake_requested: false,
-                respawn_requested: false,
-            },
+            input: InputLatches::new(pos_before_ticks),
             replication: SessionReplication {
                 pending_corrective_cells: Vec::new(),
                 presented_places: Vec::new(),
@@ -709,6 +499,25 @@ impl ConnectedPlayer {
         self.input
             .held_rotation
             .slab_rotation(self.player.held().map(|st| st.item))
+    }
+
+    /// Step the player's active status effects one game tick and apply the
+    /// consequences of every interval boundary that fired:
+    /// [`Player::tick_effects`] owns the durations and reports the
+    /// boundaries, the session owns what they do. Spectators keep ticking
+    /// their durations too — an effect is wall-clock-like state, not a
+    /// survival consequence — but healing a full or dead player is already a
+    /// no-op inside [`Player::heal`]. Touches this session only.
+    pub fn tick_effects(&mut self) {
+        for behavior in self.player.tick_effects() {
+            match behavior {
+                petramond_world::effect::EffectBehavior::None
+                | petramond_world::effect::EffectBehavior::Speed { .. } => {}
+                petramond_world::effect::EffectBehavior::Regen { amount, .. } => {
+                    self.player.heal(amount);
+                }
+            }
+        }
     }
 
     /// The in-progress eat as `(progress / eat_ticks)` in `[0, 1)`, or `None`.

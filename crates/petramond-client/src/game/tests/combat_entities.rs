@@ -620,8 +620,12 @@ fn fist_takes_four_hits_to_kill_an_owl() {
 fn click_attack_at(game: &mut super::common::TestGame, index: usize) {
     let id = game.server.world().mobs().instances()[index].id();
     common::aim_server_at_mob(game, index);
-    game.server.sessions_mut()[0].input_mut().pending_attack = true;
-    game.server.sessions_mut()[0].input_mut().pending_attack_mob = Some(id);
+    game.server.sessions_mut()[0]
+        .input_mut()
+        .latch_attack(petramond::server::player::AttackClick {
+            mob: Some(id),
+            player: None,
+        });
 }
 
 /// A swing FOLLOWS THROUGH before the hand may attack again, and the CLIENT
@@ -916,8 +920,12 @@ fn a_forged_mob_id_cannot_redirect_an_attack_past_the_nearest_body() {
         .iter()
         .map(|mob| mob.health())
         .collect();
-    game.server.sessions_mut()[0].input_mut().pending_attack = true;
-    game.server.sessions_mut()[0].input_mut().pending_attack_mob = Some(forged);
+    game.server.sessions_mut()[0]
+        .input_mut()
+        .latch_attack(petramond::server::player::AttackClick {
+            mob: Some(forged),
+            player: None,
+        });
     let mut ev = TickEvents::default();
 
     game.server.tick_attack(0, &mut ev);
@@ -953,7 +961,7 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
         }),
     );
     assert!(
-        game.server.sessions()[0].input().pending_attack,
+        game.server.sessions()[0].input().attack().is_some(),
         "the click latched while playing"
     );
 
@@ -964,12 +972,8 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(update));
     assert!(
-        !game.server.sessions()[0].input().pending_attack,
-        "opening a screen drops the latched press"
-    );
-    assert!(
-        game.server.sessions()[0].input().pending_attack_mob.is_none(),
-        "the click's mob target is dropped with it"
+        game.server.sessions()[0].input().attack().is_none(),
+        "opening a screen drops the latched press and its mob target with it"
     );
     let mut ev = TickEvents::default();
     game.server.tick_attack(0, &mut ev);

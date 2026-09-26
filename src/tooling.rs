@@ -132,9 +132,10 @@ pub mod draw {
 /// loaded cleanly.
 pub mod gui {
     /// Every accepted `*.gui.json` document as `(kind key, container slot
-    /// count)`. A pack machine missing from this list, or listed with zero
-    /// container slots, has a REJECTED or mis-declared document — which
-    /// otherwise degrades silently to plain storage.
+    /// count)` — the count from the server-owned slot contract table. A pack
+    /// machine missing from this list, or listed with zero container slots,
+    /// has a REJECTED or mis-declared document — which otherwise degrades
+    /// silently to plain storage.
     pub fn loaded_documents() -> Vec<(&'static str, usize)> {
         crate::gui::documents::loaded_documents()
     }

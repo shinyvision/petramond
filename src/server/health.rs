@@ -231,26 +231,6 @@ impl ServerGame {
             self.world.spawn_item(drop);
         }
     }
-
-    /// Step the player's active status effects one game tick and apply the
-    /// consequences of every interval boundary that fired:
-    /// [`crate::player::Player::tick_effects`] owns the durations and reports
-    /// the boundaries, the server owns what they do. Spectators keep ticking
-    /// their durations too — an effect is wall-clock-like state, not a
-    /// survival consequence — but healing a full or dead player is already a
-    /// no-op inside [`crate::player::Player::heal`].
-    pub fn tick_effects(&mut self, s: usize) {
-        let fired = self.sessions[s].player.tick_effects();
-        for behavior in fired {
-            match behavior {
-                petramond_world::effect::EffectBehavior::None
-                | petramond_world::effect::EffectBehavior::Speed { .. } => {}
-                petramond_world::effect::EffectBehavior::Regen { amount, .. } => {
-                    self.sessions[s].player.heal(amount);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

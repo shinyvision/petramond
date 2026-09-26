@@ -161,12 +161,20 @@ impl PendingConn {
     }
 }
 
-/// The admission limits' view of the pending set.
-pub(super) fn admits(pending: &[PendingConn], ip: IpAddr) -> Result<(), &'static str> {
-    if pending.len() >= MAX_PENDING {
+/// The admission limits' view of every connection still joining: those in
+/// the handshake and those waiting for their restore.
+pub(super) fn admits<'a>(
+    joining: impl Iterator<Item = &'a PendingConn>,
+    ip: IpAddr,
+) -> Result<(), &'static str> {
+    let (mut total, mut from_ip) = (0, 0);
+    for conn in joining {
+        total += 1;
+        from_ip += usize::from(conn.peer.ip() == ip);
+    }
+    if total >= MAX_PENDING {
         return Err("too many connections are joining");
     }
-    let from_ip = pending.iter().filter(|p| p.peer.ip() == ip).count();
     if from_ip >= MAX_PENDING_PER_IP {
         return Err("too many joining connections from one address");
     }

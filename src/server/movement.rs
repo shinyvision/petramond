@@ -11,6 +11,7 @@ use petramond_math::math::Vec3;
 
 use super::game::ServerGame;
 use super::player::ConnectedPlayer;
+use super::sessions::SessionRegistry;
 use crate::events::tick::TICK_DT;
 use crate::world::ServerWorld;
 
@@ -39,20 +40,21 @@ const CLAIM_H_SPEED: f32 = player::SPRINT * 1.5;
 /// legitimate; a body meaningfully inside a block is not.
 const PENETRATION_TOL: f32 = 0.1;
 
-impl ServerGame {
-    /// Integrate every session against one immutable pre-mob obstacle
-    /// snapshot. Building segmented solid-body geometry once keeps movement
-    /// cost proportional to players + solid mobs, rather than their product
-    /// just for snapshot construction.
-    pub fn tick_movements(&mut self) {
-        let obstacles = self.world.mobs().solid_obstacles();
-        for sess in &mut self.sessions {
-            integrate_session(&self.world, sess, &obstacles);
-        }
+/// The movement stage: integrate every session against one immutable
+/// pre-mob obstacle snapshot. Building segmented solid-body geometry once
+/// keeps movement cost proportional to players + solid mobs, rather than
+/// their product just for snapshot construction. Borrows only what it
+/// touches: the world read-only, the sessions mutably.
+pub(in crate::server) fn tick_movements(world: &World, sessions: &mut SessionRegistry) {
+    let obstacles = world.mobs().solid_obstacles();
+    for sess in sessions {
+        integrate_session(world, sess, &obstacles);
     }
+}
 
+impl ServerGame {
     /// Focused tests often advance one session without running the whole
-    /// stage; production uses [`tick_movements`](Self::tick_movements).
+    /// stage; production uses [`tick_movements`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn tick_movement(&mut self, s: usize) {
         let obstacles = self.world.mobs().solid_obstacles();

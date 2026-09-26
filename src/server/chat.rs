@@ -5,7 +5,6 @@
 
 use crate::net::protocol::{ChatColor, ChatLine, ChatSpan, MAX_CHAT_CHARS};
 use crate::player::PlayerId;
-use crate::server::game::ServerGame;
 
 /// Who should receive one accepted chat line on the next pump.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,15 +112,6 @@ impl ChatService {
     }
 }
 
-impl ServerGame {
-    /// Ordinary player chat from a connected player; echoed to the log on a
-    /// headless server.
-    pub fn enqueue_player_chat(&mut self, name: &str, text: &str) {
-        let echo = !self.sessions.has_local_session();
-        self.chat.player(name, text, echo);
-    }
-}
-
 pub fn player_line(seq: u64, name: &str, text: &str) -> Option<ChatLine> {
     let text = clean_text(text)?;
     Some(ChatLine {
@@ -160,23 +150,38 @@ pub fn display_text(line: &ChatLine) -> String {
     line.spans.iter().map(|span| span.text.as_str()).collect()
 }
 
+/// `{name} has joined the game`, in yellow. Built from an explicit span like
+/// [`plain_line`], never through markup: the name is player-controlled.
 pub fn joined_line(seq: u64, name: &str) -> ChatLine {
-    parse_markup(seq, &format!("$[fg=yellow]{name} has joined the game"))
+    presence_line(seq, name, "has joined the game")
 }
 
+/// `{name} has left the game`, in yellow (see [`joined_line`]).
 pub fn left_line(seq: u64, name: &str) -> ChatLine {
-    parse_markup(seq, &format!("$[fg=yellow]{name} has left the game"))
+    presence_line(seq, name, "has left the game")
 }
 
-pub fn clean_text(text: &str) -> Option<String> {
-    let mut out = String::new();
-    for ch in text.chars() {
-        let ch = if ch.is_control() { ' ' } else { ch };
-        out.push(ch);
-        if out.chars().count() >= MAX_CHAT_CHARS {
-            break;
-        }
+fn presence_line(seq: u64, name: &str, what: &str) -> ChatLine {
+    let name: String = name.chars().filter(|c| !c.is_control()).collect();
+    ChatLine {
+        seq,
+        spans: vec![ChatSpan {
+            fg: ChatColor::Yellow,
+            text: format!("{name} {what}"),
+        }],
     }
+}
+
+/// Control characters become spaces, the result is capped at
+/// [`MAX_CHAT_CHARS`] characters and trimmed; `None` when nothing is left.
+/// Linear in the kept prefix: the cap is applied while iterating, never by
+/// recounting the output.
+pub fn clean_text(text: &str) -> Option<String> {
+    let out: String = text
+        .chars()
+        .take(MAX_CHAT_CHARS)
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
     let out = out.trim();
     (!out.is_empty()).then(|| out.to_owned())
 }
@@ -266,11 +271,35 @@ mod tests {
     }
 
     #[test]
-    fn system_join_uses_yellow_markup() {
+    fn system_join_is_one_yellow_span() {
         let line = joined_line(3, "Alex");
         assert_eq!(line.spans.len(), 1);
         assert_eq!(line.spans[0].fg, ChatColor::Yellow);
         assert_eq!(line.spans[0].text, "Alex has joined the game");
+    }
+
+    /// A name is never parsed as formatting, even one that slipped past
+    /// validation: the markup survives as literal text in the yellow span.
+    #[test]
+    fn presence_lines_never_parse_the_name_as_markup() {
+        let line = left_line(4, "$[fg=red]Mallory");
+        assert_eq!(
+            line.spans,
+            vec![ChatSpan {
+                fg: ChatColor::Yellow,
+                text: "$[fg=red]Mallory has left the game".to_string(),
+            }]
+        );
+    }
+
+    /// The cap counts characters (not bytes) and a huge input costs only its
+    /// kept prefix.
+    #[test]
+    fn clean_text_caps_by_characters() {
+        let long = "é".repeat(MAX_CHAT_CHARS * 50);
+        let out = clean_text(&long).expect("non-empty");
+        assert_eq!(out.chars().count(), MAX_CHAT_CHARS);
+        assert_eq!(clean_text(" \u{7}\n "), None, "controls alone trim to nothing");
     }
 
     #[test]

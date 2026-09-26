@@ -288,30 +288,6 @@ impl ServerGame {
         });
     }
 
-    /// Record every audibly-moving player's footstep noise for this tick's mob
-    /// AI batch — called once per tick right before the mob stage. Sneaking
-    /// players are silent (the whole point of sneaking near a listener);
-    /// airborne players are silent until they land.
-    pub fn push_player_step_noises(&mut self) {
-        for s in 0..self.sessions.len() {
-            let p = &self.sessions[s].player;
-            let horizontal_sq = p.vel.x * p.vel.x + p.vel.z * p.vel.z;
-            if crate::mob::player_steps_are_audible(
-                horizontal_sq,
-                p.on_ground,
-                self.sessions[s].sneaking(),
-                p.is_spectator(),
-            ) {
-                let noise = crate::mob::Noise {
-                    pos: p.pos,
-                    kind: crate::mob::NoiseKind::Step,
-                    source: crate::mob::EntityRef::Player(self.sessions[s].id),
-                };
-                self.world.push_noise(noise);
-            }
-        }
-    }
-
     /// Scatter the carried stacks of every mob that died or despawned since
     /// the last stage boundary, at the body they left.
     pub fn scatter_mob_spills(&mut self) {
@@ -437,4 +413,31 @@ pub fn light_at_pos(
 ) -> (u8, petramond_world::light::BlockLight6) {
     let c = pos.block();
     world.data().dynamic_light_at_world(c.x, c.y, c.z)
+}
+
+/// Record every audibly-moving player's footstep noise for this tick's mob
+/// AI batch — called once per tick right before the mob stage. Sneaking
+/// players are silent (the whole point of sneaking near a listener);
+/// airborne players are silent until they land. Reads the sessions, writes
+/// only the world's noise batch.
+pub(in crate::server) fn push_player_step_noises(
+    world: &mut World,
+    sessions: &crate::server::sessions::SessionRegistry,
+) {
+    for sess in sessions {
+        let p = &sess.player;
+        let horizontal_sq = p.vel.x * p.vel.x + p.vel.z * p.vel.z;
+        if crate::mob::player_steps_are_audible(
+            horizontal_sq,
+            p.on_ground,
+            sess.sneaking(),
+            p.is_spectator(),
+        ) {
+            world.push_noise(crate::mob::Noise {
+                pos: p.pos,
+                kind: crate::mob::NoiseKind::Step,
+                source: crate::mob::EntityRef::Player(sess.id),
+            });
+        }
+    }
 }

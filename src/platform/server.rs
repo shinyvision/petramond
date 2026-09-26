@@ -34,6 +34,9 @@ pub struct ServerSettings {
     /// Independent of `view_distance`: loading more of the world no longer
     /// costs mob simulation.
     pub simulation_distance: crate::mob::SimDistance,
+    /// Most players connected at once (`1..=256`); joins beyond it are
+    /// refused with `ServerFull`.
+    pub max_players: usize,
 }
 
 impl Default for ServerSettings {
@@ -41,6 +44,7 @@ impl Default for ServerSettings {
         Self {
             view_distance: 32,
             simulation_distance: crate::mob::SimDistance::default(),
+            max_players: 20,
         }
     }
 }
@@ -91,7 +95,8 @@ pub fn run() {
         eprintln!("usage: petramond_server <world-name>");
         eprintln!(
             "  settings.json (beside the binary): view_distance <4..64>, \
-             simulation_distance {{full_chunks, reduced_chunks, reduced_interval}}"
+             simulation_distance {{full_chunks, reduced_chunks, reduced_interval}}, \
+             max_players <1..256>"
         );
         eprintln!("  env: PETRAMOND_SEED=<u32>  PETRAMOND_RD=<4..64>  PETRAMOND_PORT=<port>");
         std::process::exit(2);
@@ -112,10 +117,8 @@ pub fn run() {
         .unwrap_or(crate::net::DEFAULT_PORT);
 
     let mut server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
-    server
-        .world_mut()
-        .mobs_mut()
-        .set_sim_distance(settings.simulation_distance);
+    server.set_sim_distance(settings.simulation_distance);
+    server.set_max_players(settings.max_players);
     let mut handle = crate::server::handle::spawn(server);
     let port = match handle.open_to_lan(port) {
         Ok(port) => port,

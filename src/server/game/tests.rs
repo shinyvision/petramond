@@ -270,7 +270,7 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     // and never swings whatever the claim says — asserting "no swing" with a
     // cell under the crosshair passes for the wrong reason.
     server.sessions[0].input.look = None;
-    server.sessions[0].input.pending_attack = true;
+    server.sessions[0].input.latch_attack(Default::default());
     server.tick_attack(0, &mut events);
     assert!(!events.player_at(0).swung_hand, "no swing while denied");
     assert_eq!(
@@ -286,7 +286,7 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     );
 
     // Non-vacuous: the same press on a released body swings.
-    server.sessions[0].input.pending_attack = true;
+    server.sessions[0].input.latch_attack(Default::default());
     server.tick_attack(0, &mut events);
     assert!(events.player_at(0).swung_hand);
 }

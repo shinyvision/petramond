@@ -53,7 +53,7 @@ const CONSUMERS: &[Consumer] = &[
 impl ServerGame {
     /// Attack, on the tick: resolve a buffered primary-button press (consumed once, so a
     /// press never lands more than one hit). The damage lands the tick *after* the click —
-    /// `pending_attack` is latched per frame and consumed here. Paced by
+    /// the press is latched per frame (`InputLatches::latch_attack`) and consumed here. Paced by
     /// [`ATTACK_COOLDOWN_TICKS`]: the cooldown counts down one tick at a time and the swing
     /// plays whole before the next one begins, so mashing the button can't land a hit every
     /// tick — only one swing per cooldown connects, so an owl can't be spam-clicked to
@@ -73,9 +73,7 @@ impl ServerGame {
             .denied_actions()
             .denies(mod_api::BodyAction::Attack)
         {
-            sess.input.pending_attack = false;
-            sess.input.pending_attack_mob = None;
-            sess.input.pending_attack_player = None;
+            sess.input.take_attack();
             return;
         }
         // A press landing while the hand is still following through is HELD,
@@ -88,20 +86,18 @@ impl ServerGame {
         if sess.sim.attack_cooldown != 0 {
             return;
         }
-        let mob_target = std::mem::take(&mut sess.input.pending_attack_mob);
-        let player_target = std::mem::take(&mut sess.input.pending_attack_player);
-        let pressed = std::mem::take(&mut sess.input.pending_attack);
-        if !pressed {
+        let Some(click) = sess.input.take_attack() else {
             return;
-        }
+        };
         // The claimed targets resolve through the authoritative validators
         // BEFORE any consumer (mods included) can observe them: a forged,
         // vanished, dead, occluded or out-of-reach claim is no target at all.
         let mob =
-            super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], mob_target)
+            super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], click.mob)
                 .map(|idx| self.world.mobs().instances()[idx].id());
-        let target = player_target
-            .and_then(|t| self.authoritative_player_target(s, PlayerId(t)))
+        let target = click
+            .player
+            .and_then(|t| self.authoritative_player_target(s, t))
             .map(|t| self.sessions[t].id);
         let look = self.sessions[s].input.look;
         let attempt = AttackAttempt {

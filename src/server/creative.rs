@@ -107,10 +107,14 @@ impl ServerGame {
         } else {
             match request {
                 Pending::Action(action) => self.apply_creative(s, action, events),
-                Pending::Placement { origin, turns, .. } => {
-                    let design = decoded.expect("a placement is decoded before it is its turn");
-                    self.place_schematic(s, design.schematic(), origin, turns, events)
-                }
+                Pending::Placement { origin, turns, .. } => match decoded {
+                    Some(design) => {
+                        self.place_schematic(s, design.schematic(), origin, turns, events)
+                    }
+                    // Only a decoded placement reaches its turn; one that
+                    // did not is refused, never a server-wide panic.
+                    None => Err("That design is not ready to place".into()),
+                },
             }
         };
         if let Err(message) = result {

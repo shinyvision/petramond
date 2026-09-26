@@ -11,7 +11,7 @@ use crate::net::protocol::{
     ActionDenyReason, ActionOutcome, ClientRequestId, PlayerAction, TargetRef,
 };
 use crate::server::game::ServerGame;
-use crate::server::player::{PendingBreakFinished, PendingMenuAction, PendingUseClick};
+use crate::server::player::{AttackClick, PendingBreakFinished, PendingMenuAction, PendingUseClick};
 use petramond_math::math::IVec3;
 
 impl ServerGame {
@@ -25,10 +25,10 @@ impl ServerGame {
                 jabbed,
             } => self.apply_use_click(s, mob, target, request_id, predicted, jabbed),
             PlayerAction::AttackClick { mob, player } => {
-                let sess = &mut self.sessions[s];
-                sess.input.pending_attack = true;
-                sess.input.pending_attack_mob = mob;
-                sess.input.pending_attack_player = player;
+                self.sessions[s].input.latch_attack(AttackClick {
+                    mob,
+                    player: player.map(crate::player::PlayerId),
+                });
             }
             PlayerAction::Drop { all, request_id } => {
                 let sess = &mut self.sessions[s];
@@ -100,13 +100,9 @@ impl ServerGame {
                 } else {
                     petramond_world::gui_state::GuiKind::Inventory
                 };
-                self.sessions[s]
-                    .input.pending_menu_actions
-                    .push(PendingMenuAction::OpenGui { kind, anchor: None })
+                self.queue_menu_action(s, PendingMenuAction::OpenGui { kind, anchor: None })
             }
-            PlayerAction::CloseMenu => self.sessions[s]
-                .input.pending_menu_actions
-                .push(PendingMenuAction::Close),
+            PlayerAction::CloseMenu => self.queue_menu_action(s, PendingMenuAction::Close),
         }
     }
 
@@ -169,14 +165,43 @@ impl ServerGame {
             let cells = self.world.break_footprint_cells(old.pos);
             self.sessions[s].replication.pending_corrective_cells.extend(cells);
         }
-        self.sessions[s]
-            .input.pending_break_finished
-            .push(PendingBreakFinished {
-                request_id,
-                pos,
-                tool_item_id,
-                predicted,
-            });
+        let request = PendingBreakFinished {
+            request_id,
+            pos,
+            tool_item_id,
+            predicted,
+        };
+        if let Err(refused) = self.sessions[s].input.queue_break_finished(request) {
+            // A flood, not play: deny at once and restore the cells the
+            // client may have cleared optimistically.
+            log::warn!(
+                "session {} overflowed its break queue; denying",
+                self.sessions[s].id.0
+            );
+            let cells = self.world.break_footprint_cells(refused.pos);
+            let sess = &mut self.sessions[s];
+            sess.replication.pending_corrective_cells.extend(cells);
+            sess.replication.push_outcome(ActionOutcome::deny(
+                refused.request_id,
+                ActionDenyReason::Denied,
+            ));
+        }
+    }
+
+    /// Queue one menu intent for session `s` on its ordered, bounded queue.
+    /// A full queue is a flood, not play: the intent is dropped and, when it
+    /// carries a request id, denied at once so the client's prediction
+    /// ledger never leaks.
+    pub(in crate::server) fn queue_menu_action(&mut self, s: usize, action: PendingMenuAction) {
+        let sess = &mut self.sessions[s];
+        let Err(refused) = sess.input.queue_menu_action(action) else {
+            return;
+        };
+        log::warn!("session {} overflowed its menu queue; dropping", sess.id.0);
+        if let Some(id) = refused.request_id() {
+            sess.replication
+                .push_outcome(ActionOutcome::deny(id, ActionDenyReason::Denied));
+        }
     }
 
     pub fn push_action_outcome(

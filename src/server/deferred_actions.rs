@@ -71,9 +71,10 @@ impl ServerGame {
                     let Some(s) = self.sessions.index_of(player) else {
                         continue;
                     };
-                    self.sessions[s]
-                        .input.pending_menu_actions
-                        .push(crate::server::player::PendingMenuAction::OpenGui { kind, anchor });
+                    self.queue_menu_action(
+                        s,
+                        crate::server::player::PendingMenuAction::OpenGui { kind, anchor },
+                    );
                 }
                 DeferredAction::CloseGui { player } => {
                     let Some(s) = self.sessions.index_of(player) else {

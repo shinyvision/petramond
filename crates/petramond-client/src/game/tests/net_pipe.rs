@@ -257,7 +257,7 @@ fn menu_click_messages_latch_then_apply_on_the_tick() {
         },
     );
     assert_eq!(
-        game.server.sessions()[0].input().pending_menu_actions.len(),
+        game.server.sessions()[0].input().queued_menu_actions(),
         1,
         "the click joined the ordered menu-action queue for the tick"
     );

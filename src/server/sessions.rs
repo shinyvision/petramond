@@ -26,7 +26,17 @@ pub struct SessionRegistry {
     sessions: Vec<ConnectedPlayer>,
     /// Whether index 0 is THIS process's local player (listen server).
     has_local: bool,
+    /// Most sessions admitted at once, the local one included (see
+    /// [`set_capacity`](Self::set_capacity)).
+    capacity: usize,
+    /// Sessions whose work panicked this pump, awaiting eviction (see
+    /// `server::game::isolation`).
+    faulted: Vec<PlayerId>,
 }
+
+/// How many sessions distinct `PlayerId`s can name: the ceiling any
+/// configured player cap is clamped to.
+pub const MAX_SESSIONS: usize = u8::MAX as usize + 1;
 
 impl SessionRegistry {
     /// A listen server's registry around its local session, or a headless
@@ -35,7 +45,39 @@ impl SessionRegistry {
         Self {
             has_local: local.is_some(),
             sessions: local.into_iter().collect(),
+            capacity: MAX_SESSIONS,
+            faulted: Vec::new(),
         }
+    }
+
+    /// Mark session `id` faulted: skipped by every isolated stage until the
+    /// pump evicts it.
+    pub fn mark_faulted(&mut self, id: PlayerId) {
+        if !self.faulted.contains(&id) {
+            self.faulted.push(id);
+        }
+    }
+
+    /// Whether the session at `index` is awaiting eviction.
+    pub fn is_faulted(&self, index: usize) -> bool {
+        self.faulted.contains(&self.sessions[index].id)
+    }
+
+    /// Every faulted session id, clearing the set.
+    pub fn take_faulted(&mut self) -> Vec<PlayerId> {
+        std::mem::take(&mut self.faulted)
+    }
+
+    /// Cap how many sessions may be connected at once (a headless server's
+    /// `max_players`), clamped to `1..=`[`MAX_SESSIONS`]. Lowering it below
+    /// the current count never kicks anyone; it only refuses further joins.
+    pub fn set_capacity(&mut self, max_players: usize) {
+        self.capacity = max_players.clamp(1, MAX_SESSIONS);
+    }
+
+    /// Most sessions admitted at once, the local one included.
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Whether index 0 is this process's local player. False on a headless
@@ -60,14 +102,6 @@ impl SessionRegistry {
     /// Session `id`, if connected.
     pub fn by_id(&self, id: PlayerId) -> Option<&ConnectedPlayer> {
         self.sessions.iter().find(|sess| sess.id == id)
-    }
-
-    /// The smallest `PlayerId` no connected session uses (freed ids
-    /// recycle); `None` when all 256 are taken.
-    pub fn next_free_id(&self) -> Option<PlayerId> {
-        (0..=u8::MAX)
-            .map(PlayerId)
-            .find(|id| self.by_id(*id).is_none())
     }
 
     /// Append a joining session; returns its roster index.
@@ -180,19 +214,29 @@ mod tests {
         let mut registry = SessionRegistry::new(Some(session(0)));
         assert!(registry.has_local_session());
         assert_eq!(registry.local_id(), Some(PlayerId(0)));
-        assert_eq!(registry.next_free_id(), Some(PlayerId(1)));
 
         registry.join(session(1));
         registry.join(session(2));
         assert_eq!(registry.leave(1).id, PlayerId(1));
         assert_eq!(registry[0].id, PlayerId(0), "the local session never moves");
         assert_eq!(registry.index_of(PlayerId(2)), Some(1), "the survivor took the slot");
-        assert_eq!(registry.next_free_id(), Some(PlayerId(1)), "freed ids recycle");
+        assert!(registry.by_id(PlayerId(1)).is_none(), "the leaver's id is free");
 
         let roster: &mut dyn PlayerRoster = &mut registry;
         assert_eq!(roster.len(), 2);
         assert_eq!(roster.index_of(PlayerId(2)), Some(1));
         assert_eq!(roster.id_at(1), PlayerId(2));
         assert!(SessionRegistry::new(None).local_id().is_none());
+    }
+
+    /// The configured cap is clamped to what `PlayerId`s can name.
+    #[test]
+    fn the_player_cap_is_clamped_to_the_id_space() {
+        let mut registry = SessionRegistry::new(None);
+        assert_eq!(registry.capacity(), MAX_SESSIONS);
+        registry.set_capacity(0);
+        assert_eq!(registry.capacity(), 1);
+        registry.set_capacity(usize::MAX);
+        assert_eq!(registry.capacity(), MAX_SESSIONS);
     }
 }

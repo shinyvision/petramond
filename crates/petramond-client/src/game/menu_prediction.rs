@@ -75,7 +75,7 @@ impl Game {
         let Some(held) = self.self_view.inventory.cursor().copied() else {
             return;
         };
-        let specs = petramond::gui::documents::container_slot_specs(kind);
+        let specs = petramond::menu::slot_specs_for_kind(kind);
         let plan = plan_drag_distribution(
             slots,
             held.count,
@@ -226,7 +226,7 @@ impl Game {
         let Some(held) = held else {
             return false;
         };
-        let specs = petramond::gui::documents::container_slot_specs(kind);
+        let specs = petramond::menu::slot_specs_for_kind(kind);
         let Some(spec) = specs.get(i) else {
             return false;
         };
@@ -285,7 +285,7 @@ impl Game {
                 let Some(kind) = self.menu_view.container_kind else {
                     return;
                 };
-                let specs = petramond::gui::documents::container_slot_specs(kind);
+                let specs = petramond::menu::slot_specs_for_kind(kind);
                 if let Some(cell) = self
                     .menu_view
                     .container
@@ -417,7 +417,7 @@ impl Game {
                 }
                 MenuSlot::Container(i) => {
                     let kind = self.menu_view.container_kind.expect("gated above");
-                    let specs = petramond::gui::documents::container_slot_specs(kind);
+                    let specs = petramond::menu::slot_specs_for_kind(kind);
                     if let Some(cell) = self
                         .menu_view
                         .container

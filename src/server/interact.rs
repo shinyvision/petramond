@@ -500,7 +500,8 @@ impl ServerGame {
             // (chest viewer, machine gauges, mod container anchoring) and
             // gui_click dispatches know where the GUI was opened from.
             BlockInteraction::OpenGui(kind) => {
-                self.sessions[s].input.pending_menu_actions.push(
+                self.queue_menu_action(
+                    s,
                     crate::server::player::PendingMenuAction::OpenGui {
                         kind,
                         anchor: Some(crate::menu::MenuAnchor::Block(pos)),

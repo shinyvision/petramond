@@ -67,54 +67,56 @@ impl ServerGame {
             let gameplay = self.sessions[s].input.intent_gameplay;
             self.sessions[s].player.refresh_engine_claims(gameplay);
         }
-        self.tick_movements();
+        crate::server::movement::tick_movements(&self.world, &mut self.sessions);
 
+        // Each session's share of a stage runs isolated: a panic in it kicks
+        // that session instead of ending the world (see `isolation`).
         self.begin_stage(Stage::Mining, events);
-        for s in 0..self.sessions.len() {
-            self.tick_mining(s, events);
-        }
+        self.for_each_session("mining", events, |server, s, events| {
+            server.tick_mining(s, events);
+        });
         self.end_stage(Stage::Mining, events);
 
         self.begin_stage(Stage::Placement, events);
-        for s in 0..self.sessions.len() {
-            self.tick_place(s, events);
-            self.tick_creative(s, events);
-        }
+        self.for_each_session("placement", events, |server, s, events| {
+            server.tick_place(s, events);
+            server.tick_creative(s, events);
+        });
         self.tick_schematics();
         self.end_stage(Stage::Placement, events);
 
         self.begin_stage(Stage::Attack, events);
-        for s in 0..self.sessions.len() {
-            self.tick_attack(s, events);
-        }
+        self.for_each_session("attack", events, |server, s, events| {
+            server.tick_attack(s, events);
+        });
         self.end_stage(Stage::Attack, events);
 
         self.begin_stage(Stage::Drops, events);
-        for s in 0..self.sessions.len() {
-            self.tick_drops(s, events);
-        }
+        self.for_each_session("drops", events, |server, s, events| {
+            server.tick_drops(s, events);
+        });
         self.end_stage(Stage::Drops, events);
 
         self.begin_stage(Stage::Menu, events);
         self.close_menus_on_absent_anchors(events);
-        for s in 0..self.sessions.len() {
-            self.tick_menu(s, events);
-        }
+        self.for_each_session("menu", events, |server, s, events| {
+            server.tick_menu(s, events);
+        });
         self.end_stage(Stage::Menu, events);
 
         self.begin_stage(Stage::PlayerDamage, events);
-        for s in 0..self.sessions.len() {
-            self.tick_fall_damage(s, events);
-            self.tick_player_exposure(s, events);
-            self.tick_fluid_splash(s, events);
+        self.for_each_session("player damage", events, |server, s, events| {
+            server.tick_fall_damage(s, events);
+            server.tick_player_exposure(s, events);
+            server.tick_fluid_splash(s, events);
             // Status effects ride the same stage: they are pure player-state
             // steps (regen heals, durations count down) on the tick, after damage
             // so a same-tick hit lands before the heal.
-            self.tick_effects(s);
+            server.sessions[s].tick_effects();
             // Sleeping and respawn ride the same stage: both are pure player-state
             // transitions (teleport, health restore, time skip) on the tick.
-            self.tick_bed_and_respawn(s, events);
-        }
+            server.tick_bed_and_respawn(s, events);
+        });
         // Sleep completion is a cross-player decision (everyone must sleep),
         // resolved once after every session advanced its own timer.
         self.resolve_sleep_completion(events);
@@ -165,16 +167,16 @@ impl ServerGame {
                         .any(|sess| sess.id == id && sess.player.health() > 0)
                 });
         }
-        for s in 0..self.sessions.len() {
-            if self.item_pickup_tick(s) {
+        self.for_each_session("pickup", events, |server, s, events| {
+            if server.item_pickup_tick(s) {
                 events.player(s).picked_up_item = true;
                 // Every observer hears the pickup at the collector's body.
                 events
                     .world
                     .item_picked_up
-                    .push((self.sessions[s].player.body_center(), self.sessions[s].id));
+                    .push((server.sessions[s].player.body_center(), server.sessions[s].id));
             }
-        }
+        });
         self.end_stage(Stage::Pickup, events);
     }
 
@@ -203,12 +205,14 @@ impl ServerGame {
         // Passive natural spawning still centres on one anchor per tick, round-robin,
         // so its per-tick attempt budget stays constant. Hostile spawning builds its
         // own chunk/cap plan from every connected anchor below.
-        let spawn_s = (self.world.current_tick() as usize) % self.sessions.len();
+        let spawn_anchor = anchors
+            .get((self.world.current_tick() as usize) % anchors.len().max(1))
+            .map(|anchor| anchor.pos);
 
         // Footstep noises for hearing-based mob AI, sampled from the same
         // settled player state as the anchors (block-action noises were pushed
         // by their own funnels during the earlier stages).
-        self.push_player_step_noises();
+        crate::server::entities::push_player_step_noises(&mut self.world, &self.sessions);
 
         self.begin_stage(Stage::Mobs, events);
         let mob_events = self.world.tick_mobs(TICK_DT, anchors);
@@ -258,8 +262,10 @@ impl ServerGame {
         self.begin_stage(Stage::Spawning, events);
         // One-time worldgen herds land as chunks near the round-robin player
         // settle; the persisted populated set keeps that stock one-time.
-        for (id, kind, pos) in self.world.populate_mobs_tick(anchors[spawn_s].pos) {
-            self.mods.emit(PostEvent::MobSpawned { id, kind, pos });
+        if let Some(anchor) = spawn_anchor {
+            for (id, kind, pos) in self.world.populate_mobs_tick(anchor) {
+                self.mods.emit(PostEvent::MobSpawned { id, kind, pos });
+            }
         }
         // The passive trickle backfills on the slow creature cadence — one
         // attempt per player per interval, not per tick, or killing animals

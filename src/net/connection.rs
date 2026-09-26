@@ -5,8 +5,11 @@
 //! a connection is local or TCP:
 //!
 //! - [`TcpServerConn`] (one per remote client, owned by the server thread's
-//!   `RemoteHub`): the reader decodes `ClientToServer` into an unbounded
-//!   inbound channel the server loop drains; the writer drains a BOUNDED
+//!   `RemoteHub`): the reader decodes `ClientToServer` into a BOUNDED
+//!   inbound channel the server loop drains, under per-connection limits
+//!   (see [`InboundLimits`]) — a peer that overruns the queue, the message
+//!   rate, the byte rate or the post-join frame cap is disconnected, so no
+//!   client can grow server memory or flood the tick; the writer drains a BOUNDED
 //!   queue of `ServerToClient` — a full queue (a client slower than the
 //!   server produces) marks the connection dead instead of ever blocking the
 //!   server tick. The server's terrain streamer paces itself against
@@ -34,7 +37,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::framing::{read_msg, write_msg};
+use super::framing::{read_msg, read_msg_bounded, write_msg};
+use super::rate::TokenBucket;
 use super::protocol::{ClientToServer, ServerToClient};
 use super::remap::IdRemap;
 
@@ -53,6 +57,75 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// keeping up and gets disconnected. Terrain is paced against the live
 /// headroom (`queue_headroom`), so only non-terrain traffic can fill it.
 pub const SERVER_QUEUE_MSGS: usize = 4096;
+
+/// Client→server inbound queue depth (messages). The server loop drains it
+/// every few milliseconds; only a client sending far faster than any real
+/// one (or a server stalled for seconds) fills it, and that client is
+/// disconnected rather than buffered.
+pub const CLIENT_INBOX_MSGS: usize = 4096;
+
+/// Per-connection inbound limits, enforced by the reader thread before a
+/// message is queued. Generous for real play — the client sends one
+/// `PlayerUpdate` per rendered frame, so the message rate must clear a
+/// high-refresh display with room to spare — and fatal when exceeded.
+#[derive(Copy, Clone, Debug)]
+pub struct InboundLimits {
+    /// Largest joined-client frame body. Every post-join message is small
+    /// (the big one, `Join`, is read under the handshake's own cap).
+    pub max_frame: usize,
+    /// Messages per second, sustained, and the burst allowance.
+    pub msgs_per_second: f64,
+    pub msg_burst: f64,
+    /// Bytes per second on the wire, sustained, and the burst allowance.
+    pub bytes_per_second: f64,
+    pub byte_burst: f64,
+}
+
+impl Default for InboundLimits {
+    fn default() -> Self {
+        Self {
+            max_frame: 64 * 1024,
+            msgs_per_second: 2400.0,
+            msg_burst: 4800.0,
+            bytes_per_second: 512.0 * 1024.0,
+            byte_burst: 2.0 * 1024.0 * 1024.0,
+        }
+    }
+}
+
+/// Why the reader stopped taking a peer's messages.
+#[derive(Debug, PartialEq, Eq)]
+enum Overrun {
+    MessageRate,
+    ByteRate,
+    Queue,
+}
+
+/// The reader's meter over one peer's inbound traffic.
+struct InboundMeter {
+    msgs: TokenBucket,
+    bytes: TokenBucket,
+}
+
+impl InboundMeter {
+    fn new(limits: &InboundLimits, now: std::time::Instant) -> Self {
+        Self {
+            msgs: TokenBucket::new(limits.msg_burst, limits.msgs_per_second, now),
+            bytes: TokenBucket::new(limits.byte_burst, limits.bytes_per_second, now),
+        }
+    }
+
+    /// Charge one received frame of `bytes` wire bytes.
+    fn admit(&mut self, bytes: usize, now: std::time::Instant) -> Result<(), Overrun> {
+        if !self.msgs.try_take(1.0, now) {
+            return Err(Overrun::MessageRate);
+        }
+        if !self.bytes.try_take(bytes as f64, now) {
+            return Err(Overrun::ByteRate);
+        }
+        Ok(())
+    }
+}
 
 fn configure(stream: &TcpStream) -> io::Result<()> {
     stream.set_nodelay(true)?;
@@ -181,8 +254,14 @@ pub struct TcpServerConn {
 }
 
 impl TcpServerConn {
-    /// Take ownership of an accepted socket and spawn its reader/writer.
+    /// Take ownership of an accepted socket and spawn its reader/writer
+    /// under the default [`InboundLimits`].
     pub fn spawn(stream: TcpStream) -> io::Result<TcpServerConn> {
+        Self::spawn_with_limits(stream, InboundLimits::default())
+    }
+
+    /// [`spawn`](Self::spawn) under explicit inbound limits.
+    pub fn spawn_with_limits(stream: TcpStream, limits: InboundLimits) -> io::Result<TcpServerConn> {
         configure(&stream)?;
         let peer = stream
             .peer_addr()
@@ -191,16 +270,32 @@ impl TcpServerConn {
         let dead = Arc::new(AtomicBool::new(false));
         let queued = Arc::new(AtomicUsize::new(0));
         let (tx, out_rx) = mpsc::sync_channel::<ServerToClient>(SERVER_QUEUE_MSGS);
-        let (in_tx, rx) = mpsc::channel::<ClientToServer>();
+        let (in_tx, rx) = mpsc::sync_channel::<ClientToServer>(CLIENT_INBOX_MSGS);
 
         let reader = stream.try_clone()?;
         let flag = Arc::clone(&dead);
+        let reader_peer = peer.clone();
         std::thread::Builder::new()
             .name("petramond-conn-read".to_string())
             .spawn(move || {
+                let shutdown = reader.try_clone();
                 let mut r = BufReader::new(reader);
-                while let Ok(msg) = read_msg::<ClientToServer, _>(&mut r) {
-                    if in_tx.send(msg).is_err() {
+                let mut meter = InboundMeter::new(&limits, std::time::Instant::now());
+                while let Ok((msg, bytes)) =
+                    read_msg_bounded::<ClientToServer, _>(&mut r, limits.max_frame)
+                {
+                    let verdict = meter
+                        .admit(bytes, std::time::Instant::now())
+                        .and_then(|()| match in_tx.try_send(msg) {
+                            Ok(()) => Ok(()),
+                            Err(TrySendError::Full(_)) => Err(Overrun::Queue),
+                            Err(TrySendError::Disconnected(_)) => Ok(()),
+                        });
+                    if let Err(overrun) = verdict {
+                        log::warn!("client {reader_peer} exceeded its inbound limit ({overrun:?}); disconnecting");
+                        if let Ok(stream) = &shutdown {
+                            let _ = stream.shutdown(Shutdown::Both);
+                        }
                         break;
                     }
                 }
@@ -388,6 +483,59 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::time::Instant;
+
+    /// The meter refuses once either budget is spent: a message flood and a
+    /// byte flood are both caught, each named.
+    #[test]
+    fn the_inbound_meter_names_the_budget_a_flood_exhausted() {
+        let t0 = Instant::now();
+        let limits = InboundLimits {
+            max_frame: 1024,
+            msgs_per_second: 1.0,
+            msg_burst: 2.0,
+            bytes_per_second: 1.0,
+            byte_burst: 100.0,
+        };
+        let mut meter = InboundMeter::new(&limits, t0);
+        assert_eq!(meter.admit(10, t0), Ok(()));
+        assert_eq!(meter.admit(10, t0), Ok(()));
+        assert_eq!(meter.admit(10, t0), Err(Overrun::MessageRate));
+
+        let mut meter = InboundMeter::new(&limits, t0);
+        assert_eq!(meter.admit(101, t0), Err(Overrun::ByteRate));
+    }
+
+    /// A peer that floods past its message budget is disconnected: the
+    /// server sees the connection dead, never an unbounded backlog.
+    #[test]
+    fn a_flooding_client_is_disconnected() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let mut client = TcpStream::connect(addr).expect("connect");
+        let (accepted, _) = listener.accept().expect("accept");
+        let limits = InboundLimits {
+            msgs_per_second: 1.0,
+            msg_burst: 8.0,
+            ..InboundLimits::default()
+        };
+        let conn = TcpServerConn::spawn_with_limits(accepted, limits).expect("conn threads");
+        for _ in 0..64 {
+            if write_msg(&mut client, &ClientToServer::KeepAlive).is_err() {
+                break;
+            }
+        }
+        let _ = client.flush();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !conn.is_dead() {
+            assert!(Instant::now() < deadline, "the flood was never cut off");
+            std::thread::yield_now();
+        }
+        let mut delivered = 0;
+        while conn.try_recv().is_some() {
+            delivered += 1;
+        }
+        assert!(delivered < 16, "only about the burst got through ({delivered})");
+    }
 
     /// Every `send` increment must be matched by a writer-drain decrement,
     /// or headroom leaks downward until terrain pacing starves a healthy

@@ -28,6 +28,7 @@ pub mod level;
 pub mod mobs;
 pub mod palette;
 pub mod player;
+mod players;
 mod read;
 pub(crate) use petramond_region as region;
 pub mod settings;
@@ -40,6 +41,7 @@ mod tests;
 pub use codec::{DiskSlot, KeptContent, SectionSnapshot};
 pub use format::RecordError;
 pub use level::LevelData;
+pub use players::PlayerFiles;
 pub use petramond_util::paths::base_data_dir;
 pub use worlds::{
     delete_world, dir_name_for, list_worlds, random_seed, read_world_seed, read_world_settings,
@@ -63,10 +65,6 @@ use crate::net::identity::PlayerKey;
 use encode::EncodeSlot;
 use io::{write_thread, IoMsg};
 use read::{ReadMsg, ReadQueues};
-use worlds::{legacy_player_path, player_path};
-
-/// The identity→display-name registry file inside `players/`.
-const PLAYER_REGISTRY_FILE: &str = "names.json";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SectionStore {
@@ -150,10 +148,10 @@ pub struct WorldSave {
     /// load. Populated both when we save such a record and when we read one back (so
     /// cross-session staleness is seen).
     entities_on_disk: HashSet<SectionPos>,
-    /// `<world dir>/players/` — per-identity `<hex key>.dat` files, read
-    /// synchronously at session open/join (one small file, like `level.dat`),
-    /// plus the name registry.
-    players_dir: PathBuf,
+    /// `<world dir>/players/` — per-identity `<hex key>.dat` files plus the
+    /// name registry, behind a handle joins read through off the server
+    /// thread.
+    players: Arc<PlayerFiles>,
     /// The world's save directory.
     dir: PathBuf,
     /// Write jobs the I/O thread is holding because one failed to land.
@@ -162,16 +160,11 @@ pub struct WorldSave {
     /// overwritten (see [`Unreadable::must_not_overwrite`]): their saves are
     /// dropped for the rest of the session.
     write_protected: HashSet<SectionPos>,
-    /// Player files under the same protection, by player identity.
-    protected_players: Mutex<HashSet<PlayerKey>>,
     /// Content kept in disk form from each loaded section's record (mobs and
     /// item entities this build cannot bring to life — a removed or disabled
     /// mod's), written back with every save of the section so it returns
     /// with its mod. Replaced by each load of the section.
     kept_sections: Mutex<HashMap<SectionPos, KeptContent>>,
-    /// The same for player files: slots and fields a live player cannot
-    /// carry, by player identity.
-    kept_players: Mutex<HashMap<PlayerKey, player::KeptPlayer>>,
     /// This world's name↔id palette. Every record the save writes or reads
     /// maps its ids through it (see [`palette`]).
     palette: Arc<palette::Palette>,
@@ -443,161 +436,38 @@ impl WorldSave {
     /// write (`players/<hex key>.dat`, atomic like `level.dat`).
     ///
     /// A player whose file could not be read and was not kept aside is not
-    /// written (see [`load_player`](Self::load_player)).
+    /// written (see [`PlayerFiles::load_player`]).
     pub fn save_player(&self, key: &PlayerKey, player: &crate::player::Player) {
-        if self
-            .protected_players
-            .lock()
-            .expect("protected players")
-            .contains(key)
-        {
-            return;
+        if let Some(bytes) = self.players.encode_for_save(key, player) {
+            self.queue_write(IoMsg::SavePlayer { key: *key, bytes });
         }
-        let bytes = match self.kept_players.lock().expect("kept players").get(key) {
-            Some(kept) => player::encode_keeping(player, &self.palette, kept),
-            None => player::encode(player, &self.palette),
-        };
-        self.queue_write(IoMsg::SavePlayer { key: *key, bytes });
     }
 
-    /// Blocking read and decode of `players/<hex key>.dat`: `Ok(None)` when
-    /// the player has no file yet. Called once per player at session
-    /// open/join time — one small file, synchronous like the `level.dat` read
-    /// at open.
-    ///
-    /// A file that exists but does not decode is an error, never a fresh
-    /// player: its bytes are copied to `quarantine/players/` first, and when
-    /// that fails (or the file is from a newer build) the player's saves are
-    /// dropped for the session so the original is never overwritten.
+    /// The world's player files, as a handle other threads may read through
+    /// (a join's restore runs off the server thread).
+    pub fn player_files(&self) -> Arc<PlayerFiles> {
+        Arc::clone(&self.players)
+    }
+
+    /// Blocking read and decode of `key`'s player file (see
+    /// [`PlayerFiles::load_player`]).
     pub fn load_player(&self, key: &PlayerKey) -> Result<Option<player::PlayerData>, RecordError> {
-        let path = player_path(&self.players_dir, key);
-        let Some(bytes) = self.read_player_file(&path, key)? else {
-            return Ok(None);
-        };
-        self.decode_player_file(&path, &bytes, key).map(Some)
+        self.players.load_player(key)
     }
 
-    /// Hand a pre-identity `players/<sanitized name>.dat` to `key`: once it
-    /// decodes, the file MOVES to `key`'s own path (synchronously, before
-    /// anything else can claim it) and its contents are returned. `Ok(None)`
-    /// = no legacy file for that name, or `key` already has a file of its
-    /// own (never overwritten). Worlds saved before player identities existed
-    /// migrate one player at a time this way, on that name's first
-    /// authenticated claim.
-    ///
-    /// A legacy file that cannot be read or decoded is an error exactly like
-    /// [`load_player`](Self::load_player): it is quarantined and never
-    /// moved, and when it could not be kept aside (or is from a newer build)
-    /// `key`'s saves are dropped for the session, so no fresh player file
-    /// takes its place.
+    /// Migrate the legacy file of `name` to `key` (see
+    /// [`PlayerFiles::adopt_legacy_player`]).
     pub fn adopt_legacy_player(
         &self,
         name: &str,
         key: &PlayerKey,
     ) -> Result<Option<player::PlayerData>, RecordError> {
-        let legacy = legacy_player_path(&self.players_dir, name);
-        let owned = player_path(&self.players_dir, key);
-        if owned.exists() {
-            return Ok(None);
-        }
-        let Some(bytes) = self.read_player_file(&legacy, key)? else {
-            return Ok(None);
-        };
-        let data = self.decode_player_file(&legacy, &bytes, key)?;
-        if let Err(e) = std::fs::rename(&legacy, &owned) {
-            // The decoded state still restores; the player's next save lands
-            // at `owned` and the legacy file is left as it was.
-            log::warn!(
-                "could not migrate legacy player file {}: {e}",
-                legacy.display()
-            );
-            return Ok(Some(data));
-        }
-        if let Err(e) = petramond_util::atomic_file::sync_dir(&self.players_dir) {
-            log::warn!("could not sync the players directory: {e}");
-        }
-        Ok(Some(data))
-    }
-
-    /// Read a player file: `Ok(None)` when it does not exist. Any other read
-    /// failure protects `key`'s saves (nothing of it could be kept aside).
-    fn read_player_file(
-        &self,
-        path: &std::path::Path,
-        key: &PlayerKey,
-    ) -> Result<Option<Vec<u8>>, RecordError> {
-        match std::fs::read(path) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => {
-                log::error!("could not read player file {}: {e}", path.display());
-                self.protect_player(key);
-                Err(RecordError::Io {
-                    format: player::FORMAT.name,
-                    kind: e.kind(),
-                })
-            }
-        }
-    }
-
-    /// Decode a player file's bytes; an unreadable one is quarantined and,
-    /// when it must not be overwritten, protects `key`'s saves.
-    fn decode_player_file(
-        &self,
-        path: &std::path::Path,
-        bytes: &[u8],
-        key: &PlayerKey,
-    ) -> Result<player::PlayerData, RecordError> {
-        let error = match player::decode(bytes, &self.palette) {
-            Ok(data) => {
-                let mut kept = self.kept_players.lock().expect("kept players");
-                if data.kept.is_empty() {
-                    kept.remove(key);
-                } else {
-                    kept.insert(*key, data.kept.clone());
-                }
-                return Ok(data);
-            }
-            Err(error) => error,
-        };
-        let relative = std::path::Path::new("players").join(path.file_name().unwrap_or_default());
-        let unreadable = Unreadable {
-            quarantined: format::quarantine(&self.dir, &relative, bytes)
-                .inspect_err(|e| log::error!("could not quarantine {}: {e}", path.display()))
-                .ok(),
-            error,
-        };
-        log::error!(
-            "player file {} is unreadable ({}); kept at {:?}",
-            path.display(),
-            unreadable.error,
-            unreadable.quarantined
-        );
-        if unreadable.must_not_overwrite() {
-            self.protect_player(key);
-        }
-        Err(unreadable.error)
-    }
-
-    fn protect_player(&self, key: &PlayerKey) {
-        log::warn!("player {key} will not be saved this session: its file must not be overwritten");
-        self.protected_players
-            .lock()
-            .expect("protected players")
-            .insert(*key);
+        self.players.adopt_legacy_player(name, key)
     }
 
     /// The identity→display-name registry bytes (`None` = none saved yet).
     pub fn load_player_registry(&self) -> Option<Vec<u8>> {
-        std::fs::read(self.players_dir.join(PLAYER_REGISTRY_FILE)).ok()
-    }
-
-    /// Replace the identity→display-name registry, synchronously and
-    /// atomically: it changes only when a player first joins or renames, and
-    /// it must never lag the player files it describes.
-    pub fn store_player_registry(&self, bytes: &[u8]) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.players_dir)?;
-        petramond_util::atomic_file::replace(&self.players_dir.join(PLAYER_REGISTRY_FILE), bytes)
+        self.players.load_player_registry()
     }
 
     /// Record the active mod set (`mods.json`) with the save — compared with a
@@ -916,7 +786,7 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         colgen_manifest.len()
     );
 
-    let players_dir = dir.join("players");
+    let players = Arc::new(PlayerFiles::new(dir.clone(), palette.clone()));
     let world_dir = dir.clone();
     let (tx, rx) = std::sync::mpsc::channel::<(u64, IoMsg)>();
     let (load_tx, load_rx) = std::sync::mpsc::channel::<DecodedLoad>();
@@ -955,13 +825,11 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             reader_handles,
             colgen_manifest,
             entities_on_disk: HashSet::new(),
-            players_dir,
+            players,
             dir: world_dir,
             held_writes,
             write_protected: HashSet::new(),
-            protected_players: Mutex::new(HashSet::new()),
             kept_sections: Mutex::new(HashMap::new()),
-            kept_players: Mutex::new(HashMap::new()),
             palette,
             encoders: None,
         },

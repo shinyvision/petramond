@@ -19,8 +19,9 @@ fn single_block_edits_made_in_one_tick_undo_as_one_edit() {
         Some(ItemStack::new(ItemType::Stone, 1));
     let mut events = TickEvents::default();
     server.sessions[0]
-        .input.pending_break_finished
-        .push(break_request(1, broken));
+        .input
+        .queue_break_finished(break_request(1, broken))
+        .expect("room");
     server.tick_mining(0, &mut events);
     server
         .try_place(

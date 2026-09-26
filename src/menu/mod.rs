@@ -2,12 +2,13 @@ mod crafting;
 mod dispatch;
 mod furnace;
 mod generic;
-pub use generic::slot_specs_for_kind;
+pub mod slots;
 mod state;
 mod target;
 mod transport;
 
 pub use crafting::CraftMenuFailure;
+pub use slots::slot_specs_for_kind;
 pub use state::ContainerMenu;
 pub use target::{ContainerTarget, MenuAnchor};
 
@@ -35,7 +36,7 @@ mod tests {
     #[test]
     fn the_chest_derives_its_slot_specs_from_its_document() {
         let specs =
-            crate::gui::documents::container_slot_specs(petramond_world::gui_state::GuiKind::Chest);
+            super::slot_specs_for_kind(petramond_world::gui_state::GuiKind::Chest);
         assert_eq!(
             specs.len(),
             crate::world::chest::CHEST_SLOTS,
@@ -47,15 +48,15 @@ mod tests {
         );
     }
 
-    /// The furnace's slot SEMANTICS are its document's too: a smeltable-only
-    /// input, a fuel-only fuel slot, and a take-only output, in the engine's
-    /// `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT` index order. If the document's
-    /// slot order or its `accepts`/`take_only` ever drift, shift-routing sends
-    /// coal to the input and the output stops refusing inserts — both silent.
+    /// The furnace's slot SEMANTICS: a smeltable-only input, a fuel-only fuel
+    /// slot, and a take-only output, in the engine's
+    /// `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT` index order. If they ever drift,
+    /// shift-routing sends coal to the input and the output stops refusing
+    /// inserts — both silent.
     #[test]
     fn the_furnace_derives_its_slot_specs_from_its_document() {
         use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-        let specs = crate::gui::documents::container_slot_specs(
+        let specs = super::slot_specs_for_kind(
             petramond_world::gui_state::GuiKind::Furnace,
         );
         assert_eq!(specs.len(), petramond_world::furnace::FURNACE_SLOTS);

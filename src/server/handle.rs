@@ -12,7 +12,10 @@
 //! - [`ControlMsg::Shutdown`] (sent by [`ServerHandle::shutdown_and_join`])
 //!   makes the thread save everything and exit; the join returns after the
 //!   save queued (the world's save thread flushes on drop).
-//! - A PANIC anywhere in the loop drops the world WITHOUT saving — mid-tick
+//! - A panic in ONE remote session's work (its messages, its share of a
+//!   tick stage, its replication) is contained: that session is kicked and
+//!   everyone else keeps playing (see `server::game::isolation`).
+//! - Any OTHER PANIC in the loop drops the world WITHOUT saving — mid-tick
 //!   state may be inconsistent, and persisting it risks a corrupt save;
 //!   autosave bounds the loss to ~30 s (the `GenOutput::*Failed` fail-loud
 //!   philosophy). The crash is surfaced through [`ServerHandle::is_crashed`].
@@ -171,6 +174,7 @@ fn server_main(
             }
         }
         hub.route(out.remote);
+        hub.kick(out.kicked, &outbox);
         // Local client gone (endpoints dropped): in singleplayer the app's
         // quit path joins us first, so this is a crashed/aborted client —
         // farewell the remotes, save, and exit.

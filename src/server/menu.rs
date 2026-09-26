@@ -48,7 +48,7 @@ impl ServerGame {
     /// GUI's owning mod instead. Keeping transitions and mutations in one
     /// stream prevents close/click/craft races.
     pub fn tick_menu(&mut self, s: usize, events: &mut TickEvents) {
-        for action in std::mem::take(&mut self.sessions[s].input.pending_menu_actions) {
+        for action in self.sessions[s].input.take_menu_actions() {
             match action {
                 PendingMenuAction::OpenGui { kind, anchor } => {
                     self.replace_open_menu_for(s, events);
@@ -74,8 +74,8 @@ impl ServerGame {
                         *self.sessions[s].player.inventory.cursor_mut() =
                             resolved.map(|i| ItemStack::new(i, i.max_stack_size()));
                     }
-                    self.sessions[s].replication.last_sent_inventory_revision = None;
-                    self.sessions[s].replication.last_menu_sync = None;
+                    self.sessions[s].replication.force_inventory_resync();
+                    self.sessions[s].replication.force_menu_resync();
                     self.push_action_outcome(
                         s,
                         request_id,
@@ -115,8 +115,8 @@ impl ServerGame {
                         // ordinary on-change gate moved — the client skips
                         // interim snapshots while its prediction is pending
                         // and reconciles from exactly this batch.
-                        sess.replication.last_sent_inventory_revision = None;
-                        sess.replication.last_menu_sync = None;
+                        sess.replication.force_inventory_resync();
+                        sess.replication.force_menu_resync();
                     }
                     self.push_action_outcome(s, request_id, true, None);
                 }
@@ -138,8 +138,8 @@ impl ServerGame {
                     // the authoritative pair into the outcome batch even if
                     // stale client capacity made the server-side action a
                     // no-op and neither ordinary on-change gate moved.
-                    sess.replication.last_sent_inventory_revision = None;
-                    sess.replication.last_menu_sync = None;
+                    sess.replication.force_inventory_resync();
+                    sess.replication.force_menu_resync();
                     self.push_action_outcome(s, request_id, true, None);
                 }
                 PendingMenuAction::DropSlot {
@@ -177,8 +177,8 @@ impl ServerGame {
                         // force the authoritative pair into the outcome batch
                         // so the pending prediction reconciles from it (the
                         // SlotClick rule).
-                        sess.replication.last_sent_inventory_revision = None;
-                        sess.replication.last_menu_sync = None;
+                        sess.replication.force_inventory_resync();
+                        sess.replication.force_menu_resync();
                     }
                     self.push_action_outcome(
                         s,
@@ -492,7 +492,7 @@ impl ServerGame {
     fn clear_all_gui_states(&mut self) {
         for sess in &mut self.sessions {
             petramond_world::gui_state::gui_state_clear(&mut sess.sim.gui_state);
-            sess.replication.last_sent_gui_state = None;
+            sess.replication.force_gui_state_resync();
         }
     }
 
@@ -577,9 +577,7 @@ mod tests {
 
     fn open_on_mob(server: &mut ServerGame, mob: u64, events: &mut TickEvents) {
         let kind = intern_kind("anchortest:pack").unwrap();
-        server.sessions[0]
-            .input.pending_menu_actions
-            .push(PendingMenuAction::OpenGui {
+        server.queue_menu_action(0, PendingMenuAction::OpenGui {
                 kind,
                 anchor: Some(MenuAnchor::Mob(mob)),
             });
@@ -587,9 +585,7 @@ mod tests {
     }
 
     fn click(server: &mut ServerGame, slot: MenuSlot, events: &mut TickEvents) {
-        server.sessions[0]
-            .input.pending_menu_actions
-            .push(PendingMenuAction::SlotClick {
+        server.queue_menu_action(0, PendingMenuAction::SlotClick {
                 slot,
                 button: PointerButton::Primary,
                 shift: false,

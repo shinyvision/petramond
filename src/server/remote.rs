@@ -10,9 +10,12 @@
 //! thread-free nonblocking sockets ([`admission`]) — the pending set is
 //! capped globally and per address, and each pending connection has a 10 s
 //! deadline (dropped silently). Out-of-sequence handshake traffic drops the
-//! connection. Only a join whose identity proof verifies
-//! (`net::identity::verify_join`) and that passes admission gets its
-//! reader/writer threads ([`TcpServerConn`]).
+//! connection. A join whose identity proof verifies
+//! (`net::identity::verify_join`) and that passes the admission check
+//! reserves its slot and waits, still thread-free, while its player is
+//! restored on the job pool (`server::admissions`); at a later pump the
+//! finished restore gets its reader/writer threads ([`TcpServerConn`]) and
+//! its session. Nothing in a join blocks the server loop.
 
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -29,6 +32,7 @@ use crate::net::protocol::{
 use crate::net::PROTOCOL_VERSION;
 use crate::player::PlayerId;
 
+use super::admissions::AdmissionTicket;
 use super::game::ServerGame;
 use admission::{PendingConn, Refusals, Stage};
 
@@ -117,6 +121,14 @@ enum PendingVerdict {
     Join(JoinRequest),
 }
 
+/// A verified join waiting for its player restore (`server::admissions`).
+/// Its socket stays thread-free and unpolled: the client waits for the
+/// `JoinAccept`.
+struct Admitting {
+    ticket: AdmissionTicket,
+    conn: PendingConn,
+}
+
 /// A `Join` frame, with the challenge it must prove itself against.
 struct JoinRequest {
     challenge: crate::net::identity::JoinChallenge,
@@ -132,6 +144,7 @@ struct JoinRequest {
 pub struct RemoteHub {
     listener: Option<LanListener>,
     pending: Vec<PendingConn>,
+    admitting: Vec<Admitting>,
     clients: Vec<RemoteClient>,
 }
 
@@ -158,13 +171,15 @@ impl RemoteHub {
         }
         self.clients.clear();
         self.pending.clear();
+        self.admitting.clear();
         self.listener = None;
     }
 
     /// One server-loop step: accept handed-off sockets, drive the pre-join
-    /// handshakes, then process leaves and drain the joined connections'
-    /// messages into `inbound` (tagged by `PlayerId`; the pump resolves the
-    /// tags against the post-leave session list).
+    /// handshakes, promote the joins whose restore finished, then process
+    /// leaves and drain the joined connections' messages into `inbound`
+    /// (tagged by `PlayerId`; the pump resolves the tags against the
+    /// post-leave session list).
     pub fn pump(
         &mut self,
         server: &mut ServerGame,
@@ -172,7 +187,8 @@ impl RemoteHub {
         local_tx: &Sender<ServerToClient>,
     ) {
         self.accept_new();
-        self.drive_pending(server, local_tx);
+        self.drive_pending(server);
+        self.finish_admissions(server, local_tx);
         self.drain_clients(server, inbound, local_tx);
     }
 
@@ -202,13 +218,38 @@ impl RemoteHub {
         }
     }
 
+    /// Disconnect the sessions the pump evicted after a fault (their leave
+    /// path already ran server-side): tell each why, drop its connection,
+    /// and announce the leave to everyone else.
+    pub fn kick(&mut self, kicked: Vec<(PlayerId, Option<String>)>, local_tx: &Sender<ServerToClient>) {
+        for (id, name) in kicked {
+            let Some(at) = self.clients.iter().position(|c| c.id == id) else {
+                continue;
+            };
+            let client = self.clients.remove(at);
+            client.conn.send(ServerToClient::Disconnect {
+                reason: "Kicked: the server hit an error handling your session".to_string(),
+            });
+            log::info!(
+                "player '{}' (id {}) kicked after a fault",
+                name.as_deref().unwrap_or("?"),
+                id.0
+            );
+            self.broadcast(ServerToClient::PlayerLeft { id }, local_tx);
+        }
+    }
+
     fn accept_new(&mut self) {
         let Some(listener) = &self.listener else {
             return;
         };
         let mut refused = Refusals::default();
         while let Ok((stream, peer)) = listener.handoff.try_recv() {
-            if let Err(why) = admission::admits(&self.pending, peer.ip()) {
+            let joining = self
+                .pending
+                .iter()
+                .chain(self.admitting.iter().map(|a| &a.conn));
+            if let Err(why) = admission::admits(joining, peer.ip()) {
                 refused.note(peer.ip(), why);
                 continue; // dropping the socket closes it
             }
@@ -223,7 +264,7 @@ impl RemoteHub {
         refused.log();
     }
 
-    fn drive_pending(&mut self, server: &mut ServerGame, local_tx: &Sender<ServerToClient>) {
+    fn drive_pending(&mut self, server: &mut ServerGame) {
         let mut i = 0;
         while i < self.pending.len() {
             match step_pending(&mut self.pending[i], server) {
@@ -233,21 +274,49 @@ impl RemoteHub {
                 PendingVerdict::Drop => drop(self.pending.swap_remove(i)),
                 PendingVerdict::Join(request) => {
                     let pending = self.pending.swap_remove(i);
-                    let Some((client, name)) = admit(pending, request, server) else {
-                        continue;
-                    };
-                    log::info!("player '{name}' joined as id {}", client.id.0);
-                    server.chat.joined(&name);
-                    self.broadcast(
-                        ServerToClient::PlayerJoined {
-                            id: client.id,
-                            name,
-                        },
-                        local_tx,
-                    );
-                    self.clients.push(client);
+                    if let Some(admitting) = begin_admission(pending, request, server) {
+                        self.admitting.push(admitting);
+                    }
                 }
             }
+        }
+    }
+
+    /// Promote every join whose player restore finished: spawn its
+    /// connection's I/O threads, then make it a session and announce it. A
+    /// connection that cannot be promoted releases its reservation instead.
+    fn finish_admissions(&mut self, server: &mut ServerGame, local_tx: &Sender<ServerToClient>) {
+        for admitted in server.take_admitted() {
+            let Some(at) = self
+                .admitting
+                .iter()
+                .position(|a| a.ticket == admitted.ticket())
+            else {
+                // Its connection is gone (a shutdown cleared it).
+                server.abandon_admission(admitted);
+                continue;
+            };
+            let Admitting { conn, .. } = self.admitting.swap_remove(at);
+            let peer = conn.peer();
+            let conn = match conn.into_conn() {
+                Ok(conn) => conn,
+                Err(e) => {
+                    log::warn!("LAN connection setup failed for {peer}: {e}");
+                    server.abandon_admission(admitted);
+                    continue;
+                }
+            };
+            let Some((data, name)) = server.finish_admission(admitted) else {
+                // The restore failed (logged where it happened); dropping the
+                // connection closes it.
+                continue;
+            };
+            let id = data.player_id;
+            conn.send(ServerToClient::JoinAccept(data));
+            log::info!("player '{name}' joined as id {}", id.0);
+            server.chat.joined(&name);
+            self.broadcast(ServerToClient::PlayerJoined { id, name }, local_tx);
+            self.clients.push(RemoteClient { id, conn });
         }
     }
 
@@ -375,52 +444,37 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
     }
 }
 
-/// Settle a `Join`: verify the identity proof, validate the display name,
-/// check admission, and only then spawn the connection's I/O threads and
-/// admit the session. Every refusal before the spawn is a `JoinReject` over
-/// the thread-free socket; a spawn failure just closes it.
-fn admit(
+/// Settle a `Join`'s verdict: verify the identity proof, validate the
+/// display name, and reserve the admission. Every refusal is a `JoinReject`
+/// over the thread-free socket; an accepted join waits for its restore.
+fn begin_admission(
     mut pending: PendingConn,
     request: JoinRequest,
     server: &mut ServerGame,
-) -> Option<(RemoteClient, String)> {
+) -> Option<Admitting> {
     let peer = pending.peer();
     let verdict = if !verify_join(&request.challenge, &request.key, &request.proof) {
         Err(JoinRejectReason::BadProof)
     } else {
         validate_player_name(&request.player_name)
             .map_err(|e| JoinRejectReason::InvalidName(e.to_string()))
-            .and_then(|name| server.check_admission(&request.key).map(|()| name))
+            .and_then(|name| {
+                server.begin_admission(
+                    request.key,
+                    &name,
+                    request.view_distance as i32,
+                    request.cached_sections,
+                )
+            })
     };
-    let name = match verdict {
-        Ok(name) => name,
+    match verdict {
+        Ok(ticket) => Some(Admitting {
+            ticket,
+            conn: pending,
+        }),
         Err(reason) => {
             log::info!("refused join from {peer}: {reason:?}");
             let _ = pending.send(&ServerToClient::JoinReject { reason });
-            return None;
-        }
-    };
-    let conn = match pending.into_conn() {
-        Ok(conn) => conn,
-        Err(e) => {
-            log::warn!("LAN connection setup failed for {peer}: {e}");
-            return None;
-        }
-    };
-    match server.admit_remote_player(
-        request.key,
-        &name,
-        request.view_distance as i32,
-        &request.cached_sections,
-    ) {
-        Ok((data, name)) => {
-            let id = data.player_id;
-            conn.send(ServerToClient::JoinAccept(data));
-            Some((RemoteClient { id, conn }, name))
-        }
-        Err(reason) => {
-            // Dropping the conn flushes the farewell through its writer.
-            conn.send(ServerToClient::JoinReject { reason });
             None
         }
     }
