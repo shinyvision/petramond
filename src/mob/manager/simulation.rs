@@ -1,4 +1,3 @@
-use std::sync::LazyLock;
 
 use crate::mob::brain::{AiMob, TickInputs};
 use crate::mob::model_meta::{self, IdleAnimMeta, Skeleton};
@@ -129,20 +128,24 @@ struct MobMeta {
     skeleton: Skeleton,
 }
 
-/// Every species' [`MobMeta`], derived once for the whole process from the precached
+/// Every species' [`MobMeta`], derived once per content registry from the precached
 /// [`Model`](petramond_world::bbmodel::Model)s (see [`model`](super::model)) and indexed by `Mob as
-/// usize`. It's identical for every world, so computing it once keeps each `World::new` (of
-/// which the tests make dozens) from re-deriving it — and nothing here re-reads a `.bbmodel`.
-static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
-    defs()
+/// usize`. It's identical for every world on one registry, so computing it once keeps each
+/// `World::new` (of which the tests make dozens) from re-deriving it — and nothing here
+/// re-reads a `.bbmodel`.
+static MOB_META: petramond_world::content::Slot<Vec<MobMeta>> =
+    petramond_world::content::Slot::new("mob model metadata", &["mobs.json"], derive_meta);
+
+fn derive_meta(_: &petramond_world::content::ContentRegistry) -> Result<Vec<MobMeta>, String> {
+    Ok(defs()
         .iter()
         .map(|d| MobMeta {
             idle_anims: model_meta::idle_anims(model(d.mob)),
             named_anims: model_meta::named_anims(model(d.mob)),
             skeleton: model_meta::skeleton(model(d.mob)),
         })
-        .collect()
-});
+        .collect())
+}
 
 /// The horizontal radius `body_geometry`'s compound push bound uses. Kept
 /// identical to it: the sweep is only sound while it is an upper bound on the
@@ -326,7 +329,7 @@ impl Mobs {
                 continue;
             }
             ticked[i] = true;
-            let meta = &MOB_META[mob.kind.0 as usize];
+            let meta = &MOB_META.current()[mob.kind.0 as usize];
             let peer_obstacles = if d.collision == super::MobCollision::Solid {
                 supporting_solid.clear();
                 super::append_body_supports(

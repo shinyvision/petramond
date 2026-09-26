@@ -179,6 +179,26 @@ pub fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
     Some(root)
 }
 
+/// Run `body` in-process against a content registry built from the fixture
+/// packs under `root/mods`, pinned on this thread (and on every pool job it
+/// queues), then remove the fixture — panicking or not. The registry is the
+/// test's own: the process registry and every other test never see its rows.
+/// For content-only fixtures; one whose packs ship wasm still needs
+/// [`run_child_test`], because the mod host's engine and module cache are
+/// process-wide.
+pub fn with_fixture_content(root: &std::path::Path, body: impl FnOnce()) {
+    struct Staged<'a>(&'a std::path::Path);
+    impl Drop for Staged<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0);
+        }
+    }
+    let _staged = Staged(root);
+    let content = petramond_world::content::test_support::with_mods(&root.join("mods"));
+    let _pin = petramond_world::content::pin(content);
+    body();
+}
+
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with
 /// `PETRAMOND_MODS` pointing at `root/mods`, then clean the fixture up.
 /// `PETRAMOND_DATA_DIR` is pinned to this process's shared test root (the one

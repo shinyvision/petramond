@@ -277,12 +277,15 @@ pub(super) struct RawPose {
     pub roll: f64,
 }
 
-/// Load the item table from every `items.json` layer (base + mod packs, later
-/// packs replacing rows by item), panicking with a precise message if the
-/// table is missing or inconsistent.
-pub(super) fn table() -> &'static [ItemDef] {
-    crate::registry::read_catalog("items.json", "item", |texts| {
-        parse_layers(texts, crate::registry::names())
+/// Load the item table from every `items.json` layer of `packs` (base + the
+/// enabled packs, later packs replacing rows by item), resolving against the
+/// `names` built from those same layers.
+pub(super) fn table(
+    packs: &crate::assets::PackSet,
+    names: &ContentNames,
+) -> Result<&'static [ItemDef], String> {
+    crate::registry::read_catalog(packs, "items.json", "item", |texts| {
+        parse_layers(texts, names)
     })
 }
 

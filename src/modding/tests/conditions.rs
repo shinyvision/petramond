@@ -113,14 +113,12 @@ fn a_body_in_a_clearing_fluid_refuses_a_grant_after_its_exposure_tick() {
             DOUSE, "jump", 1.0, 0.5, 0.0, serde_json::json!({"clears": [HOT]}), &[], 0.0,
         )]}),
     );
-    run_child_test(&root, "modding::tests::conditions::doused_grant_inner");
+    with_fixture_content(&root, doused_grant_inner);
 }
 
 /// Mobs tick exposure before a mod's later stage runs, so a mod granting a
 /// condition to a body standing in a fluid that clears it must be refused, or
 /// the condition would flicker on for one tick.
-#[test]
-#[ignore = "child of a_body_in_a_clearing_fluid_refuses_a_grant_after_its_exposure_tick"]
 fn doused_grant_inner() {
     let hot = petramond_world::condition::by_name(HOT).unwrap();
     let douse = fluid_fixture::block(DOUSE);

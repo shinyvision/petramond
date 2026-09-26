@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 mod template;
 use template::bake_cell_template;
 pub use template::model_face_tris;
@@ -15,9 +13,9 @@ use petramond_math::face::Face;
 use super::ao::{bake_contact_field, bake_face_ao, CONTACT_GRID};
 use super::query::face_texel_opaque;
 use super::{
-    all, atlas, cell_of, clip_to_cell, cube_is_flat_plane, def, oriented_cell_instance,
+    all, atlas, cell_of, clip_to_cell, cube_is_flat_plane, def, models, oriented_cell_instance,
     placement_transform_fp, posed_cube_bounds, render_face_bias, union_clip_to_cell,
-    BlockModelKind, CollisionSpec, FitMode, ModelCube, MODELS,
+    BlockModelKind, CollisionSpec, FitMode, ModelCube,
 };
 
 // ---------------------------------------------------------------------------------
@@ -228,7 +226,7 @@ impl ModelInstance {
     }
 
     fn build(kind: BlockModelKind) -> Self {
-        let m = &MODELS[kind.0 as usize];
+        let m = &models()[kind.0 as usize];
         let d = def(kind);
         let footprint = d.cells.map(|c| c.max(1));
         let at = atlas();
@@ -480,7 +478,7 @@ impl ModelInstance {
         let oriented_render = std::array::from_fn(|i| {
             let facing = Facing::from_u8(i as u8);
             // Explicit local footprint, NOT placement_transform(kind, ..): this runs inside
-            // the INSTANCES LazyLock init, so resolving footprint(kind) would deadlock.
+            // the INSTANCES slot's build, so resolving footprint(kind) would re-enter it.
             let base_xform = placement_transform_fp(footprint, facing);
             cells
                 .iter()
@@ -598,14 +596,22 @@ fn bake_contact_piece(
     verts
 }
 
-/// Every kind's runtime [`ModelInstance`], indexed by `kind as usize`.
-static INSTANCES: LazyLock<Vec<ModelInstance>> =
-    LazyLock::new(|| all().iter().map(|&k| ModelInstance::build(k)).collect());
+/// Every kind's runtime [`ModelInstance`], indexed by `kind as usize` — a
+/// derived view of the content registry, baked on first use.
+static INSTANCES: crate::content::Slot<Vec<ModelInstance>> = crate::content::Slot::new(
+    "block model instances",
+    &[crate::content::stage::MODELS],
+    build_instances,
+);
+
+fn build_instances(_: &crate::content::ContentRegistry) -> Result<Vec<ModelInstance>, String> {
+    Ok(all().iter().map(|&k| ModelInstance::build(k)).collect())
+}
 
 /// This kind's runtime instance (footprint + per-cell geometry/collision/selection).
 #[inline]
 pub fn instance(kind: BlockModelKind) -> &'static ModelInstance {
-    &INSTANCES[kind.0 as usize]
+    &INSTANCES.current()[kind.0 as usize]
 }
 
 /// The block's footprint in cells `(sx, sy, sz)`.

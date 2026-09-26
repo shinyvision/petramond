@@ -22,6 +22,18 @@ fn frame_period(fps: u32) -> Duration {
 
 pub fn run() {
     petramond::platform::init_logging();
+    // Every content catalog loads here, once, before anything touches one: a
+    // bad pack is a load report on stderr, not a panic on whichever thread
+    // first read a catalog.
+    let client_stages: [&'static dyn petramond_world::content::Stage; 3] = [
+        &petramond_audio::music_registry::CATALOG,
+        &petramond_render::player_model::LOCOMOTION,
+        petramond_render::atlas::stage(),
+    ];
+    if let Err(e) = petramond::content::install_from_env(&client_stages) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
     // Pack discovery + any cold wasm compiles happen behind the shell menu,
     // so the first world open finds every mod module ready.
     petramond::modding::prewarm_modules();

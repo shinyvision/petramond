@@ -273,9 +273,9 @@ pub fn plan(recipe: &CraftingRecipe, inventory: &Inventory) -> Option<CraftPlan>
         if out.is_empty() {
             crate::item::VariantId::NONE
         } else {
-            crate::item::variant::intern(&out).unwrap_or_else(|| {
+            crate::item::variant::intern(&out).unwrap_or_else(|e| {
                 log::warn!(
-                    "craft '{}': variant table full — output loses inherited data",
+                    "craft '{}': {e} — output loses inherited data",
                     recipe.key()
                 );
                 crate::item::VariantId::NONE

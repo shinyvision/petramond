@@ -7,8 +7,7 @@ use petramond_world::fluid::Buoyancy;
 
 #[test]
 fn fluid_rows_drive_players_and_mobs_through_the_world() {
-    let root = fluid_fixture::stage("mob-fluids");
-    crate::modding::tests::run_child_test(&root, "mob::manager::tests::fluid::fluid_bodies_inner");
+    fluid_fixture::with_content("mob-fluids", fluid_bodies_inner);
 }
 
 fn body(name: &str, pos: WorldPos) -> Mobs {
@@ -38,8 +37,6 @@ fn step(
     )
 }
 
-#[test]
-#[ignore = "child of fluid_rows_drive_players_and_mobs_through_the_world with fixture content"]
 fn fluid_bodies_inner() {
     for name in [BRINE, SYRUP] {
         let world = pool(block(name), 75);

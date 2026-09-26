@@ -335,8 +335,8 @@ pub(super) fn intern_abi_data(
         return Ok(variant::VariantId::NONE);
     }
     let map = abi_data_map(what, data)?;
-    Ok(variant::intern(&map).unwrap_or_else(|| {
-        log::warn!("{what}: variant table full — stack degrades to plain");
+    Ok(variant::intern(&map).unwrap_or_else(|e| {
+        log::warn!("{what}: {e} — stack degrades to plain");
         variant::VariantId::NONE
     }))
 }

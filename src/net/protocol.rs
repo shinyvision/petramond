@@ -78,8 +78,8 @@ impl ItemSlotWire {
         );
         if let Some(blob) = &self.data {
             match petramond_world::item::variant::intern_blob(blob) {
-                Some(v) => st.variant = v,
-                None => log::warn!("wire slot: unreadable instance-data blob dropped"),
+                Ok(v) => st.variant = v,
+                Err(e) => log::warn!("wire slot: instance-data blob dropped: {e}"),
             }
         }
         st

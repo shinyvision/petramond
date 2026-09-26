@@ -816,12 +816,9 @@ mod tests {
 
     #[test]
     fn spawn_sites_refuse_hazardous_floors() {
-        let root = crate::entity::fluid_fixture::stage("spawn-hazards");
-        crate::modding::tests::run_child_test(&root, "mob::spawn::tests::spawn_hazards_inner");
+        crate::entity::fluid_fixture::with_content("spawn-hazards", spawn_hazards_inner);
     }
 
-    #[test]
-    #[ignore = "child of spawn_sites_refuse_hazardous_floors with fixture content"]
     fn spawn_hazards_inner() {
         use crate::entity::fluid_fixture::{block, pool, CINDER, FLOOR_Y};
         let kind = crate::mob::by_key("bodyfluid:swim").unwrap();

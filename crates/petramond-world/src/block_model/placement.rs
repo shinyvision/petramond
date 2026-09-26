@@ -31,8 +31,8 @@ pub fn placement_transform(kind: BlockModelKind, facing: Facing) -> Mat4 {
 
 /// [`placement_transform`] with an explicit footprint instead of `footprint(kind)`. Used by
 /// `ModelInstance::build` to bake the render templates: that runs INSIDE the `INSTANCES`
-/// `LazyLock` init, so going through `footprint(kind)` (→ `instance(kind)`) would re-enter
-/// the half-built lock and deadlock. The footprint is already known locally there.
+/// slot's build, so going through `footprint(kind)` (→ `instance(kind)`) would re-enter
+/// the half-built cell and deadlock. The footprint is already known locally there.
 pub fn placement_transform_fp(fp: [u8; 3], facing: Facing) -> Mat4 {
     let sx = fp[0] as f32;
     let sz = fp[2] as f32;

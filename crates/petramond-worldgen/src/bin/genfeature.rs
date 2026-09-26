@@ -182,6 +182,12 @@ fn with_suffix(out: &str, suffix: &str) -> String {
 }
 
 fn main() {
+    if let Err(e) =
+        petramond_world::content::install_from_env(&petramond_worldgen::data::content_stages())
+    {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
     let mut args = std::env::args().skip(1);
     let feature = args.next().unwrap_or_else(|| "redwood".to_string());
     if feature == "list" {

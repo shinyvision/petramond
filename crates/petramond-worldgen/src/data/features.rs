@@ -14,7 +14,8 @@
 //! affect worldgen geometry, so edits to `features.json` change world bytes —
 //! determinism only demands same-input ⇒ same-output.
 
-use std::sync::LazyLock;
+use petramond_world::content::{ContentRegistry, Slot};
+use petramond_world::registry::Catalog;
 
 use serde::Deserialize;
 
@@ -187,33 +188,43 @@ struct RawFile {
     features: Vec<RawFeatureDef>,
 }
 
-fn catalog() -> &'static petramond_world::registry::Catalog<FeatureDef> {
-    static TABLE: LazyLock<petramond_world::registry::Catalog<FeatureDef>> = LazyLock::new(|| {
-        let table = petramond_world::registry::read_catalog(
-            "features.json",
-            "worldgen feature",
-            parse_layers,
-        );
-        // Cross-check every block row's `grows_into` key against this table.
-        // The block layer sits BELOW worldgen and interns keys unchecked; a
-        // final sapling stage naming a missing tree must still fail loudly,
-        // and this is the first layer that owns the feature names.
-        for block in petramond_world::block::Block::all() {
-            for (key, _) in block.grows_into() {
-                if table.id(key).is_none() {
-                    panic!(
-                        "blocks.json: '{}' grows_into names unknown worldgen feature '{key}'",
-                        petramond_world::registry::names()
-                            .blocks
-                            .name(block.id())
-                            .unwrap_or("?")
-                    );
-                }
+/// The feature catalog stage (see [`super::content_stages`]).
+pub(crate) static CATALOG: Slot<Catalog<FeatureDef>> = Slot::new(
+    "features.json",
+    &[petramond_world::content::stage::BLOCKS],
+    load,
+);
+
+fn load(reg: &ContentRegistry) -> Result<Catalog<FeatureDef>, String> {
+    let table = petramond_world::registry::read_catalog(
+        reg.packs(),
+        "features.json",
+        "worldgen feature",
+        parse_layers,
+    )?;
+    // Cross-check every block row's `grows_into` key against this table. The
+    // block layer sits BELOW worldgen and interns keys unchecked; a final
+    // sapling stage naming a missing tree must still fail the load, and this
+    // is the first layer that owns the feature names.
+    let mut unknown = Vec::new();
+    for block in petramond_world::block::Block::all() {
+        for (key, _) in block.grows_into() {
+            if table.id(key).is_none() {
+                unknown.push(format!(
+                    "blocks.json: '{}' grows_into names unknown worldgen feature '{key}'",
+                    reg.names().blocks.name(block.id()).unwrap_or("?")
+                ));
             }
         }
-        table
-    });
-    &TABLE
+    }
+    if !unknown.is_empty() {
+        return Err(unknown.join("\n"));
+    }
+    Ok(table)
+}
+
+fn catalog() -> &'static Catalog<FeatureDef> {
+    CATALOG.current()
 }
 
 fn parse_layers(texts: &[&str]) -> Result<petramond_world::registry::Catalog<FeatureDef>, String> {

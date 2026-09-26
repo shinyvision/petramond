@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use serde::{Deserialize, Serialize};
 
 use crate::facing::Facing;
@@ -73,12 +71,7 @@ impl<'de> Deserialize<'de> for BlockModelKind {
 
 /// Every registered kind in id order (engine + pack-registered).
 pub fn all() -> &'static [BlockModelKind] {
-    static ALL: LazyLock<Vec<BlockModelKind>> = LazyLock::new(|| {
-        (0..defs().len())
-            .map(|id| BlockModelKind(id as u16))
-            .collect()
-    });
-    &ALL
+    &DEFS.current().kinds
 }
 
 /// How a bbmodel block's player collision is derived. Resolved PER CELL: a multi-block
@@ -316,17 +309,39 @@ struct RawModelDef {
     surfaces: Vec<super::SurfaceMaterial>,
 }
 
-/// The loaded, id-ordered model def table. Loads exactly once; a missing or
-/// inconsistent `models.json` fails loudly at startup.
+/// One content registry's model defs, id-ordered, with the kind list.
+pub(crate) struct ModelDefs {
+    rows: &'static [BlockModelDef],
+    kinds: Box<[BlockModelKind]>,
+}
+
+/// The block-model catalog stage of every content registry. Composed over
+/// EVERY installed pack like the tile manifest: the client bakes the model
+/// atlas once, so a world's mod switches must not renumber model kinds. A
+/// missing or inconsistent `models.json` fails the registry build.
+pub(crate) static DEFS: crate::content::Slot<ModelDefs> = crate::content::Slot::new(
+    crate::content::stage::MODELS,
+    &[crate::content::stage::TILES],
+    load,
+);
+
+fn load(reg: &crate::content::ContentRegistry) -> Result<ModelDefs, String> {
+    let rows = crate::registry::read_asset_catalog(
+        reg.packs(),
+        "models.json",
+        "block model",
+        parse_layers,
+    )?
+    .rows();
+    check_shared_part_lists(rows)?;
+    Ok(ModelDefs {
+        rows,
+        kinds: (0..rows.len()).map(|id| BlockModelKind(id as u16)).collect(),
+    })
+}
+
 fn defs() -> &'static [BlockModelDef] {
-    static DEFS: LazyLock<&'static [BlockModelDef]> = LazyLock::new(|| {
-        let rows = crate::registry::read_catalog("models.json", "block model", parse_layers).rows();
-        if let Err(e) = check_shared_part_lists(rows) {
-            panic!("models.json: {e}");
-        }
-        rows
-    });
-    &DEFS
+    DEFS.current().rows
 }
 
 /// Rows sharing one `.bbmodel` must agree on their `parts` order.

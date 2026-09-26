@@ -30,8 +30,8 @@ fn drop_at(x: f32, z: f32) -> DroppedItem {
 /// whole stack IN PLACE the first physics tick its center sits in water —
 /// count, identity, and age preserved, one fx record per entity, exactly
 /// once — while an identical entity on dry ground never transforms. Pack
-/// rows need the fixture registry, so the assertions run in a child
-/// process (the established `PETRAMOND_MODS` re-spawn pattern).
+/// rows need the fixture registry, which the test builds and pins for
+/// itself.
 #[test]
 fn dropped_reaction_transforms_the_stack_in_water() {
     // A content-only fixture pack — no wasm build involved.
@@ -62,18 +62,11 @@ fn dropped_reaction_transforms_the_stack_in_water() {
         ] }"#,
     )
     .unwrap();
-    let run = petramond_world::test_child::run_ignored(
-        "world::entities::tests::dropped_reaction_inner",
-        [("PETRAMOND_MODS", root.join("mods"))],
-    );
+    crate::modding::tests::with_fixture_content(&root, dropped_reaction_inner);
     let _ = std::fs::remove_dir_all(&root);
-    run.assert_passed();
 }
 
-/// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
-/// pointing at the fixture pack before first registry touch).
-#[test]
-#[ignore = "spawned by dropped_reaction_transforms_the_stack_in_water with a fixture pack env"]
+/// The assertions, against the fixture registry pinned above.
 fn dropped_reaction_inner() {
     let by_key = |key: &str| {
         ItemType::by_key(key).unwrap_or_else(|| panic!("fixture item '{key}' registered"))

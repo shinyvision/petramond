@@ -4,7 +4,7 @@ use super::*;
 fn alternatives_inherit_material_and_do_not_animate() {
     let (base, _) = crate::assets::read_base_text("textures/atlas.json").unwrap();
     let layer = r#"{"tiles":[{"name":"stone","file":"stone.png","variants":["dirt.png","sand.png"],"variation":"cell","tint":"foliage","icon_tint":"grass","fill_cutout_mips":true}]}"#;
-    let d = build(&[&base, layer]).unwrap();
+    let d = build(&[&base, layer], crate::content::current().packs()).unwrap();
     let base = d.by_name["stone"].index();
     let count = d.cells[base].variation_count as usize;
     assert_eq!(count, 3);
@@ -27,7 +27,10 @@ fn alternatives_inherit_material_and_do_not_animate() {
 fn animation_and_variants_are_mutually_exclusive() {
     let invalid =
         r#"{"tiles":[{"name":"test","file":"unused.png","anim":true,"variants":["unused.png"]}]}"#;
-    assert!(build(&[invalid]).err().unwrap().contains("cannot combine"));
+    assert!(build(&[invalid], crate::content::current().packs())
+        .err()
+        .unwrap()
+        .contains("cannot combine"));
 }
 
 #[test]
@@ -36,7 +39,7 @@ fn a_selector_requires_alternatives_to_select_among() {
         let invalid = format!(
             r#"{{"tiles":[{{"name":"test","file":"unused.png","variation":"{select}"}}]}}"#
         );
-        assert!(build(&[&invalid])
+        assert!(build(&[&invalid], crate::content::current().packs())
             .err()
             .unwrap()
             .contains("without variants"));
@@ -64,7 +67,7 @@ fn only_face_selecting_tiles_vary_per_face() {
         {"name":"test_face","file":"stone.png","variants":["dirt.png","sand.png"],"variation":"face"},
         {"name":"test_cell","file":"stone.png","variants":["dirt.png","sand.png"],"variation":"cell"},
         {"name":"test_plain","file":"stone.png","variants":["dirt.png","sand.png"]}]}"#;
-    let d = build(&[&base, layer]).unwrap();
+    let d = build(&[&base, layer], crate::content::current().packs()).unwrap();
     // The face selector's arithmetic against the synthetic table (the tile
     // methods read the process-wide manifest).
     let select = |name: &str, cell: [i32; 3], normal: u32| {
@@ -108,7 +111,9 @@ fn a_flipbook_rate_is_authored_one_way() {
         (r#""fps":0"#, "fps must be positive"),
         (r#""frame_ticks":-1"#, "frame_ticks must be positive"),
     ] {
-        let err = build(&[&row(rate)]).err().unwrap();
+        let err = build(&[&row(rate)], crate::content::current().packs())
+            .err()
+            .unwrap();
         assert!(err.contains(error), "{rate}: {err}");
     }
 }

@@ -917,14 +917,12 @@ mod registry_palette {
     }
 
     /// End-to-end dynamic registration: a real pack (blocks.json + items.json
-    /// under a `PETRAMOND_MODS` dir) registers a namespaced block + item, the
+    /// under a fixture mods dir) registers a namespaced block + item, the
     /// block is placeable/breakable through `World`, and the save palette pins
     /// the dynamic entry by name with engine ids stable.
     ///
-    /// The global registries are process-wide LazyLocks, so pack injection
-    /// must happen before ANY test touches them — this outer test spawns the
-    /// test binary again as a child with the env set, running only the
-    /// `#[ignore]`d inner test below. Deterministic regardless of test order.
+    /// The packs load into a content registry of the test's own, pinned on
+    /// this thread — the process registry and every other test never see it.
     #[test]
     fn dynamic_pack_content_flows_end_to_end() {
         let root = std::env::temp_dir().join(format!("petramond-dynpack-{}", std::process::id()));
@@ -969,22 +967,12 @@ mod registry_palette {
             .unwrap();
         }
 
-        let run = petramond_world::test_child::run_ignored(
-            "world::relocated_world_crate_tests::registry_palette::dynamic_pack_world_inner",
-            [
-                ("PETRAMOND_MODS", root.join("mods")),
-                ("PETRAMOND_DYNPACK_SAVE", root.join("save")),
-            ],
-        );
-        let _ = std::fs::remove_dir_all(&root);
-        run.assert_passed();
+        let save = root.join("save");
+        crate::modding::tests::with_fixture_content(&root, || dynamic_pack_world_inner(&save));
     }
 
-    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
-    /// pointing at the fixture pack before first registry touch).
-    #[test]
-    #[ignore = "spawned by dynamic_pack_content_flows_end_to_end with a fixture pack env"]
-    fn dynamic_pack_world_inner() {
+    /// The assertions, against the fixture registry pinned above.
+    fn dynamic_pack_world_inner(save: &std::path::Path) {
         use petramond_world::block::Block;
         use petramond_world::chunk::{Chunk, ChunkPos};
         use petramond_world::item::ItemType;
@@ -1040,10 +1028,9 @@ mod registry_palette {
         assert_eq!(Block::from_id(w.data.chunk_block(x, y, z)), Block::Air);
 
         // --- Save palette: dynamic entry pinned by name, engine ids stable. ---
-        let save = std::path::PathBuf::from(std::env::var_os("PETRAMOND_DYNPACK_SAVE").unwrap());
         // An "old" palette written before the mod existed, with a stranger
         // entry so disk ids and runtime ids genuinely diverge.
-        std::fs::create_dir_all(&save).unwrap();
+        std::fs::create_dir_all(save).unwrap();
         let mut blocks: Vec<&str> = petramond_world::block::ENGINE_BLOCK_NAMES.to_vec();
         blocks.push("othermod:stranger");
         let items: Vec<&str> = petramond_world::item::ENGINE_ITEM_NAMES.to_vec();

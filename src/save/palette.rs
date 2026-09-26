@@ -597,9 +597,8 @@ mod tests {
     /// mods): while a mod is disabled its namespaced names get NO new palette
     /// entries and existing entries decode as unknown (blocks→air, items→
     /// empty, no to-disk pin); re-enabling restores the mapping from the
-    /// untouched append-only file. Needs a registered dynamic name, so it runs
-    /// in a child process with a fixture pack (the 2a `PETRAMOND_MODS`
-    /// re-spawn pattern).
+    /// untouched append-only file. A pinned fixture registry supplies the
+    /// dynamic name without changing content seen by other tests.
     #[test]
     fn disabled_mod_content_gets_the_unknown_treatment_and_reenabling_restores() {
         let root = std::env::temp_dir().join(format!("petramond-paldis-{}", std::process::id()));
@@ -622,23 +621,12 @@ mod tests {
         )
         .unwrap();
 
-        let run = petramond_world::test_child::run_ignored(
-            "save::palette::tests::disabled_mod_palette_inner",
-            [
-                ("PETRAMOND_MODS", root.join("mods")),
-                ("PETRAMOND_PALDIS_SAVE", root.join("save")),
-            ],
-        );
-        let _ = std::fs::remove_dir_all(&root);
-        run.assert_passed();
+        crate::modding::tests::with_fixture_content(&root, || {
+            disabled_mod_palette_inner(&root.join("save"))
+        });
     }
 
-    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
-    /// pointing at the fixture pack before first registry touch).
-    #[test]
-    #[ignore = "spawned by disabled_mod_content_gets_the_unknown_treatment_and_reenabling_restores"]
-    fn disabled_mod_palette_inner() {
-        let save = std::path::PathBuf::from(std::env::var_os("PETRAMOND_PALDIS_SAVE").unwrap());
+    fn disabled_mod_palette_inner(save: &Path) {
         std::fs::create_dir_all(&save).unwrap();
         let disabled: BTreeSet<String> = ["palmod".to_owned()].into();
 

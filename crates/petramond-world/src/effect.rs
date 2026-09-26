@@ -14,8 +14,6 @@
 //! Persistence is by registry NAME in `players/<name>.dat` (ids are
 //! session-scoped).
 
-use std::sync::LazyLock;
-
 use serde::Deserialize;
 
 /// A status effect kind, identified by its opaque runtime id (the row index in
@@ -179,16 +177,24 @@ pub fn by_name(name: &str) -> Option<Effect> {
     catalog().id(name).map(|id| Effect(id as u8))
 }
 
-/// The loaded effect table, id-ordered (`defs()[effect.0]`). Loads exactly
-/// once; a missing or inconsistent `effects.json` fails loudly at startup.
+/// The current registry's effect table, id-ordered (`defs()[effect.0]`). A
+/// missing or inconsistent `effects.json` fails the registry build.
 pub fn defs() -> &'static [EffectDef] {
     catalog().rows()
 }
 
+/// The effect catalog stage of every content registry.
+pub(crate) static CATALOG: crate::content::Slot<crate::registry::Catalog<EffectDef>> =
+    crate::content::Slot::new(crate::content::stage::EFFECTS, &[], load);
+
+fn load(
+    reg: &crate::content::ContentRegistry,
+) -> Result<crate::registry::Catalog<EffectDef>, String> {
+    crate::registry::read_catalog(reg.packs(), "effects.json", "effect", parse_layers)
+}
+
 fn catalog() -> &'static crate::registry::Catalog<EffectDef> {
-    static TABLE: LazyLock<crate::registry::Catalog<EffectDef>> =
-        LazyLock::new(|| crate::registry::read_catalog("effects.json", "effect", parse_layers));
-    &TABLE
+    CATALOG.current()
 }
 
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EffectDef>, String> {

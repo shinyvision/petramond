@@ -12,9 +12,10 @@
 //! never the pixels.
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, OnceLock};
 
 use serde::Deserialize;
+
+use crate::assets::PackSet;
 
 /// How many tiles the id space can address — the ONE definition the manifest
 /// loader's cap, the packed chunk vertex's tile-id field, and the shader
@@ -183,24 +184,19 @@ impl Tile {
     }
 }
 
-/// Per-tile representative cartography colours, pixel-derived by the atlas
-/// composer and installed once on the client (`atlas` calls
-/// [`install_map_colors`] when it composes). Headless builds never install —
-/// [`map_rgb`] then answers a neutral gray, and nothing headless draws maps.
-static MAP_RGB: OnceLock<Vec<[u8; 3]>> = OnceLock::new();
-
-/// Install the pixel-derived per-tile map colours (id order). First caller
-/// wins; the composer only ever runs once.
+/// Install pixel-derived per-tile map colours in the current content registry.
+/// The client atlas composer calls this once; headless content leaves the
+/// colours unset and [`map_rgb`] returns neutral gray.
 pub fn install_map_colors(colors: Vec<[u8; 3]>) {
-    let _ = MAP_RGB.set(colors);
+    let _ = crate::content::current().map_rgb.set(colors);
 }
 
 /// Representative untinted top-down cartography colour for `tile`. Callers
 /// apply the same biome tint as terrain. Neutral gray until the atlas
 /// composer installs the real colours (headless: always).
 pub fn map_rgb(tile: Tile) -> [u8; 3] {
-    MAP_RGB
-        .get()
+    crate::content::try_current()
+        .and_then(|content| content.registry().map_rgb.get())
         .and_then(|v| v.get(tile.index()))
         .copied()
         .unwrap_or([32, 32, 32])
@@ -317,41 +313,46 @@ impl RawTile {
     }
 }
 
-struct TileData {
+/// The tile identity table of one content registry (see `crate::content`).
+pub(crate) struct TileData {
     cells: Vec<CellMeta>,
     names: Vec<&'static str>,
     by_name: HashMap<&'static str, Tile>,
     engine: EngineTiles,
 }
 
-static TILES: LazyLock<TileData> = LazyLock::new(|| {
-    let layers = crate::assets::read_layers("textures/atlas.json");
+/// The content loader's tiles stage: compose the atlas manifest layers of
+/// EVERY installed pack (the client bakes this into its GPU atlas once, so a
+/// world's mod switches must not renumber it — see `PackSet`).
+pub(crate) fn load(packs: &PackSet) -> Result<TileData, String> {
+    let layers = packs.read_asset_layers("textures/atlas.json");
     if layers.is_empty() {
-        panic!(
-            "textures/atlas.json not found (searched {:?}); the game cannot run without its texture atlas",
-            crate::assets::candidate_paths("textures/atlas.json")
-        );
+        return Err(format!(
+            "not found (searched {:?}); the game cannot run without its texture atlas",
+            packs.candidate_paths("textures/atlas.json")
+        ));
     }
     for (_, path) in &layers {
         log::info!("atlas manifest layer: {}", path.display());
     }
     let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
-    build(&texts).unwrap_or_else(|e| panic!("textures/atlas.json: {e}"))
-});
+    build(&texts, packs)
+}
 
 #[cfg(test)]
 mod variation_tests;
 
 #[inline]
 fn data() -> &'static TileData {
-    &TILES
+    crate::content::current().tiles()
 }
 
 /// A manifest PNG's dimensions through the asset roots — header decode only,
 /// never the pixels (this is what lets a headless build assign tile ids).
-fn image_dimensions(file: &str) -> Result<(u32, u32), String> {
+fn image_dimensions(file: &str, packs: &PackSet) -> Result<(u32, u32), String> {
     let rel = format!("textures/{file}");
-    let (bytes, _) = crate::assets::read_bytes(&rel)
+    let (bytes, _) = packs
+        .read_bytes(&rel)
         .ok_or_else(|| format!("missing texture '{rel}' (searched the asset roots)"))?;
     image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -360,7 +361,7 @@ fn image_dimensions(file: &str) -> Result<(u32, u32), String> {
         .map_err(|e| format!("failed to decode '{rel}' header: {e}"))
 }
 
-fn build(manifests: &[&str]) -> Result<TileData, String> {
+fn build(manifests: &[&str], packs: &PackSet) -> Result<TileData, String> {
     // Merge manifest layers by tile name: a later layer's row REPLACES the
     // earlier one (keeping its position, so replacement never renumbers ids
     // within a run); unknown names APPEND as new tiles. A pack can thus both
@@ -424,7 +425,7 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
             }
             continue;
         }
-        let (sw, sh) = image_dimensions(&t.file)?;
+        let (sw, sh) = image_dimensions(&t.file, packs)?;
         if sw == 0 || sh == 0 || sh % sw != 0 {
             return Err(format!(
                 "animated texture 'textures/{}' must be a vertical strip of square frames, got {sw}x{sh}",
@@ -508,8 +509,8 @@ mod tests {
 
     #[test]
     fn manifest_loads_and_engine_tiles_resolve() {
-        // Forces the LazyLock (engine tiles included): a bad manifest set
-        // panics right here.
+        // The current registry's tiles stage (engine tiles included): a bad
+        // manifest set fails the registry build before this line.
         let d = data();
         assert!(!d.cells.is_empty() && d.cells.len() <= MAX_TILES);
         // Names round-trip.
@@ -525,7 +526,8 @@ mod tests {
         // A pack layer retints an existing tile (replacing its row in place)
         // and appends a brand-new tile reusing an existing PNG.
         let layer = r#"{"tiles": [{"name": "stone", "file": "stone.png", "tint": "grass"}, {"name": "test_extra_tile", "file": "stone.png"}]}"#;
-        let d = build(&[&base, layer]).expect("layered manifest builds");
+        let d = build(&[&base, layer], crate::content::current().packs())
+            .expect("layered manifest builds");
         let stone = d.by_name["stone"];
         assert_eq!(d.cells[stone.index()].world_tint, Some(TileTint::Grass));
         let extra = d.by_name["test_extra_tile"];

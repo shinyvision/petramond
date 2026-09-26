@@ -6,20 +6,12 @@ use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn fluid_rows_drive_the_player_body() {
-    let root = fluid_fixture::stage("player-fluids");
-    crate::modding::tests::run_child_test(
-        &root,
-        "player::tests::fluid_rows::player_fluid_rows_inner",
-    );
-}
-
-#[test]
-#[ignore = "child of fluid_rows_drive_the_player_body with fixture content"]
-fn player_fluid_rows_inner() {
-    wet_locomotion_ignores_sprint_at_every_step_rate();
-    entry_brakes_a_fast_fall();
-    immersion_follows_the_probe_and_the_real_flow_height();
-    a_current_carries_an_idle_swimmer();
+    fluid_fixture::with_content("player-fluids", || {
+        wet_locomotion_ignores_sprint_at_every_step_rate();
+        entry_brakes_a_fast_fall();
+        immersion_follows_the_probe_and_the_real_flow_height();
+        a_current_carries_an_idle_swimmer();
+    });
 }
 
 fn wet_locomotion_ignores_sprint_at_every_step_rate() {

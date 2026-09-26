@@ -1,7 +1,5 @@
 //! How a fluid looks from inside it and at its surface: row data a renderer reads.
 
-use std::sync::LazyLock;
-
 use crate::block::Block;
 
 /// A grey level the surface albedo is pulled toward, so painted body colour
@@ -100,12 +98,19 @@ impl FluidMedium {
     }
 }
 
-struct MediaTable {
+pub(crate) struct MediaTable {
     blocks: Vec<Block>,
     by_id: Box<[u32]>,
 }
 
-static MEDIA: LazyLock<MediaTable> = LazyLock::new(|| {
+/// The fluid media of a content registry, derived from its block rows.
+pub(crate) static MEDIA: crate::content::Slot<MediaTable> = crate::content::Slot::new(
+    crate::content::stage::FLUID_MEDIA,
+    &[crate::content::stage::BLOCKS],
+    derive_media,
+);
+
+fn derive_media(_: &crate::content::ContentRegistry) -> Result<MediaTable, String> {
     let blocks: Vec<Block> = Block::all()
         .iter()
         .copied()
@@ -115,19 +120,20 @@ static MEDIA: LazyLock<MediaTable> = LazyLock::new(|| {
     for (i, b) in blocks.iter().enumerate() {
         by_id[b.id() as usize] = i as u32;
     }
-    MediaTable { blocks, by_id }
-});
+    Ok(MediaTable { blocks, by_id })
+}
 
 /// Every fluid block, in id order: position `i` is medium index `i`, the dense
 /// handle a renderer addresses a fluid's [`FluidMedium`] by.
 pub fn media() -> &'static [Block] {
-    &MEDIA.blocks
+    &MEDIA.current().blocks
 }
 
 /// The dense medium index of a fluid block (not of a host holding one).
 #[inline]
 pub fn medium_index(block: Block) -> Option<u32> {
     MEDIA
+        .current()
         .by_id
         .get(block.id() as usize)
         .copied()

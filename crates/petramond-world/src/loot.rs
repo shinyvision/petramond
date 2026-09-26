@@ -7,6 +7,7 @@ mod load;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use load::CATALOG;
 pub use load::{catalog, parse_layers};
 
 const MAX_EXPANSION: usize = 256;

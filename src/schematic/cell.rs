@@ -34,7 +34,7 @@ impl SavedStack {
         let variant = if self.data.is_empty() {
             VariantId::NONE
         } else {
-            variant::intern_blob(&self.data).ok_or("Invalid or exhausted item data")?
+            variant::intern_blob(&self.data).map_err(|e| format!("Item data: {e}"))?
         };
         Ok(ItemStack::with_variant(item, self.count, variant))
     }

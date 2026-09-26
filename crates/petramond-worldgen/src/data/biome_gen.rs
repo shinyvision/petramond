@@ -31,7 +31,6 @@
 //! (see [`GroundCover`]). Every row must state its generation: a row without one
 //! would generate as nothing.
 
-use std::sync::LazyLock;
 
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
@@ -250,17 +249,48 @@ pub(crate) fn parse(biome: Biome, generation: Option<&str>) -> Result<BiomeSpec,
     })
 }
 
+/// Every biome's generation rules, in id order — a registry stage after the
+/// biome catalog (see [`super::content_stages`]); every bad biome row is
+/// reported.
+pub(crate) static SPECS: petramond_world::content::Slot<Box<[BiomeSpec]>> =
+    petramond_world::content::Slot::new(
+        "biome generation",
+        &[
+            petramond_world::content::stage::BIOMES,
+            petramond_world::content::stage::BLOCKS,
+        ],
+        load_specs,
+    );
+
+fn load_specs(_: &petramond_world::content::ContentRegistry) -> Result<Box<[BiomeSpec]>, String> {
+    collect_rows(Biome::all().map(|biome| {
+        parse(biome, biome.generation())
+            .map_err(|e| format!("biomes.json: biome '{}': {e}", biome.key()))
+    }))
+}
+
+/// Every row's result, or every row's error (one per line).
+pub(crate) fn collect_rows<T>(
+    rows: impl Iterator<Item = Result<T, String>>,
+) -> Result<Box<[T]>, String> {
+    let mut out = Vec::new();
+    let mut errors = Vec::new();
+    for row in rows {
+        match row {
+            Ok(value) => out.push(value),
+            Err(e) => errors.push(e),
+        }
+    }
+    if errors.is_empty() {
+        Ok(out.into_boxed_slice())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
 /// Every biome's generation rules, in id order.
 pub(crate) fn specs() -> &'static [BiomeSpec] {
-    static TABLE: LazyLock<Box<[BiomeSpec]>> = LazyLock::new(|| {
-        Biome::all()
-            .map(|biome| {
-                parse(biome, biome.generation())
-                    .unwrap_or_else(|e| panic!("biomes.json: biome '{}': {e}", biome.key()))
-            })
-            .collect()
-    });
-    &TABLE
+    SPECS.current()
 }
 
 /// The loaded generation rules of `biome`.

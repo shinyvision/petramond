@@ -1,9 +1,9 @@
 use super::Biome;
 
-pub(super) type Color = [f32; 3];
+pub(crate) type Color = [f32; 3];
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(super) struct BiomeDef {
+pub(crate) struct BiomeDef {
     pub biome: Biome,
     /// The registry key (`petramond:forest`, `mymod:crystal_fields`).
     pub key: &'static str,

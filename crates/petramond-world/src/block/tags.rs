@@ -13,7 +13,7 @@ pub struct BlockTag(u8);
 
 /// Engine block-tag names, id-ordered: `BLOCK_TAGS.resolve(ENGINE[i]) == i`
 /// matches the consts on [`BlockTag`].
-static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
+const ENGINE_TAGS: &[&str] = &[
     "leaves",
     "log",
     "terrain",
@@ -36,7 +36,12 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "rock",
     "canopy",
     "nav_hazard",
-]);
+];
+
+static BLOCK_TAGS: crate::content::Slot<crate::registry::TagTable> =
+    crate::content::Slot::new("block tags", &[], |_| {
+        Ok(crate::registry::TagTable::new(ENGINE_TAGS))
+    });
 
 impl BlockTag {
     /// The raw tag id — the bit index in the dense per-block tag set.
@@ -173,13 +178,13 @@ impl BlockTag {
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub fn resolve(name: &str) -> Result<BlockTag, String> {
-        BLOCK_TAGS.resolve(name).map(BlockTag)
+        BLOCK_TAGS.current().resolve(name).map(BlockTag)
     }
 
     /// Look up an already-registered tag name without interning — the QUERY
     /// path (the mod ABI's `BlocksByTag`): an unknown name is simply a tag no
     /// block carries, never a new registration.
     pub fn lookup(name: &str) -> Option<BlockTag> {
-        BLOCK_TAGS.lookup(name).map(BlockTag)
+        BLOCK_TAGS.current().lookup(name).map(BlockTag)
     }
 }

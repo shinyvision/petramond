@@ -85,6 +85,21 @@ fn load_settings() -> ServerSettings {
     }
 }
 
+/// Load the process's content before anything touches it: every installed
+/// pack, then — this process serves exactly one world and draws nothing — the
+/// registry scoped to that world's enabled mods, so a pack the world switched
+/// off registers no ids at all. Either failure is the full load report.
+fn install_world_content(
+    world_name: &str,
+) -> Result<(), petramond_world::content::ContentErrors> {
+    crate::content::install_from_env(&[])?;
+    let dir = crate::save::world_dir(world_name);
+    let disabled = crate::save::settings::load(&dir).disabled_mods;
+    let scoped = crate::content::for_world(&disabled)?;
+    petramond_world::content::install(scoped);
+    Ok(())
+}
+
 /// `petramond_server <world-name>` — configured by `settings.json` beside the
 /// binary (`view_distance`, `simulation_distance`); env overrides: `PETRAMOND_SEED` (new worlds
 /// only), `PETRAMOND_RD` (streaming radius > settings.json), `PETRAMOND_PORT`
@@ -101,6 +116,10 @@ pub fn run() {
         eprintln!("  env: PETRAMOND_SEED=<u32>  PETRAMOND_RD=<4..64>  PETRAMOND_PORT=<port>");
         std::process::exit(2);
     };
+    if let Err(e) = install_world_content(&world_name) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
     let settings = load_settings();
     let seed: u32 = std::env::var("PETRAMOND_SEED")
         .ok()

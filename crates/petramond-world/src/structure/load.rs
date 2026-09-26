@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use std::sync::LazyLock;
 
 use super::Template;
 use crate::registry::Catalog;
@@ -17,8 +16,18 @@ struct Row {
     file: String,
 }
 
-static CATALOG: LazyLock<Catalog<Template>> = LazyLock::new(|| {
-    crate::registry::read_catalog("structures.json", "structure", |texts| {
+/// The structure-template catalog stage of every content registry. Templates
+/// name blocks, so it builds after the shared name tables; every template
+/// compiles at load, including ones worldgen never selects.
+pub(crate) static CATALOG: crate::content::Slot<Catalog<Template>> = crate::content::Slot::new(
+    crate::content::stage::STRUCTURES,
+    &[crate::content::stage::NAMES],
+    load,
+);
+
+fn load(reg: &crate::content::ContentRegistry) -> Result<Catalog<Template>, String> {
+    let packs = reg.packs();
+    crate::registry::read_catalog(packs, "structures.json", "structure", |texts| {
         crate::registry::load_catalog(
             texts,
             |text| serde_json::from_str::<File>(text).map(|file| file.structures),
@@ -38,7 +47,7 @@ static CATALOG: LazyLock<Catalog<Template>> = LazyLock::new(|| {
                         row.structure
                     ));
                 }
-                let (bytes, _) = crate::assets::read_bytes(&row.file).ok_or_else(|| {
+                let (bytes, _) = packs.read_bytes(&row.file).ok_or_else(|| {
                     format!("structure '{}': missing '{}'", row.structure, row.file)
                 })?;
                 if bytes.len() > 4 * 1024 * 1024 {
@@ -49,23 +58,16 @@ static CATALOG: LazyLock<Catalog<Template>> = LazyLock::new(|| {
                 }
                 let json = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
                 Template::parse(json, |key| {
-                    crate::registry::names()
-                        .blocks
-                        .id(key)
-                        .map(crate::block::Block)
+                    reg.names().blocks.id(key).map(crate::block::Block)
                 })
                 .map_err(|e| format!("structure '{}' ({}): {e}", row.structure, row.file))
             },
         )
     })
-});
-
-/// Resolve a namespaced template after pack admission, compiled once.
-pub fn by_key(key: &str) -> Option<&'static Template> {
-    CATALOG.id(key).map(|id| &CATALOG.rows()[id as usize])
 }
 
-/// Force validation of every template, including ones not selected by worldgen.
-pub fn validate_catalog() {
-    let _ = CATALOG.rows();
+/// Resolve a namespaced template of the current registry.
+pub fn by_key(key: &str) -> Option<&'static Template> {
+    let catalog = CATALOG.current();
+    catalog.id(key).map(|id| &catalog.rows()[id as usize])
 }

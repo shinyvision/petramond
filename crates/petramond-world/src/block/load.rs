@@ -413,8 +413,10 @@ pub(super) struct RawDrop {
 /// The loaded block table: id-indexed defs plus the dense per-id flag and
 /// emission copies the mesher/light hot loops read (see `data::flags` /
 /// `data::emission`).
-pub(super) struct Registry {
+pub(crate) struct Registry {
     pub defs: &'static [BlockDef],
+    /// Every registered block in id order (`all[id] == Block(id)`).
+    pub all: Box<[Block]>,
     /// Session-local shape-kind table (see [`shape_kind`]); every
     /// `BlockDef::shape_kind` indexes it.
     pub shape_kinds: &'static [ShapeKindDef],
@@ -450,14 +452,17 @@ pub(super) struct Registry {
 /// Highest tag id the dense [`Registry::tag_bits`] set can hold.
 pub(super) const TAG_BITS_MAX: u8 = 127;
 
-/// Load the registry from every `blocks.json` layer (base + mod packs, later
-/// packs replacing rows by block — see [`crate::assets::read_layers`]),
-/// panicking with a precise message if the table is missing or inconsistent.
-pub(super) fn registry() -> Registry {
-    // The global name table was built from these same layers, so every row key
-    // resolves and every dynamic id is already assigned.
-    crate::registry::read_catalog("blocks.json", "block", |texts| {
-        parse_layers(texts, crate::registry::names())
+/// Load the registry from every `blocks.json` layer of `packs` (base + the
+/// enabled packs, later packs replacing rows by block — see
+/// [`PackSet::read_layers`](crate::assets::PackSet::read_layers)) — the
+/// content loader's blocks stage. `names` was built from these same layers,
+/// so every row key resolves and every dynamic id is already assigned.
+pub(crate) fn load_registry(
+    packs: &crate::assets::PackSet,
+    names: &ContentNames,
+) -> Result<Registry, String> {
+    crate::registry::read_catalog(packs, "blocks.json", "block", |texts| {
+        parse_layers(texts, names)
     })
 }
 
@@ -573,6 +578,7 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     }
     Ok(Registry {
         defs,
+        all: (0..n).map(|id| Block(id as u16)).collect(),
         shape_kinds,
         flags,
         emission,

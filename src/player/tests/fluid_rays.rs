@@ -5,15 +5,10 @@ use crate::world::testutil::flat_server_world;
 
 #[test]
 fn bucket_rays_key_on_the_fluid_rows() {
-    let root = fluid_fixture::stage("fluid-rays");
-    crate::modding::tests::run_child_test(&root, "player::tests::fluid_rays::fluid_rays_inner");
-}
-
-#[test]
-#[ignore = "child of bucket_rays_key_on_the_fluid_rows with fixture content"]
-fn fluid_rays_inner() {
-    fill_ray_stops_on_a_source_only_when_the_bucket_takes_its_fluid();
-    pour_ray_stops_at_the_surface_of_any_fluid();
+    fluid_fixture::with_content("fluid-rays", || {
+        fill_ray_stops_on_a_source_only_when_the_bucket_takes_its_fluid();
+        pour_ray_stops_at_the_surface_of_any_fluid();
+    });
 }
 
 /// Eye three blocks over the top face of `cell`, looking straight down.

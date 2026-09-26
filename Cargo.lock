@@ -2392,8 +2392,11 @@ dependencies = [
  "mimalloc",
  "mod-api",
  "noise",
+ "petramond-anim",
+ "petramond-input",
  "petramond-math",
  "petramond-mesh",
+ "petramond-region",
  "petramond-text",
  "petramond-ui",
  "petramond-util",
@@ -2408,6 +2411,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "petramond-anim"
+version = "0.4.0"
+dependencies = [
+ "glam",
+ "petramond-world",
+ "rustc-hash 2.1.3",
+ "serde_json",
+]
+
+[[package]]
 name = "petramond-audio"
 version = "0.4.0"
 dependencies = [
@@ -2415,6 +2428,8 @@ dependencies = [
  "petramond-math",
  "petramond-world",
  "rodio",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2430,6 +2445,7 @@ dependencies = [
  "mod-api",
  "petramond",
  "petramond-audio",
+ "petramond-input",
  "petramond-math",
  "petramond-mesh",
  "petramond-render",
@@ -2444,6 +2460,14 @@ dependencies = [
  "serde_json",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "petramond-input"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2471,6 +2495,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "petramond-region"
+version = "0.4.0"
+dependencies = [
+ "petramond-util",
+ "petramond-world",
+ "rustc-hash 2.1.3",
+]
+
+[[package]]
 name = "petramond-render"
 version = "0.4.0"
 dependencies = [
@@ -2481,6 +2514,7 @@ dependencies = [
  "mod-api",
  "naga",
  "petramond",
+ "petramond-anim",
  "petramond-math",
  "petramond-mesh",
  "petramond-text",
@@ -2547,6 +2581,7 @@ dependencies = [
  "log",
  "mod-api",
  "petramond-math",
+ "petramond-region",
  "petramond-util",
  "petramond-world",
  "rustc-hash 2.1.3",

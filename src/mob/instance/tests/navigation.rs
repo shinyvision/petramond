@@ -19,15 +19,9 @@ impl AiBehavior for Goal {
 
 #[test]
 fn walking_bodies_avoid_hazards_and_escape_them() {
-    let root = fluid_fixture::stage("hazard-walk");
-    crate::modding::tests::run_child_test(
-        &root,
-        "mob::instance::tests::navigation::hazard_walk_inner",
-    );
+    fluid_fixture::with_content("hazard-walk", hazard_walk_inner);
 }
 
-#[test]
-#[ignore = "child of walking_bodies_avoid_hazards_and_escape_them"]
 fn hazard_walk_inner() {
     a_walking_mob_detours_around_a_hazard_and_stops_when_it_cuts_off_the_route();
     a_mob_in_a_hazard_keeps_swimming_until_it_reaches_the_shore();
@@ -115,15 +109,9 @@ fn a_mob_in_a_hazard_keeps_swimming_until_it_reaches_the_shore() {
 
 #[test]
 fn routes_and_bodies_climb_out_of_every_fluid_onto_a_one_block_bank() {
-    let root = fluid_fixture::stage("shore-climb");
-    crate::modding::tests::run_child_test(
-        &root,
-        "mob::instance::tests::navigation::shore_climb_inner",
-    );
+    fluid_fixture::with_content("shore-climb", shore_climb_inner);
 }
 
-#[test]
-#[ignore = "child of routes_and_bodies_climb_out_of_every_fluid_onto_a_one_block_bank"]
 fn shore_climb_inner() {
     const TOP: i32 = 67;
     const BANK_X: i32 = 10;

@@ -313,7 +313,7 @@ impl RemotePlayers {
                     .curr
                     .held_data
                     .as_deref()
-                    .and_then(petramond_world::item::variant::intern_blob)
+                    .and_then(|b| petramond_world::item::variant::intern_blob(b).ok())
                     .unwrap_or_default(),
                 // Held-rotation preview state isn't replicated; the default
                 // reads fine at held-mini-cube size.
@@ -334,7 +334,7 @@ impl RemotePlayers {
                     .curr
                     .off_hand_data
                     .as_deref()
-                    .and_then(petramond_world::item::variant::intern_blob)
+                    .and_then(|b| petramond_world::item::variant::intern_blob(b).ok())
                     .unwrap_or_default(),
                 block_state: Default::default(),
                 mining: false,

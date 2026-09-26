@@ -5,10 +5,10 @@
 //! module keeps only what must stay compiled in: the engine block NAMES in
 //! frozen id order (index == id — the completeness oracle the loader validates
 //! the file against, and the low half of the runtime name table packs extend;
-//! see `crate::registry`) and the lazily-loaded registry the `Block`
-//! accessors read.
+//! see `crate::registry`) and the accessors over the current content
+//! registry's block table and derived views (see `crate::content`).
 
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 use super::definition::{BlockDef, BlockFlags};
 use super::shape_kind::{BlockShapeKind, ShapeKindDef};
@@ -176,19 +176,17 @@ pub const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:redwood_trapdoor",
 ];
 
-/// The JSON-loaded block table. Loads exactly once, on first access from any
-/// thread (the gen/light worker pools included); the loader panics with a
-/// precise message if the file is missing or inconsistent (see `super::load`).
-static REGISTRY: LazyLock<load::Registry> = LazyLock::new(load::registry);
+/// The current content registry's block table (see `crate::content`; the
+/// loader is `super::load`).
+#[inline]
+fn registry() -> &'static load::Registry {
+    crate::content::current().blocks()
+}
 
 /// Every registered block in id order (engine + pack-registered).
+#[inline]
 pub(super) fn all() -> &'static [Block] {
-    static ALL: LazyLock<Vec<Block>> = LazyLock::new(|| {
-        (0..REGISTRY.defs.len())
-            .map(|id| Block(id as u16))
-            .collect()
-    });
-    &ALL
+    &registry().all
 }
 
 /// `Block(id)` for a registered id, `Air` past the table.
@@ -201,7 +199,7 @@ pub(super) fn all() -> &'static [Block] {
 /// bounds test alone is the whole function.
 #[inline]
 pub(super) fn from_id(id: u16) -> Block {
-    if (id as usize) < REGISTRY.defs.len() {
+    if (id as usize) < registry().defs.len() {
         Block(id)
     } else {
         Block::Air
@@ -226,21 +224,21 @@ pub(super) fn row<T: Copy>(table: &[T], id: u16) -> T {
 
 #[inline]
 pub(super) fn def(block: Block) -> &'static BlockDef {
-    let defs = REGISTRY.defs;
+    let defs = registry().defs;
     defs.get(block.id() as usize).unwrap_or(&defs[0])
 }
 
 /// The shape-kind registry row for `kind` (see [`super::shape_kind`]).
 #[inline]
 pub(super) fn shape_kind_def(kind: BlockShapeKind) -> &'static ShapeKindDef {
-    &REGISTRY.shape_kinds[kind.0 as usize]
+    &registry().shape_kinds[kind.0 as usize]
 }
 
 /// The session-local shape-kind id for a registry `key`, or `None` — the
 /// `ResolveShape` host call's lookup. A linear scan over the small shape-kind
 /// table (dozens of rows), like the other name→id resolvers.
 pub fn shape_kind_id_by_key(key: &str) -> Option<u16> {
-    REGISTRY
+    registry()
         .shape_kinds
         .iter()
         .position(|d| d.key == key)
@@ -253,7 +251,7 @@ pub fn shape_kind_id_by_key(key: &str) -> Option<u16> {
 /// carries an unrelated key, so the common case must cost one small-table
 /// scan, not seven world reads.
 pub fn state_key_declared(key: &str) -> bool {
-    REGISTRY
+    registry()
         .shape_kinds
         .iter()
         .any(|d| d.params.state_key() == Some(key))
@@ -264,7 +262,36 @@ pub fn state_key_declared(key: &str) -> bool {
 /// registry reads `false`, matching the `Air` its `Block::from_id` resolves to.
 #[inline]
 pub(super) fn shape_refines(id: u16) -> bool {
-    row(&REGISTRY.shape_refines, id)
+    row(&registry().shape_refines, id)
+}
+
+/// The dense per-id tables DERIVED from a registry's block rows through the
+/// ordinary `Block` accessors — each shape family answers for its own kind,
+/// so these cannot bake inside the block table's own build (the family would
+/// read the table being built). Each view is its own cell of the registry:
+/// the content loader's block-views stage warms all of them right after the
+/// block table ([`warm_views`]), and one view may read another while it
+/// derives (the light cells read the apertures) whatever the order.
+#[derive(Default)]
+pub(crate) struct BlockViews {
+    apertures: OnceLock<Box<[u32]>>,
+    light_cells: OnceLock<Box<[u32]>>,
+    collision: OnceLock<Box<[Option<&'static [super::Aabb]>]>>,
+    nav_solid: OnceLock<Box<[bool]>>,
+}
+
+#[inline]
+fn views() -> &'static BlockViews {
+    &crate::content::current().block_views
+}
+
+/// Derive every [`BlockViews`] table of the current registry now — the
+/// content loader's block-views stage.
+pub(crate) fn warm_views() {
+    let _ = default_light_apertures(0);
+    let _ = light_cells();
+    let _ = static_collision_boxes(0);
+    let _ = nav_reads_solid(0);
 }
 
 /// Dense per-id STATE-FREE light apertures: what each block's shape blocks
@@ -272,13 +299,9 @@ pub(super) fn shape_refines(id: u16) -> bool {
 /// sparse state gather did not cover — which is every cell of a stateless
 /// shape (a cover, a cactus, a mod's plate) — so it is baked once instead of
 /// re-derived per flood step.
-///
-/// Baked in its OWN lazy rather than inside [`REGISTRY`]: a family resolving
-/// its shape reads ordinary `Block` accessors, and those read the registry, so
-/// deriving this during the registry's own initialisation deadlocks it.
 #[inline]
 pub(super) fn default_light_apertures(id: u16) -> u32 {
-    static APERTURES: LazyLock<Box<[u32]>> = LazyLock::new(|| {
+    let table = views().apertures.get_or_init(|| {
         let mut table = vec![crate::block::LIGHT_APERTURES_OPEN; all().len()].into_boxed_slice();
         for &block in all() {
             let k = block.shape_kind_def();
@@ -291,7 +314,7 @@ pub(super) fn default_light_apertures(id: u16) -> u32 {
         }
         table
     });
-    row(&APERTURES, id)
+    row(table, id)
 }
 
 /// Dense per-id LIGHT CELL word — everything the light flood needs to know
@@ -308,10 +331,9 @@ pub(super) fn default_light_apertures(id: u16) -> u32 {
 /// The flood relaxes ~100 M edges per render-distance-12 load and each edge
 /// asked two blocks for their apertures; going through `Block::light_shape`
 /// meant a registry `BlockDef` load plus a virtual `ShapeSim` call per ask.
-/// Baked in its own lazy for the same reason as `default_light_apertures`.
 #[inline]
 pub fn light_cells() -> &'static [u32] {
-    static CELLS: LazyLock<Box<[u32]>> = LazyLock::new(|| {
+    views().light_cells.get_or_init(|| {
         let word = |block: Block| -> u32 {
             let mut w = match block.light_shape() {
                 crate::block::BlockLightShape::OpaqueCube => 0,
@@ -330,8 +352,7 @@ pub fn light_cells() -> &'static [u32] {
             table[block.id() as usize] = word(block);
         }
         table
-    });
-    &CELLS
+    })
 }
 
 /// Dense per-id CELL COLLISION for every shape whose boxes are fully
@@ -341,11 +362,9 @@ pub fn light_cells() -> &'static [u32] {
 ///
 /// Every body/particle/navigation cell probe used to pay a `shape_kind_def`
 /// indirection plus a virtual `collision_boxes` call for plain stone and air.
-///
-/// Baked in its OWN lazy for the same reason as [`default_light_apertures`].
 #[inline]
 pub(super) fn static_collision_boxes(id: u16) -> Option<&'static [super::Aabb]> {
-    static BOXES: LazyLock<Box<[Option<&'static [super::Aabb]>]>> = LazyLock::new(|| {
+    let table = views().collision.get_or_init(|| {
         let mut table: Box<[Option<&'static [super::Aabb]>]> =
             vec![None; all().len()].into_boxed_slice();
         for &block in all() {
@@ -361,14 +380,14 @@ pub(super) fn static_collision_boxes(id: u16) -> Option<&'static [super::Aabb]> 
         }
         table
     });
-    row(&BOXES, id)
+    row(table, id)
 }
 
 /// Dense per-id [`ShapeSim::nav_reads_solid`] — a per-KIND answer, so it bakes
 /// per id like the apertures. Read once per navigation cell probe.
 #[inline]
 pub(super) fn nav_reads_solid(id: u16) -> bool {
-    static SOLID: LazyLock<Box<[bool]>> = LazyLock::new(|| {
+    let table = views().nav_solid.get_or_init(|| {
         let mut table = vec![false; all().len()].into_boxed_slice();
         for &block in all() {
             let k = block.shape_kind_def();
@@ -376,7 +395,7 @@ pub(super) fn nav_reads_solid(id: u16) -> bool {
         }
         table
     });
-    row(&SOLID, id)
+    row(table, id)
 }
 
 /// Dense per-id copy of every block's [`BlockFlags`], indexed by raw block id.
@@ -391,7 +410,7 @@ pub(super) fn nav_reads_solid(id: u16) -> bool {
 #[inline]
 pub(super) fn has_tag(id: u16, tag: super::BlockTag) -> bool {
     if tag.id() <= load::TAG_BITS_MAX {
-        row(&REGISTRY.tag_bits, id) & (1u128 << tag.id()) != 0
+        row(&registry().tag_bits, id) & (1u128 << tag.id()) != 0
     } else {
         def(Block(id)).tags.contains(&tag)
     }
@@ -399,14 +418,14 @@ pub(super) fn has_tag(id: u16, tag: super::BlockTag) -> bool {
 
 #[inline]
 pub(super) fn flags(id: u16) -> BlockFlags {
-    row(&REGISTRY.flags, id)
+    row(&registry().flags, id)
 }
 
 /// Dense per-id copy of every block's light `emission`, same rationale as
 /// [`flags`]: the light emitter scan reads it per cell over whole sections.
 #[inline]
 pub(super) fn emission(id: u16) -> u8 {
-    row(&REGISTRY.emission, id)
+    row(&registry().emission, id)
 }
 
 /// Dense per-id PER-CHANNEL light emission — `emission` split by the row's
@@ -414,5 +433,5 @@ pub(super) fn emission(id: u16) -> u8 {
 /// row per registered block, so a lookup is one small-array read.
 #[inline]
 pub(super) fn emission_rgb(id: u16) -> [u8; 3] {
-    row(&REGISTRY.emission_rgb, id)
+    row(&registry().emission_rgb, id)
 }

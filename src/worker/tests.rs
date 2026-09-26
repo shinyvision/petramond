@@ -100,3 +100,29 @@ fn pool_runs_lowest_key_first_and_fifo_on_ties() {
         vec!["near-a", "near-b", "mid", "far"]
     );
 }
+
+/// A worker runs each job under the registry its SUBMITTER reads, not the
+/// worker thread's own: a pool serves whichever world queued the work.
+#[test]
+fn jobs_run_under_the_submitters_content_registry() {
+    use petramond_world::content::{self, Content};
+    let no_mods = std::env::temp_dir().join(format!("petramond-pool-{}", std::process::id()));
+    let own = content::test_support::with_mods(&no_mods);
+    let pool = JobPool::new(1);
+    let (tx, rx) = channel::<bool>();
+    {
+        let _pin = content::pin(own);
+        let tx = tx.clone();
+        pool.submit(0, move || {
+            let _ = tx.send(Content::current().same(own));
+        });
+    }
+    pool.submit(1, move || {
+        let _ = tx.send(Content::current().same(own));
+    });
+    assert!(rx.recv().unwrap(), "the pinned submitter's registry rides the job");
+    assert!(
+        !rx.recv().unwrap(),
+        "an unpinned submitter's job reads the process registry"
+    );
+}

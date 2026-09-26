@@ -3,11 +3,11 @@
 //! A stack may carry a small namespaced key→bytes map (the item-side sibling
 //! of per-cell block KV): `petramond:tint` on dyed wool, whatever a mod mints.
 //! The map itself never rides in `ItemStack` — stacks stay `Copy` by holding a
-//! [`VariantId`], an id interned process-wide from the map's CANONICAL BYTES.
-//! Two stacks stack together iff item AND variant id match, which by
-//! construction means byte-identical data.
+//! [`VariantId`], an id interned from the map's CANONICAL BYTES into the
+//! content registry's [`VariantTable`]. Two stacks stack together iff item AND
+//! variant id match, which by construction means byte-identical data.
 //!
-//! The id is a PROCESS-LOCAL compact: it never persists and never crosses the
+//! The id is a REGISTRY-LOCAL compact: it never persists and never crosses the
 //! save format, the wire, or the mod ABI — all three carry the canonical blob
 //! (only for stacks that have data) and the receiving side re-interns. That
 //! keeps saves registry-order-proof and spares the network layer a variant
@@ -15,11 +15,12 @@
 //!
 //! Caps are deliberately tight (this multiplies across every inventory slot):
 //! at most [`MAX_KEYS`] keys and [`MAX_VALUE_BYTES`]-byte values per map, and
-//! a bounded intern table — an over-cap or table-full intern yields
-//! `None`/`NONE` (the stack degrades to plain), never unbounded growth.
+//! a bounded intern table — an over-cap or table-full intern is a
+//! [`VariantError`] the mint site must handle, never a silent strip and never
+//! unbounded growth.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
 /// Interned id for a stack's instance-data map. `NONE` (0) = no data.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
@@ -48,11 +49,13 @@ pub const MAX_KEY_BYTES: usize = 64;
 /// `petramond:overlay` holding one art name per augment socket (4 sockets of
 /// ~31-char names, comma-joined).
 pub const MAX_VALUE_BYTES: usize = 128;
-/// Most distinct variants one process will intern (excluding `NONE`) — the
-/// `u16` id ceiling. The table never evicts (outstanding ids must stay
-/// valid), so this bounds a process-lifetime cache: at the per-map caps
-/// above, and counting the canonical blob each row keeps beside its map,
-/// roughly 100 MB worst case. Raising [`MAX_VALUE_BYTES`] moves this figure.
+/// Most distinct variants one registry's table will intern (excluding
+/// `NONE`) — the `u16` id ceiling. The table never evicts (a `Copy` stack
+/// holding an id carries no liveness the table could count), so this bounds
+/// the table for the registry's lifetime: at the per-map caps above, and
+/// counting the canonical blob each row keeps beside its map, roughly 100 MB
+/// worst case. Raising [`MAX_VALUE_BYTES`] moves this figure. Reaching it is
+/// [`VariantError::TableFull`] at the mint site.
 pub const MAX_VARIANTS: usize = u16::MAX as usize;
 
 /// `true` if `data` fits every per-map cap and every key is namespaced.
@@ -117,89 +120,169 @@ pub fn decode(bytes: &[u8]) -> Option<VariantMap> {
     Some(map)
 }
 
-struct Interner {
-    /// id-1 → (map, canonical blob). Index order is mint order.
-    rows: Vec<(Arc<VariantMap>, Arc<Vec<u8>>)>,
-    by_blob: HashMap<Vec<u8>, u16>,
+/// Why a map could not be interned. Every mint site gets this back instead of
+/// a silently plain stack: the ABI refuses the call, save/wire ingest logs
+/// and decides, a crafting output fails loudly.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum VariantError {
+    /// Empty, over a per-map cap, or carrying a bare (un-namespaced) key.
+    Invalid,
+    /// A canonical blob that does not decode (see [`decode`]).
+    Malformed,
+    /// The registry's table holds [`MAX_VARIANTS`] distinct maps already.
+    TableFull,
 }
 
-static TABLE: OnceLock<RwLock<Interner>> = OnceLock::new();
-
-fn table() -> &'static RwLock<Interner> {
-    TABLE.get_or_init(|| {
-        RwLock::new(Interner {
-            rows: Vec::new(),
-            by_blob: HashMap::new(),
+impl std::fmt::Display for VariantError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            VariantError::Invalid => "item data is empty, over a cap, or has a bare key",
+            VariantError::Malformed => "item data blob is malformed",
+            VariantError::TableFull => "the item data table is full",
         })
-    })
+    }
 }
 
-/// Intern `data`, returning its process-wide id. `None` for an invalid map or
-/// a full table — callers degrade the stack to plain (variant `NONE`) and the
-/// mint site decides whether that is an error (ABI) or a logged warning
-/// (save/wire ingest).
-pub fn intern(data: &VariantMap) -> Option<VariantId> {
-    if !valid(data) {
-        return None;
+impl std::error::Error for VariantError {}
+
+/// Rows per storage chunk of a [`VariantTable`].
+const CHUNK: usize = 1024;
+const CHUNKS: usize = MAX_VARIANTS.div_ceil(CHUNK);
+
+struct Row {
+    map: Arc<VariantMap>,
+    blob: Arc<Vec<u8>>,
+}
+
+/// One content registry's variant table (see `ContentRegistry::variants`):
+/// append-only rows readers reach WITHOUT a lock — a chunk of rows is
+/// published once and never moves, so `get`/`blob` are two acquire loads —
+/// and a blob index that only interning locks.
+pub struct VariantTable {
+    chunks: Box<[OnceLock<Box<[OnceLock<Row>]>>]>,
+    /// Canonical blob → id, plus the row count (the next id is `len + 1`).
+    index: RwLock<HashMap<Vec<u8>, u16>>,
+}
+
+impl Default for VariantTable {
+    fn default() -> Self {
+        VariantTable {
+            chunks: (0..CHUNKS).map(|_| OnceLock::new()).collect(),
+            index: RwLock::new(HashMap::new()),
+        }
     }
-    let blob = encode(data);
-    // Fast path under the read lock: on a running world almost every intern
-    // is a repeat of an already-minted variant.
-    if let Some(&id) = table()
-        .read()
-        .expect("variant table lock")
-        .by_blob
-        .get(&blob)
-    {
-        return Some(VariantId(id));
+}
+
+impl VariantTable {
+    /// Intern `data`, returning its id in this table.
+    pub fn intern(&self, data: &VariantMap) -> Result<VariantId, VariantError> {
+        if !valid(data) {
+            return Err(VariantError::Invalid);
+        }
+        let blob = encode(data);
+        // Fast path under the read lock: on a running world almost every
+        // intern is a repeat of an already-minted variant.
+        if let Some(&id) = self
+            .index
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&blob)
+        {
+            return Ok(VariantId(id));
+        }
+        let mut index = self.index.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(&id) = index.get(&blob) {
+            return Ok(VariantId(id));
+        }
+        let slot = index.len();
+        if slot >= MAX_VARIANTS {
+            return Err(VariantError::TableFull);
+        }
+        let chunk = self.chunks[slot / CHUNK]
+            .get_or_init(|| (0..CHUNK).map(|_| OnceLock::new()).collect());
+        // Published before the index names the id, so a reader handed the id
+        // always finds its row.
+        let _ = chunk[slot % CHUNK].set(Row {
+            map: Arc::new(data.clone()),
+            blob: Arc::new(blob.clone()),
+        });
+        let id = (slot + 1) as u16;
+        index.insert(blob, id);
+        Ok(VariantId(id))
     }
-    let mut t = table().write().expect("variant table lock");
-    if let Some(&id) = t.by_blob.get(&blob) {
-        return Some(VariantId(id));
+
+    /// Decode + intern a canonical blob (the save/wire/ABI ingest path).
+    pub fn intern_blob(&self, bytes: &[u8]) -> Result<VariantId, VariantError> {
+        self.intern(&decode(bytes).ok_or(VariantError::Malformed)?)
     }
-    if t.rows.len() >= MAX_VARIANTS {
-        return None;
+
+    fn row(&self, id: VariantId) -> Option<&Row> {
+        let slot = (id.0 as usize).checked_sub(1)?;
+        self.chunks.get(slot / CHUNK)?.get()?[slot % CHUNK].get()
     }
-    let id = (t.rows.len() + 1) as u16;
-    t.rows
-        .push((Arc::new(data.clone()), Arc::new(blob.clone())));
-    t.by_blob.insert(blob, id);
-    Some(VariantId(id))
+
+    /// Whether this exact map is already interned, without allocating a row.
+    pub fn contains(&self, data: &VariantMap) -> bool {
+        self.index
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&encode(data))
+    }
+
+    /// Distinct maps interned so far.
+    pub fn len(&self) -> usize {
+        self.index
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The interned map for `id` (`None` for `NONE` or an unknown id).
+    pub fn get(&self, id: VariantId) -> Option<Arc<VariantMap>> {
+        self.row(id).map(|r| r.map.clone())
+    }
+
+    /// The canonical blob for `id` (`None` for `NONE` or an unknown id).
+    pub fn blob(&self, id: VariantId) -> Option<Arc<Vec<u8>>> {
+        self.row(id).map(|r| r.blob.clone())
+    }
+}
+
+#[inline]
+fn table() -> &'static VariantTable {
+    crate::content::current().variants()
+}
+
+/// Intern `data` in the current registry's table. A refused map is an error
+/// the mint site handles (see [`VariantError`]) — never a silent strip.
+pub fn intern(data: &VariantMap) -> Result<VariantId, VariantError> {
+    table().intern(data)
 }
 
 /// Decode + intern a canonical blob (the save/wire/ABI ingest path).
-pub fn intern_blob(bytes: &[u8]) -> Option<VariantId> {
-    intern(&decode(bytes)?)
+pub fn intern_blob(bytes: &[u8]) -> Result<VariantId, VariantError> {
+    table().intern_blob(bytes)
 }
 
 /// Whether this exact map is already interned, without allocating a variant row.
 #[cfg(any(test, feature = "test-support"))]
 pub fn is_interned_for_test(data: &VariantMap) -> bool {
-    let blob = encode(data);
-    table()
-        .read()
-        .expect("variant table lock")
-        .by_blob
-        .contains_key(&blob)
+    table().contains(data)
 }
 
 /// The interned map for `id` (`None` for `NONE` or an unknown id).
 pub fn get(id: VariantId) -> Option<Arc<VariantMap>> {
-    if id.is_none() {
-        return None;
-    }
-    let t = table().read().expect("variant table lock");
-    t.rows.get(id.0 as usize - 1).map(|(m, _)| m.clone())
+    table().get(id)
 }
 
 /// The canonical blob for `id` (`None` for `NONE` or an unknown id) — what
 /// saves, the wire, and the ABI ship instead of the id.
 pub fn blob(id: VariantId) -> Option<Arc<Vec<u8>>> {
-    if id.is_none() {
-        return None;
-    }
-    let t = table().read().expect("variant table lock");
-    t.rows.get(id.0 as usize - 1).map(|(_, b)| b.clone())
+    table().blob(id)
 }
 
 /// `true` if the stack interned as `id` carries exactly `data` (`NONE`
@@ -318,15 +401,17 @@ mod tests {
 
     #[test]
     fn invalid_maps_and_malformed_blobs_are_refused() {
-        assert_eq!(intern(&VariantMap::new()), None, "empty = no variant");
-        assert_eq!(intern(&map(&[("bare_key", &[1])])), None, "bare key");
+        let invalid = Err(VariantError::Invalid);
+        assert_eq!(intern(&VariantMap::new()), invalid, "empty = no variant");
+        assert_eq!(intern(&map(&[("bare_key", &[1])])), invalid, "bare key");
         assert_eq!(
             intern(&map(&[("m:big", &[0u8; MAX_VALUE_BYTES + 1])])),
-            None,
+            invalid,
             "value cap"
         );
         let over: VariantMap = (0..5).map(|i| (format!("m:k{i}"), vec![0u8])).collect();
-        assert_eq!(intern(&over), None, "key-count cap");
+        assert_eq!(intern(&over), invalid, "key-count cap");
+        assert_eq!(intern_blob(&[1, 3]), Err(VariantError::Malformed));
         assert_eq!(decode(&[]), None);
         assert_eq!(decode(&[1, 3]), None, "truncated key");
         // Non-canonical order must not decode (byte identity would fork):
@@ -337,5 +422,44 @@ mod tests {
         swapped.extend(b"m:a");
         swapped.extend([1, 1]);
         assert_eq!(decode(&swapped), None, "unsorted keys refused");
+    }
+
+    /// Ids belong to the table that minted them: two tables number the same
+    /// maps independently, and one table's id means nothing in the other.
+    #[test]
+    fn each_table_numbers_its_own_variants() {
+        let (a, b) = (VariantTable::default(), VariantTable::default());
+        let red = map(&[("m:tint", &[255, 0, 0])]);
+        let blue = map(&[("m:tint", &[0, 0, 255])]);
+        let red_in_a = a.intern(&red).unwrap();
+        assert_eq!(b.intern(&blue).unwrap(), red_in_a, "both tables start at 1");
+        assert_eq!(*a.get(red_in_a).unwrap(), red);
+        assert_eq!(*b.get(red_in_a).unwrap(), blue);
+        assert_eq!(a.get(VariantId(2)), None, "an id past the table reads nothing");
+        assert!(a.contains(&red) && !a.contains(&blue));
+    }
+
+    /// A full table REFUSES a new map with an error the mint site sees —
+    /// nothing is stripped behind its back — while every minted id keeps
+    /// reading, and repeats of minted maps keep interning.
+    #[test]
+    fn a_full_table_refuses_new_maps_and_keeps_serving_old_ones() {
+        let table = VariantTable::default();
+        let nth = |i: usize| map(&[("m:n", &(i as u32).to_le_bytes())]);
+        for i in 0..MAX_VARIANTS {
+            table.intern(&nth(i)).unwrap();
+        }
+        assert_eq!(table.len(), MAX_VARIANTS);
+        assert_eq!(
+            table.intern(&nth(MAX_VARIANTS)),
+            Err(VariantError::TableFull)
+        );
+        let last = VariantId(MAX_VARIANTS as u16);
+        assert_eq!(*table.get(last).unwrap(), nth(MAX_VARIANTS - 1));
+        assert_eq!(
+            table.intern(&nth(7)).unwrap(),
+            VariantId(8),
+            "repeats still intern"
+        );
     }
 }

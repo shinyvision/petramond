@@ -19,6 +19,8 @@ pub(crate) mod body_animator;
 mod locomotion;
 
 pub(crate) use body_animator::{BodyAnimator, BodyAnimators, LOCAL_BODY};
+/// The locomotion table stage a client registers with its content loader.
+pub use locomotion::TABLE as LOCOMOTION;
 
 use glam::{Mat4, Quat, Vec3};
 

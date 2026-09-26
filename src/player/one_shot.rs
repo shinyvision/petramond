@@ -7,8 +7,6 @@
 //! see graph events. A rig whose graph declares no such name simply never
 //! hears that gesture.
 
-use std::sync::LazyLock;
-
 use petramond_world::inventory::Hand;
 
 use super::rigs::{self, RigId};
@@ -64,10 +62,16 @@ fn hand_slot(hand: Hand) -> usize {
     }
 }
 
+type EventTable = Vec<[[Option<u16>; 5]; 2]>;
+
 /// Per rig, per hand, per gesture: the graph event id, or `None` where the
-/// rig's graph declares no such name.
-static TABLE: LazyLock<Vec<[[Option<u16>; 5]; 2]>> = LazyLock::new(|| {
-    rigs::all()
+/// rig's graph declares no such name — derived per content registry from its
+/// rigs.
+static TABLE: petramond_world::content::Slot<EventTable> =
+    petramond_world::content::Slot::new("rig gesture events", &[], resolve_events);
+
+fn resolve_events(_: &petramond_world::content::ContentRegistry) -> Result<EventTable, String> {
+    Ok(rigs::all()
         .iter()
         .map(|rig| {
             [Hand::Main, Hand::Off].map(|hand| {
@@ -78,18 +82,18 @@ static TABLE: LazyLock<Vec<[[Option<u16>; 5]; 2]>> = LazyLock::new(|| {
                 })
             })
         })
-        .collect()
-});
+        .collect())
+}
 
 /// The event id `kind` from `hand` fires on `rig`, if its graph has one.
 pub fn resolve(rig: RigId, hand: Hand, kind: OneShot) -> Option<u16> {
-    TABLE.get(rig.index())?[hand_slot(hand)][kind.slot()]
+    TABLE.current().get(rig.index())?[hand_slot(hand)][kind.slot()]
 }
 
 /// Every rig's event for `kind` from `hand` — the `(rig, event)` rows a
 /// fired gesture becomes, in rig id order.
 pub fn fired(hand: Hand, kind: OneShot) -> impl Iterator<Item = (RigId, u16)> {
-    TABLE.iter().enumerate().filter_map(move |(i, per_hand)| {
+    TABLE.current().iter().enumerate().filter_map(move |(i, per_hand)| {
         per_hand[hand_slot(hand)][kind.slot()].map(|event| (RigId(i as u16), event))
     })
 }

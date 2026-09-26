@@ -161,25 +161,38 @@ pub fn paying_item(block: Block) -> Result<ItemType, String> {
 /// The item whose placement commits `block` as one of its variant rows: a
 /// wall-facing sibling, a flipped run, or a sampled decorative variant.
 fn placed_as_variant(block: Block) -> Option<ItemType> {
-    use std::sync::LazyLock;
-    static PLACED_BY: LazyLock<Vec<Option<ItemType>>> = LazyLock::new(|| {
-        let mut table = vec![None; Block::all().len()];
-        for &item in ItemType::all() {
-            if item.creative_only() {
-                continue;
-            }
-            let mut rows: Vec<Block> = item.placement_variants().to_vec();
-            if let Some(base) = item.as_block() {
-                rows.extend(base.facing_rows().into_iter().flatten());
-                rows.extend(base.flipped_row());
-            }
-            for row in rows {
-                table[row.id() as usize].get_or_insert(item);
-            }
+    PLACED_BY
+        .current()
+        .get(block.id() as usize)
+        .copied()
+        .flatten()
+}
+
+/// Block id → the item whose placement commits it as a variant row, derived
+/// per content registry from its item and block rows.
+pub(crate) static PLACED_BY: crate::content::Slot<Vec<Option<ItemType>>> =
+    crate::content::Slot::new(
+        crate::content::stage::CONSTRUCTION,
+        &[crate::content::stage::ITEMS],
+        derive_placed_by,
+    );
+
+fn derive_placed_by(_: &crate::content::ContentRegistry) -> Result<Vec<Option<ItemType>>, String> {
+    let mut table = vec![None; Block::all().len()];
+    for &item in ItemType::all() {
+        if item.creative_only() {
+            continue;
         }
-        table
-    });
-    PLACED_BY.get(block.id() as usize).copied().flatten()
+        let mut rows: Vec<Block> = item.placement_variants().to_vec();
+        if let Some(base) = item.as_block() {
+            rows.extend(base.facing_rows().into_iter().flatten());
+            rows.extend(base.flipped_row());
+        }
+        for row in rows {
+            table[row.id() as usize].get_or_insert(item);
+        }
+    }
+    Ok(table)
 }
 
 /// The parts of the cell at `pos` holding `block`, or its one whole part.
@@ -274,7 +287,7 @@ fn part_variant(record: &Record, part: CellPart, part_block: Block) -> Result<Va
     if map.is_empty() {
         return Ok(VariantId::NONE);
     }
-    variant::intern(&map).ok_or_else(|| "the carried item data cannot be represented".into())
+    variant::intern(&map).map_err(|e| format!("the carried item data cannot be represented: {e}"))
 }
 
 /// Measure `record` at `pos` against `world`. The caller gates terrain

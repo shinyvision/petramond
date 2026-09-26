@@ -9,8 +9,6 @@
 //! Engine rows own the low ids in the frozen order below; a pack adds a
 //! condition with a namespaced key.
 
-use std::sync::LazyLock;
-
 mod body;
 mod load;
 
@@ -84,13 +82,25 @@ pub fn defs() -> &'static [ConditionDef] {
     catalog().rows()
 }
 
+/// The condition catalog stage of every content registry (conditions name
+/// particle emitter bundles, so it builds after them).
+pub(crate) static CATALOG: crate::content::Slot<crate::registry::Catalog<ConditionDef>> =
+    crate::content::Slot::new(
+        crate::content::stage::CONDITIONS,
+        &[crate::content::stage::PARTICLE_EMITTERS],
+        load_catalog,
+    );
+
+fn load_catalog(
+    reg: &crate::content::ContentRegistry,
+) -> Result<crate::registry::Catalog<ConditionDef>, String> {
+    crate::registry::read_catalog(reg.packs(), "conditions.json", "condition", |texts| {
+        load::parse_layers(texts, ENGINE_CONDITION_NAMES, true)
+    })
+}
+
 fn catalog() -> &'static crate::registry::Catalog<ConditionDef> {
-    static TABLE: LazyLock<crate::registry::Catalog<ConditionDef>> = LazyLock::new(|| {
-        crate::registry::read_catalog("conditions.json", "condition", |texts| {
-            load::parse_layers(texts, ENGINE_CONDITION_NAMES, true)
-        })
-    });
-    &TABLE
+    CATALOG.current()
 }
 
 /// Parse synthetic layers without engine names or emitter validation.

@@ -765,6 +765,10 @@ fn render_macro(seed: u32, out: &str, stride: i32) {
 }
 
 fn main() {
+    if let Err(e) = petramond::content::install_from_env(&[petramond_render::atlas::stage()]) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
     // Map colours are pixel-derived; compose the atlas up front so
     // `tile::map_rgb` answers real colours, not the headless gray.
     petramond_render::atlas::ensure_composed();

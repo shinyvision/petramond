@@ -68,8 +68,6 @@ pub use spawn::{
 };
 
 use petramond_world::fluid::Buoyancy;
-use std::sync::LazyLock;
-
 use petramond_world::bbmodel::Model;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
@@ -237,9 +235,7 @@ impl Mob {
 
     /// Every registered species in id order (engine + pack-registered).
     pub fn all() -> &'static [Mob] {
-        static ALL: LazyLock<Vec<Mob>> =
-            LazyLock::new(|| (0..defs().len()).map(|id| Mob(id as u8)).collect());
-        &ALL
+        &catalog().all
     }
 }
 
@@ -704,8 +700,8 @@ pub struct BrainNode {
 impl BrainNode {
     /// Run the factory once, discarding the behavior — the loader's validation pass,
     /// so a bad row fails the catalog load instead of the first spawn. `all` is the
-    /// in-flight def table (validation runs inside the `defs()` initializer, so the
-    /// factory must never reach for the LazyLock itself).
+    /// in-flight def table (validation runs inside the catalog's own build, so the
+    /// factory must never reach for `defs()` itself).
     fn validate(&self, def: &'static MobDef, all: &[MobDef]) -> Result<(), String> {
         (self.factory)(self.node, self.params, self.inputs, def, all).map(|_| ())
     }
@@ -951,12 +947,52 @@ pub const MAX_MOB_TAGS: usize = 32;
 /// keeps the wire-facing seat index an honest small integer.
 pub const MAX_MOB_SEATS: usize = 8;
 
-/// The loaded mob catalog — the def table plus the brain-extension side table
-/// [`build_brain`] appends from. Loads exactly once, on first access; a
-/// missing or inconsistent `mobs.json` fails loudly at startup.
+/// One content registry's mob catalog: the def table plus the
+/// brain-extension side table [`build_brain`] appends from, and the lookups
+/// derived from them.
+pub(crate) struct MobCatalog {
+    loaded: load::LoadedMobs,
+    all: Box<[Mob]>,
+    /// [`MobDef::key`] → species, so a key lookup never scans `defs()`.
+    by_key: rustc_hash::FxHashMap<&'static str, Mob>,
+}
+
+/// The mob catalog as a content-registry stage (see [`crate::content::stages`]);
+/// a missing or inconsistent `mobs.json` fails the registry build.
+pub(crate) static CATALOG: petramond_world::content::Slot<MobCatalog> =
+    petramond_world::content::Slot::new(
+        "mobs.json",
+        &[
+            petramond_world::content::stage::ITEMS,
+            petramond_world::content::stage::LOOT,
+            petramond_world::content::stage::PARTICLE_EMITTERS,
+            petramond_world::content::stage::SOUNDS,
+            petramond_world::content::stage::BIOMES,
+            petramond_world::content::stage::EFFECTS,
+        ],
+        load_catalog,
+    );
+
+fn load_catalog(reg: &petramond_world::content::ContentRegistry) -> Result<MobCatalog, String> {
+    let loaded = load::table(reg.packs())?;
+    Ok(MobCatalog {
+        all: (0..loaded.defs.len()).map(|id| Mob(id as u8)).collect(),
+        by_key: loaded
+            .defs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.key, Mob(i as u8)))
+            .collect(),
+        loaded,
+    })
+}
+
+fn catalog() -> &'static MobCatalog {
+    CATALOG.current()
+}
+
 fn loaded() -> &'static load::LoadedMobs {
-    static LOADED: LazyLock<load::LoadedMobs> = LazyLock::new(load::table);
-    &LOADED
+    &catalog().loaded
 }
 
 /// The loaded, id-ordered mob def table (engine rows first, then pack rows in load
@@ -979,17 +1015,10 @@ pub fn def(mob: Mob) -> &'static MobDef {
 }
 
 /// The species registered under `key` ([`MobDef::key`] — the mod-facing
-/// species vocabulary), O(1) through a hash index built once. `None` =
+/// species vocabulary), O(1) through the catalog's hash index. `None` =
 /// unregistered. Never scan `defs()` per call for a key lookup.
 pub fn by_key(key: &str) -> Option<Mob> {
-    static INDEX: LazyLock<rustc_hash::FxHashMap<&'static str, Mob>> = LazyLock::new(|| {
-        defs()
-            .iter()
-            .enumerate()
-            .map(|(i, d)| (d.key, Mob(i as u8)))
-            .collect()
-    });
-    INDEX.get(key).copied()
+    catalog().by_key.get(key).copied()
 }
 
 /// Every species' compiled [`Model`](petramond_world::bbmodel::Model), indexed by `Mob` id —
@@ -997,9 +1026,12 @@ pub fn by_key(key: &str) -> Option<Mob> {
 /// `.llmob` on a cache miss, else fast-loading the `.llmob`) and shared by the renderer and
 /// the simulation. Sources are read through the pack overlay, so a pack can override a
 /// species' art by shipping the same relative path. After this builds, nothing in the
-/// running engine reads a `.bbmodel`.
-static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
-    defs()
+/// running engine reads a `.bbmodel`. A derived view of the content registry.
+static MODELS: petramond_world::content::Slot<Vec<Model>> =
+    petramond_world::content::Slot::new("mob models", &["mobs.json"], compile_models);
+
+fn compile_models(_: &petramond_world::content::ContentRegistry) -> Result<Vec<Model>, String> {
+    Ok(defs()
         .iter()
         .map(|d| {
             let m = d.mob;
@@ -1014,14 +1046,14 @@ static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
                 },
             )
         })
-        .collect()
-});
+        .collect())
+}
 
-/// This species' precached [`Model`], borrowed for the process
-/// lifetime: the renderer bakes geometry from it each frame and the simulation derives its
-/// skeleton + idle metadata from it (see `model_meta`).
+/// This species' precached [`Model`], borrowed from the current content registry: the
+/// renderer bakes geometry from it each frame and the simulation derives its skeleton +
+/// idle metadata from it (see `model_meta`).
 pub fn model(mob: Mob) -> &'static Model {
-    &MODELS[mob.0 as usize]
+    &MODELS.current()[mob.0 as usize]
 }
 
 /// A deterministic per-mob RNG (a SplitMix64-style finalizer over a seed + counter).

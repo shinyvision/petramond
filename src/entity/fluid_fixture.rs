@@ -1,6 +1,7 @@
 //! Synthetic fluid and body rows for the behaviour tests that must not depend
-//! on authored water, lava or species tuning. The pack is staged for a child
-//! test process, where its rows join the real registries.
+//! on authored water, lava or species tuning. The pack is staged in a fresh
+//! mods root and loaded into a registry of its own ([`with_content`]), pinned
+//! on the test's thread — the process registry never sees it.
 
 use std::path::PathBuf;
 
@@ -65,6 +66,14 @@ pub fn stage(tag: &str) -> PathBuf {
         ]}),
     );
     root
+}
+
+/// Stage the pack and run `body` against a content registry of its own,
+/// pinned on this thread (see [`crate::modding::tests::with_fixture_content`]).
+/// The fixture's rows never reach the process registry, so these tests run
+/// in-process beside every other test.
+pub fn with_content(tag: &str, body: impl FnOnce()) {
+    crate::modding::tests::with_fixture_content(&stage(tag), body);
 }
 
 /// A complete synthetic fluid block row with the given motion knobs and

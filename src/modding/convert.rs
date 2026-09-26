@@ -268,7 +268,10 @@ pub(super) fn item_stack_in(data: &api::ItemStackData) -> Option<petramond_world
             map.insert(k.clone(), v.clone());
         }
         if variant::valid(&map) {
-            variant::intern(&map).unwrap_or(variant::VariantId::NONE)
+            variant::intern(&map).unwrap_or_else(|e| {
+                log::warn!("event drops override for '{}': {e}", data.item);
+                variant::VariantId::NONE
+            })
         } else {
             log::warn!(
                 "event drops override for '{}': invalid instance data",

@@ -14,8 +14,17 @@
 pub struct ItemTag(u8);
 
 /// Engine item-tag names, id-ordered to match the consts on [`ItemTag`].
-static ITEM_TAGS: crate::registry::TagTable =
-    crate::registry::TagTable::new(&["planks", "logs", "fuel", "smeltable", "shovels", "raw_ore"]);
+static ITEM_TAGS: crate::content::Slot<crate::registry::TagTable> =
+    crate::content::Slot::new("item tags", &[], |_| {
+        Ok(crate::registry::TagTable::new(&[
+            "planks",
+            "logs",
+            "fuel",
+            "smeltable",
+            "shovels",
+            "raw_ore",
+        ]))
+    });
 
 impl ItemTag {
     /// Any wood-type planks (recipe selector `petramond:planks`).
@@ -38,24 +47,24 @@ impl ItemTag {
     /// `items.json` row entry), interning an unseen namespaced pack tag.
     /// `None` only for invalid names (a bare non-engine name).
     pub fn from_key(key: &str) -> Option<ItemTag> {
-        ITEM_TAGS.resolve(key).ok().map(ItemTag)
+        ITEM_TAGS.current().resolve(key).ok().map(ItemTag)
     }
 
     /// The registered name for this tag (engine tags bare, pack tags
     /// namespaced) — the inverse of [`from_key`](Self::from_key).
     pub fn name(self) -> &'static str {
-        ITEM_TAGS.name(self.0)
+        ITEM_TAGS.current().name(self.0)
     }
 
     /// Loader-side [`from_key`](Self::from_key) that surfaces the error text.
     pub fn resolve(name: &str) -> Result<ItemTag, String> {
-        ITEM_TAGS.resolve(name).map(ItemTag)
+        ITEM_TAGS.current().resolve(name).map(ItemTag)
     }
 
     /// Look up an already-registered tag name without interning — the QUERY
     /// path (the mod ABI's `ItemsByTag`): an unknown name is simply a tag no
     /// item carries, never a new registration.
     pub fn lookup(name: &str) -> Option<ItemTag> {
-        ITEM_TAGS.lookup(name).map(ItemTag)
+        ITEM_TAGS.current().lookup(name).map(ItemTag)
     }
 }

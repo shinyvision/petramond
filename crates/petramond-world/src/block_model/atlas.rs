@@ -4,15 +4,14 @@
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::LazyLock;
 
 mod packing;
 
-use super::{all, BlockModelKind, MODELS};
+use super::{all, models, BlockModelKind};
 
 /// Every model kind's texture packed into one RGBA sheet, with a
 /// per-kind UV transform into it, so all model geometry in a chunk draws with a single
-/// texture bind. Built once from [`MODELS`]; the mesher remaps each face UV through
+/// texture bind. Built once from the compiled models; the mesher remaps each face UV through
 /// [`remap`](Self::remap) and the renderer uploads [`rgba`](Self::rgba).
 pub struct ModelAtlas {
     rgba: Vec<u8>,
@@ -31,8 +30,8 @@ impl ModelAtlas {
         // content deduplication safe even when two hashes collide.
         let mut hashes: HashMap<u64, Vec<usize>> = HashMap::new();
         let mut unique: Vec<usize> = Vec::new();
-        let mut entries = Vec::with_capacity(MODELS.len());
-        for (i, m) in MODELS.iter().enumerate() {
+        let mut entries = Vec::with_capacity(models().len());
+        for (i, m) in models().iter().enumerate() {
             let mut hash = std::collections::hash_map::DefaultHasher::new();
             (m.tex_w, m.tex_h, &m.texture_rgba).hash(&mut hash);
             let candidates = hashes.entry(hash.finish()).or_default();
@@ -40,7 +39,7 @@ impl ModelAtlas {
                 .iter()
                 .copied()
                 .find(|&slot| {
-                    let other = &MODELS[unique[slot]];
+                    let other = &models()[unique[slot]];
                     m.tex_w == other.tex_w
                         && m.tex_h == other.tex_h
                         && m.texture_rgba == other.texture_rgba
@@ -55,13 +54,13 @@ impl ModelAtlas {
         }
         let sizes: Vec<_> = unique
             .iter()
-            .map(|&i| [MODELS[i].tex_w.max(1), MODELS[i].tex_h.max(1)])
+            .map(|&i| [models()[i].tex_w.max(1), models()[i].tex_h.max(1)])
             .collect();
         let layout = packing::pack(&sizes, 8192).expect("block model atlas");
         let [w, h] = layout.size;
         let mut rgba = vec![0u8; (w * h * 4) as usize];
         for (&i, &[x_off, y_off]) in unique.iter().zip(&layout.origins) {
-            let m = &MODELS[i];
+            let m = &models()[i];
             for row in 0..m.tex_h {
                 let src = (row * m.tex_w * 4) as usize;
                 let dst = (((y_off + row) * w + x_off) * 4) as usize;
@@ -71,8 +70,8 @@ impl ModelAtlas {
                 }
             }
         }
-        let mut xform = Vec::with_capacity(MODELS.len());
-        for (m, &entry) in MODELS.iter().zip(&entries) {
+        let mut xform = Vec::with_capacity(models().len());
+        for (m, &entry) in models().iter().zip(&entries) {
             let [x_off, y_off] = layout.origins[entry];
             xform.push([
                 x_off as f32 / w as f32,
@@ -231,10 +230,21 @@ impl ModelAtlas {
     }
 }
 
-/// The combined model texture atlas (built once).
+/// The combined model texture atlas of a content registry — a derived view,
+/// packed on first use from the registry's compiled models.
+static ATLAS: crate::content::Slot<ModelAtlas> = crate::content::Slot::new(
+    "block model atlas",
+    &[crate::content::stage::MODELS],
+    build_atlas,
+);
+
+fn build_atlas(_: &crate::content::ContentRegistry) -> Result<ModelAtlas, String> {
+    Ok(ModelAtlas::build())
+}
+
+/// The current registry's combined model texture atlas.
 pub fn atlas() -> &'static ModelAtlas {
-    static ATLAS: LazyLock<ModelAtlas> = LazyLock::new(ModelAtlas::build);
-    &ATLAS
+    ATLAS.current()
 }
 
 // ---------------------------------------------------------------------------------
@@ -251,12 +261,20 @@ struct ParticlePatches {
     size_local: f32,
 }
 
-static PATCHES: LazyLock<Vec<ParticlePatches>> =
-    LazyLock::new(|| all().iter().map(|&k| ParticlePatches::scan(k)).collect());
+/// Every kind's fleck patches, a derived view of the content registry.
+static PATCHES: crate::content::Slot<Vec<ParticlePatches>> = crate::content::Slot::new(
+    "block model particle patches",
+    &[crate::content::stage::MODELS],
+    scan_patches,
+);
+
+fn scan_patches(_: &crate::content::ContentRegistry) -> Result<Vec<ParticlePatches>, String> {
+    Ok(all().iter().map(|&k| ParticlePatches::scan(k)).collect())
+}
 
 impl ParticlePatches {
     fn scan(kind: BlockModelKind) -> Self {
-        let m = &MODELS[kind.0 as usize];
+        let m = &models()[kind.0 as usize];
         let (tw, th) = (m.tex_w.max(1), m.tex_h.max(1));
         // A 4-texel fleck patch, stepped across the sheet on the same stride.
         let patch = 4u32.min(tw).min(th);
@@ -289,7 +307,7 @@ impl ParticlePatches {
 /// The patch is inset half a sheet texel per side: a UV exactly on a packing boundary resolves
 /// (nearest filtering) to the NEIGHBOURING kind's texels.
 pub fn particle_patch(kind: BlockModelKind, r: f32) -> ([f32; 2], [f32; 2]) {
-    let p = &PATCHES[kind.0 as usize];
+    let p = &PATCHES.current()[kind.0 as usize];
     let at = atlas();
     let min_local = if p.mins.is_empty() {
         [0.0, 0.0]

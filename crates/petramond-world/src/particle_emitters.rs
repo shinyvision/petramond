@@ -24,8 +24,6 @@
 //! give it a density, with no mod involved. [`biome_intensity`] is that
 //! per-(bundle, biome) table; [`biome_driven`] lists the bundles it covers.
 
-use std::sync::LazyLock;
-
 use serde::Deserialize;
 
 use crate::block::{BlockTag, ParticleEmitter};
@@ -467,20 +465,41 @@ fn catalog() -> &'static crate::registry::Catalog<EmitterBundle> {
     &tables().0
 }
 
-/// The bundle catalog plus the biome-density table over it. Both fail loudly
-/// at first use, like every catalog: a biome row naming a bundle that does not
-/// exist (or is not ambient) is a content error, not a silent no-show.
+/// The bundle catalog plus the biome-density table over it — one stage of
+/// every content registry, after the biomes (and the tiles and sounds bundles
+/// name). Either failing fails the registry build: a biome row naming a
+/// bundle that does not exist (or is not ambient) is a content error, not a
+/// silent no-show.
+pub(crate) static TABLES: crate::content::Slot<(
+    crate::registry::Catalog<EmitterBundle>,
+    BiomeTable,
+)> = crate::content::Slot::new(
+    crate::content::stage::PARTICLE_EMITTERS,
+    &[
+        crate::content::stage::TILES,
+        crate::content::stage::SOUNDS,
+        crate::content::stage::BIOMES,
+    ],
+    load,
+);
+
+fn load(
+    reg: &crate::content::ContentRegistry,
+) -> Result<(crate::registry::Catalog<EmitterBundle>, BiomeTable), String> {
+    let catalog = crate::registry::read_catalog(
+        reg.packs(),
+        "particle_emitters.json",
+        "emitter",
+        parse_layers,
+    )?;
+    let rows = crate::biome::Biome::all().map(|biome| (biome.id(), biome.ambient()));
+    let table = BiomeTable::build(&catalog, rows)
+        .map_err(|e| format!("biomes.json ambient densities: {e}"))?;
+    Ok((catalog, table))
+}
+
 fn tables() -> &'static (crate::registry::Catalog<EmitterBundle>, BiomeTable) {
-    static TABLES: LazyLock<(crate::registry::Catalog<EmitterBundle>, BiomeTable)> =
-        LazyLock::new(|| {
-            let catalog =
-                crate::registry::read_catalog("particle_emitters.json", "emitter", parse_layers);
-            let rows = crate::biome::Biome::all().map(|biome| (biome.id(), biome.ambient()));
-            let table = BiomeTable::build(&catalog, rows)
-                .unwrap_or_else(|e| panic!("biomes.json ambient densities: {e}"));
-            (catalog, table)
-        });
-    &TABLES
+    TABLES.current()
 }
 
 /// The density at which `biome` drives `bundle` — the biome row's `ambient`
@@ -499,7 +518,7 @@ pub fn biome_driven() -> &'static [u8] {
 }
 
 /// Per-(bundle, biome) density, dense over the byte id spaces.
-struct BiomeTable {
+pub(crate) struct BiomeTable {
     /// `cells[bundle * 256 + biome]`; rows of bundles no biome names are all 1.
     cells: Box<[f32]>,
     driven: Box<[u8]>,

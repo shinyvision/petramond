@@ -1,6 +1,7 @@
-//! Fluid meshing on SYNTHETIC rows: a pack staged for a child test process
-//! adds its own fluids and tiles, so nothing here depends on authored water or
-//! lava — and the fluids it adds are a third and fourth medium.
+//! Fluid meshing on SYNTHETIC rows: a pack staged into a registry of the
+//! test's own adds its own fluids and tiles, so nothing here depends on
+//! authored water or lava — and the fluids it adds are a third and fourth
+//! medium.
 
 use super::fluid::{assert_meshes_from_its_row, face_of, fluid_quads, medium_slot};
 use super::*;
@@ -72,17 +73,8 @@ fn stage() -> std::path::PathBuf {
 #[test]
 fn synthetic_fluid_rows() {
     let root = stage();
-    let run = petramond_world::test_child::run_ignored(
-        "tests::synthetic_fluids::inner",
-        [("PETRAMOND_MODS", root.join("mods"))],
-    );
-    let _ = std::fs::remove_dir_all(&root);
-    run.assert_passed();
-}
-
-#[test]
-#[ignore = "runs in a child process with the synthetic pack staged"]
-fn inner() {
+    let content = petramond_world::content::test_support::with_mods(&root.join("mods"));
+    let _pin = petramond_world::content::pin(content);
     let tar = block(TAR);
     let mist = block(MIST);
     assert!(
@@ -95,6 +87,7 @@ fn inner() {
     an_opaque_top_under_a_lid_draws_only_when_recessed(tar, mist);
     only_a_full_opaque_medium_covers_the_faces_behind_it(tar, mist);
     biome_tinted_fluid_tiles_mark_the_section(tar, mist);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 fn block(name: &str) -> Block {

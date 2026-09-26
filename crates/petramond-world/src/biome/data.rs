@@ -17,7 +17,6 @@
 //! catalog caps at 255 biomes (id 0 is unassigned).
 
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
 
 use serde::Deserialize;
 
@@ -90,10 +89,18 @@ struct RawFile {
     biomes: Vec<RawBiomeDef>,
 }
 
+/// The biome catalog stage of every content registry.
+pub(crate) static CATALOG: crate::content::Slot<crate::registry::Catalog<BiomeDef>> =
+    crate::content::Slot::new(crate::content::stage::BIOMES, &[], load);
+
+fn load(
+    reg: &crate::content::ContentRegistry,
+) -> Result<crate::registry::Catalog<BiomeDef>, String> {
+    crate::registry::read_catalog(reg.packs(), "biomes.json", "biome", parse_layers)
+}
+
 fn catalog() -> &'static crate::registry::Catalog<BiomeDef> {
-    static TABLE: LazyLock<crate::registry::Catalog<BiomeDef>> =
-        LazyLock::new(|| crate::registry::read_catalog("biomes.json", "biome", parse_layers));
-    &TABLE
+    CATALOG.current()
 }
 
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BiomeDef>, String> {

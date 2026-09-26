@@ -4,6 +4,8 @@
 mod data;
 mod definition;
 
+pub(crate) use data::CATALOG;
+
 /// A surface biome: an opaque one-byte registry id into the layered
 /// `biomes.json` catalog, like blocks and underground biomes.
 ///

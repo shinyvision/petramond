@@ -67,7 +67,7 @@ pub use geometry::cube_is_flat_plane;
 pub use geometry::render_face_bias;
 pub use placement::placement_transform_fp;
 
-use compiled::MODELS;
+use compiled::models;
 use geometry::{box_corners, cell_of, clip_to_cell, posed_cube_bounds, union_clip_to_cell};
 use placement::oriented_cell_instance;
 

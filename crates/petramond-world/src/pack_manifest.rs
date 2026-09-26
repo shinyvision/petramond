@@ -1,5 +1,5 @@
 //! Pack manifest semantics: load-order resolution and namespace-prefix
-//! validation. Pure functions — `crate::assets::packs()` does the filesystem
+//! validation. Pure functions — `crate::assets::PackSet::discover` does the filesystem
 //! walking and feeds them.
 //!
 //! Load order = topological sort by `dependencies` + `after`, ties broken by

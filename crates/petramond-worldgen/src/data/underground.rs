@@ -6,7 +6,6 @@
 //!
 //! This table resolves blocks, so do not initialize it from a block registry loader.
 
-use std::sync::LazyLock;
 
 use serde::Deserialize;
 
@@ -462,23 +461,38 @@ fn default_blend() -> [f64; 2] {
 // has to widen (and hence generation cost), not the author's taste. Violations
 // are load errors: loud beats plausible.
 
-/// The process-wide table, built once from the real catalog layers.
-///
-/// See the module docs: safe from worldgen and the host-call handlers, never
-/// from a block/item/shape loader.
 mod load;
 
 use load::parse_layers;
 
+/// The underground-biome catalog stage (see [`super::content_stages`]).
+pub(crate) static TABLE: petramond_world::content::Slot<UndergroundBiomes> =
+    petramond_world::content::Slot::new(
+        "underground_biomes.json",
+        &[
+            petramond_world::content::stage::TILES,
+            petramond_world::content::stage::BLOCKS,
+        ],
+        load_table,
+    );
+
+fn load_table(
+    reg: &petramond_world::content::ContentRegistry,
+) -> Result<UndergroundBiomes, String> {
+    petramond_world::registry::read_catalog(
+        reg.packs(),
+        "underground_biomes.json",
+        "underground biome",
+        parse_layers,
+    )
+}
+
+/// The current registry's underground-biome table.
+///
+/// See the module docs: safe from worldgen and the host-call handlers, never
+/// from a block/item/shape loader.
 pub fn table() -> &'static UndergroundBiomes {
-    static TABLE: LazyLock<UndergroundBiomes> = LazyLock::new(|| {
-        petramond_world::registry::read_catalog(
-            "underground_biomes.json",
-            "underground biome",
-            parse_layers,
-        )
-    });
-    &TABLE
+    TABLE.current()
 }
 
 /// The underground-biome id registered under `name` — the mod ABI's resolver.

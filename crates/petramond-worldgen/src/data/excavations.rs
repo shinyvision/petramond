@@ -3,7 +3,6 @@
 use super::underground::UndergroundBiomes;
 use crate::noise::settings::{CAVE_LATTICE_STEP, CAVE_MIN_Y};
 use serde::Deserialize;
-use std::sync::LazyLock;
 
 pub mod effects;
 mod field;
@@ -108,13 +107,23 @@ pub struct Excavations {
     pub fingerprint: u64,
 }
 
+/// The excavation catalog stage (see [`super::content_stages`]).
+pub(crate) static TABLE: petramond_world::content::Slot<Excavations> =
+    petramond_world::content::Slot::new(
+        "excavations.json",
+        &["underground_biomes.json"],
+        load_table,
+    );
+
+fn load_table(reg: &petramond_world::content::ContentRegistry) -> Result<Excavations, String> {
+    petramond_world::registry::read_catalog(reg.packs(), "excavations.json", "excavation", |texts| {
+        load::parse_layers(texts, super::underground::TABLE.get(reg))
+    })
+}
+
+/// The current registry's excavation table.
 pub fn table() -> &'static Excavations {
-    static TABLE: LazyLock<Excavations> = LazyLock::new(|| {
-        petramond_world::registry::read_catalog("excavations.json", "excavation", |texts| {
-            load::parse_layers(texts, super::underground::table())
-        })
-    });
-    &TABLE
+    TABLE.current()
 }
 
 #[cfg(test)]

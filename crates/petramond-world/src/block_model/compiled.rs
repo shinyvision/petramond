@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -347,11 +345,24 @@ impl CompiledAsset for BlockModel {
     }
 }
 
-/// Every kind's compiled [`BlockModel`], indexed by raw kind id — the cached parse,
-/// precached once on first use (compiling each `.bbmodel` → `.llblock` on a miss, else
-/// fast-loading the `.llblock`).
-pub(super) static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
-    all()
+/// Every kind's compiled [`BlockModel`], indexed by raw kind id — the cached parse
+/// (compiling each `.bbmodel` → `.llblock` on a miss, else fast-loading the
+/// `.llblock`). A derived view of the content registry, compiled on first use: a
+/// model that fails to load logs and draws empty rather than failing the registry.
+static MODELS: crate::content::Slot<Vec<BlockModel>> = crate::content::Slot::new(
+    "compiled block models",
+    &[crate::content::stage::MODELS],
+    compile_models,
+);
+
+/// The current registry's compiled models (see [`MODELS`]).
+#[inline]
+pub(super) fn models() -> &'static [BlockModel] {
+    MODELS.current()
+}
+
+fn compile_models(_: &crate::content::ContentRegistry) -> Result<Vec<BlockModel>, String> {
+    Ok(all()
         .iter()
         .map(|&k| {
             let d = def(k);
@@ -388,5 +399,5 @@ pub(super) static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
             }
             model
         })
-        .collect()
-});
+        .collect())
+}

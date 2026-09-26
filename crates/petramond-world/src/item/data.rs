@@ -5,10 +5,8 @@
 //! moddable — without a rebuild. This module keeps only what must stay compiled
 //! in: the engine item NAMES in frozen id order (index == id — the completeness
 //! oracle the loader validates the file against, and the low half of the
-//! runtime name table packs extend; see `crate::registry`) and the
-//! lazily-loaded table the accessors read.
-
-use std::sync::LazyLock;
+//! runtime name table packs extend; see `crate::registry`) and the accessors
+//! over the current content registry's item table (see `crate::content`).
 
 use crate::block::Block;
 
@@ -184,67 +182,90 @@ pub const ENGINE_ITEM_NAMES: &[&str] = &[
     "petramond:redwood_trapdoor",
 ];
 
-/// The JSON-loaded item table. Loads exactly once, on first access; the loader
-/// panics with a precise message if the file is missing or inconsistent.
-static TABLE: LazyLock<&'static [ItemDef]> = LazyLock::new(load::table);
-
-/// Every registered item in id order (engine + pack-registered).
-pub(super) fn all() -> &'static [ItemType] {
-    static ALL: LazyLock<Vec<ItemType>> =
-        LazyLock::new(|| (0..TABLE.len()).map(|id| ItemType(id as u16)).collect());
-    &ALL
+/// One content registry's item table plus the lookups derived from it (see
+/// `crate::content`; the rows come from `super::load`).
+pub(crate) struct ItemTables {
+    defs: &'static [ItemDef],
+    /// Every registered item in id order (engine + pack-registered).
+    all: Box<[ItemType]>,
+    /// Dense block-id → item LUT, inverted from the rows' `block` links
+    /// (`"block"` in `items.json`). A block no row links to maps to `Air`
+    /// (nothing to hold); if several rows link one block, the lowest item id
+    /// wins (the growth-stage pattern: only the planting item links the
+    /// stage-0 block, later stages link nothing).
+    block_to_item: Box<[ItemType]>,
+    /// Keyed hash index over the rows' recipe `key`s (unique — the loader
+    /// enforces it). The engine-internal keyed lookup (recipes, loot tables);
+    /// mod-facing identity is the registry NAME.
+    key_to_item: std::collections::HashMap<&'static str, ItemType>,
 }
 
-#[inline]
-pub(super) fn from_id(id: u16) -> ItemType {
-    TABLE.get(id as usize).map_or(ItemType::Air, |d| d.item)
-}
-
-#[inline]
-pub(super) fn def(item: ItemType) -> &'static ItemDef {
-    TABLE.get(item.id() as usize).unwrap_or(&TABLE[0])
-}
-
-/// Dense block-id → item LUT, inverted once from the rows' `block` links
-/// (`"block"` in `items.json`). A block no row links to maps to `Air`
-/// (nothing to hold); if several rows link one block, the lowest item id
-/// wins (the growth-stage pattern: only the planting item links the stage-0
-/// block, later stages link nothing).
-static BLOCK_TO_ITEM: LazyLock<Box<[ItemType]>> = LazyLock::new(|| {
-    let n = crate::block::Block::all().len();
-    let mut lut = vec![ItemType::Air; n].into_boxed_slice();
-    let mut set = vec![false; n].into_boxed_slice();
-    for d in TABLE.iter() {
+/// The content loader's items stage: load every `items.json` layer of `packs`
+/// against `names`, then derive the lookups. Reads the block table (the
+/// block-link LUT is sized to it), so it runs after the blocks stage.
+pub(crate) fn load_tables(
+    packs: &crate::assets::PackSet,
+    names: &crate::registry::ContentNames,
+) -> Result<ItemTables, String> {
+    let defs = load::table(packs, names)?;
+    let n = Block::all().len();
+    let mut block_to_item = vec![ItemType::Air; n].into_boxed_slice();
+    let mut linked = vec![false; n].into_boxed_slice();
+    for d in defs {
         if d.key.starts_with(super::creative::PREFIX) {
             continue;
         }
         if let Some(b) = d.block {
-            if !set[b.id() as usize] {
-                lut[b.id() as usize] = d.item;
-                set[b.id() as usize] = true;
+            if !linked[b.id() as usize] {
+                block_to_item[b.id() as usize] = d.item;
+                linked[b.id() as usize] = true;
             }
         }
     }
-    lut
-});
+    Ok(ItemTables {
+        defs,
+        all: (0..defs.len()).map(|id| ItemType(id as u16)).collect(),
+        block_to_item,
+        key_to_item: defs.iter().map(|d| (d.key, d.item)).collect(),
+    })
+}
+
+#[inline]
+fn tables() -> &'static ItemTables {
+    crate::content::current().items()
+}
+
+/// Every registered item in id order (engine + pack-registered).
+pub(super) fn all() -> &'static [ItemType] {
+    &tables().all
+}
+
+#[inline]
+pub(super) fn from_id(id: u16) -> ItemType {
+    tables()
+        .defs
+        .get(id as usize)
+        .map_or(ItemType::Air, |d| d.item)
+}
+
+#[inline]
+pub(super) fn def(item: ItemType) -> &'static ItemDef {
+    let defs = tables().defs;
+    defs.get(item.id() as usize).unwrap_or(&defs[0])
+}
 
 /// The item whose row links it to `block`, or `Air` if none does.
 #[inline]
 pub(super) fn item_for_block(block: Block) -> ItemType {
-    BLOCK_TO_ITEM
+    tables()
+        .block_to_item
         .get(block.id() as usize)
         .copied()
         .unwrap_or(ItemType::Air)
 }
 
-/// Keyed hash index over the rows' recipe `key`s (unique — the loader
-/// enforces it), built once with the table. The engine-internal keyed lookup
-/// (recipes, loot tables); mod-facing identity is the registry NAME.
-static KEY_TO_ITEM: LazyLock<std::collections::HashMap<&'static str, ItemType>> =
-    LazyLock::new(|| TABLE.iter().map(|d| (d.key, d.item)).collect());
-
 /// The item whose row carries recipe `key`, or `None`.
 #[inline]
 pub(super) fn item_for_key(key: &str) -> Option<ItemType> {
-    KEY_TO_ITEM.get(key).copied()
+    tables().key_to_item.get(key).copied()
 }

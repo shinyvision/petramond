@@ -17,8 +17,7 @@
 //! shared rules). Because the scheduler picks uniformly over the whole loaded table,
 //! a pack that adds tracks joins the rotation with no engine change.
 
-use std::sync::LazyLock;
-
+use petramond_world::content::{ContentRegistry, Slot};
 use petramond_world::registry;
 use serde::Deserialize;
 
@@ -110,16 +109,23 @@ pub fn by_name(name: &str) -> Option<MusicTrack> {
     catalog().id(name).map(|id| MusicTrack(id as u8))
 }
 
-/// The loaded music table, id-ordered (`defs()[track.0]`). Loads exactly once;
-/// a missing or inconsistent `music.json` fails loudly at startup.
+/// The current registry's music table, id-ordered (`defs()[track.0]`). A
+/// missing or inconsistent `music.json` fails the registry build when the
+/// process registers [`CATALOG`] as a stage.
 pub fn defs() -> &'static [MusicDef] {
     catalog().rows()
 }
 
+/// The music catalog as a content-registry stage; the client passes it to
+/// its `ContentLoader` so a bad track row is part of the load report.
+pub static CATALOG: Slot<registry::Catalog<MusicDef>> = Slot::new("music.json", &[], load);
+
+fn load(reg: &ContentRegistry) -> Result<registry::Catalog<MusicDef>, String> {
+    registry::read_catalog(reg.packs(), "music.json", "music track", parse_layers)
+}
+
 fn catalog() -> &'static registry::Catalog<MusicDef> {
-    static TABLE: LazyLock<registry::Catalog<MusicDef>> =
-        LazyLock::new(|| registry::read_catalog("music.json", "music track", parse_layers));
-    &TABLE
+    CATALOG.current()
 }
 
 fn parse_layers(texts: &[&str]) -> Result<registry::Catalog<MusicDef>, String> {

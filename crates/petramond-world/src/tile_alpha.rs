@@ -5,17 +5,17 @@
 //! the alpha channel itself (headless included) instead of riding the
 //! client's composed atlas.
 
-use std::sync::OnceLock;
-
+use crate::assets::PackSet;
 use crate::tile::Tile;
 
 /// Fixed tile edge length in texels (the atlas cell size).
 const TILE_SIZE: usize = 16;
 const ALPHA_CUTOFF: u8 = 128;
 
-fn cell_alpha(file: &str, frame: u32) -> Result<image::RgbaImage, String> {
+fn cell_alpha(packs: &PackSet, file: &str, frame: u32) -> Result<image::RgbaImage, String> {
     let rel = format!("textures/{file}");
-    let (bytes, _) = crate::assets::read_bytes(&rel)
+    let (bytes, _) = packs
+        .read_bytes(&rel)
         .ok_or_else(|| format!("missing texture '{rel}' (searched the asset roots)"))?;
     let img = image::load_from_memory(&bytes)
         .map_err(|e| format!("failed to decode '{rel}': {e}"))?
@@ -43,12 +43,20 @@ pub struct TileAlphaBounds {
     pub v_max: f32,
 }
 
-struct TileAlphaData {
+pub(crate) struct TileAlphaData {
     rows: Vec<[u16; TILE_SIZE]>,
     bounds: Vec<Option<TileAlphaBounds>>,
 }
 
-static TILE_ALPHA: OnceLock<TileAlphaData> = OnceLock::new();
+/// The cutout masks of every tile — a content-registry stage after the
+/// tiles, so a missing or undecodable texture fails the registry build with
+/// the tile named, instead of panicking the first cutout raycast (on a
+/// headless server too).
+pub(crate) static TABLE: crate::content::Slot<TileAlphaData> = crate::content::Slot::new(
+    crate::content::stage::TILE_ALPHA,
+    &[crate::content::stage::TILES],
+    build_tile_alpha_data,
+);
 
 /// True when a bottom-up tile coordinate lands on a texel that survives the
 /// cutout alpha test used by `fs_opaque`.
@@ -64,18 +72,24 @@ pub fn tile_alpha_bounds(tile: Tile) -> Option<TileAlphaBounds> {
 }
 
 fn tile_alpha_data() -> &'static TileAlphaData {
-    TILE_ALPHA.get_or_init(build_tile_alpha_data)
+    TABLE.current()
 }
 
-fn build_tile_alpha_data() -> TileAlphaData {
+fn build_tile_alpha_data(reg: &crate::content::ContentRegistry) -> Result<TileAlphaData, String> {
     let cells = crate::tile::cells();
     let mut rows = vec![[0u16; TILE_SIZE]; cells.len()];
     let mut bounds = vec![None; cells.len()];
+    let mut errors = Vec::new();
 
     for tile in Tile::all() {
         let cell = &cells[tile.index()];
-        let pixels = cell_alpha(&cell.file, cell.frame)
-            .unwrap_or_else(|e| panic!("tile alpha for '{}': {e}", cell.name));
+        let pixels = match cell_alpha(reg.packs(), &cell.file, cell.frame) {
+            Ok(pixels) => pixels,
+            Err(e) => {
+                errors.push(format!("tile '{}': {e}", cell.name));
+                continue;
+            }
+        };
         let mut min_x = TILE_SIZE;
         let mut min_y = TILE_SIZE;
         let mut max_x = 0usize;
@@ -106,7 +120,10 @@ fn build_tile_alpha_data() -> TileAlphaData {
         }
     }
 
-    TileAlphaData { rows, bounds }
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
+    Ok(TileAlphaData { rows, bounds })
 }
 
 fn texel_coord(v: f32) -> usize {

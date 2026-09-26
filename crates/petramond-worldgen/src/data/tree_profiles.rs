@@ -7,7 +7,6 @@
 //! are named `features.json` rows, so a pack-added tree species is placed by
 //! naming it here. A row without `trees` roots nothing.
 
-use std::sync::LazyLock;
 
 use petramond_world::biome::Biome;
 use serde::Deserialize;
@@ -173,16 +172,24 @@ fn parse(trees: Option<&str>) -> Result<TreeProfile, String> {
     }
 }
 
+/// Every biome's tree profile, in id order — a registry stage after the
+/// biome and feature catalogs (see [`super::content_stages`]); every bad
+/// biome row is reported.
+pub(crate) static TABLE: petramond_world::content::Slot<Box<[TreeProfile]>> =
+    petramond_world::content::Slot::new(
+        "biome trees",
+        &[petramond_world::content::stage::BIOMES, "features.json"],
+        load_table,
+    );
+
+fn load_table(_: &petramond_world::content::ContentRegistry) -> Result<Box<[TreeProfile]>, String> {
+    super::biome_gen::collect_rows(Biome::all().map(|biome| {
+        parse(biome.trees()).map_err(|e| format!("biomes.json: biome '{}': {e}", biome.key()))
+    }))
+}
+
 fn table() -> &'static [TreeProfile] {
-    static TABLE: LazyLock<Box<[TreeProfile]>> = LazyLock::new(|| {
-        Biome::all()
-            .map(|biome| {
-                parse(biome.trees())
-                    .unwrap_or_else(|e| panic!("biomes.json: biome '{}': {e}", biome.key()))
-            })
-            .collect()
-    });
-    &TABLE
+    TABLE.current()
 }
 
 /// The loaded tree profile of `biome`.

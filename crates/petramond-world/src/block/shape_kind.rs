@@ -41,6 +41,7 @@ mod load;
 mod neighborhood;
 pub mod run_form;
 
+pub(crate) use custom::CUSTOM_SHAPES;
 pub use custom::{CustomLight, CustomShapeDef};
 pub use facets::{
     full_face_at, light_aperture_face, pack_light_apertures, rests_flat_on_floor, FullFace,

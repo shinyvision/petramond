@@ -8,7 +8,7 @@ use super::{Aabb, Block, BlockInteraction, BlockShapeKind, BlockTag};
 // No `Debug`/`PartialEq`: the `behavior` trait object is neither, and nothing
 // compares or formats a whole `BlockDef` (callers read individual fields).
 #[derive(Copy, Clone)]
-pub(super) struct BlockDef {
+pub(crate) struct BlockDef {
     pub block: Block,
     pub flags: BlockFlags,
     pub contained_fluid: Option<Block>,

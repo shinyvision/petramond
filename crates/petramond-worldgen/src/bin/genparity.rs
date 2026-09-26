@@ -9,6 +9,12 @@ use std::process::ExitCode;
 use petramond_worldgen::parity;
 
 fn main() -> ExitCode {
+    if let Err(e) =
+        petramond_world::content::install_from_env(&petramond_worldgen::data::content_stages())
+    {
+        eprintln!("{e}");
+        return ExitCode::FAILURE;
+    }
     let combined = parity::combined_hash();
     println!("COMBINED={combined:016x}");
     if combined == parity::EXPECTED_COMBINED {

@@ -1,6 +1,5 @@
 use super::*;
 use serde::Deserialize;
-use std::sync::LazyLock;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,17 +36,23 @@ enum RawOutcome {
     Empty,
 }
 
-static LOOT: LazyLock<Loot> = LazyLock::new(|| {
-    crate::registry::read_catalog("loot_tables.json", "loot", |layers| {
-        parse_layers(layers, |key| {
-            crate::registry::names().items.id(key).map(ItemType)
-        })
-    })
-});
+/// The reward catalog stage of every content registry (rows name items, so
+/// it builds after the shared name tables).
+pub(crate) static CATALOG: crate::content::Slot<Loot> = crate::content::Slot::new(
+    crate::content::stage::LOOT,
+    &[crate::content::stage::NAMES],
+    load,
+);
 
-/// Load and validate the installed reward catalog once.
+fn load(reg: &crate::content::ContentRegistry) -> Result<Loot, String> {
+    crate::registry::read_catalog(reg.packs(), "loot_tables.json", "loot", |layers| {
+        parse_layers(layers, |key| reg.names().items.id(key).map(ItemType))
+    })
+}
+
+/// The current registry's reward catalog.
 pub fn catalog() -> &'static Loot {
-    &LOOT
+    CATALOG.current()
 }
 
 /// Shared parser for runtime catalogs, asset validation, and authoring tools.

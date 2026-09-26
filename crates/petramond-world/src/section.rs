@@ -19,6 +19,7 @@ use crate::furnace::Furnace;
 use crate::light::LightRgb;
 
 pub use cube::BlockCube;
+pub(crate) use metrics::METRICS;
 
 mod block_entities;
 mod cell_states;

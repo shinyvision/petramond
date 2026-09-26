@@ -4,12 +4,9 @@ use petramond_world::block::Block;
 
 #[test]
 fn shore_climbs_read_the_footprint_ahead() {
-    let root = fluid_fixture::stage("shore-probe");
-    crate::modding::tests::run_child_test(&root, "entity::shore::tests::shore_probe_inner");
+    fluid_fixture::with_content("shore-probe", shore_probe_inner);
 }
 
-#[test]
-#[ignore = "child of shore_climbs_read_the_footprint_ahead with fixture content"]
 fn shore_probe_inner() {
     a_ledge_under_the_leading_edge_counts_off_the_centre_line();
     a_ledge_without_headroom_is_no_shore();

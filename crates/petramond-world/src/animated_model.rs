@@ -22,7 +22,6 @@
 //! models by key, resolved once at block load.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 use serde::Deserialize;
 
@@ -187,11 +186,28 @@ pub fn by_key(key: &str) -> Option<&'static AnimatedModelDef> {
     catalog().id(key).map(|id| &catalog().rows()[id as usize])
 }
 
+/// The animated-model catalog stage of every content registry (parts name
+/// tiles, so it builds after the tiles stage).
+pub(crate) static CATALOG: crate::content::Slot<crate::registry::Catalog<AnimatedModelDef>> =
+    crate::content::Slot::new(
+        crate::content::stage::ANIMATED_MODELS,
+        &[crate::content::stage::TILES],
+        load,
+    );
+
+fn load(
+    reg: &crate::content::ContentRegistry,
+) -> Result<crate::registry::Catalog<AnimatedModelDef>, String> {
+    crate::registry::read_catalog(
+        reg.packs(),
+        "animated_models.json",
+        "animated model",
+        parse_layers,
+    )
+}
+
 fn catalog() -> &'static crate::registry::Catalog<AnimatedModelDef> {
-    static CATALOG: LazyLock<crate::registry::Catalog<AnimatedModelDef>> = LazyLock::new(|| {
-        crate::registry::read_catalog("animated_models.json", "animated model", parse_layers)
-    });
-    &CATALOG
+    CATALOG.current()
 }
 
 #[derive(Deserialize)]

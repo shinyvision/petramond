@@ -112,8 +112,11 @@ const MAX_KINDS: usize = 250;
 /// keys) can carry them. Bounded: manifests load once; tests add a handful.
 static INTERNED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
-/// Mod kind keys in registration order; index + engine count == id.
-static REGISTERED_KINDS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+/// Mod kind keys in registration order for one content registry; index +
+/// engine count == id. A second world's disabled packs must not inherit ids
+/// registered by the first world.
+static REGISTERED_KINDS: crate::content::Slot<Mutex<Vec<&'static str>>> =
+    crate::content::Slot::new("gui kinds", &[], |_| Ok(Mutex::new(Vec::new())));
 
 /// Deduplicate `s` into a `'static` string (see `INTERNED`).
 pub fn intern_str(s: &str) -> &'static str {
@@ -139,7 +142,7 @@ pub fn intern_kind(key: &str) -> Option<GuiKind> {
     if !crate::registry::is_namespaced(key) {
         return None;
     }
-    let mut kinds = REGISTERED_KINDS.lock().unwrap();
+    let mut kinds = REGISTERED_KINDS.current().lock().unwrap();
     if let Some(i) = kinds.iter().position(|n| *n == key) {
         return Some(GuiKind((ENGINE_GUI_KIND_NAMES.len() + i) as u8));
     }
@@ -159,7 +162,7 @@ pub fn resolve_kind(key: &str) -> Option<GuiKind> {
     if let Some(i) = ENGINE_GUI_KIND_NAMES.iter().position(|n| *n == key) {
         return Some(GuiKind(i as u8));
     }
-    let kinds = REGISTERED_KINDS.lock().unwrap();
+    let kinds = REGISTERED_KINDS.current().lock().unwrap();
     kinds
         .iter()
         .position(|n| *n == key)
@@ -179,7 +182,7 @@ pub fn kind_key(kind: GuiKind) -> Option<&'static str> {
     if let Some(name) = ENGINE_GUI_KIND_NAMES.get(i) {
         return Some(name);
     }
-    let kinds = REGISTERED_KINDS.lock().unwrap();
+    let kinds = REGISTERED_KINDS.current().lock().unwrap();
     kinds.get(i - ENGINE_GUI_KIND_NAMES.len()).copied()
 }
 

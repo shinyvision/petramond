@@ -280,17 +280,16 @@ enum RawMobDamageSound {
 /// The mob catalog as loaded: the id-ordered def rows plus the validated
 /// cross-pack brain extensions (a side table — the target rows' own `brain`
 /// lists stay their own; [`super::build_brain`] appends per spawn).
-pub(super) struct LoadedMobs {
+pub(crate) struct LoadedMobs {
     pub defs: &'static [MobDef],
     /// `(target, appended nodes)` in extension (layer) order.
     pub extensions: &'static [(Mob, &'static [BrainNode])],
 }
 
-/// Load the mob table from every `mobs.json` layer (base + mod packs, later packs
-/// replacing rows by mob), panicking with a precise message if the table is missing
-/// or inconsistent.
-pub(super) fn table() -> LoadedMobs {
-    petramond_world::registry::read_catalog_labeled("mobs.json", "mob", |layers| {
+/// Load the mob table from every `mobs.json` layer of `packs` (base + the enabled
+/// packs, later packs replacing rows by mob).
+pub(super) fn table(packs: &petramond_world::assets::PackSet) -> Result<LoadedMobs, String> {
+    petramond_world::registry::read_catalog_labeled(packs, "mobs.json", "mob", |layers| {
         let labeled: Vec<(&str, String)> = layers
             .iter()
             .map(|(text, path)| (*text, path.display().to_string()))

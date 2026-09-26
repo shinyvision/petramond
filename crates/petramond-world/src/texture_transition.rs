@@ -28,10 +28,7 @@ use crate::{
     tile::{Tile, TileTint},
 };
 use serde::Deserialize;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::LazyLock,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Sets a world can hold: the terrain vertex spends four bits on the set id.
 pub const MAX_SETS: usize = 16;
@@ -144,12 +141,21 @@ impl Rules {
     }
 }
 
-/// Load once, after the ordinary block/tile catalogs are available.
+/// The transition catalog stage of every content registry, after the block
+/// and tile catalogs it composes.
+pub(crate) static RULES: crate::content::Slot<Rules> = crate::content::Slot::new(
+    crate::content::stage::TEXTURE_TRANSITIONS,
+    &[crate::content::stage::BLOCKS, crate::content::stage::TILES],
+    load,
+);
+
+fn load(reg: &crate::content::ContentRegistry) -> Result<Rules, String> {
+    crate::registry::read_catalog(reg.packs(), FILE, "texture transition", Rules::from_layers)
+}
+
+/// The current registry's transition rules.
 pub fn rules() -> &'static Rules {
-    static RULES: LazyLock<Rules> = LazyLock::new(|| {
-        crate::registry::read_catalog(FILE, "texture transition", Rules::from_layers)
-    });
-    &RULES
+    RULES.current()
 }
 
 const FILE: &str = "texture_transitions.json";

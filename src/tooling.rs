@@ -149,7 +149,7 @@ pub mod recipes {
 
     /// Every enabled pack's crafting/processing rows (the same load the
     /// server runs at session start, with nothing disabled).
-    pub fn load() -> Recipes {
+    pub fn load() -> Result<Recipes, String> {
         petramond_world::crafting::load_recipes_for(&Default::default())
     }
 

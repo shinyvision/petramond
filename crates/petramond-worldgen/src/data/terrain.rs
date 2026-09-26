@@ -34,7 +34,6 @@
 //! `base_height` (all horizontal) and `master_density`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -502,17 +501,23 @@ fn parse_layers(texts: &[&str]) -> Result<TerrainRecipe, String> {
     TerrainRecipe::new(merged)
 }
 
-/// The loaded terrain recipe. Loads once; a missing or malformed layer fails
-/// loudly at first use.
+/// The terrain recipe stage (see [`super::content_stages`]); a missing or
+/// malformed layer fails the registry build.
+pub(crate) static RECIPE: petramond_world::content::Slot<TerrainRecipe> =
+    petramond_world::content::Slot::new("density/terrain.json", &[], load_recipe);
+
+fn load_recipe(reg: &petramond_world::content::ContentRegistry) -> Result<TerrainRecipe, String> {
+    petramond_world::registry::read_catalog(
+        reg.packs(),
+        "density/terrain.json",
+        "terrain density recipe",
+        parse_layers,
+    )
+}
+
+/// The current registry's terrain recipe.
 pub fn recipe() -> &'static TerrainRecipe {
-    static RECIPE: LazyLock<TerrainRecipe> = LazyLock::new(|| {
-        petramond_world::registry::read_catalog(
-            "density/terrain.json",
-            "terrain density recipe",
-            parse_layers,
-        )
-    });
-    &RECIPE
+    RECIPE.current()
 }
 
 #[cfg(test)]

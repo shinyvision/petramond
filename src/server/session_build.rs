@@ -208,7 +208,8 @@ pub fn build_server_with_pool(
     // The mod host answers `SmeltResult` from the same loaded catalog the
     // engine cooks from — install a shared snapshot (the process-wide pattern
     // gen hooks use). The unlock index is the other view of that catalog.
-    let recipes = load_recipes_for(&disabled_mods);
+    let recipes = load_recipes_for(&disabled_mods)
+        .unwrap_or_else(|error| panic!("failed to load crafting recipes: {error}"));
     crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
     let catalog = RecipeCatalog::new(recipes);
     perf.mark("recipes");

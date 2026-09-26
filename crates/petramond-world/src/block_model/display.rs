@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::bbmodel::display_euler_quat;
 
-use super::{BlockModelKind, MODELS};
+use super::{models, BlockModelKind};
 
 /// One Blockbench `display` transform (rotation degrees, translation in 1/16-block
 /// units, scale multiplier, plus the optional rotation/scale pivots in block units) —
@@ -152,5 +152,5 @@ impl BlockDisplay {
 /// reads `firstperson_righthand`, the inventory icon reads `gui`.
 #[inline]
 pub fn display(kind: BlockModelKind) -> &'static BlockDisplay {
-    &MODELS[kind.0 as usize].display
+    &models()[kind.0 as usize].display
 }

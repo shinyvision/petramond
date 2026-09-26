@@ -14,6 +14,26 @@ pub mod terrain;
 pub mod tree_profiles;
 pub mod underground;
 
+use petramond_world::content::Stage;
+
+/// Worldgen's catalogs as content-registry stages, in build order. A process
+/// that generates terrain passes these to its `ContentLoader` (after the world
+/// crate's own stages) so a bad worldgen row fails the registry build with the
+/// rest of the load report; a registry built without them derives each table
+/// on first use instead (test registries).
+pub fn content_stages() -> [&'static dyn Stage; 8] {
+    [
+        &terrain::RECIPE,
+        &features::CATALOG,
+        &underground::TABLE,
+        &excavations::TABLE,
+        &ores::TABLE,
+        &climate_table::TABLE,
+        &biome_gen::SPECS,
+        &tree_profiles::TABLE,
+    ]
+}
+
 /// FNV-1a over a loaded table's resolved content: the fingerprint a table
 /// stamps into the column-gen cache so a pack that changes it is never served
 /// stale cached columns.

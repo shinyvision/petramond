@@ -9,8 +9,6 @@
 //! The catalog is empty unless a pack ships `shapes.json`; engine shapes are the
 //! compiled families, never rows here.
 
-use std::sync::LazyLock;
-
 use serde::Deserialize;
 
 /// How a custom shape's cells participate in light propagation when the sim bake
@@ -75,36 +73,39 @@ struct RawCustomShapeFile {
     shapes: Vec<RawCustomShapeDef>,
 }
 
-/// The loaded custom-shape catalog — id-ordered, or empty when no pack ships
-/// `shapes.json`. Loads once; a malformed `shapes.json` fails loudly at startup
-/// (the pack should have been disabled at admission).
+/// The custom-shape catalog of a content registry — id-ordered, or empty when
+/// no pack ships `shapes.json`. A malformed `shapes.json` fails the registry
+/// build (the pack should have been disabled at admission).
+pub(crate) static CUSTOM_SHAPES: crate::content::Slot<&'static [CustomShapeDef]> =
+    crate::content::Slot::new(crate::content::stage::SHAPES, &[], load);
+
+fn load(reg: &crate::content::ContentRegistry) -> Result<&'static [CustomShapeDef], String> {
+    let layers = reg.packs().read_layers("shapes.json");
+    if layers.is_empty() {
+        return Ok(&[]);
+    }
+    let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
+    crate::registry::load_catalog(
+        &texts,
+        |t| serde_json::from_str::<RawCustomShapeFile>(t).map(|f| f.shapes),
+        |r| &r.key,
+        &[], // no engine custom shapes — the compiled families cover those
+        "shape",
+        |r, id, names| {
+            Ok(CustomShapeDef {
+                key: names.name(id).expect("id resolved from this table"),
+                light_shape: r.light_shape,
+                nav_solid: matches!(r.nav_profile.as_deref(), Some("solid")),
+                grass_decay_eligible: r.grass_decay_eligible,
+                state_key: r.state_key.map(|k| -> &'static str { String::leak(k) }),
+            })
+        },
+    )
+    .map(|catalog| catalog.rows())
+}
+
 fn defs() -> &'static [CustomShapeDef] {
-    static DEFS: LazyLock<&'static [CustomShapeDef]> = LazyLock::new(|| {
-        let layers = crate::assets::read_layers("shapes.json");
-        if layers.is_empty() {
-            return &[];
-        }
-        let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
-        crate::registry::load_catalog(
-            &texts,
-            |t| serde_json::from_str::<RawCustomShapeFile>(t).map(|f| f.shapes),
-            |r| &r.key,
-            &[], // no engine custom shapes — the compiled families cover those
-            "shape",
-            |r, id, names| {
-                Ok(CustomShapeDef {
-                    key: names.name(id).expect("id resolved from this table"),
-                    light_shape: r.light_shape,
-                    nav_solid: matches!(r.nav_profile.as_deref(), Some("solid")),
-                    grass_decay_eligible: r.grass_decay_eligible,
-                    state_key: r.state_key.map(|k| -> &'static str { String::leak(k) }),
-                })
-            },
-        )
-        .unwrap_or_else(|e| panic!("shapes.json: {e}"))
-        .rows()
-    });
-    &DEFS
+    *CUSTOM_SHAPES.current()
 }
 
 /// The custom shape declared under `key`, or `None` — used by the loader to

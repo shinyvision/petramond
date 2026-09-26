@@ -17,13 +17,13 @@
 //! still owned by their loaders (`block::load`, `item::load`); they resolve
 //! rows against these same tables so ids can never disagree.
 //!
-//! Blocks and items get one SHARED bootstrap (`names()`) because their
-//! catalogs cross-reference (block drops name items; a dynamic item's `block`
-//! field names a block) — resolving through one table pair avoids any lazy-init
-//! cycle between the two loaders.
+//! Blocks and items get one SHARED name stage ([`load_names`], read back
+//! through [`names`]) because their catalogs cross-reference (block drops name
+//! items; a dynamic item's `block` field names a block) — the content loader
+//! builds it before either definition table, so both resolve through one
+//! table pair.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 use serde::Deserialize;
 
@@ -452,12 +452,22 @@ fn resolve_merged<R, D>(
     what: &str,
     mut convert: impl FnMut(R, u16, &NameTable) -> Result<D, String>,
 ) -> Result<Vec<D>, String> {
+    // Every bad row is reported, one per line — a pack author fixes a whole
+    // catalog from one load report instead of one row per restart.
     let mut rows: Vec<Option<D>> = (0..names.len()).map(|_| None).collect();
+    let mut errors: Vec<String> = Vec::new();
     for r in merged {
-        let id = names
-            .id(row_key(&r))
-            .ok_or_else(|| format!("unregistered {what} '{}'", row_key(&r)))?;
-        rows[id as usize] = Some(convert(r, id, names)?);
+        let Some(id) = names.id(row_key(&r)) else {
+            errors.push(format!("unregistered {what} '{}'", row_key(&r)));
+            continue;
+        };
+        match convert(r, id, names) {
+            Ok(row) => rows[id as usize] = Some(row),
+            Err(e) => errors.push(e),
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
     }
     rows.into_iter()
         .enumerate()
@@ -522,15 +532,32 @@ pub fn validate_namespaced_keys(what: &str, keys: &[String]) -> Result<(), Strin
 }
 
 /// The catalog FILE frame around [`load_catalog`]/[`resolve_catalog`]: read
-/// every layer of `file` (base assets + packs), then run `parse` over the
-/// layer texts. These tables are load-bearing, so a missing file or a parse
-/// error panics with a precise message instead of limping on.
+/// every layer of `file` from `packs` (base assets + the enabled packs), then
+/// run `parse` over the layer texts. These tables are load-bearing, so a
+/// missing file is an error like any parse error; the content loader
+/// attributes both to the stage (the file) that returned them.
 pub fn read_catalog<T>(
+    packs: &crate::assets::PackSet,
     file: &str,
     what: &str,
     parse: impl FnOnce(&[&str]) -> Result<T, String>,
-) -> T {
-    read_catalog_labeled(file, what, |layers| {
+) -> Result<T, String> {
+    read_catalog_labeled(packs, file, what, |layers| {
+        let texts: Vec<&str> = layers.iter().map(|(s, _)| *s).collect();
+        parse(&texts)
+    })
+}
+
+/// [`read_catalog`] over EVERY installed pack's copy — for the presentation
+/// catalogs the client bakes once (see
+/// [`PackSet::read_asset_layers`](crate::assets::PackSet::read_asset_layers)).
+pub fn read_asset_catalog<T>(
+    packs: &crate::assets::PackSet,
+    file: &str,
+    what: &str,
+    parse: impl FnOnce(&[&str]) -> Result<T, String>,
+) -> Result<T, String> {
+    parse_catalog_layers(packs, packs.read_asset_layers(file), file, what, |layers| {
         let texts: Vec<&str> = layers.iter().map(|(s, _)| *s).collect();
         parse(&texts)
     })
@@ -539,16 +566,26 @@ pub fn read_catalog<T>(
 /// [`read_catalog`] with each layer's source path alongside its text, for the
 /// catalogs whose diagnostics should name the pack a layer came from.
 pub fn read_catalog_labeled<T>(
+    packs: &crate::assets::PackSet,
     file: &str,
     what: &str,
     parse: impl FnOnce(&[(&str, &std::path::Path)]) -> Result<T, String>,
-) -> T {
-    let layers = crate::assets::read_layers(file);
+) -> Result<T, String> {
+    parse_catalog_layers(packs, packs.read_layers(file), file, what, parse)
+}
+
+fn parse_catalog_layers<T>(
+    packs: &crate::assets::PackSet,
+    layers: Vec<(String, std::path::PathBuf)>,
+    file: &str,
+    what: &str,
+    parse: impl FnOnce(&[(&str, &std::path::Path)]) -> Result<T, String>,
+) -> Result<T, String> {
     if layers.is_empty() {
-        panic!(
+        return Err(format!(
             "{file} not found (searched {:?}); the game cannot run without its {what} table",
-            crate::assets::candidate_paths(file)
-        );
+            packs.candidate_paths(file)
+        ));
     }
     for (_, path) in &layers {
         log::info!("{what} defs layer: {}", path.display());
@@ -557,7 +594,7 @@ pub fn read_catalog_labeled<T>(
         .iter()
         .map(|(s, p)| (s.as_str(), p.as_path()))
         .collect();
-    parse(&layers).unwrap_or_else(|e| panic!("{file}: {e}"))
+    parse(&layers)
 }
 
 /// Whether `key` carries a `namespace:` prefix.
@@ -738,34 +775,36 @@ pub fn build_names(block_texts: &[&str], item_texts: &[&str]) -> Result<ContentN
     Ok(ContentNames { blocks, items })
 }
 
-/// The process-wide name tables, built once from the real catalog layers
-/// (base `assets/` + packs). Loads on first touch from any thread; a bad pack
-/// key fails loudly here, before any definition table builds on top of it.
-pub fn names() -> &'static ContentNames {
-    static NAMES: LazyLock<ContentNames> = LazyLock::new(|| {
-        let blocks = crate::assets::read_layers("blocks.json");
-        let items = crate::assets::read_layers("items.json");
-        let block_texts: Vec<&str> = blocks.iter().map(|(s, _)| s.as_str()).collect();
-        let item_texts: Vec<&str> = items.iter().map(|(s, _)| s.as_str()).collect();
-        let names = build_names(&block_texts, &item_texts)
-            .unwrap_or_else(|e| panic!("content registry: {e}"));
-        // The ceiling is invisible until it is hit, and by then the only
-        // signal is a refused pack. Say where the world is against it at every
-        // boot, and say it LOUDLY once the remaining headroom is smaller than
-        // an ordinary pack.
-        for (what, used) in [("block", names.blocks.len()), ("item", names.items.len())] {
-            let left = WIDE_ID_CAP - used;
-            if left < ID_HEADROOM_WARN {
-                log::warn!(
-                    "{what} registry: {used}/{WIDE_ID_CAP} ids used, {left} left for further packs"
-                );
-            } else {
-                log::info!("{what} registry: {used}/{WIDE_ID_CAP} ids used");
-            }
+/// Build the shared name tables from `packs`' `blocks.json` / `items.json`
+/// layers — the content loader's names stage. A bad pack key fails here,
+/// before any definition table builds on top of it.
+pub fn load_names(packs: &crate::assets::PackSet) -> Result<ContentNames, String> {
+    let blocks = packs.read_layers("blocks.json");
+    let items = packs.read_layers("items.json");
+    let block_texts: Vec<&str> = blocks.iter().map(|(s, _)| s.as_str()).collect();
+    let item_texts: Vec<&str> = items.iter().map(|(s, _)| s.as_str()).collect();
+    let names = build_names(&block_texts, &item_texts)?;
+    // The ceiling is invisible until it is hit, and by then the only signal
+    // is a refused pack. Say where the registry is against it at every build,
+    // and say it LOUDLY once the remaining headroom is smaller than an
+    // ordinary pack.
+    for (what, used) in [("block", names.blocks.len()), ("item", names.items.len())] {
+        let left = WIDE_ID_CAP - used;
+        if left < ID_HEADROOM_WARN {
+            log::warn!(
+                "{what} registry: {used}/{WIDE_ID_CAP} ids used, {left} left for further packs"
+            );
+        } else {
+            log::info!("{what} registry: {used}/{WIDE_ID_CAP} ids used");
         }
-        names
-    });
-    &NAMES
+    }
+    Ok(names)
+}
+
+/// The current content registry's name tables (see `crate::content`).
+#[inline]
+pub fn names() -> &'static ContentNames {
+    crate::content::current().names()
 }
 
 /// Everything this module's relocated tests (in the engine crate) exercise.

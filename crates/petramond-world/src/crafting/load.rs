@@ -15,8 +15,6 @@ use super::recipe::{
 use super::station::CraftingStation;
 use crate::assets::CatalogLayer;
 
-const EMBEDDED: &str = include_str!("../../../../assets/recipes.json");
-
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum RawRecipe {
@@ -76,8 +74,8 @@ fn one_u8() -> u8 {
 /// when one of its rows mentions engine content only, and an integration
 /// layer goes with EITHER pack it joins. Reference filtering then removes
 /// enabled/base rows that touch another disabled namespace.
-pub fn load_recipes_for(disabled: &std::collections::BTreeSet<String>) -> Recipes {
-    load_layers(read_recipe_layers(), disabled)
+pub fn load_recipes_for(disabled: &std::collections::BTreeSet<String>) -> Result<Recipes, String> {
+    Ok(load_layers(read_recipe_layers()?, disabled))
 }
 
 fn load_layers(
@@ -182,18 +180,12 @@ fn compile_row(
     }
 }
 
-fn read_recipe_layers() -> Vec<CatalogLayer> {
+fn read_recipe_layers() -> Result<Vec<CatalogLayer>, String> {
     let layers = crate::assets::read_catalog_layers("recipes.json");
     if layers.is_empty() {
-        log::info!("crafting recipes: no on-disk recipes.json found, using embedded defaults");
-        vec![CatalogLayer {
-            text: EMBEDDED.to_owned(),
-            path: std::path::PathBuf::from("<embedded recipes.json>"),
-            owner: None,
-            requires: Vec::new(),
-        }]
+        Err("recipes.json: no readable catalog in the active asset roots or packs".into())
     } else {
-        layers
+        Ok(layers)
     }
 }
 

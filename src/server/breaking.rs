@@ -633,8 +633,8 @@ impl ServerGame {
         if map.is_empty() {
             return petramond_world::item::VariantId::NONE;
         }
-        petramond_world::item::variant::intern(&map).unwrap_or_else(|| {
-            log::warn!("carry at {pos:?}: variant table full — drop loses its data");
+        petramond_world::item::variant::intern(&map).unwrap_or_else(|e| {
+            log::warn!("carry at {pos:?}: {e} — drop loses its data");
             petramond_world::item::VariantId::NONE
         })
     }

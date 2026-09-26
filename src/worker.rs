@@ -172,10 +172,16 @@ impl JobPool {
             f();
             return ticket;
         }
+        // The job reads content through the SUBMITTER's registry, whatever the
+        // worker thread's own: a pool serves whichever world queued the work.
+        let content = petramond_world::content::Content::current();
         let job = QueuedJob {
             key,
             seq,
-            run: Box::new(f),
+            run: Box::new(move || {
+                let _pin = petramond_world::content::pin(content);
+                f()
+            }),
         };
         self.shared.queue.lock().unwrap().push(job);
         self.shared.available.notify_one();

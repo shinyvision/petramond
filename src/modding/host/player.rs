@@ -865,7 +865,8 @@ mod tests {
         // FROM it. A synthetic catalog would be stomped by any concurrently
         // building session; naming a specific engine recipe would pin editable
         // data. Neither is this test's subject.
-        let recipes = petramond_world::crafting::load_recipes_for(&Default::default());
+        let recipes = petramond_world::crafting::load_recipes_for(&Default::default())
+            .expect("the shipped recipes catalog loads");
         let key = recipes
             .crafting()
             .iter()

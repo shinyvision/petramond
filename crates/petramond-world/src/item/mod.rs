@@ -33,6 +33,7 @@ mod uses;
 pub mod variant;
 
 pub use data::ENGINE_ITEM_NAMES;
+pub(crate) use data::{load_tables, ItemTables};
 pub use drops::{Drop, DropSpec};
 pub use food::FoodDef;
 pub use projectile::{Projectile, PROJECTILE_DATA_KEY};

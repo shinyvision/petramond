@@ -6,12 +6,9 @@ use petramond_world::chunk::{Chunk, ChunkPos};
 
 #[test]
 fn navigation_hazards_follow_the_hazard_rows() {
-    let root = fluid_fixture::stage("nav-hazards");
-    crate::modding::tests::run_child_test(&root, "mob::nav::hazards::tests::hazards_inner");
+    fluid_fixture::with_content("nav-hazards", hazards_inner);
 }
 
-#[test]
-#[ignore = "child of navigation_hazards_follow_the_hazard_rows with fixture content"]
 fn hazards_inner() {
     routes_detour_around_pools_shallow_flows_and_body_height_hazards();
     hazards_block_a_crossing_that_a_safe_fluid_allows();

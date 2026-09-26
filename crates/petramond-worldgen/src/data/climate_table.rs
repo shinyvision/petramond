@@ -42,7 +42,6 @@
 //! the sea-ice line (see `density::surface`).
 
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
 
 use petramond_world::biome::Biome;
 use serde::Deserialize;
@@ -409,18 +408,28 @@ impl ResolvedTable {
     }
 }
 
-/// The loaded placement table. Loads once; a missing or malformed layer
-/// fails loudly at first use.
+/// The placement table stage (see [`super::content_stages`]); a missing or
+/// malformed layer fails the registry build.
+pub(crate) static TABLE: petramond_world::content::Slot<ClimateTable> =
+    petramond_world::content::Slot::new(
+        "climate_table.json",
+        &[petramond_world::content::stage::BIOMES],
+        load_table,
+    );
+
+fn load_table(reg: &petramond_world::content::ContentRegistry) -> Result<ClimateTable, String> {
+    petramond_world::registry::read_catalog(
+        reg.packs(),
+        "climate_table.json",
+        "climate table",
+        parse_layers,
+    )
+    .map(|table| table.build())
+}
+
+/// The current registry's placement table.
 pub fn table() -> &'static ClimateTable {
-    static TABLE: LazyLock<ClimateTable> = LazyLock::new(|| {
-        petramond_world::registry::read_catalog(
-            "climate_table.json",
-            "climate table",
-            parse_layers,
-        )
-        .build()
-    });
-    &TABLE
+    TABLE.current()
 }
 
 #[cfg(test)]

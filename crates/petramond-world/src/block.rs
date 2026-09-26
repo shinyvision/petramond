@@ -19,7 +19,10 @@ mod tags;
 mod tests;
 
 pub use behavior::BlockBehavior;
+pub(crate) use data::{warm_views, BlockViews};
 pub use data::ENGINE_BLOCK_NAMES;
+pub(crate) use load::{load_registry, Registry as BlockRegistry};
+pub(crate) use shape_kind::CUSTOM_SHAPES;
 pub use data::{shape_kind_id_by_key, state_key_declared};
 pub use definition::{BlockFlags, BlockMaterial};
 // ColorRamp rides the public `ParticleEmitter::color_ramp` field; only tests

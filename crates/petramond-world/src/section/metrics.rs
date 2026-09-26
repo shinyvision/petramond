@@ -20,36 +20,46 @@ const MB_QUENCHER: u16 = 1 << 9;
 /// Histogram width of the fast path in [`Section::metrics_from_blocks`].
 const LOW_HIST: usize = 256;
 
-/// Per-id metrics class bits, derived once from the SAME predicates the
-/// incremental setter path (`adjust_random_tick_count` / `adjust_opaque_count`)
-/// uses — the block registry loads exactly once per process, so this can never
-/// go stale. Ids beyond the registry read as `Air` through `Block::from_id`,
-/// matching the per-cell predicates on such ids.
+/// Per-id metrics class bits of a content registry, derived from the SAME
+/// predicates the incremental setter path (`adjust_random_tick_count` /
+/// `adjust_opaque_count`) uses — derived per registry from its immutable block
+/// table, so it can never go stale. Ids beyond the registry read as `Air`
+/// through `Block::from_id`, matching the per-cell predicates on such ids.
+pub(crate) static METRICS: crate::content::Slot<Box<[u16]>> = crate::content::Slot::new(
+    crate::content::stage::SECTION_METRICS,
+    &[
+        crate::content::stage::BLOCKS,
+        crate::content::stage::PARTICLE_EMITTERS,
+    ],
+    derive_metrics_bits,
+);
+
+fn derive_metrics_bits(_: &crate::content::ContentRegistry) -> Result<Box<[u16]>, String> {
+    let quench = |block: Block| block.fluid_def().and_then(|f| f.quench);
+    let mut bits = vec![0u16; Block::all().len()].into_boxed_slice();
+    for &block in Block::all() {
+        if let Some(q) = quench(block) {
+            bits[q.by.id() as usize] |= MB_QUENCHER;
+        }
+    }
+    for (i, b) in bits.iter_mut().enumerate() {
+        let id = i as u16;
+        let block = Block::from_id(id);
+        *b |= (u16::from(block.has_random_tick()) * MB_RANDOM_TICK)
+            | (u16::from(block.is_opaque()) * MB_OPAQUE)
+            | (u16::from(id != 0) * MB_NON_AIR)
+            | (u16::from(id == Block::Water.id()) * MB_WATER)
+            | (u16::from(block.is_fluid()) * MB_FLUID)
+            | (u16::from(quench(block).is_some()) * MB_QUENCHES)
+            | (u16::from(Section::id_uses_biome_tint(id)) * MB_BIOME_TINT)
+            | (u16::from(Section::id_has_particle_emitter(id)) * MB_PARTICLE_EMITTER)
+            | (u16::from(Section::id_emits_light(id)) * MB_LIGHT_EMITTER);
+    }
+    Ok(bits)
+}
+
 fn metrics_bits() -> &'static [u16] {
-    static BITS: std::sync::LazyLock<Box<[u16]>> = std::sync::LazyLock::new(|| {
-        let quench = |block: Block| block.fluid_def().and_then(|f| f.quench);
-        let mut bits = vec![0u16; Block::all().len()].into_boxed_slice();
-        for &block in Block::all() {
-            if let Some(q) = quench(block) {
-                bits[q.by.id() as usize] |= MB_QUENCHER;
-            }
-        }
-        for (i, b) in bits.iter_mut().enumerate() {
-            let id = i as u16;
-            let block = Block::from_id(id);
-            *b |= (u16::from(block.has_random_tick()) * MB_RANDOM_TICK)
-                | (u16::from(block.is_opaque()) * MB_OPAQUE)
-                | (u16::from(id != 0) * MB_NON_AIR)
-                | (u16::from(id == Block::Water.id()) * MB_WATER)
-                | (u16::from(block.is_fluid()) * MB_FLUID)
-                | (u16::from(quench(block).is_some()) * MB_QUENCHES)
-                | (u16::from(Section::id_uses_biome_tint(id)) * MB_BIOME_TINT)
-                | (u16::from(Section::id_has_particle_emitter(id)) * MB_PARTICLE_EMITTER)
-                | (u16::from(Section::id_emits_light(id)) * MB_LIGHT_EMITTER);
-        }
-        bits
-    });
-    &BITS
+    METRICS.current()
 }
 
 #[inline]

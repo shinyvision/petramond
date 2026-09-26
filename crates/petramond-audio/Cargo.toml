@@ -25,3 +25,7 @@ log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"], optional = true }
+
+[dev-dependencies]
+# Tests read content through the fallback registry test builds install.
+petramond-world = { path = "../petramond-world", features = ["test-support"] }

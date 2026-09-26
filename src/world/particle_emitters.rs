@@ -6,8 +6,6 @@
 //! out of simulation, saves, and the fixed tick.
 
 use crate::world::{ServerWorld, World, WorldSide};
-use std::sync::LazyLock;
-
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::view_volume::ViewVolume;
@@ -74,19 +72,7 @@ fn fall_reach(e: &ParticleEmitter) -> f32 {
 /// is too far for even THAT to cover a pixel holds nothing anyone can see, so
 /// the whole section rejects on one compare.
 fn max_emitter_particle() -> f32 {
-    static SIZE: LazyLock<f32> = LazyLock::new(|| {
-        let mut size: f32 = 0.0;
-        for &block in Block::all() {
-            let Some(rows) = block.particle_emitter() else {
-                continue;
-            };
-            for row in rows {
-                size = size.max(particle_size(row));
-            }
-        }
-        size
-    });
-    *SIZE
+    EMITTER_BOUNDS.current().0
 }
 
 /// How far, in blocks, any loaded block row's emitter particles can reach from
@@ -99,28 +85,39 @@ fn max_emitter_particle() -> f32 {
 /// particles are on screen. Derived from the loaded rows rather than guessed,
 /// so a pack with a far-flung emitter widens it automatically.
 fn max_emitter_reach() -> f32 {
-    static REACH: LazyLock<f32> = LazyLock::new(|| {
-        let mut reach: f32 = 0.0;
-        for &block in Block::all() {
-            let Some(rows) = block.particle_emitter() else {
-                continue;
-            };
-            // A model anchors in FOOTPRINT space and its base is placed off the
-            // authored-origin cell, so twice the footprint bounds both.
-            let footprint = block.model_kind().map_or(0.0, |kind| {
-                let fp = block_model::def(kind).cells;
-                2.0 * fp.iter().copied().max().unwrap_or(0) as f32
-            });
-            for row in rows {
-                let anchor =
-                    Vec3::from_array(row.origin).abs() + Vec3::from_array(row.offset).abs();
-                let far = Vec3::splat(1.0 + footprint) + anchor + emitter_envelope(row);
-                reach = reach.max(far.max_element());
-            }
+    EMITTER_BOUNDS.current().1
+}
+
+/// Both presentation bounds depend on the active block catalog. Keep them
+/// together in one derived view of each content registry.
+static EMITTER_BOUNDS: petramond_world::content::Slot<(f32, f32)> =
+    petramond_world::content::Slot::new(
+        "particle emitter bounds",
+        &[petramond_world::content::stage::BLOCKS],
+        emitter_bounds,
+    );
+
+fn emitter_bounds(_: &petramond_world::content::ContentRegistry) -> Result<(f32, f32), String> {
+    let mut size: f32 = 0.0;
+    let mut reach: f32 = 0.0;
+    for &block in Block::all() {
+        let Some(rows) = block.particle_emitter() else {
+            continue;
+        };
+        // A model anchors in footprint space and its base is placed off the
+        // authored-origin cell, so twice the footprint bounds both.
+        let footprint = block.model_kind().map_or(0.0, |kind| {
+            let fp = block_model::def(kind).cells;
+            2.0 * fp.iter().copied().max().unwrap_or(0) as f32
+        });
+        for row in rows {
+            size = size.max(particle_size(row));
+            let anchor = Vec3::from_array(row.origin).abs() + Vec3::from_array(row.offset).abs();
+            let far = Vec3::splat(1.0 + footprint) + anchor + emitter_envelope(row);
+            reach = reach.max(far.max_element());
         }
-        reach
-    });
-    *REACH
+    }
+    Ok((size, reach))
 }
 
 /// The block at `q` read from `section` when `q` is one of its own cells, and

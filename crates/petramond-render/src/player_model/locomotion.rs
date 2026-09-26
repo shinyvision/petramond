@@ -13,8 +13,6 @@
 //! that weight back into `walk` instead of dropping it. Every weight is
 //! evaluated in one pass; adding a locomotion style is a row edit.
 
-use std::sync::LazyLock;
-
 use petramond_world::bbmodel::{Animation, Model};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -214,17 +212,6 @@ pub struct LocomotionTable {
 }
 
 impl LocomotionTable {
-    /// A table with no layers: every body holds its rest pose. The fallback
-    /// for a missing or malformed asset.
-    fn empty() -> Self {
-        let requires: Vec<Box<[String]>> = vec![Box::new([]); Inputs::NAMES.len()];
-        Self {
-            derived: Box::new([]),
-            requires: requires.into_boxed_slice(),
-            layers: Box::new([]),
-        }
-    }
-
     /// Number of value slots (inputs + derived).
     fn slots(&self) -> usize {
         Inputs::NAMES.len() + self.derived.len()
@@ -366,24 +353,25 @@ impl LocomotionTable {
     }
 }
 
-/// The shipped table (all asset layers). A missing or malformed table is a
-/// content error logged at first use; bodies then hold their rest pose
-/// rather than the game crashing on one bad pack file.
+/// The locomotion table as a content-registry stage (all layers). The client
+/// registers it with its loader, so a missing or malformed table is part of
+/// the load report instead of a panic mid-frame.
+pub static TABLE: petramond_world::content::Slot<LocomotionTable> =
+    petramond_world::content::Slot::new("animations/player_locomotion.json", &[], load_table);
+
+fn load_table(
+    reg: &petramond_world::content::ContentRegistry,
+) -> Result<LocomotionTable, String> {
+    petramond_world::registry::read_catalog(
+        reg.packs(),
+        "animations/player_locomotion.json",
+        "player locomotion",
+        LocomotionTable::parse_layers,
+    )
+}
+
 fn table() -> &'static LocomotionTable {
-    static TABLE: LazyLock<LocomotionTable> = LazyLock::new(|| {
-        const PATH: &str = "animations/player_locomotion.json";
-        let layers = petramond_world::assets::read_layers(PATH);
-        if layers.is_empty() {
-            log::error!("{PATH} not found; player bodies hold their rest pose");
-            return LocomotionTable::empty();
-        }
-        let texts: Vec<&str> = layers.iter().map(|(text, _)| text.as_str()).collect();
-        LocomotionTable::parse_layers(&texts).unwrap_or_else(|e| {
-            log::error!("{PATH}: {e}; player bodies hold their rest pose");
-            LocomotionTable::empty()
-        })
-    });
-    &TABLE
+    TABLE.current()
 }
 
 /// The clip layers for this body this frame: `(clip, time into the clip,

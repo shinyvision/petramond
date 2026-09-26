@@ -271,12 +271,9 @@ mod tests {
 
     #[test]
     fn dismounts_prefer_footing_clear_of_fluids_and_hazards() {
-        let root = fluid_fixture::stage("dismount-footing");
-        crate::modding::tests::run_child_test(&root, "mob::riding::tests::dismount_footing_inner");
+        fluid_fixture::with_content("dismount-footing", dismount_footing_inner);
     }
 
-    #[test]
-    #[ignore = "child of dismounts_prefer_footing_clear_of_fluids_and_hazards"]
     fn dismount_footing_inner() {
         let feet = WorldPos::new(8.5, FLOOR_Y as f64, 8.5);
         let floor = FLOOR_Y - 1;

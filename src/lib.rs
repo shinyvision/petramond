@@ -3,6 +3,7 @@
 //! Native desktop target. Worldgen runs off the render thread via an OS thread
 //! pool (rayon).
 
+pub mod content;
 pub mod entity;
 pub mod events;
 mod exposure;

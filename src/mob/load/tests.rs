@@ -486,11 +486,8 @@ fn loader_rejects_incomplete_tables_and_duplicate_keys() {
 /// species registers, spawns, distance-despawns per its hostile category, and
 /// pins into the save palette by name (with unknown disk names skipped).
 ///
-/// The global registries are process-wide LazyLocks, so pack injection must
-/// happen before ANY test touches them — this outer test re-spawns the test
-/// binary with `PETRAMOND_MODS` set, running only the `#[ignore]`d inner test
-/// below (the pattern pinned by `registry::tests::dynamic_pack_content_flows_
-/// end_to_end`).
+/// The pack loads into a content registry of the test's own, pinned on this
+/// thread — the process registry and every other test never see it.
 #[test]
 fn dynamic_pack_mob_flows_end_to_end() {
     let root = std::env::temp_dir().join(format!("petramond-mobpack-{}", std::process::id()));
@@ -526,22 +523,12 @@ fn dynamic_pack_mob_flows_end_to_end() {
     )
     .unwrap();
 
-    let run = petramond_world::test_child::run_ignored(
-        "mob::load::tests::dynamic_pack_mob_inner",
-        [
-            ("PETRAMOND_MODS", root.join("mods")),
-            ("PETRAMOND_MOBPACK_SAVE", root.join("save")),
-        ],
-    );
-    let _ = std::fs::remove_dir_all(&root);
-    run.assert_passed();
+    let save = root.join("save");
+    crate::modding::tests::with_fixture_content(&root, || dynamic_pack_mob_inner(&save));
 }
 
-/// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
-/// pointing at the fixture pack before first registry touch).
-#[test]
-#[ignore = "spawned by dynamic_pack_mob_flows_end_to_end with a fixture pack env"]
-fn dynamic_pack_mob_inner() {
+/// The assertions, against the fixture registry pinned above.
+fn dynamic_pack_mob_inner(save: &std::path::Path) {
     use super::super::{def, defs, Mob, Mobs};
     use crate::world::ServerWorld;
 
@@ -591,8 +578,7 @@ fn dynamic_pack_mob_inner() {
     );
 
     // --- Save palette: the namespaced mob pins by name; strangers skip. ---
-    let save = std::path::PathBuf::from(std::env::var_os("PETRAMOND_MOBPACK_SAVE").unwrap());
-    std::fs::create_dir_all(&save).unwrap();
+    std::fs::create_dir_all(save).unwrap();
     // An "old" palette with a stranger between the engine mobs and ours, so
     // disk ids and runtime ids genuinely diverge.
     let blocks: Vec<&str> = petramond_world::block::ENGINE_BLOCK_NAMES.to_vec();

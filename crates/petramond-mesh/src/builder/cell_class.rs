@@ -9,9 +9,9 @@
 //! [`MeshEmitter`] (its shape family's facet), never a list of named blocks or
 //! families kept here.
 
-use std::sync::LazyLock;
-
 use petramond_world::block::{Block, MeshEmitter};
+use petramond_world::content::stage::BLOCKS;
+use petramond_world::content::{ContentRegistry, Slot};
 
 /// Air, invisible rows, and every row drawn outside the chunk mesh by its
 /// animated block model emit nothing here.
@@ -37,10 +37,11 @@ pub(super) const PAD_SEALS: u8 = 1 << 2;
 /// it (the fill check needs the cell's meta, so this bit only nominates).
 pub(super) const PAD_OPAQUE_FLUID: u8 = 1 << 3;
 
-#[inline]
-pub(super) fn pad_classes() -> &'static [u8] {
-    static CLASSES: LazyLock<Box<[u8]>> = LazyLock::new(|| {
-        Block::all()
+/// The padding classes of a content registry, derived from its block rows.
+static PAD_CLASSES: Slot<Box<[u8]>> = Slot::new("mesh padding classes", &[BLOCKS], derive_pad);
+
+fn derive_pad(_: &ContentRegistry) -> Result<Box<[u8]>, String> {
+    Ok(Block::all()
             .iter()
             .map(|&block| {
                 let mut c = 0;
@@ -61,18 +62,27 @@ pub(super) fn pad_classes() -> &'static [u8] {
                 }
                 c
             })
-            .collect()
-    });
-    &CLASSES
+            .collect())
+}
+
+#[inline]
+pub(super) fn pad_classes() -> &'static [u8] {
+    PAD_CLASSES.current()
 }
 
 /// The whole class table. The cell scan and the exposure-mask build both take
 /// it ONCE and index it per cell, so 4096 cells cost 4096 byte loads rather
-/// than 4096 lazy-static checks.
+/// than 4096 registry lookups.
 #[inline]
 pub(super) fn cell_classes() -> &'static [u8] {
-    static CLASSES: LazyLock<Box<[u8]>> = LazyLock::new(|| {
-        Block::all()
+    CELL_CLASSES.current()
+}
+
+/// The cell classes of a content registry, derived from its block rows.
+static CELL_CLASSES: Slot<Box<[u8]>> = Slot::new("mesh cell classes", &[BLOCKS], derive_cells);
+
+fn derive_cells(_: &ContentRegistry) -> Result<Box<[u8]>, String> {
+    Ok(Block::all()
             .iter()
             .map(|&block| {
                 let mut c = if block == Block::Air
@@ -95,9 +105,7 @@ pub(super) fn cell_classes() -> &'static [u8] {
                 }
                 c
             })
-            .collect()
-    });
-    &CLASSES
+            .collect())
 }
 
 /// Whether a cube-drawn block may take the exposure-mask fast path.
@@ -126,9 +134,14 @@ pub(super) fn class_of(table: &[u8], id: u16) -> u8 {
 /// dispatches a non-skipped, non-fluid cell on.
 #[inline]
 pub(super) fn emitters() -> &'static [MeshEmitter] {
-    static EMITTERS: LazyLock<Box<[MeshEmitter]>> =
-        LazyLock::new(|| Block::all().iter().map(|b| b.mesh_emitter()).collect());
-    &EMITTERS
+    EMITTERS.current()
+}
+
+static EMITTERS: Slot<Box<[MeshEmitter]>> =
+    Slot::new("mesh emitters", &[BLOCKS], derive_emitters);
+
+fn derive_emitters(_: &ContentRegistry) -> Result<Box<[MeshEmitter]>, String> {
+    Ok(Block::all().iter().map(|b| b.mesh_emitter()).collect())
 }
 
 /// An emitter-table read at a RAW id, degrading like [`class_of`].

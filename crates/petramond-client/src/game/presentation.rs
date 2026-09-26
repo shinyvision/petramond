@@ -214,7 +214,7 @@ impl GamePresentationScratch {
                         .curr
                         .data
                         .as_deref()
-                        .and_then(petramond_world::item::variant::intern_blob)
+                        .and_then(|b| petramond_world::item::variant::intern_blob(b).ok())
                         .unwrap_or_default(),
                     count: entry.curr.count,
                     prev_spin: entry.prev.spin,

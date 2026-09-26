@@ -16,8 +16,9 @@
 //! host call, and everything below — the claims, the wire rows, the join
 //! tables, the render drivers — carries the id.
 
+use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use petramond_anim::{ClipId, Graph};
 use petramond_world::bbmodel::Model;
@@ -30,16 +31,28 @@ pub use mod_api::rig::{PLAYER_BODY, PLAYER_FIRST_PERSON};
 /// The catalog's pack-relative path.
 const CATALOG_PATH: &str = "animations/rigs.json";
 
-const ROW_KEYS: &[&str] = &[
-    "model",
-    "animator",
-    "observed",
-    "presenter",
-    "grips",
-    "camera",
-    "twist",
-    "holds",
-];
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRig {
+    model: String,
+    animator: String,
+    observed: bool,
+    presenter: String,
+    grips: RawGrips,
+    #[serde(default)]
+    camera: Option<String>,
+    #[serde(default)]
+    twist: Vec<String>,
+    #[serde(default)]
+    holds: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawGrips {
+    main: String,
+    off: String,
+}
 
 /// A rig's index in this process's registry — the compact id every runtime
 /// path carries below the ABI. Both mirrors resolve names against the same
@@ -111,9 +124,15 @@ impl Rig {
     }
 }
 
-static RIGS: LazyLock<Vec<Rig>> = LazyLock::new(|| {
+/// Every rig of a content registry — a derived view built on first use. Rig
+/// rows are presentation: a bad row is logged and skipped rather than failing
+/// the registry.
+static RIGS: petramond_world::content::Slot<Vec<Rig>> =
+    petramond_world::content::Slot::new("player rigs", &[], load_rigs);
+
+fn load_rigs(reg: &petramond_world::content::ContentRegistry) -> Result<Vec<Rig>, String> {
     let mut doc = Map::new();
-    for layer in petramond_world::assets::read_catalog_layers(CATALOG_PATH) {
+    for layer in reg.packs().read_catalog_layers(CATALOG_PATH) {
         match serde_json::from_str::<Value>(&layer.text) {
             Ok(value) => {
                 if let Err(e) =
@@ -129,8 +148,12 @@ static RIGS: LazyLock<Vec<Rig>> = LazyLock::new(|| {
     for e in errors {
         log::error!("rigs catalog: {e}");
     }
-    rigs
-});
+    Ok(rigs)
+}
+
+fn rigs() -> &'static [Rig] {
+    RIGS.current()
+}
 
 fn load_model(path: &str) -> Option<Model> {
     let Some((src, _)) = petramond_world::assets::read_bytes(path) else {
@@ -173,91 +196,57 @@ fn rig_from(
     load_model: &impl Fn(&str) -> Option<Model>,
     load_graph: &impl Fn(&str, &Model) -> Option<Arc<Graph>>,
 ) -> Result<Rig, String> {
-    let row = row.as_object().ok_or("a rig row is an object")?;
-    if let Some(key) = row.keys().find(|k| !ROW_KEYS.contains(&k.as_str())) {
-        return Err(format!("unknown key `{key}`"));
-    }
-    let text = |key: &str| {
-        row.get(key)
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("`{key}` names a path"))
-    };
-    let model_path = text("model")?;
-    let animator = text("animator")?.to_string();
-    let observed = row
-        .get("observed")
-        .and_then(Value::as_bool)
-        .ok_or("`observed` is true or false")?;
-    let presenter = row
-        .get("presenter")
-        .and_then(Value::as_str)
-        .and_then(Presenter::named)
-        .ok_or("`presenter` is `body` or `viewmodel`")?;
-    let model = load_model(model_path).ok_or_else(|| format!("no model at '{model_path}'"))?;
-    let bone = |bone: &Value, key: &str| {
-        let name = bone
-            .as_str()
-            .ok_or_else(|| format!("`{key}` names bones"))?;
+    let row: RawRig = serde_json::from_value(row.clone()).map_err(|e| e.to_string())?;
+    let presenter =
+        Presenter::named(&row.presenter).ok_or("`presenter` is `body` or `viewmodel`")?;
+    let model = load_model(&row.model).ok_or_else(|| format!("no model at '{}'", row.model))?;
+    let bone = |name: &str, key: &str| {
         model
             .bone_named(name)
             .ok_or_else(|| format!("`{key}`: the model has no bone `{name}`"))
     };
-    let grips = row
-        .get("grips")
-        .and_then(Value::as_object)
-        .ok_or("`grips` is { main, off }")?;
-    let grip = |hand: &str| {
-        grips
-            .get(hand)
-            .ok_or_else(|| format!("`grips.{hand}` names a bone"))
-            .and_then(|v| bone(v, "grips"))
-    };
-    let grips = [grip("main")?, grip("off")?];
-    let camera = row.get("camera").map(|v| bone(v, "camera")).transpose()?;
-    let twist = match row.get("twist") {
-        None => Vec::new(),
-        Some(Value::Array(list)) => list
-            .iter()
-            .map(|v| bone(v, "twist"))
-            .collect::<Result<_, _>>()?,
-        Some(_) => return Err("`twist` is a list of bones".into()),
-    };
-    let graph = load_graph(&animator, &model);
+    let grips = [
+        bone(&row.grips.main, "grips.main")?,
+        bone(&row.grips.off, "grips.off")?,
+    ];
+    let camera = row
+        .camera
+        .as_deref()
+        .map(|v| bone(v, "camera"))
+        .transpose()?;
+    let twist = row
+        .twist
+        .iter()
+        .map(|v| bone(v, "twist"))
+        .collect::<Result<_, _>>()?;
+    let graph = load_graph(&row.animator, &model);
     let mut holds = Vec::new();
-    if let Some(listed) = row.get("holds") {
-        let listed = listed
-            .as_object()
-            .ok_or("`holds` is { render kind: clip }")?;
-        for (kind, clip) in listed {
-            let kind = ItemRenderKind::NAMES
-                .into_iter()
-                .find(|k| *k == kind.as_str())
-                .ok_or_else(|| {
-                    format!(
-                        "`holds.{kind}`: not a render kind ({})",
-                        ItemRenderKind::NAMES.join(", ")
-                    )
-                })?;
-            let clip = clip
-                .as_str()
-                .ok_or_else(|| format!("`holds.{kind}` names a clip"))?;
-            // Without a graph the rig draws its rest pose, so a hold has
-            // nothing to rest in; the missing animator is already logged.
-            if let Some(graph) = &graph {
-                let id = graph
-                    .clips()
-                    .id(clip)
-                    .ok_or_else(|| format!("`holds.{kind}`: the rig has no clip `{clip}`"))?;
-                holds.push((kind, id));
-            }
+    for (kind, clip) in &row.holds {
+        let kind = ItemRenderKind::NAMES
+            .into_iter()
+            .find(|k| *k == kind.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "`holds.{kind}`: not a render kind ({})",
+                    ItemRenderKind::NAMES.join(", ")
+                )
+            })?;
+        // Without a graph the rig draws its rest pose, so a hold has
+        // nothing to rest in; the missing animator is already logged.
+        if let Some(graph) = &graph {
+            let id = graph
+                .clips()
+                .id(clip)
+                .ok_or_else(|| format!("`holds.{kind}`: the rig has no clip `{clip}`"))?;
+            holds.push((kind, id));
         }
     }
     Ok(Rig {
         name: name.to_string(),
         model,
-        animator,
+        animator: row.animator,
         graph,
-        observed,
+        observed: row.observed,
         presenter,
         grips,
         camera,
@@ -268,27 +257,29 @@ fn rig_from(
 
 /// Every registered rig, in id order.
 pub fn all() -> &'static [Rig] {
-    &RIGS
+    rigs()
 }
 
 /// The rig behind `id`; `None` for an id this process never registered (a
 /// remapped peer row can carry none — the transport drops those).
 pub fn get(id: RigId) -> Option<&'static Rig> {
-    RIGS.get(id.index())
+    rigs().get(id.index())
 }
 
 /// Resolve a rig NAME to its id, once at the ABI.
 pub fn id(name: &str) -> Option<RigId> {
-    RIGS.iter()
+    rigs()
+        .iter()
         .position(|r| r.name == name)
         .map(|i| RigId(i as u16))
 }
 
 /// The rig `presenter` draws, with its id.
 pub fn presented(presenter: Presenter) -> Option<(RigId, &'static Rig)> {
-    RIGS.iter()
+    let rigs = rigs();
+    rigs.iter()
         .position(|r| r.presenter == presenter)
-        .map(|i| (RigId(i as u16), &RIGS[i]))
+        .map(|i| (RigId(i as u16), &rigs[i]))
 }
 
 /// The compiled animator of `id`'s rig, if it has one.

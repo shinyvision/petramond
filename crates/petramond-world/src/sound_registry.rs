@@ -7,8 +7,6 @@
 //! namespaced (`mod_id:name`) key, which registers a fresh id in load order
 //! (see [`crate::registry`] for the shared rules).
 
-use std::sync::LazyLock;
-
 use serde::Deserialize;
 
 /// Default distance, in blocks, where positional sounds fade to silence when a
@@ -270,16 +268,24 @@ pub fn by_name(name: &str) -> Option<Sound> {
     catalog().id(name).map(|id| Sound(id as u8))
 }
 
-/// The loaded sound table, id-ordered (`defs()[sound.0]`). Loads exactly once;
-/// a missing or inconsistent `sounds.json` fails loudly at startup.
+/// The current registry's sound table, id-ordered (`defs()[sound.0]`). A
+/// missing or inconsistent `sounds.json` fails the registry build.
 pub fn defs() -> &'static [SoundDef] {
     catalog().rows()
 }
 
+/// The sound catalog stage of every content registry.
+pub(crate) static CATALOG: crate::content::Slot<crate::registry::Catalog<SoundDef>> =
+    crate::content::Slot::new(crate::content::stage::SOUNDS, &[], load);
+
+fn load(
+    reg: &crate::content::ContentRegistry,
+) -> Result<crate::registry::Catalog<SoundDef>, String> {
+    crate::registry::read_catalog(reg.packs(), "sounds.json", "sound", parse_layers)
+}
+
 fn catalog() -> &'static crate::registry::Catalog<SoundDef> {
-    static TABLE: LazyLock<crate::registry::Catalog<SoundDef>> =
-        LazyLock::new(|| crate::registry::read_catalog("sounds.json", "sound", parse_layers));
-    &TABLE
+    CATALOG.current()
 }
 
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<SoundDef>, String> {

@@ -1,19 +1,26 @@
 //! Client cache of custom shapes' baked ITEM geometry — the boxes a
 //! shape's `BakeShapeItem` produced once at client-mod load, reused for the
-//! block-item's icon, dropped entity, and in-hand form. Keyed by block id
-//! (stable for a session); populated by `ClientModRuntime::bake_item_geometry`
+//! block-item's icon, dropped entity, and in-hand form. Keyed by block id and
+//! kept per content registry (ids mean nothing across registries); populated by `ClientModRuntime::bake_item_geometry`
 //! and read by `render::item_cube`'s custom branch. A miss (no client bake,
 //! trapped, or empty) falls back to the block's plain cube there.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use crate::block::Aabb;
 
-static CACHE: OnceLock<Mutex<HashMap<u16, Arc<[Aabb]>>>> = OnceLock::new();
+type Cache = Mutex<HashMap<u16, Arc<[Aabb]>>>;
 
-fn cache() -> &'static Mutex<HashMap<u16, Arc<[Aabb]>>> {
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+static CACHE: crate::content::Slot<Cache> =
+    crate::content::Slot::new("item shape bakes", &[], empty_cache);
+
+fn empty_cache(_: &crate::content::ContentRegistry) -> Result<Cache, String> {
+    Ok(Mutex::default())
+}
+
+fn cache() -> &'static Cache {
+    CACHE.current()
 }
 
 /// Record a custom block's baked item boxes (cell-local, `0.0..1.0`).
