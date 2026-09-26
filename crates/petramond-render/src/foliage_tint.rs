@@ -24,14 +24,14 @@ use petramond_world::tile::{Tile, TileTint};
 /// colour is what an icon/held grass block greens to.
 #[inline]
 pub fn default_grass_color() -> [f32; 3] {
-    Biome::Plains.grass_color()
+    Biome::PLAINS.grass_color()
 }
 
 /// Fixed temperate foliage colour for out-of-world tints (Plains foliage colour),
 /// used to tint all `*Leaves` tiles.
 #[inline]
 pub fn default_foliage_color() -> [f32; 3] {
-    Biome::Plains.foliage_color()
+    Biome::PLAINS.foliage_color()
 }
 
 /// White (no tint) for everything that the mesher leaves untinted.

@@ -16,10 +16,9 @@ use crate::surface::SurfaceSystem;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::chunk::{SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y, WORLD_MIN_Y};
-use petramond_world::mathh::smoothstep;
 use petramond_world::section::Section;
 
-use super::super::rng::FeatureRng;
+use super::super::rng::{patch_field, FeatureRng};
 
 const VEG_SALT: u64 = 0x0000_5EED_1EAF_0001;
 /// Salt for the flower-patch SPECIES field (which one flower a patch is made of).
@@ -152,8 +151,9 @@ pub fn place_vegetation_section(
     }
 }
 
-/// Choose a plant for a column. Non-grass surfaces keep their material-specific
-/// scatter; grass surfaces split into two INDEPENDENT decisions:
+/// Choose a plant for a column. The biome row's `covers` answer first for the
+/// grounds they name; then sand and podzol take their cover rolls, and grass
+/// surfaces split into two INDEPENDENT decisions:
 ///   1. a common grass-tuft / fern scatter (keyed to the column RNG), and
 ///   2. a flower PATCH: a low-frequency presence field decides whether this column
 ///      is inside a flower patch, a low-frequency species field picks the ONE
@@ -175,19 +175,15 @@ fn pick_plant(
         return Some(litter);
     }
 
-    if matches!(surf, Block::Sand | Block::RedSand) {
-        return vegetation.sand_cover.and_then(|roll| roll.pick(rng));
-    }
-
-    if surf == Block::Mycelium {
-        if !rng.chance(0.10) {
+    if let Some(cover) = vegetation.covers.iter().find(|c| c.on.contains(&surf)) {
+        if cover.clustered && !cover_cluster_allows(vegetation.cover_cluster, seed, wx, wz) {
             return None;
         }
-        return Some(if rng.next_i32(0, 99) < 55 {
-            Block::RedMushroom
-        } else {
-            Block::BrownMushroom
-        });
+        return cover.roll.pick(rng);
+    }
+
+    if matches!(surf, Block::Sand | Block::RedSand) {
+        return vegetation.sand_cover.and_then(|roll| roll.pick(rng));
     }
 
     if surf == Block::Podzol {
@@ -356,26 +352,6 @@ fn cover_cluster_allows(cluster: Option<CoverCluster>, seed: u32, wx: i32, wz: i
     }
 }
 
-/// Smooth low-frequency value field in `[0,1)` at world `(wx,wz)`: hashed lattice
-/// corners with a smoothstep bilinear blend, so flower patches are organic blobs
-/// rather than a hard grid. Pure function of `(seed, salt, wx, wz)` — seamless
-/// across chunk borders.
-pub fn patch_field(seed: u32, salt: u64, wx: i32, wz: i32, period: f32) -> f32 {
-    let fx = wx as f32 / period;
-    let fz = wz as f32 / period;
-    let x0 = fx.floor() as i32;
-    let z0 = fz.floor() as i32;
-    let tx = smoothstep(0.0, 1.0, fx - x0 as f32);
-    let tz = smoothstep(0.0, 1.0, fz - z0 as f32);
-    let corner = |ix: i32, iz: i32| FeatureRng::positional(seed, salt, ix, 0, iz).next_f32();
-    let c00 = corner(x0, z0);
-    let c10 = corner(x0 + 1, z0);
-    let c01 = corner(x0, z0 + 1);
-    let c11 = corner(x0 + 1, z0 + 1);
-    let a = c00 + (c10 - c00) * tx;
-    let b = c01 + (c11 - c01) * tx;
-    a + (b - a) * tz
-}
 
 #[cfg(test)]
 mod tests {
@@ -405,7 +381,7 @@ mod tests {
         for wz in 0..SIDE {
             for wx in 0..SIDE {
                 let mut rng = FeatureRng::positional(SEED, VEG_SALT, wx, 0, wz);
-                match pick_litter(Biome::SnowyTaiga, Block::Grass, SEED, wx, wz, &mut rng) {
+                match pick_litter(Biome::SNOWY_TAIGA, Block::Grass, SEED, wx, wz, &mut rng) {
                     Some(Block::Hemp) => hemp += 1,
                     Some(_) => pebbles += 1,
                     None => {}

@@ -1,0 +1,284 @@
+{
+  "fields": {
+    "temperature": {"salt": [6664882324328353151, 17859146487254174088], "first_octave": -10, "amplitudes": [1.5, 0.0, 1.0, 0.0, 0.0, 0.0]},
+    "humidity": {"salt": [9348150263868561038, 17422373889327170509], "first_octave": -8, "amplitudes": [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]},
+    "continentality": {"salt": [9477944837549565538, 12656866088844454061], "first_octave": -9, "amplitudes": [1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0]},
+    "erosion": {"salt": [14998273076172386264, 5157273775208757888], "first_octave": -9, "amplitudes": [1.0, 1.0, 0.0, 1.0, 1.0]},
+    "weirdness": {"salt": [17278323085305457460, 2012804684704589034], "first_octave": -7, "amplitudes": [1.0, 2.0, 1.0, 0.0, 0.0, 0.0]},
+    "crag": {"salt": [1271071581156483110, 506583420214636557], "first_octave": -5, "amplitudes": [1.0, 1.0]},
+    "structure": {"salt": [6490216430896724498, 11402401403905556481], "first_octave": -10, "amplitudes": [1.0]}
+  },
+  "splines": {
+    "offset": {"axis": "continentality", "points": [
+      [-1.1, 0.044, 0.0],
+      [-1.02, -0.2222, 0.0],
+      [-0.51, -0.2222, 0.0],
+      [-0.44, -0.12, 0.0],
+      [-0.18, -0.12, 0.0],
+      [-0.16, "offset_coast", 0.0],
+      [-0.15, "offset_coast", 0.0],
+      [-0.1, "offset_near_inland", 0.0],
+      [0.25, "offset_mid_inland", 0.0],
+      [1.0, "offset_far_inland", 0.0]
+    ]},
+    "offset_far_inland": {"axis": "erosion", "points": [
+      [-0.85, "offset_far_inland_ridge_high", 0.0],
+      [-0.7, "offset_far_inland_ridge_mid", 0.0],
+      [-0.4, "offset_far_inland_ridge_low", 0.0],
+      [-0.35, "offset_far_inland_eroded_low", 0.0],
+      [-0.1, "offset_far_inland_eroded_mid", 0.0],
+      [0.2, "offset_far_inland_eroded", 0.0],
+      [0.4, "offset_far_inland_eroded", 0.0],
+      [0.45, "offset_far_inland_shoulder", 0.0],
+      [0.55, "offset_far_inland_shoulder", 0.0],
+      [0.58, "offset_far_inland_eroded", 0.0],
+      [0.7, "offset_far_inland_valley", 0.0]
+    ]},
+    "offset_far_inland_valley": {"axis": "ridge", "points": [
+      [-1.0, -0.02, 0.015],
+      [-0.4, 0.01, 0.0],
+      [0.0, 0.01, 0.0],
+      [0.4, 0.03, 0.039999999999999994],
+      [1.0, 0.1, 0.049]
+    ]},
+    "offset_far_inland_shoulder": {"axis": "ridge", "points": [
+      [-1.0, -0.05, 0.0],
+      [-0.4, "offset_far_inland_eroded", 0.0],
+      [0.0, 0.17, 0.0]
+    ]},
+    "offset_far_inland_eroded": {"axis": "ridge", "points": [
+      [-1.0, -0.05, 0.5],
+      [-0.4, 0.01, 0.0],
+      [0.0, 0.01, 0.0],
+      [0.4, 0.03, 0.039999999999999994],
+      [1.0, 0.1, 0.049]
+    ]},
+    "offset_far_inland_eroded_mid": {"axis": "ridge", "points": [
+      [-1.0, -0.05, 0.5],
+      [-0.4, 0.01, 0.09999999999999998],
+      [0.0, 0.03, 0.09999999999999998],
+      [0.4, 0.5, 0.94],
+      [1.0, 0.6, 0.06999999999999998]
+    ]},
+    "offset_far_inland_eroded_low": {"axis": "ridge", "points": [
+      [-1.0, -0.2, 0.5],
+      [-0.4, 0.5, 0.0],
+      [0.0, 0.5, 0.0],
+      [0.4, 0.5, 0.0],
+      [1.0, 0.6, 0.06999999999999998]
+    ]},
+    "offset_far_inland_ridge_low": {"axis": "ridge", "points": [
+      [-1.0, 0.2, 0.0],
+      [0.0, 0.5391704799, 0.46082947],
+      [1.0, 0.9999999499, 0.46082947]
+    ]},
+    "offset_far_inland_ridge_mid": {"axis": "ridge", "points": [
+      [-1.0, 0.2, 0.0],
+      [0.0, 0.5391704799, 0.46082947],
+      [1.0, 0.9999999499, 0.46082947]
+    ]},
+    "offset_far_inland_ridge_high": {"axis": "ridge", "points": [
+      [-1.0, 0.34792626237499996, 0.0],
+      [0.0, 0.9239630998749999, 0.5760368375],
+      [1.0, 1.499999937375, 0.5760368375]
+    ]},
+    "offset_mid_inland": {"axis": "erosion", "points": [
+      [-0.85, "offset_mid_inland_ridge_high", 0.0],
+      [-0.7, "offset_mid_inland_ridge_mid", 0.0],
+      [-0.4, "offset_mid_inland_ridge_low", 0.0],
+      [-0.35, "offset_mid_inland_eroded_low", 0.0],
+      [-0.1, "offset_mid_inland_eroded_mid", 0.0],
+      [0.2, "offset_mid_inland_eroded", 0.0],
+      [0.4, "offset_mid_inland_eroded", 0.0],
+      [0.45, "offset_mid_inland_shoulder", 0.0],
+      [0.55, "offset_mid_inland_shoulder", 0.0],
+      [0.58, "offset_mid_inland_eroded", 0.0],
+      [0.7, "offset_mid_inland_valley", 0.0]
+    ]},
+    "offset_mid_inland_valley": {"axis": "ridge", "points": [
+      [-1.0, -0.02, 0.0],
+      [-0.4, -0.03, 0.0],
+      [0.0, -0.03, 0.0],
+      [0.4, 0.03, 0.12],
+      [1.0, 0.1, 0.049]
+    ]},
+    "offset_mid_inland_shoulder": {"axis": "ridge", "points": [
+      [-1.0, -0.1, 0.0],
+      [-0.4, "offset_mid_inland_eroded", 0.0],
+      [0.0, 0.17, 0.0]
+    ]},
+    "offset_mid_inland_eroded": {"axis": "ridge", "points": [
+      [-1.0, -0.1, 0.5],
+      [-0.4, 0.01, 0.0],
+      [0.0, 0.01, 0.0],
+      [0.4, 0.03, 0.039999999999999994],
+      [1.0, 0.1, 0.049]
+    ]},
+    "offset_mid_inland_eroded_mid": {"axis": "ridge", "points": [
+      [-1.0, -0.1, 0.5],
+      [-0.4, 0.006999999999999999, 0.06999999999999999],
+      [0.0, 0.020999999999999998, 0.06999999999999999],
+      [0.4, 0.35, 0.6579999999999999],
+      [1.0, 0.42, 0.049]
+    ]},
+    "offset_mid_inland_eroded_low": {"axis": "ridge", "points": [
+      [-1.0, -0.25, 0.5],
+      [-0.4, 0.35, 0.0],
+      [0.0, 0.35, 0.0],
+      [0.4, 0.35, 0.0],
+      [1.0, 0.42, 0.049]
+    ]},
+    "offset_mid_inland_ridge_low": {"axis": "ridge", "points": [
+      [-1.0, 0.2, 0.0],
+      [0.0, 0.3082949079149999, 0.39170504949999996],
+      [1.0, 0.6999999574149999, 0.39170504949999996]
+    ]},
+    "offset_mid_inland_ridge_mid": {"axis": "ridge", "points": [
+      [-1.0, 0.2, 0.0],
+      [0.0, 0.4468202511059999, 0.4331797018],
+      [1.0, 0.8799999529059999, 0.4331797018]
+    ]},
+    "offset_mid_inland_ridge_high": {"axis": "ridge", "points": [
+      [-1.0, 0.20235022603849995, 0.0],
+      [0.0, 0.7161750850884999, 0.51382485905],
+      [1.0, 1.2299999441385, 0.51382485905]
+    ]},
+    "offset_near_inland": {"axis": "erosion", "points": [
+      [-0.85, "offset_near_inland_ridge_high", 0.0],
+      [-0.7, "offset_near_inland_ridge_mid", 0.0],
+      [-0.4, "offset_near_inland_ridge_low", 0.0],
+      [-0.35, "offset_near_inland_eroded_low", 0.0],
+      [-0.1, "offset_near_inland_eroded_mid", 0.0],
+      [0.2, "offset_near_inland_eroded", 0.0],
+      [0.7, "offset_near_inland_valley", 0.0]
+    ]},
+    "offset_near_inland_valley": {"axis": "ridge", "points": [
+      [-1.0, -0.02, 0.0],
+      [-0.4, -0.03, 0.0],
+      [0.0, -0.03, 0.0],
+      [0.4, 0.03, 0.12],
+      [1.0, 0.1, 0.049]
+    ]},
+    "offset_near_inland_eroded": {"axis": "ridge", "points": [
+      [-1.0, -0.1, 0.5],
+      [-0.4, 0.01, 0.0],
+      [0.0, 0.01, 0.0],
+      [0.4, 0.03, 0.039999999999999994],
+      [1.0, 0.1, 0.049]
+    ]},
+    "offset_near_inland_eroded_mid": {"axis": "ridge", "points": [
+      [-1.0, -0.1, 0.5],
+      [-0.4, 0.001, 0.01],
+      [0.0, 0.003, 0.01],
+      [0.4, 0.05, 0.094],
+      [1.0, 0.06, 0.006999999999999996]
+    ]},
+    "offset_near_inland_eroded_low": {"axis": "ridge", "points": [
+      [-1.0, -0.25, 0.5],
+      [-0.4, 0.05, 0.0],
+      [0.0, 0.05, 0.0],
+      [0.4, 0.05, 0.0],
+      [1.0, 0.06, 0.006999999999999996]
+    ]},
+    "offset_near_inland_ridge_low": {"axis": "ridge", "points": [
+      [-1.0, -0.2222, 0.0],
+      [-0.75, -0.2222, 0.0],
+      [-0.65, 0.0, 0.0],
+      [0.5954546344048224, 0.0, 0.0],
+      [0.6054546344048224, 0.0, 0.2534562084999998],
+      [1.0, 0.09999997244499997, 0.2534562084999998]
+    ]},
+    "offset_near_inland_ridge_mid": {"axis": "ridge", "points": [
+      [-1.0, -0.11576037188200002, 0.3778801654000001],
+      [1.0, 0.6399999589180001, 0.3778801654000001]
+    ]},
+    "offset_near_inland_ridge_high": {"axis": "ridge", "points": [
+      [-1.0, -0.08880184663450005, 0.38940090215],
+      [1.0, 0.6899999576654999, 0.38940090215]
+    ]},
+    "offset_coast": {"axis": "erosion", "points": [
+      [-0.85, "offset_coast_ridge_high", 0.0],
+      [-0.7, "offset_coast_ridge_mid", 0.0],
+      [-0.4, "offset_coast_ridge_low", 0.0],
+      [-0.35, "offset_coast_eroded_low", 0.0],
+      [-0.1, "offset_coast_eroded_mid", 0.0],
+      [0.2, "offset_coast_eroded", 0.0],
+      [0.7, "offset_coast_valley", 0.0]
+    ]},
+    "offset_coast_valley": {"axis": "ridge", "points": [
+      [-1.0, -0.02, 0.0],
+      [-0.4, -0.03, 0.0],
+      [0.0, -0.03, 0.0],
+      [0.4, 0.0, 0.06],
+      [1.0, 0.0, 0.0]
+    ]},
+    "offset_coast_eroded": {"axis": "ridge", "points": [
+      [-1.0, -0.15, 0.5],
+      [-0.4, 0.0, 0.0],
+      [0.0, 0.0, 0.0],
+      [0.4, 0.0, 0.0],
+      [1.0, 0.0, 0.0]
+    ]},
+    "offset_coast_eroded_mid": {"axis": "ridge", "points": [
+      [-1.0, -0.15, 0.5],
+      [-0.4, 0.0, 0.0],
+      [0.0, 0.0, 0.0],
+      [0.4, 0.05, 0.1],
+      [1.0, 0.06, 0.006999999999999996]
+    ]},
+    "offset_coast_eroded_low": {"axis": "ridge", "points": [
+      [-1.0, -0.3, 0.5],
+      [-0.4, 0.05, 0.0],
+      [0.0, 0.05, 0.0],
+      [0.4, 0.05, 0.0],
+      [1.0, 0.06, 0.006999999999999996]
+    ]},
+    "offset_coast_ridge_low": {"axis": "ridge", "points": [
+      [-1.0, -0.2222, 0.0],
+      [-0.75, -0.2222, 0.0],
+      [-0.65, 0.0, 0.0],
+      [0.5954546344048224, 0.0, 0.0],
+      [0.6054546344048224, 0.0, 0.2534562084999998],
+      [1.0, 0.09999997244499997, 0.2534562084999998]
+    ]},
+    "offset_coast_ridge_mid": {"axis": "ridge", "points": [
+      [-1.0, -0.11576037188200002, 0.3778801654000001],
+      [1.0, 0.6399999589180001, 0.3778801654000001]
+    ]},
+    "offset_coast_ridge_high": {"axis": "ridge", "points": [
+      [-1.0, -0.08880184663450005, 0.38940090215],
+      [1.0, 0.6899999576654999, 0.38940090215]
+    ]}
+  },
+  "nodes": {
+    "temperature": {"field": "temperature"},
+    "humidity": {"field": "humidity"},
+    "raw_continentality": {"field": "continentality"},
+    "raw_erosion": {"field": "erosion"},
+    "variance": {"field": "weirdness"},
+    "spine": {"clamp": {"input": {"add": [{"multiply": [{"abs": {"field": "structure"}}, -5.0]}, 1.0]}, "min": 0.0, "max": 1.0}},
+    "uplift": {"multiply": [{"multiply": ["spine", "spine"]}, {"spline": {"spline": {"axis": "style_raw_continentality", "points": [[-0.45, 0.0, 0.0], [-0.15, 1.0, 0.0]]}, "inputs": {"style_raw_continentality": "raw_continentality"}}}]},
+    "continentality": {"add": ["raw_continentality", {"multiply": ["uplift", 0.22]}]},
+    "erosion": {"add": ["raw_erosion", {"multiply": ["uplift", -0.5]}]},
+    "ridge": {"ridge_fold": "variance"},
+    "offset": {"spline": {"spline": "offset", "inputs": {"continentality": "continentality", "erosion": "erosion", "ridge": "ridge"}}},
+    "crest": {"clamp": {"input": {"add": [{"multiply": [{"abs": {"field": "crag"}}, -2.0]}, 1.0]}, "min": 0.0, "max": 1.0}},
+    "crag_weight": {"multiply": [{"multiply": [{"spline": {"spline": {"axis": "style_offset", "points": [[0.3, 0.0, 0.0], [0.55, 1.0, 0.0]]}, "inputs": {"style_offset": "offset"}}}, {"spline": {"spline": {"axis": "erosion", "points": [[-0.6, 1.0, 0.0], [0.05, 0.0, 0.0]]}, "inputs": {"erosion": "erosion"}}}]}, {"spline": {"spline": {"axis": "style_variance", "points": [[-0.16, 1.0, 0.0], [-0.06, 0.0, 0.0], [0.06, 0.0, 0.0], [0.16, 1.0, 0.0]]}, "inputs": {"style_variance": "variance"}}}]},
+    "crag_term": {"multiply": [{"multiply": [{"multiply": ["crest", "crest"]}, 0.21875]}, "crag_weight"]},
+    "smooth_height": {"add": [{"multiply": [{"add": ["offset", "crag_term"]}, 128.0]}, 63.519996643066406]},
+    "mesa_weight": {"multiply": [{"multiply": [{"multiply": [{"multiply": [{"spline": {"spline": {"axis": "style_temperature", "points": [[0.4, 0.0, 0.0], [0.6, 1.0, 0.0]]}, "inputs": {"style_temperature": "temperature"}}}, {"spline": {"spline": {"axis": "style_humidity", "points": [[-0.35, 1.0, 0.0], [-0.05, 0.0, 0.0]]}, "inputs": {"style_humidity": "humidity"}}}]}, {"spline": {"spline": {"axis": "erosion", "points": [[-0.1, 0.0, 0.0], [0.25, 1.0, 0.0]]}, "inputs": {"erosion": "erosion"}}}]}, {"spline": {"spline": {"axis": "continentality", "points": [[-0.05, 0.0, 0.0], [0.15, 1.0, 0.0]]}, "inputs": {"continentality": "continentality"}}}]}, 0.85]},
+    "base_height": {"lerp": {"a": "smooth_height", "b": {"terrace": {"input": "smooth_height", "step": 8.0}}, "t": "mesa_weight"}},
+    "master_density": {"floor_clamp": {"input": {"vertical_bias": "base_height"}, "floor_y": 0.0, "fade_height": 8.0, "solid_density": 64.0}}
+  },
+  "channels": {
+    "temperature": "temperature",
+    "humidity": "humidity",
+    "continentality": "continentality",
+    "erosion": "erosion",
+    "variance": "variance",
+    "ridge": "ridge",
+    "base_height": "base_height",
+    "master_density": "master_density",
+    "surface_detection": 0.0
+  }
+}

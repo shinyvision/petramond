@@ -1,5 +1,4 @@
 use super::spline::{CubicSpline, SplineAxis};
-#[cfg(test)]
 use super::Axis;
 use super::{GraphEvaluationCache, GraphId, NodeId, SamplePoint, SampledScalarField, ScalarGraph};
 use std::sync::Arc;
@@ -7,14 +6,11 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub(super) enum Node {
     Constant(f64),
-    #[cfg(test)]
     Axis(Axis),
     SampledField(Arc<dyn SampledScalarField>),
     Add(NodeId, NodeId),
     Multiply(NodeId, NodeId),
-    #[cfg(test)]
     Min(NodeId, NodeId),
-    #[cfg(test)]
     Max(NodeId, NodeId),
     Abs(NodeId),
     RidgeFold(NodeId),
@@ -35,7 +31,6 @@ pub(super) enum Node {
         b: NodeId,
         t: NodeId,
     },
-    #[cfg(test)]
     VerticalRamp {
         y_min: f64,
         y_max: f64,
@@ -49,7 +44,6 @@ pub(super) enum Node {
         fade_height: f64,
         solid_density: f64,
     },
-    #[cfg(test)]
     RangeSelect {
         selector: NodeId,
         min: f64,
@@ -67,14 +61,11 @@ impl Node {
     pub(super) fn with_graph(self, graph_id: GraphId) -> Self {
         match self {
             Self::Constant(value) => Self::Constant(value),
-            #[cfg(test)]
             Self::Axis(axis) => Self::Axis(axis),
             Self::SampledField(field) => Self::SampledField(field),
             Self::Add(a, b) => Self::Add(a.with_graph(graph_id), b.with_graph(graph_id)),
             Self::Multiply(a, b) => Self::Multiply(a.with_graph(graph_id), b.with_graph(graph_id)),
-            #[cfg(test)]
             Self::Min(a, b) => Self::Min(a.with_graph(graph_id), b.with_graph(graph_id)),
-            #[cfg(test)]
             Self::Max(a, b) => Self::Max(a.with_graph(graph_id), b.with_graph(graph_id)),
             Self::Abs(input) => Self::Abs(input.with_graph(graph_id)),
             Self::RidgeFold(input) => Self::RidgeFold(input.with_graph(graph_id)),
@@ -92,7 +83,6 @@ impl Node {
                 b: b.with_graph(graph_id),
                 t: t.with_graph(graph_id),
             },
-            #[cfg(test)]
             Self::VerticalRamp { y_min, y_max } => Self::VerticalRamp { y_min, y_max },
             Self::VerticalBias { base_height } => Self::VerticalBias {
                 base_height: base_height.with_graph(graph_id),
@@ -108,7 +98,6 @@ impl Node {
                 fade_height,
                 solid_density,
             },
-            #[cfg(test)]
             Self::RangeSelect {
                 selector,
                 min,
@@ -201,11 +190,8 @@ impl ScalarGraph {
     fn evaluate_node_uncached(&self, node: NodeId, point: SamplePoint) -> f64 {
         match &self.nodes[node.index] {
             Node::Constant(value) => *value,
-            #[cfg(test)]
             Node::Axis(Axis::X) => point.x,
-            #[cfg(test)]
             Node::Axis(Axis::Y) => point.y,
-            #[cfg(test)]
             Node::Axis(Axis::Z) => point.z,
             Node::SampledField(field) => field.sample(point),
             Node::Add(a, b) => {
@@ -214,11 +200,9 @@ impl ScalarGraph {
             Node::Multiply(a, b) => {
                 self.evaluate_node_uncached(*a, point) * self.evaluate_node_uncached(*b, point)
             }
-            #[cfg(test)]
             Node::Min(a, b) => self
                 .evaluate_node_uncached(*a, point)
                 .min(self.evaluate_node_uncached(*b, point)),
-            #[cfg(test)]
             Node::Max(a, b) => self
                 .evaluate_node_uncached(*a, point)
                 .max(self.evaluate_node_uncached(*b, point)),
@@ -237,7 +221,6 @@ impl ScalarGraph {
                 let b = self.evaluate_node_uncached(*b, point);
                 a + (b - a) * self.evaluate_node_uncached(*t, point)
             }
-            #[cfg(test)]
             Node::VerticalRamp { y_min, y_max } => vertical_ramp(point.y, *y_min, *y_max),
             Node::VerticalBias { base_height } => {
                 self.evaluate_node_uncached(*base_height, point) - point.y
@@ -254,7 +237,6 @@ impl ScalarGraph {
                 *fade_height,
                 *solid_density,
             ),
-            #[cfg(test)]
             Node::RangeSelect {
                 selector,
                 min,
@@ -301,11 +283,8 @@ impl ScalarGraph {
 
         let value = match &self.nodes[node.index] {
             Node::Constant(value) => *value,
-            #[cfg(test)]
             Node::Axis(Axis::X) => point.x,
-            #[cfg(test)]
             Node::Axis(Axis::Y) => point.y,
-            #[cfg(test)]
             Node::Axis(Axis::Z) => point.z,
             Node::SampledField(field) => field.sample(point),
             Node::Add(a, b) => {
@@ -316,11 +295,9 @@ impl ScalarGraph {
                 self.evaluate_node_cached_inner(*a, point, cache)
                     * self.evaluate_node_cached_inner(*b, point, cache)
             }
-            #[cfg(test)]
             Node::Min(a, b) => self
                 .evaluate_node_cached_inner(*a, point, cache)
                 .min(self.evaluate_node_cached_inner(*b, point, cache)),
-            #[cfg(test)]
             Node::Max(a, b) => self
                 .evaluate_node_cached_inner(*a, point, cache)
                 .max(self.evaluate_node_cached_inner(*b, point, cache)),
@@ -342,7 +319,6 @@ impl ScalarGraph {
                 let b = self.evaluate_node_cached_inner(*b, point, cache);
                 a + (b - a) * self.evaluate_node_cached_inner(*t, point, cache)
             }
-            #[cfg(test)]
             Node::VerticalRamp { y_min, y_max } => vertical_ramp(point.y, *y_min, *y_max),
             Node::VerticalBias { base_height } => {
                 self.evaluate_node_cached_inner(*base_height, point, cache) - point.y
@@ -359,7 +335,6 @@ impl ScalarGraph {
                 *fade_height,
                 *solid_density,
             ),
-            #[cfg(test)]
             Node::RangeSelect {
                 selector,
                 min,
@@ -397,13 +372,11 @@ impl ScalarGraph {
     pub(super) fn node_definition_depends_on_y(&self, node: &Node) -> bool {
         match node {
             Node::Constant(_) => false,
-            #[cfg(test)]
             Node::Axis(axis) => *axis == Axis::Y,
             Node::SampledField(field) => field.depends_on_y(),
             Node::Add(a, b) | Node::Multiply(a, b) => {
                 self.node_depends_on_y(*a) || self.node_depends_on_y(*b)
             }
-            #[cfg(test)]
             Node::Min(a, b) | Node::Max(a, b) => {
                 self.node_depends_on_y(*a) || self.node_depends_on_y(*b)
             }
@@ -414,11 +387,7 @@ impl ScalarGraph {
                     || self.node_depends_on_y(*b)
                     || self.node_depends_on_y(*t)
             }
-            #[cfg(test)]
             Node::VerticalRamp { .. } | Node::VerticalBias { .. } | Node::FloorClamp { .. } => true,
-            #[cfg(not(test))]
-            Node::VerticalBias { .. } | Node::FloorClamp { .. } => true,
-            #[cfg(test)]
             Node::RangeSelect {
                 selector,
                 inside,
@@ -436,7 +405,6 @@ impl ScalarGraph {
     }
 }
 
-#[cfg(test)]
 fn vertical_ramp(y: f64, y_min: f64, y_max: f64) -> f64 {
     if (y_max - y_min).abs() <= f64::EPSILON {
         if y >= y_max {

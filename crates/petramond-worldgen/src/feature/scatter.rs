@@ -1,15 +1,17 @@
 //! Underground scatter features — ore veins + dirt / gravel / tuff blobs.
 //!
 //! This is the `DecoStep::RawGeneration` + `DecoStep::Ores` content: small
-//! veins that overwrite Stone below the surface, spanning the FULL cubic world
-//! depth (down to `WORLD_MIN_Y`). Two vein shapes:
+//! veins that overwrite their host blocks (stone, unless a row says
+//! otherwise) below the surface, spanning the FULL cubic world depth (down to
+//! `WORLD_MIN_Y`). The vein table is data — `assets/ores.json`, loaded by
+//! [`crate::data::ores`] — and this pass interprets it. Two vein shapes:
 //!   - `VeinShape::Blob`: a roughly-spherical blob of `~size` cells (dirt,
 //!     gravel, tuff, and the bulk ores).
 //!   - `VeinShape::Grid3`: a single-layer 3×3 patch holding 1..=9 ore
 //!     blocks — the iron/diamond rule: a vein always fits a 3×3 area and never
 //!     exceeds 9.
 //!
-//! A config may carry a `DepthRamp`: each rolled vein is then only accepted
+//! A row may carry a depth ramp: each rolled vein is then only accepted
 //! with a chance that grows quadratically toward the bottom of its Y band —
 //! diamonds get more likely the deeper you dig, yet stay rare even at the floor.
 //!
@@ -28,154 +30,32 @@ use petramond_world::section::Section;
 use super::super::rng::FeatureRng;
 use super::sink::SinkTarget;
 use super::{FeatureCtx, SectionSink};
-
-/// How a vein materialises its cells around the rolled origin.
-enum VeinShape {
-    /// Roughly-spherical blob of `~size` cells with per-vein radius jitter.
-    Blob { size: i32 },
-    /// One horizontal 3×3 layer centred on the origin holding exactly
-    /// `1..=max_ore` ore cells (uniformly chosen among the 9 slots).
-    Grid3 { max_ore: i32 },
-}
-
-/// Per-vein acceptance chance ramping toward the BOTTOM of the config's Y band:
-/// `chance(y) = max_chance · t²` with `t = (y_max − y) / (y_max − y_min)`.
-struct DepthRamp {
-    max_chance: f32,
-}
-
-/// One scatter species: a block that overwrites Stone in up to `count` veins per
-/// chunk within a world-Y band.
-struct ScatterConfig {
-    block: Block,
-    salt: u64,
-    count: i32,
-    shape: VeinShape,
-    y_min: i32,
-    y_max: i32,
-    ramp: Option<DepthRamp>,
-}
-
-impl ScatterConfig {
-    /// Conservative `(horizontal, vertical)` reach of one vein from its rolled
-    /// origin, in cells: every write lands within this Chebyshev box. Blob radius
-    /// is `base_r × (0.85 + 0.4·f)` with `f < 1`, so `ceil(base_r × 1.25)` bounds
-    /// `ceil(r)` (f32 multiply is monotone; an exact-integer bound still holds
-    /// because `r` is strictly below it). Grid3 writes one 3×3 layer.
-    fn reach(&self) -> (i32, i32) {
-        match self.shape {
-            VeinShape::Blob { size } => {
-                let r = (blob_base_radius(size) * 1.25).ceil() as i32;
-                (r, r)
-            }
-            VeinShape::Grid3 { .. } => (1, 0),
-        }
-    }
-}
-
-/// The widest horizontal reach across [`CONFIGS`] — the column-level reject bound.
-fn max_config_reach() -> i32 {
-    static MAX: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
-    *MAX.get_or_init(|| CONFIGS.iter().map(|c| c.reach().0).max().unwrap_or(0))
-}
-
-/// Radius for a blob of `size` cells: `r = cbrt(3·size / 4π)` — shared by the
-/// materialiser and the reach bound so they can never drift apart.
-#[inline]
-fn blob_base_radius(size: i32) -> f32 {
-    petramond_math::detmath::cbrtf((size as f32) * 3.0 / (4.0 * std::f32::consts::PI))
-}
-
-const fn blob(
-    block: Block,
-    salt: u64,
-    count: i32,
-    size: i32,
-    y_min: i32,
-    y_max: i32,
-) -> ScatterConfig {
-    ScatterConfig {
-        block,
-        salt,
-        count,
-        shape: VeinShape::Blob { size },
-        y_min,
-        y_max,
-        ramp: None,
-    }
-}
-
-const fn grid3(
-    block: Block,
-    salt: u64,
-    count: i32,
-    y_min: i32,
-    y_max: i32,
-    ramp: Option<DepthRamp>,
-) -> ScatterConfig {
-    ScatterConfig {
-        block,
-        salt,
-        count,
-        shape: VeinShape::Grid3 { max_ore: 9 },
-        y_min,
-        y_max,
-        ramp,
-    }
-}
-
-/// Vein table, spanning the full cubic depth. Order is fixed (deterministic
-/// placement); every vein only overwrites Stone, so overlaps just leave the
-/// earlier block in place.
-///
-/// Y bands (world Y, floor −64, sea level 63):
-///   - dirt/gravel pockets ride the whole underground;
-///   - tuff is the deep stratum flavour below y 0;
-///   - coal stays shallow-to-mid, copper mid, gold deep;
-///   - iron is a Grid3 vein (≤9 ore in a 3×3 layer) across the WHOLE depth, at
-///     the same veins-per-volume rate as before — as common, less plentiful;
-///   - diamond is a Grid3 vein on a depth ramp: absent above y 14, increasingly
-///     likely toward the floor, yet rare even there;
-///   - marble is a decorative stone flavour over the whole underground, and is
-///     placed LAST so it can only claim cells still Stone after every ore — the
-///     ore counts above are tuned and must not move because a stone flavour was
-///     added. (Vein RNG is keyed on the config's SALT, not its index, so the
-///     position in this table changes write ORDER only.)
-static CONFIGS: &[ScatterConfig] = &[
-    // Underground dirt / gravel pockets, all the way down.
-    blob(Block::Dirt, 0xA1_0005, 9, 33, WORLD_MIN_Y, 130),
-    blob(Block::Gravel, 0xA1_0006, 10, 33, WORLD_MIN_Y, 130),
-    // Tuff: the deep-stratum stone flavour.
-    blob(Block::Tuff, 0xA1_0004, 6, 40, WORLD_MIN_Y, 0),
-    // Ores.
-    blob(Block::CoalOre, 0xA1_0010, 14, 17, 16, 150),
-    blob(Block::CopperOre, 0xA1_0012, 11, 10, -16, 96),
-    grid3(Block::IronOre, 0xA1_0011, 34, WORLD_MIN_Y, 136, None),
-    blob(Block::GoldOre, 0xA1_0013, 3, 9, WORLD_MIN_Y, 30),
-    grid3(
-        Block::DiamondOre,
-        0xA1_0016,
-        7,
-        WORLD_MIN_Y,
-        16,
-        Some(DepthRamp { max_chance: 1.0 }),
-    ),
-    // Decorative stone flavour. Marble used to be reachable only from the walls
-    // of its own cave biome; it is ordinary stone-hosted rock now.
-    blob(Block::Marble, 0xA1_0007, 8, 33, WORLD_MIN_Y, 130),
-];
+use crate::data::ores::{blob_base_radius, OreTable, VeinShape};
 
 /// Place the underground veins reaching one 16³ [`Section`], through a
 /// [`SectionSink`]: every section regenerates its 3×3 column neighbourhood's veins.
 /// Veins are keyed on the ORIGIN column (`positional(seed, salt, ncx, vein, ncz)`)
-/// and only overwrite Stone, so a vein straddling a section seam (horizontal OR
-/// vertical) is materialised identically from every section it touches.
+/// and only overwrite their hosts, so a vein straddling a section seam
+/// (horizontal OR vertical) is materialised identically from every section it
+/// touches.
 pub fn place_underground_section(section: &mut Section, seed: u32) {
+    place_table_section(crate::data::ores::table(), section, seed);
+}
+
+/// [`place_underground_section`] over an explicit vein table.
+fn place_table_section(table: &OreTable, section: &mut Section, seed: u32) {
     let (ccx, ccz) = (section.cx, section.cz);
     let clip = clip_box_of(section.world_box());
     let mut sink = SectionSink::new(section);
     let mut ctx = FeatureCtx::new(&mut sink);
-    place_underground_into(&mut ctx, clip, ccx, ccz, seed);
+    place_underground_into(table, &mut ctx, clip, ccx, ccz, seed);
+}
+
+/// World-Y span the scatter veins can possibly touch (the union of every
+/// row's band widened by its vertical reach, clamped to the world), so the
+/// cubic generator can skip the deep / high sections a vein can never reach.
+pub fn y_span() -> (i32, i32) {
+    crate::data::ores::table().y_span
 }
 
 /// Inclusive world-coordinate bounds of a sink target's writable footprint.
@@ -194,6 +74,7 @@ fn clip_box_of((origin, size): (IVec3, IVec3)) -> (IVec3, IVec3) {
 /// outside the sink's clip anyway. This is what makes the 16-tall section path
 /// cheap — most of the 3×3 neighbourhood's full-depth veins miss one section's slab.
 fn place_underground_into(
+    table: &OreTable,
     ctx: &mut FeatureCtx,
     clip: (IVec3, IVec3),
     ccx: i32,
@@ -201,6 +82,7 @@ fn place_underground_into(
     seed: u32,
 ) {
     let (clip_min, clip_max) = clip;
+    let max_r = table.max_reach;
     // 3x3 neighbourhood so border-straddling veins appear from both sides.
     for dcz in -1..=1 {
         for dcx in -1..=1 {
@@ -209,7 +91,6 @@ fn place_underground_into(
             // Column-level reject: no origin in this 16×16 column can reach the
             // clip box horizontally (origins span the column; reach ≤ the widest
             // vein's radius).
-            let max_r = max_config_reach();
             if (ncx * 16 + 15 + max_r) < clip_min.x
                 || (ncx * 16 - max_r) > clip_max.x
                 || (ncz * 16 + 15 + max_r) < clip_min.z
@@ -217,8 +98,8 @@ fn place_underground_into(
             {
                 continue;
             }
-            for cfg in CONFIGS {
-                let (rxz, ry) = cfg.reach();
+            for cfg in table.veins {
+                let (rxz, ry) = cfg.shape.reach();
                 // Band-level reject: the whole config's Y band is out of reach.
                 if cfg.y_max + ry < clip_min.y || cfg.y_min - ry > clip_max.y {
                     continue;
@@ -237,19 +118,22 @@ fn place_underground_into(
                     {
                         continue;
                     }
-                    if let Some(ramp) = &cfg.ramp {
+                    if let Some(max_chance) = cfg.depth_ramp {
                         // Deeper = likelier: quadratic ease toward the band floor.
                         let t = (cfg.y_max - oy) as f32 / (cfg.y_max - cfg.y_min) as f32;
-                        if !rng.chance(ramp.max_chance * t * t) {
+                        if !rng.chance(max_chance * t * t) {
                             continue;
                         }
                     }
+                    let vein = Vein {
+                        origin: IVec3::new(ox, oy, oz),
+                        block: cfg.block,
+                        hosts: cfg.hosts,
+                    };
                     match cfg.shape {
-                        VeinShape::Blob { size } => {
-                            place_blob_vein(ctx, ox, oy, oz, size, cfg.block, &mut rng)
-                        }
+                        VeinShape::Blob { size } => place_blob_vein(ctx, vein, size, &mut rng),
                         VeinShape::Grid3 { max_ore } => {
-                            place_grid3_vein(ctx, ox, oy, oz, max_ore, cfg.block, &mut rng)
+                            place_grid3_vein(ctx, vein, max_ore, &mut rng)
                         }
                     }
                 }
@@ -258,12 +142,13 @@ fn place_underground_into(
     }
 }
 
-/// World-Y span the scatter veins can possibly touch (the union of every config's
-/// `[y_min,y_max]` widened by the largest vein radius), so the cubic generator can
-/// skip the deep / high sections a vein can never reach. The widest config is `size`
-/// 40 → radius ≈ 3, so a ±4 pad is safe; the low end clamps at the world floor.
-pub const SCATTER_MIN_Y: i32 = WORLD_MIN_Y;
-pub const SCATTER_MAX_Y: i32 = 154;
+/// One rolled vein: where it sits, what it places, what it may overwrite.
+#[derive(Copy, Clone)]
+struct Vein {
+    origin: IVec3,
+    block: Block,
+    hosts: &'static [Block],
+}
 
 /// Keep the world-floor layer solid stone and never write above the world top.
 #[inline]
@@ -271,18 +156,11 @@ fn vein_y_in_world(y: i32) -> bool {
     y > WORLD_MIN_Y && y < WORLD_MAX_Y
 }
 
-/// A roughly-spherical blob of `~size` Stone cells turned into `block`, with a
-/// small per-vein radius jitter so veins read irregular rather than as clean
-/// spheres. Writes are Stone-only and chunk-clipped.
-fn place_blob_vein(
-    ctx: &mut FeatureCtx,
-    ox: i32,
-    oy: i32,
-    oz: i32,
-    size: i32,
-    block: Block,
-    rng: &mut FeatureRng,
-) {
+/// A roughly-spherical blob of `~size` host cells turned into the vein's block,
+/// with a small per-vein radius jitter so veins read irregular rather than as
+/// clean spheres. Writes are host-only and chunk-clipped.
+fn place_blob_vein(ctx: &mut FeatureCtx, vein: Vein, size: i32, rng: &mut FeatureRng) {
+    let (ox, oy, oz) = (vein.origin.x, vein.origin.y, vein.origin.z);
     let r = (blob_base_radius(size) * (0.85 + 0.4 * rng.next_f32())).max(0.7);
     let ri = r.ceil() as i32;
     let r2 = r * r;
@@ -295,27 +173,20 @@ fn place_blob_vein(
             for dx in -ri..=ri {
                 let d2 = (dx * dx + dy * dy + dz * dz) as f32;
                 if d2 <= r2 {
-                    ctx.replace_block(IVec3::new(ox + dx, y, oz + dz), Block::Stone, block);
+                    ctx.replace_block(IVec3::new(ox + dx, y, oz + dz), vein.hosts, vein.block);
                 }
             }
         }
     }
 }
 
-/// The iron/diamond vein shape: exactly `1..=max_ore` cells of `block` chosen
-/// uniformly among the 3×3 slots of one horizontal layer centred on the origin —
-/// a vein always fits a 3×3 area and never holds more than 9 ore blocks. Writes
-/// are Stone-only and chunk-clipped (a slot occupied by cave air, dirt, or an
-/// earlier vein simply stays as it is).
-fn place_grid3_vein(
-    ctx: &mut FeatureCtx,
-    ox: i32,
-    oy: i32,
-    oz: i32,
-    max_ore: i32,
-    block: Block,
-    rng: &mut FeatureRng,
-) {
+/// The iron/diamond vein shape: exactly `1..=max_ore` cells of the vein's block
+/// chosen uniformly among the 3×3 slots of one horizontal layer centred on the
+/// origin — a vein always fits a 3×3 area and never holds more than 9 ore
+/// blocks. Writes are host-only and chunk-clipped (a slot occupied by cave air,
+/// dirt, or an earlier vein simply stays as it is).
+fn place_grid3_vein(ctx: &mut FeatureCtx, vein: Vein, max_ore: i32, rng: &mut FeatureRng) {
+    let (ox, oy, oz) = (vein.origin.x, vein.origin.y, vein.origin.z);
     if !vein_y_in_world(oy) {
         return;
     }
@@ -326,10 +197,13 @@ fn place_grid3_vein(
             // Reservoir pick: exactly `remaining` of the `slots_left` slots get
             // ore, uniformly, in one fixed deterministic pass.
             if rng.next_i32(0, slots_left - 1) < remaining {
-                ctx.replace_block(IVec3::new(ox + dx, oy, oz + dz), Block::Stone, block);
+                ctx.replace_block(IVec3::new(ox + dx, oy, oz + dz), vein.hosts, vein.block);
                 remaining -= 1;
             }
             slots_left -= 1;
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

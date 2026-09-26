@@ -50,21 +50,21 @@ mod tests {
     fn below_sea_grass_caps_resolve_to_dirt() {
         let surface = SurfaceSystem;
 
-        let plains = ctx(SEA_LEVEL - 1, 0, Biome::Plains);
+        let plains = ctx(SEA_LEVEL - 1, 0, Biome::PLAINS);
         assert_eq!(
-            surface.skin_block(&plains, spec(Biome::Plains).surface),
+            surface.skin_block(&plains, spec(Biome::PLAINS).surface),
             Block::Dirt
         );
 
-        let snowy_top = ctx(SEA_LEVEL - 1, 0, Biome::SnowyTundra);
+        let snowy_top = ctx(SEA_LEVEL - 1, 0, Biome::SNOWY_TUNDRA);
         assert_eq!(
-            surface.skin_block(&snowy_top, spec(Biome::SnowyTundra).surface),
+            surface.skin_block(&snowy_top, spec(Biome::SNOWY_TUNDRA).surface),
             Block::Dirt
         );
 
-        let snowy_subsurface = ctx(SEA_LEVEL - 2, 1, Biome::SnowyTundra);
+        let snowy_subsurface = ctx(SEA_LEVEL - 2, 1, Biome::SNOWY_TUNDRA);
         assert_eq!(
-            surface.skin_block(&snowy_subsurface, spec(Biome::SnowyTundra).surface),
+            surface.skin_block(&snowy_subsurface, spec(Biome::SNOWY_TUNDRA).surface),
             Block::Dirt
         );
     }
@@ -73,18 +73,18 @@ mod tests {
     fn above_sea_grass_caps_are_unchanged() {
         let surface = SurfaceSystem;
 
-        let plains = ctx(SEA_LEVEL + 1, 0, Biome::Plains);
+        let plains = ctx(SEA_LEVEL + 1, 0, Biome::PLAINS);
         assert_eq!(
-            surface.skin_block(&plains, spec(Biome::Plains).surface),
+            surface.skin_block(&plains, spec(Biome::PLAINS).surface),
             Block::Grass
         );
 
         // Snowy biomes cap with ordinary grass — the snow layer above it (and
         // the snowy side rendering) comes from the vegetation pass, not the
         // skin.
-        let snowy = ctx(SEA_LEVEL + 1, 0, Biome::SnowyTundra);
+        let snowy = ctx(SEA_LEVEL + 1, 0, Biome::SNOWY_TUNDRA);
         assert_eq!(
-            surface.skin_block(&snowy, spec(Biome::SnowyTundra).surface),
+            surface.skin_block(&snowy, spec(Biome::SNOWY_TUNDRA).surface),
             Block::Grass
         );
     }

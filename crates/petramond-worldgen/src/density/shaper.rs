@@ -1,5 +1,7 @@
 //! Terrain-shaping spline: the continent height offset, built as nested
-//! cubic-Hermite splines over the climate axes.
+//! cubic-Hermite splines over the climate axes — the TEST REFERENCE the
+//! `offset` splines of `assets/density/terrain.json` were generated from (the
+//! live recipe is data, see [`crate::data::terrain`]).
 //!
 //! This reproduces a well-studied reference generator's continent-offset
 //! shaping, keyed `continentality → erosion → ridge (folded peaks/valleys)`:
@@ -16,8 +18,8 @@
 
 use crate::graph::spline::{CubicSpline, SplinePoint};
 
-/// Spline coordinate names. These must match the axis nodes that `terrain.rs`
-/// feeds into each spline.
+/// Spline coordinate names. These must match the axis nodes the terrain
+/// recipe feeds into each spline.
 pub mod axes {
     pub const CONTINENTALITY: &str = "continentality";
     pub const EROSION: &str = "erosion";

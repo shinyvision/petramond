@@ -39,7 +39,7 @@ fn plains_index() -> BiomeClimateIndex {
     const ANY: AxisRange = AxisRange::new(-1.0, 1.0);
     static PLAINS: &[ClimateRect] = &[ClimateRect::surface(ANY, ANY, ANY, ANY, ANY)];
     BiomeClimateIndex::new(&[BiomeClimateEntry {
-        biome: Biome::Plains,
+        biome: Biome::PLAINS,
         rectangles: PLAINS,
     }])
 }
@@ -62,11 +62,11 @@ fn coast_index() -> BiomeClimateIndex {
     )];
     BiomeClimateIndex::new(&[
         BiomeClimateEntry {
-            biome: Biome::Ocean,
+            biome: Biome::OCEAN,
             rectangles: OCEAN,
         },
         BiomeClimateEntry {
-            biome: Biome::Plains,
+            biome: Biome::PLAINS,
             rectangles: PLAINS,
         },
     ])
@@ -344,9 +344,9 @@ fn fallback_biome_lookup_matches_region_biomes() {
 fn beach_is_derived_only_on_low_land_near_ocean_climate() {
     let system = coast_system();
 
-    assert_eq!(system.biome_at(-8, 0), Biome::Ocean);
-    assert_eq!(system.biome_at(8, 0), Biome::Beach);
-    assert_eq!(system.biome_at(40, 0), Biome::Plains);
+    assert_eq!(system.biome_at(-8, 0), Biome::OCEAN);
+    assert_eq!(system.biome_at(8, 0), Biome::BEACH);
+    assert_eq!(system.biome_at(40, 0), Biome::PLAINS);
 }
 
 #[test]
@@ -354,7 +354,7 @@ fn climate_classification_uses_variance_derived_ridge() {
     let index = plains_index();
     assert_eq!(
         index.classify_surface(SurfaceClimate::new(0.0, 0.0, 0.0, 0.0, 0.25)),
-        Some(Biome::Plains)
+        Some(Biome::PLAINS)
     );
 }
 

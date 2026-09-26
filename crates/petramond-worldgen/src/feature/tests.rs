@@ -16,7 +16,7 @@ fn is_tree(id: u16) -> bool {
 fn synthetic_tree_region(x0: i32, z0: i32, w: usize, h: usize) -> RegionCells {
     let mut region = RegionCells::new(x0, z0, w, h);
     region.surf.fill(70);
-    region.biomes.fill(Biome::RedwoodForest);
+    region.biomes.fill(Biome::REDWOOD_FOREST);
     region
 }
 
@@ -266,7 +266,7 @@ fn accepted_tree_origins(seed: u32, chunk_radius: i32, biome: Biome) -> Vec<(i32
 #[test]
 fn tree_origin_spacing_rule_enforces_configured_radius() {
     for seed in [1u32, 7, 42, 0x1234_5678] {
-        for biome in [Biome::RedwoodForest, Biome::Forest, Biome::WoodedHills] {
+        for biome in [Biome::REDWOOD_FOREST, Biome::FOREST, Biome::WOODED_HILLS] {
             let origins = accepted_tree_origins(seed, 3, biome);
             assert!(
                 origins.len() > 10,

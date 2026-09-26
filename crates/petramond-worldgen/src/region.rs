@@ -20,7 +20,7 @@ impl RegionCells {
             w,
             h,
             surf: vec![0; w * h],
-            biomes: vec![Biome::Ocean; w * h],
+            biomes: vec![Biome::OCEAN; w * h],
         }
     }
 

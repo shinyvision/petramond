@@ -53,7 +53,7 @@ fn cached_tile(
         let mut tile = RegionTile {
             raw: [0; 256],
             adj: [0; 256],
-            biomes: [Biome::Ocean; 256],
+            biomes: [Biome::OCEAN; 256],
         };
         tile.adj
             .copy_from_slice(&caves.feature_surfaces_after_caves(tx0, tz0, &bulk.surf));

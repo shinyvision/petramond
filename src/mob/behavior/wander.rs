@@ -571,8 +571,8 @@ mod tests {
 
     fn habitat() -> Habitat {
         Habitat {
-            avoid: &[Biome::Plains, Biome::Desert],
-            prefer: &[Biome::Forest],
+            avoid: &[Biome::PLAINS, Biome::DESERT],
+            prefer: &[Biome::FOREST],
         }
     }
 
@@ -598,7 +598,7 @@ mod tests {
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 chunk.set_block(x, 64, z, Block::Grass);
-                chunk.set_biome(x, z, Biome::Plains.id());
+                chunk.set_biome(x, z, Biome::PLAINS.id());
             }
         }
         extra(&mut chunk);
@@ -608,7 +608,7 @@ mod tests {
 
     static PLAINS_HABITAT: Habitat = Habitat {
         avoid: &[],
-        prefer: &[Biome::Plains],
+        prefer: &[Biome::PLAINS],
     };
 
     fn plains_habitat() -> &'static Habitat {
@@ -618,20 +618,20 @@ mod tests {
     #[test]
     fn classify_sorts_biomes_into_prefer_avoid_neutral() {
         let h = habitat();
-        assert_eq!(classify_biome(Biome::Forest, &h), BiomeFit::Preferred);
-        assert_eq!(classify_biome(Biome::Plains, &h), BiomeFit::Avoided);
-        assert_eq!(classify_biome(Biome::Desert, &h), BiomeFit::Avoided);
+        assert_eq!(classify_biome(Biome::FOREST, &h), BiomeFit::Preferred);
+        assert_eq!(classify_biome(Biome::PLAINS, &h), BiomeFit::Avoided);
+        assert_eq!(classify_biome(Biome::DESERT, &h), BiomeFit::Avoided);
         // A biome on neither list is fair game, just not favored.
-        assert_eq!(classify_biome(Biome::Taiga, &h), BiomeFit::Neutral);
+        assert_eq!(classify_biome(Biome::TAIGA, &h), BiomeFit::Neutral);
     }
 
     #[test]
     fn classify_prefers_over_avoids_when_a_biome_is_in_both() {
         let h = Habitat {
-            avoid: &[Biome::Forest],
-            prefer: &[Biome::Forest],
+            avoid: &[Biome::FOREST],
+            prefer: &[Biome::FOREST],
         };
-        assert_eq!(classify_biome(Biome::Forest, &h), BiomeFit::Preferred);
+        assert_eq!(classify_biome(Biome::FOREST, &h), BiomeFit::Preferred);
     }
 
     #[test]

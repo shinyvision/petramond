@@ -9,7 +9,7 @@
 
 use std::sync::LazyLock;
 
-use petramond_world::biome::{Biome, BIOME_COUNT};
+use petramond_world::biome::Biome;
 use serde::Deserialize;
 
 use crate::biome::trees::{
@@ -96,16 +96,11 @@ fn species_table(rows: &[RawSpecies]) -> Result<SpeciesTable, String> {
     SpeciesTable::new(&weighted)
 }
 
-/// Engine biomes are keyed `petramond:<name>` in every catalog; `Biome::name`
-/// is the bare half.
-const BIOME_NAMESPACE: &str = "petramond:";
-
-fn biome_key(biome: Biome) -> String {
-    format!("{BIOME_NAMESPACE}{}", biome.name())
-}
-
+/// A biome named by its registry key (`petramond:forest`, or a pack's
+/// `mod_id:name`); catalogs never use bare names.
 fn biome_named(key: &str) -> Result<Biome, String> {
-    key.strip_prefix(BIOME_NAMESPACE)
+    Some(key)
+        .filter(|key| petramond_world::registry::is_namespaced(key))
         .and_then(Biome::from_name)
         .ok_or_else(|| format!("unknown biome '{key}'"))
 }
@@ -188,11 +183,10 @@ fn parse(trees: Option<&str>) -> Result<TreeProfile, String> {
 
 fn table() -> &'static [TreeProfile] {
     static TABLE: LazyLock<Box<[TreeProfile]>> = LazyLock::new(|| {
-        (1..=BIOME_COUNT as u8)
-            .map(Biome::from_id)
+        Biome::all()
             .map(|biome| {
                 parse(biome.trees())
-                    .unwrap_or_else(|e| panic!("biomes.json: biome '{}': {e}", biome_key(biome)))
+                    .unwrap_or_else(|e| panic!("biomes.json: biome '{}': {e}", biome.key()))
             })
             .collect()
     });

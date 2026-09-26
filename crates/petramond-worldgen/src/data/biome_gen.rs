@@ -25,16 +25,21 @@
 //! `"underwater"`, `{"depth_from_top": n}`, `{"surface_above_y": y}` and
 //! `{"cluster_noise_below": {"salt", "threshold", "period"}}`. Ground cover
 //! rolls are `{"chance": p, "roll": [[bound, block], ...]}` (see
-//! [`CoverRoll`]). Every row must state its generation: a row without one
+//! [`CoverRoll`]): the fixed `sand_cover` / `podzol_cover` / `grass_cover`
+//! slots, plus `covers` for any other ground —
+//! `[{"on": ["petramond:mycelium"], "roll": {...}, "clustered": false}]`
+//! (see [`GroundCover`]). Every row must state its generation: a row without one
 //! would generate as nothing.
 
 use std::sync::LazyLock;
 
-use petramond_world::biome::{Biome, BIOME_COUNT};
+use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use serde::Deserialize;
 
-use crate::biome::{BiomeFlags, BiomeSpec, CoverCluster, CoverRoll, SnowCover, VegetationProfile};
+use crate::biome::{
+    BiomeFlags, BiomeSpec, CoverCluster, CoverRoll, GroundCover, SnowCover, VegetationProfile,
+};
 use crate::surface::rule::{SurfaceCond, SurfaceRule};
 
 /// The `generation` object as written on a biome row.
@@ -85,6 +90,7 @@ struct RawVegetation {
     grass: Option<RawGrass>,
     flowers: Option<RawFlowers>,
     hemp: f32,
+    covers: Vec<GroundCover>,
     sand_cover: Option<CoverRoll>,
     podzol_cover: Option<CoverRoll>,
     grass_cover: Option<CoverRoll>,
@@ -181,7 +187,14 @@ impl RawVegetation {
                 Some(f) => (f.palette.leak(), f.coverage, f.density),
                 None => (&[], 0.0, 0.0),
             };
+        for cover in &self.covers {
+            if cover.on.is_empty() {
+                return Err("covers: an entry needs at least one `on` block".into());
+            }
+            cover.roll.validate().map_err(|e| format!("covers: {e}"))?;
+        }
         Ok(VegetationProfile {
+            covers: self.covers.leak(),
             sand_cover: leak_roll(self.sand_cover, "sand_cover")?,
             podzol_cover: leak_roll(self.podzol_cover, "podzol_cover")?,
             grass_cover: leak_roll(self.grass_cover, "grass_cover")?,
@@ -232,11 +245,10 @@ pub(crate) fn parse(biome: Biome, generation: Option<&str>) -> Result<BiomeSpec,
 /// Every biome's generation rules, in id order.
 pub(crate) fn specs() -> &'static [BiomeSpec] {
     static TABLE: LazyLock<Box<[BiomeSpec]>> = LazyLock::new(|| {
-        (1..=BIOME_COUNT as u8)
-            .map(Biome::from_id)
+        Biome::all()
             .map(|biome| {
                 parse(biome, biome.generation())
-                    .unwrap_or_else(|e| panic!("biomes.json: biome '{}': {e}", biome.name()))
+                    .unwrap_or_else(|e| panic!("biomes.json: biome '{}': {e}", biome.key()))
             })
             .collect()
     });

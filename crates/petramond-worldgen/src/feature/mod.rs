@@ -203,10 +203,11 @@ impl<'a> FeatureCtx<'a> {
         self.sink.place(p, b, PlacementRule::Litter);
     }
 
-    /// Replace a voxel only when it currently equals `expect`. Used by the
-    /// underground ore / stone-blob veins, which overwrite Stone (and never air,
-    /// dirt, or an already-placed ore). World coords; clipped to this chunk.
-    pub fn replace_block(&mut self, p: IVec3, expect: Block, b: Block) {
-        self.sink.place(p, b, PlacementRule::Replace(expect));
+    /// Replace a voxel only when it currently holds one of `hosts`. Used by
+    /// the underground ore / stone-blob veins, which overwrite their host rock
+    /// (and never air, dirt, or an already-placed ore unless listed). World
+    /// coords; clipped to this chunk.
+    pub fn replace_block(&mut self, p: IVec3, hosts: &'static [Block], b: Block) {
+        self.sink.place(p, b, PlacementRule::Replace(hosts));
     }
 }

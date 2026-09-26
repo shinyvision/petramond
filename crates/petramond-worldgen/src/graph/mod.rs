@@ -87,7 +87,6 @@ impl NodeId {
     }
 }
 
-#[cfg(test)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Axis {
     X,

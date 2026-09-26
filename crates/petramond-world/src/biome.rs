@@ -1,43 +1,60 @@
-//! Biome definitions and per-biome metadata (names, ids, fog/grass/foliage/water colours).
+//! Biome identity (a pack-extensible registry id) and per-biome metadata
+//! (names, fog/grass/foliage/water colours, ambience, worldgen rows).
 
 mod data;
 mod definition;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Biome {
-    Ocean = 1,
-    Beach,
-    River,
-    Desert,
-    Plains,
-    Savanna,
-    Forest,
-    Swamp,
-    Taiga,
-    SnowyTundra,
-    SnowyTaiga,
-    Mountains,
-    SnowyPeaks,
-    DeepOcean,
-    Foothills,
-    Wetland,
-    // --- appended (ids 16+): keep append-only; never reorder (biome ids are
-    // serialized into chunk bytes). ---
-    RedwoodForest,
-    OldGrowthTaiga,
-    Meadow,
-    Grove,
-    SnowySlopes,
-    WindsweptHills,
-    StonyPeaks,
-    WoodedHills,
-    MountainEdge,
-    DesertLakes,
-    SnowyPlains,
+/// A surface biome: an opaque one-byte registry id into the layered
+/// `biomes.json` catalog, like blocks and underground biomes.
+///
+/// The engine biomes own ids `1..=ENGINE_BIOME_COUNT` in a frozen order (the
+/// associated consts below; append-only, never reorder — ids are serialized
+/// into chunk bytes, one per column). A mod pack ADDS a biome by stating a
+/// row under its own namespaced key (`mod_id:name`); it registers the next id
+/// after the engine range, in pack load order. Id 0 is unassigned.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Biome(u8);
+
+impl Biome {
+    pub const OCEAN: Biome = Biome(1);
+    pub const BEACH: Biome = Biome(2);
+    pub const RIVER: Biome = Biome(3);
+    pub const DESERT: Biome = Biome(4);
+    pub const PLAINS: Biome = Biome(5);
+    pub const SAVANNA: Biome = Biome(6);
+    pub const FOREST: Biome = Biome(7);
+    pub const SWAMP: Biome = Biome(8);
+    pub const TAIGA: Biome = Biome(9);
+    pub const SNOWY_TUNDRA: Biome = Biome(10);
+    pub const SNOWY_TAIGA: Biome = Biome(11);
+    pub const MOUNTAINS: Biome = Biome(12);
+    pub const SNOWY_PEAKS: Biome = Biome(13);
+    pub const DEEP_OCEAN: Biome = Biome(14);
+    pub const FOOTHILLS: Biome = Biome(15);
+    pub const WETLAND: Biome = Biome(16);
+    pub const REDWOOD_FOREST: Biome = Biome(17);
+    pub const OLD_GROWTH_TAIGA: Biome = Biome(18);
+    pub const MEADOW: Biome = Biome(19);
+    pub const GROVE: Biome = Biome(20);
+    pub const SNOWY_SLOPES: Biome = Biome(21);
+    pub const WINDSWEPT_HILLS: Biome = Biome(22);
+    pub const STONY_PEAKS: Biome = Biome(23);
+    pub const WOODED_HILLS: Biome = Biome(24);
+    pub const MOUNTAIN_EDGE: Biome = Biome(25);
+    pub const DESERT_LAKES: Biome = Biome(26);
+    pub const SNOWY_PLAINS: Biome = Biome(27);
 }
 
-pub const BIOME_COUNT: usize = data::ENGINE_BIOME_COUNT;
+/// How many biomes the engine itself defines (ids `1..=ENGINE_BIOME_COUNT`).
+pub const ENGINE_BIOME_COUNT: usize = data::ENGINE_BIOME_COUNT;
+
+/// How many biomes are registered: the engine range plus every pack biome.
+/// Registered ids are exactly `1..=count()`.
+#[inline]
+pub fn count() -> usize {
+    data::count()
+}
 
 /// Radius, in blocks, used when blending the above-water sky/fog colour across
 /// neighbouring biome columns.
@@ -121,32 +138,51 @@ impl Biome {
         self.def().fog_color
     }
 
+    /// The stable name: the bare snake_case half for an engine biome
+    /// (`"forest"`), the full namespaced key for a pack biome
+    /// (`"mymod:crystal_fields"`).
     #[inline]
     pub fn name(self) -> &'static str {
         self.def().name
     }
 
+    /// The registry key (`"petramond:forest"`, `"mymod:crystal_fields"`).
     #[inline]
-    pub fn from_id(id: u8) -> Biome {
-        data::from_id(id)
+    pub fn key(self) -> &'static str {
+        self.def().key
     }
 
-    /// Resolve a biome by its stable snake_case name (`"forest"`), for data-driven
-    /// catalogs (e.g. mob spawn rules in `mobs.json`) that reference biomes by name.
+    /// The biome registered under `id`; an unregistered id (0, or past the
+    /// loaded catalog) reads as [`Biome::OCEAN`].
+    #[inline]
+    pub fn from_id(id: u8) -> Biome {
+        if (1..=count()).contains(&usize::from(id)) {
+            Biome(id)
+        } else {
+            Biome::OCEAN
+        }
+    }
+
+    /// Resolve a biome for data-driven catalogs (mob spawn rules, tree
+    /// profiles, the climate table): a registry key (`"petramond:forest"`,
+    /// `"mymod:crystal_fields"`) or an engine biome's bare name (`"forest"`).
     pub fn from_name(name: &str) -> Option<Biome> {
-        (1..=BIOME_COUNT as u8)
-            .map(Biome::from_id)
-            .find(|b| b.name() == name)
+        data::id_of(name).map(Biome)
+    }
+
+    /// Every registered biome, in id order.
+    pub fn all() -> impl Iterator<Item = Biome> {
+        (1..=count()).map(|id| Biome(id as u8))
     }
 
     #[inline]
     pub fn id(self) -> u8 {
-        self as u8
+        self.0
     }
 
-    /// Grass-block top tint colour (linear sRGB 0..1) for biome. Every biome
-    /// except Desert and Savanna uses a green-dominant, saturated tint, with
-    /// brightness varied by biome.
+    /// Grass-block top tint colour (linear sRGB 0..1) for biome. Every engine
+    /// biome except Desert and Savanna uses a green-dominant, saturated tint,
+    /// with brightness varied by biome.
     #[inline]
     pub fn grass_color(self) -> [f32; 3] {
         self.def().grass_color

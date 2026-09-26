@@ -699,9 +699,9 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
         .defs;
     let spawn = &defs[Mob::Owl.0 as usize].spawn;
     use petramond_world::biome::Biome;
-    assert_eq!(spawn.chance_in(Biome::Forest), 1.0, "unmapped listed biome");
-    assert_eq!(spawn.chance_in(Biome::RedwoodForest), 0.25, "mapped biome");
-    assert_eq!(spawn.chance_in(Biome::Desert), 0.0, "unlisted biome");
+    assert_eq!(spawn.chance_in(Biome::FOREST), 1.0, "unmapped listed biome");
+    assert_eq!(spawn.chance_in(Biome::REDWOOD_FOREST), 0.25, "mapped biome");
+    assert_eq!(spawn.chance_in(Biome::DESERT), 0.0, "unlisted biome");
 
     let unlisted = parse_layers(&[&owl_with(|row| {
         row["spawn"]["chances"] = serde_json::json!({"desert": 0.5});
@@ -732,12 +732,12 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
         .defs;
     let spawn = &defs[Mob::Owl.0 as usize].spawn;
     assert_eq!(
-        spawn.chance_in(Biome::Forest),
+        spawn.chance_in(Biome::FOREST),
         0.25,
         "unmapped listed biome"
     );
-    assert_eq!(spawn.chance_in(Biome::RedwoodForest), 0.125, "both applied");
-    assert_eq!(spawn.chance_in(Biome::Desert), 0.0, "unlisted biome");
+    assert_eq!(spawn.chance_in(Biome::REDWOOD_FOREST), 0.125, "both applied");
+    assert_eq!(spawn.chance_in(Biome::DESERT), 0.0, "unlisted biome");
 
     let bad = parse_layers(&[&owl_with(|row| {
         row["spawn"]["chance"] = serde_json::json!(1.5);

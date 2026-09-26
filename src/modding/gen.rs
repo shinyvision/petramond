@@ -40,7 +40,7 @@ use std::sync::Arc;
 use mod_api::{GuestCall, GuestRet, WorldgenStage};
 use wasmtime::Module;
 
-use petramond_world::biome::BIOME_COUNT;
+use petramond_world::biome;
 use petramond_world::block::Block;
 use petramond_world::chunk::{SEA_LEVEL, SECTION_VOLUME};
 
@@ -224,7 +224,10 @@ impl GenHooks {
                         map.len()
                     ));
                 }
-                if let Some(&bad) = map.iter().find(|&&id| id == 0 || id as usize > BIOME_COUNT) {
+                if let Some(&bad) = map
+                    .iter()
+                    .find(|&&id| id == 0 || usize::from(id) > biome::count())
+                {
                     return Err(format!("climate replacement wrote invalid biome id {bad}"));
                 }
                 Ok(map)

@@ -9,7 +9,7 @@ fn species() -> SpeciesTable {
 fn nearby(radius: i32) -> SelectionRule {
     SelectionRule {
         territory: Territory::NearbyBiome {
-            biome: Biome::River,
+            biome: Biome::RIVER,
             radius,
         },
         species: species(),
@@ -67,9 +67,9 @@ impl FeatureField for Habitat {
         (
             70,
             if Some(p) == self.target {
-                Biome::River
+                Biome::RIVER
             } else {
-                Biome::Plains
+                Biome::PLAINS
             },
         )
     }
@@ -200,7 +200,7 @@ fn profiles_without_rules_touch_neither_terrain_nor_lattices() {
 fn dense_small_trees_cannot_displace_large_crowns() {
     let large = TreeCandidate {
         anchor: 70,
-        biome: Biome::Forest,
+        biome: Biome::FOREST,
         density: 0.1,
         spacing_radius: 7,
         priority: 1,
@@ -227,7 +227,7 @@ fn the_candidate_window_replays_present_and_absent_sites_without_more_terrain_re
     impl FeatureField for FlatForest {
         fn column_at(&mut self, _: i32, _: i32) -> (i32, Biome) {
             self.0 += 1;
-            (70, Biome::Forest)
+            (70, Biome::FOREST)
         }
     }
     let (ox, oz) = (-48, 96);

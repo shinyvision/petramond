@@ -6,9 +6,12 @@
 //! generation rules this module serves (`generation`: surface rule stack,
 //! ground cover, snow and behaviour flags — parsed by
 //! [`crate::data::biome_gen`]). There is no per-biome Rust: a pack retunes a
-//! biome's ground by overriding its row.
+//! biome's ground by overriding its row, or adds a biome with a row of its
+//! own and places it in climate space with rows in `climate_table.json`
+//! (see [`crate::data::climate_table`]).
 
 pub mod climate;
+#[cfg(test)]
 pub mod surface_table;
 pub mod trees;
 
@@ -72,10 +75,26 @@ pub struct CoverCluster {
     pub coverage: f32,
 }
 
+/// Ground cover for surfaces the fixed slots of [`VegetationProfile`] do not
+/// name — mycelium, or a pack's own ground block: a column whose bare ground
+/// is one of `on` makes `roll` (masked by the biome's cover cluster when
+/// `clustered`). Checked before the fixed slots, so an entry may also take
+/// over sand, podzol or grass.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroundCover {
+    pub on: Vec<Block>,
+    pub roll: CoverRoll,
+    #[serde(default)]
+    pub clustered: bool,
+}
+
 /// A biome's ground vegetation: what the vegetation pass may put on each kind
 /// of bare ground.
 #[derive(Copy, Clone, Debug)]
 pub struct VegetationProfile {
+    /// Covers keyed by surface block, checked first.
+    pub covers: &'static [GroundCover],
     pub sand_cover: Option<&'static CoverRoll>,
     pub podzol_cover: Option<&'static CoverRoll>,
     pub grass_cover: Option<&'static CoverRoll>,

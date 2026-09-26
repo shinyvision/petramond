@@ -134,7 +134,9 @@ impl SplinePoint {
         Self::with_optional_derivative(location, value, None)
     }
 
-    fn with_optional_derivative(
+    /// A knot with an explicit tangent, or `None` to let the spline derive
+    /// monotone slopes (see the `derivative` field).
+    pub fn with_optional_derivative(
         location: f64,
         value: SplineValue,
         derivative: Option<f64>,

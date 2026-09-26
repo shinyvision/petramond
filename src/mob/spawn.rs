@@ -734,7 +734,7 @@ mod tests {
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 chunk.set_block(x, 64, z, Block::Grass);
-                chunk.set_biome(x, z, Biome::Plains.id());
+                chunk.set_biome(x, z, Biome::PLAINS.id());
             }
         }
         extra(&mut chunk);

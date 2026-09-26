@@ -4,7 +4,7 @@ use petramond_world::chunk::{Chunk, SectionPos};
 
 fn rule() -> SpawnRule {
     SpawnRule {
-        biomes: &[Biome::Plains],
+        biomes: &[Biome::PLAINS],
         underground: &[],
         y: Some([18, 28]),
         space: None,
@@ -19,7 +19,7 @@ fn cave() -> World {
     let mut chunk = Chunk::new(0, 0);
     for x in 0..16 {
         for z in 0..16 {
-            chunk.set_biome(x, z, Biome::Plains.id());
+            chunk.set_biome(x, z, Biome::PLAINS.id());
             chunk.set_block(x, 20, z, Block::Grass);
             chunk.set_block(x, 64, z, Block::Grass);
         }

@@ -17,7 +17,7 @@
 
 use crate::driver::ChunkGenerator;
 use crate::generate_chunk;
-use petramond_world::biome::{Biome, BIOME_COUNT};
+use petramond_world::biome::{self, Biome};
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 
@@ -162,7 +162,7 @@ pub fn audit(seed: u32) -> DebrisAudit {
     let mut deepest_floor = i32::MAX;
     let (mut tall, mut tall_chunk, mut tall_xz) = (0i32, (0, 0), (0usize, 0usize));
     let (mut best_oh, mut oh_loc) = (0u32, (0i32, 0i32));
-    let mut biome_counts = [0u32; BIOME_COUNT + 1];
+    let mut biome_counts = vec![0u32; biome::count() + 1];
     let mut total_cols = 0u32;
     for cz in 0..n {
         for cx in 0..n {
@@ -189,9 +189,8 @@ pub fn audit(seed: u32) -> DebrisAudit {
             };
             for z in 0..CHUNK_SZ {
                 for x in 0..CHUNK_SX {
-                    let bid = chunk.biome_at(x, z) as usize;
-                    if bid <= BIOME_COUNT {
-                        biome_counts[bid] += 1;
+                    if let Some(count) = biome_counts.get_mut(usize::from(chunk.biome_at(x, z))) {
+                        *count += 1;
                     }
                     total_cols += 1;
                     // ocean floor depth (highest solid where water sits above)
@@ -273,11 +272,11 @@ pub fn audit(seed: u32) -> DebrisAudit {
 
 /// Build a descending biome census (only entries with >0% share) from a count
 /// table indexed by biome id over `total` columns.
-fn biome_census(counts: &[u32; BIOME_COUNT + 1], total: f64) -> Vec<BiomeShare> {
-    let mut census: Vec<BiomeShare> = (1..=BIOME_COUNT as u8)
-        .map(|id| BiomeShare {
-            name: Biome::from_id(id).name(),
-            percent: 100.0 * counts[id as usize] as f64 / total,
+fn biome_census(counts: &[u32], total: f64) -> Vec<BiomeShare> {
+    let mut census: Vec<BiomeShare> = Biome::all()
+        .map(|biome| BiomeShare {
+            name: biome.name(),
+            percent: 100.0 * counts[usize::from(biome.id())] as f64 / total,
         })
         .filter(|s| s.percent > 0.0)
         .collect();

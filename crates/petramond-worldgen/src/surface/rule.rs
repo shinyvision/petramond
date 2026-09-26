@@ -6,10 +6,9 @@
 //! surface / depth / Y conditions below (e.g. the mountain colour bands key
 //! off `SurfaceAboveY`).
 
-use crate::rng::FeatureRng;
+use crate::rng::patch_field;
 use petramond_world::block::Block;
 use petramond_world::chunk::SEA_LEVEL;
-use petramond_world::mathh::smoothstep;
 
 pub enum SurfaceRule {
     /// Unconditionally place this block.
@@ -67,28 +66,9 @@ impl SurfaceCond {
                 salt,
                 threshold,
                 period,
-            } => cluster_field(c.seed, *salt, c.wx, c.wz, *period) < *threshold,
+            } => patch_field(c.seed, *salt, c.wx, c.wz, *period) < *threshold,
         }
     }
-}
-
-/// Smooth low-frequency value field in `[0,1)` at world `(wx,wz)`: hashed lattice
-/// corners with a smoothstep bilinear blend, so a threshold cuts out organic
-/// blobs rather than a hard grid. Pure function of `(seed, salt, wx, wz)`, so it
-/// is seamless across chunk borders. (Mirrors the patch field the vegetation pass
-/// uses for flower/fern clusters; kept here so surface rules don't depend on the
-/// feature layer.)
-fn cluster_field(seed: u32, salt: u64, wx: i32, wz: i32, period: f32) -> f32 {
-    let fx = wx as f32 / period;
-    let fz = wz as f32 / period;
-    let x0 = fx.floor() as i32;
-    let z0 = fz.floor() as i32;
-    let tx = smoothstep(0.0, 1.0, fx - x0 as f32);
-    let tz = smoothstep(0.0, 1.0, fz - z0 as f32);
-    let corner = |ix: i32, iz: i32| FeatureRng::positional(seed, salt, ix, 0, iz).next_f32();
-    let a = corner(x0, z0) + (corner(x0 + 1, z0) - corner(x0, z0)) * tx;
-    let b = corner(x0, z0 + 1) + (corner(x0 + 1, z0 + 1) - corner(x0, z0 + 1)) * tx;
-    a + (b - a) * tz
 }
 
 impl SurfaceRule {

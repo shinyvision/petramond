@@ -87,7 +87,7 @@ fn peak_density_covers_every_candidate_stage_rule() {
 #[test]
 fn a_deferred_rule_reserves_spacing_only_while_it_can_still_win() {
     let nearby = Territory::NearbyBiome {
-        biome: Biome::River,
+        biome: Biome::RIVER,
         radius: 4,
     };
     let grove = Territory::Grove(lattice());
@@ -109,7 +109,7 @@ fn a_deferred_rule_reserves_spacing_only_while_it_can_still_win() {
 #[test]
 fn validation_names_the_field_that_breaks_a_bound() {
     let nearby = Territory::NearbyBiome {
-        biome: Biome::River,
+        biome: Biome::RIVER,
         radius: 4,
     };
     let err = wooded(vec![rule(nearby, Some(0.3), None)])

@@ -10,9 +10,11 @@
 //! Water is blue/teal with darker swamp and deep-ocean variants. Horizon colours
 //! retain biome atmosphere without bleaching the scene into a pastel wash.
 //!
-//! The biome ID SPACE stays compiled and closed: ids are serialized into
-//! chunk bytes and the [`Biome`] enum is matched across worldgen, so a pack
-//! may OVERRIDE an engine row's colours but cannot add biomes.
+//! The biome id space is a registry: engine rows hold their frozen ids
+//! (`ENGINE_BIOMES`), and a pack ADDS a biome with a namespaced row, which
+//! registers the next id after the engine range in load order (a pack may
+//! also OVERRIDE an engine row). Ids ride chunk bytes as one byte, so the
+//! catalog caps at 255 biomes (id 0 is unassigned).
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -22,37 +24,41 @@ use serde::Deserialize;
 use super::definition::BiomeDef;
 use super::Biome;
 
-/// Engine biomes in frozen id order (`ENGINE_BIOMES[id - 1]` is `id`'s biome;
-/// biome id 0 is unassigned). Append-only; never reorder.
-const ENGINE_BIOMES: &[(Biome, &str)] = &[
-    (Biome::Ocean, "petramond:ocean"),
-    (Biome::Beach, "petramond:beach"),
-    (Biome::River, "petramond:river"),
-    (Biome::Desert, "petramond:desert"),
-    (Biome::Plains, "petramond:plains"),
-    (Biome::Savanna, "petramond:savanna"),
-    (Biome::Forest, "petramond:forest"),
-    (Biome::Swamp, "petramond:swamp"),
-    (Biome::Taiga, "petramond:taiga"),
-    (Biome::SnowyTundra, "petramond:snowy_tundra"),
-    (Biome::SnowyTaiga, "petramond:snowy_taiga"),
-    (Biome::Mountains, "petramond:mountains"),
-    (Biome::SnowyPeaks, "petramond:snowy_peaks"),
-    (Biome::DeepOcean, "petramond:deep_ocean"),
-    (Biome::Foothills, "petramond:foothills"),
-    (Biome::Wetland, "petramond:wetland"),
-    (Biome::RedwoodForest, "petramond:redwood_forest"),
-    (Biome::OldGrowthTaiga, "petramond:old_growth_taiga"),
-    (Biome::Meadow, "petramond:meadow"),
-    (Biome::Grove, "petramond:grove"),
-    (Biome::SnowySlopes, "petramond:snowy_slopes"),
-    (Biome::WindsweptHills, "petramond:windswept_hills"),
-    (Biome::StonyPeaks, "petramond:stony_peaks"),
-    (Biome::WoodedHills, "petramond:wooded_hills"),
-    (Biome::MountainEdge, "petramond:mountain_edge"),
-    (Biome::DesertLakes, "petramond:desert_lakes"),
-    (Biome::SnowyPlains, "petramond:snowy_plains"),
+/// Engine biome keys in frozen id order (`ENGINE_BIOMES[id - 1]` is `id`'s
+/// key, matching the [`Biome`] consts; biome id 0 is unassigned).
+/// Append-only; never reorder.
+const ENGINE_BIOMES: &[&str] = &[
+    "petramond:ocean",
+    "petramond:beach",
+    "petramond:river",
+    "petramond:desert",
+    "petramond:plains",
+    "petramond:savanna",
+    "petramond:forest",
+    "petramond:swamp",
+    "petramond:taiga",
+    "petramond:snowy_tundra",
+    "petramond:snowy_taiga",
+    "petramond:mountains",
+    "petramond:snowy_peaks",
+    "petramond:deep_ocean",
+    "petramond:foothills",
+    "petramond:wetland",
+    "petramond:redwood_forest",
+    "petramond:old_growth_taiga",
+    "petramond:meadow",
+    "petramond:grove",
+    "petramond:snowy_slopes",
+    "petramond:windswept_hills",
+    "petramond:stony_peaks",
+    "petramond:wooded_hills",
+    "petramond:mountain_edge",
+    "petramond:desert_lakes",
+    "petramond:snowy_plains",
 ];
+
+/// Registered biomes cap at 255: the id is `row index + 1` in one byte.
+const BIOME_ID_CAP: usize = u8::MAX as usize;
 
 pub(super) const ENGINE_BIOME_COUNT: usize = ENGINE_BIOMES.len();
 
@@ -91,21 +97,15 @@ fn catalog() -> &'static crate::registry::Catalog<BiomeDef> {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BiomeDef>, String> {
-    let engine_names: Vec<&'static str> = ENGINE_BIOMES.iter().map(|(_, n)| *n).collect();
-    crate::registry::load_catalog(
+    crate::registry::load_catalog_with_capacity(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.biomes),
         |r| &r.biome,
-        &engine_names,
+        ENGINE_BIOMES,
         "biome",
-        |r, id, _| {
-            let Some(&(biome, key)) = ENGINE_BIOMES.get(id as usize) else {
-                return Err(format!(
-                    "biome '{}': biomes are engine-defined (their ids are serialized into \
-                     chunk bytes); packs may only override engine rows",
-                    r.biome
-                ));
-            };
+        BIOME_ID_CAP,
+        |r, index, names| {
+            let key = names.name(index).expect("index resolved from this table");
             let mut ambient = Vec::with_capacity(r.ambient.len());
             for (bundle, density) in r.ambient {
                 if !crate::registry::is_namespaced(&bundle) {
@@ -123,8 +123,9 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BiomeDef>, St
                 ambient.push((&*bundle.leak(), density));
             }
             Ok(BiomeDef {
-                biome,
-                name: key.strip_prefix("petramond:").expect("engine biome key"),
+                biome: Biome(index as u8 + 1),
+                key,
+                name: engine_name(key).unwrap_or(key),
                 fog_color: r.fog_color,
                 grass_color: r.grass_color,
                 foliage_color: r.foliage_color,
@@ -137,16 +138,35 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BiomeDef>, St
     )
 }
 
-#[inline]
-pub(super) fn from_id(id: u8) -> Biome {
-    ENGINE_BIOMES
-        .get(id.saturating_sub(1) as usize)
-        .map_or(Biome::Ocean, |&(b, _)| b)
+/// The bare half of an engine key (`"petramond:forest"` -> `"forest"`),
+/// `None` for a pack key.
+fn engine_name(key: &str) -> Option<&str> {
+    key.strip_prefix(crate::registry::ENGINE_NAMESPACE)
+        .and_then(|rest| rest.strip_prefix(':'))
 }
 
+/// The number of registered biomes (engine plus pack rows).
+#[inline]
+pub(super) fn count() -> usize {
+    catalog().rows().len()
+}
+
+/// The id registered under a namespaced key, or under an engine biome's
+/// bare name.
+pub(super) fn id_of(name: &str) -> Option<u8> {
+    let index = if crate::registry::is_namespaced(name) {
+        catalog().id(name)
+    } else {
+        catalog().id(&format!("{}:{name}", crate::registry::ENGINE_NAMESPACE))
+    }?;
+    Some(index as u8 + 1)
+}
+
+/// The row of a registered biome. Every [`Biome`] value is registered: the
+/// consts name engine rows and [`Biome::from_id`] maps unknown ids to one.
 #[inline]
 pub(super) fn def(biome: Biome) -> &'static BiomeDef {
-    &catalog().rows()[(biome.id() - 1) as usize]
+    &catalog().rows()[usize::from(biome.id()) - 1]
 }
 
 #[cfg(test)]

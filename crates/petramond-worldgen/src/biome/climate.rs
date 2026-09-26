@@ -144,10 +144,18 @@ impl ClimateRect {
         }
     }
 
-    #[cfg(test)]
     pub const fn with_offset(mut self, offset: f32) -> Self {
         self.offset = offset;
         self
+    }
+
+    /// The five axis ranges, in [`SurfaceClimate`] axis order.
+    pub const fn axis_ranges(self) -> [AxisRange; SURFACE_AXIS_COUNT] {
+        self.axes
+    }
+
+    pub const fn offset(self) -> f32 {
+        self.offset
     }
 
     #[cfg(test)]
@@ -266,11 +274,10 @@ impl BiomeClimateIndex {
         }
     }
 
+    /// The surface placement index loaded from `climate_table.json` (see
+    /// [`crate::data::climate_table`]).
     pub fn default_surface() -> &'static Self {
-        static DEFAULT: std::sync::LazyLock<BiomeClimateIndex> = std::sync::LazyLock::new(|| {
-            BiomeClimateIndex::from_rects(&super::surface_table::surface_biome_table())
-        });
-        &DEFAULT
+        &crate::data::climate_table::table().index
     }
 
     #[cfg(test)]
@@ -490,18 +497,18 @@ mod tests {
         )];
         let index = BiomeClimateIndex::new(&[
             BiomeClimateEntry {
-                biome: Biome::SnowyTundra,
+                biome: Biome::SNOWY_TUNDRA,
                 rectangles: COLD,
             },
             BiomeClimateEntry {
-                biome: Biome::Desert,
+                biome: Biome::DESERT,
                 rectangles: WARM,
             },
         ]);
 
         assert_eq!(
             index.classify_surface(SurfaceClimate::new(0.50, 0.0, 0.0, 0.0, 0.0)),
-            Some(Biome::Desert)
+            Some(Biome::DESERT)
         );
     }
 
@@ -551,13 +558,13 @@ mod tests {
     fn non_empty_index_always_returns_a_biome() {
         const RECTANGLES: &[ClimateRect] = &[test_rect(0.25, 0.75)];
         let index = BiomeClimateIndex::new(&[BiomeClimateEntry {
-            biome: Biome::Plains,
+            biome: Biome::PLAINS,
             rectangles: RECTANGLES,
         }]);
 
         assert_eq!(
             index.classify_surface(SurfaceClimate::new(99.0, -50.0, 7.0, 4.0, 2.0)),
-            Some(Biome::Plains)
+            Some(Biome::PLAINS)
         );
     }
 
@@ -574,11 +581,11 @@ mod tests {
         )];
         let index = BiomeClimateIndex::new(&[
             BiomeClimateEntry {
-                biome: Biome::Plains,
+                biome: Biome::PLAINS,
                 rectangles: BROAD,
             },
             BiomeClimateEntry {
-                biome: Biome::Meadow,
+                biome: Biome::MEADOW,
                 rectangles: SPECIFIC,
             },
         ]);
@@ -586,10 +593,10 @@ mod tests {
 
         // Both rectangles contain the sample (zero range-distance), but BROAD carries
         // an `offset` penalty, so the unpenalized biome wins.
-        assert_eq!(index.classify_surface(climate), Some(Biome::Meadow));
+        assert_eq!(index.classify_surface(climate), Some(Biome::MEADOW));
         assert_eq!(
             index.classify_surface_bruteforce(climate),
-            Some(Biome::Meadow)
+            Some(Biome::MEADOW)
         );
     }
 

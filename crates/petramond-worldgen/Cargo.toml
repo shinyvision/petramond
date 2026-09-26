@@ -20,7 +20,9 @@ mod-api = { path = "../../mod-api" }
 log = "0.4"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `float_roundtrip`: data recipes (density/terrain.json) carry computed f64
+# knots that must parse back to the exact bits they were written from.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [[bin]]

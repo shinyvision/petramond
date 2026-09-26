@@ -50,8 +50,8 @@ fn mul_kv_tint(tint: [f32; 3], kv: Option<[u8; 3]>) -> [f32; 3] {
 #[inline]
 fn tile_tint(tile: Tile) -> [f32; 3] {
     match tile.icon_tint() {
-        Some(petramond_world::tile::TileTint::Grass) => Biome::Plains.grass_color(),
-        Some(petramond_world::tile::TileTint::Foliage) => Biome::Plains.foliage_color(),
+        Some(petramond_world::tile::TileTint::Grass) => Biome::PLAINS.grass_color(),
+        Some(petramond_world::tile::TileTint::Foliage) => Biome::PLAINS.foliage_color(),
         Some(petramond_world::tile::TileTint::Fixed(rgb)) => rgb.map(|c| f32::from(c) / 255.0),
         _ => NO_TINT,
     }

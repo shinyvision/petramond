@@ -281,7 +281,7 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
 
 #[test]
 fn grass_top_mining_dust_is_green_but_dirt_side_is_not() {
-    let grass = Biome::Plains.grass_color();
+    let grass = Biome::PLAINS.grass_color();
     // Mining the grass-block TOP samples GrassTop -> green flecks.
     let mut sys = ParticleSystem::new();
     sys.spawn_mining(IVec3::new(0, 64, 0), IVec3::Y, Block::Grass);
@@ -307,7 +307,7 @@ fn grass_top_mining_dust_is_green_but_dirt_side_is_not() {
 
 #[test]
 fn leaf_burst_flecks_carry_the_foliage_tint() {
-    let foliage = Biome::Plains.foliage_color();
+    let foliage = Biome::PLAINS.foliage_color();
     let mut sys = ParticleSystem::new();
     sys.spawn_break_burst(IVec3::ZERO, Block::OakLeaves);
     assert!(!sys.is_empty());

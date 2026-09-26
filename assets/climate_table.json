@@ -1,0 +1,1292 @@
+{
+  "bands": {
+    "temperature": {
+      "full": [-1.0, 1.0],
+      "frozen": [-1.0, -0.3],
+      "cold": [-0.3, -0.15],
+      "temperate": [-0.15, 0.2],
+      "warm": [0.2, 0.55],
+      "hot": [0.55, 1.0]
+    },
+    "humidity": {
+      "full": [-1.0, 1.0],
+      "arid": [-1.0, -0.35],
+      "dry": [-0.35, -0.1],
+      "neutral": [-0.1, 0.1],
+      "humid": [0.1, 0.3],
+      "wet": [0.3, 1.0]
+    },
+    "continentality": {
+      "mushroom": [-1.2, -1.05],
+      "deep_ocean": [-1.05, -0.455],
+      "ocean": [-0.455, -0.19],
+      "coast": [-0.19, -0.11],
+      "near_inland": [-0.11, 0.03],
+      "mid_inland": [0.03, 0.3],
+      "far_inland": [0.3, 1.0]
+    },
+    "erosion": {
+      "full": [-1.0, 1.0],
+      "e0": [-1.0, -0.78],
+      "e1": [-0.78, -0.375],
+      "e2": [-0.375, -0.2225],
+      "e3": [-0.2225, 0.05],
+      "e4": [0.05, 0.45],
+      "e5": [0.45, 0.55],
+      "e6": [0.55, 1.0]
+    },
+    "variance": {
+      "full": [-1.0, 1.0],
+      "v0": [-1.0, -0.93333334],
+      "v1": [-0.93333334, -0.7666667],
+      "v2": [-0.7666667, -0.56666666],
+      "v3": [-0.56666666, -0.4],
+      "v4": [-0.4, -0.26666668],
+      "v5": [-0.26666668, -0.05],
+      "v6": [-0.05, 0.05],
+      "v7": [0.05, 0.26666668],
+      "v8": [0.26666668, 0.4],
+      "v9": [0.4, 0.56666666],
+      "v10": [0.56666666, 0.7666667],
+      "v11": [0.7666667, 0.93333334],
+      "v12": [0.93333334, 1.0]
+    }
+  },
+  "groups": [
+    {
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "mushroom", "erosion": "full", "variance": "full", "biome": "petramond:plains"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["full"]},
+      "at": {"variance": "full", "erosion": "full"},
+      "rows": [
+        {"continentality": "deep_ocean", "biomes": [
+          "petramond:deep_ocean",
+          "petramond:deep_ocean",
+          "petramond:deep_ocean",
+          "petramond:deep_ocean",
+          "petramond:ocean"
+        ]},
+        {"continentality": "ocean", "biomes": "petramond:ocean"}
+      ]
+    },
+    {
+      "at": {"variance": "v0"},
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e0..e2", "biome": "petramond:beach"},
+        {"temperature": "cold..hot", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:swamp"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v0"},
+      "rows": [
+        {"continentality": "near_inland..far_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..mid_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e4", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e5", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e6", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null]
+        ]}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v1"},
+      "rows": [
+        {"continentality": "coast", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e0", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v2"},
+      "rows": [
+        {"continentality": "coast..far_inland", "erosion": "e0", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e1", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v3"},
+      "rows": [
+        {"continentality": "coast", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e0", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]}
+      ]
+    },
+    {
+      "at": {"variance": "v4"},
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e0..e2", "biome": "petramond:beach"},
+        {"temperature": "cold..hot", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:swamp"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v4"},
+      "rows": [
+        {"continentality": "near_inland..far_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..mid_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e4", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e5", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e6", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null]
+        ]}
+      ]
+    },
+    {
+      "at": {"variance": "v5"},
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e0..e2", "biome": "petramond:beach"},
+        {"temperature": "cold..hot", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:swamp"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v5"},
+      "rows": [
+        {"continentality": "near_inland", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e3..e4", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e5", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:old_growth_taiga"],
+          ["petramond:forest", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e6", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_plains", "petramond:snowy_plains", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:taiga"],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null]
+        ]}
+      ]
+    },
+    {
+      "at": {"variance": "v6"},
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e0..e1", "biome": "petramond:river"},
+        {"temperature": "full", "humidity": "full", "continentality": "near_inland", "erosion": "e0..e1", "biome": "petramond:river"},
+        {"temperature": "full", "humidity": "full", "continentality": "coast..far_inland", "erosion": "e2..e5", "biome": "petramond:river"},
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e6", "biome": "petramond:river"},
+        {"temperature": "frozen", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:river"},
+        {"temperature": "cold..hot", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:swamp"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v6"},
+      "rows": [
+        {"continentality": "mid_inland..far_inland", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]}
+      ]
+    },
+    {
+      "at": {"variance": "v7"},
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e0..e2", "biome": "petramond:beach"},
+        {"temperature": "cold..hot", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:swamp"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v7"},
+      "rows": [
+        {"continentality": "near_inland", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e3..e4", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e6", "biomes": [
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:beach",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null]
+        ]}
+      ]
+    },
+    {
+      "at": {"variance": "v8"},
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e0..e2", "biome": "petramond:beach"},
+        {"temperature": "cold..hot", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:swamp"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v8"},
+      "rows": [
+        {"continentality": "near_inland..far_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..mid_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null]
+        ]}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v9"},
+      "rows": [
+        {"continentality": "coast", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e0", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v10"},
+      "rows": [
+        {"continentality": "coast..far_inland", "erosion": "e0", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e1", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:windswept_hills"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v11"},
+      "rows": [
+        {"continentality": "coast", "erosion": "e0..e1", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e0", "biomes": [
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:snowy_peaks",
+          "petramond:stony_peaks",
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e2..e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]}
+      ]
+    },
+    {
+      "at": {"variance": "v12"},
+      "rows": [
+        {"temperature": "full", "humidity": "full", "continentality": "coast", "erosion": "e0..e2", "biome": "petramond:beach"},
+        {"temperature": "cold..hot", "humidity": "full", "continentality": "near_inland..far_inland", "erosion": "e6", "biome": "petramond:swamp"}
+      ]
+    },
+    {
+      "grid": {"temperature": ["frozen", "cold", "temperate", "warm", "hot"], "humidity": ["arid", "dry", "neutral", "humid", "wet"]},
+      "at": {"variance": "v12"},
+      "rows": [
+        {"continentality": "near_inland..far_inland", "erosion": "e0", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..mid_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e1", "biomes": [
+          ["petramond:snowy_slopes", "petramond:snowy_slopes", "petramond:grove", "petramond:grove", "petramond:grove"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "far_inland", "erosion": "e2", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_tundra", "petramond:snowy_taiga", "petramond:snowy_taiga"],
+          ["petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:meadow", "petramond:redwood_forest"],
+          ["petramond:meadow", "petramond:meadow", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:forest", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..near_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e3", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast..far_inland", "erosion": "e4", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "near_inland", "erosion": "e5", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:savanna", "petramond:desert"]
+        ]},
+        {"continentality": "mid_inland..far_inland", "erosion": "e5", "biomes": [
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          "petramond:windswept_hills",
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "coast", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:taiga", "petramond:redwood_forest"],
+          ["petramond:plains", "petramond:plains", "petramond:forest", "petramond:forest", "petramond:forest"],
+          ["petramond:savanna", "petramond:savanna", "petramond:plains", "petramond:forest", "petramond:forest"],
+          "petramond:desert"
+        ]},
+        {"continentality": "near_inland..far_inland", "erosion": "e6", "biomes": [
+          ["petramond:snowy_tundra", "petramond:snowy_plains", "petramond:snowy_taiga", "petramond:snowy_taiga", "petramond:taiga"],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null],
+          [null, null, null, null, null]
+        ]}
+      ]
+    }
+  ]
+}

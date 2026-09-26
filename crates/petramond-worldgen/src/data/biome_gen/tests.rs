@@ -194,77 +194,77 @@ fn legacy(biome: Biome) -> Legacy {
         ..base(surface)
     };
     match biome {
-        Biome::Ocean | Biome::DeepOcean => Legacy {
+        Biome::OCEAN | Biome::DEEP_OCEAN => Legacy {
             flags: (true, false, true, false),
-            ..base(if biome == Biome::Ocean {
+            ..base(if biome == Biome::OCEAN {
                 &OCEAN_FLOOR
             } else {
                 &DEEP_OCEAN_FLOOR
             })
         },
-        Biome::Beach => Legacy {
+        Biome::BEACH => Legacy {
             flags: (false, false, true, false),
             ..base(&SAND_DEEP)
         },
-        Biome::River => Legacy {
+        Biome::RIVER => Legacy {
             flags: (false, true, true, false),
             ..base(&OCEAN_FLOOR)
         },
-        Biome::Desert | Biome::DesertLakes => Legacy {
+        Biome::DESERT | Biome::DESERT_LAKES => Legacy {
             sand: Some(sand_cover),
             ..base(&SAND_DEEP)
         },
-        Biome::Plains => Legacy {
+        Biome::PLAINS => Legacy {
             flowers: PLAINS_FLOWERS,
             flower_coverage: 0.1,
             flower_density: 0.15,
             hemp: 0.0045,
             ..grass(&PLAINS_TOP, Block::ShortGrass, 0.14)
         },
-        Biome::Savanna => Legacy {
+        Biome::SAVANNA => Legacy {
             hemp: 0.0023,
             ..grass(&PLAINS_TOP, Block::ShortGrass, 0.14)
         },
-        Biome::Forest => Legacy {
+        Biome::FOREST => Legacy {
             flowers: &[Block::Poppy, Block::Dandelion, Block::OxeyeDaisy],
             flower_coverage: 0.16,
             flower_density: 0.22,
             hemp: 0.0037,
             ..grass(&PLAINS_TOP, Block::ShortGrass, 0.11)
         },
-        Biome::Swamp | Biome::Wetland => Legacy {
+        Biome::SWAMP | Biome::WETLAND => Legacy {
             hemp: 0.016,
             ..grass(&WETLAND_TOP, Block::ShortGrass, 0.10)
         },
-        Biome::Taiga => Legacy {
+        Biome::TAIGA => Legacy {
             hemp: 0.0023,
             ..grass(&PLAINS_TOP, Block::Fern, 0.12)
         },
-        Biome::SnowyTundra | Biome::SnowyPlains => Legacy {
+        Biome::SNOWY_TUNDRA | Biome::SNOWY_PLAINS => Legacy {
             hemp: COLD_HEMP,
             snow: SnowCover::Always,
             ..base(&PLAINS_TOP)
         },
-        Biome::SnowyTaiga => Legacy {
+        Biome::SNOWY_TAIGA => Legacy {
             hemp: COLD_HEMP,
             snow: SnowCover::Always,
             ..grass(&PLAINS_TOP, Block::Fern, 0.12)
         },
-        Biome::Mountains => Legacy {
+        Biome::MOUNTAINS => Legacy {
             snow: SnowCover::AboveSurfaceY(MOUNTAIN_SNOW_LINE),
             flags: (false, false, false, true),
             ..grass(&MOUNTAIN_TOP, Block::ShortGrass, 0.05)
         },
-        Biome::SnowyPeaks => Legacy {
+        Biome::SNOWY_PEAKS => Legacy {
             snow: SnowCover::Always,
             flags: (false, false, false, true),
             ..base(&PLAINS_TOP)
         },
-        Biome::Foothills => Legacy {
+        Biome::FOOTHILLS => Legacy {
             flags: (false, true, false, true),
             ..grass(&FOOTHILLS_TOP, Block::ShortGrass, 0.06)
         },
-        Biome::RedwoodForest => Legacy {
+        Biome::REDWOOD_FOREST => Legacy {
             flowers: &[Block::OxeyeDaisy, Block::Poppy],
             flower_coverage: 0.05,
             flower_density: 0.14,
@@ -277,47 +277,49 @@ fn legacy(biome: Biome) -> Legacy {
             }),
             ..grass(&REDWOOD_TOP, Block::ShortGrass, 0.0)
         },
-        Biome::OldGrowthTaiga => Legacy {
+        Biome::OLD_GROWTH_TAIGA => Legacy {
             podzol: Some(old_growth_podzol),
             ..grass(&PODZOL_TOP, Block::Fern, 0.12)
         },
-        Biome::Meadow => Legacy {
+        Biome::MEADOW => Legacy {
             flowers: PLAINS_FLOWERS,
             flower_coverage: 0.36,
             flower_density: 0.34,
             hemp: 0.0045,
             ..grass(&PLAINS_TOP, Block::ShortGrass, 0.16)
         },
-        Biome::Grove => Legacy {
+        Biome::GROVE => Legacy {
             hemp: COLD_HEMP,
             snow: SnowCover::Always,
             flags: (false, true, false, true),
             ..grass(&PLAINS_TOP, Block::Fern, 0.08)
         },
-        Biome::SnowySlopes => Legacy {
+        Biome::SNOWY_SLOPES => Legacy {
             hemp: COLD_HEMP,
             snow: SnowCover::Always,
             flags: (false, false, false, true),
             ..base(&PLAINS_TOP)
         },
-        Biome::WindsweptHills | Biome::MountainEdge => Legacy {
+        Biome::WINDSWEPT_HILLS | Biome::MOUNTAIN_EDGE => Legacy {
             flags: (false, false, false, true),
             ..grass(&FOOTHILLS_TOP, Block::ShortGrass, 0.05)
         },
-        Biome::StonyPeaks => Legacy {
+        Biome::STONY_PEAKS => Legacy {
             flags: (false, false, false, true),
             ..base(&STONY_TOP)
         },
-        Biome::WoodedHills => Legacy {
+        Biome::WOODED_HILLS => Legacy {
             hemp: 0.0037,
             flags: (false, true, false, true),
             ..grass(&PLAINS_TOP, Block::ShortGrass, 0.09)
         },
+        other => unreachable!("{other:?} is not an engine biome"),
     }
 }
 
+/// The engine biomes, the ones the compiled definitions covered.
 fn all_biomes() -> impl Iterator<Item = Biome> {
-    (1..=BIOME_COUNT as u8).map(Biome::from_id)
+    Biome::all().take(petramond_world::biome::ENGINE_BIOME_COUNT)
 }
 
 #[test]
@@ -325,7 +327,7 @@ fn every_biome_has_its_rules_in_id_order() {
     for (i, spec) in specs().iter().enumerate() {
         assert_eq!(spec.biome.id() as usize, i + 1);
     }
-    assert_eq!(specs().len(), BIOME_COUNT);
+    assert_eq!(specs().len(), petramond_world::biome::count());
 }
 
 /// Every surface stack resolves exactly as its compiled predecessor for
@@ -425,7 +427,7 @@ fn vegetation_snow_and_flags_match_the_compiled_profiles() {
 /// unknown flag or field.
 #[test]
 fn malformed_generation_rules_are_refused() {
-    let biome = Biome::Plains;
+    let biome = Biome::PLAINS;
     assert!(parse(biome, None).is_err());
     let with = |extra: &str| {
         format!(r#"{{"surface": "petramond:stone"{extra}}}"#)
@@ -448,4 +450,49 @@ fn malformed_generation_rules_are_refused() {
     .expect("valid rules load");
     assert_eq!(spec.snow_cover, SnowCover::AboveSurfaceY(90));
     assert!(spec.flags.wet && !spec.flags.beach_base && !spec.flags.ocean);
+}
+
+/// Ground the fixed slots do not name gets its cover from the row's `covers`
+/// table: the mycelium mushroom roll that used to be compiled into the
+/// vegetation pass is one entry, drawing the same plants from the same
+/// stream.
+#[test]
+fn a_covers_entry_reproduces_the_compiled_mycelium_roll() {
+    let spec = parse(
+        Biome::PLAINS,
+        Some(
+            r#"{"surface": "petramond:mycelium", "vegetation": {"covers": [
+                {"on": ["petramond:mycelium"], "roll": {"chance": 0.1, "roll": [
+                    [55, "petramond:red_mushroom"], [100, "petramond:brown_mushroom"]]}}]}}"#,
+        ),
+    )
+    .expect("a covers entry loads");
+    let covers = spec.vegetation.covers;
+    assert_eq!(covers.len(), 1);
+    assert_eq!(covers[0].on, vec![Block::Mycelium]);
+    assert!(!covers[0].clustered);
+    let compiled = |rng: &mut FeatureRng| {
+        if !rng.chance(0.10) {
+            return None;
+        }
+        Some(if rng.next_i32(0, 99) < 55 {
+            Block::RedMushroom
+        } else {
+            Block::BrownMushroom
+        })
+    };
+    let mut planted = 0;
+    for i in 0..4000 {
+        let mut data = FeatureRng::positional(7, 0x5EED, i, 0, -i);
+        let mut code = data;
+        let picked = covers[0].roll.pick(&mut data);
+        assert_eq!(picked, compiled(&mut code), "column {i}");
+        assert_eq!(data.next_u64(), code.next_u64(), "column {i}: same draw count");
+        planted += usize::from(picked.is_some());
+    }
+    assert!(planted > 0);
+
+    let empty_on = r#"{"surface": "petramond:stone", "vegetation": {"covers": [
+        {"on": [], "roll": {"chance": 0.1, "roll": [[100, "petramond:red_mushroom"]]}}]}}"#;
+    assert!(parse(Biome::PLAINS, Some(empty_on)).is_err());
 }

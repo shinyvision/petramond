@@ -21,12 +21,14 @@ use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 /// Disposable generation cache format. Version 11 rebalances natural cavern density.
 pub const VERSION: u8 = 11;
 
-/// Fingerprint of the loaded catalogs, stamped beside the seed — the same
-/// content identity every in-memory memo keys on
+/// Fingerprint of the loaded catalogs — habitat, excavation, climate
+/// placement and terrain recipe — stamped beside the seed: the same content
+/// identity every in-memory memo keys on
 /// ([`GenContext`](crate::cache::GenContext)). A version byte only catches
 /// ENGINE drift; installing, removing, or retuning a pack that reshapes caves
-/// changes no version but does change `top_surf`, and without this the cache
-/// would happily serve the stale columns.
+/// or terrain or moves a biome changes no version but does change `surf` /
+/// `top_surf` / `biome`, and without this the cache would happily serve the
+/// stale columns.
 fn table_fingerprint(seed: u32) -> u64 {
     crate::cache::GenContext::installed(seed).tables()
 }

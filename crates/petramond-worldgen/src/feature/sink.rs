@@ -32,7 +32,7 @@ pub enum PlacementRule {
     Leaf,
     Branch,
     Litter,
-    Replace(Block),
+    Replace(&'static [Block]),
 }
 
 impl PlacementRule {
@@ -47,7 +47,7 @@ impl PlacementRule {
             }
             Self::Branch => block == Block::Air || block == Block::Water || block.is_leaves(),
             Self::Litter => block == Block::Air || block == Block::Water || block.is_snow_cover(),
-            Self::Replace(expected) => block == expected,
+            Self::Replace(hosts) => hosts.contains(&block),
         }
     }
 }

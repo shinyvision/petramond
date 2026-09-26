@@ -18,8 +18,7 @@ use crate::biome::climate::{
     CLIMATE_SAMPLE_CELL_Z,
 };
 use crate::biome::spec;
-use crate::biome::surface_table::FROZEN_TEMPERATURE_MAX;
-use crate::feature::vegetation::patch_field;
+use crate::rng::patch_field;
 use crate::region::RegionCells;
 use crate::surface::rule::SurfaceCtx;
 use crate::surface::SurfaceSystem;
@@ -40,9 +39,9 @@ const BEACH_MAX_CONTINENTALITY: f32 = 0.14;
 const BEACH_SCAN_RADIUS: i32 = 16;
 const BEACH_SCAN_STEP: i32 = 8;
 
-/// Sea ice: frozen (`temperature < FROZEN_TEMPERATURE_MAX`) shallow water caps
-/// its waterline cell with ice — the ice sheet along cold coasts and frozen
-/// rivers. `MIN`/`MAX` bound the capped water depth; a low-frequency cluster
+/// Sea ice: frozen (temperature below the top of the climate table's `frozen`
+/// band) shallow water caps its waterline cell with ice — the ice sheet along
+/// cold coasts and frozen rivers. `MIN`/`MAX` bound the capped water depth; a low-frequency cluster
 /// field picks each column's effective threshold in between, so the sheet's
 /// deep-water edge breaks into organic lobes and floes instead of tracing a
 /// bathymetry contour.
@@ -216,7 +215,7 @@ impl SurfaceDensitySystem {
             .climate_at(wx, wz)
             .get(ClimateAxis::Temperature)
             .unwrap_or(0.0);
-        if temperature >= FROZEN_TEMPERATURE_MAX {
+        if temperature >= crate::data::climate_table::table().frozen_temperature_max {
             return Block::Water;
         }
         let field = patch_field(self.seed, SEA_ICE_EDGE_SALT, wx, wz, SEA_ICE_EDGE_PERIOD);
@@ -259,7 +258,7 @@ impl SurfaceDensitySystem {
             return cell.base;
         }
         if self.near_ocean_climate(cells, wx, wz) {
-            Biome::Beach
+            Biome::BEACH
         } else {
             cell.base
         }

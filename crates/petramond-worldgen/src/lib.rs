@@ -594,9 +594,9 @@ mod tests {
                     let biome = petramond_world::biome::Biome::from_id(chunk.biome_at(x, z));
                     let snowy = matches!(
                         biome,
-                        petramond_world::biome::Biome::SnowyPlains
-                            | petramond_world::biome::Biome::SnowyTundra
-                            | petramond_world::biome::Biome::SnowyTaiga
+                        petramond_world::biome::Biome::SNOWY_PLAINS
+                            | petramond_world::biome::Biome::SNOWY_TUNDRA
+                            | petramond_world::biome::Biome::SNOWY_TAIGA
                     );
                     if snowy && chunk.block(x, SEA_LEVEL as usize, z) == Block::Ice {
                         cases += 1;

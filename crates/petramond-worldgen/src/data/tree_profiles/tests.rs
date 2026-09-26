@@ -10,8 +10,8 @@ fn profile_of(text: &str) -> Result<TreeProfile, String> {
 
 #[test]
 fn every_shipped_biome_parses_and_rooted_ones_name_species() {
-    for id in 1..=BIOME_COUNT as u8 {
-        let profile = profile(Biome::from_id(id));
+    for biome in Biome::all() {
+        let profile = profile(biome);
         assert!(profile.validate().is_ok());
         assert_eq!(profile.density > 0.0, profile.species.is_some());
     }

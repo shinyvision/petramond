@@ -48,44 +48,49 @@ fn block_color(block: u16) -> [u8; 3] {
     let base = tile_map_rgb(tile);
     let tint = match tile.world_tint() {
         None => return base,
-        Some(TileTint::Grass) => Biome::Plains.grass_color(),
-        Some(TileTint::Foliage) => Biome::Plains.foliage_color(),
-        Some(TileTint::Water) => Biome::Plains.water_color(),
+        Some(TileTint::Grass) => Biome::PLAINS.grass_color(),
+        Some(TileTint::Foliage) => Biome::PLAINS.foliage_color(),
+        Some(TileTint::Water) => Biome::PLAINS.water_color(),
         Some(TileTint::Fixed(rgb)) => rgb.map(|c| f32::from(c) / 255.0),
     };
     std::array::from_fn(|c| (base[c] as f32 * tint[c]).round().clamp(0.0, 255.0) as u8)
 }
 
-/// Distinct top-down colour per biome id.
+/// Distinct top-down colour per engine biome id; pack biomes show their fog
+/// colour.
 fn biome_color(id: u8) -> [u8; 3] {
     match Biome::from_id(id) {
-        Biome::Ocean => [46, 104, 180],
-        Biome::DeepOcean => [20, 50, 116],
-        Biome::Beach => [240, 232, 174], // pale sand
-        Biome::River => [80, 150, 210],
-        Biome::Desert => [224, 186, 88], // tan-orange (distinct from beach)
-        Biome::Plains => [126, 198, 78], // bright green
-        Biome::Savanna => [188, 186, 86], // olive
-        Biome::Forest => [46, 128, 48],  // dark green
-        Biome::RedwoodForest => [30, 90, 36], // deep dark green — tall redwood groves
-        Biome::Wetland => [92, 144, 96],
-        Biome::Swamp => [58, 92, 64],
-        Biome::Taiga => [58, 116, 92],
-        Biome::Foothills => [152, 168, 122], // gray-green
-        Biome::Mountains => [138, 138, 132], // gray
-        Biome::SnowyTundra => [210, 224, 228],
-        Biome::SnowyTaiga => [168, 198, 198],
-        Biome::SnowyPeaks => [238, 242, 250],
-        Biome::OldGrowthTaiga => [48, 96, 70],
-        Biome::Meadow => [150, 210, 104],
-        Biome::Grove => [150, 180, 172],
-        Biome::SnowySlopes => [224, 232, 238],
-        Biome::WindsweptHills => [126, 138, 126],
-        Biome::StonyPeaks => [166, 166, 160],
-        Biome::WoodedHills => [64, 132, 56],
-        Biome::MountainEdge => [148, 158, 132],
-        Biome::DesertLakes => [214, 178, 92],
-        Biome::SnowyPlains => [222, 230, 226],
+        Biome::OCEAN => [46, 104, 180],
+        Biome::DEEP_OCEAN => [20, 50, 116],
+        Biome::BEACH => [240, 232, 174], // pale sand
+        Biome::RIVER => [80, 150, 210],
+        Biome::DESERT => [224, 186, 88], // tan-orange (distinct from beach)
+        Biome::PLAINS => [126, 198, 78], // bright green
+        Biome::SAVANNA => [188, 186, 86], // olive
+        Biome::FOREST => [46, 128, 48],  // dark green
+        Biome::REDWOOD_FOREST => [30, 90, 36], // deep dark green — tall redwood groves
+        Biome::WETLAND => [92, 144, 96],
+        Biome::SWAMP => [58, 92, 64],
+        Biome::TAIGA => [58, 116, 92],
+        Biome::FOOTHILLS => [152, 168, 122], // gray-green
+        Biome::MOUNTAINS => [138, 138, 132], // gray
+        Biome::SNOWY_TUNDRA => [210, 224, 228],
+        Biome::SNOWY_TAIGA => [168, 198, 198],
+        Biome::SNOWY_PEAKS => [238, 242, 250],
+        Biome::OLD_GROWTH_TAIGA => [48, 96, 70],
+        Biome::MEADOW => [150, 210, 104],
+        Biome::GROVE => [150, 180, 172],
+        Biome::SNOWY_SLOPES => [224, 232, 238],
+        Biome::WINDSWEPT_HILLS => [126, 138, 126],
+        Biome::STONY_PEAKS => [166, 166, 160],
+        Biome::WOODED_HILLS => [64, 132, 56],
+        Biome::MOUNTAIN_EDGE => [148, 158, 132],
+        Biome::DESERT_LAKES => [214, 178, 92],
+        Biome::SNOWY_PLAINS => [222, 230, 226],
+        // A pack biome: its horizon colour.
+        pack => pack
+            .fog_color()
+            .map(|c| (c * 255.0).round().clamp(0.0, 255.0) as u8),
     }
 }
 

@@ -1,6 +1,5 @@
 use super::node::Node;
 use super::spline::{CubicSpline, SplineAxis};
-#[cfg(test)]
 use super::Axis;
 use super::{Channel, NodeId, SampledScalarField, ScalarGraph};
 use std::sync::Arc;
@@ -32,7 +31,6 @@ impl ScalarGraph {
 
     node_builders! {
         fn constant(value: f64) -> Node::Constant(value);
-        #[cfg(test)]
         fn axis(axis: Axis) -> Node::Axis(axis);
         fn sampled_field(field: impl SampledScalarField + 'static)
             -> Node::SampledField(Arc::new(field));
@@ -40,10 +38,8 @@ impl ScalarGraph {
             -> Node::Add(a, b);
         fn multiply(a: NodeId => "multiply left input", b: NodeId => "multiply right input")
             -> Node::Multiply(a, b);
-        #[cfg(test)]
         fn min(a: NodeId => "min left input", b: NodeId => "min right input")
             -> Node::Min(a, b);
-        #[cfg(test)]
         fn max(a: NodeId => "max left input", b: NodeId => "max right input")
             -> Node::Max(a, b);
         fn abs(input: NodeId => "abs input") -> Node::Abs(input);
@@ -56,7 +52,6 @@ impl ScalarGraph {
             b: NodeId => "lerp second input",
             t: NodeId => "lerp selector input",
         ) -> Node::Lerp { a, b, t };
-        #[cfg(test)]
         fn vertical_ramp(y_min: f64, y_max: f64) -> Node::VerticalRamp { y_min, y_max };
         fn vertical_bias(base_height: NodeId => "vertical bias base height input")
             -> Node::VerticalBias { base_height };
@@ -66,7 +61,6 @@ impl ScalarGraph {
             fade_height: f64,
             solid_density: f64,
         ) -> Node::FloorClamp { input, floor_y, fade_height, solid_density };
-        #[cfg(test)]
         fn range_select(
             selector: NodeId => "range selector input",
             min: f64,

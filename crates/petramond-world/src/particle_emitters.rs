@@ -475,8 +475,7 @@ fn tables() -> &'static (crate::registry::Catalog<EmitterBundle>, BiomeTable) {
         LazyLock::new(|| {
             let catalog =
                 crate::registry::read_catalog("particle_emitters.json", "emitter", parse_layers);
-            let rows = (1..=crate::biome::BIOME_COUNT as u8)
-                .map(|id| (id, crate::biome::Biome::from_id(id).ambient()));
+            let rows = crate::biome::Biome::all().map(|biome| (biome.id(), biome.ambient()));
             let table = BiomeTable::build(&catalog, rows)
                 .unwrap_or_else(|e| panic!("biomes.json ambient densities: {e}"));
             (catalog, table)

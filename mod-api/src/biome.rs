@@ -1,20 +1,20 @@
 //! The stable biome vocabulary for mods.
 //!
 //! Worldgen hooks receive biomes as raw `u8` ids (see
-//! [`GuestCall::GenFeature`](crate::GuestCall::GenFeature)). Unlike block/item
-//! ids, biome ids are a COMPILED APPEND-ONLY table (they serialize into chunk
-//! bytes), so the ids themselves are stable across sessions and saves and may
-//! be named as constants. Mods must still address biomes through these names —
-//! never copied numeric literals; the engine pins this table against its own
-//! biome registry, so a drift fails an engine test, not a mod at runtime.
+//! [`GuestCall::GenFeature`](crate::GuestCall::GenFeature)). The ENGINE biome
+//! ids are a frozen append-only range (they serialize into chunk bytes), so
+//! they are stable across sessions and saves and may be named as constants.
+//! Mods must still address engine biomes through these names — never copied
+//! numeric literals; the engine pins this table against its own biome
+//! registry, so a drift fails an engine test, not a mod at runtime.
 //!
-//! When SURFACE biomes become data-driven (explicitly future work), pack
-//! biomes will get a name-resolution call like `ResolveBlock`; this vocabulary
-//! stays valid for the engine rows. UNDERGROUND biomes already went that way
-//! and are the precedent: they are pack-extensible, so the ABI speaks NAMES
-//! and session ids ([`HostCall::ResolveUndergroundBiome`](crate::HostCall) +
-//! `UndergroundBiomeAt`) and there is deliberately no frozen name table here
-//! for them.
+//! Surface biomes are pack-extensible: a pack biome registers an id after
+//! the engine range in pack load order, so it has no constant here and
+//! [`name`] / [`by_name`] do not know it. UNDERGROUND biomes are the
+//! precedent for addressing such ids: the ABI speaks NAMES and session ids
+//! ([`HostCall::ResolveUndergroundBiome`](crate::HostCall) +
+//! `UndergroundBiomeAt`), and there is deliberately no frozen name table
+//! here for them.
 
 /// Engine biome names, indexed by `id - 1` (biome ids start at 1; 0 is
 /// unused). Append-only, mirroring the engine's biome table.

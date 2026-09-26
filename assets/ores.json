@@ -1,0 +1,13 @@
+{
+  "ores": [
+    {"ore": "petramond:dirt", "block": "petramond:dirt", "salt": 10551301, "count": 9, "shape": {"blob": {"size": 33}}, "y": [-64, 130]},
+    {"ore": "petramond:gravel", "block": "petramond:gravel", "salt": 10551302, "count": 10, "shape": {"blob": {"size": 33}}, "y": [-64, 130]},
+    {"ore": "petramond:tuff", "block": "petramond:tuff", "salt": 10551300, "count": 6, "shape": {"blob": {"size": 40}}, "y": [-64, 0]},
+    {"ore": "petramond:coal_ore", "block": "petramond:coal_ore", "salt": 10551312, "count": 14, "shape": {"blob": {"size": 17}}, "y": [16, 150]},
+    {"ore": "petramond:copper_ore", "block": "petramond:copper_ore", "salt": 10551314, "count": 11, "shape": {"blob": {"size": 10}}, "y": [-16, 96]},
+    {"ore": "petramond:iron_ore", "block": "petramond:iron_ore", "salt": 10551313, "count": 34, "shape": {"grid3": {"max_ore": 9}}, "y": [-64, 136]},
+    {"ore": "petramond:gold_ore", "block": "petramond:gold_ore", "salt": 10551315, "count": 3, "shape": {"blob": {"size": 9}}, "y": [-64, 30]},
+    {"ore": "petramond:diamond_ore", "block": "petramond:diamond_ore", "salt": 10551318, "count": 7, "shape": {"grid3": {"max_ore": 9}}, "y": [-64, 16], "depth_ramp": 1.0},
+    {"ore": "petramond:marble", "block": "petramond:marble", "salt": 10551303, "count": 8, "shape": {"blob": {"size": 33}}, "y": [-64, 130]}
+  ]
+}

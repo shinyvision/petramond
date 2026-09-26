@@ -15,6 +15,7 @@
 
 use crate::data::excavations::{self, Excavations};
 use crate::data::underground::{self, UndergroundBiomes};
+use crate::data::{climate_table, terrain};
 
 /// The seed and catalog fingerprints a generation fact derives from. See the
 /// module docs.
@@ -26,10 +27,16 @@ pub struct GenContext {
     /// natural cave source sampled without their influence), so it can never
     /// be confused with the same fact under any excavation catalog.
     excavations: Option<u64>,
+    /// The climate placement table (which biome a climate sample lands in).
+    climate: u64,
+    /// The terrain density recipe (the height / shape graph).
+    terrain: u64,
 }
 
 impl GenContext {
-    /// The context of a field over the habitat and excavation catalogs.
+    /// The context of a field over the habitat and excavation catalogs. The
+    /// climate table and terrain recipe are process-wide (every generator
+    /// reads the installed ones), so they are taken from the loaded tables.
     pub(crate) fn new(
         seed: u32,
         underground: &UndergroundBiomes,
@@ -39,6 +46,8 @@ impl GenContext {
             seed,
             habitats: underground.fingerprint,
             excavations: Some(excavations.fingerprint),
+            climate: climate_table::table().fingerprint,
+            terrain: terrain::recipe().fingerprint,
         }
     }
 
@@ -54,7 +63,10 @@ impl GenContext {
     /// One fingerprint over every catalog the context names — what a
     /// persisted cache stamps beside the seed.
     pub fn tables(self) -> u64 {
-        self.habitats.rotate_left(17) ^ self.excavations.unwrap_or(0)
+        self.habitats.rotate_left(17)
+            ^ self.excavations.unwrap_or(0)
+            ^ self.climate.rotate_left(31)
+            ^ self.terrain.rotate_left(47)
     }
 
     /// This context for a fact that reads no excavation.

@@ -5,6 +5,9 @@ pub(super) type Color = [f32; 3];
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) struct BiomeDef {
     pub biome: Biome,
+    /// The registry key (`petramond:forest`, `mymod:crystal_fields`).
+    pub key: &'static str,
+    /// The bare name for an engine row, the key for a pack row.
     pub name: &'static str,
     pub fog_color: Color,
     pub grass_color: Color,

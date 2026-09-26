@@ -9,6 +9,8 @@
 //! stepper is xorshift64. Changing either is a worldgen compatibility break and
 //! requires updating the pinned vectors below.
 
+use petramond_world::mathh::smoothstep;
+
 const SALT_MULTIPLIER: u64 = 0x9E37_79B9_7F4A_7C15;
 const X_MULTIPLIER: u64 = 0xC2B2_AE3D_27D4_EB4F;
 const Y_MULTIPLIER: u64 = 0x1656_67B1_9E37_79F9;
@@ -78,6 +80,30 @@ impl FeatureRng {
     pub fn chance(&mut self, p: f32) -> bool {
         self.next_f32() < p
     }
+}
+
+/// Smooth low-frequency value field in `[0,1)` at world `(wx,wz)`: hashed
+/// lattice corners (one positional draw each, `period` blocks apart) with a
+/// smoothstep bilinear blend, so a threshold cuts out organic blobs rather
+/// than a hard grid, and nearby columns share corner samples. Pure function
+/// of `(seed, salt, wx, wz)`, so it is seamless across chunk borders. The ONE
+/// patch field every worldgen stage uses — flower and fern patches, surface
+/// rule clusters, the sea-ice edge.
+pub fn patch_field(seed: u32, salt: u64, wx: i32, wz: i32, period: f32) -> f32 {
+    let fx = wx as f32 / period;
+    let fz = wz as f32 / period;
+    let x0 = fx.floor() as i32;
+    let z0 = fz.floor() as i32;
+    let tx = smoothstep(0.0, 1.0, fx - x0 as f32);
+    let tz = smoothstep(0.0, 1.0, fz - z0 as f32);
+    let corner = |ix: i32, iz: i32| FeatureRng::positional(seed, salt, ix, 0, iz).next_f32();
+    let c00 = corner(x0, z0);
+    let c10 = corner(x0 + 1, z0);
+    let c01 = corner(x0, z0 + 1);
+    let c11 = corner(x0 + 1, z0 + 1);
+    let a = c00 + (c10 - c00) * tx;
+    let b = c01 + (c11 - c01) * tx;
+    a + (b - a) * tz
 }
 
 #[cfg(test)]

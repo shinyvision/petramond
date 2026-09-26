@@ -1,20 +1,16 @@
-//! Parameter-space surface biome table.
+//! The compiled surface biome table builder — the TEST REFERENCE the shipped
+//! `assets/climate_table.json` was generated from (the live table loads from
+//! that file, see [`crate::data::climate_table`]).
 //!
-//! Surface biomes are assigned by nearest climate rectangle (see
-//! [`super::climate::BiomeClimateIndex`]). Rather than hand-tuning one rectangle
-//! per biome, this module generates a dense table of `(rectangle, biome)` rows
-//! that tile the five climate axes (temperature, humidity, continentality,
-//! erosion, variance) the way a well-studied reference generator does: a grid of
-//! base biomes selected by temperature/humidity, then sliced by erosion bands and
-//! mirrored across the variance ("low"/"high") fold, with coast/ocean/peak
-//! special cases layered on top.
-//!
-//! The grids below already hold *our* palette — the reference biome set is folded
-//! into our biomes at authoring time, so the table is the single editable knob for
-//! how climate maps to terrain cover.
+//! It tiles the five climate axes (temperature, humidity, continentality,
+//! erosion, variance) the way a well-studied reference generator does: a grid
+//! of base biomes selected by temperature/humidity, then sliced by erosion
+//! bands and mirrored across the variance ("low"/"high") fold, with
+//! coast/ocean/peak special cases layered on top. The shipped table must
+//! reproduce this builder's rows exactly, in order, so moving the table to
+//! data changed no generated biome.
 
 use petramond_world::biome::Biome;
-use petramond_world::biome::Biome::*;
 
 use super::climate::{AxisRange, ClimateRect};
 
@@ -25,8 +21,8 @@ type Row = (ClimateRect, Biome);
 const FULL: AxisRange = AxisRange::new(-1.0, 1.0);
 
 /// Upper edge of the FROZEN temperature band (`T[0]`): everything colder is
-/// snowy-family land, frozen shallow water (see the sea-ice pass in
-/// `density::surface`), and river-instead-of-swamp behaviour. The reference
+/// snowy-family land, frozen shallow water (the sea-ice pass reads the data
+/// table's `frozen` band), and river-instead-of-swamp behaviour. The reference
 /// partition put this at -0.45; widened to -0.3 (2026-07-16, a deliberate
 /// stylization like the spines/terraces) so snowy biomes are a meaningful
 /// share of the world — measured 10.6% → 15.0% of land over a 40-seed census.
@@ -108,55 +104,61 @@ fn is_low(variance: AxisRange) -> bool {
 const CORE: [[Biome; 5]; 5] = [
     // Cold row, dry → wet: open treeless snowfield, scattered-spruce tundra,
     // then the spruce forests.
-    [SnowyPlains, SnowyPlains, SnowyTundra, SnowyTaiga, Taiga],
-    [Plains, Plains, Forest, Taiga, OldGrowthTaiga],
-    [Forest, Plains, Forest, Forest, Forest],
-    [Savanna, Savanna, Forest, Forest, Forest],
-    [Desert, Desert, Desert, Desert, Desert],
+    [
+        Biome::SNOWY_PLAINS,
+        Biome::SNOWY_PLAINS,
+        Biome::SNOWY_TUNDRA,
+        Biome::SNOWY_TAIGA,
+        Biome::TAIGA,
+    ],
+    [Biome::PLAINS, Biome::PLAINS, Biome::FOREST, Biome::TAIGA, Biome::OLD_GROWTH_TAIGA],
+    [Biome::FOREST, Biome::PLAINS, Biome::FOREST, Biome::FOREST, Biome::FOREST],
+    [Biome::SAVANNA, Biome::SAVANNA, Biome::FOREST, Biome::FOREST, Biome::FOREST],
+    [Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT],
 ];
 
 const CORE_HIGH: [[Option<Biome>; 5]; 5] = [
-    [Some(SnowyTundra), None, Some(SnowyTaiga), None, None],
-    [None, None, None, None, Some(RedwoodForest)],
-    [Some(Plains), None, None, Some(Forest), None],
-    [None, None, Some(Plains), Some(Forest), Some(Forest)],
+    [Some(Biome::SNOWY_TUNDRA), None, Some(Biome::SNOWY_TAIGA), None, None],
+    [None, None, None, None, Some(Biome::REDWOOD_FOREST)],
+    [Some(Biome::PLAINS), None, None, Some(Biome::FOREST), None],
+    [None, None, Some(Biome::PLAINS), Some(Biome::FOREST), Some(Biome::FOREST)],
     [None, None, None, None, None],
 ];
 
 const PLATEAU: [[Biome; 5]; 5] = [
     [
-        SnowyTundra,
-        SnowyTundra,
-        SnowyTundra,
-        SnowyTaiga,
-        SnowyTaiga,
+        Biome::SNOWY_TUNDRA,
+        Biome::SNOWY_TUNDRA,
+        Biome::SNOWY_TUNDRA,
+        Biome::SNOWY_TAIGA,
+        Biome::SNOWY_TAIGA,
     ],
-    [Meadow, Meadow, Forest, Taiga, OldGrowthTaiga],
-    [Meadow, Meadow, Meadow, Meadow, Forest],
-    [Savanna, Savanna, Forest, Forest, Forest],
-    [Desert, Desert, Desert, Desert, Desert],
+    [Biome::MEADOW, Biome::MEADOW, Biome::FOREST, Biome::TAIGA, Biome::OLD_GROWTH_TAIGA],
+    [Biome::MEADOW, Biome::MEADOW, Biome::MEADOW, Biome::MEADOW, Biome::FOREST],
+    [Biome::SAVANNA, Biome::SAVANNA, Biome::FOREST, Biome::FOREST, Biome::FOREST],
+    [Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT],
 ];
 
 const PLATEAU_HIGH: [[Option<Biome>; 5]; 5] = [
-    [Some(SnowyTundra), None, None, None, None],
-    [None, None, Some(Meadow), Some(Meadow), Some(RedwoodForest)],
-    [None, None, Some(Forest), Some(Forest), None],
+    [Some(Biome::SNOWY_TUNDRA), None, None, None, None],
+    [None, None, Some(Biome::MEADOW), Some(Biome::MEADOW), Some(Biome::REDWOOD_FOREST)],
+    [None, None, Some(Biome::FOREST), Some(Biome::FOREST), None],
     [None, None, None, None, None],
-    [Some(Desert), Some(Desert), None, None, None],
+    [Some(Biome::DESERT), Some(Biome::DESERT), None, None, None],
 ];
 
 const HILLS: [[Option<Biome>; 5]; 5] = [
-    [Some(WindsweptHills); 5],
-    [Some(WindsweptHills); 5],
-    [Some(WindsweptHills); 5],
+    [Some(Biome::WINDSWEPT_HILLS); 5],
+    [Some(Biome::WINDSWEPT_HILLS); 5],
+    [Some(Biome::WINDSWEPT_HILLS); 5],
     [None; 5],
     [None; 5],
 ];
 
 // Ocean by temperature: deep row (no deep variant of the warmest), shallow row.
 const OCEANS: [[Biome; 5]; 2] = [
-    [DeepOcean, DeepOcean, DeepOcean, DeepOcean, Ocean],
-    [Ocean, Ocean, Ocean, Ocean, Ocean],
+    [Biome::DEEP_OCEAN, Biome::DEEP_OCEAN, Biome::DEEP_OCEAN, Biome::DEEP_OCEAN, Biome::OCEAN],
+    [Biome::OCEAN, Biome::OCEAN, Biome::OCEAN, Biome::OCEAN, Biome::OCEAN],
 ];
 
 // --- Pickers (temperature index `i`, humidity index `j`, variance slice `v`) --
@@ -171,7 +173,7 @@ fn pick_core(i: usize, j: usize, v: AxisRange) -> Biome {
 
 fn pick_core_or_arid_if_hot(i: usize, j: usize, v: AxisRange) -> Biome {
     if i == 4 {
-        Desert
+        Biome::DESERT
     } else {
         pick_core(i, j, v)
     }
@@ -187,7 +189,7 @@ fn pick_core_or_arid_if_hot_or_slope_if_cold(i: usize, j: usize, v: AxisRange) -
 
 fn maybe_windswept_open(i: usize, j: usize, v: AxisRange, fallback: Biome) -> Biome {
     if i > 1 && j < 4 && !is_low(v) {
-        Savanna
+        Biome::SAVANNA
     } else {
         fallback
     }
@@ -204,9 +206,9 @@ fn pick_windswept_coast(i: usize, j: usize, v: AxisRange) -> Biome {
 
 fn pick_beach(i: usize) -> Biome {
     if i == 4 {
-        Desert
+        Biome::DESERT
     } else {
-        Beach
+        Biome::BEACH
     }
 }
 
@@ -220,11 +222,11 @@ fn pick_plateau(i: usize, j: usize, v: AxisRange) -> Biome {
 
 fn pick_peak(i: usize, _j: usize, _v: AxisRange) -> Biome {
     if i <= 2 {
-        SnowyPeaks
+        Biome::SNOWY_PEAKS
     } else if i == 3 {
-        StonyPeaks
+        Biome::STONY_PEAKS
     } else {
-        Desert
+        Biome::DESERT
     }
 }
 
@@ -232,9 +234,9 @@ fn pick_slope(i: usize, j: usize, v: AxisRange) -> Biome {
     if i >= 3 {
         pick_plateau(i, j, v)
     } else if j <= 1 {
-        SnowySlopes
+        Biome::SNOWY_SLOPES
     } else {
-        Grove
+        Biome::GROVE
     }
 }
 
@@ -257,7 +259,7 @@ fn add(
 }
 
 fn add_off_coast(rows: &mut Vec<Row>) {
-    add(rows, FULL, FULL, MUSHROOM, FULL, FULL, Plains);
+    add(rows, FULL, FULL, MUSHROOM, FULL, FULL, Biome::PLAINS);
     for (i, &t) in T.iter().enumerate() {
         add(rows, t, FULL, DEEP_OCEAN_C, FULL, FULL, OCEANS[0][i]);
         add(rows, t, FULL, OCEAN_C, FULL, FULL, OCEANS[1][i]);
@@ -342,7 +344,7 @@ fn add_high_slice(rows: &mut Vec<Row>, v: AxisRange) {
 }
 
 fn add_mid_slice(rows: &mut Vec<Row>, v: AxisRange) {
-    add(rows, FULL, FULL, COAST, span(E[0], E[2]), v, Beach);
+    add(rows, FULL, FULL, COAST, span(E[0], E[2]), v, Biome::BEACH);
     add(
         rows,
         UNFROZEN,
@@ -350,7 +352,7 @@ fn add_mid_slice(rows: &mut Vec<Row>, v: AxisRange) {
         span(NEAR_INLAND, FAR_INLAND),
         E[6],
         v,
-        Swamp,
+        Biome::SWAMP,
     );
 
     for (i, &t) in T.iter().enumerate() {
@@ -410,7 +412,7 @@ fn add_mid_slice(rows: &mut Vec<Row>, v: AxisRange) {
 }
 
 fn add_low_slice(rows: &mut Vec<Row>, v: AxisRange) {
-    add(rows, FULL, FULL, COAST, span(E[0], E[2]), v, Beach);
+    add(rows, FULL, FULL, COAST, span(E[0], E[2]), v, Biome::BEACH);
     add(
         rows,
         UNFROZEN,
@@ -418,7 +420,7 @@ fn add_low_slice(rows: &mut Vec<Row>, v: AxisRange) {
         span(NEAR_INLAND, FAR_INLAND),
         E[6],
         v,
-        Swamp,
+        Biome::SWAMP,
     );
 
     for (i, &t) in T.iter().enumerate() {
@@ -473,8 +475,8 @@ fn add_low_slice(rows: &mut Vec<Row>, v: AxisRange) {
 fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
     // Rivers. Frozen + unfrozen both map to River, so the reference temperature
     // split collapses to FULL across these rows.
-    add(rows, FULL, FULL, COAST, span(E[0], E[1]), v, River);
-    add(rows, FULL, FULL, NEAR_INLAND, span(E[0], E[1]), v, River);
+    add(rows, FULL, FULL, COAST, span(E[0], E[1]), v, Biome::RIVER);
+    add(rows, FULL, FULL, NEAR_INLAND, span(E[0], E[1]), v, Biome::RIVER);
     add(
         rows,
         FULL,
@@ -482,9 +484,9 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
         span(COAST, FAR_INLAND),
         span(E[2], E[5]),
         v,
-        River,
+        Biome::RIVER,
     );
-    add(rows, FULL, FULL, COAST, E[6], v, River);
+    add(rows, FULL, FULL, COAST, E[6], v, Biome::RIVER);
     // Wettest erosion shoulder, inland: frozen → river, otherwise swamp.
     add(
         rows,
@@ -493,7 +495,7 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
         span(NEAR_INLAND, FAR_INLAND),
         E[6],
         v,
-        River,
+        Biome::RIVER,
     );
     add(
         rows,
@@ -502,7 +504,7 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
         span(NEAR_INLAND, FAR_INLAND),
         E[6],
         v,
-        Swamp,
+        Biome::SWAMP,
     );
     // Driest mid/far-inland erosion keeps the ordinary middle biome.
     for (i, &t) in T.iter().enumerate() {
@@ -570,16 +572,16 @@ mod tests {
         let centre = variance_slice(6);
         let river_rows: Vec<_> = surface_biome_table()
             .into_iter()
-            .filter(|(_, biome)| *biome == Biome::River)
+            .filter(|(_, biome)| *biome == Biome::RIVER)
             .collect();
-        assert!(!river_rows.is_empty(), "surface table must assign River");
+        assert!(!river_rows.is_empty(), "surface table must assign Biome::RIVER");
         for (rect, _) in river_rows {
             let var = rect
                 .axis_range(ClimateAxis::Variance)
                 .expect("surface rect must expose variance");
             assert!(
                 var.min >= centre.min && var.max <= centre.max,
-                "River row variance [{}, {}] escaped the centre band [{}, {}]",
+                "Biome::RIVER row variance [{}, {}] escaped the centre band [{}, {}]",
                 var.min,
                 var.max,
                 centre.min,

@@ -5,7 +5,7 @@ use petramond_world::biome::Biome;
 struct Forest;
 impl FeatureField for Forest {
     fn column_at(&mut self, _: i32, _: i32) -> (i32, Biome) {
-        (70, Biome::Forest)
+        (70, Biome::FOREST)
     }
 }
 

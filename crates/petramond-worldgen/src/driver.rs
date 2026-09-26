@@ -21,8 +21,7 @@ use petramond_world::section::{Section, SectionSummary};
 
 use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
-    apply_gen_plan, cached_feature_region, feature_candidate_bounds, feature_region_bounds,
-    scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
+    apply_gen_plan, cached_feature_region, feature_candidate_bounds, feature_region_bounds, scatter,
     vegetation, ColumnFeatureField, FeaturePlan, SurfaceHeights, MAX_TREE_REACH_ABOVE, TREELINE,
 };
 use super::noise::cave_field::CaveField;
@@ -690,7 +689,8 @@ impl ChunkGenerator {
             WorldgenStage::Underground => {
                 if !self.run_stage_replacement(stage, sp, section, col)? {
                     let has_stone = sec_lo <= col.surf_max;
-                    if has_stone && ranges_overlap(sec_lo, sec_hi, SCATTER_MIN_Y, SCATTER_MAX_Y) {
+                    let (scatter_lo, scatter_hi) = scatter::y_span();
+                    if has_stone && ranges_overlap(sec_lo, sec_hi, scatter_lo, scatter_hi) {
                         scatter::place_underground_section(section, self.seed);
                     }
                 }

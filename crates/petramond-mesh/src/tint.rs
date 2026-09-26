@@ -197,11 +197,11 @@ mod tests {
     fn summed_area_tint_matches_reference_window() {
         let biome = |wx: i32, wz: i32| -> u8 {
             match (wx.div_euclid(3) + wz.div_euclid(5)).rem_euclid(5) {
-                0 => Biome::Plains.id(),
-                1 => Biome::Forest.id(),
-                2 => Biome::Swamp.id(),
-                3 => Biome::Desert.id(),
-                _ => Biome::Taiga.id(),
+                0 => Biome::PLAINS.id(),
+                1 => Biome::FOREST.id(),
+                2 => Biome::SWAMP.id(),
+                3 => Biome::DESERT.id(),
+                _ => Biome::TAIGA.id(),
             }
         };
 

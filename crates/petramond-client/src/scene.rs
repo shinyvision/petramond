@@ -220,7 +220,7 @@ impl SceneCapture {
         let (fog, eye_fluid) = crate::game::environment::camera_fog(&self.world, eye, |wx, wz| {
             self.world
                 .biome_at_world(wx, wz)
-                .map_or(Biome::Plains, Biome::from_id)
+                .map_or(Biome::PLAINS, Biome::from_id)
         });
         self.renderer.update_uniforms(
             &self.camera,
