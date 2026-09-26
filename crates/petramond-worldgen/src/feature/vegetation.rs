@@ -5,18 +5,17 @@
 //! its surface material. Runs AFTER the underground pass but BEFORE trees, so the
 //! surface read from the heightmap is bare ground (not a tree canopy).
 //!
-//! Plants are one block wide, so there is no cross-chunk footprint: each column's
-//! plant is placed by its owning chunk from a positional RNG keyed on (seed, wx,
-//! wz), making the result deterministic and seamless with no neighbour pass.
+//! Plants are one block wide, so there is no cross-column footprint: each column's
+//! plant is placed by the section holding it from a positional RNG keyed on
+//! (seed, wx, wz), making the result deterministic and seamless with no
+//! neighbour pass.
 
 use crate::biome::{spec, CoverCluster};
 use crate::surface::rule::SurfaceCtx;
 use crate::surface::SurfaceSystem;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{
-    Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y,
-};
+use petramond_world::chunk::{SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
 use petramond_world::mathh::smoothstep;
 use petramond_world::section::Section;
 
@@ -83,54 +82,16 @@ const HEMP_ANCHOR_GRID: i32 = 4;
 // world-anchored surface scan at neighbouring offsets (the shape of the beach
 // pass's `near_ocean_memo`) rather than anything a single column knows.
 
-/// Place ground vegetation across the chunk. Pure function of `(seed, cx, cz)`.
-pub fn place_vegetation(chunk: &mut Chunk, seed: u32) {
-    let (ox, oz) = chunk.chunk_origin_world();
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            let top = chunk.surface_y(x, z);
-            // Need a ground voxel and an empty cell above it within the world.
-            if top < 1 || top + 1 >= CHUNK_SY as i32 {
-                continue;
-            }
-            let above = (top + 1) as usize;
-            if chunk.block_raw(x, above, z) != Block::Air.id() {
-                continue; // already occupied (e.g. tree, or water surface)
-            }
-            let surf = Block::from_id(chunk.block_raw(x, top as usize, z));
-            let biome = Biome::from_id(chunk.biome_at(x, z));
-            let wx = ox + x as i32;
-            let wz = oz + z as i32;
-            let mut rng = FeatureRng::positional(seed, VEG_SALT, wx, 0, wz);
-            if let Some(p) = pick_plant(biome, surf, seed, wx, wz, &mut rng) {
-                chunk.set_block_raw(x, above, z, p.id());
-            } else if spec(biome).snow_cover.covers(top) && surf.is_solid() && !surf.is_slippery() {
-                // Snow-covered columns blanket the bare ground with a snow
-                // layer; a column that rolled a plant keeps it (ferns poke
-                // through the snow). The solid-surface guard skips water tops
-                // (a submerged column's heightmap ends at the waterline), and
-                // the slippery guard skips SEA ICE tops — snow never rides the
-                // ice. That last exclusion is also what keeps this path
-                // byte-identical to `place_vegetation_section`, which skips
-                // every submerged column outright (`column_surf < SEA_LEVEL`):
-                // a frozen pond inside a snowy biome is exactly a submerged
-                // column whose heightmap ends at solid waterline ice.
-                chunk.set_block_raw(x, above, z, Block::SnowLayer.id());
-            }
-        }
-    }
-}
-
-/// Cubic per-section ground vegetation. Places each column's single plant into the
-/// ONE section that contains the cell just above its post-cave bare-ground top, so
-/// the result is byte-identical to the whole-column [`place_vegetation`] for this
-/// section's slab. `biomes`/`surf`/`top` are the column's 16×16 grids (biome id,
-/// original density surface, and post-cave top), indexed `z*16 + x`.
+/// Per-section ground vegetation. Places each column's single plant into the ONE
+/// section that contains the cell just above its post-cave bare-ground top.
+/// `biomes`/`surf`/`top` are the column's 16×16 grids (biome id, original density
+/// surface, and post-cave top), indexed `z*16 + x`.
 ///
-/// Submerged columns are skipped outright because their top material is water. The
-/// surface material is recomputed analytically at the post-cave anchor depth
-/// because the anchor cell may live in the section below this one. Must run AFTER
-/// terrain + scatter and BEFORE features, matching the chunk stage order.
+/// Submerged columns are skipped outright because their top material is water (so
+/// a frozen pond's sea ice never carries a snow layer). The surface material is
+/// recomputed analytically at the post-cave anchor depth because the anchor cell
+/// may live in the section below this one. Must run AFTER terrain + scatter and
+/// BEFORE features.
 pub fn place_vegetation_section(
     section: &mut Section,
     biomes: &[u8],
@@ -144,8 +105,7 @@ pub fn place_vegetation_section(
             let i = z * SECTION_SIZE + x;
             let column_surf = surf[i];
             // Submerged (or floorless) columns top out at the waterline: their surface
-            // material is water, which carries no ground plant. Skip — matches the chunk
-            // path, where `pick_plant(.., Water)` returns None.
+            // material is water, which carries no ground plant.
             if column_surf < SEA_LEVEL {
                 continue;
             }
@@ -160,7 +120,7 @@ pub fn place_vegetation_section(
             }
             let (lx, ly, lz) = (x, ly as usize, z);
             if section.block_raw(lx, ly, lz) != Block::Air.id() {
-                continue; // already occupied (terrain/scatter) — matches the chunk guard.
+                continue; // already occupied (terrain/scatter).
             }
             let biome = Biome::from_id(biomes[i]);
             let wx = ox + x as i32;
@@ -181,9 +141,9 @@ pub fn place_vegetation_section(
             if let Some(p) = pick_plant(biome, surf_block, seed, wx, wz, &mut rng) {
                 section.set_block_raw(lx, ly, lz, p.id());
             } else if spec(biome).snow_cover.covers(anchor) && surf_block.is_solid() {
-                // Mirrors the chunk path's snow-layer branch — the analytic
-                // skin block stands in for the chunk read, exactly like the
-                // plant pick above, so the two paths stay byte-identical.
+                // Snow-covered columns blanket the bare ground with a snow
+                // layer; a column that rolled a plant keeps it (ferns poke
+                // through the snow).
                 section.set_block_raw(lx, ly, lz, Block::SnowLayer.id());
             }
         }
@@ -214,7 +174,7 @@ fn pick_plant(
     }
 
     if matches!(surf, Block::Sand | Block::RedSand) {
-        return vegetation.sand_cover.and_then(|picker| picker(rng));
+        return vegetation.sand_cover.and_then(|roll| roll.pick(rng));
     }
 
     if surf == Block::Mycelium {
@@ -232,7 +192,7 @@ fn pick_plant(
         if !cover_cluster_allows(vegetation.cover_cluster, seed, wx, wz) {
             return None;
         }
-        return vegetation.podzol_cover.and_then(|picker| picker(rng));
+        return vegetation.podzol_cover.and_then(|roll| roll.pick(rng));
     }
 
     if surf != Block::Grass {
@@ -249,11 +209,11 @@ fn pick_plant(
         }
     }
 
-    if let Some(picker) = vegetation.grass_cover {
+    if let Some(roll) = vegetation.grass_cover {
         if !cover_cluster_allows(vegetation.cover_cluster, seed, wx, wz) {
             return None;
         }
-        return picker(rng);
+        return roll.pick(rng);
     }
     if rng.chance(vegetation.grass_density) {
         return Some(vegetation.grass_tuft);

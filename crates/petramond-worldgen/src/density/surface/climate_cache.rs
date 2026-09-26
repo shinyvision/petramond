@@ -2,6 +2,7 @@ use crate::biome::climate::{
     BiomeClimateIndex, ClimateSampleCell, ClimateSampler, SurfaceClimate, CLIMATE_SAMPLE_CELL_X,
     CLIMATE_SAMPLE_CELL_Z,
 };
+use crate::cache::local::{self, LocalTable};
 use petramond_world::biome::Biome;
 use rustc_hash::FxHashMap;
 
@@ -45,51 +46,28 @@ struct BlockMemo {
     uniform: Option<Option<Biome>>,
 }
 
-/// One memoized quart-cell climate sample (+ optionally its DEFAULT-index base
-/// classification — see [`ClimateCellCache::cell_base`]).
-#[derive(Clone, Copy)]
-struct ClimateMemoEntry {
-    init: bool,
-    seed: u32,
-    cell: ClimateSampleCell,
-    climate: SurfaceClimate,
-    /// `Some` only when classified with the process-wide default surface index
-    /// (`BiomeClimateIndex::default_surface` — pointer identity), so a custom
-    /// (test) index can never read another index's classification.
-    base: Option<Biome>,
-}
-
 /// Per-thread, world-anchored memo of raw quart-cell climate samples (the
-/// 5-channel double-perlin — the expensive step). A fresh [`ClimateCellCache`]
-/// is built per region call, and adjacent window tiles share edge cells, so
-/// without this the same quart corner is re-sampled by several tile builds.
-/// Keyed by exact `(seed, cell)`: pure dedupe, values byte-identical.
-const CLIMATE_MEMO_BITS: u32 = 15;
+/// 5-channel double-perlin — the expensive step), plus — once classified with
+/// the process-wide DEFAULT surface index (`BiomeClimateIndex::default_surface`,
+/// pointer identity, so a custom test index can never read another index's
+/// answer) — the cell's base biome. A fresh [`ClimateCellCache`] is built per
+/// region call, and adjacent window tiles share edge cells, so without this
+/// the same quart corner is re-sampled by several tile builds. Keyed by exact
+/// `(seed, cell)`: pure dedupe, values byte-identical.
+type MemoValue = (SurfaceClimate, Option<Biome>);
 
 thread_local! {
-    static CLIMATE_MEMO: std::cell::RefCell<Box<[ClimateMemoEntry]>> =
-        std::cell::RefCell::new(
-            vec![
-                ClimateMemoEntry {
-                    init: false,
-                    seed: 0,
-                    cell: ClimateSampleCell::surface(0, 0),
-                    climate: SurfaceClimate::new(0.0, 0.0, 0.0, 0.0, 0.0),
-                    base: None,
-                };
-                1 << CLIMATE_MEMO_BITS
-            ]
-            .into_boxed_slice(),
-        );
+    static CLIMATE_MEMO: LocalTable<(u32, ClimateSampleCell), MemoValue> =
+        LocalTable::new(&local::SURFACE_CLIMATE);
 }
 
-fn climate_memo_idx(seed: u32, cell: ClimateSampleCell) -> usize {
+fn climate_memo_hash(seed: u32, cell: ClimateSampleCell) -> u64 {
     let (x, y, z) = cell.coords();
-    let key = (((x as u32 as u64) << 32) | (z as u32 as u64))
-        ^ ((seed as u64) << 16)
-        ^ ((y as u32 as u64) << 8);
-    let h = key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    (h >> (64 - CLIMATE_MEMO_BITS)) as usize
+    local::spread(
+        (((x as u32 as u64) << 32) | (z as u32 as u64))
+            ^ ((seed as u64) << 16)
+            ^ ((y as u32 as u64) << 8),
+    )
 }
 
 impl<'a> ClimateCellCache<'a> {
@@ -159,24 +137,14 @@ impl<'a> ClimateCellCache<'a> {
         }
         let seed = self.seed;
         let sampler = self.sampler;
-        let climate = CLIMATE_MEMO.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            let e = &mut memo[climate_memo_idx(seed, cell)];
-            if e.init && e.seed == seed && e.cell == cell {
-                return e.climate;
-            }
-            let climate = sampler
-                .sample_surface_cell(cell)
-                .expect("surface density graph must expose climate channels")
-                .climate;
-            *e = ClimateMemoEntry {
-                init: true,
-                seed,
-                cell,
-                climate,
-                base: None,
-            };
-            climate
+        let (climate, _) = CLIMATE_MEMO.with(|memo| {
+            memo.get_or_insert_with(climate_memo_hash(seed, cell), (seed, cell), || {
+                let climate = sampler
+                    .sample_surface_cell(cell)
+                    .expect("surface density graph must expose climate channels")
+                    .climate;
+                (climate, None)
+            })
         });
         self.climate.insert(cell, climate);
         climate
@@ -194,13 +162,8 @@ impl<'a> ClimateCellCache<'a> {
         let seed = self.seed;
         if is_default {
             let memoized = CLIMATE_MEMO.with(|memo| {
-                let memo = memo.borrow();
-                let e = &memo[climate_memo_idx(seed, cell)];
-                if e.init && e.seed == seed && e.cell == cell {
-                    e.base
-                } else {
-                    None
-                }
+                memo.get(climate_memo_hash(seed, cell), &(seed, cell))
+                    .and_then(|(_, base)| base)
             });
             if let Some(base) = memoized {
                 self.base.insert(cell, base);
@@ -215,11 +178,9 @@ impl<'a> ClimateCellCache<'a> {
         self.base.insert(cell, base);
         if is_default {
             CLIMATE_MEMO.with(|memo| {
-                let mut memo = memo.borrow_mut();
-                let e = &mut memo[climate_memo_idx(seed, cell)];
-                if e.init && e.seed == seed && e.cell == cell {
-                    e.base = Some(base);
-                }
+                memo.update(climate_memo_hash(seed, cell), &(seed, cell), |(_, memoized)| {
+                    *memoized = Some(base);
+                });
             });
         }
         base

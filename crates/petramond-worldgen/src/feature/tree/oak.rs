@@ -10,9 +10,9 @@ use crate::{
 
 /// Branch tips — and so leaf-clump centres — are fenced inside this Chebyshev
 /// radius of the feature origin: a clump overhangs its centre by at most 5
-/// (part offset 2 + part half-extent 3), so `TIP_FENCE + 5 == proto::MARGIN`
+/// (part offset 2 + part half-extent 3), so `TIP_FENCE + 5 == crate::feature::MARGIN`
 /// keeps every leaf inside the seam-consistency margin.
-pub const TIP_FENCE: i32 = crate::proto::MARGIN - 5;
+pub const TIP_FENCE: i32 = crate::feature::MARGIN - 5;
 
 /// Trunk heights a row may draw from, inclusive. Below the floor the base
 /// flare leaves no shaft for branch levels; the ceiling sizes the per-level

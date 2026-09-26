@@ -5,7 +5,15 @@
       "fog_color": [0.250, 0.460, 0.720],
       "grass_color": [0.200, 0.680, 0.070],
       "foliage_color": [0.140, 0.560, 0.045],
-      "water_color": [0.025, 0.250, 0.640]
+      "water_color": [0.025, 0.250, 0.640],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 2}, "then": "petramond:sand"},
+          {"if": {"depth_from_top": 4}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "flags": ["ocean", "no_beach", "wet"]
+      }
     },
     {
       "biome": "petramond:beach",
@@ -13,7 +21,14 @@
       "fog_color": [0.510, 0.600, 0.660],
       "grass_color": [0.400, 0.740, 0.080],
       "foliage_color": [0.260, 0.620, 0.045],
-      "water_color": [0.025, 0.390, 0.670]
+      "water_color": [0.025, 0.390, 0.670],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 4}, "then": "petramond:sand"},
+          "petramond:stone"
+        ],
+        "flags": ["no_beach", "wet"]
+      }
     },
     {
       "biome": "petramond:river",
@@ -21,14 +36,31 @@
       "fog_color": [0.270, 0.490, 0.720],
       "grass_color": [0.170, 0.720, 0.055],
       "foliage_color": [0.120, 0.600, 0.035],
-      "water_color": [0.025, 0.340, 0.610]
+      "water_color": [0.025, 0.340, 0.610],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 2}, "then": "petramond:sand"},
+          {"if": {"depth_from_top": 4}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "flags": ["wet"]
+      }
     },
     {
       "biome": "petramond:desert",
       "fog_color": [0.640, 0.540, 0.350],
       "grass_color": [0.750, 0.570, 0.065],
       "foliage_color": [0.530, 0.430, 0.035],
-      "water_color": [0.035, 0.410, 0.660]
+      "water_color": [0.035, 0.410, 0.660],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 4}, "then": "petramond:sand"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "sand_cover": {"chance": 0.007, "roll": [[45, "petramond:dead_bush"], [100, "petramond:cactus"]]}
+        }
+      }
     },
     {
       "biome": "petramond:plains",
@@ -46,6 +78,18 @@
           {"when": {"nearby_biome": {"biome": "petramond:river", "radius": 10}},
            "species": [{"feature": "petramond:birch", "weight": 1}]}
         ]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.14},
+          "flowers": {"palette": ["petramond:dandelion", "petramond:poppy", "petramond:oxeye_daisy", "petramond:cornflower", "petramond:azure_bluet"], "coverage": 0.1, "density": 0.15},
+          "hemp": 0.0045
+        }
       }
     },
     {
@@ -57,6 +101,17 @@
       "trees": {
         "density": 0.015,
         "species": [{"feature": "petramond:acacia", "weight": 1}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.14},
+          "hemp": 0.0023
+        }
       }
     },
     {
@@ -75,6 +130,18 @@
           {"when": {"grove": {"field": "petramond:forest_groves", "period": 84, "transition": [0.792, 0.892], "chance": [0.001, 0.75]}},
            "species": [{"feature": "petramond:birch", "weight": 1}], "density": 0.06375, "spacing_radius": 1}
         ]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.11},
+          "flowers": {"palette": ["petramond:poppy", "petramond:dandelion", "petramond:oxeye_daisy"], "coverage": 0.16, "density": 0.22},
+          "hemp": 0.0037
+        }
       }
     },
     {
@@ -87,6 +154,18 @@
       "trees": {
         "density": 0.018,
         "species": [{"feature": "petramond:oak_big", "weight": 15}, {"feature": "petramond:oak_swamp", "weight": 85}]
+      },
+      "generation": {
+        "surface": [
+          {"if": "underwater", "then": {"if": {"depth_from_top": 2}, "then": "petramond:sand"}},
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.1},
+          "hemp": 0.016
+        }
       }
     },
     {
@@ -99,6 +178,17 @@
       "trees": {
         "density": 0.026,
         "species": [{"feature": "petramond:spruce", "weight": 1}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:fern", "density": 0.12},
+          "hemp": 0.0023
+        }
       }
     },
     {
@@ -110,6 +200,17 @@
       "trees": {
         "density": 0.004,
         "species": [{"feature": "petramond:spruce", "weight": 1}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "hemp": 0.01
+        },
+        "snow": "always"
       }
     },
     {
@@ -121,6 +222,18 @@
       "trees": {
         "density": 0.02,
         "species": [{"feature": "petramond:spruce", "weight": 1}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:fern", "density": 0.12},
+          "hemp": 0.01
+        },
+        "snow": "always"
       }
     },
     {
@@ -133,6 +246,20 @@
       "trees": {
         "density": 0.004,
         "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"surface_above_y": 143}, "then": [{"if": {"depth_from_top": 0}, "then": "petramond:grass"}, "petramond:stone"]},
+          {"if": {"surface_above_y": 135}, "then": "petramond:stone"},
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 2}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.05}
+        },
+        "snow": {"above_surface_y": 143},
+        "flags": ["no_beach", "mountain"]
       }
     },
     {
@@ -140,14 +267,30 @@
       "fog_color": [0.510, 0.620, 0.770],
       "grass_color": [0.480, 0.690, 0.420],
       "foliage_color": [0.310, 0.550, 0.310],
-      "water_color": [0.050, 0.350, 0.690]
+      "water_color": [0.050, 0.350, 0.690],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "snow": "always",
+        "flags": ["no_beach", "mountain"]
+      }
     },
     {
       "biome": "petramond:deep_ocean",
       "fog_color": [0.190, 0.370, 0.670],
       "grass_color": [0.180, 0.600, 0.070],
       "foliage_color": [0.120, 0.480, 0.035],
-      "water_color": [0.012, 0.140, 0.430]
+      "water_color": [0.012, 0.140, 0.430],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 2}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "flags": ["ocean", "no_beach", "wet"]
+      }
     },
     {
       "biome": "petramond:foothills",
@@ -159,6 +302,17 @@
       "trees": {
         "density": 0.012,
         "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 2}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.06}
+        },
+        "flags": ["mountain"]
       }
     },
     {
@@ -171,6 +325,18 @@
       "trees": {
         "density": 0.011,
         "species": [{"feature": "petramond:oak_small", "weight": 30}, {"feature": "petramond:oak_swamp", "weight": 70}]
+      },
+      "generation": {
+        "surface": [
+          {"if": "underwater", "then": {"if": {"depth_from_top": 2}, "then": "petramond:sand"}},
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.1},
+          "hemp": 0.016
+        }
       }
     },
     {
@@ -186,6 +352,21 @@
         "height_clearance": 56,
         "support": "redwood_base",
         "species": [{"feature": "petramond:spruce", "weight": 25}, {"feature": "petramond:redwood", "weight": 75}]
+      },
+      "generation": {
+        "surface": [
+          {"if": "underwater", "then": {"if": {"depth_from_top": 3}, "then": "petramond:dirt"}},
+          {"if": {"depth_from_top": 0}, "then": [{"if": {"cluster_noise_below": {"salt": 90457452773447, "threshold": 0.3, "period": 7.0}}, "then": "petramond:grass"}, "petramond:podzol"]},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.0},
+          "flowers": {"palette": ["petramond:oxeye_daisy", "petramond:poppy"], "coverage": 0.05, "density": 0.14},
+          "podzol_cover": {"chance": 0.55, "roll": [[70, "petramond:fern"], [90, "petramond:short_grass"], [95, "petramond:red_mushroom"], [100, "petramond:brown_mushroom"]]},
+          "grass_cover": {"chance": 0.55, "roll": [[70, "petramond:fern"], [90, "petramond:short_grass"], [95, "petramond:red_mushroom"], [100, "petramond:brown_mushroom"]]},
+          "cover_cluster": {"salt": 279354572668929, "period": 9.0, "coverage": 0.5}
+        }
       }
     },
     {
@@ -198,6 +379,18 @@
       "trees": {
         "density": 0.035,
         "species": [{"feature": "petramond:spruce", "weight": 1}]
+      },
+      "generation": {
+        "surface": [
+          {"if": "underwater", "then": {"if": {"depth_from_top": 3}, "then": "petramond:dirt"}},
+          {"if": {"depth_from_top": 0}, "then": "petramond:podzol"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:fern", "density": 0.12},
+          "podzol_cover": {"chance": 0.1, "roll": [[58, "petramond:fern"], [80, "petramond:short_grass"], [90, "petramond:red_mushroom"], [100, "petramond:brown_mushroom"]]}
+        }
       }
     },
     {
@@ -210,6 +403,18 @@
       "trees": {
         "density": 0.006,
         "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.16},
+          "flowers": {"palette": ["petramond:dandelion", "petramond:poppy", "petramond:oxeye_daisy", "petramond:cornflower", "petramond:azure_bluet"], "coverage": 0.36, "density": 0.34},
+          "hemp": 0.0045
+        }
       }
     },
     {
@@ -221,6 +426,19 @@
       "trees": {
         "density": 0.024,
         "species": [{"feature": "petramond:spruce", "weight": 1}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:fern", "density": 0.08},
+          "hemp": 0.01
+        },
+        "snow": "always",
+        "flags": ["mountain"]
       }
     },
     {
@@ -228,7 +446,19 @@
       "fog_color": [0.480, 0.610, 0.760],
       "grass_color": [0.370, 0.610, 0.350],
       "foliage_color": [0.250, 0.490, 0.250],
-      "water_color": [0.040, 0.330, 0.650]
+      "water_color": [0.040, 0.330, 0.650],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "hemp": 0.01
+        },
+        "snow": "always",
+        "flags": ["no_beach", "mountain"]
+      }
     },
     {
       "biome": "petramond:windswept_hills",
@@ -240,6 +470,17 @@
       "trees": {
         "density": 0.004,
         "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 2}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.05}
+        },
+        "flags": ["no_beach", "mountain"]
       }
     },
     {
@@ -247,7 +488,14 @@
       "fog_color": [0.430, 0.510, 0.610],
       "grass_color": [0.320, 0.450, 0.180],
       "foliage_color": [0.220, 0.340, 0.120],
-      "water_color": [0.035, 0.320, 0.620]
+      "water_color": [0.035, 0.320, 0.620],
+      "generation": {
+        "surface": [
+          {"if": {"surface_above_y": 150}, "then": [{"if": {"depth_from_top": 0}, "then": "petramond:calcite"}, "petramond:stone"]},
+          "petramond:stone"
+        ],
+        "flags": ["no_beach", "mountain"]
+      }
     },
     {
       "biome": "petramond:wooded_hills",
@@ -265,6 +513,18 @@
           {"when": {"grove": {"field": "petramond:forest_groves", "period": 84, "transition": [0.792, 0.892], "chance": [0.001, 0.75]}},
            "species": [{"feature": "petramond:birch", "weight": 1}], "density": 0.06375, "spacing_radius": 1}
         ]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.09},
+          "hemp": 0.0037
+        },
+        "flags": ["mountain"]
       }
     },
     {
@@ -277,6 +537,17 @@
       "trees": {
         "density": 0.008,
         "species": [{"feature": "petramond:oak_young", "weight": 40}, {"feature": "petramond:oak_small", "weight": 60}]
+      },
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 2}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "grass": {"tuft": "petramond:short_grass", "density": 0.05}
+        },
+        "flags": ["no_beach", "mountain"]
       }
     },
     {
@@ -284,14 +555,34 @@
       "fog_color": [0.620, 0.530, 0.350],
       "grass_color": [0.730, 0.570, 0.055],
       "foliage_color": [0.500, 0.430, 0.030],
-      "water_color": [0.035, 0.430, 0.680]
+      "water_color": [0.035, 0.430, 0.680],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 4}, "then": "petramond:sand"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "sand_cover": {"chance": 0.007, "roll": [[45, "petramond:dead_bush"], [100, "petramond:cactus"]]}
+        }
+      }
     },
     {
       "biome": "petramond:snowy_plains",
       "fog_color": [0.470, 0.600, 0.740],
       "grass_color": [0.300, 0.550, 0.220],
       "foliage_color": [0.200, 0.440, 0.160],
-      "water_color": [0.040, 0.330, 0.630]
+      "water_color": [0.040, 0.330, 0.630],
+      "generation": {
+        "surface": [
+          {"if": {"depth_from_top": 0}, "then": "petramond:grass"},
+          {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
+          "petramond:stone"
+        ],
+        "vegetation": {
+          "hemp": 0.01
+        },
+        "snow": "always"
+      }
     }
   ]
 }

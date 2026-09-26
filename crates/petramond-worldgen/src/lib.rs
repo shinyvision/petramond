@@ -1,8 +1,9 @@
 //! Worldgen pipeline.
 //!
-//! `generate_chunk(seed, cx, cz) -> Chunk` is the single deterministic
-//! entrypoint, invoked in isolation on a worker thread (native pool / web
-//! Worker) and serialized to flat block + per-column biome bytes.
+//! One pipeline, per section: [`driver::ChunkGenerator`] computes a column's
+//! shared data once, then generates each 16³ section — the streamer's unit —
+//! in a fixed stage order. `generate_chunk(seed, cx, cz) -> Chunk` assembles a
+//! chunk column from those same sections for tooling and the parity hash.
 //!
 //! Active terrain is built from the surface density graph: climate graph biome
 //! assignment, `master_density` sign fill, sea-level water, exposed-run surface
@@ -13,6 +14,7 @@
 
 pub mod audit;
 pub mod biome;
+pub mod cache;
 pub mod colgen;
 pub mod data;
 pub mod density;
@@ -25,10 +27,8 @@ pub use terrain_query::heights_at as terrain_heights_at;
 pub use terrain_query::section_blocks as terrain_section_at;
 pub mod graph;
 pub mod hooks;
-mod memo;
 mod noise;
 pub mod preview;
-mod proto;
 pub mod region;
 pub mod rng;
 mod section_memo;
@@ -44,52 +44,20 @@ use petramond_world::chunk::Chunk;
 /// border, so trees cross chunk seams seamlessly.
 ///
 /// The generator holds only immutable seed-derived state (noise samplers and
-/// worldgen subsystems), which is expensive to build, so it is cached per thread
-/// keyed by seed — repeated one-shot calls for the same world reuse it instead of
-/// rebuilding the pipeline per chunk. Hot worker loops should still hold their
-/// own generator and call [`generate_chunk_with`] directly.
+/// worldgen subsystems), which is expensive to build, so one-shot calls share
+/// [`driver::ChunkGenerator::shared`] instead of rebuilding the pipeline per
+/// chunk. Hot worker loops hold their own generator and call
+/// [`generate_chunk_with`] directly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
-    thread_local! {
-        static CACHED: std::cell::RefCell<Option<((u32, u64), driver::ChunkGenerator)>> =
-            const { std::cell::RefCell::new(None) };
-    }
-    // The cache key carries the installed worldgen-hook epoch alongside the
-    // seed, so a session (re)installing mod hooks evicts generators that
-    // captured the previous config. One atomic load; hookless processes see 0.
-    let key = (seed, crate::hooks::installed_epoch());
-    CACHED.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        if slot.as_ref().map(|(k, _)| *k) != Some(key) {
-            *slot = Some((key, driver::ChunkGenerator::new(seed)));
-        }
-        generate_chunk_with(&slot.as_ref().unwrap().1, cx, cz)
-    })
+    generate_chunk_with(&driver::ChunkGenerator::shared(seed), cx, cz)
 }
 
-/// Generate terrain + features with an already-built generator.
-///
-/// This preserves `generate_chunk` as the public one-shot API while allowing
-/// hot worker loops to reuse the generator's immutable seed-derived state.
-///
-/// With mod worldgen hooks active, the chunk is assembled from the SAME
-/// per-section path the cubic streamer runs (`generate_section`), so every
-/// hook receives identical inputs per `(seed, section)` on both paths —
-/// column/section parity is structural. With no hooks (the genparity pin),
-/// the classic whole-chunk pipeline below runs untouched.
+/// Generate terrain + features with an already-built generator: the chunk's
+/// sections from the one section pipeline, assembled (see
+/// [`driver::ChunkGenerator::generate_chunk`]). Hot loops hold their own
+/// generator and call this instead of [`generate_chunk`].
 pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
-    if generator.has_gen_hooks() {
-        let mut chunk = generator.generate_chunk_via_sections(cx, cz);
-        chunk.dirty = true;
-        return chunk;
-    }
-    let mut chunk = generator.generate_surface(cx, cz);
-    generator.carve_caves(&mut chunk);
-    generator.place_underground(&mut chunk);
-    generator.place_vegetation(&mut chunk);
-    generator.place_features_runtime(&mut chunk);
-
-    chunk.dirty = true;
-    chunk
+    generator.generate_chunk(cx, cz)
 }
 
 /// The underground biome owning each world position for `seed` — the same
@@ -97,12 +65,17 @@ pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32)
 /// before any section exists. Purely positional: no loaded world, no order
 /// dependence. This is the engine side of the mod ABI's `UndergroundBiomeAt`.
 pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
-    let field = cave_field(seed);
+    let generator = driver::ChunkGenerator::shared(seed);
+    let (_, field) = generator.sources();
     let clamped: Vec<[i32; 3]> = positions.iter().map(|p| clamp_query(*p)).collect();
     let mut out = Vec::new();
     field.underground_biome_at_batch(&clamped, &mut out);
     out
 }
+
+/// The key of a memoized [`underground_biomes_in_box`] answer: seed, cave
+/// tables, and the normalized box.
+pub(crate) type UndergroundBoxKey = (u32, [usize; 2], [i32; 3], [i32; 3]);
 
 /// The conservative set of underground biome ids that can own a cell inside the
 /// inclusive world box — the engine side of the mod ABI's
@@ -110,17 +83,19 @@ pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
 /// so a mod whose content belongs to one biome can reject a whole dispatch on
 /// it instead of asking cell by cell.
 pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u8> {
-    type Key = (u32, [usize; 2], [i32; 3], [i32; 3]);
     // Every section of a column asks about the same box, and neighbouring
     // columns about the same few.
-    static BOXES: std::sync::LazyLock<memo::SharedMemo<Key, std::sync::Arc<[u8]>>> =
-        std::sync::LazyLock::new(|| memo::SharedMemo::new(4096));
     let (lo, hi) = (clamp_query(lo), clamp_query(hi));
     let box_lo = std::array::from_fn(|a| lo[a].min(hi[a]));
     let box_hi = std::array::from_fn(|a| lo[a].max(hi[a]));
-    let field = cave_field(seed);
-    BOXES
-        .get_or_compute_unlocked((seed, field.table_identities(), box_lo, box_hi), || {
+    let generator = driver::ChunkGenerator::shared(seed);
+    let (_, field) = generator.sources();
+    let key = (seed, field.table_identities(), box_lo, box_hi);
+    field
+        .caches()
+        .terrain
+        .underground_boxes
+        .get_or_compute_unlocked(key, || {
             field
                 .underground_biome_ids_in_box(box_lo, box_hi)
                 .ids()
@@ -169,7 +144,9 @@ pub fn terrain_space_at(seed: u32, positions: &[[i32; 3]]) -> Vec<TerrainSpace> 
 
 /// Each position's `(clamped position, column surface, terrain occupancy)`.
 fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, TerrainSpace)> {
-    terrain_samples_in(&cave_field(seed), &surface_system(seed), seed, positions)
+    let generator = driver::ChunkGenerator::shared(seed);
+    let (surface, caves) = generator.sources();
+    terrain_samples_in(caves, surface, seed, positions)
 }
 
 /// [`terrain_samples`] over explicit generation sources.
@@ -331,8 +308,8 @@ fn terrain_samples_in(
 /// the answer cannot drift from the biome a section is actually dressed with.
 pub fn surface_biome_at(seed: u32, columns: &[[i32; 2]]) -> Vec<u8> {
     const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
-    let caves = cave_field(seed);
-    let surface = surface_system(seed);
+    let generator = driver::ChunkGenerator::shared(seed);
+    let (surface, caves) = generator.sources();
     // Answered TILE BY TILE rather than in the caller's order: a batch of
     // neighbour probes around one column straddles a tile edge and would
     // otherwise re-take the memo lock on every other query.
@@ -375,40 +352,6 @@ fn clamp_query(p: [i32; 3]) -> [i32; 3] {
         ),
         p[2].clamp(-HORIZONTAL_LIMIT, HORIZONTAL_LIMIT),
     ]
-}
-
-/// Reuse the immutable cave sources and their bounded positional caches across
-/// host queries. A seed change replaces the shared instance.
-fn cave_field(seed: u32) -> std::sync::Arc<noise::cave_field::CaveField> {
-    use std::sync::{Arc, Mutex};
-    static SLOT: Mutex<Option<(u32, Arc<noise::cave_field::CaveField>)>> = Mutex::new(None);
-    let mut slot = SLOT.lock().unwrap();
-    match slot.as_ref() {
-        Some((s, field)) if *s == seed => Arc::clone(field),
-        _ => {
-            let field = Arc::new(noise::cave_field::CaveField::new(seed));
-            *slot = Some((seed, Arc::clone(&field)));
-            field
-        }
-    }
-}
-
-/// The density graph behind the surface heights, memoized like [`cave_field`]:
-/// building it is the expensive part of a generator, and the terrain query
-/// would otherwise pay for it on every batch.
-fn surface_system(seed: u32) -> std::sync::Arc<density::surface::SurfaceDensitySystem> {
-    use std::sync::{Arc, Mutex};
-    static SLOT: Mutex<Option<(u32, Arc<density::surface::SurfaceDensitySystem>)>> =
-        Mutex::new(None);
-    let mut slot = SLOT.lock().unwrap();
-    match slot.as_ref() {
-        Some((s, sys)) if *s == seed => Arc::clone(sys),
-        _ => {
-            let sys = Arc::new(density::surface::SurfaceDensitySystem::new(seed));
-            *slot = Some((seed, Arc::clone(&sys)));
-            sys
-        }
-    }
 }
 
 #[cfg(all(test, feature = "worldgen-tests"))]
@@ -584,69 +527,6 @@ mod tests {
         }
     }
 
-    /// The cubic per-section generator must be byte-identical, above ground, to the
-    /// whole-column generator: assembling `generate_section` over a column's surface
-    /// sections (cy 0..15) reproduces `generate_chunk`'s blocks and biomes exactly.
-    /// This is the S3 correctness gate — terrain, scatter, vegetation, and trees all
-    /// clip per-section without drift across the (now 3D) seams.
-    #[test]
-    fn per_section_generation_matches_whole_column_above_ground() {
-        use petramond_world::chunk::{SectionPos, CHUNK_SY, SECTION_SIZE};
-
-        // Seed 31337's origin sits in a snowy region, so the snow-layer
-        // placement (vegetation stage) is exercised across the seam too; seed
-        // 34's chunks hold FROZEN PONDS (snowy-biome columns submerged under
-        // waterline sea ice), the case where the chunk path must skip the
-        // snow layer exactly like the section path skips the whole column.
-        for &(seed, cx, cz) in &[
-            (0x1234_5678u32, 0, 0),
-            (0x1234_5678, 1, -1),
-            (0x1234_5678, -3, 5),
-            (0x1234_5678, 12, -7),
-            (0x1234_5678, 4, -3),
-            (31337, 0, 0),
-            (31337, 2, 3),
-            (31337, -1, -2),
-            (34, 6, -1),
-            (34, 7, -1),
-            (34, 8, -1),
-            // Forest groves straddle horizontal and vertical section boundaries.
-            (786, 24, -24),
-            (786, 25, -24),
-            (786, 26, -25),
-        ] {
-            let generator = driver::ChunkGenerator::new(seed);
-            let chunk = generate_chunk(seed, cx, cz);
-            let col = generator.generate_column_gen(cx, cz);
-
-            for z in 0..CHUNK_SZ {
-                for x in 0..CHUNK_SX {
-                    assert_eq!(
-                        col.biome_at(x, z),
-                        chunk.biome_at(x, z),
-                        "biome mismatch at ({cx},{cz}) col ({x},{z})"
-                    );
-                }
-            }
-
-            for cy in 0..(CHUNK_SY / SECTION_SIZE) as i32 {
-                let section = generator.generate_section(SectionPos::new(cx, cy, cz), &col);
-                for ly in 0..SECTION_SIZE {
-                    let wy = cy as usize * SECTION_SIZE + ly;
-                    for z in 0..CHUNK_SZ {
-                        for x in 0..CHUNK_SX {
-                            assert_eq!(
-                                section.block_raw(x, ly, z),
-                                chunk.block_raw(x, wy, z),
-                                "block mismatch at ({cx},{cz}) cy {cy} local ({x},{ly},{z}) world y {wy}"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     #[test]
     fn cave_capable_section_summaries_are_conservative() {
         use super::noise::cave_field::CaveField;
@@ -712,11 +592,9 @@ mod tests {
 
     /// Frozen ponds carry bare sea ice: a snowy-biome column submerged under a
     /// waterline ice cap must NOT grow a snow layer above the ice (the
-    /// per-section vegetation pass never visits submerged columns, so a layer
-    /// here would be a chunk-vs-section parity break — the exact bug the
-    /// slippery-top guard in `place_vegetation` exists to prevent). Seed 34's
-    /// scanned coast holds thousands of such columns; assert on real ones so
-    /// the guard cannot silently rot.
+    /// vegetation pass never visits submerged columns). Seed 34's scanned
+    /// coast holds thousands of such columns; assert on real ones so the rule
+    /// cannot silently rot.
     #[test]
     fn frozen_ponds_carry_bare_sea_ice_without_a_snow_layer() {
         let seed = 34;
@@ -765,6 +643,32 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// The height and block queries read the merged surface memos (the cave
+    /// field's density surfaces, the shared surface tiles); they must answer
+    /// exactly the surfaces and biomes the terrain fill uses.
+    #[test]
+    fn the_terrain_queries_read_the_fill_inputs() {
+        let seed = 0x4EA7_0001;
+        let surface = density::surface::SurfaceDensitySystem::new(seed);
+        let columns: Vec<[i32; 2]> = (-4..4)
+            .flat_map(|x| (-3..3).map(move |z| [x * 37 + 5, z * 29 - 11]))
+            .collect();
+        let expected: Vec<i32> = columns
+            .iter()
+            .map(|&[x, z]| surface.surface_heights(x, z, 1, 1)[0])
+            .collect();
+        assert_eq!(terrain_heights_at(seed, &columns), expected);
+
+        let generator = driver::ChunkGenerator::shared(seed);
+        let (surface, caves) = generator.sources();
+        for (cx, cz) in [(0, 0), (-3, 2)] {
+            let region = surface.region(cx * 16, cz * 16, 16, 16);
+            let (raw, biomes) = feature::cached_tile_raw(surface, caves, seed, cx, cz);
+            assert_eq!(raw.as_slice(), region.surf.as_slice());
+            assert_eq!(biomes.as_slice(), region.biomes.as_slice());
         }
     }
 }

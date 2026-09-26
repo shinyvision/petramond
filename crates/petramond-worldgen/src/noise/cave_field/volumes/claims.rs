@@ -1,18 +1,17 @@
 //! Excavations may claim a habitat column without requiring its block tiles.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use super::{site, CaveField, FieldShape, Site};
-use crate::{data::underground::IdSet, memo::SharedMemo};
+use crate::data::underground::IdSet;
 
 #[derive(Clone, Copy)]
-struct Claim {
+pub(in crate::noise::cave_field) struct Claim {
     biome: u8,
     y: [i32; 2],
 }
-type Key = (u32, [usize; 2], [i32; 2]);
-type Claims = Arc<[Claim]>;
-static COLUMNS: LazyLock<SharedMemo<Key, Claims>> = LazyLock::new(|| SharedMemo::new(8192));
+pub(in crate::noise::cave_field) type Key = (u32, [usize; 2], [i32; 2]);
+pub(in crate::noise::cave_field) type Claims = Arc<[Claim]>;
 
 #[derive(Default)]
 pub(in crate::noise::cave_field) struct Columns {
@@ -89,7 +88,8 @@ pub(in crate::noise::cave_field) fn include(
 }
 
 fn column(field: &CaveField, pos: [i32; 2]) -> Claims {
-    COLUMNS.get_or_insert((field.seed, field.table_identities(), pos), || {
+    let key = (field.seed, field.table_identities(), pos);
+    field.memos().claims.get_or_insert(key, || {
         let origin = pos.map(|v| v * 16);
         let mut out = Vec::new();
         for row in &field.excavations.rows {
@@ -147,7 +147,7 @@ fn reaches(
     if sites.is_empty() {
         return false;
     }
-    let heights = crate::terrain_query::height_tile(field.seed, origin.map(|v| v.div_euclid(16)));
+    let heights = field.density_surface_tile(origin.map(|v| v.div_euclid(16)));
     let first = sites[0].inputs([0; 3], 0);
     let varying: Vec<usize> = (3..=7)
         .filter(|&i| {

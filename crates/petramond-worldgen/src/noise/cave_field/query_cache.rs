@@ -1,9 +1,7 @@
-use std::sync::LazyLock;
-
 use super::CaveField;
-use crate::memo::SharedMemo;
+use crate::cache::Memo;
 
-type Query = ([i32; 3], i32);
+pub(super) type Query = ([i32; 3], i32);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) struct Key<Q> {
@@ -12,11 +10,7 @@ pub(super) struct Key<Q> {
     queries: Q,
 }
 
-pub(super) type QueryMemo<T> = SharedMemo<Key<Box<[Query]>>, Vec<T>>;
-/// Openness answers.
-pub(super) static CARVED: LazyLock<QueryMemo<bool>> = LazyLock::new(|| SharedMemo::new(512));
-/// What each open cell holds.
-pub(super) static FILLED: LazyLock<QueryMemo<Option<u16>>> = LazyLock::new(|| SharedMemo::new(512));
+pub(super) type QueryMemo<T> = Memo<Key<Box<[Query]>>, Vec<T>>;
 const MAX_CACHED_POINTS: usize = 4096;
 
 impl CaveField {

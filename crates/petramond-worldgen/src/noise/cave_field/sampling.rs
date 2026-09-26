@@ -1,18 +1,15 @@
 //! Sample only the source groups required by a query.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use super::*;
-use crate::memo::SharedMemo;
 
 /// Excavation fields are gathered once per 64-block column cell padded by
 /// this many blocks and shared by every generator; a lattice inside the
 /// padded cell restricts that field to its own box.
 const CHAMBER_CELL: i32 = 64;
 const CHAMBER_PAD: i32 = 32;
-type ChamberKey = (u32, usize, usize, [i32; 2]);
-static CHAMBER_FIELDS: LazyLock<SharedMemo<ChamberKey, Arc<chamber::ChamberField>>> =
-    LazyLock::new(|| SharedMemo::new(1024));
+pub(super) type ChamberKey = (u32, usize, usize, [i32; 2]);
 
 impl CaveField {
     /// The excavation terms reaching `bounds`: restricted from the shared
@@ -26,7 +23,7 @@ impl CaveField {
         let [lo, hi] = bounds;
         let gather = |lo: [i32; 3], hi: [i32; 3]| {
             chamber::ChamberField::gather(
-                chamber::CandidateCache::shared(),
+                &self.caches.caves.candidates,
                 self.underground,
                 self.excavations,
                 self.seed,
@@ -50,7 +47,8 @@ impl CaveField {
             std::ptr::from_ref(self.excavations) as usize,
             cell,
         );
-        CHAMBER_FIELDS
+        self.memos()
+            .chamber_fields
             .get_or_insert(key, || {
                 Arc::new(gather(
                     [
@@ -68,6 +66,8 @@ impl CaveField {
             .restrict(lo, hi)
     }
 
+    /// Every field over a box — the tests' view of what a carve reads.
+    #[cfg(test)]
     pub(super) fn build_lattice(
         &self,
         x0: i32,
@@ -203,6 +203,7 @@ impl CaveField {
             .collect();
         lat.walks = fields.carve.then(|| {
             WalkField::gather(
+                &self.caches.caves.walks,
                 self.seed,
                 [
                     [lx0 * LATTICE_STEP, ly0 * LATTICE_STEP, lz0 * LATTICE_STEP],

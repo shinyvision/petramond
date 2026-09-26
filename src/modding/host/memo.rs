@@ -147,6 +147,23 @@ impl Store {
         wake_parked(key);
     }
 
+    /// Block until `key` publishes or its lease is older than `expiry`, woken
+    /// by [`publish`](Self::publish). Returns at once when nobody leases it.
+    fn wait_published(&self, key: &[u8], expiry: Duration) {
+        let Some(lease) = self.leases().get(key).cloned() else {
+            return;
+        };
+        let left = expiry.saturating_sub(lease.started.elapsed());
+        let published = lease
+            .published
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = lease
+            .ready
+            .wait_timeout_while(published, left, |published| !*published)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+
     fn is_leased(&self, key: &[u8]) -> bool {
         self.leases()
             .get(key)
@@ -168,6 +185,20 @@ pub(crate) fn clear_pending_key() {
 /// The key the current thread's most recent dispatch pended on, if any.
 pub(crate) fn take_pending_key() -> Option<Box<[u8]>> {
     PENDING.with(|pending| pending.borrow_mut().take())
+}
+
+/// Whether a dispatch on this thread has pended on a key not yet taken.
+pub(crate) fn has_pending_key() -> bool {
+    PENDING.with(|pending| pending.borrow().is_some())
+}
+
+/// Block until the fact this thread's most recent dispatch pended on is
+/// published, or its lease lapses — how a caller that must finish a deferred
+/// section waits for it without polling. Returns at once when nothing pends.
+pub(crate) fn wait_for_pending() {
+    if let Some(key) = take_pending_key() {
+        STORE.wait_published(&key, LEASE_EXPIRY);
+    }
 }
 
 type Wake = Box<dyn FnOnce() + Send>;
@@ -445,6 +476,51 @@ mod tests {
         });
         sweep_parked();
         assert_eq!(woken.load(Ordering::SeqCst), 4);
+    }
+
+    /// A caller that must finish a deferred section sleeps on the lease and
+    /// is woken by the publication — not by a poll — and never waits on a
+    /// fact nobody is deriving or on a lease that has lapsed.
+    #[test]
+    fn waiting_on_a_pending_fact_wakes_on_publish_and_skips_dead_leases() {
+        let key = scoped_key("wait", 11, b"fact");
+        assert_eq!(STORE.claim(&key), MemoClaim::Lease);
+        assert_eq!(STORE.claim(&key), MemoClaim::Pending);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(20));
+                assert_eq!(put("wait", 11, b"fact", b"v"), HostRet::Bool(true));
+            });
+            let started = Instant::now();
+            // A generous expiry: only the publication can end this wait early.
+            STORE.wait_published(&key, Duration::from_secs(30));
+            assert!(started.elapsed() < Duration::from_secs(30));
+        });
+        assert_eq!(get("wait", 11, b"fact").as_deref(), Some(&b"v"[..]));
+
+        let started = Instant::now();
+        STORE.wait_published(&scoped_key("wait", 11, b"nobody"), Duration::from_secs(30));
+        let dead = scoped_key("wait", 11, b"dead");
+        assert_eq!(STORE.claim(&dead), MemoClaim::Lease);
+        STORE.wait_published(&dead, Duration::ZERO);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "an unheld or lapsed fact must not be waited on"
+        );
+
+        // The thread-level entry point waits on (and consumes) the key the
+        // last pending claim recorded.
+        let data = ModStoreData::new("wait", 11);
+        let claim = |key: &[u8]| {
+            handle_memo_call(&data, HostCall::MemoClaim { key: key.to_vec() })
+        };
+        clear_pending_key();
+        assert_eq!(claim(b"own"), HostRet::MemoClaim(MemoClaim::Lease));
+        assert_eq!(claim(b"own"), HostRet::MemoClaim(MemoClaim::Pending));
+        assert!(has_pending_key());
+        assert_eq!(put("wait", 11, b"own", b"w"), HostRet::Bool(true));
+        wait_for_pending();
+        assert!(!has_pending_key());
     }
 
     #[test]

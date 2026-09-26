@@ -7,9 +7,7 @@
 
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{
-    idx, section_idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE,
-};
+use petramond_world::chunk::{section_idx, CHUNK_SY, SEA_LEVEL, SECTION_SIZE};
 use petramond_world::section::Section;
 
 use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
@@ -22,7 +20,6 @@ use crate::biome::climate::{
 use crate::biome::spec;
 use crate::biome::surface_table::FROZEN_TEMPERATURE_MAX;
 use crate::feature::vegetation::patch_field;
-use crate::proto::ProtoChunk;
 use crate::region::RegionCells;
 use crate::surface::rule::SurfaceCtx;
 use crate::surface::SurfaceSystem;
@@ -100,159 +97,18 @@ impl SurfaceDensitySystem {
         surface_heights(&self.density, x0, z0, w, h)
     }
 
-    #[cfg(test)]
-    pub fn fill_chunk(&self, proto: &mut ProtoChunk, region: &RegionCells) {
-        let bounds = DensityLatticeBounds::chunk(proto.cx(), proto.cz());
-        let lattice = master_density_lattice(&self.density, bounds);
-        let (ox, oz) = proto.chunk_origin_world();
-        let mut cells = self.climate_cells();
-
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                let wx = ox + x as i32;
-                let wz = oz + z as i32;
-                let (surf_y, biome) = region.at(wx, wz);
-                proto.set_biome(x, z, biome.id());
-                let waterline = self.waterline_block(&mut cells, wx, wz, surf_y);
-                self.fill_column(
-                    proto.terrain_blocks_mut(),
-                    &lattice,
-                    x,
-                    z,
-                    wx,
-                    wz,
-                    biome,
-                    waterline,
-                );
-            }
-        }
-    }
-
-    /// Reference whole-chunk fill via the density lattice — superseded by
-    /// [`fill_chunk_from`](Self::fill_chunk_from) in production, kept as the
-    /// independent implementation `direct_fill_matches_region_fill` pins the
-    /// surf-driven fill against.
-    #[cfg(test)]
-    pub fn fill_chunk_direct(&self, proto: &mut ProtoChunk) {
-        let bounds = DensityLatticeBounds::chunk(proto.cx(), proto.cz());
-        let lattice = master_density_lattice(&self.density, bounds);
-        let (ox, oz) = proto.chunk_origin_world();
-        let mut cells = self.climate_cells();
-
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                let wx = ox + x as i32;
-                let wz = oz + z as i32;
-                let surf_y = lattice.top_solid_surface(x, z).unwrap_or(-1);
-                let biome = self.biome_at_cell(&mut cells, wx, wz, surf_y);
-                proto.set_biome(x, z, biome.id());
-                let waterline = self.waterline_block(&mut cells, wx, wz, surf_y);
-                self.fill_column(
-                    proto.terrain_blocks_mut(),
-                    &lattice,
-                    x,
-                    z,
-                    wx,
-                    wz,
-                    biome,
-                    waterline,
-                );
-            }
-        }
-    }
-
-    /// Fill one whole chunk from precomputed per-column `(biome, surf)` — no
-    /// density lattice: `master_density` is depth-only and exactly linear in
-    /// Y, so a voxel is solid IFF `wy <= surf`, the same equivalence
-    /// [`fill_section`](Self::fill_section) relies on. The run below the
-    /// deepest depth-gated skin band resolves to one (depth-independent)
-    /// block computed once. Byte-identical to `fill_chunk_direct`, pinned
-    /// by `direct_fill_matches_region_fill`.
-    pub fn fill_chunk_from(&self, proto: &mut ProtoChunk, biomes: &[Biome], surf: &[i32]) {
-        debug_assert_eq!(biomes.len(), CHUNK_SX * CHUNK_SZ);
-        debug_assert_eq!(surf.len(), CHUNK_SX * CHUNK_SZ);
-        let (ox, oz) = proto.chunk_origin_world();
-        let seed = self.seed;
-        // Lazy: only frozen-candidate columns (shallow submerged) touch climate.
-        let mut cells: Option<ClimateCellCache<'_>> = None;
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                let i = z * CHUNK_SX + x;
-                let biome = biomes[i];
-                proto.set_biome(x, z, biome.id());
-                let s = surf[i];
-                let rule = spec(biome).surface;
-                let (wx, wz) = (ox + x as i32, oz + z as i32);
-
-                // Water fills non-solid cells at/below sea level (the
-                // waterline cell may freeze to sea ice); air stays zeroed.
-                let waterline = if s < SEA_LEVEL && SEA_LEVEL - s <= SEA_ICE_MAX_DEPTH {
-                    let cells = cells.get_or_insert_with(|| self.climate_cells());
-                    self.waterline_block(cells, wx, wz, s)
-                } else {
-                    Block::Water
-                };
-                let blocks = proto.terrain_blocks_mut();
-                for y in (s + 1).max(0)..=SEA_LEVEL {
-                    blocks[idx(x, y as usize, z)] = if y == SEA_LEVEL {
-                        waterline.id()
-                    } else {
-                        Block::Water.id()
-                    };
-                }
-                if s < 0 {
-                    continue;
-                }
-                let top = s.min(CHUNK_SY as i32 - 1);
-
-                // Deep uniform run below the skin band: one skin call fills it.
-                let band_lo = (s - MAX_SKIN_BAND_DEPTH).max(0);
-                if band_lo > 0 {
-                    let deep = self
-                        .surface
-                        .skin_block(
-                            &SurfaceCtx {
-                                seed,
-                                wx,
-                                wz,
-                                y: 0,
-                                surf_y: s,
-                                depth_from_top: s as u32,
-                            },
-                            rule,
-                        )
-                        .id();
-                    for y in 0..band_lo {
-                        blocks[idx(x, y as usize, z)] = deep;
-                    }
-                }
-                for y in band_lo..=top {
-                    let ctx = SurfaceCtx {
-                        seed,
-                        wx,
-                        wz,
-                        y,
-                        surf_y: s,
-                        depth_from_top: (s - y) as u32,
-                    };
-                    blocks[idx(x, y as usize, z)] = self.surface.skin_block(&ctx, rule).id();
-                }
-            }
-        }
-    }
-
     /// Cubic terrain fill for one 16³ section, driven by the column's precomputed
     /// biome + density surface (`biomes`/`surf`, the column's 16×16 grids indexed
     /// `z*16 + x`) instead of a per-section density lattice.
     ///
-    /// This is byte-identical to `fill_column` for the section's
-    /// slab. `master_density` is depth-only and exactly linear in Y, so a voxel is
+    /// `master_density` is depth-only and exactly linear in Y, so a voxel is
     /// solid IFF `wy <= surf`, and its surface depth is exactly `surf - wy` — the same
     /// run-top/`depth_from_top` the lattice walk derives, with no overhangs to track.
     /// Solid voxels take their skin material, non-solid voxels at or below sea level
-    /// take water, the rest stay air. Works for ANY `cy` (incl. below y=0, where the
-    /// lattice cannot be built): there, every voxel is far below the surface and
-    /// resolves through the deep fast path.
+    /// take water, the rest stay air — byte-identical to walking the density lattice
+    /// (pinned by `section_fill_matches_the_lattice_reference`). Works for ANY `cy`
+    /// (incl. below y=0, where the lattice cannot be built): there, every voxel is
+    /// far below the surface and resolves through the deep fast path.
     pub fn fill_section(&self, section: &mut Section, biomes: &[u8], surf: &[i32]) {
         let (ox, oy, oz) = section.origin_world();
         let section_top = oy + SECTION_SIZE as i32 - 1;
@@ -325,57 +181,6 @@ impl SurfaceDensitySystem {
                 }
             }
         });
-    }
-
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    fn fill_column(
-        &self,
-        blocks: &mut [u16],
-        lattice: &DensityLattice,
-        x: usize,
-        z: usize,
-        wx: i32,
-        wz: i32,
-        biome: Biome,
-        waterline: Block,
-    ) {
-        let surface_rule = spec(biome).surface;
-        let mut run_top: Option<i32> = None;
-        let mut depth_from_top = 0u32;
-
-        for y in (0..CHUNK_SY).rev() {
-            let wy = y as i32;
-            if !lattice.solid_at_local(x, y, z) {
-                run_top = None;
-                depth_from_top = 0;
-                if wy == SEA_LEVEL {
-                    blocks[idx(x, y, z)] = waterline.id();
-                } else if wy < SEA_LEVEL {
-                    blocks[idx(x, y, z)] = Block::Water.id();
-                }
-                continue;
-            }
-
-            let surf_y = match run_top {
-                Some(top) => top,
-                None => {
-                    run_top = Some(wy);
-                    wy
-                }
-            };
-            let ctx = SurfaceCtx {
-                seed: self.seed,
-                wx,
-                wz,
-                y: wy,
-                surf_y,
-                depth_from_top,
-            };
-            let block = self.surface.skin_block(&ctx, surface_rule);
-            blocks[idx(x, y, z)] = block.id();
-            depth_from_top += 1;
-        }
     }
 
     fn climate_cells(&self) -> ClimateCellCache<'_> {
@@ -529,20 +334,9 @@ fn master_density_lattice(
 }
 
 fn is_ocean_biome(biome: Biome) -> bool {
-    matches!(biome, Biome::Ocean | Biome::DeepOcean)
+    spec(biome).flags.ocean
 }
 
 fn can_be_beach_base(biome: Biome) -> bool {
-    !matches!(
-        biome,
-        Biome::Ocean
-            | Biome::DeepOcean
-            | Biome::Beach
-            | Biome::Mountains
-            | Biome::SnowyPeaks
-            | Biome::SnowySlopes
-            | Biome::WindsweptHills
-            | Biome::StonyPeaks
-            | Biome::MountainEdge
-    )
+    spec(biome).flags.beach_base
 }

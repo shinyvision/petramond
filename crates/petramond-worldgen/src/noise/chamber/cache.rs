@@ -1,6 +1,5 @@
 use super::{Excavation, Room, UndergroundBiomes};
-use crate::memo::SharedMemo;
-use std::sync::LazyLock;
+use crate::cache::{inline, CacheBudget, Memo, MemoSpec, MemoStats, Scaling};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Key {
@@ -29,20 +28,35 @@ impl Key {
 /// Memoizes position-only admission, including rejected candidates. Query-box
 /// culling happens afterward; it must never enter a cached result. Admission
 /// is a pure function of the key and the natural geometry source, so every
-/// generator in the process shares one instance ([`shared`](Self::shared));
-/// a test that substitutes its own geometry oracle builds its own.
-pub(in crate::noise) struct CandidateCache(SharedMemo<Key, Option<Room>>);
+/// generator of a world shares its world's instance (`crate::cache`); a test
+/// that substitutes its own geometry oracle builds its own.
+pub(in crate::noise) struct CandidateCache(Memo<Key, Option<Room>>);
 
 impl Default for CandidateCache {
     fn default() -> Self {
-        Self(SharedMemo::new(4096))
+        Self::new(CacheBudget::REFERENCE)
     }
 }
 
 impl CandidateCache {
-    pub(in crate::noise) fn shared() -> &'static CandidateCache {
-        static SHARED: LazyLock<CandidateCache> = LazyLock::new(CandidateCache::default);
-        &SHARED
+    pub(in crate::noise) fn new(budget: CacheBudget) -> Self {
+        Self(Memo::new(
+            MemoSpec {
+                name: "cave.chamber_candidates",
+                capacity: 4096,
+                scaling: Scaling::Frontier,
+                weigh: inline,
+            },
+            budget,
+        ))
+    }
+
+    pub(in crate::noise) fn stats(&self) -> MemoStats {
+        self.0.stats()
+    }
+
+    pub(in crate::noise) fn clear(&self) {
+        self.0.clear();
     }
 
     pub(super) fn get_or_compute(

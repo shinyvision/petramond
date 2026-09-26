@@ -62,6 +62,27 @@ fn the_trees_field_is_carried_verbatim_and_absent_when_omitted() {
     assert!(desert(&parse_layers(&[&base, &row("")]).unwrap()).is_none());
 }
 
+/// Every shipped row states its `generation` rules, carried verbatim like
+/// `trees` for worldgen to parse.
+#[test]
+fn every_shipped_row_carries_its_generation_rules() {
+    let base = std::fs::read_to_string(
+        crate::assets::candidate_paths("biomes.json")
+            .into_iter()
+            .find(|p| p.exists())
+            .expect("shipped biomes.json"),
+    )
+    .unwrap();
+    let table = parse_layers(&[&base]).expect("shipped biomes load");
+    for row in table.rows() {
+        let text = row
+            .generation
+            .unwrap_or_else(|| panic!("biome '{}' has no generation", row.name));
+        let value: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(value.get("surface").is_some(), "biome '{}'", row.name);
+    }
+}
+
 /// The ambient map is validated per entry (namespaced key, density in
 /// range) and a row that omits it drives nothing.
 #[test]

@@ -57,10 +57,7 @@ fn is_terrain(b: u16) -> bool {
 
 #[inline]
 fn intended_wet_biome(biome: Biome) -> bool {
-    matches!(
-        biome,
-        Biome::Ocean | Biome::DeepOcean | Biome::Beach | Biome::River
-    )
+    crate::biome::spec(biome).flags.wet
 }
 
 // ---------------------------------------------------------------------------
@@ -612,18 +609,7 @@ fn find_mountain_chunk(seed: u32) -> Option<(i32, i32)> {
 
 #[inline]
 fn is_mountain_like(biome: Biome) -> bool {
-    matches!(
-        biome,
-        Biome::Mountains
-            | Biome::SnowyPeaks
-            | Biome::Foothills
-            | Biome::Grove
-            | Biome::SnowySlopes
-            | Biome::WindsweptHills
-            | Biome::StonyPeaks
-            | Biome::WoodedHills
-            | Biome::MountainEdge
-    )
+    crate::biome::spec(biome).flags.mountain
 }
 
 // ---------------------------------------------------------------------------

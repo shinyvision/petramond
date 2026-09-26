@@ -20,7 +20,7 @@
 
 use petramond_world::block::Block;
 
-use super::query_cache::{QueryMemo, CARVED, FILLED};
+use super::query_cache::QueryMemo;
 use super::{CaveCut, CaveField, Col, Fields, CAVE_MIN_Y, CAVE_SURFACE_BUFFER, LATTICE_STEP};
 
 /// Per-position work order for the carve batch: the decision's two cheap
@@ -36,7 +36,7 @@ impl CaveField {
     /// pairs, sharing one lattice per box the subdivision keeps.
     pub fn cave_carved_batch(&self, queries: &[([i32; 3], i32)], out: &mut Vec<bool>) {
         // Openness never depends on what fills a cell, so no pools are gathered.
-        self.cut_batch(queries, false, &CARVED, false, CaveCut::is_open, out);
+        self.cut_batch(queries, false, &self.memos().carved, false, CaveCut::is_open, out);
     }
 
     /// [`Self::cave_carved_batch`] answering WHAT each open cell holds:
@@ -48,7 +48,7 @@ impl CaveField {
             CaveCut::Fill(block) if !Block::from_id(block).is_solid() => Some(block),
             _ => None,
         };
-        self.cut_batch(queries, true, &FILLED, None, fill, out);
+        self.cut_batch(queries, true, &self.memos().filled, None, fill, out);
     }
 
     fn cut_batch<T: Clone>(

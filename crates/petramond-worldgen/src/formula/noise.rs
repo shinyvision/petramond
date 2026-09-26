@@ -1,8 +1,7 @@
 use super::{Expression, Inputs};
 use crate::density::noise::ReferenceDoublePerlin;
-use crate::memo::SharedMemo;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -20,17 +19,15 @@ pub struct Perlin {
     pub amplitudes: Vec<f64>,
 }
 
+/// A seeded Perlin stack's identity: the seed and every parameter.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct Key {
+pub(crate) struct Key {
     seed: u32,
     salt: [u64; 2],
     octave: i32,
     amplitudes: [u64; 9],
     count: usize,
 }
-
-static NOISES: LazyLock<SharedMemo<Key, Arc<ReferenceDoublePerlin>>> =
-    LazyLock::new(|| SharedMemo::new(256));
 
 impl Perlin {
     pub(super) fn validate(&self) -> Result<(), String> {
@@ -55,7 +52,7 @@ impl Perlin {
             amplitudes: std::array::from_fn(|i| self.amplitudes.get(i).map_or(0, |v| v.to_bits())),
             count: self.amplitudes.len(),
         };
-        NOISES.get_or_insert(key, || {
+        crate::cache::process().noises.get_or_insert(key, || {
             Arc::new(ReferenceDoublePerlin::from_seed(
                 seed.into(),
                 self.salt,

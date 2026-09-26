@@ -4,11 +4,10 @@
 //! Live world storage is the cubic [`crate::section::Section`] (16³), keyed by
 //! [`SectionPos`]. [`Chunk`] survives in exactly two roles:
 //!
-//! - **Worldgen transfer format**: `worldgen::driver::generate_surface` and the
-//!   staged pipeline behind `worldgen::generate_chunk` fill a whole column at
-//!   once (blocks, fluid metadata, heightmap, biome — never block entities),
-//!   consumed by the worldgen bins/audit tooling (`genmap`, `genparity`,
-//!   `genfeature`) and by worldgen parity tests.
+//! - **Worldgen transfer format**: `worldgen::generate_chunk` assembles a whole
+//!   column (blocks, heightmap, biome — never block entities) from the
+//!   per-section pipeline, consumed by the worldgen bins/audit tooling
+//!   (`genmap`, `genparity`, `genfeature`) and by worldgen tests.
 //! - **Test fixture**: column-era tests hand-build a `Chunk` and install it via
 //!   `World::insert_chunk_for_test`, which splits it into sections like the old
 //!   streamer did (`world::stream::split_generated_column`); `mesh`'s legacy

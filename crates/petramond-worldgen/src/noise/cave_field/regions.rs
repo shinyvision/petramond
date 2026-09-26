@@ -1,12 +1,10 @@
 //! Quart-resolution habitat columns, independent of excavation and voxel tiles.
 
-use std::{
-    cell::RefCell,
-    sync::{Arc, LazyLock},
-};
+use std::sync::Arc;
 
 use super::CaveField;
-use crate::{data::underground::IdSet, memo::SharedMemo};
+use crate::cache::local::{self, LocalTable};
+use crate::data::underground::IdSet;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Column {
@@ -49,12 +47,10 @@ impl Column {
     }
 }
 
-type Key = (u32, usize, [i32; 2]);
-type Tile = [Column; 16];
-static TILES: LazyLock<SharedMemo<Key, Arc<Tile>>> = LazyLock::new(|| SharedMemo::new(16_384));
-type Entry = Option<(Key, Arc<Tile>)>;
+pub(super) type Key = (u32, usize, [i32; 2]);
+pub(super) type Tile = [Column; 16];
 thread_local! {
-    static LOCAL: RefCell<Vec<Entry>> = RefCell::new(vec![None; 256]);
+    static LOCAL: LocalTable<Key, Arc<Tile>> = LocalTable::new(&local::CAVE_REGIONS);
 }
 
 #[derive(Default)]
@@ -102,38 +98,36 @@ impl CaveField {
         let key = (self.seed, self.table_identities()[0], pos);
         let hash =
             (pos[0] as u32 as u64) ^ (pos[1] as u32 as u64).rotate_left(32) ^ self.seed as u64;
-        let slot = (hash.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 56) as usize;
-        let saved = LOCAL.with(|cache| {
-            cache.borrow()[slot]
-                .as_ref()
-                .filter(|(k, _)| *k == key)
-                .map(|(_, tile)| Arc::clone(tile))
-        });
-        let tile = saved.unwrap_or_else(|| {
-            let tile = TILES.get_or_compute_unlocked(key, || {
-                Arc::new(std::array::from_fn(|i| {
-                    let quart = [pos[0] * 4 + (i % 4) as i32, pos[1] * 4 + (i / 4) as i32];
-                    let mut candidates = IdSet::default();
-                    for group in &self.underground.regions {
-                        group.candidates(
-                            self.seed,
-                            quart,
-                            |[x, z]| self.climate_column(x, z),
-                            &mut candidates,
-                        );
-                    }
-                    let height = if candidates.iter().next().is_some() {
-                        self.climate_column(quart[0] * 4, quart[1] * 4)[5]
-                    } else {
-                        0.0
-                    };
-                    Column { candidates, height }
-                }))
-            });
-            LOCAL.with(|cache| cache.borrow_mut()[slot] = Some((key, Arc::clone(&tile))));
-            tile
+        let tile = LOCAL.with(|table| {
+            table.get_or_insert_with(local::spread(hash), key, || {
+                self.memos()
+                    .regions
+                    .get_or_compute_unlocked(key, || Arc::new(self.region_tile(pos)))
+            })
         });
         tile[(z.rem_euclid(16) / 4 * 4 + x.rem_euclid(16) / 4) as usize]
+    }
+
+    /// The candidate columns of one 16×16 tile's sixteen quarts.
+    fn region_tile(&self, pos: [i32; 2]) -> Tile {
+        std::array::from_fn(|i| {
+            let quart = [pos[0] * 4 + (i % 4) as i32, pos[1] * 4 + (i / 4) as i32];
+            let mut candidates = IdSet::default();
+            for group in &self.underground.regions {
+                group.candidates(
+                    self.seed,
+                    quart,
+                    |[x, z]| self.climate_column(x, z),
+                    &mut candidates,
+                );
+            }
+            let height = if candidates.iter().next().is_some() {
+                self.climate_column(quart[0] * 4, quart[1] * 4)[5]
+            } else {
+                0.0
+            };
+            Column { candidates, height }
+        })
     }
 
     /// Habitat identity before excavation can claim any additional volume.

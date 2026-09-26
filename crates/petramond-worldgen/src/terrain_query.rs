@@ -1,26 +1,26 @@
-//! Material queries share the generation cache, including cave surface courses.
+//! Material queries read the generation memos: the same surface tiles and
+//! section terrain the pipeline fills, so a query and a generated section
+//! cannot disagree.
 
 use petramond_world::chunk::{section_idx, SectionPos};
 use petramond_world::section::BlockCube;
 use std::collections::BTreeMap;
-use std::sync::{Arc, LazyLock};
 
-type HeightsKey = (u32, [i32; 2]);
-static HEIGHTS: LazyLock<crate::memo::SharedMemo<HeightsKey, Arc<[i32]>>> =
-    LazyLock::new(|| crate::memo::SharedMemo::new(8192));
-
-pub(crate) fn height_tile(seed: u32, cell: [i32; 2]) -> Arc<[i32]> {
-    HEIGHTS.get_or_insert((seed, cell), || raw_region(seed, cell).surf.clone().into())
-}
+use crate::density::surface::SurfaceDensitySystem;
+use crate::noise::cave_field::CaveField;
 
 /// Highest solid density cell before caves and feature placement.
 pub fn heights_at(seed: u32, columns: &[[i32; 2]]) -> Vec<i32> {
+    let generator = crate::driver::ChunkGenerator::shared(seed);
+    let (_, caves) = generator.sources();
     let mut tiles = BTreeMap::new();
     columns
         .iter()
         .map(|&[x, z]| {
             let cell = [x.div_euclid(16), z.div_euclid(16)];
-            let heights = tiles.entry(cell).or_insert_with(|| height_tile(seed, cell));
+            let heights = tiles
+                .entry(cell)
+                .or_insert_with(|| caves.density_surface_tile(cell));
             heights[(z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize]
         })
         .collect()
@@ -76,35 +76,33 @@ pub fn section_blocks(seed: u32, section: [i32; 3]) -> Vec<u16> {
             .collect();
         return blocks_at(seed, &positions);
     }
-    let surface = super::surface_system(seed);
-    let caves = super::cave_field(seed);
-    let region = raw_region(seed, [section[0], section[2]]);
-    let biomes: Vec<u8> = region.biomes.iter().map(|b| b.id()).collect();
+    let generator = crate::driver::ChunkGenerator::shared(seed);
+    let (surface, caves) = generator.sources();
+    let (biomes, raw) = column_inputs(surface, caves, seed, [section[0], section[2]]);
     super::section_memo::terrain_cube(
-        &surface,
-        &caves,
+        surface,
+        caves,
         seed,
         SectionPos::new(section[0], section[1], section[2]),
         &biomes,
-        &region.surf,
+        &raw,
     )
     .iter()
     .collect()
 }
 
 pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
-    let surface = super::surface_system(seed);
-    let caves = super::cave_field(seed);
+    let generator = crate::driver::ChunkGenerator::shared(seed);
+    let (surface, caves) = generator.sources();
     if let Some(cell) = whole_section(positions) {
-        let region = raw_region(seed, [cell[0], cell[2]]);
-        let biomes: Vec<u8> = region.biomes.iter().map(|b| b.id()).collect();
+        let (biomes, raw) = column_inputs(surface, caves, seed, [cell[0], cell[2]]);
         return super::section_memo::terrain_cube(
-            &surface,
-            &caves,
+            surface,
+            caves,
             seed,
             SectionPos::new(cell[0], cell[1], cell[2]),
             &biomes,
-            &region.surf,
+            &raw,
         )
         .iter()
         .collect();
@@ -117,16 +115,12 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
             let [x, y, z] = super::clamp_query(pos);
             let cell = [x, y, z].map(|v| v.div_euclid(16));
             let cube = cubes.entry(cell).or_insert_with(|| {
-                let (biomes, raw) = columns.entry([cell[0], cell[2]]).or_insert_with(|| {
-                    let region = raw_region(seed, [cell[0], cell[2]]);
-                    (
-                        region.biomes.iter().map(|b| b.id()).collect::<Vec<_>>(),
-                        region.surf.clone(),
-                    )
-                });
+                let (biomes, raw) = columns
+                    .entry([cell[0], cell[2]])
+                    .or_insert_with(|| column_inputs(surface, caves, seed, [cell[0], cell[2]]));
                 super::section_memo::terrain_cube(
-                    &surface,
-                    &caves,
+                    surface,
+                    caves,
                     seed,
                     SectionPos::new(cell[0], cell[1], cell[2]),
                     biomes,
@@ -142,12 +136,14 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
         .collect()
 }
 
-type RegionKey = (u32, [i32; 2]);
-static REGIONS: LazyLock<crate::memo::SharedMemo<RegionKey, Arc<crate::region::RegionCells>>> =
-    LazyLock::new(|| crate::memo::SharedMemo::new(8192));
-
-fn raw_region(seed: u32, cell: [i32; 2]) -> Arc<crate::region::RegionCells> {
-    REGIONS.get_or_insert((seed, cell), || {
-        Arc::new(super::surface_system(seed).region(cell[0] * 16, cell[1] * 16, 16, 16))
-    })
+/// A column's biome ids and raw density surfaces, `z*16 + x` — the terrain
+/// fill's inputs — from the shared surface tile.
+fn column_inputs(
+    surface: &SurfaceDensitySystem,
+    caves: &CaveField,
+    seed: u32,
+    cell: [i32; 2],
+) -> (Vec<u8>, [i32; 256]) {
+    let (raw, biomes) = crate::feature::cached_tile_raw(surface, caves, seed, cell[0], cell[1]);
+    (biomes.iter().map(|b| b.id()).collect(), raw)
 }

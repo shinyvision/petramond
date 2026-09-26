@@ -1,7 +1,9 @@
 use super::*;
+use petramond_world::chunk::{idx, CHUNK_SX, CHUNK_SZ};
 use crate::biome::climate::{AxisRange, BiomeClimateEntry, ClimateRect, SurfaceClimate};
 use crate::graph::{Channel, SamplePoint, SampledScalarField};
 use petramond_world::chunk::Chunk;
+use petramond_world::section::Section;
 
 #[derive(Debug)]
 struct PlaneDensity {
@@ -11,20 +13,6 @@ struct PlaneDensity {
 impl SampledScalarField for PlaneDensity {
     fn sample(&self, point: SamplePoint) -> f64 {
         self.surface_y - point.y
-    }
-}
-
-#[derive(Debug)]
-struct AlternatingRuns;
-
-impl SampledScalarField for AlternatingRuns {
-    fn sample(&self, point: SamplePoint) -> f64 {
-        let y = point.y as i32;
-        match y {
-            72 | 88 => 1.0,
-            80 | 96 => -1.0,
-            _ => -1.0,
-        }
     }
 }
 
@@ -140,9 +128,80 @@ fn generate_surface_chunk(system: &SurfaceDensitySystem, cx: i32, cz: i32) -> Ch
         CHUNK_SX,
         CHUNK_SZ,
     );
-    let mut proto = ProtoChunk::new(cx, cz);
-    system.fill_chunk(&mut proto, &region);
-    proto.into_chunk()
+    section_fill(system, cx, cz, &region)
+}
+
+/// The production fill over one chunk column: `fill_section` for cy 0..16,
+/// assembled.
+fn section_fill(system: &SurfaceDensitySystem, cx: i32, cz: i32, region: &RegionCells) -> Chunk {
+    let biomes: Vec<u8> = region.biomes.iter().map(|b| b.id()).collect();
+    let mut chunk = Chunk::new(cx, cz);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            chunk.set_biome(x, z, biomes[z * CHUNK_SX + x]);
+        }
+    }
+    for cy in 0..(CHUNK_SY / SECTION_SIZE) as i32 {
+        let mut section = Section::new(cx, cy, cz);
+        system.fill_section(&mut section, &biomes, &region.surf);
+        for ly in 0..SECTION_SIZE {
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    chunk.blocks_slice_mut()[idx(x, cy as usize * SECTION_SIZE + ly, z)] =
+                        section.block_raw(x, ly, z);
+                }
+            }
+        }
+    }
+    chunk.recompute_heightmap();
+    chunk
+}
+
+/// An independent reference fill: walk the master-density lattice top-down,
+/// skinning each solid run from its own top. `fill_section` derives the same
+/// blocks from the column surface alone; this is what pins that shortcut.
+fn lattice_fill(system: &SurfaceDensitySystem, cx: i32, cz: i32, region: &RegionCells) -> Chunk {
+    let lattice = master_density_lattice(&system.density, DensityLatticeBounds::chunk(cx, cz));
+    let mut chunk = Chunk::new(cx, cz);
+    let (ox, oz) = chunk.chunk_origin_world();
+    let mut cells = system.climate_cells();
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            let (wx, wz) = (ox + x as i32, oz + z as i32);
+            let (surf_y, biome) = region.at(wx, wz);
+            chunk.set_biome(x, z, biome.id());
+            let waterline = system.waterline_block(&mut cells, wx, wz, surf_y);
+            let rule = spec(biome).surface;
+            let mut run_top: Option<i32> = None;
+            let mut depth_from_top = 0u32;
+            for y in (0..CHUNK_SY).rev() {
+                let wy = y as i32;
+                let blocks = chunk.blocks_slice_mut();
+                if !lattice.solid_at_local(x, y, z) {
+                    run_top = None;
+                    depth_from_top = 0;
+                    if wy == SEA_LEVEL {
+                        blocks[idx(x, y, z)] = waterline.id();
+                    } else if wy < SEA_LEVEL {
+                        blocks[idx(x, y, z)] = Block::Water.id();
+                    }
+                    continue;
+                }
+                let ctx = SurfaceCtx {
+                    seed: system.seed,
+                    wx,
+                    wz,
+                    y: wy,
+                    surf_y: *run_top.get_or_insert(wy),
+                    depth_from_top,
+                };
+                blocks[idx(x, y, z)] = system.surface.skin_block(&ctx, rule).id();
+                depth_from_top += 1;
+            }
+        }
+    }
+    chunk.recompute_heightmap();
+    chunk
 }
 
 fn top_solid_excluding_water(chunk: &Chunk, x: usize, z: usize) -> Option<i32> {
@@ -150,21 +209,6 @@ fn top_solid_excluding_water(chunk: &Chunk, x: usize, z: usize) -> Option<i32> {
         let block = chunk.block(x, y, z);
         (block != Block::Air && block != Block::Water).then_some(y as i32)
     })
-}
-
-fn exposed_solid_run_tops(chunk: &Chunk, x: usize, z: usize) -> Vec<i32> {
-    (0..CHUNK_SY)
-        .rev()
-        .filter_map(|y| {
-            let block = chunk.block(x, y, z);
-            if block == Block::Air || block == Block::Water {
-                return None;
-            }
-            let above_open =
-                y + 1 >= CHUNK_SY || matches!(chunk.block(x, y + 1, z), Block::Air | Block::Water);
-            above_open.then_some(y as i32)
-        })
-        .collect()
 }
 
 /// The deep fast path in `fill_section` requires every biome rule to be
@@ -185,7 +229,7 @@ fn deep_skin_is_depth_independent_and_ignores_underwater_status() {
         depth_from_top: depth,
     };
 
-    for spec in crate::biome::SPECS.iter() {
+    for spec in crate::biome::specs() {
         for (wx, wz) in [(0, 0), (137, -911), (-4096, 512)] {
             for surf_y in [SEA_LEVEL - 20, SEA_LEVEL + 20, 160] {
                 assert_eq!(
@@ -220,27 +264,10 @@ fn density_sign_fill_produces_solid_air_and_sea_water() {
 }
 
 #[test]
-fn surface_dressing_resets_across_multiple_solid_runs() {
-    let system = test_system(AlternatingRuns);
-    let chunk = generate_surface_chunk(&system, 0, 0);
-    let run_tops = exposed_solid_run_tops(&chunk, 0, 0);
-
-    assert!(
-        run_tops.len() >= 2,
-        "test density should produce multiple exposed solid runs"
-    );
-    for y in run_tops.into_iter().take(2) {
-        assert_eq!(chunk.block(0, y as usize, 0), Block::Grass);
-    }
-}
-
-#[test]
 fn region_top_solid_matches_filled_chunk_excluding_water() {
     let system = SurfaceDensitySystem::new(0xCAFE_BABE);
     let region = system.region(0, 0, CHUNK_SX, CHUNK_SZ);
-    let mut proto = ProtoChunk::new(0, 0);
-    system.fill_chunk(&mut proto, &region);
-    let chunk = proto.into_chunk();
+    let chunk = section_fill(&system, 0, 0, &region);
 
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
@@ -253,46 +280,29 @@ fn region_top_solid_matches_filled_chunk_excluding_water() {
     }
 }
 
+/// The section fill is the only production terrain fill; it must reproduce
+/// the density lattice walk byte for byte, waterline ice included.
 #[test]
-fn direct_fill_matches_region_fill() {
-    let system = SurfaceDensitySystem::new(7);
-
-    for (cx, cz) in [(0, 0), (-2, 1), (4, -3)] {
-        let ox = cx * CHUNK_SX as i32;
-        let oz = cz * CHUNK_SZ as i32;
-        let region = system.region(ox, oz, CHUNK_SX, CHUNK_SZ);
-
-        let mut region_proto = ProtoChunk::new(cx, cz);
-        system.fill_chunk(&mut region_proto, &region);
-        let region_chunk = region_proto.into_chunk();
-
-        let mut direct_proto = ProtoChunk::new(cx, cz);
-        system.fill_chunk_direct(&mut direct_proto);
-        let direct_chunk = direct_proto.into_chunk();
-
-        let mut from_proto = ProtoChunk::new(cx, cz);
-        system.fill_chunk_from(&mut from_proto, &region.biomes, &region.surf);
-        let from_chunk = from_proto.into_chunk();
-
+fn section_fill_matches_the_lattice_reference() {
+    for (seed, cx, cz) in [(7, 0, 0), (7, -2, 1), (7, 4, -3), (34, 6, -1), (31337, 0, 0)] {
+        let system = SurfaceDensitySystem::new(seed);
+        let region = system.region(
+            cx * CHUNK_SX as i32,
+            cz * CHUNK_SZ as i32,
+            CHUNK_SX,
+            CHUNK_SZ,
+        );
+        let reference = lattice_fill(&system, cx, cz, &region);
+        let sections = section_fill(&system, cx, cz, &region);
         assert_eq!(
-            region_chunk.blocks_slice(),
-            direct_chunk.blocks_slice(),
-            "blocks differ at ({cx},{cz})"
+            reference.blocks_slice(),
+            sections.blocks_slice(),
+            "blocks differ at seed {seed} ({cx},{cz})"
         );
         assert_eq!(
-            region_chunk.biomes_slice(),
-            direct_chunk.biomes_slice(),
-            "biomes differ at ({cx},{cz})"
-        );
-        assert_eq!(
-            region_chunk.blocks_slice(),
-            from_chunk.blocks_slice(),
-            "surf-driven fill blocks differ at ({cx},{cz})"
-        );
-        assert_eq!(
-            region_chunk.biomes_slice(),
-            from_chunk.biomes_slice(),
-            "surf-driven fill biomes differ at ({cx},{cz})"
+            reference.biomes_slice(),
+            sections.biomes_slice(),
+            "biomes differ at seed {seed} ({cx},{cz})"
         );
     }
 }

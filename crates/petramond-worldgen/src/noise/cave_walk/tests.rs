@@ -55,8 +55,9 @@ fn walks_are_bounded_and_independent_of_the_gather_window() {
         }
     }
     let center = plan(7, [0, 0])[0].center.map(|v| v.round() as i32);
-    let large = WalkField::gather(7, [center.map(|v| v - 80), center.map(|v| v + 80)]);
-    let small = WalkField::gather(7, [center.map(|v| v - 8), center.map(|v| v + 8)]);
+    let memos = WalkMemos::new(crate::cache::CacheBudget::REFERENCE);
+    let large = WalkField::gather(&memos, 7, [center.map(|v| v - 80), center.map(|v| v + 80)]);
+    let small = WalkField::gather(&memos, 7, [center.map(|v| v - 8), center.map(|v| v + 8)]);
     let mut open = 0;
     for x in -8..=8 {
         for y in -8..=8 {

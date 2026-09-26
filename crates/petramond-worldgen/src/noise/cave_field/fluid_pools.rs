@@ -15,27 +15,22 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use super::*;
 use crate::data::underground::{FluidPool, POOL_CELL};
 use crate::density::surface::SURFACE_FLOOR_Y;
-use crate::memo::SharedMemo;
 use crate::rng::FeatureRng;
 
-type PoolKey = (u32, [usize; 2], u16, [i32; 3]);
-static POOLS: LazyLock<SharedMemo<PoolKey, Option<Arc<Pool>>>> =
-    LazyLock::new(|| SharedMemo::new(262_144));
+pub(super) type PoolKey = (u32, [usize; 2], u16, [i32; 3]);
 
 /// The cave model over one pool cell, as the floor search, the descent and
 /// the flood read it. A flood spans a dozen cells its neighbours' floods
 /// cross too, so the cells are shared rather than built per pool.
-type TileKey = (u32, [usize; 2], [i32; 3]);
-static TILES: LazyLock<SharedMemo<TileKey, Arc<CaveLattice>>> =
-    LazyLock::new(|| SharedMemo::new(2048));
+pub(super) type TileKey = (u32, [usize; 2], [i32; 3]);
 
 /// One pool's filled cells, as a bitset over its own bounding box.
-struct Pool {
+pub(super) struct Pool {
     fluid: u16,
     lo: [i32; 3],
     span: [i32; 3],
@@ -219,7 +214,10 @@ fn pool_at(field: &CaveField, row: usize, g: [i32; 3]) -> Option<Arc<Pool>> {
         return None;
     }
     let key = (field.seed, field.table_identities(), row as u16, g);
-    POOLS.get_or_insert(key, move || derive(field, row, g, rng))
+    field
+        .memos()
+        .pools
+        .get_or_insert(key, move || derive(field, row, g, rng))
 }
 
 /// The flood behind one rolled lattice cell's pool of `row`.
@@ -355,7 +353,7 @@ impl Tiles {
         let tile = pos.map(|v| v.div_euclid(POOL_CELL));
         if !matches!(&self.last, Some((at, _)) if *at == tile) {
             let key = (field.seed, field.table_identities(), tile);
-            let lattice = TILES.get_or_insert(key, || {
+            let lattice = field.memos().pool_tiles.get_or_insert(key, || {
                 let lo = tile.map(|v| v * POOL_CELL);
                 let hi = lo.map(|v| v + POOL_CELL - 1);
                 Arc::new(field.build_lattice_filtered(

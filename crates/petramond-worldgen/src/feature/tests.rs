@@ -1,12 +1,12 @@
-use super::super::proto::MARGIN;
-use super::tree_select::TreeCandidates;
-use super::{feature_region_bounds, place_features_with_field, RuntimeFeatureField};
+use super::tree_select::{place_features_section, TreeCandidates};
+use super::{cached_feature_region, feature_candidate_bounds, feature_region_bounds, MARGIN};
 use crate::density::surface::SurfaceDensitySystem;
 use crate::generate_chunk;
 use crate::region::RegionCells;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE};
+use petramond_world::section::Section;
 
 fn is_tree(id: u16) -> bool {
     let block = Block::from_id(id);
@@ -313,39 +313,35 @@ fn live_density_feature_region_covers_margin_and_spacing_queries() {
     }
 }
 
+/// The memoized feature windows every section's tree pass reads must equal an
+/// uncached reference: the raw density region with the per-cell cave
+/// adjustment applied. Warm and cold windows alike, and windows that only
+/// partly overlap tiles already cached.
 #[test]
-fn runtime_feature_field_matches_full_region_features() {
+fn cached_feature_windows_match_the_uncached_region() {
     let seed = 0x1234_5678;
     let surface = SurfaceDensitySystem::new(seed);
     let caves = crate::noise::cave_field::CaveField::new(seed);
 
-    for (cx, cz) in [(0, 0), (-3, 5), (12, -7), (4, -3)] {
-        let ox = cx * CHUNK_SX as i32;
-        let oz = cz * CHUNK_SZ as i32;
-        let (x0, z0, w, h) = feature_region_bounds(ox, oz);
-        // The runtime field bakes the cave adjustment into its candidate
-        // window, so the reference full-region field gets the same per-cell
-        // adjustment before comparing.
-        let mut full_region = surface.region(x0, z0, w, h);
-        for (i, s) in full_region.surf.iter_mut().enumerate() {
-            let wx = full_region.x0 + (i % full_region.w) as i32;
-            let wz = full_region.z0 + (i / full_region.w) as i32;
-            *s = caves.feature_surface_after_caves(wx, wz, *s);
+    for (cx, cz) in [(0, 0), (-3, 5), (12, -7), (4, -3), (5, -3)] {
+        let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
+        for (x0, z0, w, h) in [
+            feature_candidate_bounds(ox, oz),
+            feature_region_bounds(ox, oz),
+        ] {
+            let reference = surface.region(x0, z0, w, h);
+            let (cached, raw) = cached_feature_region(&surface, &caves, seed, x0, z0, w, h);
+            assert_eq!(raw, reference.surf, "raw surfaces differ at ({cx},{cz})");
+            assert_eq!(cached.biomes, reference.biomes, "biomes differ at ({cx},{cz})");
+            for (i, (&adjusted, &s)) in cached.surf.iter().zip(&reference.surf).enumerate() {
+                let (wx, wz) = (x0 + (i % w) as i32, z0 + (i / w) as i32);
+                assert_eq!(
+                    adjusted,
+                    caves.feature_surface_after_caves(wx, wz, s),
+                    "cave-adjusted surface differs at ({wx},{wz})"
+                );
+            }
         }
-        let mut full_field = &full_region;
-
-        let mut full_chunk = Chunk::new(cx, cz);
-        place_features_with_field(&mut full_chunk, &mut full_field, seed);
-
-        let mut runtime_chunk = Chunk::new(cx, cz);
-        let mut field = RuntimeFeatureField::new(&surface, &caves, seed, ox, oz);
-        place_features_with_field(&mut runtime_chunk, &mut field, seed);
-
-        assert_eq!(
-            full_chunk.blocks_slice(),
-            runtime_chunk.blocks_slice(),
-            "feature blocks differ at ({cx},{cz})"
-        );
     }
 }
 
@@ -368,15 +364,25 @@ fn generate_chunk_is_deterministic() {
     }
 }
 
+/// The tree pass over the sections of column `(0, 0)`, cy 0..16, reading
+/// `field` — the section path's origin loop with no generator around it.
+fn place_features_column(field: &RegionCells, seed: u32) -> Vec<Section> {
+    (0..(CHUNK_SY / SECTION_SIZE) as i32)
+        .map(|cy| {
+            let mut section = Section::new(0, cy, 0);
+            place_features_section(&mut section, &mut &*field, seed);
+            section
+        })
+        .collect()
+}
+
 #[test]
 fn features_occupy_chunk_edges() {
     // P4 removed the chunk-edge skip: trees may now sit on the border.
     for seed in [1u32, 7, 42, 0x1234_5678] {
-        let mut c = Chunk::new(0, 0);
         let (x0, z0, w, h) = feature_region_bounds(0, 0);
         let field = synthetic_tree_region(x0, z0, w, h);
-        let mut field = &field;
-        place_features_with_field(&mut c, &mut field, seed);
+        let sections = place_features_column(&field, seed);
 
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
@@ -384,8 +390,8 @@ fn features_occupy_chunk_edges() {
                 if !edge {
                     continue;
                 }
-                for y in 0..CHUNK_SY {
-                    if is_tree(c.block_raw(x, y, z)) {
+                for section in &sections {
+                    if (0..SECTION_SIZE).any(|y| is_tree(section.block_raw(x, y, z))) {
                         return;
                     }
                 }

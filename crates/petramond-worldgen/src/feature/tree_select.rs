@@ -1,6 +1,6 @@
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
+use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 use petramond_world::mathh::IVec3;
 #[cfg(test)]
 use petramond_world::section::Section;
@@ -13,7 +13,7 @@ use super::super::rng::FeatureRng;
 use super::tree::{redwood_base_trunk_contains, REDWOOD_BASE_SUPPORT_REACH};
 #[cfg(test)]
 use super::SectionSink;
-use super::{ChunkSink, FeatureCtx, FeatureField, TREELINE};
+use super::{FeatureCtx, FeatureField, TREELINE};
 
 mod groves;
 use groves::{GroveField, Window};
@@ -94,7 +94,7 @@ pub(super) struct TreeCandidates {
 
 impl TreeCandidates {
     pub(super) fn new(seed: u32, ox: i32, oz: i32) -> Self {
-        let reach = super::proto::MARGIN + MAX_TREE_SPACING_RADIUS;
+        let reach = super::MARGIN + MAX_TREE_SPACING_RADIUS;
         let window = Window {
             x_min: ox - reach,
             x_max: ox + CHUNK_SX as i32 + reach,
@@ -324,27 +324,10 @@ fn redwood_trunk_is_supported(
     true
 }
 
-/// Per-chunk feature placement (P4). Iterates feature origins across the chunk
-/// plus a `MARGIN` border, in canonical (wz, wx) order, so a tree rooted in a
-/// neighbour that reaches into this chunk is generated here too. Each origin
-/// seeds its OWN positional RNG (`FeatureRng::positional`), so the per-biome
-/// density roll, variant pick, and geometry are pure functions of (seed, wx, wz)
-/// — independent of chunk and order. Candidate origins are then thinned by a
-/// deterministic configured spacing rule. Features write in world coords and
-/// are clipped to this chunk, so seams are continuous with no double-placement
-/// and the old chunk-edge skip is gone.
-pub fn place_features_with_field(chunk: &mut Chunk, field: &mut impl FeatureField, seed: u32) {
-    let (ox, oz) = chunk.chunk_origin_world();
-    let mut sink = ChunkSink::new(chunk);
-    let mut ctx = FeatureCtx::new(&mut sink);
-    place_feature_origins(&mut ctx, field, seed, ox, oz);
-}
-
-/// Cubic per-section feature placement: run the SAME origin loop into one 16³
+/// Cubic per-section feature placement: run the origin loop into one 16³
 /// [`Section`] through a [`SectionSink`]. Because each feature write predicates only
-/// on its own cell, the section's voxels come out byte-identical to what the
-/// whole-column [`place_features_with_field`] would write there — for the section's
-/// own vertical slab, with no neighbour buffer. `field` covers this section's column
+/// on its own cell, a tree straddling sections materialises identically from each
+/// of them, with no neighbour buffer. `field` covers this section's column
 /// (origin `ox,oz = section column origin`) plus the feature margin.
 ///
 /// Production replays a recorded [`super::FeaturePlan`] instead; this is the
@@ -372,7 +355,7 @@ pub(crate) fn place_feature_origins(
     ox: i32,
     oz: i32,
 ) {
-    let margin = super::proto::MARGIN;
+    let margin = super::MARGIN;
     let mut candidates = TreeCandidates::new(seed, ox, oz);
     for wz in (oz - margin)..(oz + CHUNK_SZ as i32 + margin) {
         for wx in (ox - margin)..(ox + CHUNK_SX as i32 + margin) {

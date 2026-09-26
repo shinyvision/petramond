@@ -108,6 +108,14 @@ impl Biome {
         self.def().trees
     }
 
+    /// The row's `generation` rules as JSON text (surface stack, ground
+    /// cover, snow, behaviour flags), `None` when the row states none.
+    /// Worldgen owns and parses the vocabulary.
+    #[inline]
+    pub fn generation(self) -> Option<&'static str> {
+        self.def().generation
+    }
+
     #[inline]
     pub fn fog_color(self) -> [f32; 3] {
         self.def().fog_color

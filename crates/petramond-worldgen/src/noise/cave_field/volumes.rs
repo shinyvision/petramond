@@ -5,22 +5,19 @@ use crate::data::excavations::effects::{Course, MaterialFilter};
 use crate::data::excavations::Bounds;
 use crate::data::excavations::{Excavation, FieldShape};
 use crate::formula::Inputs;
-use crate::memo::SharedMemo;
 use crate::rng::FeatureRng;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 pub(super) mod claims;
 mod tile;
 use tile::build_tile;
+pub(super) use tile::{AnchorKey, ChunkAnchors, PlaneKey};
 
-type SiteKey = (u32, usize, usize, [i32; 2]);
-type TileKey = (u32, [usize; 2], [i32; 3]);
-static SITES: LazyLock<SharedMemo<SiteKey, Option<Site>>> =
-    LazyLock::new(|| SharedMemo::new(16_384));
-static TILES: LazyLock<SharedMemo<TileKey, Arc<Tile>>> = LazyLock::new(|| SharedMemo::new(4096));
+pub(super) type SiteKey = (u32, usize, usize, [i32; 2]);
+pub(super) type TileKey = (u32, [usize; 2], [i32; 3]);
 
 #[derive(Clone, Copy)]
-struct Site {
+pub(super) struct Site {
     center: [i32; 3],
     radius: i32,
     height: i32,
@@ -90,7 +87,7 @@ impl CourseCell {
     }
 }
 
-struct Tile {
+pub(super) struct Tile {
     cells: Option<Box<[Cell]>>,
     /// One bit per 4³ sub-block holding any touched cell: the carve walk
     /// skips lattice cells the field leaves alone exactly as it skips
@@ -128,10 +125,10 @@ impl Tiles {
             for z in origin[2]..=end[2] {
                 for x in origin[0]..=end[0] {
                     let pos = [x, y, z];
-                    let tile = TILES
-                        .get_or_insert((field.seed, field.table_identities(), pos), || {
-                            Arc::new(build_tile(field, pos))
-                        });
+                    let tile = field.memos().volume_tiles.get_or_insert(
+                        (field.seed, field.table_identities(), pos),
+                        || Arc::new(build_tile(field, pos)),
+                    );
                     any |= tile.cells.is_some();
                     tiles.push(tile);
                 }
@@ -228,7 +225,7 @@ fn site(field: &CaveField, row: &Excavation, profile: &FieldShape, cell: [i32; 2
         row as *const _ as usize,
         cell,
     );
-    SITES.get_or_insert(key, || {
+    field.memos().volume_sites.get_or_insert(key, || {
         let p = &row.placement;
         let mut rng = FeatureRng::positional(field.seed, row.salt, cell[0], 0, cell[1]);
         if rng.next_i32(0, p.one_in - 1) != 0 {
@@ -306,9 +303,12 @@ fn site(field: &CaveField, row: &Excavation, profile: &FieldShape, cell: [i32; 2
 
 pub(super) fn space_at(field: &CaveField, pos: [i32; 3]) -> Option<mod_api::TerrainSpace> {
     let cell = pos.map(|v| v.div_euclid(16));
-    let tile = TILES.get_or_insert((field.seed, field.table_identities(), cell), || {
-        Arc::new(build_tile(field, cell))
-    });
+    let tile = field
+        .memos()
+        .volume_tiles
+        .get_or_insert((field.seed, field.table_identities(), cell), || {
+            Arc::new(build_tile(field, cell))
+        });
     let cells = tile.cells.as_ref()?;
     let p = pos.map(|v| v.rem_euclid(16) as usize);
     match cells[(p[1] * 16 + p[2]) * 16 + p[0]] {

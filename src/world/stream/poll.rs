@@ -233,7 +233,7 @@ impl World {
                 // A hook is waiting on a fact another worker derives: run the
                 // job again at its priority. The section stays pending, so
                 // the streamer neither re-requests nor judges it absent.
-                GenOutput::SectionDeferred { sp, col } => {
+                GenOutput::SectionDeferred { sp, col, pending } => {
                     if !w.gen.pending_section_jobs.contains_key(&sp)
                         || !w.within_current_keep_radius(sp.chunk_pos())
                     {
@@ -245,8 +245,8 @@ impl World {
                     let underground = w.anchor_underground(target);
                     let job = w.worker.submit(
                         target.deferred_section_key(sp, band_lo, underground),
-                        GenJob::Section {
-                            sp,
+                        GenJob::ResumeSection {
+                            pending,
                             col,
                             seed: w.seed,
                         },

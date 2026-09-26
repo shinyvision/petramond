@@ -9,8 +9,8 @@ use petramond_mesh::ChunkMesh;
 use petramond_world::block::Block;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::{Section, SectionSummary};
-use petramond_worldgen::driver::ChunkGenerator;
-use petramond_worldgen::driver::ColumnGen;
+use petramond_worldgen::cache::{CacheBudget, GenCaches};
+use petramond_worldgen::driver::{ChunkGenerator, ColumnGen, SectionGen};
 
 use super::entities::DroppedItems;
 use super::light::LightBakeQueue;
@@ -167,6 +167,16 @@ pub(in crate::world) struct WorldgenJobs {
     /// re-minting every session. Persisted in `level.dat`; BTreeSet so the
     /// encoding iterates in one deterministic order. Mutated on the tick only.
     pub(in crate::world) populated_columns: BTreeSet<ChunkPos>,
+    /// This world's worldgen memos, sized to its view distance and worker
+    /// count. A generating world installs them for every generator it builds;
+    /// they are billed in the memory census and emptied when the world drops.
+    pub(in crate::world) caches: Arc<GenCaches>,
+}
+
+impl Drop for WorldgenJobs {
+    fn drop(&mut self) {
+        self.caches.clear();
+    }
 }
 
 /// The SERVER's per-tick change log: what to ship to each session next
@@ -407,6 +417,7 @@ impl World {
                 disk_primary_sections: FxHashSet::default(),
                 pending_colgen_records: Vec::new(),
                 populated_columns: BTreeSet::new(),
+                caches: world_caches(role, render_dist),
             },
             replication: ReplicationLog {
                 replication_capture: false,
@@ -556,6 +567,11 @@ impl World {
         &self.session.player_roster
     }
 
+    /// The worldgen memo report behind [`MemoryCensus::worldgen_cache_bytes`].
+    pub fn worldgen_cache_report(&self) -> Vec<petramond_worldgen::cache::MemoStats> {
+        self.gen.caches.report()
+    }
+
     /// Ensure an empty section exists at `pos` so a write can land in it, materializing
     /// it (and its column) on demand. This is how building into the open air above the
     /// surface works: the streamer skips all-air sections (none are loaded there), so the
@@ -575,13 +591,20 @@ impl World {
             if self.saved_section_contains(pos) {
                 return false;
             }
-            let section = self
+            let col = self
                 .gen
                 .column_gen
                 .get(&pos.chunk_pos())
-                .filter(|col| col.section_summary(pos.cy) != SectionSummary::Empty)
-                .map(|col| ChunkGenerator::new(self.seed).generate_section(pos, col))
-                .unwrap_or_else(|| Section::new(pos.cx, pos.cy, pos.cz));
+                .filter(|col| col.section_summary(pos.cy) != SectionSummary::Empty);
+            let section = match col {
+                Some(col) => match ChunkGenerator::shared(self.seed).start_section(pos, col) {
+                    SectionGen::Ready(section) => section,
+                    // A mod hook waits on a fact another worker is deriving:
+                    // refuse the write rather than stall the tick on it.
+                    SectionGen::Deferred(_) => return false,
+                },
+                None => Section::new(pos.cx, pos.cy, pos.cz),
+            };
             self.ensure_column(pos.chunk_pos());
             self.sections.insert(pos, Arc::new(section));
             self.note_section_loaded(pos);
@@ -633,6 +656,19 @@ impl World {
     pub fn route_probe_budget(&self) -> &crate::mob::ReachBudget {
         &self.route_probe_budget
     }
+}
+
+/// A world's worldgen memos: sized for its view distance and the generation
+/// pool, and installed for the generators it will build when it generates at
+/// all (a client replica only receives sections, so it installs nothing and
+/// its unused memos never allocate).
+fn world_caches(role: WorldRole, render_dist: i32) -> Arc<GenCaches> {
+    let budget = CacheBudget::for_world(render_dist, JobPool::default_threads());
+    let caches = Arc::new(GenCaches::new(budget));
+    if role != WorldRole::ClientReplica {
+        petramond_worldgen::cache::install(Arc::clone(&caches));
+    }
+    caches
 }
 
 use petramond_math::math::IVec3;

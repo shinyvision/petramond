@@ -14,7 +14,7 @@
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::Section;
-use petramond_worldgen::driver::{ChunkGenerator, ColumnGen};
+use petramond_worldgen::driver::{ChunkGenerator, ColumnGen, PendingSection, SectionGen};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::BinaryHeap;
@@ -261,13 +261,21 @@ pub enum GenJob {
         col: Arc<ColumnGen>,
         seed: u32,
     },
+    /// Continue a section a hook deferred, from the hook that deferred it.
+    ResumeSection {
+        pending: Box<PendingSection>,
+        col: Arc<ColumnGen>,
+        seed: u32,
+    },
 }
 
 impl GenJob {
     #[inline]
     fn seed(&self) -> u32 {
         match self {
-            GenJob::Column { seed, .. } | GenJob::Section { seed, .. } => *seed,
+            GenJob::Column { seed, .. }
+            | GenJob::Section { seed, .. }
+            | GenJob::ResumeSection { seed, .. } => *seed,
         }
     }
 }
@@ -284,10 +292,15 @@ pub enum GenOutput {
         section: Arc<Section>,
     },
     /// A hook deferred the section: a positional fact it depends on is being
-    /// derived by another worker. The owner submits the job again later (the
-    /// column data rides along so it can); the eventual section does not
-    /// depend on when.
-    SectionDeferred { sp: SectionPos, col: Arc<ColumnGen> },
+    /// derived by another worker. The owner submits a
+    /// [`GenJob::ResumeSection`] later (the column data and the partial
+    /// section ride along so it can); the eventual section does not depend on
+    /// when.
+    SectionDeferred {
+        sp: SectionPos,
+        col: Arc<ColumnGen>,
+        pending: Box<PendingSection>,
+    },
     /// The column job panicked (a worldgen bug at these coordinates). Reported —
     /// not silently dropped — so the streamer clears its pending flag: a leaked
     /// flag left the column permanently ungenerated (an invisible hole) and
@@ -300,10 +313,11 @@ pub enum GenOutput {
 thread_local! {
     /// Per-worker reused generator. Building a `ChunkGenerator` sets up the full noise
     /// stack, far too heavy per job; per-thread reuse also keeps its column-noise cache
-    /// warm across the jobs of one streaming burst. Keyed by `(seed, gen-hook epoch)`
-    /// so a session (re)installing mod worldgen hooks evicts generators that captured
-    /// the previous config.
-    static GENERATOR: RefCell<Option<((u32, u64), ChunkGenerator)>> = const { RefCell::new(None) };
+    /// warm across the jobs of one streaming burst. Keyed by the seed and the installed
+    /// config (gen-hook and memo epochs), so a session (re)installing mod worldgen hooks
+    /// or a new world installing its caches evicts generators that captured the old ones.
+    static GENERATOR: RefCell<Option<((u32, (u64, u64)), ChunkGenerator)>> =
+        const { RefCell::new(None) };
 }
 
 fn run_gen_job(job: GenJob) -> GenOutput {
@@ -311,7 +325,7 @@ fn run_gen_job(job: GenJob) -> GenOutput {
     GENERATOR.with(|slot| {
         let mut slot = slot.borrow_mut();
         let seed = job.seed();
-        let key = (seed, crate::modding::gen::installed_epoch());
+        let key = (seed, ChunkGenerator::installed_config());
         if slot.as_ref().is_none_or(|(k, _)| *k != key) {
             *slot = Some((key, ChunkGenerator::new(seed)));
         }
@@ -321,15 +335,29 @@ fn run_gen_job(job: GenJob) -> GenOutput {
                 pos,
                 col: Arc::new(generator.generate_column_gen(pos.cx, pos.cz)),
             },
-            GenJob::Section { sp, col, .. } => match generator.try_generate_section(sp, &col) {
-                Some(section) => GenOutput::Section {
-                    sp,
-                    section: Arc::new(section),
-                },
-                None => GenOutput::SectionDeferred { sp, col },
-            },
+            GenJob::Section { sp, col, .. } => {
+                section_output(sp, generator.start_section(sp, &col), col)
+            }
+            GenJob::ResumeSection { pending, col, .. } => {
+                section_output(pending.pos(), generator.resume_section(*pending, &col), col)
+            }
         }
     })
+}
+
+/// A section job's result as the world drains it.
+fn section_output(sp: SectionPos, attempt: SectionGen, col: Arc<ColumnGen>) -> GenOutput {
+    match attempt {
+        SectionGen::Ready(section) => GenOutput::Section {
+            sp,
+            section: Arc::new(section),
+        },
+        SectionGen::Deferred(pending) => GenOutput::SectionDeferred {
+            sp,
+            col,
+            pending: Box::new(pending),
+        },
+    }
 }
 
 /// Fan a set of 16×16 surface-tile warmups across the pool at maximum
@@ -343,7 +371,7 @@ pub fn warm_surface_tiles(pool: &JobPool, seed: u32, tiles: impl IntoIterator<It
         pool.submit(i64::MIN, move || {
             GENERATOR.with(|slot| {
                 let mut slot = slot.borrow_mut();
-                let key = (seed, crate::modding::gen::installed_epoch());
+                let key = (seed, ChunkGenerator::installed_config());
                 if slot.as_ref().is_none_or(|(k, _)| *k != key) {
                     *slot = Some((key, ChunkGenerator::new(seed)));
                 }
@@ -429,6 +457,7 @@ fn spawn_gen(
     let failed = match &job {
         GenJob::Column { pos, .. } => GenOutput::ColumnFailed(*pos),
         GenJob::Section { sp, .. } => GenOutput::SectionFailed(*sp),
+        GenJob::ResumeSection { pending, .. } => GenOutput::SectionFailed(pending.pos()),
     };
     let seed = job.seed();
     let pool_again = Arc::clone(pool);
@@ -436,22 +465,26 @@ fn spawn_gen(
     pool.submit(key, move || {
         if cancel.is_cancelled() {
             if resumed {
-                if let GenJob::Section { sp, col, .. } = job {
-                    let _ = tx.send(GenOutput::SectionDeferred { sp, col });
+                if let GenJob::ResumeSection { pending, col, .. } = job {
+                    let _ = tx.send(GenOutput::SectionDeferred {
+                        sp: pending.pos(),
+                        col,
+                        pending,
+                    });
                 }
             }
             return;
         }
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_gen_job(job))) {
-            Ok(GenOutput::SectionDeferred { sp, col }) => {
+            Ok(GenOutput::SectionDeferred { sp, col, pending }) => {
                 match crate::modding::take_pending_key().filter(|_| !inline) {
-                    Some(pending) => crate::modding::park(
-                        pending,
+                    Some(fact) => crate::modding::park(
+                        fact,
                         Box::new(move || {
                             spawn_gen(
                                 &pool_again,
                                 key,
-                                GenJob::Section { sp, col, seed },
+                                GenJob::ResumeSection { pending, col, seed },
                                 tx,
                                 cancel,
                                 true,
@@ -459,7 +492,7 @@ fn spawn_gen(
                         }),
                     ),
                     None => {
-                        let _ = tx.send(GenOutput::SectionDeferred { sp, col });
+                        let _ = tx.send(GenOutput::SectionDeferred { sp, col, pending });
                     }
                 }
             }

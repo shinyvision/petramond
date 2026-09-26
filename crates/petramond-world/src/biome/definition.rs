@@ -15,4 +15,7 @@ pub(super) struct BiomeDef {
     /// The row's `trees` object as canonical JSON text, `None` when the row
     /// states none. Opaque here: worldgen owns the vocabulary and parses it.
     pub trees: Option<&'static str>,
+    /// The row's `generation` object as canonical JSON text, `None` when the
+    /// row states none. Opaque here, like `trees`.
+    pub generation: Option<&'static str>,
 }

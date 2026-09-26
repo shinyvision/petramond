@@ -75,17 +75,13 @@ impl Geology {
     }
 }
 
-/// One batch carve's shared state. Both batch paths — whole column and cubic
-/// section — drive the SAME column walk through this, because the orientation
-/// lining is loop-shaped (it reads what the cell above turned out to be) and
-/// two copies of that would be free to disagree below y=0, where the
-/// chunk/section parity test does not look.
-///
-/// Sharing the walk is not enough on its own: its carry has to be seeded and
-/// flushed by ASKING the carve field, never by assuming the box floor is a
-/// world floor. Both ends of a column are box boundaries for exactly one of
-/// the two paths, so anything remembered across a voxel is container-shaped
-/// state unless the other end can re-derive it.
+/// One batch carve's shared state: the column walk a section carve drives.
+/// The orientation lining is loop-shaped (it reads what the cell above turned
+/// out to be), so the walk's carry has to be seeded and flushed by ASKING the
+/// carve field, never by assuming the box floor is a world floor: both ends of
+/// a section's column are box boundaries, and anything remembered across a
+/// voxel is container-shaped state unless the neighbouring section can
+/// re-derive it.
 pub(super) struct BatchCarve<'a> {
     field: &'a CaveField,
     lat: &'a CaveLattice,

@@ -154,8 +154,8 @@ impl VoxelSink for Recorder {
 
     fn set(&mut self, pos: IVec3, block: Block) {
         let delta = pos - self.origin;
-        if delta.x.abs() > crate::proto::MARGIN
-            || delta.z.abs() > crate::proto::MARGIN
+        if delta.x.abs() > crate::feature::MARGIN
+            || delta.z.abs() > crate::feature::MARGIN
             || !(0..=super::MAX_TREE_REACH_ABOVE).contains(&delta.y)
         {
             self.overflow = true;

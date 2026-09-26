@@ -17,12 +17,11 @@
 //! read again — a dense grid answers each with one memory read where a
 //! hierarchy of separately locked cubes paid a lock per node.
 
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use super::{CaveField, LATTICE_STEP};
+use crate::cache::local::{self, LocalTable};
 use crate::data::underground::{ClimatePoint, IdSet, UndergroundBiomes};
-use crate::memo::SharedMemo;
 
 /// Leaf granularity in world blocks: two lattice cells per axis. Coarser reuses
 /// better but snaps a query box further outward, and the whole value of the gate
@@ -41,27 +40,22 @@ const LEAVES: usize = (GRID * GRID * GRID) as usize;
 /// first one's answers out of these slots. The table is `&'static`, so its
 /// address is its identity.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct Key {
+pub(super) struct Key {
     seed: u32,
     table: usize,
     pos: [i32; 3],
 }
 
-struct Grid {
+pub(super) struct Grid {
     leaves: Box<[IdSet; LEAVES]>,
     /// The union of every leaf, for a box that covers the whole grid.
     all: IdSet,
 }
 
-static GRIDS: std::sync::LazyLock<SharedMemo<Key, Arc<Grid>>> =
-    std::sync::LazyLock::new(|| SharedMemo::new(8192));
-
 // A query touches at most eight grids and the next section's query the same
 // ones, so a small per-thread copy fronts the shared slots' locks.
-const LOCAL_ENTRIES: usize = 256;
-type LocalEntry = Option<(Key, Arc<Grid>)>;
 thread_local! {
-    static LOCAL: RefCell<Vec<LocalEntry>> = RefCell::new(vec![None; LOCAL_ENTRIES]);
+    static LOCAL: LocalTable<Key, Arc<Grid>> = LocalTable::new(&local::CAVE_TERRITORY);
 }
 
 impl CaveField {
@@ -106,16 +100,13 @@ impl CaveField {
             ^ (gp[1] as u32 as u64).rotate_left(21)
             ^ (gp[2] as u32 as u64).rotate_left(42)
             ^ self.seed as u64;
-        let slot = (hash.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 56) as usize;
-        if let Some(hit) = LOCAL.with(|cache| match &cache.borrow()[slot] {
-            Some((saved, grid)) if *saved == key => Some(Arc::clone(grid)),
-            _ => None,
-        }) {
-            return hit;
-        }
-        let grid = GRIDS.get_or_compute_unlocked(key, || Arc::new(self.compute_grid(gp)));
-        LOCAL.with(|cache| cache.borrow_mut()[slot] = Some((key, Arc::clone(&grid))));
-        grid
+        LOCAL.with(|table| {
+            table.get_or_insert_with(local::spread(hash), key, || {
+                self.memos()
+                    .territory
+                    .get_or_compute_unlocked(key, || Arc::new(self.compute_grid(gp)))
+            })
+        })
     }
 
     /// Every leaf of one grid from its shared climate columns: a leaf's nine

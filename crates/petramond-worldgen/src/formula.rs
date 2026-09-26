@@ -44,6 +44,7 @@ mod interval;
 mod noise;
 mod scan;
 pub use batch::{BatchFormula, BatchScan};
+pub(crate) use noise::Key as NoiseKey;
 pub use noise::{NoiseExpression, Perlin};
 pub use scan::Scan;
 

@@ -1,66 +1,84 @@
-//! First-class worldgen biome modules.
+//! Worldgen biome behaviour.
 //!
-//! A game-facing [`Biome`] is only identity: id, name, and
-//! render colours live in `src/biome`. Generation behavior lives here. Each
-//! biome module owns its surface rule and ground-cover decoration; tree
-//! placement is row data (the `trees` field of the biome row, see `trees`).
+//! A game-facing [`Biome`] is identity plus its row in `assets/biomes.json`.
+//! That one row is the whole definition: render colours and ambience (read by
+//! `petramond-world`), tree placement (`trees`, see [`trees`]) and the
+//! generation rules this module serves (`generation`: surface rule stack,
+//! ground cover, snow and behaviour flags — parsed by
+//! [`crate::data::biome_gen`]). There is no per-biome Rust: a pack retunes a
+//! biome's ground by overriding its row.
 
 pub mod climate;
 pub mod surface_table;
-pub mod surfaces;
 pub mod trees;
-
-mod beach;
-mod deep_ocean;
-mod desert;
-mod desert_lakes;
-mod foothills;
-mod forest;
-mod grove;
-mod meadow;
-mod mountain_edge;
-mod mountains;
-mod ocean;
-mod old_growth_taiga;
-mod plains;
-mod redwood_forest;
-mod river;
-mod savanna;
-mod snowy_peaks;
-mod snowy_plains;
-mod snowy_slopes;
-mod snowy_taiga;
-mod snowy_tundra;
-mod stony_peaks;
-mod swamp;
-mod taiga;
-mod wetland;
-mod windswept_hills;
-mod wooded_hills;
 
 use crate::rng::FeatureRng;
 use crate::surface::rule::SurfaceRule;
-use petramond_world::biome::{Biome, BIOME_COUNT};
+use petramond_world::biome::Biome;
 use petramond_world::block::Block;
+use serde::Deserialize;
 
-pub type PlantPicker = fn(&mut FeatureRng) -> Option<Block>;
+/// A ground-cover roll: `chance` that the column gets a plant at all, then
+/// one `0..=99` draw picks the first entry whose bound it is below. The last
+/// bound is 100, so a column that passes the chance always gets a plant.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoverRoll {
+    pub chance: f32,
+    pub roll: Vec<(i32, Block)>,
+}
+
+impl CoverRoll {
+    /// The plant for a column, drawing from its positional stream: exactly
+    /// one chance draw, then one pick draw only when the chance passes.
+    pub fn pick(&self, rng: &mut FeatureRng) -> Option<Block> {
+        if !rng.chance(self.chance) {
+            return None;
+        }
+        let r = rng.next_i32(0, 99);
+        self.roll
+            .iter()
+            .find(|(below, _)| r < *below)
+            .map(|&(_, block)| block)
+    }
+
+    /// Bounds strictly rising, inside `1..=100`, and ending at 100.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        let bounds: Vec<i32> = self.roll.iter().map(|(below, _)| *below).collect();
+        let rising = bounds.windows(2).all(|w| w[0] < w[1]);
+        if !self.chance.is_finite()
+            || !(0.0..=1.0).contains(&self.chance)
+            || bounds.first().is_none_or(|&b| b < 1)
+            || !rising
+            || bounds.last() != Some(&100)
+        {
+            return Err(format!(
+                "a cover roll needs a chance in 0..=1 and rising bounds ending at 100, got {bounds:?}"
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Clustering for podzol/grass GROUND COVER (ferns, tufts). When set, cover only
 /// appears where a smooth low-frequency field is below `coverage`, so ferns form
 /// `period`-sized patches with bare ground between, instead of an even per-column
 /// sprinkle. Same blobby value-noise the flower patches use.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CoverCluster {
     pub salt: u64,
     pub period: f32,
     pub coverage: f32,
 }
 
-#[derive(Copy, Clone)]
+/// A biome's ground vegetation: what the vegetation pass may put on each kind
+/// of bare ground.
+#[derive(Copy, Clone, Debug)]
 pub struct VegetationProfile {
-    pub sand_cover: Option<PlantPicker>,
-    pub podzol_cover: Option<PlantPicker>,
-    pub grass_cover: Option<PlantPicker>,
+    pub sand_cover: Option<&'static CoverRoll>,
+    pub podzol_cover: Option<&'static CoverRoll>,
+    pub grass_cover: Option<&'static CoverRoll>,
     /// Optional clustering applied to `podzol_cover` / `grass_cover`.
     pub cover_cluster: Option<CoverCluster>,
     pub flower_palette: &'static [Block],
@@ -71,72 +89,10 @@ pub struct VegetationProfile {
     pub hemp_anchor_chance: f32,
 }
 
-pub(super) const COLD_HEMP: f32 = 0.01;
-
-impl VegetationProfile {
-    pub const NONE: Self = Self {
-        sand_cover: None,
-        podzol_cover: None,
-        grass_cover: None,
-        cover_cluster: None,
-        flower_palette: &[],
-        flower_coverage: 0.0,
-        flower_density: 0.0,
-        grass_tuft: Block::ShortGrass,
-        grass_density: 0.0,
-        hemp_anchor_chance: 0.0,
-    };
-
-    pub const fn grass(grass_tuft: Block, grass_density: f32) -> Self {
-        Self {
-            grass_tuft,
-            grass_density,
-            ..Self::NONE
-        }
-    }
-
-    pub const fn with_flowers(
-        mut self,
-        palette: &'static [Block],
-        coverage: f32,
-        density: f32,
-    ) -> Self {
-        self.flower_palette = palette;
-        self.flower_coverage = coverage;
-        self.flower_density = density;
-        self
-    }
-
-    pub const fn with_sand_cover(mut self, picker: PlantPicker) -> Self {
-        self.sand_cover = Some(picker);
-        self
-    }
-
-    pub const fn with_podzol_cover(mut self, picker: PlantPicker) -> Self {
-        self.podzol_cover = Some(picker);
-        self
-    }
-
-    pub const fn with_grass_cover(mut self, picker: PlantPicker) -> Self {
-        self.grass_cover = Some(picker);
-        self
-    }
-
-    pub const fn with_cover_cluster(mut self, cluster: CoverCluster) -> Self {
-        self.cover_cluster = Some(cluster);
-        self
-    }
-
-    pub const fn with_hemp(mut self, anchor_chance: f32) -> Self {
-        self.hemp_anchor_chance = anchor_chance;
-        self
-    }
-}
-
 /// Where a biome lays a snow layer on the bare ground (one cell above the
 /// column's post-cave surface, placed by the ground-vegetation pass). The
 /// grass underneath renders its snowy sides while the layer sits on it.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SnowCover {
     /// Never — the default for temperate biomes.
     None,
@@ -144,7 +100,7 @@ pub enum SnowCover {
     Always,
     /// Only columns whose bare-ground surface is strictly above this Y — the
     /// altitude snow caps (mountains). Keep the line in lockstep with the
-    /// biome's `SurfaceAboveY` cap band so the cap material and the layer
+    /// biome's `surface_above_y` cap band so the cap material and the layer
     /// appear together.
     AboveSurfaceY(i32),
 }
@@ -161,61 +117,35 @@ impl SnowCover {
     }
 }
 
+/// What other stages ask about a biome, stated on its row instead of in
+/// per-stage lists of biome names.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct BiomeFlags {
+    /// Open sea: a beach forms on low land near it.
+    pub ocean: bool,
+    /// The biome may turn into beach on low land near an ocean.
+    pub beach_base: bool,
+    /// Standing water belongs here (the audits do not flag it as a leak).
+    pub wet: bool,
+    /// Hill and mountain terrain (the audits' relief checks).
+    pub mountain: bool,
+}
+
 pub struct BiomeSpec {
     pub biome: Biome,
     pub surface: &'static SurfaceRule,
     pub vegetation: VegetationProfile,
     pub snow_cover: SnowCover,
+    pub flags: BiomeFlags,
 }
 
-pub static SPECS: [&BiomeSpec; BIOME_COUNT] = [
-    &ocean::SPEC,
-    &beach::SPEC,
-    &river::SPEC,
-    &desert::SPEC,
-    &plains::SPEC,
-    &savanna::SPEC,
-    &forest::SPEC,
-    &swamp::SPEC,
-    &taiga::SPEC,
-    &snowy_tundra::SPEC,
-    &snowy_taiga::SPEC,
-    &mountains::SPEC,
-    &snowy_peaks::SPEC,
-    &deep_ocean::SPEC,
-    &foothills::SPEC,
-    &wetland::SPEC,
-    &redwood_forest::SPEC,
-    &old_growth_taiga::SPEC,
-    &meadow::SPEC,
-    &grove::SPEC,
-    &snowy_slopes::SPEC,
-    &windswept_hills::SPEC,
-    &stony_peaks::SPEC,
-    &wooded_hills::SPEC,
-    &mountain_edge::SPEC,
-    &desert_lakes::SPEC,
-    &snowy_plains::SPEC,
-];
-
+/// The loaded generation rules of `biome`.
 #[inline]
 pub fn spec(biome: Biome) -> &'static BiomeSpec {
-    let i = biome.id() as usize - 1;
-    debug_assert!(
-        i < SPECS.len() && SPECS[i].biome == biome,
-        "worldgen biome specs are not id-ordered"
-    );
-    SPECS[i.min(SPECS.len() - 1)]
+    crate::data::biome_gen::spec(biome)
 }
 
-#[cfg(all(test, feature = "worldgen-tests"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn specs_are_one_to_one_with_game_biomes() {
-        for (i, spec) in SPECS.iter().enumerate() {
-            assert_eq!(spec.biome.id() as usize, i + 1);
-        }
-    }
+/// Every biome's generation rules, in id order.
+pub fn specs() -> &'static [BiomeSpec] {
+    crate::data::biome_gen::specs()
 }

@@ -13,21 +13,21 @@
 //! with a chance that grows quadratically toward the bottom of its Y band —
 //! diamonds get more likely the deeper you dig, yet stay rare even at the floor.
 //!
-//! Seam handling mirrors the tree pass without a margin buffer: every chunk
-//! regenerates its 3x3 neighbourhood's veins from a positional RNG keyed on the
-//! ORIGIN chunk (`positional(seed, salt, ncx, vein, ncz)`), and writes only the
-//! cells that fall inside itself (`FeatureCtx` clips). A vein straddling a chunk
-//! border is therefore materialised identically from both sides — no seam, no
-//! double-placement — because both chunks derive the exact same vein.
+//! Seam handling mirrors the tree pass without a margin buffer: every section
+//! regenerates its 3x3 column neighbourhood's veins from a positional RNG keyed
+//! on the ORIGIN column (`positional(seed, salt, ncx, vein, ncz)`), and writes
+//! only the cells that fall inside itself (`FeatureCtx` clips). A vein
+//! straddling a border is therefore materialised identically from both sides —
+//! no seam, no double-placement — because both derive the exact same vein.
 
 use petramond_world::block::Block;
-use petramond_world::chunk::{Chunk, WORLD_MAX_Y, WORLD_MIN_Y};
+use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 use petramond_world::mathh::IVec3;
 use petramond_world::section::Section;
 
 use super::super::rng::FeatureRng;
 use super::sink::SinkTarget;
-use super::{ChunkSink, FeatureCtx, SectionSink};
+use super::{FeatureCtx, SectionSink};
 
 /// How a vein materialises its cells around the rolled origin.
 enum VeinShape {
@@ -165,21 +165,11 @@ static CONFIGS: &[ScatterConfig] = &[
     blob(Block::Marble, 0xA1_0007, 8, 33, WORLD_MIN_Y, 130),
 ];
 
-/// Place all underground veins for `chunk`. Pure function of `(seed, cx, cz)`.
-pub fn place_underground(chunk: &mut Chunk, seed: u32) {
-    let (ccx, ccz) = (chunk.cx, chunk.cz);
-    let clip = clip_box_of(chunk.world_box());
-    let mut sink = ChunkSink::new(chunk);
-    let mut ctx = FeatureCtx::new(&mut sink);
-    place_underground_into(&mut ctx, clip, ccx, ccz, seed);
-}
-
-/// Cubic per-section scatter: run the SAME 3×3-column vein loop into one 16³
-/// [`Section`] through a [`SectionSink`]. Veins are keyed on the ORIGIN column
-/// (`positional(seed, salt, ncx, vein, ncz)`) exactly as the chunk path, and only
-/// overwrite Stone, so a vein straddling a section seam (horizontal OR vertical) is
-/// materialised identically from every section it touches — byte-parity with the
-/// whole-column pass for this section's slab.
+/// Place the underground veins reaching one 16³ [`Section`], through a
+/// [`SectionSink`]: every section regenerates its 3×3 column neighbourhood's veins.
+/// Veins are keyed on the ORIGIN column (`positional(seed, salt, ncx, vein, ncz)`)
+/// and only overwrite Stone, so a vein straddling a section seam (horizontal OR
+/// vertical) is materialised identically from every section it touches.
 pub fn place_underground_section(section: &mut Section, seed: u32) {
     let (ccx, ccz) = (section.cx, section.cz);
     let clip = clip_box_of(section.world_box());

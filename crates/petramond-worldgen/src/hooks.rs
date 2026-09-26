@@ -33,7 +33,8 @@ pub enum FeatureOutcome {
     /// The hook could not settle a positional fact its writes depend on
     /// because another worker is deriving it: the whole section must be
     /// generated again later, and its eventual content does not depend on
-    /// when.
+    /// when. Only valid as the answer to a pending claim, so there is always
+    /// a publication for [`GenHookDispatch::wait_deferred`] to wait on.
     Deferred,
 }
 
@@ -74,6 +75,12 @@ pub trait GenHookDispatch: Send + Sync {
     /// Dispatch feature `idx` for one section. `Skipped` = the feature
     /// failed (instance disabled with a logged error) or declined.
     fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> FeatureOutcome;
+    /// Block until the fact behind this thread's most recent
+    /// [`FeatureOutcome::Deferred`] is published, or until the claim on it
+    /// lapses, woken by the publisher rather than by polling. Returns at once
+    /// when nothing is pending. Only a caller that must finish a section now
+    /// (whole-chunk assembly, tooling) waits; the streamer parks the section.
+    fn wait_deferred(&self);
 }
 
 static INSTALLED: RwLock<Option<Arc<dyn GenHookDispatch>>> = RwLock::new(None);

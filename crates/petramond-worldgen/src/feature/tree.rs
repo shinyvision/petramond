@@ -141,8 +141,8 @@ impl CanopyTreeFeature {
     pub fn validate(&self) -> Result<(), String> {
         use crate::data::bounds::{ascending, unit, within};
         ascending("height", self.height, CANOPY_MIN_HEIGHT..=i32::MAX)?;
-        ascending("lean", self.lean, 0..=crate::proto::MARGIN)?;
-        ascending("reach", self.reach, 0..=crate::proto::MARGIN)?;
+        ascending("lean", self.lean, 0..=crate::feature::MARGIN)?;
+        ascending("reach", self.reach, 0..=crate::feature::MARGIN)?;
         ascending("tip_height", self.tip_height, i32::MIN..=i32::MAX)?;
         ascending("limbs", self.limbs, 1..=CANOPY_MAX_LIMBS)?;
         ascending(
@@ -164,11 +164,11 @@ impl CanopyTreeFeature {
         let horizontal = i64::from(self.lean.1.max(1))
             + (i64::from(self.reach.1) + i64::from(self.tip_radius.1))
                 .max(i64::from(self.crown_radius));
-        if horizontal > i64::from(crate::proto::MARGIN) {
+        if horizontal > i64::from(crate::feature::MARGIN) {
             return Err(format!(
                 "lean + reach + tip_radius: {horizontal} blocks of crown reach exceed the \
                  {} block replay margin",
-                crate::proto::MARGIN
+                crate::feature::MARGIN
             ));
         }
         let lowest_clump_floor =

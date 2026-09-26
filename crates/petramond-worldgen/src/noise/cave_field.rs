@@ -8,13 +8,14 @@ use crate::data::underground::{self, LiningFaces, UndergroundBiomes};
 use crate::density::terrain::{channels, TerrainDensityGraph, TerrainDensitySpec};
 use crate::graph::SamplePoint;
 use petramond_world::block::Block;
-use petramond_world::chunk::{idx, section_idx, Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE};
+use petramond_world::chunk::{section_idx, SECTION_SIZE};
 use petramond_world::section::Section;
 
 use super::chamber;
 
 mod aquifer;
 mod batch;
+mod caches;
 mod carve;
 mod climate;
 mod fluid_falls;
@@ -29,6 +30,7 @@ mod terrain_surface;
 use carve::BatchCarve;
 #[cfg(test)]
 use carve::MAX_FLOOR_DEPTH;
+pub(crate) use caches::CaveCaches;
 pub use fluid_falls::FallCell;
 #[cfg(test)]
 mod separation_tests;
@@ -69,6 +71,8 @@ impl CaveCut {
 /// Immutable world sources; caches only memoize positional results.
 pub struct CaveField {
     seed: u32,
+    /// The world's memos (see `crate::cache`), captured at construction.
+    caches: std::sync::Arc<crate::cache::GenCaches>,
     natural: CaveDensity,
     terrain: TerrainDensityGraph,
     underground: &'static UndergroundBiomes,
@@ -182,6 +186,7 @@ impl CaveField {
     ) -> Self {
         Self {
             seed,
+            caches: crate::cache::installed(),
             underground,
             chamber_y_span: excavations.y_span,
             excavations,
@@ -198,6 +203,21 @@ impl CaveField {
             table,
             crate::data::excavations::test_table(&[], table),
         )
+    }
+
+    /// The same field over `caches` instead of the installed memos.
+    pub(crate) fn with_caches(mut self, caches: std::sync::Arc<crate::cache::GenCaches>) -> Self {
+        self.caches = caches;
+        self
+    }
+
+    /// The world memos this field reads and fills.
+    pub(crate) fn caches(&self) -> &crate::cache::GenCaches {
+        &self.caches
+    }
+
+    fn memos(&self) -> &caches::CaveMemos {
+        &self.caches.caves.memos
     }
 
     /// The addresses of the loaded habitat and excavation catalogs: the
@@ -353,7 +373,7 @@ impl CaveField {
     #[cfg(test)]
     pub(super) fn chamber_field(&self, lo: [i32; 3], hi: [i32; 3]) -> chamber::ChamberField {
         chamber::ChamberField::gather(
-            chamber::CandidateCache::shared(),
+            &self.caches.caves.candidates,
             self.underground,
             self.excavations,
             self.seed,
@@ -565,57 +585,6 @@ impl CaveField {
     #[inline]
     fn batch_y_pad_low(&self, y0: i32) -> i32 {
         (self.lining_faces && y0 > self.batch_min_y()) as i32
-    }
-
-    pub fn carve_chunk(&self, chunk: &mut Chunk, surf: &[i32]) {
-        debug_assert_eq!(surf.len(), CHUNK_SX * CHUNK_SZ);
-        let (ox, oz) = chunk.chunk_origin_world();
-        let mut carved = false;
-
-        let y0 = self.batch_min_y().max(0);
-        let y1 = surf
-            .iter()
-            .copied()
-            .max()
-            .unwrap_or(0)
-            .saturating_add(self.excavations.surface_offset)
-            .min(CHUNK_SY as i32 - 1);
-        if y0 > y1 {
-            return;
-        }
-        let lat = self.build_lattice(
-            ox,
-            y0 - self.batch_y_pad_low(y0),
-            oz,
-            ox + CHUNK_SX as i32 - 1,
-            y1 + self.batch_y_pad(),
-            oz + CHUNK_SZ as i32 - 1,
-        );
-        let batch = BatchCarve::new(self, &lat);
-        let mut scratch = carve::Scratch::default();
-        let blocks = chunk.blocks_slice_mut();
-
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                let surf_y = surf[z * CHUNK_SX + x];
-                let y1 = (surf_y + self.excavations.surface_offset).min(CHUNK_SY as i32 - 1);
-                if y0 > y1 {
-                    continue;
-                }
-                let slot = |y| idx(x, y as usize, z);
-                let (wx, wz) = (ox + x as i32, oz + z as i32);
-                carved |= if batch.faces {
-                    batch.column::<true, _>(blocks, slot, wx, wz, y0, y1, surf_y, &mut scratch)
-                } else {
-                    batch.column::<false, _>(blocks, slot, wx, wz, y0, y1, surf_y, &mut scratch)
-                };
-            }
-        }
-
-        if carved {
-            chunk.recompute_heightmap();
-            chunk.recompute_random_tick_count();
-        }
     }
 
     pub fn carve_section(&self, section: &mut Section, surf: &[i32]) {

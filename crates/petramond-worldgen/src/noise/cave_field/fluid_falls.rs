@@ -6,17 +6,15 @@
 //! mask and the sparse terrain query — so what a query promises never depends
 //! on which of those happened to be cached.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use super::*;
 use crate::data::underground::FluidFall as FallRow;
-use crate::memo::SharedMemo;
 use crate::rng::FeatureRng;
 use mod_api::TerrainSpace;
 use petramond_world::fluid_math::FALLING;
 
-type Key = (u32, [usize; 2], [i32; 2]);
-static FALLS: LazyLock<SharedMemo<Key, Arc<ChunkFalls>>> = LazyLock::new(|| SharedMemo::new(4096));
+pub(super) type Key = (u32, [usize; 2], [i32; 2]);
 
 struct Fall {
     fluid: u16,
@@ -97,7 +95,9 @@ impl CaveField {
     /// The falls whose sources lie in chunk `(cx, cz)`.
     pub(crate) fn chunk_falls(&self, cx: i32, cz: i32) -> Arc<ChunkFalls> {
         let key = (self.seed, self.table_identities(), [cx, cz]);
-        FALLS.get_or_insert(key, || Arc::new(self.derive_falls(cx, cz)))
+        self.memos()
+            .falls
+            .get_or_insert(key, || Arc::new(self.derive_falls(cx, cz)))
     }
 
     /// The highest cell any fall row claims; `None` without fall rows.

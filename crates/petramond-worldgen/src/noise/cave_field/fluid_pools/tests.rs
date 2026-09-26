@@ -20,8 +20,8 @@ fn field_with_pools(seed: u32, rows: &[(&str, &str)]) -> CaveField {
 const TOP: i32 = 0;
 
 /// A pool belongs to its lattice cell, never to the box that asked: two boxes
-/// sharing a cell answer the same fluid for it, or the section carve and the
-/// whole-column carve would disagree wherever a pool crosses a batch edge.
+/// sharing a cell answer the same fluid for it, or neighbouring section carves
+/// would disagree wherever a pool crosses a batch edge.
 #[test]
 fn overlapping_boxes_answer_the_same_fluid() {
     let field = field_with_pools(0x1A7A_7001, &[("test:lava", "petramond:lava")]);

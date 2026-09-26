@@ -4,6 +4,7 @@
 //! samplers. Every field is a pure function of `(world_seed, field id, point)`.
 
 use super::super::graph::{SamplePoint, SampledScalarField};
+use crate::cache::local::{self, LocalTable};
 
 /// The 16 axis-aligned edge gradients (each pointing to an edge midpoint of the
 /// unit cube, magnitude √2). This is the standard improved-Perlin gradient set:
@@ -438,41 +439,17 @@ pub struct ShiftedClimateField {
     field: ReferenceDoublePerlin,
 }
 
-/// Per-thread memo of the climate domain warp. Every [`ShiftedClimateField`] of a
-/// given world seed embeds the SAME shift field (`climate_fields::SHIFT` forks only
-/// from the world seed), so temperature/humidity/continentality/erosion/weirdness
-/// all recompute an identical `(sx, sz)` at the same quart cell — as do the height
-/// (density lattice) and biome (climate cell) passes, which sample the same
-/// world-anchored 4-block grid. Memoizing the warp is bit-exact: the cached values
-/// are the very f64s the direct computation yields for that `(seed, qx, qz)`.
-#[derive(Copy, Clone)]
-struct WarpMemoEntry {
-    init: bool,
-    seed: u64,
-    qx: u64,
-    qz: u64,
-    sx: f64,
-    sz: f64,
-}
-
-const WARP_MEMO_ENTRIES: usize = 1024;
-
 thread_local! {
-    static WARP_MEMO: std::cell::RefCell<Box<[WarpMemoEntry]>> =
-        std::cell::RefCell::new(
-            vec![
-                WarpMemoEntry {
-                    init: false,
-                    seed: 0,
-                    qx: 0,
-                    qz: 0,
-                    sx: 0.0,
-                    sz: 0.0,
-                };
-                WARP_MEMO_ENTRIES
-            ]
-            .into_boxed_slice(),
-        );
+    /// Per-thread memo of the climate domain warp, keyed by `(seed, qx, qz)`
+    /// bits. Every [`ShiftedClimateField`] of a given world seed embeds the SAME
+    /// shift field (`climate_fields::SHIFT` forks only from the world seed), so
+    /// temperature/humidity/continentality/erosion/weirdness all recompute an
+    /// identical `(sx, sz)` at the same quart cell — as do the height (density
+    /// lattice) and biome (climate cell) passes, which sample the same
+    /// world-anchored 4-block grid. Memoizing the warp is bit-exact: the cached
+    /// values are the very f64s the direct computation yields.
+    static WARP_MEMO: LocalTable<[u64; 3], (f64, f64)> =
+        LocalTable::new(&local::CLIMATE_WARP);
 }
 
 impl ShiftedClimateField {
@@ -494,26 +471,13 @@ impl ShiftedClimateField {
     /// The domain warp at a quart cell, memoized per thread (direct-mapped).
     fn warp(&self, qx: f64, qz: f64) -> (f64, f64) {
         let (qxb, qzb) = (qx.to_bits(), qz.to_bits());
-        let hash =
-            (qxb ^ qzb.rotate_left(32) ^ self.world_seed).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let idx = (hash >> (64 - WARP_MEMO_ENTRIES.trailing_zeros())) as usize;
+        let hash = local::spread(qxb ^ qzb.rotate_left(32) ^ self.world_seed);
         WARP_MEMO.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            let e = &mut memo[idx];
-            if e.init && e.seed == self.world_seed && e.qx == qxb && e.qz == qzb {
-                return (e.sx, e.sz);
-            }
-            let sx = self.shift.sample(qx, 0.0, qz) * 4.0;
-            let sz = self.shift.sample(qz, qx, 0.0) * 4.0;
-            *e = WarpMemoEntry {
-                init: true,
-                seed: self.world_seed,
-                qx: qxb,
-                qz: qzb,
-                sx,
-                sz,
-            };
-            (sx, sz)
+            memo.get_or_insert_with(hash, [self.world_seed, qxb, qzb], || {
+                let sx = self.shift.sample(qx, 0.0, qz) * 4.0;
+                let sz = self.shift.sample(qz, qx, 0.0) * 4.0;
+                (sx, sz)
+            })
         })
     }
 }

@@ -42,6 +42,10 @@ pub struct MemoryCensus {
     /// Per-stream used mesh bytes: opaque v/i, far v/i, transparent v/i,
     /// translucent v/i, model v/i, contact v.
     pub mesh_streams: [u64; 11],
+    /// Worldgen memo entries held (shared memos) and the resident bytes of
+    /// every memo generation reads through (see `World::worldgen_cache_report`).
+    pub worldgen_cache_entries: usize,
+    pub worldgen_cache_bytes: u64,
 }
 
 impl MemoryCensus {
@@ -58,6 +62,7 @@ impl MemoryCensus {
             + self.column_gen_bytes
             + self.mesh_capacity_bytes
             + self.index_bytes
+            + self.worldgen_cache_bytes
     }
 }
 
@@ -71,6 +76,10 @@ impl World {
     /// Where this world's resident bytes are. See [`MemoryCensus`].
     pub fn memory_census(&self) -> MemoryCensus {
         let mut c = MemoryCensus::default();
+        for memo in self.worldgen_cache_report() {
+            c.worldgen_cache_entries += memo.entries;
+            c.worldgen_cache_bytes += memo.bytes;
+        }
         let mut seen: HashSet<usize> = HashSet::with_capacity(self.sections.len() * 2);
         c.sections = self.sections.len();
         c.section_structs =

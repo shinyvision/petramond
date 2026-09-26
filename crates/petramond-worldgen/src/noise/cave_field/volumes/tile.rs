@@ -4,11 +4,11 @@ use super::{
 use crate::data::excavations::effects::MaterialFilter;
 use crate::formula::Inputs;
 use crate::rng::FeatureRng;
-use crate::terrain_query::heights_at;
 use petramond_world::block::Block;
 use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 
 mod projection;
+pub(super) use projection::{AnchorKey, ChunkAnchors, PlaneKey};
 
 struct Plan<'a> {
     site: Site,
@@ -158,7 +158,10 @@ pub(super) fn build_tile(field: &CaveField, tile: [i32; 3]) -> Tile {
                 .map(move |x| [origin[0] + x as i32 - pad[0], origin[2] + z as i32 - pad[2]])
         })
         .collect();
-    let surfaces = heights_at(field.seed, &columns);
+    let surfaces: Vec<i32> = columns
+        .iter()
+        .map(|&[x, z]| field.density_surface(x, z))
+        .collect();
     carve(&mut draft, &plans, &surfaces, field.seed);
     let mut seals = Vec::new();
     let mut courses = Vec::new();

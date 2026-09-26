@@ -22,7 +22,9 @@ pub mod client;
 mod convert;
 pub mod gen;
 mod host;
-pub(crate) use host::memo::{clear_pending_key, park, sweep_parked, take_pending_key};
+pub(crate) use host::memo::{
+    clear_pending_key, has_pending_key, park, sweep_parked, take_pending_key, wait_for_pending,
+};
 mod instance;
 pub use petramond_world::pack_manifest as manifest;
 pub mod modset;

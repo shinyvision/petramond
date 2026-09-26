@@ -7,9 +7,9 @@
 //! initialize` folds them into one immutable [`GenHooks`] and [`install`]s it
 //! process-wide. `ChunkGenerator::new` captures the installed config (an `Arc`
 //! clone), so every generator built for a session — worker threads, the main
-//! thread, tooling — agrees on the hook set; the [`installed_epoch`] rides the
-//! per-thread generator cache keys so a new session's config replaces stale
-//! cached generators.
+//! thread, tooling — agrees on the hook set; the installed epoch rides the
+//! per-thread generator cache keys (`ChunkGenerator::installed_config`) so a
+//! new session's config replaces stale cached generators.
 //!
 //! # Per-thread instances
 //!
@@ -359,8 +359,15 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
 }
 
 /// A write-list reply as the driver consumes it: deferred, or validated.
+///
+/// A deferral is only honoured as the answer to a memo claim that came back
+/// pending, so the section always has a publication to wait for; one with
+/// nothing pending would be re-dispatched in a busy loop, and fails instead.
 fn outcome(output: mod_api::GenOutput, seed: u32) -> Result<FeatureOutcome, String> {
     if output.deferred {
+        if !super::has_pending_key() {
+            return Err("deferred its section without a pending memo claim to wait on".into());
+        }
         return Ok(FeatureOutcome::Deferred);
     }
     validated_writes(output, seed).map(FeatureOutcome::Plan)
@@ -585,6 +592,9 @@ impl GenHookDispatch for GenHooks {
     fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> FeatureOutcome {
         GenHooks::dispatch_feature(self, idx, inputs)
     }
+    fn wait_deferred(&self) {
+        super::wait_for_pending();
+    }
 }
 
 /// Install the session's hook config into the worldgen-owned seam
@@ -592,12 +602,6 @@ impl GenHookDispatch for GenHooks {
 /// module provides it.
 pub fn install(hooks: Option<Arc<GenHooks>>) {
     petramond_worldgen::hooks::install(hooks.map(|h| h as Arc<dyn GenHookDispatch>));
-}
-
-/// The worldgen-owned installed-epoch (kept as a module fn for the worker's
-/// per-thread generator cache keys).
-pub fn installed_epoch() -> u64 {
-    petramond_worldgen::hooks::installed_epoch()
 }
 
 #[cfg(test)]

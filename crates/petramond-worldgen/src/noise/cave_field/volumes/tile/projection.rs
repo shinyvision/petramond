@@ -1,12 +1,10 @@
 use super::{shift, site, CaveField, Draft, Excavation, FieldShape, Plan, Site};
 use crate::data::excavations::effects::Projection;
 use crate::formula::{BatchScan, Scan};
-use crate::memo::SharedMemo;
-use crate::terrain_query::height_tile;
 use petramond_world::block::Block;
 use petramond_world::chunk::{SEA_LEVEL, WORLD_MAX_Y, WORLD_MIN_Y};
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 /// Per rule, the scans its stages reuse across every target.
 struct RuleScans<'a> {
@@ -29,12 +27,10 @@ fn terrain_guess(y: i32, surface: i32) -> u16 {
     }
 }
 
-type PlaneKey = (u32, [usize; 2], [i32; 2], usize, i32);
 /// What stands at one height across a 16×16 chunk once the field has cut:
 /// the union of every site's cut on the margin lattice, its material where
 /// it cuts and the terrain guess elsewhere. A probe reads this plane.
-static PLANES: LazyLock<SharedMemo<PlaneKey, Arc<[u16; 256]>>> =
-    LazyLock::new(|| SharedMemo::new(2048));
+pub(in crate::noise::cave_field) type PlaneKey = (u32, [usize; 2], [i32; 2], usize, i32);
 
 /// The sites of `row` whose bounds reach the chunk within the shape's
 /// height range, in placement order.
@@ -93,9 +89,9 @@ fn probe_plane(
         std::ptr::from_ref(shape) as usize,
         y,
     );
-    PLANES.get_or_insert(key, || {
+    field.memos().planes.get_or_insert(key, || {
         let origin = [chunk[0] * 16, chunk[1] * 16];
-        let heights = height_tile(field.seed, chunk);
+        let heights = field.density_surface_tile(chunk);
         let mut out = [0u16; 256];
         for (i, cell) in out.iter_mut().enumerate() {
             *cell = terrain_guess(y, heights[i]);
@@ -211,16 +207,13 @@ fn probe_passes(
     !rule.probe.contains(&block)
 }
 
-type AnchorKey = (u32, [usize; 2], [i32; 2], usize);
-/// Per column of a chunk, the owning site and its anchor height.
-type ChunkAnchors = Arc<[Option<(Site, i32)>; 256]>;
+pub(in crate::noise::cave_field) type AnchorKey = (u32, [usize; 2], [i32; 2], usize);
 /// Per column of a 16×16 chunk, the site owning the rule's anchor there and
 /// its height: the lowest cell the site cuts with one of the rule's source
 /// materials, found on the cut margin's lattice and refined cell by cell.
 /// Every tile stacked over the chunk reads the same answer, so a mount is
 /// whole across tile edges.
-static ANCHORS: LazyLock<SharedMemo<AnchorKey, ChunkAnchors>> =
-    LazyLock::new(|| SharedMemo::new(4096));
+pub(in crate::noise::cave_field) type ChunkAnchors = Arc<[Option<(Site, i32)>; 256]>;
 
 const STEP: i32 = 4;
 /// A corner no site reaches.
@@ -240,9 +233,9 @@ fn chunk_anchors(
         chunk,
         rule as *const _ as usize,
     );
-    ANCHORS.get_or_insert(key, || {
+    field.memos().anchors.get_or_insert(key, || {
         let origin = [chunk[0] * 16, chunk[1] * 16];
-        let heights = height_tile(field.seed, chunk);
+        let heights = field.density_surface_tile(chunk);
         let sites = reaching_sites(field, row, shape, chunk);
         let mut out = [None; 256];
         if sites.is_empty() {

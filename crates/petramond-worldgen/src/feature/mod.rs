@@ -28,12 +28,11 @@ pub(crate) use tree_select::place_feature_origins as place_trees;
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod tests;
 
+pub(crate) use self::field::{cached_tile_raw, RegionTile, TileKey};
 pub use self::field::{
-    cached_feature_region, cached_tile_biomes, ColumnFeatureField, FeatureField,
-    RuntimeFeatureField, SurfaceHeights,
+    cached_feature_region, cached_tile_biomes, ColumnFeatureField, FeatureField, SurfaceHeights,
 };
 pub use self::sink::*;
-pub use self::tree_select::place_features_with_field;
 
 use petramond_world::block::Block;
 use petramond_world::chunk::CHUNK_SX;
@@ -41,8 +40,23 @@ use petramond_world::mathh::IVec3;
 
 use self::tree::REDWOOD_BASE_SUPPORT_REACH;
 use super::biome;
-use super::proto;
 use super::rng::FeatureRng;
+
+/// Border (in blocks) considered around a column for cross-column feature
+/// placement: the tree pass derives feature origins in `[-MARGIN, 16+MARGIN)`
+/// so a tree rooted in a neighbour can write its overlapping voxels here.
+///
+/// Feature writes are clipped to the target's own footprint (see
+/// `FeatureCtx`), so no wider buffer is needed: an in-footprint write only
+/// ever reads in-footprint cells, and a feature whose footprint <= MARGIN is
+/// materialised identically by every section that owns part of it
+/// (seam-consistent, no double-placement). MARGIN is sized to the widest
+/// feature: the grand oak's fenced branch tips (`tree::TIP_FENCE` = 11) plus
+/// its widest leaf-clump overhang (satellite box offset 2 + half-extent 3).
+/// Redwoods (branch reach + leaf blob ≤ 10) fit inside that. Raising this
+/// widens every column's candidate scan and padded surface region — re-time
+/// generation when it changes.
+pub const MARGIN: i32 = 16;
 
 /// Highest surface a tree will root on — above this (bare snow/stone peaks) the
 /// canopy is left off regardless of biome.
@@ -57,12 +71,12 @@ pub const MAX_TREE_REACH_ABOVE: i32 = 64;
 
 pub fn feature_region_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
     let pad =
-        super::proto::MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS + REDWOOD_BASE_SUPPORT_REACH;
+        MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS + REDWOOD_BASE_SUPPORT_REACH;
     feature_bounds_with_pad(ox, oz, pad)
 }
 
 pub fn feature_candidate_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
-    let pad = super::proto::MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS;
+    let pad = MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS;
     feature_bounds_with_pad(ox, oz, pad)
 }
 

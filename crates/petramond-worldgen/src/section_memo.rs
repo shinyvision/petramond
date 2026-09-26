@@ -1,23 +1,22 @@
-//! A section's terrain before features — filled and carved — memoized
-//! process-wide, because two consumers need exactly it: section generation,
-//! and the positional terrain queries a pack asks while placing content that
-//! spans sections. A pack probing a cell's floor shortly before its sections
+//! A section's terrain before features — filled and carved — memoized in the
+//! world's caches (`crate::cache`), because two consumers need exactly it:
+//! section generation, and the positional terrain queries a pack asks while
+//! placing content that spans sections. A pack probing a cell's floor shortly before its sections
 //! stream, or dressing a section just after, otherwise paid the fill and the
 //! carve twice. Solidity is kept separately and longer than the blocks: it is
 //! sixteen times smaller and is what the queries read.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use petramond_world::block::Block;
 use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE};
 use petramond_world::section::{BlockCube, Section};
 
 use crate::density::surface::SurfaceDensitySystem;
-use crate::memo::SharedMemo;
 use crate::noise::cave_field::{CaveField, FallCell};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct Key {
+pub(crate) struct Key {
     seed: u32,
     tables: [usize; 2],
     pos: [i32; 3],
@@ -73,9 +72,6 @@ pub(crate) fn space_of(id: u16) -> mod_api::TerrainSpace {
     }
 }
 
-static CUBES: LazyLock<SharedMemo<Key, BlockCube>> = LazyLock::new(|| SharedMemo::new(8192));
-static SPACES: LazyLock<SharedMemo<Key, Arc<SpaceMask>>> = LazyLock::new(|| SharedMemo::new(16384));
-
 fn key(caves: &CaveField, seed: u32, sp: SectionPos) -> Key {
     Key {
         seed,
@@ -94,7 +90,8 @@ pub(crate) fn terrain_cube(
     biomes: &[u8],
     surf: &[i32],
 ) -> BlockCube {
-    CUBES.get_or_compute_unlocked(key(caves, seed, sp), || {
+    let cubes = &caves.caches().terrain.section_cubes;
+    cubes.get_or_compute_unlocked(key(caves, seed, sp), || {
         let mut section = Section::new(sp.cx, sp.cy, sp.cz);
         surface.fill_section(&mut section, biomes, surf);
         caves.carve_section(&mut section, surf);
@@ -147,7 +144,8 @@ pub(crate) fn space_mask(
     biomes: &[u8],
     surf: &[i32],
 ) -> Arc<SpaceMask> {
-    SPACES.get_or_insert(key(caves, seed, sp), || {
+    let spaces = &caves.caches().terrain.section_spaces;
+    spaces.get_or_insert(key(caves, seed, sp), || {
         let cube = terrain_cube(surface, caves, seed, sp, biomes, surf);
         let mut mask = SpaceMask {
             solid: [0; 64],
@@ -171,5 +169,5 @@ pub(crate) fn space_mask_if_memoized(
     seed: u32,
     sp: SectionPos,
 ) -> Option<Arc<SpaceMask>> {
-    SPACES.get(&key(caves, seed, sp))
+    caves.caches().terrain.section_spaces.get(&key(caves, seed, sp))
 }

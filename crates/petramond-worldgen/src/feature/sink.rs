@@ -1,5 +1,7 @@
 use petramond_world::block::Block;
-use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_SIZE};
+#[cfg(test)]
+use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+use petramond_world::chunk::SECTION_SIZE;
 use petramond_world::mathh::IVec3;
 use petramond_world::section::Section;
 
@@ -8,7 +10,7 @@ mod tests;
 
 /// A destination a feature paints voxels into. Abstracting WHERE the writes land
 /// lets the SAME `Feature` / placer code drive two callers: worldgen, which writes
-/// into one [`Chunk`] clipped to its footprint ([`ChunkSink`]), and runtime sapling
+/// into one [`Section`] clipped to its footprint ([`SectionSink`]), and runtime sapling
 /// growth, which writes into the live `World` through a validating overlay (see
 /// `world::sapling`). `get` returns the sink's CURRENT occupant so the overwrite
 /// predicates on `FeatureCtx` see a feature's own earlier writes; it reads `Air`
@@ -111,6 +113,8 @@ impl<T: SinkTarget> VoxelSink for ClippedSink<'_, T> {
     }
 }
 
+/// Whole-column test fixture: tests paint shapes into one chunk.
+#[cfg(test)]
 impl SinkTarget for Chunk {
     fn world_box(&self) -> (IVec3, IVec3) {
         let (ox, oz) = self.chunk_origin_world();
@@ -142,13 +146,14 @@ impl SinkTarget for Section {
     }
 }
 
-/// [`ClippedSink`] over one [`Chunk`]'s `[0,16)×[0,256)×[0,16)` footprint —
-/// seam-consistent cross-chunk features with no shared buffer.
+/// [`ClippedSink`] over one [`Chunk`]'s `[0,16)×[0,256)×[0,16)` footprint — the
+/// tests' whole-column fixture.
+#[cfg(test)]
 pub type ChunkSink<'a> = ClippedSink<'a, Chunk>;
 
 /// [`ClippedSink`] over one 16³ [`Section`] for the cubic path — the same seam
 /// mechanism in 3D, so a feature materialises its in-section voxels identically
-/// whether the section is generated alone or as part of a whole column, across
+/// from every section it reaches, across
 /// VERTICAL seams as well as horizontal ones.
 pub type SectionSink<'a> = ClippedSink<'a, Section>;
 

@@ -1,7 +1,9 @@
 //! Biome rows — a layered catalog (`assets/biomes.json`): the colour set, the
 //! `ambient` density map (which ambient particle bundles this biome drives,
-//! and how strongly — see [`crate::particle_emitters`]) and the `trees`
-//! placement profile, carried verbatim for the worldgen layer to parse.
+//! and how strongly — see [`crate::particle_emitters`]), and the `trees`
+//! placement profile and `generation` rules (surface stack, ground cover,
+//! snow, behaviour flags), both carried verbatim for the worldgen layer to
+//! parse. The row is a biome's single definition.
 //!
 //! Authored linear-light tints keep distinct colour families: spring greens,
 //! deep woodland, golden dry grass, cool conifers and subdued alpine plants.
@@ -71,6 +73,10 @@ struct RawBiomeDef {
     /// (density, spacing, species tables, selection rules) is worldgen's.
     #[serde(default)]
     trees: Option<serde_json::Value>,
+    /// Generation rules (surface stack, ground cover, snow, flags). Carried
+    /// like `trees`; worldgen owns the vocabulary.
+    #[serde(default)]
+    generation: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -125,6 +131,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BiomeDef>, St
                 water_color: r.water_color,
                 ambient: Box::leak(ambient.into_boxed_slice()),
                 trees: r.trees.map(|v| &*v.to_string().leak()),
+                generation: r.generation.map(|v| &*v.to_string().leak()),
             })
         },
     )
