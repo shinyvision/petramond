@@ -10,9 +10,12 @@
 //! re-baking the whole explored area; the cubes are mostly uniform and deflate
 //! to almost nothing.
 
+#[cfg(test)]
+mod golden;
 mod item_slot;
 #[cfg(test)]
 mod tests;
+mod v19;
 
 pub use item_slot::{get_item_slot, put_item_slot};
 pub use petramond_util::bytecodec::{deflate, inflate, Reader};
@@ -32,6 +35,7 @@ use petramond_world::container::Container;
 use petramond_world::furnace::Furnace;
 use petramond_world::section::Section;
 
+use super::format::{Format, RecordError};
 use super::palette;
 
 /// Current section-record version. Flag-gated payloads are appended at the end, so a
@@ -99,10 +103,22 @@ use super::palette;
 /// positions, exact anywhere inside the world border. Clean break; dev
 /// worlds regenerate.
 /// v19 (2026-09-16): saved mobs carry their container slots, and string tags
-/// a u32 length. Clean break; dev worlds regenerate.
-const SECTION_REC_VERSION: u8 = 19;
-/// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 19;
+/// a u32 length. The oldest version this build reads.
+/// v20 (2026-09-26): every flag-gated payload is framed as `[len: u32][bytes]`,
+/// so a decoder checks each payload consumes exactly its bytes and a future
+/// upgrade step can rewrite one payload and copy the rest untouched. The
+/// first MIGRATED bump: v19 records upgrade through `v19::upgrade` on read.
+/// From here on a layout change adds an upgrade step (see `save::format`);
+/// it is never a clean break.
+const SECTION_REC_VERSION: u8 = 20;
+
+/// The section-record format: v19 and newer decode, older is retired.
+pub(super) const SECTION: Format = Format::new(
+    "section record",
+    SECTION_REC_VERSION as u32,
+    &[v19::upgrade],
+);
+
 const FLAG_HAS_FLUID: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
@@ -124,6 +140,14 @@ const FLAG2_HAS_CONTAINERS: u8 = 0x20;
 /// an absent cube simply re-bakes on load, so no version bump is needed.
 const FLAG3_HAS_SKYLIGHT: u8 = 0x02;
 const FLAG3_HAS_BLOCKLIGHT: u8 = 0x04;
+/// Every flag bit this build decodes, per flags byte. A set bit outside these
+/// is a payload a newer build appended: the record is refused, not
+/// half-read, so saving cannot drop it.
+const KNOWN_FLAGS: [u8; 3] = [
+    FLAG_HAS_FLUID | FLAG_HAS_ENTITIES | FLAG_HAS_FURNACES | FLAG_HAS_CELL_STATES | FLAG_HAS_MOBS,
+    FLAG2_HAS_CELL_KV | FLAG2_HAS_CONTAINERS,
+    FLAG3_HAS_SKYLIGHT | FLAG3_HAS_BLOCKLIGHT,
+];
 
 /// Owned, send-able copy of one 16³ section's save data. The game thread builds one
 /// of these (a cheap array clone) and hands it to the I/O thread, which does the
@@ -197,7 +221,8 @@ impl SectionSnapshot {
 
 /// Compress a section snapshot into a record: `[version, flags, flags2, flags3, blocks,
 /// fluid meta?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
-/// when present, so a terrain-only section pays for just its block array.
+/// when present, framed with its length, so a terrain-only section pays for just its
+/// block array.
 pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     encode_snapshot_with(s, &super::palette::active())
 }
@@ -245,53 +270,66 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
     // Block ids are stored as the SAVE's ids (see `super::palette`), so a
     // future registry renumbering can't corrupt old worlds.
     put_block_cube(&mut payload, &s.blocks, pal);
+    // Every flag-gated payload below is framed (`put_framed`), in flag order.
     if let Some(w) = &s.fluid {
-        payload.extend_from_slice(w);
+        put_framed(&mut payload, |buf| buf.extend_from_slice(w));
     }
     if !s.entities.is_empty() {
-        super::entities::put_entities(&mut payload, &s.entities);
+        put_framed(&mut payload, |buf| {
+            super::entities::put_entities(buf, &s.entities)
+        });
     }
     if !s.furnaces.is_empty() {
-        super::furnace::put_furnaces(&mut payload, &s.furnaces);
+        put_framed(&mut payload, |buf| {
+            super::furnace::put_furnaces(buf, &s.furnaces)
+        });
     }
     if !s.cell_states.is_empty() {
         // Each record is `[len][id_mask][len bytes]`; the id-masked bytes
         // are BLOCK IDS and go through the palette like the block array —
         // the ONLY interpretation this codec ever applies to state bytes.
-        put_indexed(&mut payload, &s.cell_states, 8, |buf, state| {
-            let bytes = state.bytes();
-            put_u8(buf, bytes.len() as u8);
-            put_u8(buf, state.id_mask());
-            let mut i = 0;
-            while i < bytes.len() {
-                if state.id_mask() & (1 << i) != 0 && i + 1 < bytes.len() {
-                    put_u16(buf, pal.block_to_disk(state.id_at(i)));
-                    i += 2;
-                } else {
-                    put_u8(buf, bytes[i]);
-                    i += 1;
+        put_framed(&mut payload, |buf| {
+            put_indexed(buf, &s.cell_states, 8, |buf, state| {
+                let bytes = state.bytes();
+                put_u8(buf, bytes.len() as u8);
+                put_u8(buf, state.id_mask());
+                let mut i = 0;
+                while i < bytes.len() {
+                    if state.id_mask() & (1 << i) != 0 && i + 1 < bytes.len() {
+                        put_u16(buf, pal.block_to_disk(state.id_at(i)));
+                        i += 2;
+                    } else {
+                        put_u8(buf, bytes[i]);
+                        i += 1;
+                    }
                 }
-            }
+            })
         });
     }
     if !s.mobs.is_empty() {
-        super::mobs::put_mobs(&mut payload, &s.mobs);
+        put_framed(&mut payload, |buf| super::mobs::put_mobs(buf, &s.mobs));
     }
     if !s.cell_kv.is_empty() {
         // Each record is the cell's KV map (idx written by put_indexed);
         // rec_bytes is a reserve hint only — the record body is variable.
-        put_indexed(&mut payload, &s.cell_kv, 16, |buf, map| {
-            put_kv_map(buf, map);
+        put_framed(&mut payload, |buf| {
+            put_indexed(buf, &s.cell_kv, 16, |buf, map| {
+                put_kv_map(buf, map);
+            })
         });
     }
     if !s.containers.is_empty() {
-        super::container::put_containers(&mut payload, &s.containers);
+        put_framed(&mut payload, |buf| {
+            super::container::put_containers(buf, &s.containers)
+        });
     }
     if let Some(sky) = &s.skylight {
-        payload.extend_from_slice(sky);
+        put_framed(&mut payload, |buf| buf.extend_from_slice(sky));
     }
     if let Some(bl) = &s.blocklight {
-        payload.extend_from_slice(&petramond_world::light::to_le_bytes(bl));
+        put_framed(&mut payload, |buf| {
+            buf.extend_from_slice(&petramond_world::light::to_le_bytes(bl))
+        });
     }
     deflate(&payload)
 }
@@ -356,13 +394,24 @@ fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<Vec<u16>> {
     Some(out)
 }
 
+/// Append one flag-gated payload as `[len: u32][bytes]`, `body` writing the
+/// bytes.
+fn put_framed(buf: &mut Vec<u8>, body: impl FnOnce(&mut Vec<u8>)) {
+    let at = buf.len();
+    put_u32(buf, 0);
+    body(buf);
+    let len = (buf.len() - at - 4) as u32;
+    buf[at..at + 4].copy_from_slice(&len.to_le_bytes());
+}
+
+/// A section record's contents: the section plus the item entities and
+/// mobs stored with it.
+pub type DecodedSection = (Section, Vec<DroppedItem>, Vec<SavedMob>);
+
 /// Decode a compressed section record into a `Section` at `pos` plus any item
-/// entities and mobs stored with it. `None` on corrupt / wrong-version /
-/// wrong-length data.
-pub fn decode_section(
-    pos: SectionPos,
-    blob: &[u8],
-) -> Option<(Section, Vec<DroppedItem>, Vec<SavedMob>)> {
+/// entities and mobs stored with it. An older record is migrated first; a
+/// newer, corrupt or unknown one is a typed error — never "no record".
+pub fn decode_section(pos: SectionPos, blob: &[u8]) -> Result<DecodedSection, RecordError> {
     decode_section_with(pos, blob, &super::palette::active())
 }
 
@@ -371,94 +420,147 @@ pub fn decode_section_with(
     pos: SectionPos,
     blob: &[u8],
     pal: &palette::Palette,
-) -> Option<(Section, Vec<DroppedItem>, Vec<SavedMob>)> {
-    let payload = inflate(blob)?;
-    let mut r = Reader::new(&payload);
-    let version = r.u8()?;
-    if !(SECTION_REC_MIN_VERSION..=SECTION_REC_VERSION).contains(&version) {
-        return None;
+) -> Result<DecodedSection, RecordError> {
+    let payload = inflate(blob).ok_or(RecordError::corrupt(SECTION.name, "zlib stream", 0))?;
+    let (&version, body) =
+        payload
+            .split_first()
+            .ok_or(RecordError::corrupt(SECTION.name, "version", 0))?;
+    let body = SECTION.upgrade(u32::from(version), body)?;
+    decode_current(pos, &body, pal)
+}
+
+/// Sequential reader over a current-version record body that hands out its
+/// framed payloads. Error offsets count from the start of the decompressed
+/// record (the version byte precedes the body).
+struct Frames<'a> {
+    r: Reader<'a>,
+}
+
+/// One framed payload and where it starts in the record.
+struct Frame<'a> {
+    bytes: &'a [u8],
+    at: usize,
+    what: &'static str,
+}
+
+impl<'a> Frames<'a> {
+    fn corrupt(&self, what: &'static str) -> RecordError {
+        RecordError::corrupt(SECTION.name, what, self.r.offset() + 1)
     }
-    let flags = r.u8()?;
-    let flags2 = r.u8()?;
-    let flags3 = r.u8()?;
-    let blocks = get_block_cube(&mut r, pal)?;
-    let fluid = if flags & FLAG_HAS_FLUID != 0 {
-        Some(r.bytes(SECTION_VOLUME)?.to_vec().into_boxed_slice())
-    } else {
-        None
+
+    /// The next payload when `present`, else `None` (nothing consumed).
+    fn payload(
+        &mut self,
+        present: bool,
+        what: &'static str,
+    ) -> Result<Option<Frame<'a>>, RecordError> {
+        if !present {
+            return Ok(None);
+        }
+        let len = self.r.u32().ok_or_else(|| self.corrupt(what))? as usize;
+        let at = self.r.offset() + 1;
+        let bytes = self.r.bytes(len).ok_or_else(|| self.corrupt(what))?;
+        Ok(Some(Frame { bytes, at, what }))
+    }
+}
+
+impl<'a> Frame<'a> {
+    /// Decode the payload; the decoder must consume exactly the frame.
+    fn decode<T>(self, f: impl FnOnce(&mut Reader<'a>) -> Option<T>) -> Result<T, RecordError> {
+        let mut r = Reader::new(self.bytes);
+        match f(&mut r) {
+            Some(value) if r.is_at_end() => Ok(value),
+            _ => Err(RecordError::corrupt(
+                SECTION.name,
+                self.what,
+                self.at + r.offset(),
+            )),
+        }
+    }
+
+    /// A fixed-size payload (a per-cell cube).
+    fn exact(self, len: usize) -> Result<&'a [u8], RecordError> {
+        self.decode(|r| r.bytes(len))
+    }
+}
+
+/// Decode a current-version record body (after the version byte).
+fn decode_current(
+    pos: SectionPos,
+    body: &[u8],
+    pal: &palette::Palette,
+) -> Result<DecodedSection, RecordError> {
+    let mut frames = Frames {
+        r: Reader::new(body),
     };
-    let entities = if flags & FLAG_HAS_ENTITIES != 0 {
-        super::entities::get_entities(&mut r)?
-    } else {
-        Vec::new()
+    let r = &mut frames.r;
+    let (Some(flags), Some(flags2), Some(flags3)) = (r.u8(), r.u8(), r.u8()) else {
+        return Err(frames.corrupt("flags"));
     };
-    let furnaces = if flags & FLAG_HAS_FURNACES != 0 {
-        super::furnace::get_furnaces(&mut r)?
-    } else {
-        HashMap::new()
-    };
-    let cell_states = if flags & FLAG_HAS_CELL_STATES != 0 {
-        get_indexed(&mut r, |r| {
-            let len = r.u8()? as usize;
-            let id_mask = r.u8()?;
-            if len > petramond_world::block::SHAPE_STATE_MAX {
-                return None;
-            }
-            let mut bytes = [0u8; petramond_world::block::SHAPE_STATE_MAX];
-            let mut i = 0;
-            while i < len {
-                if id_mask & (1 << i) != 0 && i + 1 < len {
-                    let [lo, hi] = ShapeState::id_bytes(pal.block_from_disk(r.u16()?));
-                    bytes[i] = lo;
-                    bytes[i + 1] = hi;
-                    i += 2;
-                } else {
-                    bytes[i] = r.u8()?;
-                    i += 1;
-                }
-            }
-            Some(ShapeState::with_ids(&bytes[..len], id_mask))
-        })?
-    } else {
-        HashMap::new()
-    };
-    let mobs = if flags & FLAG_HAS_MOBS != 0 {
-        super::mobs::get_mobs(&mut r)?
-    } else {
-        Vec::new()
-    };
-    let cell_kv = if flags2 & FLAG2_HAS_CELL_KV != 0 {
-        get_indexed(&mut r, get_kv_map)?
-    } else {
-        HashMap::new()
-    };
-    let containers = if flags2 & FLAG2_HAS_CONTAINERS != 0 {
-        super::container::get_containers(&mut r)?
-    } else {
-        HashMap::new()
-    };
-    let skylight = if flags3 & FLAG3_HAS_SKYLIGHT != 0 {
-        Some(r.bytes(SECTION_VOLUME)?)
-    } else {
-        None
-    };
-    let blocklight = if flags3 & FLAG3_HAS_BLOCKLIGHT != 0 {
-        Some(petramond_world::light::from_le_bytes(
-            r.bytes(SECTION_VOLUME * 2)?,
-        )?)
-    } else {
-        None
-    };
+    let unknown = [flags, flags2, flags3]
+        .iter()
+        .zip(KNOWN_FLAGS)
+        .enumerate()
+        .fold(0u32, |acc, (i, (f, known))| {
+            acc | (u32::from(f & !known) << (8 * i))
+        });
+    if unknown != 0 {
+        return Err(RecordError::UnknownPayload {
+            format: SECTION.name,
+            flags: unknown,
+        });
+    }
+    let blocks = get_block_cube(&mut frames.r, pal).ok_or_else(|| frames.corrupt("block cube"))?;
+    let fluid = frames
+        .payload(flags & FLAG_HAS_FLUID != 0, "fluid")?
+        .map(|f| f.exact(SECTION_VOLUME))
+        .transpose()?;
+    let entities = frames
+        .payload(flags & FLAG_HAS_ENTITIES != 0, "entities")?
+        .map(|f| f.decode(super::entities::get_entities))
+        .transpose()?;
+    let furnaces = frames
+        .payload(flags & FLAG_HAS_FURNACES != 0, "furnaces")?
+        .map(|f| f.decode(super::furnace::get_furnaces))
+        .transpose()?;
+    let cell_states = frames
+        .payload(flags & FLAG_HAS_CELL_STATES != 0, "cell states")?
+        .map(|f| f.decode(|r| get_cell_states(r, pal)))
+        .transpose()?;
+    let mobs = frames
+        .payload(flags & FLAG_HAS_MOBS != 0, "mobs")?
+        .map(|f| f.decode(super::mobs::get_mobs))
+        .transpose()?;
+    let cell_kv = frames
+        .payload(flags2 & FLAG2_HAS_CELL_KV != 0, "cell kv")?
+        .map(|f| f.decode(|r| get_indexed(r, get_kv_map)))
+        .transpose()?;
+    let containers = frames
+        .payload(flags2 & FLAG2_HAS_CONTAINERS != 0, "containers")?
+        .map(|f| f.decode(super::container::get_containers))
+        .transpose()?;
+    let skylight = frames
+        .payload(flags3 & FLAG3_HAS_SKYLIGHT != 0, "skylight")?
+        .map(|f| f.exact(SECTION_VOLUME))
+        .transpose()?;
+    let blocklight = frames
+        .payload(flags3 & FLAG3_HAS_BLOCKLIGHT != 0, "block light")?
+        .map(|f| f.decode(|r| petramond_world::light::from_le_bytes(r.bytes(SECTION_VOLUME * 2)?)))
+        .transpose()?;
+    if !frames.r.is_at_end() {
+        return Err(frames.corrupt("trailing bytes"));
+    }
     let mut section = Section::from_saved(
         pos.cx,
         pos.cy,
         pos.cz,
         &blocks,
-        fluid,
-        furnaces,
-        containers,
-        cell_states,
-        cell_kv,
+        fluid.map(|w| w.to_vec().into_boxed_slice()),
+        furnaces.unwrap_or_default(),
+        containers.unwrap_or_default(),
+        cell_states.unwrap_or_default(),
+        cell_kv.unwrap_or_default(),
     );
     // Persisted clean light: seed the cache and clear `light_dirty`, so the
     // streamer's settle flush skips the bake for this section entirely. The
@@ -466,11 +568,41 @@ pub fn decode_section_with(
     // persisted bake — the streamer's cover-change invalidation spares them
     // when the change's source is itself persisted content.
     if let Some(sky) = skylight {
-        section.set_skylight(std::sync::Arc::from(sky));
+        section.set_skylight(Arc::from(sky));
         if let Some(bl) = blocklight {
-            section.set_blocklight(std::sync::Arc::from(bl));
+            section.set_blocklight(Arc::from(bl));
         }
         section.light_from_persist = true;
     }
-    Some((section, entities, mobs))
+    Ok((
+        section,
+        entities.unwrap_or_default(),
+        mobs.unwrap_or_default(),
+    ))
+}
+
+/// The unified cell-state list: per cell `[len][id_mask][len bytes]`, the
+/// id-masked pairs mapped back through the save palette.
+fn get_cell_states(r: &mut Reader, pal: &palette::Palette) -> Option<HashMap<u16, ShapeState>> {
+    get_indexed(r, |r| {
+        let len = r.u8()? as usize;
+        let id_mask = r.u8()?;
+        if len > petramond_world::block::SHAPE_STATE_MAX {
+            return None;
+        }
+        let mut bytes = [0u8; petramond_world::block::SHAPE_STATE_MAX];
+        let mut i = 0;
+        while i < len {
+            if id_mask & (1 << i) != 0 && i + 1 < len {
+                let [lo, hi] = ShapeState::id_bytes(pal.block_from_disk(r.u16()?));
+                bytes[i] = lo;
+                bytes[i + 1] = hi;
+                i += 2;
+            } else {
+                bytes[i] = r.u8()?;
+                i += 1;
+            }
+        }
+        Some(ShapeState::with_ids(&bytes[..len], id_mask))
+    })
 }

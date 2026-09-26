@@ -56,7 +56,14 @@ impl RegionFileCache {
         }
     }
 
-    fn read_record(&mut self, path: &Path, lidx: u16, barrier: u64) -> Option<Vec<u8>> {
+    /// The record's bytes, `Ok(None)` when the region file or the record is
+    /// absent. Any other failure is an error: the record may exist.
+    fn read_record(
+        &mut self,
+        path: &Path,
+        lidx: u16,
+        barrier: u64,
+    ) -> std::io::Result<Option<Vec<u8>>> {
         let entry = if let Some(i) = self
             .entries
             .iter()
@@ -69,16 +76,19 @@ impl RegionFileCache {
             if let Some(i) = self.entries.iter().position(|(p, _, _)| p == path) {
                 self.entries.remove(i);
             }
-            let reader = region::RegionReader::open(path).ok()?;
+            let reader = match region::RegionReader::open(path) {
+                Ok(reader) => reader,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(e),
+            };
             (path.to_path_buf(), reader, barrier)
         };
         self.entries.push_back(entry);
         while self.entries.len() > self.capacity {
             self.entries.pop_front();
         }
-        self.entries
-            .back_mut()
-            .and_then(|(_, reader, _)| reader.read_record(lidx).ok().flatten())
+        let (_, reader, _) = self.entries.back_mut().expect("pushed above");
+        reader.read_record(lidx)
     }
 }
 
@@ -193,7 +203,7 @@ pub(super) fn read_thread(
     completed: Arc<(Mutex<u64>, Condvar)>,
 ) {
     crate::worker::lower_current_thread_priority();
-    let mut decoders = super::decode::Decoders::new(load_tx, colgen_tx);
+    let mut decoders = super::decode::Decoders::new(dir.clone(), load_tx, colgen_tx);
     let region_dir = dir.join("region");
     let explored_dir = dir.join("explored");
     let colgen_dir = dir.join("colgen");
@@ -249,7 +259,11 @@ pub(super) fn read_thread(
             ReadMsg::ColumnGen { pos, seed, barrier } => {
                 let (rx_, rz_) = colgen::region_of(pos);
                 let path = colgen::cache_path(&colgen_dir, rx_, rz_);
-                let bytes = colgen_cache.read_record(&path, colgen::local_index(pos), barrier);
+                // A rebuildable cache: an unreadable record is simply a miss.
+                let bytes = colgen_cache
+                    .read_record(&path, colgen::local_index(pos), barrier)
+                    .ok()
+                    .flatten();
                 decoders.submit(super::decode::DecodeJob::Column { pos, seed, bytes });
             }
             ReadMsg::Shutdown => unreachable!("shutdown ends the loop on receipt"),

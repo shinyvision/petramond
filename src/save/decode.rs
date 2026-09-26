@@ -1,9 +1,13 @@
+use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-use super::{codec, colgen, LoadedColumnGen, LoadedSection, SectionStore};
+use super::format::{self, RecordError};
+use super::{
+    codec, colgen, region, LoadedColumnGen, LoadedSection, SectionRecord, SectionStore, Unreadable,
+};
 
 /// Cores kept out of decoding: the save reader that feeds the pool and the
 /// game thread that consumes what it publishes.
@@ -25,7 +29,8 @@ pub(super) enum DecodeJob {
     Section {
         pos: SectionPos,
         store: SectionStore,
-        bytes: Option<Vec<u8>>,
+        /// The record as read: `Ok(None)` when there is none.
+        bytes: std::io::Result<Option<Vec<u8>>>,
     },
     Column {
         pos: ChunkPos,
@@ -51,7 +56,9 @@ pub(super) struct Decoders {
 }
 
 impl Decoders {
+    /// `dir` is the world directory unreadable records are quarantined in.
     pub(super) fn new(
+        dir: PathBuf,
         sections: mpsc::Sender<LoadedSection>,
         columns: mpsc::Sender<LoadedColumnGen>,
     ) -> Self {
@@ -95,7 +102,7 @@ impl Decoders {
             .expect("spawn load publisher");
         let mut workers: Vec<_> = (0..count)
             .map(|i| {
-                let (rx, completed) = (rx.clone(), completed.clone());
+                let (rx, completed, dir) = (rx.clone(), completed.clone(), dir.clone());
                 std::thread::Builder::new()
                     .name(format!("petramond-decode-{i}"))
                     .spawn(move || {
@@ -105,18 +112,10 @@ impl Decoders {
                             let Ok((seq, job)) = job else { break };
                             let value = match job {
                                 DecodeJob::Section { pos, store, bytes } => {
-                                    let decoded =
-                                        bytes.and_then(|b| codec::decode_section(pos, &b));
-                                    let (section, entities, mobs) = match decoded {
-                                        Some((s, e, m)) => (Some(s), e, m),
-                                        None => (None, Vec::new(), Vec::new()),
-                                    };
                                     Decoded::Section(LoadedSection {
                                         pos,
                                         store,
-                                        section,
-                                        entities,
-                                        mobs,
+                                        record: decode_record(&dir, pos, store, bytes),
                                     })
                                 }
                                 DecodeJob::Column { pos, seed, bytes } => {
@@ -163,6 +162,54 @@ impl Drop for Decoders {
             let _ = worker.join();
         }
     }
+}
+
+/// Decode one section read. A record that exists but cannot be read is
+/// logged with its position and, when authoritative, its bytes are kept
+/// under `quarantine/region/` before anything can replace them.
+fn decode_record(
+    dir: &Path,
+    pos: SectionPos,
+    store: SectionStore,
+    bytes: std::io::Result<Option<Vec<u8>>>,
+) -> SectionRecord {
+    let (error, bytes) = match bytes {
+        Ok(None) => return SectionRecord::Absent,
+        Ok(Some(bytes)) => match codec::decode_section(pos, &bytes) {
+            Ok((section, entities, mobs)) => {
+                return SectionRecord::Decoded {
+                    section: Box::new(section),
+                    entities,
+                    mobs,
+                }
+            }
+            Err(error) => (error, Some(bytes)),
+        },
+        Err(e) => (
+            RecordError::Io {
+                format: codec::SECTION.name,
+                kind: e.kind(),
+            },
+            None,
+        ),
+    };
+    if store == SectionStore::ExploredCache {
+        // A rebuildable cache: regenerating over it loses nothing.
+        log::warn!("explored-cache section {pos:?} is unreadable ({error}); regenerating");
+        return SectionRecord::Unreadable(Unreadable {
+            error,
+            quarantined: None,
+        });
+    }
+    let quarantined = bytes.and_then(|bytes| {
+        let (rx, rz) = region::region_of(pos);
+        let name = format!("r.{rx}.{rz}.{}.bin", region::local_index(pos));
+        format::quarantine(dir, &Path::new("region").join(name), &bytes)
+            .inspect_err(|e| log::error!("could not quarantine section {pos:?}: {e}"))
+            .ok()
+    });
+    log::error!("saved section {pos:?} is unreadable ({error}); kept at {quarantined:?}");
+    SectionRecord::Unreadable(Unreadable { error, quarantined })
 }
 
 #[cfg(test)]

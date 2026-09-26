@@ -79,11 +79,11 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     let saved = {
         let save = game.server.world.save_mut().expect("save stays attached");
         save.shutdown();
-        save.load_player(&key).expect("autosave wrote the player")
+        save.load_player(&key)
+            .expect("saved player decodes")
+            .expect("autosave wrote the player")
     };
-    let restored = petramond::save::player::decode(&saved)
-        .expect("saved player decodes")
-        .restore();
+    let restored = saved.restore();
     let obstacles = game.server.world.mobs().solid_obstacles();
     assert!(
         petramond::mob::riding::player_body_free(&game.server.world, restored.pos, &obstacles),

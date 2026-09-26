@@ -565,7 +565,9 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
             }
         }
         let loaded = got.expect("section read back from disk");
-        let section = loaded.section.expect("section record decodes");
+        let crate::save::SectionRecord::Decoded { section, .. } = loaded.record else {
+            panic!("section record decodes");
+        };
         assert_eq!(
             section.block_raw(4, 250usize.rem_euclid(16), 4),
             Block::Stone.id(),

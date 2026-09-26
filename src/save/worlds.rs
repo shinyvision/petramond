@@ -162,14 +162,17 @@ pub fn read_world_settings(dir_name: &str) -> settings::WorldSettings {
 }
 
 /// The world's seed from `level.dat`, by save-directory name — `None` for a
-/// world that has never been opened (or a stale-version header). Decodes only
-/// the header, so the World Settings screen shows it without opening the save.
+/// world that has never been opened, or one whose header this build cannot
+/// read (logged). Decodes only the header, so the World Settings screen shows
+/// it without opening the save.
 pub fn read_world_seed(dir_name: &str) -> Option<u32> {
     if !is_single_path_component(dir_name) {
         return None;
     }
     let bytes = std::fs::read(saves_dir().join(dir_name).join("level.dat")).ok()?;
     level::read_seed(&bytes)
+        .inspect_err(|e| log::warn!("world '{dir_name}': {e}"))
+        .ok()
 }
 
 /// Total bytes of the world's save directory (recursive walk; unreadable

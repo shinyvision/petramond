@@ -39,12 +39,17 @@ impl Projects {
     }
 
     pub fn get(&mut self, id: ProjectId) -> Option<&Project> {
-        if self.records.get(id).is_none() {
-            // A listed project whose record cannot be read is no project.
-            self.live.set(id, false);
-            return None;
+        match self.records.get(id) {
+            Ok(Some(project)) => Some(project),
+            // A listed project with no record is no project.
+            Ok(None) => {
+                self.live.set(id, false);
+                None
+            }
+            // An unreadable record (say, from a newer build) stays listed:
+            // the world keeps it for a build that can read it.
+            Err(_) => None,
         }
-        self.records.peek(id)
     }
 
     /// A project this session already holds, without reading the world.

@@ -123,16 +123,24 @@ impl PlayerRegistry {
             requested.to_string()
         };
 
-        let own = save.and_then(|s| s.load_player(&key));
-        let first_seen = !self.names.contains_key(&key) && own.is_none();
-        let bytes = if first_seen {
-            save.and_then(|s| s.adopt_legacy_player(&name, &key))
+        // An unreadable file (own or legacy) is an error, never silently a
+        // fresh player: the save quarantines it and, when it must not be
+        // overwritten, stops saving this identity (`WorldSave::load_player`).
+        // The session still spawns fresh.
+        let own = save.map_or(Ok(None), |s| s.load_player(&key));
+        let first_seen = !self.names.contains_key(&key) && matches!(own, Ok(None));
+        let loaded = if first_seen {
+            save.map_or(Ok(None), |s| s.adopt_legacy_player(&name, &key))
         } else {
             own
         };
-        let restored = bytes
-            .and_then(|b| crate::save::player::decode(&b))
-            .map(|data| data.restore());
+        let restored = match loaded {
+            Ok(data) => data.map(|data| data.restore()),
+            Err(e) => {
+                log::error!("player '{name}' ({key}) spawns fresh: {e}");
+                None
+            }
+        };
 
         if self.names.get(&key) != Some(&name) {
             self.names.insert(key, name.clone());

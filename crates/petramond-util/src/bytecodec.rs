@@ -16,6 +16,14 @@ impl<'a> Reader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, off: 0 }
     }
+    /// Bytes consumed so far — the position a decode error reports.
+    pub fn offset(&self) -> usize {
+        self.off
+    }
+    /// Whether every byte has been consumed.
+    pub fn is_at_end(&self) -> bool {
+        self.off == self.bytes.len()
+    }
     fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let end = self.off.checked_add(n)?;
         let s = self.bytes.get(self.off..end)?;

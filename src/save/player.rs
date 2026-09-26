@@ -9,13 +9,18 @@
 
 use crate::player::{BedSpawn, Player, PlayerMode};
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8, Reader};
+use crate::save::format::{Format, RecordError};
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
 use petramond_world::item::ItemStack;
 
-/// The one supported player-file version. Only the CURRENT version decodes —
-/// no legacy ladders. Bump this and let old dev players respawn fresh.
+/// The player-file version this build writes, and the oldest it reads; a
+/// later layout change adds an upgrade step to [`FORMAT`] (see
+/// `save::format`).
 const VERSION: u32 = 7;
+
+/// The player-file format and its upgrade chain.
+pub const FORMAT: Format = Format::new("player file", VERSION, &[]);
 
 /// Decoded `players/<key>.dat` contents.
 pub struct PlayerData {
@@ -113,23 +118,35 @@ fn get_strings(r: &mut Reader) -> Option<Vec<String>> {
     Some(out)
 }
 
-/// Decode a CURRENT-version player file. Any other version returns `None` —
-/// the player respawns fresh (pre-release, breaking saves is free).
-pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
-    let mut r = Reader::new(bytes);
-    if r.u32()? != VERSION {
-        return None;
+/// Decode a player file, migrating an older version first. A newer, retired
+/// or malformed one is an error — never a fresh player.
+pub fn decode(bytes: &[u8]) -> Result<PlayerData, RecordError> {
+    let body = FORMAT.upgrade_u32_record(bytes)?;
+    let mut r = Reader::new(&body);
+    let data = decode_body(&mut r)
+        .ok_or_else(|| RecordError::corrupt(FORMAT.name, "player record", 4 + r.offset()))?;
+    if !r.is_at_end() {
+        return Err(RecordError::corrupt(
+            FORMAT.name,
+            "trailing bytes",
+            4 + r.offset(),
+        ));
     }
-    let pos = get_world_pos(&mut r)?;
-    let vel = get_vec3(&mut r)?;
+    Ok(data)
+}
+
+/// The current-version body; `r` is left where decoding stopped.
+fn decode_body(r: &mut Reader) -> Option<PlayerData> {
+    let pos = get_world_pos(r)?;
+    let vel = get_vec3(r)?;
     let (yaw, pitch) = (r.f32()?, r.f32()?);
     let mode = PlayerMode::from_u8(r.u8()?);
     let health = r.u32()? as i32;
 
     let bed_spawn = if r.u8()? == 1 {
         Some(BedSpawn {
-            bed: get_ivec3(&mut r)?,
-            spot: get_ivec3(&mut r)?,
+            bed: get_ivec3(r)?,
+            spot: get_ivec3(r)?,
         })
     } else {
         None
@@ -137,10 +154,10 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
 
     let mut slots: [Option<ItemStack>; TOTAL_SLOTS] = [None; TOTAL_SLOTS];
     for slot in slots.iter_mut() {
-        *slot = get_item_slot(&mut r)?;
+        *slot = get_item_slot(r)?;
     }
-    let cursor = get_item_slot(&mut r)?;
-    let off_hand = get_item_slot(&mut r)?;
+    let cursor = get_item_slot(r)?;
+    let off_hand = get_item_slot(r)?;
     let active = r.u8()?;
     let inventory = Inventory::from_parts(slots, cursor, off_hand, active);
     let craft_craftable_only = r.u8()? != 0;
@@ -154,8 +171,8 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
         effects.push((name, remaining));
     }
 
-    let obtained_items = get_strings(&mut r)?;
-    let unlocked_recipes = get_strings(&mut r)?;
+    let obtained_items = get_strings(r)?;
+    let unlocked_recipes = get_strings(r)?;
 
     Some(PlayerData {
         pos,
@@ -338,13 +355,51 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_version_is_rejected_not_half_decoded() {
-        // Only the current version loads (project rule: no legacy decode
-        // paths; bump + wipe dev players instead). A stale blob must return
-        // None so the player respawns fresh.
+    fn other_versions_are_typed_errors_not_a_fresh_player() {
+        // A player file this build cannot read must never look like "no
+        // file": the caller would respawn the player with an empty inventory
+        // and save it over the original.
         let mut bytes = encode(&Player::new(WorldPos::new(1.0, 2.0, 3.0)));
         bytes[0..4].copy_from_slice(&(VERSION + 1).to_le_bytes());
-        assert!(decode(&bytes).is_none(), "future version rejected");
+        assert!(matches!(
+            decode(&bytes),
+            Err(RecordError::Newer { found, .. }) if found == VERSION + 1
+        ));
+        bytes[0..4].copy_from_slice(&(FORMAT.oldest() - 1).to_le_bytes());
+        assert!(matches!(decode(&bytes), Err(RecordError::Retired { .. })));
+    }
+
+    #[test]
+    fn a_truncated_file_is_corrupt() {
+        let bytes = encode(&Player::new(WorldPos::new(1.0, 2.0, 3.0)));
+        assert!(matches!(
+            decode(&bytes[..bytes.len() - 1]),
+            Err(RecordError::Corrupt { .. })
+        ));
+    }
+
+    /// Golden player file v7, laid out by hand rather than by the encoder:
+    /// survival at (1.5, 64, -2.5), health 20, no bed, empty inventory with
+    /// hotbar slot 2 active, one effect, one obtained item, one recipe. Item
+    /// slots are all empty so the fixture holds no palette-dependent id.
+    #[test]
+    fn golden_player_v7_decodes() {
+        let got = decode(include_bytes!("fixtures/player_v7.bin")).expect("v7 decodes");
+        assert_eq!(got.pos, WorldPos::new(1.5, 64.0, -2.5));
+        assert_eq!(got.vel, Vec3::new(0.0, -0.5, 0.0));
+        assert_eq!((got.yaw, got.pitch), (0.5, -0.25));
+        assert_eq!(got.mode, PlayerMode::Survival);
+        assert_eq!(got.health, 20);
+        assert_eq!(got.bed_spawn, None);
+        assert_eq!(got.inventory.active_slot(), 2);
+        assert!(got.inventory.raw_slots().iter().all(Option::is_none));
+        assert!(got.craft_craftable_only);
+        assert_eq!(
+            got.effects,
+            vec![("petramond:regeneration".to_owned(), 100)]
+        );
+        assert_eq!(got.obtained_items, vec!["petramond:coal".to_owned()]);
+        assert_eq!(got.unlocked_recipes, vec!["petramond:torch".to_owned()]);
     }
 
     #[test]

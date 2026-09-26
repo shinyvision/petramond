@@ -1,6 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
+use crate::save::SectionRecord;
 use crate::worker::{GenJob, GenOutput};
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_worldgen::driver::ColumnGen;
@@ -350,35 +351,54 @@ impl World {
                 if !w.within_current_keep_radius(sp.chunk_pos()) {
                     return;
                 }
-                let Some(section) = loaded.section else {
-                    if let Some(save) = w.save.as_mut() {
-                        save.note_section_load_miss(&mut w.data.saved, sp, loaded.store);
-                    }
-                    // Missing/corrupt record. Overlay path: generation stands.
-                    // Disk-primary path: no base exists — generate it after all.
-                    if disk_primary {
-                        if let Some(col) = w.gen.column_gen.get(&sp.chunk_pos()).cloned() {
-                            let band_lo = *Self::surface_window_for_column(&col, 0).start();
-                            let underground = w.anchor_underground(target);
-                            let job = w.worker.submit(
-                                target.surface_biased_section_key(sp, band_lo, underground),
-                                GenJob::Section {
-                                    sp,
-                                    col,
-                                    seed: w.seed,
-                                },
-                            );
-                            w.insert_pending_section(sp);
-                            w.gen.pending_section_jobs.insert(sp, job);
+                let (section, entities, mobs) = match loaded.record {
+                    SectionRecord::Decoded {
+                        section,
+                        entities,
+                        mobs,
+                    } => (*section, entities, mobs),
+                    missing => {
+                        if let Some(save) = w.save.as_mut() {
+                            match &missing {
+                                SectionRecord::Unreadable(unreadable) => save
+                                    .note_section_unreadable(
+                                        &mut w.data.saved,
+                                        sp,
+                                        loaded.store,
+                                        unreadable,
+                                    ),
+                                _ => {
+                                    save.note_section_load_miss(&mut w.data.saved, sp, loaded.store)
+                                }
+                            }
                         }
+                        // Missing, or unreadable (quarantined or write-protected by
+                        // the save). Overlay path: generation stands.
+                        // Disk-primary path: no base exists — generate it after all.
+                        if disk_primary {
+                            if let Some(col) = w.gen.column_gen.get(&sp.chunk_pos()).cloned() {
+                                let band_lo = *Self::surface_window_for_column(&col, 0).start();
+                                let underground = w.anchor_underground(target);
+                                let job = w.worker.submit(
+                                    target.surface_biased_section_key(sp, band_lo, underground),
+                                    GenJob::Section {
+                                        sp,
+                                        col,
+                                        seed: w.seed,
+                                    },
+                                );
+                                w.insert_pending_section(sp);
+                                w.gen.pending_section_jobs.insert(sp, job);
+                            }
+                        }
+                        return;
                     }
-                    return;
                 };
                 if disk_primary {
                     if !w.gen.column_gen.contains_key(&sp.chunk_pos()) {
                         return; // column evicted while the read was in flight
                     }
-                    if !loaded.entities.is_empty() || !loaded.mobs.is_empty() {
+                    if !entities.is_empty() || !mobs.is_empty() {
                         if let Some(save) = w.save.as_mut() {
                             save.note_record_holds_entities(sp);
                         }
@@ -388,8 +408,8 @@ impl World {
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
                     w.classify_deep_on_install(sp);
-                    w.dropped_items.extend(loaded.entities);
-                    w.restore_mobs(loaded.mobs);
+                    w.dropped_items.extend(entities);
+                    w.restore_mobs(mobs);
                     if w.draw_stream.stream_events_enabled {
                         w.draw_stream.stream_events.push(StreamEvent::Loaded(sp));
                     }
@@ -400,9 +420,7 @@ impl World {
                         heightmap_recompute.insert(sp.chunk_pos());
                     }
                 } else {
-                    w.gen
-                        .pending_overlays
-                        .insert(sp, (section, loaded.entities, loaded.mobs));
+                    w.gen.pending_overlays.insert(sp, (section, entities, mobs));
                     w.note_stream_nonfinal(sp);
                 }
             },

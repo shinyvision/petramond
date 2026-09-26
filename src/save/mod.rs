@@ -17,6 +17,7 @@ pub use petramond_worldgen::colgen;
 mod container;
 mod decode;
 pub mod entities;
+pub mod format;
 mod furnace;
 mod io;
 mod journal;
@@ -32,6 +33,7 @@ mod worlds;
 mod tests;
 
 pub use codec::SectionSnapshot;
+pub use format::RecordError;
 pub use level::LevelData;
 pub use petramond_util::paths::base_data_dir;
 pub use worlds::{
@@ -65,15 +67,43 @@ pub enum SectionStore {
     ExploredCache,
 }
 
-/// A section read back from disk (`section` is `None` if absent / corrupt) plus any
-/// item entities and mobs stored in its record (empty if absent / corrupt / none
-/// saved).
+/// A section read back from disk.
 pub struct LoadedSection {
     pub pos: SectionPos,
     pub store: SectionStore,
-    pub section: Option<Section>,
-    pub entities: Vec<DroppedItem>,
-    pub mobs: Vec<SavedMob>,
+    pub record: SectionRecord,
+}
+
+/// What a section read found. An unreadable record is never "absent": its
+/// bytes may be the player's builds.
+pub enum SectionRecord {
+    /// No record on disk.
+    Absent,
+    /// The decoded section plus the item entities and mobs stored with it.
+    Decoded {
+        section: Box<Section>,
+        entities: Vec<DroppedItem>,
+        mobs: Vec<SavedMob>,
+    },
+    Unreadable(Unreadable),
+}
+
+/// A record that exists but could not be read.
+#[derive(Debug)]
+pub struct Unreadable {
+    pub error: RecordError,
+    /// Where the record's bytes were kept (`quarantine/` in the world
+    /// directory), or `None` when they could not be kept (or could not be
+    /// read in the first place).
+    pub quarantined: Option<PathBuf>,
+}
+
+impl Unreadable {
+    /// Whether writing over the record could lose data nobody kept: it came
+    /// from a newer build, or its bytes are not in quarantine.
+    pub fn must_not_overwrite(&self) -> bool {
+        self.error.is_from_newer_build() || self.quarantined.is_none()
+    }
 }
 
 /// A column-gen cache record read back from disk (`record` is `None` when the
@@ -113,6 +143,12 @@ pub struct WorldSave {
     dir: PathBuf,
     /// Write jobs the I/O thread is holding because one failed to land.
     held_writes: Arc<AtomicU64>,
+    /// Authoritative sections whose record could not be read and must not be
+    /// overwritten (see [`Unreadable::must_not_overwrite`]): their saves are
+    /// dropped for the rest of the session.
+    write_protected: HashSet<SectionPos>,
+    /// Player files under the same protection, by player identity.
+    protected_players: Mutex<HashSet<PlayerKey>>,
 }
 
 /// The ordered lane to the write thread, shared with any open
@@ -283,6 +319,9 @@ impl WorldSave {
         let mut authoritative = Vec::new();
         let mut explored = Vec::new();
         for s in snaps {
+            if self.write_protected.contains(&s.pos) {
+                continue;
+            }
             if s.cache_only && !saved.authoritative_contains(s.pos) {
                 saved.insert_explored(s.pos);
                 explored.push(s);
@@ -314,41 +353,138 @@ impl WorldSave {
 
     /// Queue a player-file write (`players/<hex key>.dat`, atomic like
     /// `level.dat`). `bytes` come from [`player::encode`].
+    ///
+    /// A player whose file could not be read and was not kept aside is not
+    /// written (see [`load_player`](Self::load_player)).
     pub fn save_player(&self, key: &PlayerKey, bytes: Vec<u8>) {
+        if self
+            .protected_players
+            .lock()
+            .expect("protected players")
+            .contains(key)
+        {
+            return;
+        }
         self.queue_write(IoMsg::SavePlayer { key: *key, bytes });
     }
 
-    /// Blocking read of `players/<hex key>.dat` (`None` = no such player
-    /// yet, or unreadable). Called once per player at session open/join time
-    /// — one small file, synchronous like the `level.dat` read at open.
-    pub fn load_player(&self, key: &PlayerKey) -> Option<Vec<u8>> {
-        std::fs::read(player_path(&self.players_dir, key)).ok()
+    /// Blocking read and decode of `players/<hex key>.dat`: `Ok(None)` when
+    /// the player has no file yet. Called once per player at session
+    /// open/join time — one small file, synchronous like the `level.dat` read
+    /// at open.
+    ///
+    /// A file that exists but does not decode is an error, never a fresh
+    /// player: its bytes are copied to `quarantine/players/` first, and when
+    /// that fails (or the file is from a newer build) the player's saves are
+    /// dropped for the session so the original is never overwritten.
+    pub fn load_player(&self, key: &PlayerKey) -> Result<Option<player::PlayerData>, RecordError> {
+        let path = player_path(&self.players_dir, key);
+        let Some(bytes) = self.read_player_file(&path, key)? else {
+            return Ok(None);
+        };
+        self.decode_player_file(&path, &bytes, key).map(Some)
     }
 
-    /// Hand a pre-identity `players/<sanitized name>.dat` to `key`: the file
-    /// MOVES to `key`'s own path (synchronously, before anything else can
-    /// claim it) and its bytes are returned. `None` = no legacy file for that
-    /// name, or `key` already has a file of its own (never overwritten).
-    /// Worlds saved before player identities existed migrate one player at a
-    /// time this way, on that name's first authenticated claim.
-    pub fn adopt_legacy_player(&self, name: &str, key: &PlayerKey) -> Option<Vec<u8>> {
+    /// Hand a pre-identity `players/<sanitized name>.dat` to `key`: once it
+    /// decodes, the file MOVES to `key`'s own path (synchronously, before
+    /// anything else can claim it) and its contents are returned. `Ok(None)`
+    /// = no legacy file for that name, or `key` already has a file of its
+    /// own (never overwritten). Worlds saved before player identities existed
+    /// migrate one player at a time this way, on that name's first
+    /// authenticated claim.
+    ///
+    /// A legacy file that cannot be read or decoded is an error exactly like
+    /// [`load_player`](Self::load_player): it is quarantined and never
+    /// moved, and when it could not be kept aside (or is from a newer build)
+    /// `key`'s saves are dropped for the session, so no fresh player file
+    /// takes its place.
+    pub fn adopt_legacy_player(
+        &self,
+        name: &str,
+        key: &PlayerKey,
+    ) -> Result<Option<player::PlayerData>, RecordError> {
         let legacy = legacy_player_path(&self.players_dir, name);
         let owned = player_path(&self.players_dir, key);
         if owned.exists() {
-            return None;
+            return Ok(None);
         }
-        let bytes = std::fs::read(&legacy).ok()?;
+        let Some(bytes) = self.read_player_file(&legacy, key)? else {
+            return Ok(None);
+        };
+        let data = self.decode_player_file(&legacy, &bytes, key)?;
         if let Err(e) = std::fs::rename(&legacy, &owned) {
+            // The decoded state still restores; the player's next save lands
+            // at `owned` and the legacy file is left as it was.
             log::warn!(
                 "could not migrate legacy player file {}: {e}",
                 legacy.display()
             );
-            return None;
+            return Ok(Some(data));
         }
         if let Err(e) = petramond_util::atomic_file::sync_dir(&self.players_dir) {
             log::warn!("could not sync the players directory: {e}");
         }
-        Some(bytes)
+        Ok(Some(data))
+    }
+
+    /// Read a player file: `Ok(None)` when it does not exist. Any other read
+    /// failure protects `key`'s saves (nothing of it could be kept aside).
+    fn read_player_file(
+        &self,
+        path: &std::path::Path,
+        key: &PlayerKey,
+    ) -> Result<Option<Vec<u8>>, RecordError> {
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => {
+                log::error!("could not read player file {}: {e}", path.display());
+                self.protect_player(key);
+                Err(RecordError::Io {
+                    format: player::FORMAT.name,
+                    kind: e.kind(),
+                })
+            }
+        }
+    }
+
+    /// Decode a player file's bytes; an unreadable one is quarantined and,
+    /// when it must not be overwritten, protects `key`'s saves.
+    fn decode_player_file(
+        &self,
+        path: &std::path::Path,
+        bytes: &[u8],
+        key: &PlayerKey,
+    ) -> Result<player::PlayerData, RecordError> {
+        let error = match player::decode(bytes) {
+            Ok(data) => return Ok(data),
+            Err(error) => error,
+        };
+        let relative = std::path::Path::new("players").join(path.file_name().unwrap_or_default());
+        let unreadable = Unreadable {
+            quarantined: format::quarantine(&self.dir, &relative, bytes)
+                .inspect_err(|e| log::error!("could not quarantine {}: {e}", path.display()))
+                .ok(),
+            error,
+        };
+        log::error!(
+            "player file {} is unreadable ({}); kept at {:?}",
+            path.display(),
+            unreadable.error,
+            unreadable.quarantined
+        );
+        if unreadable.must_not_overwrite() {
+            self.protect_player(key);
+        }
+        Err(unreadable.error)
+    }
+
+    fn protect_player(&self, key: &PlayerKey) {
+        log::warn!("player {key} will not be saved this session: its file must not be overwritten");
+        self.protected_players
+            .lock()
+            .expect("protected players")
+            .insert(*key);
     }
 
     /// The identity→display-name registry bytes (`None` = none saved yet).
@@ -405,8 +541,8 @@ impl WorldSave {
         self.load_rx.try_recv().ok()
     }
 
-    /// A missing/corrupt record must not stay in the presence index or every
-    /// revisit repeats the failed read and suppresses cache replacement.
+    /// A missing record must not stay in the presence index or every revisit
+    /// repeats the failed read and suppresses cache replacement.
     pub fn note_section_load_miss(
         &mut self,
         saved: &mut crate::world::SavedIndex,
@@ -416,6 +552,29 @@ impl WorldSave {
         match store {
             SectionStore::Authoritative => saved.remove_authoritative(pos),
             SectionStore::ExploredCache => saved.remove_explored(pos),
+        }
+    }
+
+    /// An unreadable record leaves the presence index like a missing one (so
+    /// generation stands in for it), but an authoritative record that must
+    /// not be overwritten also becomes write-protected: the generated
+    /// stand-in is never saved over it this session. A quarantined corrupt
+    /// record may be replaced — its bytes are kept.
+    pub fn note_section_unreadable(
+        &mut self,
+        saved: &mut crate::world::SavedIndex,
+        pos: SectionPos,
+        store: SectionStore,
+        unreadable: &Unreadable,
+    ) {
+        self.note_section_load_miss(saved, pos, store);
+        if store == SectionStore::Authoritative && unreadable.must_not_overwrite() {
+            log::warn!(
+                "section {pos:?} is write-protected this session ({}); changes there will not \
+                 be saved",
+                unreadable.error
+            );
+            self.write_protected.insert(pos);
         }
     }
 
@@ -501,10 +660,21 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let explored_dir = dir.join("explored");
     std::fs::create_dir_all(&region_dir)?;
     std::fs::create_dir_all(&explored_dir)?;
+    // Refuse a world this build cannot read before anything touches it; back
+    // up and restamp an older one (see `format`).
+    format::prepare_world(&dir)?;
     // Finish the last save's batch before anything reads the save.
     if journal::recover(&dir)? {
         log::info!("finished an interrupted save in {}", dir.display());
     }
+    // A `level.dat` that exists but does not decode refuses the open: a
+    // world treated as new would get a fresh seed and world KV written over
+    // the real ones.
+    let level = match std::fs::read(dir.join("level.dat")) {
+        Ok(bytes) => Some(level::decode(&bytes)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
 
     // Per-world settings (`settings.json`; absent = defaults). Mod enablement
     // is read BEFORE the palette so disabled-mod content decodes as unknown.
@@ -522,9 +692,6 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     // palette). Deliberately disabled mods are not a mismatch.
     crate::modding::modset::warn_on_mismatch(&dir, &disabled_mods);
 
-    let level = std::fs::read(dir.join("level.dat"))
-        .ok()
-        .and_then(|b| level::decode(&b));
     let t_meta = t0.elapsed();
 
     // Build the load manifests from existing region/cache headers. The record
@@ -675,6 +842,8 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             players_dir,
             dir: world_dir,
             held_writes,
+            write_protected: HashSet::new(),
+            protected_players: Mutex::new(HashSet::new()),
         },
         level,
         disabled_mods,

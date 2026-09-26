@@ -530,7 +530,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         let left = remain();
         if let Some(data) = std::fs::read(dir.join(format!("players/{}.dat", visitor_id.key())))
             .ok()
-            .and_then(|bytes| crate::save::player::decode(&bytes))
+            .and_then(|bytes| crate::save::player::decode(&bytes).ok())
         {
             let count = data
                 .inventory

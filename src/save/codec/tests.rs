@@ -488,10 +488,16 @@ fn water_free_section_omits_water() {
 }
 
 #[test]
-fn corrupt_blob_is_none() {
+fn corrupt_blob_is_a_typed_error() {
     let p = SectionPos::new(0, 0, 0);
-    assert!(decode_section(p, &[1, 2, 3, 4]).is_none());
-    assert!(decode_section(p, &[]).is_none());
+    assert_eq!(
+        decode_section(p, &[1, 2, 3, 4]).err(),
+        Some(RecordError::corrupt(SECTION.name, "zlib stream", 0))
+    );
+    assert!(matches!(
+        decode_section(p, &[]),
+        Err(RecordError::Corrupt { offset: 0, .. })
+    ));
 }
 
 /// The record's block cube must carry ids that do not fit a byte, at both

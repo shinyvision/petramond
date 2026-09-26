@@ -15,34 +15,35 @@ fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
     let dir = temp_world_dir("legacy-adopt");
     let opened = open_at(dir.clone()).expect("open fresh");
     std::fs::create_dir_all(dir.join("players")).expect("players dir");
-    std::fs::write(dir.join("players/Ann_.dat"), b"old ann").expect("legacy file");
-    std::fs::write(dir.join("players/Bob.dat"), b"old bob").expect("legacy file");
+    let legacy = |slot| {
+        let mut plr = Player::new(WorldPos::new(1.0, 70.0, 2.0));
+        plr.inventory.set_active(slot);
+        player::encode(&plr)
+    };
+    std::fs::write(dir.join("players/Ann_.dat"), legacy(3)).expect("legacy file");
+    std::fs::write(dir.join("players/Bob.dat"), legacy(5)).expect("legacy file");
     let (a, b) = (
         crate::net::identity::PlayerKey([1; 32]),
         crate::net::identity::PlayerKey([2; 32]),
     );
+    let active = |data: Option<player::PlayerData>| data.map(|d| d.inventory.active_slot());
 
     assert_eq!(
-        opened.save.adopt_legacy_player("Ann ", &a).as_deref(),
-        Some(&b"old ann"[..]),
+        active(opened.save.adopt_legacy_player("Ann ", &a).expect("decodes")),
+        Some(3),
         "the name sanitizes to the legacy file's key"
     );
-    assert_eq!(
-        opened.save.load_player(&a).as_deref(),
-        Some(&b"old ann"[..])
-    );
+    assert_eq!(active(opened.save.load_player(&a).expect("decodes")), Some(3));
     assert!(
         !dir.join("players/Ann_.dat").exists(),
         "the legacy file moved"
     );
-    assert_eq!(
-        opened.save.adopt_legacy_player("Ann ", &b),
-        None,
+    assert!(
+        matches!(opened.save.adopt_legacy_player("Ann ", &b), Ok(None)),
         "a second claimant finds nothing"
     );
-    assert_eq!(
-        opened.save.adopt_legacy_player("Bob", &a),
-        None,
+    assert!(
+        matches!(opened.save.adopt_legacy_player("Bob", &a), Ok(None)),
         "an identity with its own file never adopts another"
     );
     assert!(dir.join("players/Bob.dat").exists());
@@ -67,15 +68,25 @@ fn temp_world_dir(tag: &str) -> PathBuf {
     dir
 }
 
+/// Read `pos` back and decode it; `None` if the read never answers. A
+/// record that is absent or unreadable fails the test.
 fn load_blocking(
     save: &WorldSave,
     saved: &crate::world::SavedIndex,
     pos: SectionPos,
-) -> Option<LoadedSection> {
+) -> Option<codec::DecodedSection> {
     save.request_load(saved, pos, true);
     for _ in 0..500 {
         if let Some(l) = save.poll_loaded() {
-            return Some(l);
+            return match l.record {
+                SectionRecord::Decoded {
+                    section,
+                    entities,
+                    mobs,
+                } => Some((*section, entities, mobs)),
+                SectionRecord::Absent => panic!("no record for {pos:?}"),
+                SectionRecord::Unreadable(u) => panic!("unreadable record for {pos:?}: {u:?}"),
+            };
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
@@ -95,7 +106,7 @@ fn save_reopen_roundtrips_section_level_entities() {
         let mut opened = open_at(dir.clone()).expect("open fresh");
         assert!(opened.level.is_none(), "fresh world has no level.dat");
         assert!(
-            opened.save.load_player(&RACHEL).is_none(),
+            matches!(opened.save.load_player(&RACHEL), Ok(None)),
             "fresh world has no player files"
         );
         assert!(!opened.saved.contains(pos));
@@ -138,25 +149,24 @@ fn save_reopen_roundtrips_section_level_entities() {
         let restored = opened
             .save
             .load_player(&RACHEL)
-            .and_then(|b| player::decode(&b))
+            .expect("player file decodes")
             .expect("player file restored under the same identity");
         assert_eq!(restored.pos, WorldPos::new(80.0, 70.0, -40.0));
         assert_eq!(restored.inventory.active_slot(), 4);
 
         assert!(opened.saved.contains(pos), "manifest sees saved section");
 
-        let loaded =
+        let (section, entities, _) =
             load_blocking(&opened.save, &opened.saved, pos).expect("section loads from disk");
-        let section = loaded.section.expect("section record decodes");
         assert_eq!(section.block_raw(3, 0, 7), Block::Stone.id());
         assert_eq!(section.block_raw(3, 1, 7), Block::Water.id());
         assert_eq!(section.fluid_meta(3, 1, 7), 0x12);
 
         // The item entity comes back with its section, lifetime intact.
-        assert_eq!(loaded.entities.len(), 1);
-        assert_eq!(loaded.entities[0].stack, ItemStack::new(ItemType::Dirt, 9));
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].stack, ItemStack::new(ItemType::Dirt, 9));
         assert_eq!(
-            loaded.entities[0].ticks_lived, 2500,
+            entities[0].ticks_lived, 2500,
             "remaining lifetime persisted"
         );
     }
@@ -199,15 +209,9 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
         assert!(opened.saved.explored_contains(cached_pos));
         assert!(!opened.saved.authoritative_contains(cached_pos));
         assert!(opened.saved.authoritative_contains(edited_pos));
-        let loaded =
+        let (section, ..) =
             load_blocking(&opened.save, &opened.saved, cached_pos).expect("cache section loads");
-        assert_eq!(
-            loaded
-                .section
-                .expect("cache record decodes")
-                .block_raw(2, 3, 4),
-            Block::Stone.id()
-        );
+        assert_eq!(section.block_raw(2, 3, 4), Block::Stone.id());
     }
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -270,8 +274,9 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
         "record now carries a drop"
     );
 
-    let with_item = load_blocking(&opened.save, &opened.saved, pos).expect("loads with item");
-    assert_eq!(with_item.entities.len(), 1, "drop is present before pickup");
+    let (_, entities, _) =
+        load_blocking(&opened.save, &opened.saved, pos).expect("loads with item");
+    assert_eq!(entities.len(), 1, "drop is present before pickup");
 
     // Pickup-then-unload: the section is re-saved with no drops. The channel is
     // ordered, so this write lands before the load below reads it back.
@@ -282,16 +287,11 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
         "rewrite cleared the flag"
     );
 
-    let after = load_blocking(&opened.save, &opened.saved, pos).expect("loads after pickup");
-    assert!(
-        after.entities.is_empty(),
-        "the stale drop must not resurrect"
-    );
+    let (section, entities, _) =
+        load_blocking(&opened.save, &opened.saved, pos).expect("loads after pickup");
+    assert!(entities.is_empty(), "the stale drop must not resurrect");
     // The section's own edits survive the rewrite (only the drop was cleared).
-    assert_eq!(
-        after.section.expect("section decodes").block_raw(1, 0, 1),
-        Block::Stone.id()
-    );
+    assert_eq!(section.block_raw(1, 0, 1), Block::Stone.id());
 
     opened.save.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
@@ -325,8 +325,8 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
         "record now carries a mob"
     );
 
-    let with_mob = load_blocking(&opened.save, &opened.saved, pos).expect("loads with mob");
-    assert_eq!(with_mob.mobs.len(), 1, "mob present before it leaves");
+    let (.., mobs) = load_blocking(&opened.save, &opened.saved, pos).expect("loads with mob");
+    assert_eq!(mobs.len(), 1, "mob present before it leaves");
 
     // The mob is gone: the section is re-saved mob-free. The record must be rewritten
     // so the stale mob can't resurrect on the next load.
@@ -337,9 +337,167 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
         "rewrite cleared the flag"
     );
 
-    let after = load_blocking(&opened.save, &opened.saved, pos).expect("loads after");
-    assert!(after.mobs.is_empty(), "the stale mob must not resurrect");
+    let (.., mobs) = load_blocking(&opened.save, &opened.saved, pos).expect("loads after");
+    assert!(mobs.is_empty(), "the stale mob must not resurrect");
 
     opened.save.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `level.dat` that exists but does not decode must refuse the open: a
+/// world treated as new would get a fresh seed and world KV saved over the
+/// real ones.
+#[test]
+fn an_unreadable_level_dat_refuses_the_open_and_is_left_alone() {
+    let dir = temp_world_dir("bad-level");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut bad = level::FORMAT.current.to_le_bytes().to_vec();
+    bad.push(1);
+    std::fs::write(dir.join("level.dat"), &bad).unwrap();
+    let err = open_at(dir.clone()).err().expect("refused");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(std::fs::read(dir.join("level.dat")).unwrap(), bad);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An unreadable player file is an error, never a fresh player, and its
+/// bytes are kept before anything can overwrite them. One from a newer build
+/// is also never overwritten this session.
+#[test]
+fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
+    const PAT: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([7; 32]);
+    let dir = temp_world_dir("bad-player");
+    let mut opened = open_at(dir.clone()).expect("open fresh");
+    let path = super::worlds::player_path(&dir.join("players"), &PAT);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+    // A current version header over a truncated body.
+    let mut garbage = player::FORMAT.current.to_le_bytes().to_vec();
+    garbage.extend([1, 2]);
+    std::fs::write(&path, &garbage).unwrap();
+    assert!(matches!(
+        opened.save.load_player(&PAT),
+        Err(RecordError::Corrupt { .. })
+    ));
+    let kept = dir
+        .join("quarantine")
+        .join("players")
+        .join(path.file_name().unwrap());
+    assert_eq!(std::fs::read(&kept).unwrap(), garbage);
+
+    let newer = (player::FORMAT.current + 1).to_le_bytes();
+    std::fs::write(&path, newer).unwrap();
+    assert!(matches!(
+        opened.save.load_player(&PAT),
+        Err(RecordError::Newer { .. })
+    ));
+    opened.save.save_player(
+        &PAT,
+        player::encode(&Player::new(WorldPos::new(0.0, 70.0, 0.0))),
+    );
+    opened.save.shutdown();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        newer,
+        "a newer build's player file is never saved over"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A legacy (name-keyed) player file that does not decode goes through the
+/// same typed-error path: it is quarantined and NEVER moved to the identity's
+/// path, and when it cannot be kept aside the identity's saves are dropped so
+/// a fresh player never shadows it.
+#[test]
+fn an_unreadable_legacy_player_file_is_not_migrated() {
+    const ANN: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([9; 32]);
+    let dir = temp_world_dir("bad-legacy");
+    let mut opened = open_at(dir.clone()).expect("open fresh");
+    std::fs::create_dir_all(dir.join("players")).expect("players dir");
+    let legacy = dir.join("players/Ann.dat");
+    let owned = super::worlds::player_path(&dir.join("players"), &ANN);
+
+    let mut garbage = player::FORMAT.current.to_le_bytes().to_vec();
+    garbage.extend([1, 2]);
+    std::fs::write(&legacy, &garbage).unwrap();
+    assert!(matches!(
+        opened.save.adopt_legacy_player("Ann", &ANN),
+        Err(RecordError::Corrupt { .. })
+    ));
+    assert_eq!(std::fs::read(&legacy).unwrap(), garbage, "never moved");
+    assert!(!owned.exists());
+    assert_eq!(
+        std::fs::read(dir.join("quarantine/players/Ann.dat")).unwrap(),
+        garbage
+    );
+
+    let newer = (player::FORMAT.current + 1).to_le_bytes();
+    std::fs::write(&legacy, newer).unwrap();
+    assert!(matches!(
+        opened.save.adopt_legacy_player("Ann", &ANN),
+        Err(RecordError::Newer { .. })
+    ));
+    opened.save.save_player(
+        &ANN,
+        player::encode(&Player::new(WorldPos::new(0.0, 70.0, 0.0))),
+    );
+    opened.save.shutdown();
+    assert_eq!(std::fs::read(&legacy).unwrap(), newer);
+    assert!(
+        !owned.exists(),
+        "a fresh player never shadows a legacy file from a newer build"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A section whose record must not be overwritten drops out of the index
+/// (generation stands in for it) and its saves are skipped, so the record on
+/// disk survives the session.
+#[test]
+fn a_write_protected_section_is_never_saved_over() {
+    let dir = temp_world_dir("protected");
+    let pos = SectionPos::new(2, 4, -2);
+    let mut original = Section::new(pos.cx, pos.cy, pos.cz);
+    original.set_block(1, 1, 1, Block::Stone);
+    {
+        let mut opened = open_at(dir.clone()).expect("open fresh");
+        opened.save.save_sections(
+            &mut opened.saved,
+            vec![SectionSnapshot::from_section(&original)],
+        );
+        opened.save.shutdown();
+    }
+    {
+        let mut opened = open_at(dir.clone()).expect("reopen");
+        assert!(opened.saved.authoritative_contains(pos));
+        opened.save.note_section_unreadable(
+            &mut opened.saved,
+            pos,
+            SectionStore::Authoritative,
+            &Unreadable {
+                error: RecordError::Newer {
+                    format: codec::SECTION.name,
+                    found: codec::SECTION.current + 1,
+                    newest: codec::SECTION.current,
+                },
+                quarantined: None,
+            },
+        );
+        assert!(!opened.saved.authoritative_contains(pos));
+        let generated = Section::new(pos.cx, pos.cy, pos.cz);
+        opened.save.save_sections(
+            &mut opened.saved,
+            vec![SectionSnapshot::from_section(&generated)],
+        );
+        assert!(
+            !opened.saved.authoritative_contains(pos),
+            "the protected save was dropped"
+        );
+        opened.save.shutdown();
+    }
+    let opened = open_at(dir.clone()).expect("reopen again");
+    let (section, ..) =
+        load_blocking(&opened.save, &opened.saved, pos).expect("original still on disk");
+    assert_eq!(section.block_raw(1, 1, 1), Block::Stone.id());
     let _ = std::fs::remove_dir_all(&dir);
 }

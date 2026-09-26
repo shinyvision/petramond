@@ -181,17 +181,20 @@ fn name_disabled(name: &str, disabled: &BTreeSet<String>) -> bool {
 
 /// Load the save's palette, creating (or extending) `palette.json` as needed.
 /// Content namespaced to a mod id in `disabled` is treated as unknown and not
-/// appended (see the module docs). Panics on a corrupt file: guessing at id
-/// meanings would silently corrupt the world, so refusing to open is the safe
-/// failure.
+/// appended (see the module docs). A corrupt or unreadable file is an
+/// `InvalidData` / I/O error: guessing at id meanings would silently corrupt
+/// the world, and recreating the file would re-pin every id, so refusing to
+/// open is the safe failure.
 pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Result<Palette> {
     let path = dir.join("palette.json");
+    let invalid = |msg: String| std::io::Error::new(std::io::ErrorKind::InvalidData, msg);
     let (mut file, existed) = match std::fs::read_to_string(&path) {
         Ok(text) => {
             let f: PaletteFile = serde_json::from_str(&text)
-                .unwrap_or_else(|e| panic!("corrupt save palette {}: {e}", path.display()));
+                .map_err(|e| invalid(format!("corrupt save palette {}: {e}", path.display())))?;
             (f, true)
         }
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
         // Fresh (or pre-palette) save: the append below pins the current
         // registry order (air first — the engine lists lead with it).
         Err(_) => (
@@ -234,17 +237,17 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
     if file.blocks.first().map(String::as_str) != Some("petramond:air")
         || file.items.first().map(String::as_str) != Some("petramond:air")
     {
-        panic!(
+        return Err(invalid(format!(
             "corrupt save palette {}: disk id 0 must be 'petramond:air' (the empty-slot sentinel)",
             path.display()
-        );
+        )));
     }
     let cap = petramond_world::registry::WIDE_ID_CAP;
     if file.blocks.len() > cap || file.items.len() > cap || file.mobs.len() > 256 {
-        panic!(
+        return Err(invalid(format!(
             "save palette {} exceeds the id ceiling ({cap} blocks/items, 256 mobs)",
             path.display()
-        );
+        )));
     }
     if changed {
         // Durable BEFORE this returns: the world's writer only starts after
@@ -378,6 +381,22 @@ mod tests {
         assert!(
             dir.join("palette.json").exists(),
             "palette pinned on creation"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_corrupt_palette_is_an_error_and_is_never_rewritten() {
+        // Recreating the file would re-pin every disk id to the current
+        // registry order and silently remap the whole world.
+        let dir = temp_dir("corrupt");
+        std::fs::write(dir.join("palette.json"), b"{ not json").unwrap();
+        let err = load_or_create(&dir, &no_disabled()).err().expect("refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            std::fs::read(dir.join("palette.json")).unwrap(),
+            b"{ not json",
+            "the file is left as found"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
