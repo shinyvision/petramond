@@ -11,6 +11,11 @@ name: Release
 # to it; the game resolves both relative to the executable (see the `assets`
 # module in the petramond-world crate), so a player just unzips and
 # double-clicks.
+#
+# Nothing is built until the full CI workflow (every gate, Linux tests plus the
+# Windows and macOS portability tests) has passed for this exact commit. Every
+# job uses the toolchain pinned in rust-toolchain.toml and builds `--locked`,
+# so a release links the dependency versions CI tested.
 on:
   push:
     tags:
@@ -24,27 +29,32 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   # Sample mods compile to wasm32, which is architecture-independent, so build
   # them once here and hand the exact same bytes to every platform bundle. This
   # also avoids needing `make` on the Windows runners.
   mods:
     name: Build sample mods (wasm)
+    needs: ci
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust
         with:
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: mods
-          workspaces: mods-src
+          cache-key: release-mods
+          cache-workspaces: mods-src -> ../target
+          save-cache: true
 
       - name: Build and install mods
-        run: make mods
+        run: make mods CARGO="cargo --locked"
 
       # Stage every pack `make mods` installed (a pack = a directory with a
       # pack.json, the same rule the game's discovery uses) — never a hardcoded
@@ -68,8 +78,16 @@ jobs:
 
   build:
     name: Build ${{ matrix.id }}
-    needs: mods
+    needs: [ci, mods]
     runs-on: ${{ matrix.runner }}
+    env:
+      # Shipped binaries target each architecture's BASELINE CPU, the same on
+      # every platform. A higher x86-64 level (v3: AVX2/FMA/BMI2) would crash
+      # with SIGILL on older CPUs at launch, before any feature check could
+      # run; adopting one needs a baseline launcher that checks the CPU first.
+      # Set empty on purpose: RUSTFLAGS overrides any rustflags a cargo config
+      # file could contribute.
+      RUSTFLAGS: ""
     strategy:
       fail-fast: false
       matrix:
@@ -97,20 +115,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # cpal/rodio link against ALSA at build time on Linux (the packages are
+      # installed on Linux runners only).
+      - uses: ./.github/actions/setup-rust
         with:
+          cache-key: release-${{ matrix.id }}
+          save-cache: true
           targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.id }}
-
-      # cpal/rodio link against ALSA at build time on Linux.
-      - name: Install Linux build deps (ALSA)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev
+          apt-packages: libasound2-dev
 
       # `petramond_native` belongs to the `petramond-client` crate, not the
       # workspace root package, so it must be named with `-p`: a bare
@@ -119,7 +131,7 @@ jobs:
       # shared workspace target dir that the staging step below copies from.
       - name: Build
         shell: bash
-        run: cargo build --release -p petramond-client --bin petramond_native --target ${{ matrix.target }}
+        run: cargo build --locked --release -p petramond-client --bin petramond_native --target ${{ matrix.target }}
 
       # The headless server is the ENGINE crate's own bin, and its tree has no
       # wgpu/winit/rodio at all — so it needs no GPU, no display and no ALSA on
@@ -128,7 +140,7 @@ jobs:
       - name: Build headless server
         if: matrix.server
         shell: bash
-        run: cargo build --release -p petramond --bin petramond_server --target ${{ matrix.target }}
+        run: cargo build --locked --release -p petramond --bin petramond_server --target ${{ matrix.target }}
 
       - name: Download bundled mods
         uses: actions/download-artifact@v4

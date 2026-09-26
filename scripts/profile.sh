@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# CARGO may be multi-word (Makefile default: nice -n 10 cargo), so split it into words once.
-IFS=' ' read -r -a cargo_cmd <<< "${CARGO:-cargo}"
+# CARGO_CMD may be multi-word (e.g. `nice -n 10 cargo`), so split it into words once.
+IFS=' ' read -r -a cargo_cmd <<< "${CARGO_CMD:-cargo}"
 profile_data=$(mktemp -d "${TMPDIR:-/tmp}/petramond-profile.XXXXXXXX")
 cleanup() {
     rm -rf -- "$profile_data"
@@ -11,14 +11,17 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$repo_root"
+# shellcheck source=lib/named-tests.sh
+source "$repo_root/scripts/lib/named-tests.sh"
 export PETRAMOND_DATA_DIR=$profile_data
 export PETRAMOND_JOIN_RD=${PETRAMOND_JOIN_RD:-4}
 
 # Run in the playtest profile because these are measurements, not correctness
 # gates. The canonical test suite remains the explicit debug-safe test profile.
-"${cargo_cmd[@]}" test --profile playtest -p petramond-client --lib \
-    game::tests::joinprofile::join_profile_sync -- \
-    --exact --ignored --nocapture --test-threads=1
-"${cargo_cmd[@]}" test --profile playtest -p petramond-client --lib \
-    app::tests::perf::world_map_zoom_out_frame_profile -- \
-    --exact --ignored --nocapture --test-threads=1
+# One harness per invocation keeps each one's timings free of the other's load.
+run_named_tests --profile playtest -p petramond-client --lib -- \
+    --ignored --nocapture --test-threads=1 \
+    game::tests::joinprofile::join_profile_sync
+run_named_tests --profile playtest -p petramond-client --lib -- \
+    --ignored --nocapture --test-threads=1 \
+    app::tests::perf::world_map_zoom_out_frame_profile

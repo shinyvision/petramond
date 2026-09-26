@@ -186,26 +186,18 @@ pub fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
 /// the disk module cache there lets every child after the first deserialize
 /// precompiled mod modules (~1 ms) instead of recompiling them (~1 s).
 pub fn run_child_test(root: &std::path::Path, test_path: &str) {
-    let exe = std::env::current_exe().expect("test binary path");
-    let out = std::process::Command::new(exe)
-        .arg(test_path)
-        .arg("--exact")
-        .arg("--ignored")
-        .arg("--nocapture")
-        .env("PETRAMOND_MODS", root.join("mods"))
-        .env(
-            "PETRAMOND_DATA_DIR",
-            std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id())),
-        )
-        .output()
-        .expect("spawn test binary");
-    let _ = std::fs::remove_dir_all(root);
-    assert!(
-        out.status.success(),
-        "inner test failed\n--- stdout ---\n{}\n--- stderr ---\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
+    let run = petramond_world::test_child::run_ignored(
+        test_path,
+        [
+            ("PETRAMOND_MODS", root.join("mods")),
+            (
+                "PETRAMOND_DATA_DIR",
+                std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id())),
+            ),
+        ],
     );
+    let _ = std::fs::remove_dir_all(root);
+    run.assert_passed();
 }
 
 /// A guest module implementing the raw ABI by hand: `mod_init` issues one
@@ -691,17 +683,8 @@ fn short_debug_bounds_large_payloads() {
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) so it
 /// runs alone in a fresh process.
 fn run_isolated(test_path: &str) {
-    let exe = std::env::current_exe().expect("test binary path");
-    let out = Command::new(exe)
-        .args([test_path, "--exact", "--ignored", "--nocapture"])
-        .output()
-        .expect("spawn test binary");
-    assert!(
-        out.status.success(),
-        "inner test failed\n--- stdout ---\n{}\n--- stderr ---\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
+    petramond_world::test_child::run_ignored(test_path, std::iter::empty::<(&str, &str)>())
+        .assert_passed();
 }
 
 /// The one MUTABLE field of `projectile_hit` crosses the ABI and comes back:

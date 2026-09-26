@@ -1,33 +1,142 @@
 name: CI
 
+# Parallel gates over one commit. Pull requests run once (not again for the
+# push that updated them), a newer push to the same pull request cancels the
+# older run, and the release workflow calls this whole file before it builds
+# anything.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
+  # The scripts run every cargo command through $CARGO_CMD: `--locked` makes
+  # CI fail instead of resolving dependency versions the committed lockfiles
+  # do not name.
+  CARGO_CMD: cargo --locked
+  # Incremental artifacts are never reused on a fresh runner; skipping them
+  # keeps the caches small.
+  CARGO_INCREMENTAL: "0"
+  LINUX_PACKAGES: libasound2-dev libudev-dev mesa-vulkan-drivers
 
 jobs:
-  quality:
+  fmt:
+    name: Format and source audit
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install system and Rust targets
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes libasound2-dev libudev-dev mesa-vulkan-drivers ripgrep
-          rustup target add wasm32-unknown-unknown
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+      - name: Install pinned toolchain
+        run: rustup toolchain install || rustup show
       - name: Formatting
         run: make fmt-check
-      - name: Lints
-        run: make clippy
       - name: Source debt budget
         run: make source-audit
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: clippy
+          apt-packages: ${{ env.LINUX_PACKAGES }}
+      - name: Lints (every workspace)
+        run: make clippy
+
+  # The bundled wasm guests, built once and staged the way the game discovers
+  # packs; every test job below reads them through PETRAMOND_MODS.
+  test-mods:
+    name: Build bundled mods (wasm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: test-mods
+          cache-workspaces: mods-src -> ../target
+      - name: Build and stage packs
+        run: bash scripts/stage-test-mods.sh test-mods
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-mods
+          path: test-mods
+          if-no-files-found: error
+          retention-days: 3
+
+  # One job per package group of scripts/test-all.sh. The groups are disjoint,
+  # so every test runs exactly once per platform.
+  test:
+    name: Test ${{ matrix.group }}
+    needs: test-mods
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [core, client, worldgen, mods, gui-builder]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: test-${{ matrix.group }}
+          # Engine tests build fixture guests inside mods-src/target.
+          cache-workspaces: |
+            . -> target
+            mods-src -> target
+          apt-packages: ${{ env.LINUX_PACKAGES }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-mods
+          path: test-mods
       - name: Debug-safe tests
-        run: make test
-      - name: Assets and shaders
-        run: make validate-assets
+        env:
+          PETRAMOND_MODS: ${{ github.workspace }}/test-mods
+        run: bash scripts/test-all.sh ${{ matrix.group }}
+
+  # The headless engine/world/mesh tests on the other desktop platforms, so a
+  # path, filesystem or platform-API regression shows up on the pull request
+  # instead of first breaking a release build.
+  portability:
+    name: Test portable (${{ matrix.os }})
+    needs: test-mods
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: portable-${{ matrix.os }}
+          cache-workspaces: |
+            . -> target
+            mods-src -> target
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-mods
+          path: test-mods
+      - name: Debug-safe tests
+        shell: bash
+        env:
+          PETRAMOND_MODS: ${{ github.workspace }}/test-mods
+        run: bash scripts/test-all.sh portable
+
+  # Determinism gates (the worldgen parity hash) are their own job here: a
+  # checkout plus ./.github/actions/setup-rust, independent of the test jobs.

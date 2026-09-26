@@ -526,23 +526,15 @@ fn dynamic_pack_mob_flows_end_to_end() {
     )
     .unwrap();
 
-    let exe = std::env::current_exe().expect("test binary path");
-    let out = std::process::Command::new(exe)
-        .arg("mob::load::tests::dynamic_pack_mob_inner")
-        .arg("--exact")
-        .arg("--ignored")
-        .arg("--nocapture")
-        .env("PETRAMOND_MODS", root.join("mods"))
-        .env("PETRAMOND_MOBPACK_SAVE", root.join("save"))
-        .output()
-        .expect("spawn test binary");
-    let _ = std::fs::remove_dir_all(&root);
-    assert!(
-        out.status.success(),
-        "inner test failed\n--- stdout ---\n{}\n--- stderr ---\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
+    let run = petramond_world::test_child::run_ignored(
+        "mob::load::tests::dynamic_pack_mob_inner",
+        [
+            ("PETRAMOND_MODS", root.join("mods")),
+            ("PETRAMOND_MOBPACK_SAVE", root.join("save")),
+        ],
     );
+    let _ = std::fs::remove_dir_all(&root);
+    run.assert_passed();
 }
 
 /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`

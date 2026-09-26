@@ -381,28 +381,12 @@ mod tests {
         )
         .unwrap();
 
-        let exe = std::env::current_exe().expect("test binary path");
-        let out = std::process::Command::new(exe)
-            .arg("world::fragile::tests::hanging_support_inner")
-            .arg("--exact")
-            .arg("--ignored")
-            .arg("--nocapture")
-            .env("PETRAMOND_MODS", root.join("mods"))
-            .output()
-            .expect("spawn test binary");
+        let run = petramond_world::test_child::run_ignored(
+            "world::fragile::tests::hanging_support_inner",
+            [("PETRAMOND_MODS", root.join("mods"))],
+        );
         let _ = std::fs::remove_dir_all(&root);
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        assert!(
-            out.status.success(),
-            "inner test failed\n--- stdout ---\n{stdout}\n--- stderr ---\n{}",
-            String::from_utf8_lossy(&out.stderr),
-        );
-        // A filtered-out inner test also exits 0 — the one way this whole
-        // check can silently become a no-op (a rename, a moved module).
-        assert!(
-            stdout.contains("1 passed"),
-            "the inner test did not run\n{stdout}"
-        );
+        run.assert_passed();
     }
 
     /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`

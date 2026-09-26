@@ -72,23 +72,12 @@ fn stage() -> std::path::PathBuf {
 #[test]
 fn synthetic_fluid_rows() {
     let root = stage();
-    let out = std::process::Command::new(std::env::current_exe().expect("test binary path"))
-        .args([
-            "tests::synthetic_fluids::inner",
-            "--exact",
-            "--ignored",
-            "--nocapture",
-        ])
-        .env("PETRAMOND_MODS", root.join("mods"))
-        .output()
-        .expect("spawn test binary");
-    let _ = std::fs::remove_dir_all(&root);
-    assert!(
-        out.status.success(),
-        "inner test failed\n--- stdout ---\n{}\n--- stderr ---\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
+    let run = petramond_world::test_child::run_ignored(
+        "tests::synthetic_fluids::inner",
+        [("PETRAMOND_MODS", root.join("mods"))],
     );
+    let _ = std::fs::remove_dir_all(&root);
+    run.assert_passed();
 }
 
 #[test]

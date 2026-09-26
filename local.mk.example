@@ -1,0 +1,34 @@
+# Per-machine make settings. Copy to `local.mk` (untracked) and keep what
+# fits this machine; the Makefile includes it before its portable defaults.
+# Use `?=` so a one-off `make run CARGO=cargo` or an environment variable still
+# wins.
+
+# Run builds niced: a compile saturates cores either way, and the nice lets the
+# compositor, the game and anything else interactive win the scheduler when it
+# cares (the game child keeps the nice too, which costs nothing: it is
+# GPU-bound and single-digit CPU).
+CARGO ?= nice -n 10 cargo
+
+# Run the game on a discrete NVIDIA GPU via PRIME render offload. The game
+# renders through Vulkan, so __VK_LAYER_NV_optimus=NVIDIA_only (which hides the
+# integrated GPU from the Vulkan loader) is what actually steers adapter
+# selection; the __GLX_ variable only affects OpenGL/GLES. `make run
+# NV_OFFLOAD=` then runs on the integrated GPU for one launch.
+NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
+
+# Cargo-level tuning belongs in ~/.cargo/config.toml, not here, so plain
+# `cargo` invocations (genparity, rust-analyzer) build with the same flags as
+# make and do not thrash the shared target dir. For example:
+#
+#   # Cap parallel rustc jobs so a build leaves cores free for the desktop
+#   # (22-core machine: 14 keeps the edit->playtest loop fast and ~8 cores
+#   # idle). `cargo build -j N` still overrides it.
+#   [build]
+#   jobs = 14
+#
+#   # Codegen for this CPU. Scope it to the host triple ONLY (never a [build]
+#   # rustflags) so cross-compiles are untouched. `x86-64-v3` (AVX2+FMA+BMI2)
+#   # or `native`; neither changes float semantics, but re-run the genparity
+#   # gate after changing it: COMBINED must stay at the committed hash.
+#   [target.x86_64-unknown-linux-gnu]
+#   rustflags = ["-C", "target-cpu=native"]

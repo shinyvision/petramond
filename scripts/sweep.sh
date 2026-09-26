@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# CARGO may be multi-word (Makefile default: nice -n 10 cargo), so split it into words once.
-IFS=' ' read -r -a cargo_cmd <<< "${CARGO:-cargo}"
+# CARGO_CMD may be multi-word (e.g. `nice -n 10 cargo`), so split it into words once.
+IFS=' ' read -r -a cargo_cmd <<< "${CARGO_CMD:-cargo}"
 days=${SWEEP_DAYS:-3}
 cd "$repo_root"
 

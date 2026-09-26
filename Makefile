@@ -13,32 +13,37 @@
 #   make mods            -- build mods-src (wasm32) & install packs into mods/
 #   make profile         -- run repeatable join + map perf harnesses in scratch data
 #   make smoke           -- exercise threaded, TCP, UI-connect, and headless lifecycles
+#   make test            -- the full debug-safe suite (TEST_GROUPS="core client" for a subset)
+#   make check           -- fmt-check, clippy, source-audit, test: what CI gates on
 #
 # Override vars:
 #   SEED=0x12345678 RD=12 make run
-#   NV_OFFLOAD= make run        -- run on the Intel iGPU instead of the NVIDIA dGPU
+#   TEST_GROUPS=worldgen make test  -- groups are listed in scripts/test-all.sh
 #
 # RD is only exported when set explicitly: the client normally reads the view
 # distance saved in client.json (forcing PETRAMOND_RD on every run shadowed
 # the Options slider across restarts). The headless server has no client.json,
 # so it falls back to 32.
 
-# Builds run niced by default: a compile saturates cores either way, and the
-# nice lets the compositor, the game, and anything else interactive win the
-# scheduler when it cares (the game child keeps the nice too, which costs
-# nothing — it is GPU-bound and single-digit CPU). Override for full-speed
-# builds: `make run CARGO=cargo`. Pair with the [build].jobs cap in
-# .cargo/config.toml, which bounds the parallelism of every cargo invocation,
-# make or no make.
-CARGO ?= nice -n 10 cargo
+# Machine-specific tuning is opt-in and never committed. Everything here and in
+# .cargo/config.toml stays portable, because CI and release builds use the same
+# files. Put per-machine settings in an untracked `local.mk` next to this file
+# (see local.mk.example: niced builds, a GPU-offload prefix for launches). Put
+# cargo settings that should hold for EVERY cargo invocation, make or no make
+# (a `jobs` cap, `target-cpu`), in your user-level ~/.cargo/config.toml.
+-include local.mk
+
+CARGO ?= cargo
+# Cargo reads $CARGO as the path to its own executable (and hands it to build
+# scripts and tests), so a multi-word command must never reach it as that
+# variable. The scripts take the command as CARGO_CMD instead.
+unexport CARGO
 SEED  ?= 0x312
 RD    ?=
-
-# Run on the discrete NVIDIA GPU via PRIME render offload. The game renders through
-# Vulkan, so __VK_LAYER_NV_optimus=NVIDIA_only (which hides the Intel iGPU from the
-# Vulkan loader) is what actually steers adapter selection — the __GLX_ var only
-# affects OpenGL/GLES. Override with `make run NV_OFFLOAD=` to use the Intel iGPU.
-NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
+# Env-var prefix for the commands that launch the game window (run, dev,
+# run-release), e.g. a PRIME render-offload selection. Empty by default.
+NV_OFFLOAD ?=
+TEST_GROUPS ?=
 
 .PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods test fmt fmt-check clippy source-audit validate-assets profile smoke check
 
@@ -78,7 +83,7 @@ clean:
 # target dir in the repo. Needs `cargo install cargo-sweep`.
 SWEEP_DAYS ?= 3
 sweep:
-	CARGO="$(CARGO)" SWEEP_DAYS=$(SWEEP_DAYS) bash scripts/sweep.sh
+	CARGO_CMD="$(CARGO)" SWEEP_DAYS=$(SWEEP_DAYS) bash scripts/sweep.sh
 
 # Standalone data-driven GUI builder (separate crate in ./gui-builder).
 gui-builder:
@@ -114,7 +119,7 @@ mods:
 # packs into an isolated temporary root, and runs every workspace with debug
 # assertions and overflow checks enabled. It never reads a developer's mods/.
 test:
-	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/test-all.sh
+	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/test-all.sh $(TEST_GROUPS)
 
 fmt:
 	$(CARGO) fmt --all
@@ -140,15 +145,17 @@ clippy:
 source-audit:
 	bash scripts/audit-source.sh
 
+# A quick gate over shipped data and shaders while editing assets. Every test
+# it names also runs in `test`, so `check` (and CI) leave it out.
 validate-assets:
-	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/validate-assets.sh
+	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/validate-assets.sh
 
 # Manual measurement targets are intentionally outside `check`: profile
 # numbers are machine/load dependent, and smoke duplicates full-suite coverage.
 profile:
-	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/profile.sh
+	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/profile.sh
 
 smoke:
-	CARGO="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/smoke.sh
+	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/smoke.sh
 
-check: fmt-check clippy source-audit test validate-assets
+check: fmt-check clippy source-audit test

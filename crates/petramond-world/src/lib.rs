@@ -64,6 +64,8 @@ pub mod slab;
 pub mod sound_registry;
 pub mod stair;
 pub mod structure;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_child;
 pub mod texture_transition;
 pub mod tile;
 pub mod tile_alpha;

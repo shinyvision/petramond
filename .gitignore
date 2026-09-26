@@ -5,3 +5,4 @@
 .DS_Store
 tools/*
 assets/textures/gui/source/*
+/local.mk

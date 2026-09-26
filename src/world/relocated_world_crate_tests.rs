@@ -966,23 +966,15 @@ mod registry_palette {
             .unwrap();
         }
 
-        let exe = std::env::current_exe().expect("test binary path");
-        let out = std::process::Command::new(exe)
-            .arg("registry::tests::dynamic_pack_world_inner")
-            .arg("--exact")
-            .arg("--ignored")
-            .arg("--nocapture")
-            .env("PETRAMOND_MODS", root.join("mods"))
-            .env("PETRAMOND_DYNPACK_SAVE", root.join("save"))
-            .output()
-            .expect("spawn test binary");
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(
-            out.status.success(),
-            "inner test failed\n--- stdout ---\n{}\n--- stderr ---\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr),
+        let run = petramond_world::test_child::run_ignored(
+            "world::relocated_world_crate_tests::registry_palette::dynamic_pack_world_inner",
+            [
+                ("PETRAMOND_MODS", root.join("mods")),
+                ("PETRAMOND_DYNPACK_SAVE", root.join("save")),
+            ],
         );
+        let _ = std::fs::remove_dir_all(&root);
+        run.assert_passed();
     }
 
     /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
