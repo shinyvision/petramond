@@ -2,16 +2,20 @@
 name = "exploration"
 version.workspace = true
 edition.workspace = true
-description = "Underground habitats, mineral deposits and exploration equipment."
+rust-version.workspace = true
 license.workspace = true
+description = "Underground habitats, mineral deposits and exploration equipment."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+mod-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

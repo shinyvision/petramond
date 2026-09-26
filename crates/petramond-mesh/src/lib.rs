@@ -7,8 +7,6 @@
 //! AO across the face, giving the soft contact shadows in nooks and against
 //! adjacent blocks.
 
-#![allow(clippy::too_many_arguments)]
-
 mod boxset;
 mod builder;
 pub mod face;

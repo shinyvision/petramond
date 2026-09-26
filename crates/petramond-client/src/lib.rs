@@ -2,8 +2,6 @@
 //! (replica, prediction, presentation), the native platform host, and the
 //! offscreen scene harness dev tools ride on.
 
-#![allow(clippy::too_many_arguments)]
-
 #[cfg(test)]
 #[global_allocator]
 static TEST_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;

@@ -10,8 +10,6 @@
 //! container in `petramond-region`, and view-volume culling math in
 //! `petramond-math`.
 
-#![allow(clippy::too_many_arguments)]
-
 // Foundation aliases so module-internal `crate::mathh`-style paths resolve
 // unchanged after extraction from the monolith.
 pub use petramond_math::{face, facing, math as mathh, wire_enum};

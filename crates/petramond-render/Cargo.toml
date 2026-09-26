@@ -1,35 +1,39 @@
 [package]
 name = "petramond-render"
-version = "0.4.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Petramond wgpu renderer: pipelines, composed texture atlas, camera, render-input views."
 
+[lints]
+workspace = true
+
 [dependencies]
-petramond = { path = "../.." }
-petramond-math = { path = "../petramond-math" }
-petramond-world = { path = "../petramond-world" }
-petramond-anim = { path = "../petramond-anim" }
-mod-api = { path = "../../mod-api" }
-petramond-mesh = { path = "../petramond-mesh" }
-petramond-ui = { path = "../../petramond-ui" }
-petramond-text = { path = "../../petramond-text" }
-wgpu = "27"
-winit = { version = "0.30", features = ["rwh_06", "serde"] }
-bytemuck = { version = "1.21", features = ["derive"] }
-glam = { version = "0.29", features = ["bytemuck", "serde"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
-log = "0.4"
-pollster = "0.4"
-rustc-hash = "2"
+petramond = { workspace = true }
+petramond-math = { workspace = true }
+petramond-world = { workspace = true }
+petramond-anim = { workspace = true }
+mod-api = { workspace = true }
+petramond-mesh = { workspace = true }
+petramond-ui = { workspace = true }
+petramond-text = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
+pollster = { workspace = true }
+rustc-hash = { workspace = true }
 smallvec = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
-petramond-anim = { path = "../petramond-anim", features = ["test-support"] }
-petramond-mesh = { path = "../petramond-mesh", features = ["test-support"] }
-petramond = { path = "../..", features = ["test-support"] }
+petramond-anim = { workspace = true, features = ["test-support"] }
+petramond-mesh = { workspace = true, features = ["test-support"] }
+petramond = { workspace = true, features = ["test-support"] }
 # Pack WGSL parse/validate tests (the same naga wgpu embeds): a shader typo
 # fails `cargo test`, not the first windowed launch.
-naga = { version = "27", default-features = false, features = ["wgsl-in"] }
+naga = { workspace = true, features = ["wgsl-in"] }

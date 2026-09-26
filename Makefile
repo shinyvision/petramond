@@ -8,7 +8,7 @@
 #   make build           -- build the release native binary
 #   make clean           -- cargo clean
 #   make sweep           -- delete build artifacts unused for SWEEP_DAYS (default 3) days
-#   make gui-builder     -- build (release) & run the GUI builder tool
+#   make gui-builder     -- build (playtest) & run the GUI builder tool
 #   make gui-builder-dev -- build (debug) & run the GUI builder tool
 #   make mods            -- build mods-src (wasm32) & install packs into mods/
 #   make mod ID=<name>   -- build & install one mod from mods-src/
@@ -16,7 +16,8 @@
 #   make smoke           -- exercise threaded, TCP, UI-connect, and headless lifecycles
 #   make test            -- the full debug-safe suite (TEST_GROUPS="core client" for a subset)
 #   make test-worldgen   -- every worldgen test, the slow ignored sweeps included
-#   make check           -- fmt-check, clippy, source-audit, test: what CI gates on
+#   make check           -- fmt-check, clippy, source-audit, test, genparity: what CI gates on
+#   make deny            -- advisory/license/dependency-graph gate (needs cargo-deny)
 #   make genparity       -- assert worldgen output matches its checked-in hash
 #
 # Override vars:
@@ -51,7 +52,7 @@ TEST_GROUPS ?=
 # Cargo profile for the wasm guests `make mods` / `make mod` build.
 MOD_PROFILE ?= wasm-dev
 
-.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod test test-worldgen fmt fmt-check clippy source-audit validate-assets genparity profile smoke check
+.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod test test-worldgen fmt fmt-check clippy deny source-audit validate-assets genparity profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -91,18 +92,20 @@ SWEEP_DAYS ?= 3
 sweep:
 	CARGO_CMD="$(CARGO)" SWEEP_DAYS=$(SWEEP_DAYS) bash scripts/sweep.sh
 
-# Standalone data-driven GUI builder (separate crate in ./gui-builder).
+# Data-driven GUI builder (./gui-builder, a non-default workspace member).
+# `playtest` is release-speed with incremental rebuilds.
 gui-builder:
-	$(CARGO) run --manifest-path gui-builder/Cargo.toml --target-dir target --release
+	$(CARGO) run --profile playtest -p gui-builder
 
 gui-builder-dev:
-	$(CARGO) run --manifest-path gui-builder/Cargo.toml --target-dir target
+	$(CARGO) run -p gui-builder
 
 # Build every mod crate in mods-src/ (its own wasm32 workspace) and install
 # each one that ships a pack/ dir into mods/<id>/ (pack files + mod.wasm),
-# where the game discovers it; only files that changed are copied. See
-# scripts/install-mods.sh for the conventions. MOD_PROFILE=wasm-dev (default)
-# is the fast iteration build; release packaging uses MOD_PROFILE=release.
+# where the game discovers it; only files that changed are copied. The pack
+# convention and its checks live in scripts/install-mods.sh, shared with the
+# tests and releases. MOD_PROFILE=wasm-dev (default) is the fast iteration
+# build; release packaging uses MOD_PROFILE=release.
 # `make mod ID=<name>` builds and installs a single mod.
 mods:
 	CARGO_CMD="$(CARGO)" MOD_PROFILE="$(MOD_PROFILE)" bash scripts/install-mods.sh mods
@@ -122,23 +125,28 @@ test:
 test-worldgen:
 	CARGO_CMD="$(CARGO)" bash scripts/test-all.sh worldgen
 
+# Two workspaces: the root one (game, GUI builder, guest SDK) and mods-src.
 fmt:
 	$(CARGO) fmt --all
 	$(CARGO) fmt --manifest-path mods-src/Cargo.toml --all
-	$(CARGO) fmt --manifest-path mod-sdk/Cargo.toml
-	$(CARGO) fmt --manifest-path gui-builder/Cargo.toml
 
 fmt-check:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) fmt --manifest-path mods-src/Cargo.toml --all -- --check
-	$(CARGO) fmt --manifest-path mod-sdk/Cargo.toml -- --check
-	$(CARGO) fmt --manifest-path gui-builder/Cargo.toml -- --check
 
+# The lint policy itself lives in [workspace.lints] (so editors agree with
+# CI); `-D warnings` makes every warning fatal here.
 clippy:
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
 	$(CARGO) clippy --manifest-path mods-src/Cargo.toml --target-dir target --workspace --all-targets -- -D warnings
-	$(CARGO) clippy --manifest-path mod-sdk/Cargo.toml --target-dir target --all-targets -- -D warnings
-	$(CARGO) clippy --manifest-path gui-builder/Cargo.toml --target-dir target --all-targets -- -D warnings
+
+# Supply-chain gate over both lockfiles: RUSTSEC advisories, licenses,
+# duplicate versions, crate sources and the crate-graph bans in deny.toml.
+# Needs `cargo install --locked cargo-deny`; CI runs it on every change and
+# weekly.
+deny:
+	$(CARGO) deny --workspace check
+	$(CARGO) deny --manifest-path mods-src/Cargo.toml --workspace check
 
 # Keep giant test fixtures and declarative wire schemas from disguising the
 # size of executable modules, and stop production modules growing past the

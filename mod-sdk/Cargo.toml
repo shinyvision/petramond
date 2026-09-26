@@ -1,21 +1,18 @@
 [package]
 name = "mod-sdk"
+# The guest SDK is versioned with the mod ABI, not with the game.
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Petramond guest-side mod SDK: allocator/dispatch glue, the Mod trait, and safe host-call wrappers over mod-api."
-license = "MIT"
 
-# Standalone: keep this crate OUT of the engine workspace (it is linked into
-# wasm guests, never the engine). Mods depend on it by path from mods-src/.
-[workspace]
+# Linked into wasm guests, never the engine: no engine crate depends on it, so
+# game builds never compile it. It is a root workspace member for the shared
+# lockfile, profiles and lints of its host-side tests; mods-src/ depends on it
+# by path and builds it for wasm32.
+[lints]
+workspace = true
 
 [dependencies]
-mod-api = { path = "../mod-api" }
-
-[profile.test]
-opt-level = 1
-debug-assertions = true
-overflow-checks = true
-
-[profile.fasttest]
-inherits = "test"
+mod-api = { workspace = true }

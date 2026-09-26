@@ -16,6 +16,7 @@ impl ContainerMenu {
     /// through ONE generic path driven by the target's `SlotSpec`s — the furnace's
     /// role hits just map to their conventional indices first. The transient
     /// crafting output keeps dedicated handling.
+    #[allow(clippy::too_many_arguments)]
     pub fn click(
         &mut self,
         world: &mut ServerWorld,

@@ -301,6 +301,7 @@ pub(crate) fn pose_mob_instances(
 /// `global · pose[bone] · S_cube` (see the module doc). The first-person rig's
 /// CPU bake ([`super::first_person`]), and the reference [`SkinMesh`] is
 /// tested against.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn bake_model_cubes(
     model: &Model,
     pose: &[Mat4],

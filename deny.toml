@@ -1,0 +1,75 @@
+# cargo-deny policy for both lockfiles (`make deny`): the root workspace
+# (game, GUI builder, guest SDK) and mods-src. CI runs it on every change and
+# weekly, so a new RUSTSEC advisory against wasmtime/cranelift (which execute
+# third-party mod code) or a network dependency fails a build even when no
+# code changed.
+
+[graph]
+# Resolve every platform the game ships on, not just the host running the check.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "wasm32-unknown-unknown",
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+# Vulnerabilities always fail. An unmaintained notice fails only for a crate
+# we depend on directly (we can act on those); deep transitive ones surface
+# in the report without blocking. A deliberate exception goes in `ignore`
+# with the advisory id and the reason it does not apply.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses, plus MPL-2.0 (file-level copyleft: the symphonia audio
+# decoders and option-ext are used unmodified from crates.io).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+exceptions = [
+    # egui's bundled default fonts (GUI builder only, never shipped with the game).
+    { crate = "epaint_default_fonts", allow = ["OFL-1.1", "LicenseRef-UFL-1.0"] },
+]
+
+[bans]
+# Duplicate versions lengthen builds; report them without blocking (several
+# come from wgpu/winit's platform trees and cannot be unified from here).
+multiple-versions = "warn"
+wildcards = "allow"
+# Crate-graph layering. `wrappers` names the only crates that may depend on
+# the banned crate directly.
+deny = [
+    # The engine crate (and so the headless server) has no GPU, window or audio
+    # stack; only the renderer and the client shell link them. The GUI
+    # builder's egui backends are the other windowing/GPU consumers.
+    { crate = "wgpu", wrappers = ["petramond-render", "petramond-client", "egui-wgpu"], reason = "GPU access belongs to the renderer and the client shell" },
+    { crate = "winit", wrappers = ["petramond-render", "petramond-client", "eframe", "egui-winit", "egui-wgpu", "egui_glow", "glutin-winit", "accesskit_winit"], reason = "windowing belongs to the client shell and the renderer's surface" },
+    { crate = "rodio", wrappers = ["petramond-audio"], reason = "sound playback is petramond-audio's, behind its `playback` feature" },
+    # Only the engine hosts mod wasm.
+    { crate = "wasmtime", wrappers = ["petramond"], reason = "the engine crate is the only wasm host" },
+    # Client-side crates: the engine and the world core never depend on them.
+    { crate = "petramond-render", wrappers = ["petramond-client"], reason = "the renderer is a client-only layer" },
+    { crate = "petramond-audio", wrappers = ["petramond-client"], reason = "audio playback is a client-only layer" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

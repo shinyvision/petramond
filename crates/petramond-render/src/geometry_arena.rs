@@ -179,6 +179,7 @@ impl GeometryArena {
     }
 
     /// Copy live geometry between distinct allocations without a CPU readback.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn copy(
         &mut self,
         device: &wgpu::Device,

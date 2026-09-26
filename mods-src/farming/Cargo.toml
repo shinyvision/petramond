@@ -2,18 +2,22 @@
 name = "farming"
 version.workspace = true
 edition.workspace = true
-description = "Farming content pack: wild wheat and carrot foraging, iron-hoe cultivation on irrigated farmland, four-stage crop growth, flour/dough processing through world water, and kitchen-oven baking."
+rust-version.workspace = true
 license.workspace = true
+description = "Farming content pack: wild wheat and carrot foraging, iron-hoe cultivation on irrigated farmland, four-stage crop growth, flour/dough processing through world water, and kitchen-oven baking."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
+mod-sdk = { workspace = true }
 # The shared field crate only — NOT a dependency on the weather mod. The field
 # row arrives on its session channel (`feed`); without a weather mod nothing is
 # heard, the sky is clear, and irrigation behaves exactly as it does standalone.
 weather-core = { workspace = true, features = ["sdk"] }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

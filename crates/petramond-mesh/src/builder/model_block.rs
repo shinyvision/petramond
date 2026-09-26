@@ -144,6 +144,7 @@ fn copy_run(
 /// grass next to the model while an unsupported neighbouring cell still clips
 /// it. Every stamped cell is within ±1 of `(wx, wz)` by construction, so the
 /// gate's reads stay inside the mesh pad.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_model_contact(
     contact: &mut Vec<ContactShadowVertex>,
     kind: BlockModelKind,

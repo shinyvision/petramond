@@ -421,6 +421,7 @@ impl Audio {
 
     /// Start or replace an active spatial sound. No-op when audio is disabled,
     /// the sound has no decoded variants, or the handle is zero.
+    #[allow(clippy::too_many_arguments)]
     pub fn play_spatial(
         &mut self,
         handle: u64,

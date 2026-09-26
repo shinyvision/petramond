@@ -5,11 +5,12 @@
 #   bash scripts/test-all.sh [group...]
 #
 # Groups (together they cover every test exactly once):
-#   core        the root workspace minus the client-side crates and worldgen
+#   core        the root workspace minus the client-side crates, worldgen, the
+#               GUI builder and the guest SDK
 #   client      petramond-client, petramond-render, petramond-audio
 #   worldgen    petramond-worldgen, its slow `#[ignore]`d sweeps included
 #   mods        the mods-src wasm workspace (natively) and mod-sdk
-#   gui-builder the standalone GUI builder
+#   gui-builder the GUI builder tool
 # `workspace` is core + client in one cargo invocation (one feature
 # resolution, so nothing compiles twice); the default local run uses it.
 # `portable` is the headless engine/world/mesh subset CI also runs on Windows
@@ -30,14 +31,17 @@ test_fast() {
 # leave it out.
 client_packages=(-p petramond-client -p petramond-render -p petramond-audio)
 client_excludes=(--exclude petramond-client --exclude petramond-render --exclude petramond-audio)
+# Root workspace members with a group of their own: the builder (a desktop
+# tool) and the guest SDK (tested with the mods it is linked into).
+own_group_excludes=(--exclude petramond-worldgen --exclude gui-builder --exclude mod-sdk)
 
 run_group() {
     case "$1" in
         workspace)
-            test_fast --workspace --exclude petramond-worldgen --all-targets
+            test_fast --workspace "${own_group_excludes[@]}" --all-targets
             ;;
         core)
-            test_fast --workspace --exclude petramond-worldgen "${client_excludes[@]}" --all-targets
+            test_fast --workspace "${own_group_excludes[@]}" "${client_excludes[@]}" --all-targets
             ;;
         client)
             test_fast "${client_packages[@]}" --all-targets
@@ -47,10 +51,10 @@ run_group() {
             ;;
         mods)
             test_fast --manifest-path mods-src/Cargo.toml --target-dir target --workspace --all-targets
-            test_fast --manifest-path mod-sdk/Cargo.toml --target-dir target --all-targets
+            test_fast -p mod-sdk --all-targets
             ;;
         gui-builder)
-            test_fast --manifest-path gui-builder/Cargo.toml --target-dir target --all-targets
+            test_fast -p gui-builder --all-targets
             ;;
         portable)
             test_fast -p petramond -p petramond-world -p petramond-mesh -p petramond-worldgen \

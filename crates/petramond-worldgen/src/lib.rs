@@ -10,8 +10,6 @@
 //! skinning, cave carving, underground scatter, ground vegetation, and tree
 //! features.
 
-#![allow(clippy::too_many_arguments)]
-
 pub mod audit;
 pub mod biome;
 pub mod cache;

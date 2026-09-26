@@ -2,15 +2,19 @@
 name = "builder"
 version.workspace = true
 edition.workspace = true
-description = "Survival schematics: a schematic table, blueprints, and a Mason Golem that builds a chosen design from supplied materials."
+rust-version.workspace = true
 license.workspace = true
+description = "Survival schematics: a schematic table, blueprints, and a Mason Golem that builds a chosen design from supplied materials."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
-serde.workspace = true
+mod-sdk = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

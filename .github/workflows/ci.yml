@@ -70,7 +70,7 @@ jobs:
           cache-key: test-mods
           cache-workspaces: mods-src -> ../target
       - name: Build and stage packs
-        run: bash scripts/stage-test-mods.sh test-mods
+        run: bash scripts/install-mods.sh --profile wasm-test test-mods
       - uses: actions/upload-artifact@v4
         with:
           name: test-mods

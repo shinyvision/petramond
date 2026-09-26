@@ -305,6 +305,7 @@ fn cy_span(sections: &[(SectionPos, GpuSectionMesh)]) -> (i32, i32) {
         })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn upload_column_mesh(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

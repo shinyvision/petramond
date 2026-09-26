@@ -130,6 +130,7 @@ pub(super) fn push_solid(
 
 /// Push a quad covering pixel rect `(x,y,w,h)` with explicit uv corners (top-left
 /// `uv_tl`, bottom-right `uv_br`). Two CCW triangles. y-down pixels → y-up NDC.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn push_quad_uv(
     out: &mut Vec<UiVertex>,
     screen: (u32, u32),
@@ -489,6 +490,7 @@ fn effective_hook_clip(hook: petramond::gui::DocHook) -> Option<SlotRect> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_ingredient_count(
     out: &mut Vec<UiVertex>,
     screen: (u32, u32),

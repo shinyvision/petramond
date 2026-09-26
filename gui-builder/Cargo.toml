@@ -1,36 +1,27 @@
 [package]
 name = "gui-builder"
 version = "0.2.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Petramond GUI document editor — author petramond-ui *.gui.json documents with a pixel-exact live preview."
-license = "MIT"
 
-# Standalone: declare an empty workspace so this crate does NOT join the parent
-# petramond workspace. It builds with its own Cargo.lock and dependency graph.
-[workspace]
+# A member of the root workspace (one lockfile with the game, so the preview
+# links the game's own petramond-ui), but not a default member: `cargo build`
+# at the root never builds it. `make gui-builder` or `cargo run -p gui-builder`.
+[lints]
+workspace = true
 
 [[bin]]
 name = "gui-builder"
 path = "src/main.rs"
 
 [dependencies]
-petramond-ui = { path = "../petramond-ui", features = ["raster"] }
+petramond-ui = { workspace = true, features = ["raster"] }
 eframe = "0.29"
-image = { version = "0.25", default-features = false, features = ["png"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+image = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 # Native file dialogs without a GTK build dependency: use the xdg-desktop-portal
 # backend (works on Wayland) with an async-std executor for the sync API.
 rfd = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
-
-# Keep the editor responsive even in dev builds.
-[profile.dev]
-opt-level = 1
-
-[profile.test]
-opt-level = 1
-debug-assertions = true
-overflow-checks = true
-
-[profile.fasttest]
-inherits = "test"

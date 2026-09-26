@@ -2,14 +2,18 @@
 name = "combat"
 version.workspace = true
 edition.workspace = true
-description = "Combat: a weapons workbench and the shield you craft on it. Hold the use button with one in either hand to raise it — frontal monster melee is blocked, the body slows to half speed, and both hands are committed. Every rule is authored here, on the engine's generic body seams."
+rust-version.workspace = true
 license.workspace = true
+description = "Combat: a weapons workbench and the shield you craft on it. Hold the use button with one in either hand to raise it — frontal monster melee is blocked, the body slows to half speed, and both hands are committed. Every rule is authored here, on the engine's generic body seams."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
+mod-sdk = { workspace = true }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

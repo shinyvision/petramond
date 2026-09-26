@@ -1,9 +1,13 @@
 [package]
 name = "petramond-audio"
-version = "0.4.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Client-side sound playback engine (rodio) and the music catalog; the sound registry stays in the core crate."
+
+[lints]
+workspace = true
 
 [features]
 default = ["playback"]
@@ -15,9 +19,9 @@ playback = ["dep:rodio"]
 test-support = []
 
 [dependencies]
-petramond-math = { path = "../petramond-math" }
-petramond-world = { path = "../petramond-world" }
-log = "0.4"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+petramond-math = { workspace = true }
+petramond-world = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"], optional = true }

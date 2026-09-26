@@ -17,14 +17,12 @@
 //! REGISTRY (names, defs, categories — what the sim, block sounds, and the net
 //! name tables consume) is data, not playback, and is always compiled.
 
-// `SoundCategory` has no featureless consumer (only the engine's per-category
-// gain reads it), but the re-export is part of the module's stable surface.
-#![allow(clippy::too_many_arguments)]
-
 pub mod music_registry;
 
 #[cfg_attr(not(feature = "playback"), allow(unused_imports))]
 pub use music_registry::MusicTrack;
+// `SoundCategory` has no featureless consumer (only the engine's per-category
+// gain reads it), but the re-export is part of the module's stable surface.
 #[cfg_attr(not(feature = "playback"), allow(unused_imports))]
 pub use petramond_world::sound_registry::{Sound, SoundCategory};
 

@@ -657,6 +657,7 @@ impl Instance {
     /// `manager::lod`): the body moves and follows its route, but the brain,
     /// the confinement refresh and route planning are skipped, and the last
     /// decision's continuous channels are replayed.
+    #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
         dt: f32,

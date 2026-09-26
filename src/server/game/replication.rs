@@ -111,6 +111,7 @@ impl ServerGame {
     /// window's coalesced block deltas restricted to the recipient's sent
     /// sections, the window's world events + session
     /// `s`'s one-shots, its menu sync (when changed), and its own state.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_tick_update(
         &mut self,
         s: usize,

@@ -311,6 +311,7 @@ pub(super) fn push_box_faces_lit(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_log_cube_faces_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -424,6 +425,7 @@ pub(super) fn thin_face_slice_modes(min: Vec3, max: Vec3) -> [u32; 6] {
 ///   packed at [`UV_SLICE_SHIFT`] so the shader crops a 3/16-deep face
 ///   to a matching strip of its tile instead of squishing the whole tile flat — used
 ///   by the door's thin side (crop-U) and top/bottom edge (crop-V) faces.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn push_box_faces_lit_mirrored(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -514,6 +516,7 @@ pub(super) fn push_block_item_cube_lit(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn push_block_item_cube_lit_with_state(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -663,6 +666,7 @@ fn icon_painter_order<T>(
     order
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn push_cell_local_face(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,

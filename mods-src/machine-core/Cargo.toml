@@ -2,8 +2,12 @@
 name = "machine-core"
 version.workspace = true
 edition.workspace = true
-description = "Shared placed-machine plumbing for container-slot mod machines: the generic Machine driver over a MachineSpec, the world-KV anchor registry, session registry caches, and the slot arithmetic. Depended on by the kitchen and forge packs."
+rust-version.workspace = true
 license.workspace = true
+description = "Shared placed-machine plumbing for container-slot mod machines: the generic Machine driver over a MachineSpec, the world-KV anchor registry, session registry caches, and the slot arithmetic. Depended on by the kitchen and forge packs."
+
+[lints]
+workspace = true
 
 [dependencies]
-mod-sdk.workspace = true
+mod-sdk = { workspace = true }

@@ -5,11 +5,6 @@
 //! marks mutable (`MobDamagePre::amount`, `MobDamagePre::feedback`,
 //! `PlayerDamagePre::amount`); everything else is observational.
 
-// The payloads are the mod-facing API: the engine constructs them and handlers
-// read them; fields no engine handler touches are still part of the surface
-// mod closures see through `modding::convert`.
-#![allow(dead_code)]
-
 use crate::mob::{Mob, MobDamageFeedback};
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};

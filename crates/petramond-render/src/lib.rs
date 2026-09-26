@@ -1,7 +1,5 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
-#![allow(clippy::too_many_arguments)]
-
 pub(crate) mod animation_inputs;
 pub(crate) mod animator_claims;
 pub mod atlas;

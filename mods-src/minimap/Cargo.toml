@@ -2,14 +2,18 @@
 name = "minimap"
 version.workspace = true
 edition.workspace = true
-description = "Client-side rotating terrain minimap, explored world map, and persistent personal waypoints."
+rust-version.workspace = true
 license.workspace = true
+description = "Client-side rotating terrain minimap, explored world map, and persistent personal waypoints."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
+mod-sdk = { workspace = true }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

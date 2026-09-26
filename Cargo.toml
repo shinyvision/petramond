@@ -1,17 +1,23 @@
 [package]
 name = "petramond"
-version = "0.4.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 authors = ["rachel"]
 description = "A noise-based voxel world biomes + features."
-license = "MIT"
+
+[lints]
+workspace = true
 
 [workspace]
 members = [
     ".",
     "mod-api",
+    "mod-sdk",
     "petramond-text",
     "petramond-ui",
+    "gui-builder",
     "crates/petramond-math",
     "crates/petramond-util",
     "crates/petramond-worldgen",
@@ -24,13 +30,93 @@ members = [
     "crates/petramond-audio",
     "crates/petramond-render",
 ]
-# The GUI builder (./gui-builder) is a standalone tool crate with its own deps;
-# keep it out of the game's workspace so it doesn't affect the game build.
-# mod-sdk is guest-side only (linked into mods, never the engine) and mods-src
-# is its own wasm32 workspace built by `make mods` — both stay out for the same
-# reason.
-exclude = ["gui-builder", "mod-sdk", "mods-src"]
+# One lockfile and one set of profiles for the game, the GUI builder and the
+# guest SDK, so the builder's preview links exactly the petramond-ui, image and
+# serde the game does. A plain `cargo build`/`cargo run` at the root still
+# builds only the `petramond` package (a root package is the implicit default
+# member); the builder and the SDK are selected with `-p` or `--workspace`.
+# mods-src stays its own wasm32 workspace (another target, its own release
+# profile) built by `make mods`; scripts/audit-source.sh keeps its shared
+# dependency and lint tables identical to the ones below.
+exclude = ["mods-src"]
 resolver = "2"
+
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+# The toolchain rust-toolchain.toml pins; raise the two together.
+rust-version = "1.97"
+license = "MIT"
+
+# Every dependency more than one member uses, declared once. Members write
+# `dep = { workspace = true }` and can only ADD features to an entry (default
+# features included), so each entry carries the smallest feature set any
+# member needs.
+[workspace.dependencies]
+# Internal crates.
+petramond = { path = "." }
+mod-api = { path = "mod-api" }
+mod-sdk = { path = "mod-sdk" }
+petramond-text = { path = "petramond-text" }
+petramond-ui = { path = "petramond-ui" }
+petramond-math = { path = "crates/petramond-math" }
+petramond-util = { path = "crates/petramond-util" }
+petramond-worldgen = { path = "crates/petramond-worldgen" }
+petramond-mesh = { path = "crates/petramond-mesh" }
+petramond-world = { path = "crates/petramond-world" }
+petramond-input = { path = "crates/petramond-input" }
+petramond-anim = { path = "crates/petramond-anim" }
+petramond-region = { path = "crates/petramond-region" }
+petramond-render = { path = "crates/petramond-render" }
+# Playback is the client's choice (its `audio` feature forwards to
+# `petramond-audio/playback`), so the audio crate's default is off here.
+petramond-audio = { path = "crates/petramond-audio", default-features = false }
+
+# External crates.
+bincode = "1"
+bytemuck = { version = "1.21", features = ["derive"] }
+directories = "5"
+env_logger = "0.11"
+flate2 = "1"
+glam = { version = "0.29", features = ["bytemuck", "serde"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
+mimalloc = "0.1.52"
+pollster = "0.4"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+rayon = "1.10"
+# Fast fixed-seed hasher for the per-voxel hot maps (world sections, A* scratch,
+# tick/mesh sets) — std's SipHash is a keyed cryptographic hash and its cost
+# shows up in collision/water/pathing loops that hit these maps per cell.
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# WASM runtime for mod logic. Deliberately minimal features: core modules only —
+# no wasi, no component model, no async, no gc, no wat parsing, no parallel
+# compilation — to keep compile time and binary size down.
+wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
+# The graphics stack moves as one: naga is the shader compiler wgpu embeds (the
+# same major version), and winit is the windowing version wgpu's surfaces take.
+wgpu = "27"
+naga = { version = "27", default-features = false }
+winit = { version = "0.30", features = ["rwh_06", "serde"] }
+
+# Lint policy for every member (`[lints] workspace = true`), so `cargo clippy`
+# in an editor reports what CI does; CI adds `-D warnings` on top. mods-src
+# mirrors this table.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+# Debugging leftovers never ship.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# A wide positional signature is a refactoring signal: group the arguments into
+# a context struct. The remaining exceptions are allowed item by item, never
+# crate-wide, so each one stays visible (scripts/audit-source.sh rejects
+# crate- and module-level `#![allow(...)]`).
+too_many_arguments = "warn"
 
 [lib]
 crate-type = ["rlib"]
@@ -50,25 +136,25 @@ path = "src/bin/server.rs"
 [dependencies]
 # Renderer-agnostic GUI runtime (documents, layout, theme, widgets, paint) —
 # shared with the gui-builder so its preview is pixel-exactly the game's UI.
-petramond-ui = { path = "petramond-ui" }
-petramond-text = { path = "petramond-text" }
-petramond-math = { path = "crates/petramond-math" }
-petramond-util = { path = "crates/petramond-util" }
-petramond-worldgen = { path = "crates/petramond-worldgen" }
-petramond-mesh = { path = "crates/petramond-mesh" }
-petramond-world = { path = "crates/petramond-world" }
-petramond-input = { path = "crates/petramond-input" }
-petramond-anim = { path = "crates/petramond-anim" }
-petramond-region = { path = "crates/petramond-region" }
-bytemuck = { version = "1.21", features = ["derive"] }
-glam = { version = "0.29", features = ["bytemuck", "serde"] }
+petramond-ui = { workspace = true }
+petramond-text = { workspace = true }
+petramond-math = { workspace = true }
+petramond-util = { workspace = true }
+petramond-worldgen = { workspace = true }
+petramond-mesh = { workspace = true }
+petramond-world = { workspace = true }
+petramond-input = { workspace = true }
+petramond-anim = { workspace = true }
+petramond-region = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
 noise = { version = "0.9", default-features = false }
-image = { version = "0.25", default-features = false, features = ["png"] }
-log = "0.4"
-rayon = "1.10"
-env_logger = "0.11"
-directories = "5"
-flate2 = "1"
+image = { workspace = true }
+log = { workspace = true }
+rayon = { workspace = true }
+env_logger = { workspace = true }
+directories = { workspace = true }
+flate2 = { workspace = true }
 crc32fast = "1"
 # Content addressing for world-owned schematic assets.
 blake3 = "1"
@@ -77,31 +163,25 @@ blake3 = "1"
 ed25519-dalek = "2"
 # OS randomness for identity keys and join challenges.
 getrandom = { version = "0.2", features = ["std"] }
-serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
-bincode = "1"
-mimalloc = "0.1.52"
-# Fast fixed-seed hasher for the per-voxel hot maps (world sections, A* scratch,
-# tick/mesh sets) — std's SipHash is a keyed cryptographic hash and its cost
-# shows up in collision/water/pathing loops that hit these maps per cell.
-rustc-hash = "2"
+serde = { workspace = true, features = ["rc"] }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+mimalloc = { workspace = true }
+rustc-hash = { workspace = true }
 # Per-thread scheduling priority (setpriority/gettid) for background worker pools.
 libc = "0.2"
 # --- Modding host (Phase 2b) ---
 # Shared engine↔mod ABI types (postcard enums).
-mod-api = { path = "mod-api" }
-postcard = { version = "1", default-features = false, features = ["alloc"] }
-# WASM runtime for mod logic. Deliberately minimal features: core modules only —
-# no wasi, no component model, no async, no gc, no wat parsing, no parallel
-# compilation — to keep compile time and binary size down.
-wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
+mod-api = { workspace = true }
+postcard = { workspace = true }
+wasmtime = { workspace = true }
 
 [dev-dependencies]
-petramond-world = { path = "crates/petramond-world", features = ["test-support"] }
-petramond-util = { path = "crates/petramond-util", features = ["test-support"] }
+petramond-world = { workspace = true, features = ["test-support"] }
+petramond-util = { workspace = true, features = ["test-support"] }
 # Tests hand-build hostile guest modules from WAT text (trap/registration-window
 # contracts); the shipped binary never parses wat.
-wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "wat"] }
+wasmtime = { workspace = true, features = ["wat"] }
 
 [profile.release]
 opt-level = 3

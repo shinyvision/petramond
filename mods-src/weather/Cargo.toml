@@ -2,15 +2,19 @@
 name = "weather"
 version.workspace = true
 edition.workspace = true
-description = "Localized weather: a wind-advected cloud field that darkens as it accumulates and rains where it peaks; volumetric clouds, rain/snow precipitation with splashes, and snow-layer accumulation. All policy lives here — the engine only provides generic shader/particle/event seams."
+rust-version.workspace = true
 license.workspace = true
+description = "Localized weather: a wind-advected cloud field that darkens as it accumulates and rains where it peaks; volumetric clouds, rain/snow precipitation with splashes, and snow-layer accumulation. All policy lives here — the engine only provides generic shader/particle/event seams."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
+mod-sdk = { workspace = true }
 weather-core = { workspace = true, features = ["sdk"] }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

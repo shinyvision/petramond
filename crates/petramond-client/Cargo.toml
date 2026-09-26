@@ -1,9 +1,13 @@
 [package]
 name = "petramond-client"
-version = "0.4.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Petramond client: app shell, client game session, native host, scene harness."
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "petramond_native"
@@ -20,32 +24,32 @@ default = ["audio"]
 audio = ["petramond-audio/playback"]
 
 [dependencies]
-petramond = { path = "../.." }
-petramond-audio = { path = "../petramond-audio", default-features = false }
-petramond-render = { path = "../petramond-render" }
-petramond-math = { path = "../petramond-math" }
-petramond-world = { path = "../petramond-world" }
-petramond-input = { path = "../petramond-input" }
-petramond-mesh = { path = "../petramond-mesh" }
-petramond-worldgen = { path = "../petramond-worldgen" }
-petramond-util = { path = "../petramond-util" }
-petramond-ui = { path = "../../petramond-ui" }
-petramond-text = { path = "../../petramond-text" }
-mod-api = { path = "../../mod-api" }
-glam = { version = "0.29", features = ["bytemuck", "serde"] }
-log = "0.4"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-winit = { version = "0.30", features = ["rwh_06", "serde"] }
-wgpu = "27"
-pollster = "0.4"
+petramond = { workspace = true }
+petramond-audio = { workspace = true }
+petramond-render = { workspace = true }
+petramond-math = { workspace = true }
+petramond-world = { workspace = true }
+petramond-input = { workspace = true }
+petramond-mesh = { workspace = true }
+petramond-worldgen = { workspace = true }
+petramond-util = { workspace = true }
+petramond-ui = { workspace = true }
+petramond-text = { workspace = true }
+mod-api = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+pollster = { workspace = true }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
-rustc-hash = "2"
-mimalloc = "0.1.52"
-image = { version = "0.25", default-features = false, features = ["png"] }
+rustc-hash = { workspace = true }
+mimalloc = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
-petramond-util = { path = "../petramond-util", features = ["test-support"] }
-petramond-audio = { path = "../petramond-audio", default-features = false, features = ["test-support"] }
-env_logger = "0.11"
-petramond = { path = "../..", features = ["test-support"] }
+petramond-util = { workspace = true, features = ["test-support"] }
+petramond-audio = { workspace = true, features = ["test-support"] }
+env_logger = { workspace = true }
+petramond = { workspace = true, features = ["test-support"] }

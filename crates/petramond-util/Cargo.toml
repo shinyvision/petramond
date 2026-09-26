@@ -1,14 +1,18 @@
 [package]
 name = "petramond-util"
-version = "0.4.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Persistence and platform plumbing: atomic file writes, the byte codec, user data paths, and (with test-support) shared test deadlines."
 
 [features]
 # Shared wall-clock test deadlines, for dependents' test suites only.
 test-support = []
 
+[lints]
+workspace = true
+
 [dependencies]
-flate2 = "1"
-directories = "5"
+flate2 = { workspace = true }
+directories = { workspace = true }

@@ -102,6 +102,7 @@ impl ContainerMenu {
     /// cursor, otherwise a left/right click (take-only outputs only ever
     /// give). The single entry the dispatcher routes every chest, furnace,
     /// and mod container slot through.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn container_slot_interaction(
         &self,
         world: &mut ServerWorld,

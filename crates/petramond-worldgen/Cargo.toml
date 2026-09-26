@@ -1,23 +1,27 @@
 [package]
 name = "petramond-worldgen"
-version = "0.4.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Deterministic worldgen pipeline: climate, terrain density, caves, features — plus the mod-gen hook seam and the column-gen cache records."
 
+[lints]
+workspace = true
+
 [dependencies]
-petramond-math = { path = "../petramond-math" }
-petramond-util = { path = "../petramond-util" }
-petramond-world = { path = "../petramond-world" }
-petramond-region = { path = "../petramond-region" }
-mod-api = { path = "../../mod-api" }
-log = "0.4"
-rustc-hash = "2"
-serde = { version = "1", features = ["derive"] }
+petramond-math = { workspace = true }
+petramond-util = { workspace = true }
+petramond-world = { workspace = true }
+petramond-region = { workspace = true }
+mod-api = { workspace = true }
+log = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
 # `float_roundtrip`: data recipes (density/terrain.json) carry computed f64
 # knots that must parse back to the exact bits they were written from.
-serde_json = { version = "1", features = ["float_roundtrip"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+image = { workspace = true }
 
 [[bin]]
 name = "genfeature"
@@ -28,4 +32,4 @@ name = "genparity"
 path = "src/bin/genparity.rs"
 
 [dev-dependencies]
-petramond-world = { path = "../petramond-world", features = ["test-support"] }
+petramond-world = { workspace = true, features = ["test-support"] }

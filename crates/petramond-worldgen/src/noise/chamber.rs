@@ -58,6 +58,7 @@ impl Lobe {
     /// the reach is bounded by `major + feather` horizontally and `ry + feather`
     /// vertically. Every bound in this file rests on that.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn at(
         &self,
         y: i32,

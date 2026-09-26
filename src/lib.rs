@@ -3,8 +3,6 @@
 //! Native desktop target. Worldgen runs off the render thread via an OS thread
 //! pool (rayon).
 
-#![allow(clippy::too_many_arguments)]
-
 pub mod entity;
 pub mod events;
 mod exposure;

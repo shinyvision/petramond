@@ -65,6 +65,7 @@ impl FluidSurface {
     /// in since the caller already has the meta lookup); `block_at`/`fluid_at`
     /// sample the world for the corner-height average and the flow gradient;
     /// `block` names the fluid (its row owns the still/flow tiles).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new<B, F, S>(
         wx: i32,
         wy: i32,

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Run a command with PETRAMOND_MODS pointing at a freshly built, temporary copy
 # of the bundled packs, so tests never read a developer's mods/.
+#
+# The guests build with the `wasm-test` profile (no LTO) unless MODS_PROFILE
+# says otherwise; `make profile` measures with the shipping `release` guests.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -14,7 +17,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-bash "$repo_root/scripts/stage-test-mods.sh" "$test_mod_root"
+bash "$repo_root/scripts/install-mods.sh" --profile "${MODS_PROFILE:-wasm-test}" "$test_mod_root"
 
 export PETRAMOND_MODS="$test_mod_root"
 cd "$repo_root"

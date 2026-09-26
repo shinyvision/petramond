@@ -2,15 +2,19 @@
 name = "kitchen"
 version.workspace = true
 edition.workspace = true
-description = "Cooking addon: a craftable multi-cell kitchen oven that smelts like a furnace through the mod container-slot API (fuel below, food above, output beside)."
+rust-version.workspace = true
 license.workspace = true
+description = "Cooking addon: a craftable multi-cell kitchen oven that smelts like a furnace through the mod container-slot API (fuel below, food above, output beside)."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
-machine-core.workspace = true
+mod-sdk = { workspace = true }
+machine-core = { workspace = true }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

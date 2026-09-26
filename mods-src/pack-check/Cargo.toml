@@ -2,8 +2,12 @@
 name = "pack-check"
 version.workspace = true
 edition.workspace = true
-description = "Host-side test support for the bundled mods: indexes every shipped pack's JSON (and the engine's assets) and asserts that each id a mod declares through `mod_sdk::pack_keys!` names a real declaration."
+rust-version.workspace = true
 license.workspace = true
+description = "Host-side test support for the bundled mods: indexes every shipped pack's JSON (and the engine's assets) and asserts that each id a mod declares through `mod_sdk::pack_keys!` names a real declaration."
+
+[lints]
+workspace = true
 
 [dependencies]
-mod-sdk.workspace = true
+mod-sdk = { workspace = true }

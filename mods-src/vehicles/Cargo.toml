@@ -2,14 +2,18 @@
 name = "vehicles"
 version.workspace = true
 edition.workspace = true
-description = "Rideable vehicles: a craftable wooden boat for water, and minecarts on plain, booster, curved and sloped rails for land."
+rust-version.workspace = true
 license.workspace = true
+description = "Rideable vehicles: a craftable wooden boat for water, and minecarts on plain, booster, curved and sloped rails for land."
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk.workspace = true
+mod-sdk = { workspace = true }
 
 [dev-dependencies]
-pack-check.workspace = true
+pack-check = { workspace = true }

@@ -1,9 +1,13 @@
 [package]
 name = "petramond-text"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Renderer-neutral Petramond font metrics, layout, atlases, and rasterization."
-license = "MIT"
+
+[lints]
+workspace = true
 
 [dependencies]
 ab_glyph = "0.2.32"
