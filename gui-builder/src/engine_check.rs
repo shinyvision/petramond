@@ -3,9 +3,10 @@
 //! Every rule comes from `petramond_ui::contract` — the same functions the
 //! game's loader calls — so there is no builder copy of any table. This
 //! module only supplies what those rules ask the host for: the pack the
-//! document ships in (namespace ownership), the item tags that pack and the
-//! base game register (slot `accepts`), and image files beside the project.
+//! document ships in (namespace ownership), the item tags every asset layer
+//! registers (slot `accepts`), and image files beside the project.
 
+use crate::assets::{self, AssetRoots};
 use petramond_ui::contract::{self, EngineCatalog, EngineCheck};
 use petramond_ui::{DocClass, DocIssue, Document, Theme, UiState};
 use std::collections::HashSet;
@@ -26,18 +27,18 @@ pub struct EngineContext {
 }
 
 impl EngineContext {
-    /// The context for a project saved in `project_dir`: the enclosing pack
-    /// (the first ancestor holding a `pack.json`) and the tags its and the
-    /// base game's `items.json` rows list.
-    pub fn for_project(project_dir: Option<&Path>) -> EngineContext {
-        let pack_root = project_dir.and_then(find_pack_root);
-        let pack_id = pack_root.as_deref().and_then(read_pack_id);
+    /// The context for a project saved in `project_dir`, seen through
+    /// `roots` (the project's layered roots — see
+    /// [`AssetRoots::for_project`]): the enclosing pack (the first ancestor
+    /// holding a `pack.json`) and the tags every layer's `items.json` rows
+    /// list.
+    pub fn for_project(roots: &AssetRoots, project_dir: Option<&Path>) -> EngineContext {
+        let pack_id = project_dir
+            .and_then(assets::enclosing_pack)
+            .as_deref()
+            .and_then(read_pack_id);
         let mut item_tags = HashSet::new();
-        let catalogs = crate::io::game_assets_dir()
-            .into_iter()
-            .chain(pack_root)
-            .map(|root| root.join("items.json"));
-        for path in catalogs {
+        for path in roots.all("items.json") {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 if let Ok(json) = serde_json::from_str(&text) {
                     collect_tags(&json, &mut item_tags);
@@ -96,12 +97,6 @@ impl EngineCatalog for EngineContext {
     }
 }
 
-fn find_pack_root(dir: &Path) -> Option<PathBuf> {
-    dir.ancestors()
-        .find(|d| d.join("pack.json").is_file())
-        .map(Path::to_path_buf)
-}
-
 fn read_pack_id(pack_root: &Path) -> Option<String> {
     let text = std::fs::read_to_string(pack_root.join("pack.json")).ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -150,7 +145,8 @@ mod tests {
             r#"{ "items": [ { "key": "doctest:ingot", "tags": ["doctest:metal"] } ] }"#,
         )
         .unwrap();
-        let ctx = EngineContext::for_project(Some(&docs));
+        let roots = AssetRoots::default().for_project(Some(&docs), &[]);
+        let ctx = EngineContext::for_project(&roots, Some(&docs));
         assert_eq!(ctx.pack_id.as_deref(), Some("doctest"));
         assert!(ctx.item_tag_exists("doctest:metal"));
         assert!(!ctx.item_tag_exists("doctest:no_such_tag"));

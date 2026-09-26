@@ -1,8 +1,9 @@
-//! Theme loading for the builder: the real game theme kit when it exists
-//! (`assets/ui/theme/theme.json` in the repo), otherwise petramond-ui's
-//! placeholder — another agent authors the real kit in parallel, so the
-//! placeholder path must always work.
+//! Theme loading for the builder: the game's theme kit resolved through the
+//! asset layers exactly like the game resolves it (the highest-priority
+//! `ui/theme/theme.json` wins whole-file, so a pack's replacement theme
+//! previews as it will ship), otherwise petramond-ui's placeholder.
 
+use crate::assets::AssetRoots;
 use petramond_ui::Theme;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,38 +19,29 @@ pub struct ThemeSource {
     pub rev: u64,
 }
 
-/// Candidate locations of the shipped theme manifest, relative to wherever
-/// the builder runs from.
-fn theme_manifest_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(repo) = manifest_dir.parent() {
-        out.push(repo.join("assets/ui/theme/theme.json"));
-    }
-    out.push(PathBuf::from("assets/ui/theme/theme.json"));
-    out.push(PathBuf::from("../assets/ui/theme/theme.json"));
-    out
-}
+const THEME_JSON: &str = "ui/theme/theme.json";
 
-pub fn load(rev: u64) -> ThemeSource {
-    for path in theme_manifest_candidates() {
-        let Ok(json) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let dir = path.parent().map(PathBuf::from).unwrap_or_default();
-        let read = |name: &str| std::fs::read(dir.join(name)).ok();
-        match Theme::load(&json, &read) {
-            Ok(theme) => return source(theme, format!("game theme ({})", path.display()), rev),
-            Err(e) => {
-                eprintln!(
-                    "gui-builder: theme at {} is broken ({e}); using placeholder",
-                    path.display()
-                );
-                break;
-            }
+pub fn load(roots: &AssetRoots, rev: u64) -> ThemeSource {
+    let Some(path) = roots.find(THEME_JSON) else {
+        return source(Theme::placeholder(), "placeholder theme".into(), rev);
+    };
+    let loaded = std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|json| {
+            let dir = path.parent().map(PathBuf::from).unwrap_or_default();
+            let read = |name: &str| std::fs::read(dir.join(name)).ok();
+            Theme::load(&json, &read).map_err(|e| e.to_string())
+        });
+    match loaded {
+        Ok(theme) => source(theme, format!("game theme ({})", path.display()), rev),
+        Err(e) => {
+            eprintln!(
+                "gui-builder: theme at {} is broken ({e}); using placeholder",
+                path.display()
+            );
+            source(Theme::placeholder(), "placeholder theme".into(), rev)
         }
     }
-    source(Theme::placeholder(), "placeholder theme".into(), rev)
 }
 
 fn source(theme: Theme, label: String, rev: u64) -> ThemeSource {
@@ -70,7 +62,7 @@ mod tests {
     fn style_combo_source_is_the_themes_own_key_list() {
         // Whichever theme resolves (game kit or placeholder), the combo
         // source must be exactly Theme::style_keys().
-        let src = load(0);
+        let src = load(&AssetRoots::new(None, Vec::new()), 0);
         let expect: Vec<String> = src.theme.style_keys().map(str::to_owned).collect();
         assert_eq!(src.style_keys, expect);
         assert!(!src.style_keys.is_empty(), "theme defines no parts?");

@@ -13,8 +13,25 @@ cargo run --release                      # open the editor
 cargo run --release -- samples/pause.llgui
 ```
 
-The builder loads the game theme from `../assets/ui/theme/theme.json` when it
-exists, else falls back to petramond-ui's placeholder kit (toolbar shows which).
+## Asset roots
+
+The builder reads game assets through the same layering the game uses: the
+base `assets/` directory, then pack roots above it. A point file — the theme
+(`ui/theme/theme.json`), a document image (`ui/documents/<name>`) — comes from
+the highest-priority layer holding it; catalogs (`items.json` tags,
+`ui/bindings.json` binding docs) merge every layer, so a pack can document the
+state keys of its own GUI kinds.
+
+- **Base**: `--assets <dir>`, else the nearest `assets/` above the working
+  directory, else above the executable. Nothing is compiled in, so a release
+  build unpacked beside the game's `assets/` works as-is.
+- **Packs**: every `--pack <dir>` (repeatable, highest priority last), then
+  the project's own `editor.asset_roots` list (pack roots relative to the
+  `.llgui`), then the pack the project is saved inside (the nearest ancestor
+  holding a `pack.json`) on top.
+
+With no theme in any layer the preview falls back to petramond-ui's
+placeholder kit (the toolbar shows which theme loaded).
 
 ## Layout
 
@@ -49,10 +66,9 @@ duplicate, `Delete` remove selection.
   for the tagged sample-state JSON codec.
 - **Export** writes the bare document to `assets/ui/documents/<kind>.gui.json`
   (the game hot-reloads it in debug builds).
-- **Import Legacy** converts old layer-compositor `.llgui` v1 files
-  (`../guis/*.llgui`) into a starting-point document: slot grids, shell
-  buttons/inputs, file-image layers; anything untranslatable becomes a
-  `TODO:` label.
+- Old layer-compositor `.llgui` v1 files are detected and refused with a
+  message; the importer that converted them was retired once every shipped
+  GUI had been migrated.
 
 Document images (`image`/`rotimage` nodes, and image-backed `button` faces)
 are PNGs beside the project file / exported document; missing ones simply
@@ -81,22 +97,24 @@ cargo run -- --make-samples
 ```
 
 Re-run it after editing anything in `assets/ui/documents/` (a unit test fails
-with that instruction when a sample goes stale). Hand edits to `samples/*.llgui`
-are overwritten on regeneration.
+with that instruction when a sample goes stale or orphaned). Samples whose
+document no longer ships are deleted, so the sample list is exactly the
+shipped set. Hand edits to `samples/*.llgui` are overwritten on regeneration.
 
 ## CLI
 
 ```sh
 gui-builder --export <in.llgui> [out.gui.json]      # headless export
-gui-builder --import-legacy <v1.llgui> <out.llgui>  # legacy conversion
 gui-builder --screenshot <project.llgui> <out.png>  # render the preview raster
 gui-builder --make-samples                          # regenerate samples/
 ```
+
+`--assets <dir>` and `--pack <dir>` go before any of these (see Asset roots).
 
 ## Notes
 
 - This crate is deliberately excluded from the game workspace (own
   `Cargo.lock`); it depends on `petramond-ui` by path with the `raster` feature.
-- The builder replicates the engine's slot-contract table in
-  `src/contracts.rs` — keep it in sync with `src/gui/documents.rs` by hand
-  (a unit test pins the expected values).
+- Slot contracts and every load-time document rule come from
+  `petramond_ui::contract`, the same functions the game's loader calls; the
+  builder keeps no copy of any engine table.

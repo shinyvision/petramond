@@ -2,17 +2,18 @@
 //! undo plumbing. Panels and the canvas live in their own modules and talk to
 //! the app through `App`'s small mutation API so every edit lands in history.
 
+use crate::assets::AssetRoots;
 use crate::bindings::{self, Catalog};
 use crate::doc_edit::{self, NodePath};
 use crate::engine_check::EngineContext;
 use crate::history::History;
 use crate::panels;
-use crate::preview::DiskImages;
+use crate::preview::{DiskImages, PreviewCache};
 use crate::project::Project;
 use crate::theme_src::{self, ThemeSource};
 use crate::{canvas, io, theme_bar};
 use eframe::egui;
-use petramond_ui::{DocIssue, UiState};
+use petramond_ui::DocIssue;
 use std::path::PathBuf;
 
 /// Forced widget states for the preview (applied to the selected node).
@@ -39,6 +40,11 @@ pub struct App {
     /// Collapsed container rows in the doc tree (session-only; paths shift
     /// with edits, which just re-expands moved rows).
     pub tree_collapsed: std::collections::HashSet<NodePath>,
+    /// The asset roots named on the command line (or discovered).
+    cli_roots: AssetRoots,
+    /// The layers the current project reads through: the command-line roots
+    /// plus its own `asset_roots` and enclosing pack.
+    pub roots: AssetRoots,
     pub theme: ThemeSource,
     /// The per-kind data catalog (`assets/ui/bindings.json`); `None` hides
     /// binding pickers, seeding, and the Screen-data panel.
@@ -46,6 +52,8 @@ pub struct App {
     /// `Some(true)` forces the Screen-data header open once (new documents).
     pub screen_data_force_open: Option<bool>,
     pub images: DiskImages,
+    /// The preview's state, runtime and canvas rects, rebuilt per revision.
+    pub preview: PreviewCache,
     pub forced: Forced,
     /// Editor chrome (selection outlines, badges) on the canvas.
     pub overlay: bool,
@@ -73,7 +81,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(_cc: &eframe::CreationContext<'_>, open: Option<PathBuf>) -> App {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        open: Option<PathBuf>,
+        cli_roots: AssetRoots,
+    ) -> App {
         let mut app = App {
             proj: Project::new("petramond:pause"),
             path: None,
@@ -84,10 +96,13 @@ impl App {
             sel: None,
             tree_scroll_to_sel: false,
             tree_collapsed: std::collections::HashSet::new(),
-            theme: theme_src::load(0),
-            catalog: Catalog::load(),
+            theme: theme_src::load(&cli_roots, 0),
+            catalog: Catalog::load(&cli_roots),
+            roots: cli_roots.clone(),
+            cli_roots,
             screen_data_force_open: None,
             images: DiskImages::empty(),
+            preview: PreviewCache::default(),
             forced: Forced::default(),
             overlay: true,
             sample_json: String::new(),
@@ -169,19 +184,47 @@ impl App {
         doc_edit::node_at(&self.proj.document.root, self.sel.as_deref()?)
     }
 
-    /// The preview `UiState`: the project's sample state plus non-destructive
-    /// catalog seeds for every key the author hasn't set — binding a list to
-    /// `worlds` shows rows immediately, without dirtying the file.
-    pub fn preview_state(&self) -> UiState {
-        let (mut state, _) = self.proj.sample_ui_state();
-        if let Some(info) = self
-            .catalog
-            .as_ref()
-            .and_then(|c| c.kind(&self.proj.document.kind))
-        {
-            bindings::apply_seeds(&mut state, info);
+    /// Bring the preview cache (the [`Project::preview_state`], runtime and
+    /// canvas rects) up to the current document and theme.
+    pub fn sync_preview(&mut self) {
+        if self.preview.is_stale(self.doc_rev, self.theme.rev) {
+            let state = self.proj.preview_state(self.catalog.as_ref());
+            self.preview.rebuild(
+                (self.doc_rev, self.theme.rev),
+                &self.proj.document,
+                &self.theme.theme,
+                state,
+            );
         }
-        state
+    }
+
+    /// The directory the project is saved in (`None` until first saved).
+    pub fn project_dir(&self) -> Option<PathBuf> {
+        self.path
+            .as_ref()
+            .and_then(|p| p.parent().map(PathBuf::from))
+    }
+
+    /// Re-derive the project's asset layers; when they moved (another pack,
+    /// edited `asset_roots`), reload everything read through them.
+    fn refresh_roots(&mut self) {
+        let roots = self
+            .cli_roots
+            .for_project(self.project_dir().as_deref(), &self.proj.editor.asset_roots);
+        if roots == self.roots {
+            return;
+        }
+        self.roots = roots;
+        self.reload_assets();
+    }
+
+    /// Reload the theme and binding catalog from the current layers.
+    pub fn reload_assets(&mut self) {
+        self.theme = theme_src::load(&self.roots, self.theme.rev + 1);
+        self.catalog = Catalog::load(&self.roots);
+        self.engine_ctx = None;
+        self.validation_rev = None;
+        self.doc_rev += 1;
     }
 
     /// Cached validation for the current document + theme: the game's own
@@ -189,21 +232,19 @@ impl App {
     /// pack the project is saved in.
     pub fn validation(&mut self) -> Vec<DocIssue> {
         if self.validation_rev != Some(self.doc_rev) {
-            let dir = self
-                .path
-                .as_ref()
-                .and_then(|p| p.parent().map(PathBuf::from));
+            let dir = self.project_dir();
             if self.engine_ctx.as_ref().map(|(d, _)| d) != Some(&dir) {
-                let ctx = EngineContext::for_project(dir.as_deref());
+                let ctx = EngineContext::for_project(&self.roots, dir.as_deref());
                 self.engine_ctx = Some((dir.clone(), ctx));
             }
-            let state = self.preview_state();
+            self.sync_preview();
             let (_, ctx) = self.engine_ctx.as_ref().expect("engine context was just set");
+            let roots = &self.roots;
             self.validation = ctx.validate(
                 &self.proj.document,
                 &self.theme.theme,
-                &state,
-                &|name| crate::io::resolve_document_image_path(dir.as_deref(), name),
+                self.preview.state(),
+                &|name| crate::io::resolve_document_image_path(roots, dir.as_deref(), name),
             );
             self.validation_rev = Some(self.doc_rev);
         }
@@ -226,6 +267,7 @@ impl App {
         self.canvas_drag = None;
         self.sync_sample_buffer();
         self.status = status;
+        self.refresh_roots();
     }
 
     pub fn new_project(&mut self, kind: &str) {
@@ -270,6 +312,7 @@ impl App {
                         // (save-as): image and pack checks re-run against it.
                         self.validation_rev = None;
                         self.engine_ctx = None;
+                        self.refresh_roots();
                         self.status = format!("Saved {}", path.display());
                     }
                     Err(e) => self.status = e,
@@ -295,29 +338,8 @@ impl App {
         }
     }
 
-    fn import_legacy(&mut self) {
-        let Some(path) = io::pick_open(&self.last_dir) else {
-            return;
-        };
-        match io::import_legacy(&path) {
-            Ok((proj, warnings)) => {
-                let n = warnings.len();
-                for w in &warnings {
-                    eprintln!("import: {w}");
-                }
-                self.set_project(
-                    proj,
-                    None,
-                    format!("Imported {} ({n} TODO items — see stderr)", path.display()),
-                );
-                self.dirty = true;
-            }
-            Err(e) => self.status = e,
-        }
-    }
-
     fn export(&mut self) {
-        if let Some(path) = io::pick_export(&self.proj.document, &self.last_dir) {
+        if let Some(path) = io::pick_export(&self.proj.document, &self.roots, &self.last_dir) {
             let images_from = self
                 .path
                 .as_ref()
@@ -473,7 +495,7 @@ impl App {
                         ui.close_menu();
                     }
                     ui.menu_button("Open Sample", |ui| {
-                        let samples = io::list_samples();
+                        let samples = io::list_samples(&self.roots);
                         if samples.is_empty() {
                             ui.label(
                                 egui::RichText::new("none — run `gui-builder --make-samples`")
@@ -497,10 +519,6 @@ impl App {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Import Legacy .llgui…").clicked() {
-                        self.import_legacy();
-                        ui.close_menu();
-                    }
                     if ui.button("Export .gui.json…").clicked() {
                         self.export();
                         ui.close_menu();
@@ -688,11 +706,9 @@ impl eframe::App for App {
         }
 
         // Keep doc images fresh (the project dir may gain PNGs while open).
-        let dir = self
-            .path
-            .as_ref()
-            .and_then(|p| p.parent().map(PathBuf::from));
-        self.images.refresh(&self.proj.document, dir.as_deref());
+        let dir = self.project_dir();
+        self.images
+            .refresh(&self.proj.document, dir.as_deref(), &self.roots);
 
         let title = format!(
             "GUI Builder — {}{}",

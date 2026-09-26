@@ -1,9 +1,9 @@
-//! Project file I/O: open/save `.llgui` v2 projects, import legacy v1 files,
-//! and export the bare document to the game's `assets/ui/documents/`.
-//! rfd dialogs live here so the app only deals in results.
+//! Project file I/O: open/save `.llgui` v2 projects and export the bare
+//! document to the game's `assets/ui/documents/`. rfd dialogs live here so
+//! the app only deals in results.
 
-use crate::legacy_import;
-use crate::project::{self, Project};
+use crate::assets::AssetRoots;
+use crate::project::Project;
 use petramond_ui::Document;
 use std::path::{Path, PathBuf};
 
@@ -16,19 +16,6 @@ pub fn load_project(path: &Path) -> Result<Project, String> {
 pub fn save_project(path: &Path, project: &Project) -> Result<(), String> {
     std::fs::write(path, project.to_json_pretty())
         .map_err(|e| format!("write {}: {e}", path.display()))
-}
-
-/// Import a legacy v1 `.llgui` into a fresh v2 project.
-pub fn import_legacy(path: &Path) -> Result<(Project, Vec<String>), String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    if !project::is_legacy_json(&text) {
-        return Err(format!("{} is not a legacy v1 .llgui", path.display()));
-    }
-    let imported = legacy_import::import(&text)?;
-    let mut p = Project::new(&imported.document.kind);
-    p.document = imported.document;
-    Ok((p, imported.warnings))
 }
 
 /// Export the bare document as pretty `.gui.json` (what the game loads),
@@ -81,24 +68,15 @@ pub fn choose_project_image(project_dir: Option<&Path>) -> Result<Option<String>
     Ok(Some(name))
 }
 
-/// The game's base asset root, when the builder runs inside the repo.
-pub fn game_assets_dir() -> Option<PathBuf> {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
-    let dir = repo.join("assets");
-    dir.is_dir().then_some(dir)
-}
-
-/// The game's document dir, when the builder runs inside the repo.
-pub fn game_documents_dir() -> Option<PathBuf> {
-    let dir = game_assets_dir()?.join("ui/documents");
-    dir.is_dir().then_some(dir)
-}
-
-/// Resolve a document image the way the game will after export. Normal
-/// projects resolve beside the `.llgui`; generated samples may reference paths
-/// that are correct beside `assets/ui/documents`, so fall back there for
-/// preview/validation without rewriting the document.
-pub fn resolve_document_image_path(project_dir: Option<&Path>, name: &str) -> Option<PathBuf> {
+/// Resolve a document image the way the game will after export: beside the
+/// project first, then in `ui/documents/` of the highest-priority asset layer
+/// holding it — the pack the document ships in, then the base game (where
+/// generated samples find the shipped images they reference).
+pub fn resolve_document_image_path(
+    roots: &AssetRoots,
+    project_dir: Option<&Path>,
+    name: &str,
+) -> Option<PathBuf> {
     if name.is_empty() {
         return None;
     }
@@ -108,50 +86,43 @@ pub fn resolve_document_image_path(project_dir: Option<&Path>, name: &str) -> Op
             return Some(path);
         }
     }
-    let path = game_documents_dir()?.join(name);
-    path.is_file().then_some(path)
-}
-
-/// The builder's sample-project dir (`gui-builder/samples/`).
-pub fn samples_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("samples")
+    roots.find(&format!("ui/documents/{name}"))
 }
 
 /// Every shipped `*.gui.json` as `(stem, path)`, sorted by stem.
-pub fn shipped_documents() -> Vec<(String, PathBuf)> {
-    let Some(dir) = game_documents_dir() else {
+pub fn shipped_documents(roots: &AssetRoots) -> Vec<(String, PathBuf)> {
+    let Some(dir) = roots.documents_dir() else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<(String, PathBuf)> = entries
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let stem = name.strip_suffix(".gui.json")?.to_owned();
-            Some((stem, e.path()))
-        })
-        .collect();
-    out.sort();
-    out
+    files_with_suffix(&dir, ".gui.json")
 }
 
-/// Regenerate `samples/<stem>.llgui` for every shipped document: the document
-/// verbatim + sample_state seeded from the bindings catalog. Deterministic
-/// from doc + catalog only — hand edits are NOT preserved.
-pub fn make_samples() -> Result<Vec<String>, String> {
-    let shipped = shipped_documents();
+/// What [`make_samples`] did, by stem.
+pub struct SamplesMade {
+    pub regenerated: Vec<String>,
+    /// Samples whose document no longer ships.
+    pub deleted: Vec<String>,
+}
+
+/// Regenerate `samples/<stem>.llgui` for every shipped document — the
+/// document verbatim + sample_state seeded from the bindings catalog — and
+/// delete every sample whose document no longer ships, so the sample list is
+/// exactly the shipped set. Deterministic from doc + catalog only: hand
+/// edits are NOT preserved.
+pub fn make_samples(roots: &AssetRoots) -> Result<SamplesMade, String> {
+    let shipped = shipped_documents(roots);
     if shipped.is_empty() {
-        return Err("no shipped documents found (run inside the repo)".into());
+        return Err("no shipped documents found (run inside the repo or pass --assets)".into());
     }
-    let catalog = crate::bindings::Catalog::load();
-    let out_dir = samples_dir();
+    let out_dir = roots
+        .samples_dir()
+        .ok_or("no gui-builder/samples beside the assets (run inside the repo)")?;
+    let catalog = crate::bindings::Catalog::load(roots);
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
-    let mut names = Vec::new();
-    for (stem, path) in shipped {
+    let mut regenerated = Vec::new();
+    for (stem, path) in &shipped {
         let text =
-            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let document =
             Document::from_json(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut proj = Project {
@@ -167,21 +138,39 @@ pub fn make_samples() -> Result<Vec<String>, String> {
             }
         }
         save_project(&out_dir.join(format!("{stem}.llgui")), &proj)?;
-        names.push(stem);
+        regenerated.push(stem.clone());
     }
-    Ok(names)
+    let mut deleted = Vec::new();
+    for (stem, path) in files_with_suffix(&out_dir, ".llgui") {
+        if !shipped.iter().any(|(s, _)| *s == stem) {
+            std::fs::remove_file(&path).map_err(|e| format!("delete {}: {e}", path.display()))?;
+            deleted.push(stem);
+        }
+    }
+    Ok(SamplesMade {
+        regenerated,
+        deleted,
+    })
 }
 
 /// The available sample projects as `(stem, path)`, sorted.
-pub fn list_samples() -> Vec<(String, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(samples_dir()) else {
+pub fn list_samples(roots: &AssetRoots) -> Vec<(String, PathBuf)> {
+    roots
+        .samples_dir()
+        .map(|dir| files_with_suffix(&dir, ".llgui"))
+        .unwrap_or_default()
+}
+
+/// The files in `dir` named `<stem><suffix>`, as `(stem, path)` sorted by stem.
+fn files_with_suffix(dir: &Path, suffix: &str) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut out: Vec<(String, PathBuf)> = entries
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let stem = name.strip_suffix(".llgui")?.to_owned();
+            let stem = name.strip_suffix(suffix)?.to_owned();
             Some((stem, e.path()))
         })
         .collect();
@@ -218,8 +207,12 @@ pub fn pick_save(last_dir: &Option<PathBuf>, name: &str) -> Option<PathBuf> {
         .save_file()
 }
 
-pub fn pick_export(doc: &Document, last_dir: &Option<PathBuf>) -> Option<PathBuf> {
-    let dir = game_documents_dir().or_else(|| last_dir.clone());
+pub fn pick_export(
+    doc: &Document,
+    roots: &AssetRoots,
+    last_dir: &Option<PathBuf>,
+) -> Option<PathBuf> {
+    let dir = roots.documents_dir().or_else(|| last_dir.clone());
     dialog(&dir)
         .add_filter("GUI document", &["json"])
         .set_file_name(export_file_name(doc))
@@ -230,15 +223,29 @@ pub fn pick_export(doc: &Document, last_dir: &Option<PathBuf>) -> Option<PathBuf
 mod tests {
     use super::*;
 
+    /// The sample list is exactly the shipped document set: every shipped
+    /// document has an up-to-date sample, and no sample outlives its document.
     #[test]
-    fn every_shipped_document_has_an_up_to_date_sample() {
-        let shipped = shipped_documents();
+    fn samples_and_shipped_documents_are_the_same_set_and_up_to_date() {
+        let roots = AssetRoots::new(None, Vec::new());
+        let shipped = shipped_documents(&roots);
         assert!(
             !shipped.is_empty(),
             "no shipped documents under assets/ui/documents — repo layout changed?"
         );
+        let shipped_stems: Vec<&str> = shipped.iter().map(|(s, _)| s.as_str()).collect();
+        let samples = list_samples(&roots);
+        let sample_stems: Vec<&str> = samples.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(
+            sample_stems, shipped_stems,
+            "samples/ must hold exactly one project per shipped document — \
+             re-run `gui-builder --make-samples` (it deletes orphans too)"
+        );
         for (stem, path) in shipped {
-            let sample_path = samples_dir().join(format!("{stem}.llgui"));
+            let sample_path = roots
+                .samples_dir()
+                .expect("samples dir")
+                .join(format!("{stem}.llgui"));
             let sample_text = std::fs::read_to_string(&sample_path).unwrap_or_else(|_| {
                 panic!(
                     "missing sample {} — run `gui-builder --make-samples`",
@@ -267,16 +274,35 @@ mod tests {
                 "exporting sample '{stem}' must reproduce the shipped document"
             );
             for image in crate::doc_edit::static_image_names(&sample.document) {
-                if image.is_empty() {
-                    continue;
-                }
                 assert!(
-                    resolve_document_image_path(sample_path.parent(), &image).is_some(),
+                    resolve_document_image_path(&roots, sample_path.parent(), &image).is_some(),
                     "sample '{stem}' image '{image}' must resolve for preview"
                 );
             }
             let _ = std::fs::remove_file(out);
             let _ = std::fs::remove_dir(out_dir);
         }
+    }
+
+    #[test]
+    fn document_images_resolve_beside_the_project_before_the_layers() {
+        let root = std::env::temp_dir().join(format!(
+            "gui-builder-io-images-{}",
+            std::process::id()
+        ));
+        let base = root.join("assets");
+        let project = root.join("project");
+        std::fs::create_dir_all(base.join("ui/documents")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(base.join("ui/documents/a.png"), "").unwrap();
+        std::fs::write(base.join("ui/documents/b.png"), "").unwrap();
+        std::fs::write(project.join("b.png"), "").unwrap();
+        let roots = AssetRoots::new(Some(base.clone()), Vec::new());
+        let resolve = |name: &str| resolve_document_image_path(&roots, Some(&project), name);
+        assert_eq!(resolve("a.png"), Some(base.join("ui/documents/a.png")));
+        assert_eq!(resolve("b.png"), Some(project.join("b.png")));
+        assert_eq!(resolve("c.png"), None);
+        assert_eq!(resolve(""), None);
+        std::fs::remove_dir_all(&root).ok();
     }
 }

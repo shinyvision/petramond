@@ -2,7 +2,6 @@
 //! widget states for the selection, zoom, and the sample-state editor toggle.
 
 use crate::app::App;
-use crate::theme_src;
 use eframe::egui;
 
 const SCREEN_PRESETS: [(u32, u32); 3] = [(1280, 720), (1920, 1080), (854, 480)];
@@ -12,8 +11,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new(&app.theme.label).weak());
             if ui.button("⟳").on_hover_text("Reload theme").clicked() {
-                app.theme = theme_src::load(app.theme.rev + 1);
-                app.touch();
+                app.reload_assets();
             }
             ui.separator();
 

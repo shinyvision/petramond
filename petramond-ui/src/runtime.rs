@@ -155,6 +155,10 @@ impl UiRuntime {
             hover: fs.hover_widget.clone(),
         };
         let tree = cache.expand(&self.doc, &shape, args.state, expand_key.clone());
+        if cache.stats.expanded > 0 {
+            // The instance set can only change when something re-expanded.
+            fs.retain_live(&tree);
+        }
         if tree.is_empty() {
             cache.store(tree, None);
             fs.cache = cache;

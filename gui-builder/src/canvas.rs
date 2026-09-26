@@ -5,7 +5,7 @@
 
 use crate::app::App;
 use crate::doc_edit::{self, NodePath};
-use crate::preview::{self, RectEntry};
+use crate::preview::RectEntry;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use petramond_ui::{Dir, InstKey, PreviewState, RectI, Size};
 
@@ -63,18 +63,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
     }
 
+    app.sync_preview();
     ensure_texture(app, ui.ctx(), screen, scale);
 
-    let state = app.preview_state();
+    // Solved once per revision, not per repaint: pointer motion only draws.
     let viewport = ((screen.0 as i32) / scale, (screen.1 as i32) / scale);
-    let rects = preview::layout_rects(
-        &app.proj.document,
-        app.theme.theme.as_ref(),
-        &state,
-        &app.images,
-        viewport,
-        scale,
-    );
+    let rects = app.preview.rects(&app.images, viewport, scale);
+    let rects = rects.as_slice();
 
     egui::ScrollArea::both()
         .id_salt("canvas_scroll")
@@ -107,7 +102,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 if app.proj.editor.pixel_grid && ppl >= 8.0 {
                     draw_pixel_grid(&painter, canvas, ui.clip_rect(), ppl);
                 }
-                for e in &rects {
+                for e in rects {
                     if e.slot_role.is_some() {
                         let r = to_screen(e.rect);
                         painter.text(
@@ -121,14 +116,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
 
-            interact(app, ui, &response, &rects, origin, ppl);
+            interact(app, ui, &response, rects, origin, ppl);
 
             // Overlay chrome after interaction so it reflects this frame.
             if app.overlay {
                 let ptr = response.hover_pos();
                 if app.canvas_drag.is_none() {
                     if let Some(p) = ptr {
-                        if let Some(e) = topmost_at(&rects, from_screen(p, origin, ppl)) {
+                        if let Some(e) = topmost_at(rects, from_screen(p, origin, ppl)) {
                             painter.rect_stroke(
                                 to_screen(e.rect),
                                 0.0,
@@ -149,7 +144,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
                 if let Some(CanvasDrag::Reorder { path, insert }) = &app.canvas_drag {
-                    draw_insert_caret(app, &painter, &rects, path, *insert, &to_screen);
+                    draw_insert_caret(app, &painter, rects, path, *insert, &to_screen);
                 }
             }
         });
@@ -471,16 +466,9 @@ fn ensure_texture(app: &mut App, ctx: &egui::Context, screen: (u32, u32), scale:
             focus: app.forced.focus.then(|| k.clone()),
         }
     });
-    let state = app.preview_state();
-    let rgba = preview::render_rgba(
-        &app.proj.document,
-        &app.theme.theme,
-        &state,
-        &app.images,
-        screen,
-        scale,
-        forced.as_ref(),
-    );
+    let rgba = app
+        .preview
+        .render(&app.images, screen, scale, forced.as_ref());
     let img =
         egui::ColorImage::from_rgba_unmultiplied([screen.0 as usize, screen.1 as usize], &rgba);
     match &mut app.canvas_tex {

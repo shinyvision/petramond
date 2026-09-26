@@ -7,8 +7,8 @@
 //! are the [`UiEvent`]s the host chooses to latch.
 
 use crate::text_edit::TextInput;
-use crate::tree::InstKey;
-use std::collections::BTreeMap;
+use crate::tree::{InstKey, InstTree};
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PointerButton {
@@ -285,6 +285,20 @@ impl FrameState {
         self.scroll.insert(key, offset);
     }
 
+    /// Forget the per-widget state of every instance `tree` no longer holds
+    /// — a list row scrolled out of the data, a tab's inputs after the tab
+    /// closed — so a long-lived screen's maps track what is on it, not
+    /// everything it ever showed. The focused editor survives: focus is what
+    /// a host clears, not a frame's expansion.
+    pub(crate) fn retain_live(&mut self, tree: &InstTree<'_>) {
+        let live: HashSet<&InstKey> = tree.insts.iter().filter_map(|i| i.key.as_ref()).collect();
+        let focus = self.focus.as_ref();
+        self.scroll.retain(|key, _| live.contains(key));
+        self.last_selected.retain(|key, _| live.contains(key));
+        self.editors
+            .retain(|key, _| live.contains(key) || focus == Some(key));
+    }
+
     /// Drop all transient interaction (screen change, GUI close).
     pub fn reset(&mut self) {
         self.active = None;
@@ -307,4 +321,80 @@ pub struct PreviewState {
     pub hover: Option<InstKey>,
     pub pressed: Option<InstKey>,
     pub focus: Option<InstKey>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::doc::Document;
+    use crate::paint_walk::NoImages;
+    use crate::runtime::{FrameArgs, FrameOutput, UiRuntime};
+    use crate::state::{UiMap, UiState, UiValue};
+    use crate::theme::Theme;
+    use std::sync::Arc;
+
+    fn rows(n: usize) -> UiValue {
+        UiValue::List(Arc::new((0..n).map(|_| UiMap::new()).collect()))
+    }
+
+    fn frame(rt: &UiRuntime, fs: &mut FrameState, state: &UiState) {
+        rt.frame(
+            FrameArgs {
+                screen: (400, 400),
+                scale: 1,
+                now: 0.0,
+                state,
+                input: &[],
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            fs,
+            &mut FrameOutput::default(),
+        );
+    }
+
+    /// Per-row widget state goes when its row does, instead of piling up for
+    /// every row a long-lived screen ever showed.
+    #[test]
+    fn widget_state_of_vanished_instances_is_forgotten() {
+        let doc = Document::from_json(
+            r#"{ "format": 1, "kind": "petramond:t", "class": "screen",
+                 "root": { "type": "column", "children": [
+                   { "type": "list", "id": "rows", "bind": { "items": "rows" }, "children": [
+                     { "type": "column", "children": [
+                       { "type": "scroll", "id": "sc", "layout": { "h": 10 } },
+                       { "type": "text_input", "id": "note" }
+                     ] }
+                   ] }
+                 ] } }"#,
+        )
+        .unwrap();
+        let rt = UiRuntime::new(Arc::new(doc), Arc::new(Theme::placeholder()));
+        let mut fs = FrameState::new();
+        let mut state = UiState::new();
+        state.set("rows", rows(3));
+        frame(&rt, &mut fs, &state);
+        let key = |id: &str, item| InstKey {
+            id: id.into(),
+            item: Some(item),
+        };
+        for item in 0..3 {
+            fs.set_scroll(key("sc", item), 1);
+            fs.focus_text_input(key("note", item), "", 8);
+        }
+        assert_eq!(fs.focused(), Some(&key("note", 2)));
+
+        state.set("rows", rows(1));
+        frame(&rt, &mut fs, &state);
+        let scrolled: Vec<&InstKey> = fs.scroll.keys().collect();
+        assert_eq!(scrolled, [&key("sc", 0)]);
+        let edited: Vec<&InstKey> = fs.editors.keys().collect();
+        assert_eq!(
+            edited,
+            [&key("note", 0), &key("note", 2)],
+            "the focused editor survives its row"
+        );
+    }
 }

@@ -7,7 +7,7 @@
 use petramond_ui::{UiMap, UiState, UiValue};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use crate::assets::AssetRoots;
 use std::sync::Arc;
 
 #[derive(Debug, Default)]
@@ -128,41 +128,30 @@ impl Catalog {
         })
     }
 
-    /// Load the shipped catalog from the repo (`assets/ui/bindings.json`),
-    /// searching the same roots as the theme. `None` = not found/broken.
-    pub fn load() -> Option<Catalog> {
-        for path in candidates() {
-            let Ok(json) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            match Catalog::parse(&json) {
-                Ok(c) => return Some(c),
-                Err(e) => {
-                    eprintln!(
-                        "gui-builder: {e} (at {}); binding pickers disabled",
-                        path.display()
-                    );
-                    return None;
-                }
+    /// Load and merge `ui/bindings.json` from every asset layer, base first:
+    /// a pack documents its own kinds, and a later layer's entry for a kind
+    /// replaces an earlier one. `None` = no layer ships one; a broken layer
+    /// is reported and skipped.
+    pub fn load(roots: &AssetRoots) -> Option<Catalog> {
+        let mut merged: Option<Catalog> = None;
+        for path in roots.all("ui/bindings.json") {
+            let parsed = std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|json| Catalog::parse(&json));
+            match parsed {
+                Ok(layer) => merged.get_or_insert_with(Catalog::default).kinds.extend(layer.kinds),
+                Err(e) => eprintln!(
+                    "gui-builder: {e} (at {}); that layer's binding docs are skipped",
+                    path.display()
+                ),
             }
         }
-        None
+        merged
     }
 
     pub fn kind(&self, kind: &str) -> Option<&KindInfo> {
         self.kinds.get(kind)
     }
-}
-
-fn candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(repo) = manifest_dir.parent() {
-        out.push(repo.join("assets/ui/bindings.json"));
-    }
-    out.push(PathBuf::from("assets/ui/bindings.json"));
-    out.push(PathBuf::from("../assets/ui/bindings.json"));
-    out
 }
 
 impl KindInfo {
@@ -272,7 +261,7 @@ mod tests {
             "mod kinds are open-ended"
         );
         // The real repo file, when present, must parse too.
-        if let Some(real) = Catalog::load() {
+        if let Some(real) = Catalog::load(&AssetRoots::new(None, Vec::new())) {
             assert!(real.kind("petramond:world_select").is_some());
         }
     }

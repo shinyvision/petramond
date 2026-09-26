@@ -50,6 +50,11 @@ pub struct EditorSettings {
     pub screen: (u32, u32),
     /// Draw the logical-pixel grid at high zoom.
     pub pixel_grid: bool,
+    /// Extra asset layers (pack roots, relative to the project file) the
+    /// preview and validation read through, above the base game and below
+    /// the pack the project is saved in.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub asset_roots: Vec<String>,
 }
 
 impl Default for EditorSettings {
@@ -60,6 +65,7 @@ impl Default for EditorSettings {
             preview_scale: 2,
             screen: (1280, 720),
             pixel_grid: false,
+            asset_roots: Vec::new(),
         }
     }
 }
@@ -136,7 +142,9 @@ impl Project {
         let v: Value = serde_json::from_str(s).map_err(|e| e.to_string())?;
         if v.get("document").is_none() {
             if v.get("gui_type").is_some() {
-                return Err("legacy v1 .llgui (use File > Import Legacy)".into());
+                return Err("legacy v1 .llgui: the pre-document format is no longer \
+                            imported; convert it with an older gui-builder build first"
+                    .into());
             }
             return Err("not a gui-builder project (no 'document' field)".into());
         }
@@ -166,6 +174,17 @@ impl Project {
         }
         (state, errors)
     }
+
+    /// The preview `UiState`: the sample state plus non-destructive `catalog`
+    /// seeds for every key the author hasn't set — binding a list to
+    /// `worlds` shows rows immediately, without dirtying the file.
+    pub fn preview_state(&self, catalog: Option<&crate::bindings::Catalog>) -> UiState {
+        let (mut state, _) = self.sample_ui_state();
+        if let Some(info) = catalog.and_then(|c| c.kind(&self.document.kind)) {
+            crate::bindings::apply_seeds(&mut state, info);
+        }
+        state
+    }
 }
 
 /// A sensible grid shape for `count` slots (used when scaffolding a new
@@ -179,13 +198,6 @@ fn default_grid(count: usize) -> (u32, u32) {
         1 => (1, 1),
         n => (n as u32, 1),
     }
-}
-
-/// Whether raw `.llgui` JSON text is a legacy (layer-compositor v1) project.
-pub fn is_legacy_json(s: &str) -> bool {
-    serde_json::from_str::<Value>(s)
-        .map(|v| v.get("document").is_none() && v.get("gui_type").is_some())
-        .unwrap_or(false)
 }
 
 // ---- tagged UiValue codec -------------------------------------------------------
@@ -311,7 +323,6 @@ mod tests {
     #[test]
     fn legacy_files_are_detected_not_parsed() {
         let legacy = r#"{"version":2,"gui_type":"pause","scale":1,"canvas":{"w":10,"h":10},"nodes":[],"slots":[]}"#;
-        assert!(is_legacy_json(legacy));
         assert!(Project::from_json(legacy).unwrap_err().contains("legacy"));
     }
 
