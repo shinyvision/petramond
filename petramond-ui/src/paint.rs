@@ -30,9 +30,9 @@ pub const SOLID_UV: [f32; 2] = [-1.0, -1.0];
 pub enum TexId {
     /// No texture: solid vertex color.
     Solid,
-    /// The theme kit atlas.
-    ThemeAtlas,
-    /// The font atlas ([`crate::text::build_atlas`]).
+    /// A theme atlas page ([`crate::Theme::pages`]).
+    ThemePage(u16),
+    /// The UI font's glyph atlas ([`crate::Theme::font_atlas`]).
     Font,
     /// A document-local image, by the host's per-document registry index.
     DocImage(u16),
@@ -96,7 +96,6 @@ impl DrawList {
     /// Push one quad given its four physical-px corners (tl, tr, br, bl) and
     /// matching UVs, merging into the previous batch when texture and clip
     /// agree.
-    #[allow(clippy::too_many_arguments)]
     pub fn push_quad(
         &mut self,
         tex: TexId,
@@ -135,7 +134,6 @@ impl DrawList {
 
     /// Axis-aligned quad from a physical-px rect and a pixel rect within a
     /// texture of `tex_size`.
-    #[allow(clippy::too_many_arguments)]
     pub fn push_rect(
         &mut self,
         tex: TexId,
@@ -158,6 +156,55 @@ impl DrawList {
             clip,
         );
     }
+}
+
+/// Where a sprite's pixels come from: a texture, the pixel rect within it,
+/// and the texture's size (resolved once from the theme or the document's
+/// image registry).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SpriteSrc {
+    pub tex: TexId,
+    pub rect: [u32; 4],
+    pub tex_size: (u32, u32),
+}
+
+impl SpriteSrc {
+    fn rect_f32(&self) -> [f32; 4] {
+        self.rect.map(|v| v as f32)
+    }
+}
+
+/// How a primitive is tinted and clipped (logical clip rect).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PaintStyle {
+    pub color: [f32; 4],
+    pub clip: Option<RectI>,
+}
+
+impl PaintStyle {
+    /// Untinted, optionally clipped.
+    pub fn plain(clip: Option<RectI>) -> PaintStyle {
+        PaintStyle {
+            color: [1.0; 4],
+            clip,
+        }
+    }
+}
+
+/// How a sprite fills its destination rect.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Fit {
+    /// Stretched over the whole rect.
+    Stretch,
+    /// Aspect kept, source cropped so the rect is fully covered.
+    Cover,
+    /// Repeated at natural size with partial edge tiles.
+    Tile,
+    /// 9-sliced with `[l, t, r, b]` insets.
+    NineSlice([i32; 4]),
+    /// Rotated by `angle` radians around `pivot` (logical px from the rect's
+    /// top-left; `None` = centre).
+    Rotated { angle: f32, pivot: Option<[f32; 2]> },
 }
 
 /// Scaled emission over a [`DrawList`]: all inputs are *logical* px; the one
@@ -207,46 +254,31 @@ impl Painter<'_> {
         );
     }
 
-    /// A texture sub-rect stretched over `r`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn sprite(
-        &mut self,
-        tex: TexId,
-        r: RectI,
-        src: [u32; 4],
-        tex_size: (u32, u32),
-        color: [f32; 4],
-        clip: Option<RectI>,
-    ) {
-        let clip = self.phys_clip(clip);
-        self.list.push_rect(
-            tex,
-            self.phys(r),
-            src.map(|v| v as f32),
-            tex_size,
-            color,
-            clip,
-        );
+    /// Draw `src` over the logical rect `r`, filled as `fit` says.
+    pub fn sprite(&mut self, src: &SpriteSrc, r: RectI, fit: Fit, style: PaintStyle) {
+        let clip = self.phys_clip(style.clip);
+        let color = style.color;
+        match fit {
+            Fit::Stretch => {
+                let dst = self.phys(r);
+                self.list
+                    .push_rect(src.tex, dst, src.rect_f32(), src.tex_size, color, clip);
+            }
+            Fit::Cover => self.cover(src, r, color, clip),
+            Fit::Tile => self.tiled(src, r, color, clip),
+            Fit::NineSlice(slice) => self.nine_slice(src, r, slice, color, clip),
+            Fit::Rotated { angle, pivot } => self.rotated(src, r, angle, pivot, color, clip),
+        }
     }
 
-    /// A texture sub-rect over `r`, preserving aspect ratio and cropping the
-    /// source symmetrically so the destination is fully covered.
-    #[allow(clippy::too_many_arguments)]
-    pub fn cover_sprite(
-        &mut self,
-        tex: TexId,
-        r: RectI,
-        src: [u32; 4],
-        tex_size: (u32, u32),
-        color: [f32; 4],
-        clip: Option<RectI>,
-    ) {
-        if r.w <= 0 || r.h <= 0 || src[2] == 0 || src[3] == 0 {
+    /// Preserve the aspect ratio, cropping the source symmetrically so the
+    /// destination is fully covered.
+    fn cover(&mut self, src: &SpriteSrc, r: RectI, color: [f32; 4], clip: Option<[i32; 4]>) {
+        if r.w <= 0 || r.h <= 0 || src.rect[2] == 0 || src.rect[3] == 0 {
             return;
         }
-        let [sx, sy, sw, sh] = src.map(|v| v as f32);
-        let (rw, rh) = (r.w as f32, r.h as f32);
-        let rect_aspect = rw / rh;
+        let [sx, sy, sw, sh] = src.rect_f32();
+        let rect_aspect = r.w as f32 / r.h as f32;
         let image_aspect = sw / sh;
         let crop = if rect_aspect > image_aspect {
             let crop_h = (sw / rect_aspect).min(sh);
@@ -255,67 +287,48 @@ impl Painter<'_> {
             let crop_w = (sh * rect_aspect).min(sw);
             [sx + (sw - crop_w) * 0.5, sy, crop_w, sh]
         };
-        let clip = self.phys_clip(clip);
+        let dst = self.phys(r);
         self.list
-            .push_rect(tex, self.phys(r), crop, tex_size, color, clip);
+            .push_rect(src.tex, dst, crop, src.tex_size, color, clip);
     }
 
-    /// The texture repeated over `r` at its natural 1x-art size (logical px),
-    /// with partial tiles at the right/bottom edges.
-    #[allow(clippy::too_many_arguments)]
-    pub fn tiled_sprite(
-        &mut self,
-        tex: TexId,
-        r: RectI,
-        src: [u32; 4],
-        tex_size: (u32, u32),
-        color: [f32; 4],
-        clip: Option<RectI>,
-    ) {
-        let clip_px = self.phys_clip(clip);
-        let (tile_w, tile_h) = (src[2].max(1) as i32, src[3].max(1) as i32);
+    /// Repeat the source at its natural 1x-art size (logical px), with
+    /// partial tiles at the right/bottom edges.
+    fn tiled(&mut self, src: &SpriteSrc, r: RectI, color: [f32; 4], clip: Option<[i32; 4]>) {
+        let (tile_w, tile_h) = (src.rect[2].max(1) as i32, src.rect[3].max(1) as i32);
         let mut y = 0;
         while y < r.h {
             let th = tile_h.min(r.h - y);
             let mut x = 0;
             while x < r.w {
                 let tw = tile_w.min(r.w - x);
-                let dst = RectI {
+                let dst = self.phys(RectI {
                     x: r.x + x,
                     y: r.y + y,
                     w: tw,
                     h: th,
-                };
-                self.list.push_rect(
-                    tex,
-                    self.phys(dst),
-                    [src[0] as f32, src[1] as f32, tw as f32, th as f32],
-                    tex_size,
-                    color,
-                    clip_px,
-                );
+                });
+                let part = [src.rect[0] as f32, src.rect[1] as f32, tw as f32, th as f32];
+                self.list
+                    .push_rect(src.tex, dst, part, src.tex_size, color, clip);
                 x += tile_w;
             }
             y += tile_h;
         }
     }
 
-    /// A 9-sliced texture part over `r`: corners stay 1:1 (slice insets are
-    /// 1x-art px = logical px), edges and centre stretch.
-    #[allow(clippy::too_many_arguments)]
-    pub fn nine_slice(
+    /// 9-slice: corners stay 1:1 (slice insets are 1x-art px = logical px),
+    /// edges and centre stretch.
+    fn nine_slice(
         &mut self,
-        tex: TexId,
+        src: &SpriteSrc,
         r: RectI,
-        src: [u32; 4],
         slice: [i32; 4],
-        tex_size: (u32, u32),
         color: [f32; 4],
-        clip: Option<RectI>,
+        clip: Option<[i32; 4]>,
     ) {
-        let clip = self.phys_clip(clip);
         let [sl, st, sr, sb] = slice.map(|v| v.max(0) as f32);
-        let [sx, sy, sw, sh] = src.map(|v| v as f32);
+        let [sx, sy, sw, sh] = src.rect_f32();
         let [dx, dy, dw, dh] = self.phys(r);
         // Destination insets scale with the gui scale so corner pixels stay
         // on the pixel grid; clamp so tiny rects degrade to plain stretch.
@@ -336,15 +349,56 @@ impl Painter<'_> {
                 let (u0, u1) = (xs_src[col], xs_src[col + 1]);
                 let (v0, v1) = (ys_src[row], ys_src[row + 1]);
                 self.list.push_rect(
-                    tex,
+                    src.tex,
                     [x0, y0, x1 - x0, y1 - y0],
                     [u0, v0, u1 - u0, v1 - v0],
-                    tex_size,
+                    src.tex_size,
                     color,
                     clip,
                 );
             }
         }
+    }
+
+    /// Rotate by `angle` radians around `pivot` (logical px from `r`'s
+    /// top-left; `None` = centre).
+    fn rotated(
+        &mut self,
+        src: &SpriteSrc,
+        r: RectI,
+        angle: f32,
+        pivot: Option<[f32; 2]>,
+        color: [f32; 4],
+        clip: Option<[i32; 4]>,
+    ) {
+        let [dx, dy, dw, dh] = self.phys(r);
+        let s = self.s();
+        let (px, py) = match pivot {
+            Some([px, py]) => (dx + px * s, dy + py * s),
+            None => (dx + dw * 0.5, dy + dh * 0.5),
+        };
+        let (sin, cos) = angle.sin_cos();
+        let rot = |x: f32, y: f32| -> [f32; 2] {
+            let (rx, ry) = (x - px, y - py);
+            [px + rx * cos - ry * sin, py + rx * sin + ry * cos]
+        };
+        let corners = [
+            rot(dx, dy),
+            rot(dx + dw, dy),
+            rot(dx + dw, dy + dh),
+            rot(dx, dy + dh),
+        ];
+        let (tw, th) = (src.tex_size.0 as f32, src.tex_size.1 as f32);
+        let [sx, sy, sw, sh] = src.rect_f32();
+        let (u0, v0) = (sx / tw, sy / th);
+        let (u1, v1) = ((sx + sw) / tw, (sy + sh) / th);
+        self.list.push_quad(
+            src.tex,
+            corners,
+            [[u0, v0], [u1, v0], [u1, v1], [u0, v1]],
+            color,
+            clip,
+        );
     }
 
     /// Single-line text at logical `(x, y)` (top-left of the run).
@@ -539,51 +593,6 @@ impl Painter<'_> {
             y += advance;
         }
     }
-
-    /// A texture sub-rect over `r`, rotated by `angle` radians around `pivot`
-    /// (logical px from `r`'s top-left; `None` = centre).
-    #[allow(clippy::too_many_arguments)]
-    pub fn rotated_sprite(
-        &mut self,
-        tex: TexId,
-        r: RectI,
-        src: [u32; 4],
-        tex_size: (u32, u32),
-        angle: f32,
-        pivot: Option<[f32; 2]>,
-        color: [f32; 4],
-        clip: Option<RectI>,
-    ) {
-        let clip = self.phys_clip(clip);
-        let [dx, dy, dw, dh] = self.phys(r);
-        let s = self.s();
-        let (px, py) = match pivot {
-            Some([px, py]) => (dx + px * s, dy + py * s),
-            None => (dx + dw * 0.5, dy + dh * 0.5),
-        };
-        let (sin, cos) = angle.sin_cos();
-        let rot = |x: f32, y: f32| -> [f32; 2] {
-            let (rx, ry) = (x - px, y - py);
-            [px + rx * cos - ry * sin, py + rx * sin + ry * cos]
-        };
-        let corners = [
-            rot(dx, dy),
-            rot(dx + dw, dy),
-            rot(dx + dw, dy + dh),
-            rot(dx, dy + dh),
-        ];
-        let (tw, th) = (tex_size.0 as f32, tex_size.1 as f32);
-        let [sx, sy, sw, sh] = src.map(|v| v as f32);
-        let (u0, v0) = (sx / tw, sy / th);
-        let (u1, v1) = ((sx + sw) / tw, (sy + sh) / th);
-        self.list.push_quad(
-            tex,
-            corners,
-            [[u0, v0], [u1, v0], [u1, v1], [u0, v1]],
-            color,
-            clip,
-        );
-    }
 }
 
 /// Clamp a leading/trailing inset pair so it never exceeds the available
@@ -726,24 +735,34 @@ mod tests {
             scale: 1,
             font: &font,
         };
-        p.cover_sprite(
-            TexId::DocImage(0),
+        let src = SpriteSrc {
+            tex: TexId::DocImage(0),
+            rect: [0, 0, 200, 100],
+            tex_size: (200, 100),
+        };
+        p.sprite(
+            &src,
             RectI {
                 x: 0,
                 y: 0,
                 w: 100,
                 h: 100,
             },
-            [0, 0, 200, 100],
-            (200, 100),
-            [1.0; 4],
-            None,
+            Fit::Cover,
+            PaintStyle::plain(None),
         );
         assert_eq!(dl.vertices[0].pos, [0.0, 0.0]);
         assert_eq!(dl.vertices[2].pos, [100.0, 100.0]);
         assert_eq!(dl.vertices[0].uv, [0.25, 0.0]);
         assert_eq!(dl.vertices[2].uv, [0.75, 1.0]);
     }
+
+    /// A 16×16 part at the origin of a 64×64 theme page.
+    const PAGE0: SpriteSrc = SpriteSrc {
+        tex: TexId::ThemePage(0),
+        rect: [0, 0, 16, 16],
+        tex_size: (64, 64),
+    };
 
     #[test]
     fn nine_slice_emits_nine_cells_with_fixed_corners() {
@@ -754,19 +773,16 @@ mod tests {
             scale: 2,
             font: &font,
         };
-        p.nine_slice(
-            TexId::ThemeAtlas,
+        p.sprite(
+            &PAGE0,
             RectI {
                 x: 0,
                 y: 0,
                 w: 32,
                 h: 20,
             },
-            [0, 0, 16, 16],
-            [4, 4, 4, 4],
-            (64, 64),
-            [1.0; 4],
-            None,
+            Fit::NineSlice([4, 4, 4, 4]),
+            PaintStyle::plain(None),
         );
         assert_eq!(dl.vertices.len(), 9 * 6);
         // Top-left corner cell: 4 logical px → 8 physical px square.
@@ -787,19 +803,16 @@ mod tests {
             font: &font,
         };
         // Dst exactly two insets wide: no middle column.
-        p.nine_slice(
-            TexId::ThemeAtlas,
+        p.sprite(
+            &PAGE0,
             RectI {
                 x: 0,
                 y: 0,
                 w: 8,
                 h: 30,
             },
-            [0, 0, 16, 16],
-            [4, 4, 4, 4],
-            (64, 64),
-            [1.0; 4],
-            None,
+            Fit::NineSlice([4, 4, 4, 4]),
+            PaintStyle::plain(None),
         );
         assert_eq!(dl.vertices.len(), 6 * 6, "3 rows × 2 cols survive");
     }
@@ -814,20 +827,24 @@ mod tests {
             font: &font,
         };
         // 90° around the rect centre maps tl -> tr.
-        p.rotated_sprite(
-            TexId::DocImage(0),
+        let src = SpriteSrc {
+            tex: TexId::DocImage(0),
+            rect: [0, 0, 10, 10],
+            tex_size: (10, 10),
+        };
+        p.sprite(
+            &src,
             RectI {
                 x: 0,
                 y: 0,
                 w: 10,
                 h: 10,
             },
-            [0, 0, 10, 10],
-            (10, 10),
-            std::f32::consts::FRAC_PI_2,
-            None,
-            [1.0; 4],
-            None,
+            Fit::Rotated {
+                angle: std::f32::consts::FRAC_PI_2,
+                pivot: None,
+            },
+            PaintStyle::plain(None),
         );
         let tl = dl.vertices[0].pos;
         assert!(

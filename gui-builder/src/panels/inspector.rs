@@ -84,6 +84,53 @@ impl BindOptions {
     }
 }
 
+/// Kind-specific inspector controls, including conditional binding fields.
+/// Adding a kind updates this routing once rather than several panel checks.
+#[derive(Default)]
+struct InspectorSchema {
+    flow_dir: bool,
+    frame_binding: bool,
+    item_binding: bool,
+    accepts_binding: bool,
+    palette_binding: bool,
+}
+
+impl InspectorSchema {
+    fn for_kind(kind: &NodeKind) -> Self {
+        use NodeKind::*;
+        match kind {
+            Frame | Scroll { .. } | List { .. } | Tooltip { .. } => Self {
+                flow_dir: true,
+                ..Self::default()
+            },
+            Button { image, .. } => Self {
+                flow_dir: true,
+                frame_binding: image.as_ref().is_some_and(|name| !name.is_empty()),
+                ..Self::default()
+            },
+            Image { .. } => Self {
+                frame_binding: true,
+                ..Self::default()
+            },
+            Hook => Self {
+                item_binding: true,
+                ..Self::default()
+            },
+            Slot { accepts, .. } | SlotGrid { accepts, .. } => Self {
+                accepts_binding: !accepts.is_empty(),
+                ..Self::default()
+            },
+            Label { .. } => Self {
+                palette_binding: true,
+                ..Self::default()
+            },
+            Row | Column | Spacer | Rotimage { .. } | Checkbox | Toggle { .. }
+            | Slider { .. } | TextInput { .. } | Gauge { .. } | Badge { .. }
+            | Alert { .. } | TabBar { .. } => Self::default(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Track {
     changed: bool,
@@ -233,13 +280,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .show(ui, |ui| {
             // `frame` drives a sprite-sheet frame, so it only makes sense on
             // framed nodes: `image`, or an image-backed `button`.
-            let frame_relevant = match &edited.kind {
-                NodeKind::Image { .. } => true,
-                NodeKind::Button {
-                    image: Some(img), ..
-                } => !img.is_empty(),
-                _ => false,
-            };
+            let schema = InspectorSchema::for_kind(&edited.kind);
             let mut rows: Vec<(&str, BindField, &mut Option<String>)> = vec![
                 ("text", BindField::Text, &mut edited.bind.text),
                 ("value", BindField::Value, &mut edited.bind.value),
@@ -252,13 +293,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 // width for content the layout engine cannot measure.
                 ("min_w", BindField::Value, &mut edited.bind.min_w),
             ];
-            if frame_relevant {
+            if schema.frame_binding {
                 rows.push(("frame", BindField::Frame, &mut edited.bind.frame));
             }
             // `item` is only read on hooks; the abs binds need an authored
             // `layout.abs` resting position (either form) — mirror the
             // engine-side validation.
-            if matches!(edited.kind, NodeKind::Hook) {
+            if schema.item_binding {
                 rows.push(("item", BindField::Item, &mut edited.bind.item));
             }
             let abs_relevant = edited.layout.abs.is_some()
@@ -273,18 +314,12 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             // `accepts` narrows a slot's AUTHORED filters at runtime — only
             // meaningful on a slot/slot_grid that declares some (mirrors the
             // engine-side validation).
-            let filtered_slot = match &edited.kind {
-                NodeKind::Slot { accepts, .. } | NodeKind::SlotGrid { accepts, .. } => {
-                    !accepts.is_empty()
-                }
-                _ => false,
-            };
-            if filtered_slot {
+            if schema.accepts_binding {
                 rows.push(("accepts", BindField::Value, &mut edited.bind.accepts));
             }
             // `palette` recolours a LABEL from a bound theme-palette entry —
             // only read there (mirrors the engine-side validation).
-            if matches!(edited.kind, NodeKind::Label { .. }) {
+            if schema.palette_binding {
                 rows.push(("palette", BindField::Value, &mut edited.bind.palette));
             }
             for (label, field, v) in rows {
@@ -930,14 +965,7 @@ fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track
     });
     // Every container whose flow direction reads `layout.dir` (row/column fix
     // their own).
-    if matches!(
-        kind,
-        NodeKind::Frame
-            | NodeKind::Button { .. }
-            | NodeKind::Scroll { .. }
-            | NodeKind::List { .. }
-            | NodeKind::Tooltip { .. }
-    ) {
+    if InspectorSchema::for_kind(kind).flow_dir {
         ui.horizontal(|ui| {
             ui.label("dir");
             for (d, name) in [(Dir::Row, "row"), (Dir::Column, "column")] {

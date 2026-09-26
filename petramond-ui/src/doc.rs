@@ -56,7 +56,7 @@ pub enum DocClass {
 }
 
 /// One node of the document tree.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Node {
     /// Stable id within the document: the key for events, named rects, and
     /// per-widget ephemeral state. Required on event-bearing widgets.
@@ -89,10 +89,69 @@ pub struct Node {
     pub children: Vec<Node>,
 }
 
+// A node's kind is flattened when written, but deserialization splits the
+// common fields from the tagged kind. Each half rejects unknown keys, so a
+// misspelled property cannot silently vanish through serde(flatten).
+impl<'de> Deserialize<'de> for Node {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+
+        #[derive(Deserialize)]
+        #[serde(default, deny_unknown_fields)]
+        struct Common {
+            id: Option<String>,
+            layout: LayoutProps,
+            compact_layout: Option<Box<LayoutProps>>,
+            style: Option<String>,
+            overlay: bool,
+            bind: Bindings,
+            children: Vec<Node>,
+        }
+
+        impl Default for Common {
+            fn default() -> Self {
+                Self {
+                    id: None,
+                    layout: LayoutProps::default(),
+                    compact_layout: None,
+                    style: None,
+                    overlay: false,
+                    bind: Bindings::default(),
+                    children: Vec::new(),
+                }
+            }
+        }
+
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| D::Error::custom("a document node must be an object"))?;
+        let mut common = serde_json::Map::new();
+        for key in ["id", "layout", "compact_layout", "style", "overlay", "bind", "children"] {
+            if let Some(value) = object.remove(key) {
+                common.insert(key.to_owned(), value);
+            }
+        }
+        let common: Common = serde_json::from_value(serde_json::Value::Object(common))
+            .map_err(D::Error::custom)?;
+        let kind = serde_json::from_value(value).map_err(D::Error::custom)?;
+        Ok(Node {
+            id: common.id,
+            kind,
+            layout: common.layout,
+            compact_layout: common.compact_layout,
+            style: common.style,
+            overlay: common.overlay,
+            bind: common.bind,
+            children: common.children,
+        })
+    }
+}
+
 /// The node type plus its type-specific properties. Serialized internally
 /// tagged as `"type"` so documents read naturally.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NodeKind {
     /// Generic container; lays children out along `layout.dir`.
     Frame,
@@ -291,6 +350,120 @@ pub struct TabSpec {
 }
 
 impl NodeKind {
+    /// Insertable node kinds in palette order.
+    pub const TYPE_NAMES: &'static [&'static str] = &[
+        "frame",
+        "row",
+        "column",
+        "spacer",
+        "label",
+        "image",
+        "rotimage",
+        "button",
+        "checkbox",
+        "toggle",
+        "slider",
+        "text_input",
+        "scroll",
+        "list",
+        "tab_bar",
+        "slot",
+        "slot_grid",
+        "gauge",
+        "badge",
+        "alert",
+        "hook",
+        "tooltip",
+    ];
+
+    /// A document-ready default of the named node kind.
+    pub fn default_for(type_name: &str) -> Option<Self> {
+        Some(match type_name {
+            "frame" => NodeKind::Frame,
+            "row" => NodeKind::Row,
+            "column" => NodeKind::Column,
+            "spacer" => NodeKind::Spacer,
+            "label" => NodeKind::Label {
+                text: Some("Label".into()),
+                wrap: false,
+                scale: 1,
+                small: false,
+            },
+            "image" => NodeKind::Image {
+                image: "image.png".into(),
+                fit: Default::default(),
+                frames: None,
+                fps: None,
+                interactive: false,
+            },
+            "rotimage" => NodeKind::Rotimage {
+                image: "image.png".into(),
+                pivot: None,
+            },
+            "button" => NodeKind::Button {
+                text: Some("BUTTON".into()),
+                icon: None,
+                image: None,
+                frames: None,
+                fps: None,
+            },
+            "checkbox" => NodeKind::Checkbox,
+            "toggle" => NodeKind::Toggle { icon: None },
+            "slider" => NodeKind::Slider {
+                min: 0.0,
+                max: 100.0,
+                step: None,
+            },
+            "text_input" => NodeKind::TextInput {
+                placeholder: None,
+                max_chars: 64,
+            },
+            "scroll" => NodeKind::Scroll {
+                axis: ScrollAxis::Vertical,
+            },
+            "list" => NodeKind::List { cols: 1 },
+            "slot" => NodeKind::Slot {
+                role: "storage".into(),
+                accepts: Vec::new(),
+                take_only: false,
+            },
+            "slot_grid" => NodeKind::SlotGrid {
+                role: "storage".into(),
+                cols: 9,
+                rows: 3,
+                accepts: Vec::new(),
+                take_only: false,
+            },
+            "gauge" => NodeKind::Gauge {
+                mode: GaugeMode::GrowLr,
+            },
+            "badge" => NodeKind::Badge {
+                text: Some("badge".into()),
+            },
+            "alert" => NodeKind::Alert {
+                level: AlertLevel::Info,
+                text: Some("Alert text".into()),
+            },
+            "tab_bar" => NodeKind::TabBar {
+                tabs: vec![
+                    TabSpec {
+                        key: "one".into(),
+                        icon: None,
+                        label: Some("One".into()),
+                    },
+                    TabSpec {
+                        key: "two".into(),
+                        icon: None,
+                        label: Some("Two".into()),
+                    },
+                ],
+            },
+            "hook" => NodeKind::Hook,
+            "tooltip" => NodeKind::Tooltip { hover: None },
+            _ => return None,
+        })
+    }
+
     /// Whether this node type may carry children.
     pub fn is_container(&self) -> bool {
         matches!(
@@ -537,7 +710,7 @@ pub struct AbsPos {
 /// A node's layout inputs. All lengths are logical px integers; physical px =
 /// logical × the host's integer gui scale, so the 1x pixel grid survives.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LayoutProps {
     pub w: Size,
     pub h: Size,
@@ -603,7 +776,7 @@ impl LayoutProps {
 /// (inside a list template, keys resolve against the item map first). Absent
 /// keys fall back to the node's static properties.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Bindings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -1002,5 +1175,29 @@ mod tests {
         let json = r#"{ "format": 1, "kind": "petramond:x", "class": "screen",
                         "root": { "type": "frame", "layout": { "w": "big" } } }"#;
         assert!(Document::from_json(json).is_err());
+    }
+
+    #[test]
+    fn node_typos_are_rejected_at_every_level() {
+        let root = r#"{ "format": 1, "kind": "petramond:x", "class": "screen",
+                         "root": %s }"#;
+        for node in [
+            r#"{ "type": "frame", "layuot": {} }"#,
+            r#"{ "type": "label", "tetx": "misspelled" }"#,
+            r#"{ "type": "frame", "layout": { "magrin": [0,0,0,0] } }"#,
+            r#"{ "type": "label", "bind": { "visibile": "state" } }"#,
+            r#"{ "type": "frame", "children": [ { "type": "button", "txet": "Go" } ] }"#,
+        ] {
+            let json = root.replace("%s", node);
+            assert!(Document::from_json(&json).is_err(), "accepted typo in {node}");
+        }
+    }
+
+    #[test]
+    fn every_catalog_kind_has_a_matching_default() {
+        for &name in NodeKind::TYPE_NAMES {
+            let kind = NodeKind::default_for(name).expect("catalog kind has a default");
+            assert_eq!(kind.type_name(), name);
+        }
     }
 }

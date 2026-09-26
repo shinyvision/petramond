@@ -95,6 +95,9 @@ fn measure_uses_line_advance_between_wrapped_lines() {
 #[test]
 fn atlas_pixels_match_every_glyph_bitmap() {
     for f in [Font::builtin(), Font::from_ttf(&shipped_font_bytes(), 11.0).unwrap()] {
+        for ch in ['A', 'g', '\u{c4}', '🙂'] {
+            let _ = f.glyph(ch);
+        }
         let (rgba, (w, h)) = f.build_atlas();
         assert_eq!(rgba.len(), (w * h * 4) as usize);
         for ch in ['A', 'g', '\u{c4}', '🙂'] {
@@ -232,4 +235,22 @@ fn a_missing_glyph_draws_a_body_sized_box() {
     assert_eq!(unknown.bounds()[1], top);
     assert_eq!(unknown.bounds()[3], h);
     assert!(unknown.ink().next().is_some());
+}
+
+/// Measurement reads eager advances and leaves glyph bitmaps untouched;
+/// painting one new glyph adds it to the fixed atlas exactly once.
+#[test]
+fn glyph_bitmaps_are_lazy_but_advances_are_available() {
+    let font = Font::from_ttf(&shipped_font_bytes(), 11.0).unwrap();
+    let size = font.atlas_size();
+    let before = font.atlas_revision();
+    assert!(font.width("Q") > 0);
+    assert_eq!(font.atlas_revision(), before);
+    assert_eq!(font.atlas_size(), size);
+    let _ = font.glyph('Q');
+    assert!(font.atlas_revision() > before);
+    let after = font.atlas_revision();
+    let _ = font.glyph('Q');
+    assert_eq!(font.atlas_revision(), after);
+    assert_eq!(font.atlas_size(), size);
 }

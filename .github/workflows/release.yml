@@ -142,6 +142,14 @@ jobs:
         shell: bash
         run: cargo build --locked --release -p petramond --bin petramond_server --target ${{ matrix.target }}
 
+      # The GUI builder finds the game's assets at run time (the nearest
+      # `assets/` above the executable, or `--assets`), so the same bundle
+      # layout serves it: mod authors preview their pack documents against the
+      # shipped theme without a source checkout.
+      - name: Build GUI builder
+        shell: bash
+        run: cargo build --locked --release -p gui-builder --bin gui-builder --target ${{ matrix.target }}
+
       - name: Download bundled mods
         uses: actions/download-artifact@v4
         with:
@@ -167,6 +175,7 @@ jobs:
           DEST="stage/$PKG"
           mkdir -p "$DEST/mods"
           cp "target/${{ matrix.target }}/release/petramond_native${EXT}" "$DEST/petramond${EXT}"
+          cp "target/${{ matrix.target }}/release/gui-builder${EXT}" "$DEST/gui-builder${EXT}"
           if [ "${{ matrix.server }}" = "true" ]; then
             cp "target/${{ matrix.target }}/release/petramond_server${EXT}" \
                "$DEST/petramond-server${EXT}"
@@ -248,6 +257,15 @@ jobs:
               echo "  costs almost nothing."
             } >> "$README"
           fi
+
+          {
+            echo
+            echo "GUI BUILDER"
+            echo "  gui-builder edits and previews the game's GUI documents with the"
+            echo "  game's own renderer. It reads the \"assets\" folder next to it;"
+            echo "  to preview a mod's documents, open a project saved inside the"
+            echo "  mod's pack folder or pass --pack <pack folder>. See --help."
+          } >> "$README"
 
           {
             echo

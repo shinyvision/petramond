@@ -130,90 +130,7 @@ pub fn uniquify_ids(doc: &Document, node: &mut Node) {
 
 /// A new default node of each kind, with an id where the kind requires one.
 pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
-    let kind = match type_name {
-        "frame" => NodeKind::Frame,
-        "row" => NodeKind::Row,
-        "column" => NodeKind::Column,
-        "spacer" => NodeKind::Spacer,
-        "label" => NodeKind::Label {
-            text: Some("Label".into()),
-            wrap: false,
-            scale: 1,
-            small: false,
-        },
-        "image" => NodeKind::Image {
-            image: "image.png".into(),
-            fit: Default::default(),
-            frames: None,
-            fps: None,
-            interactive: false,
-        },
-        "rotimage" => NodeKind::Rotimage {
-            image: "image.png".into(),
-            pivot: None,
-        },
-        "button" => NodeKind::Button {
-            text: Some("BUTTON".into()),
-            icon: None,
-            image: None,
-            frames: None,
-            fps: None,
-        },
-        "checkbox" => NodeKind::Checkbox,
-        "toggle" => NodeKind::Toggle { icon: None },
-        "slider" => NodeKind::Slider {
-            min: 0.0,
-            max: 100.0,
-            step: None,
-        },
-        "text_input" => NodeKind::TextInput {
-            placeholder: None,
-            max_chars: 64,
-        },
-        "scroll" => NodeKind::Scroll {
-            axis: petramond_ui::ScrollAxis::Vertical,
-        },
-        "list" => NodeKind::List { cols: 1 },
-        "slot" => NodeKind::Slot {
-            role: "storage".into(),
-            accepts: Vec::new(),
-            take_only: false,
-        },
-        "slot_grid" => NodeKind::SlotGrid {
-            role: "storage".into(),
-            cols: 9,
-            rows: 3,
-            accepts: Vec::new(),
-            take_only: false,
-        },
-        "gauge" => NodeKind::Gauge {
-            mode: petramond_ui::GaugeMode::GrowLr,
-        },
-        "badge" => NodeKind::Badge {
-            text: Some("badge".into()),
-        },
-        "alert" => NodeKind::Alert {
-            level: petramond_ui::AlertLevel::Info,
-            text: Some("Alert text".into()),
-        },
-        "tab_bar" => NodeKind::TabBar {
-            tabs: vec![
-                petramond_ui::TabSpec {
-                    key: "one".into(),
-                    icon: None,
-                    label: Some("One".into()),
-                },
-                petramond_ui::TabSpec {
-                    key: "two".into(),
-                    icon: None,
-                    label: Some("Two".into()),
-                },
-            ],
-        },
-        "hook" => NodeKind::Hook,
-        "tooltip" => NodeKind::Tooltip { hover: None },
-        _ => return None,
-    };
+    let kind = NodeKind::default_for(type_name)?;
     let mut node = Node::leaf(kind);
     if node.kind.needs_id() {
         node.id = Some(unique_id(doc, type_name));
@@ -246,30 +163,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
 }
 
 /// Every insertable node type name, palette order.
-pub const NODE_TYPES: &[&str] = &[
-    "frame",
-    "row",
-    "column",
-    "spacer",
-    "label",
-    "image",
-    "rotimage",
-    "button",
-    "checkbox",
-    "toggle",
-    "slider",
-    "text_input",
-    "scroll",
-    "list",
-    "tab_bar",
-    "slot",
-    "slot_grid",
-    "gauge",
-    "badge",
-    "alert",
-    "hook",
-    "tooltip",
-];
+pub const NODE_TYPES: &[&str] = NodeKind::TYPE_NAMES;
 
 /// Wrap the node at `path` in a fresh row/column container in place.
 pub fn wrap_in(root: &mut Node, path: &[usize], kind: NodeKind) -> Option<()> {

@@ -145,9 +145,11 @@ pub fn render_rgba(
         &mut out,
     );
     let theme = rt.theme();
+    // Built after the frame: painting rasterizes glyphs on first use.
+    let font = theme.font_atlas();
     let tex = TextureSet {
-        theme_atlas: &theme.atlas,
-        font: &theme.font,
+        theme_pages: theme.pages(),
+        font: &font,
         doc_images: &images.texture_refs(),
     };
     let mut rgba = Vec::new();

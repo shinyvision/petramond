@@ -1,13 +1,17 @@
 //! The GUI theme loader: `assets/ui/theme/theme.json` + its images, through
-//! the asset layering (a pack may ship a full replacement theme; the
-//! highest-priority copy wins whole-file).
+//! the asset layering. Every layer's copy joins the theme STACK (base first,
+//! packs above it): a pack adds or replaces parts by key on its own atlas
+//! page, adds palette entries and metrics, and may bring a font — so several
+//! packs can each add chrome without replacing the kit (see
+//! [`petramond_ui::Theme::load_stack`]).
 //!
 //! Until the shipped kit exists (or when it fails to parse) the synthesized
 //! placeholder theme renders instead — a GUI with programmer-art chrome beats
 //! a panic or a blank screen, and the loud magenta missing-part color makes
-//! gaps obvious.
+//! gaps obvious. A broken pack layer is reported and the stack loads without
+//! the pack layers rather than losing the base kit.
 
-use petramond_ui::Theme;
+use petramond_ui::{Theme, ThemeLayer};
 use std::sync::{Arc, OnceLock};
 
 const THEME_JSON: &str = "ui/theme/theme.json";
@@ -26,22 +30,43 @@ pub fn ui_font() -> Arc<petramond_ui::text::Font> {
 }
 
 fn load() -> Arc<Theme> {
-    // Highest-priority copy wins: read_layers returns base first, packs after.
-    let Some((json, path)) = petramond_world::assets::read_layers(THEME_JSON)
-        .into_iter()
-        .next_back()
-    else {
+    // read_layers returns base first, packs after: exactly stack order.
+    let layers = petramond_world::assets::read_layers(THEME_JSON);
+    if layers.is_empty() {
         return Arc::new(Theme::placeholder());
+    }
+    let readers: Vec<_> = layers
+        .iter()
+        .map(|(_, path)| {
+            let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+            move |rel: &str| std::fs::read(dir.join(rel)).ok()
+        })
+        .collect();
+    let stack: Vec<ThemeLayer<'_>> = layers
+        .iter()
+        .zip(&readers)
+        .map(|((json, _), read)| ThemeLayer { json, read })
+        .collect();
+    let describe = |n: usize| {
+        layers[..n]
+            .iter()
+            .map(|(_, path)| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    match Theme::load(&json, &|rel| std::fs::read(dir.join(rel)).ok()) {
-        Ok(theme) => Arc::new(theme),
-        Err(e) => {
-            eprintln!(
-                "gui: theme {} failed to load — {e}; using placeholder",
-                path.display()
-            );
-            Arc::new(Theme::placeholder())
+    match Theme::load_stack(&stack) {
+        Ok(theme) => return Arc::new(theme),
+        Err(e) => eprintln!("gui: theme stack [{}] failed to load — {e}", describe(stack.len())),
+    }
+    if stack.len() > 1 {
+        match Theme::load_stack(&stack[..1]) {
+            Ok(theme) => {
+                eprintln!("gui: using the base theme without pack layers");
+                return Arc::new(theme);
+            }
+            Err(e) => eprintln!("gui: base theme {} failed to load — {e}", describe(1)),
         }
     }
+    eprintln!("gui: using the placeholder theme");
+    Arc::new(Theme::placeholder())
 }

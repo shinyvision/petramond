@@ -146,9 +146,10 @@ fn main() {
         &mut out,
     );
 
+    let font = theme.font_atlas();
     let tex = TextureSet {
-        theme_atlas: &theme.atlas,
-        font: &theme.font,
+        theme_pages: theme.pages(),
+        font: &font,
         doc_images: &[],
     };
     let mut rgba = Vec::new();

@@ -1,10 +1,11 @@
-//! Theme loading for the builder: the game's theme kit resolved through the
-//! asset layers exactly like the game resolves it (the highest-priority
-//! `ui/theme/theme.json` wins whole-file, so a pack's replacement theme
-//! previews as it will ship), otherwise petramond-ui's placeholder.
+//! Theme loading for the builder: the game's theme stack resolved through
+//! the asset layers exactly like the game resolves it (every layer's
+//! `ui/theme/theme.json`, base first, packs overlaying parts by key — so a
+//! pack's chrome previews as it will ship), otherwise petramond-ui's
+//! placeholder.
 
 use crate::assets::AssetRoots;
-use petramond_ui::Theme;
+use petramond_ui::{Theme, ThemeLayer};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,26 +23,43 @@ pub struct ThemeSource {
 const THEME_JSON: &str = "ui/theme/theme.json";
 
 pub fn load(roots: &AssetRoots, rev: u64) -> ThemeSource {
-    let Some(path) = roots.find(THEME_JSON) else {
+    let paths = roots.all(THEME_JSON);
+    if paths.is_empty() {
         return source(Theme::placeholder(), "placeholder theme".into(), rev);
-    };
-    let loaded = std::fs::read_to_string(&path)
-        .map_err(|e| e.to_string())
-        .and_then(|json| {
-            let dir = path.parent().map(PathBuf::from).unwrap_or_default();
-            let read = |name: &str| std::fs::read(dir.join(name)).ok();
-            Theme::load(&json, &read).map_err(|e| e.to_string())
-        });
-    match loaded {
-        Ok(theme) => source(theme, format!("game theme ({})", path.display()), rev),
+    }
+    let label = paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" + ");
+    match load_stack(&paths) {
+        Ok(theme) => source(theme, format!("game theme ({label})"), rev),
         Err(e) => {
-            eprintln!(
-                "gui-builder: theme at {} is broken ({e}); using placeholder",
-                path.display()
-            );
+            eprintln!("gui-builder: theme stack {label} is broken ({e}); using placeholder");
             source(Theme::placeholder(), "placeholder theme".into(), rev)
         }
     }
+}
+
+/// Every manifest in `paths` (base first) as one theme stack.
+fn load_stack(paths: &[PathBuf]) -> Result<Theme, String> {
+    let jsons = paths
+        .iter()
+        .map(|p| std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let readers: Vec<_> = paths
+        .iter()
+        .map(|p| {
+            let dir = p.parent().map(PathBuf::from).unwrap_or_default();
+            move |name: &str| std::fs::read(dir.join(name)).ok()
+        })
+        .collect();
+    let layers: Vec<ThemeLayer<'_>> = jsons
+        .iter()
+        .zip(&readers)
+        .map(|(json, read)| ThemeLayer { json, read })
+        .collect();
+    Theme::load_stack(&layers).map_err(|e| e.to_string())
 }
 
 fn source(theme: Theme, label: String, rev: u64) -> ThemeSource {

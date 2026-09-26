@@ -43,11 +43,11 @@ pub use input::{
     FrameState, InputEvent, NavKey, PointerButton, PointerPhase, PreviewState, UiEvent,
 };
 pub use layout::{grid_cell, solve, LayoutEnv, RectI, SlotMetrics, Solved};
-pub use paint::{Batch, DrawList, Painter, TexId, UiVertex};
+pub use paint::{Batch, DrawList, Fit, PaintStyle, Painter, SpriteSrc, TexId, UiVertex};
 pub use paint_walk::{DocImages, NoImages};
 pub use runtime::{CacheStats, FrameArgs, FrameOutput, HookRectOut, SlotRectOut, UiRuntime};
 pub use state::{UiMap, UiState, UiValue};
 pub use text_edit::{TextClipboard, TextInput, TextInputRender};
-pub use theme::{ImageData, Part, PartFace, Theme, ThemeEnv, ThemeError};
+pub use theme::{FaceState, ImageData, Part, PartFace, Theme, ThemeEnv, ThemeError, ThemeLayer};
 pub use tree::{Inst, InstKey, InstTree};
 pub use validate::{DocIssue, SlotContract, StyleLookup};

@@ -879,11 +879,12 @@ fn compound_button_faces_cover_normal_hover_pressed_selected_and_disabled() {
             );
         }
         let mut rgba = Vec::new();
+        let font = theme.font_atlas();
         rasterize(
             &out.draw,
             &TextureSet {
-                theme_atlas: &theme.atlas,
-                font: &theme.font,
+                theme_pages: theme.pages(),
+                font: &font,
                 doc_images: &[],
             },
             (400, 200),
@@ -1046,11 +1047,12 @@ fn tab_faces_track_bound_selection_and_hover() {
             );
         }
         let mut rgba = Vec::new();
+        let font = theme.font_atlas();
         rasterize(
             &out.draw,
             &TextureSet {
-                theme_atlas: &theme.atlas,
-                font: &theme.font,
+                theme_pages: theme.pages(),
+                font: &font,
                 doc_images: &[],
             },
             (400, 200),
@@ -1240,11 +1242,12 @@ fn a_clicked_row_never_flashes_unpressed_between_release_and_rebound_selection()
     let center = ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
     let pixel = |out: &FrameOutput| {
         let mut rgba = Vec::new();
+        let font = theme.font_atlas();
         rasterize(
             &out.draw,
             &TextureSet {
-                theme_atlas: &theme.atlas,
-                font: &theme.font,
+                theme_pages: theme.pages(),
+                font: &font,
                 doc_images: &[],
             },
             (400, 200),

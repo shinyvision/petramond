@@ -10,9 +10,11 @@
 use crate::paint::{Batch, DrawList, TexId, UiVertex};
 use crate::theme::ImageData;
 
-/// The textures a draw list references, resolved by the host.
+/// The textures a draw list references, resolved by the host. `font` is the
+/// theme font's atlas built AFTER painting ([`crate::Theme::font_atlas`]):
+/// painting is what rasterizes a glyph the first time it is drawn.
 pub struct TextureSet<'a> {
-    pub theme_atlas: &'a ImageData,
+    pub theme_pages: &'a [ImageData],
     pub font: &'a ImageData,
     pub doc_images: &'a [&'a ImageData],
 }
@@ -21,7 +23,7 @@ impl TextureSet<'_> {
     fn get(&self, tex: TexId) -> Option<&ImageData> {
         match tex {
             TexId::Solid => None,
-            TexId::ThemeAtlas => Some(self.theme_atlas),
+            TexId::ThemePage(i) => self.theme_pages.get(i as usize),
             TexId::Font => Some(self.font),
             TexId::DocImage(i) => self.doc_images.get(i as usize).copied(),
         }
@@ -207,9 +209,10 @@ mod tests {
             [1.0, 0.0, 0.0, 1.0],
             None,
         );
+        let font = theme.font_atlas();
         let tex = TextureSet {
-            theme_atlas: &theme.atlas,
-            font: &theme.font,
+            theme_pages: theme.pages(),
+            font: &font,
             doc_images: &[],
         };
         let size = (16, 16);
@@ -255,9 +258,10 @@ mod tests {
                 h: 4,
             }),
         );
+        let font = theme.font_atlas();
         let tex = TextureSet {
-            theme_atlas: &theme.atlas,
-            font: &theme.font,
+            theme_pages: theme.pages(),
+            font: &font,
             doc_images: &[],
         };
         let size = (10, 10);
@@ -291,9 +295,10 @@ mod tests {
             [1.0, 1.0, 1.0, 0.5],
             None,
         );
+        let font = theme.font_atlas();
         let tex = TextureSet {
-            theme_atlas: &theme.atlas,
-            font: &theme.font,
+            theme_pages: theme.pages(),
+            font: &font,
             doc_images: &[],
         };
         let mut out = Vec::new();
@@ -316,9 +321,10 @@ mod tests {
             font: theme.ui_font(),
         }
         .text("A", 0, 0, [1.0, 1.0, 1.0, 1.0], None);
+        let font = theme.font_atlas();
         let tex = TextureSet {
-            theme_atlas: &theme.atlas,
-            font: &theme.font,
+            theme_pages: theme.pages(),
+            font: &font,
             doc_images: &[],
         };
         let size = (8, 8);

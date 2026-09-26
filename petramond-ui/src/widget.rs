@@ -6,7 +6,7 @@
 use crate::doc::{ScrollAxis, TabSpec};
 use crate::layout::RectI;
 use crate::text::Font;
-use crate::theme::Theme;
+use crate::theme::{FaceState, Theme};
 use crate::tree::Inst;
 
 /// Whether a pointer press can target this instance directly (used by the
@@ -172,23 +172,23 @@ pub(crate) fn button_face_state(
     pressed: bool,
     hovered: bool,
     has_selected_face: bool,
-) -> &'static str {
+) -> FaceState {
     if !enabled {
-        "disabled"
+        FaceState::Disabled
     } else if selected && has_selected_face {
-        "selected"
+        FaceState::Selected
     } else if pressed || selected {
-        "pressed"
+        FaceState::Pressed
     } else if hovered {
-        "hover"
+        FaceState::Hover
     } else {
-        "default"
+        FaceState::Default
     }
 }
 
-/// The face-name preference chain a checkbox/toggle paints, most specific
-/// first: try each with `face_if`, then fall back to the last (a plain state
-/// name, which every such part authors).
+/// The face preference chain a checkbox/toggle paints, most specific first:
+/// try each with `face_if`, then fall back to the last (a plain state, which
+/// every such part authors).
 ///
 /// A part that only draws `off`/`on`/`disabled` is unaffected — the qualified
 /// names simply miss. The point is controls whose press or hover cannot be a
@@ -201,18 +201,30 @@ pub(crate) fn toggle_face_chain(
     on: bool,
     pressed: bool,
     hovered: bool,
-) -> [&'static str; 3] {
-    let base = if on { "on" } else { "off" };
+) -> [FaceState; 3] {
+    let base = if on { FaceState::On } else { FaceState::Off };
     if !enabled {
-        ["disabled"; 3]
+        [FaceState::Disabled; 3]
     } else if pressed {
         [
-            if on { "on.pressed" } else { "off.pressed" },
-            "pressed",
+            if on {
+                FaceState::OnPressed
+            } else {
+                FaceState::OffPressed
+            },
+            FaceState::Pressed,
             base,
         ]
     } else if hovered {
-        [if on { "on.hover" } else { "off.hover" }, "hover", base]
+        [
+            if on {
+                FaceState::OnHover
+            } else {
+                FaceState::OffHover
+            },
+            FaceState::Hover,
+            base,
+        ]
     } else {
         [base; 3]
     }
@@ -256,15 +268,15 @@ mod tests {
             |selected, pressed, hovered| button_face_state(true, selected, pressed, hovered, true);
         let without =
             |selected, pressed, hovered| button_face_state(true, selected, pressed, hovered, false);
-        assert_eq!(with(true, false, false), "selected");
-        assert_eq!(without(true, false, false), "pressed");
+        assert_eq!(with(true, false, false), FaceState::Selected);
+        assert_eq!(without(true, false, false), FaceState::Pressed);
         // Everything else is unchanged by the preference.
-        assert_eq!(with(false, true, false), "pressed");
-        assert_eq!(with(false, false, true), "hover");
-        assert_eq!(with(false, false, false), "default");
+        assert_eq!(with(false, true, false), FaceState::Pressed);
+        assert_eq!(with(false, false, true), FaceState::Hover);
+        assert_eq!(with(false, false, false), FaceState::Default);
         assert_eq!(
             button_face_state(false, true, false, false, true),
-            "disabled"
+            FaceState::Disabled
         );
     }
 
@@ -281,11 +293,11 @@ mod tests {
         ] {
             let chain = toggle_face_chain(enabled, on, pressed, hovered);
             let expect = if !enabled {
-                "disabled"
+                FaceState::Disabled
             } else if on {
-                "on"
+                FaceState::On
             } else {
-                "off"
+                FaceState::Off
             };
             assert_eq!(chain[2], expect, "{enabled} {on} {pressed} {hovered}");
         }

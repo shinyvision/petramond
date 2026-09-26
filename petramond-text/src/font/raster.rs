@@ -1,7 +1,11 @@
-//! Face rasterization: every codepoint a source covers, thresholded to 1 bit
-//! at its design size, as ink relative to the pen origin on the baseline.
+//! Face rasterization: one glyph at a time, thresholded to 1 bit at the
+//! face's design size, as ink relative to the pen origin on the baseline.
+//!
+//! A [`Face`] owns its font file so glyphs can be rasterized whenever text
+//! first uses them, long after loading.
 
 use super::{FaceSource, FontError};
+use ab_glyph::{Font as _, ScaleFont as _};
 
 /// Coverage at or above this counts as ink at the supersampled size.
 const INK_THRESHOLD: f32 = 0.5;
@@ -30,7 +34,6 @@ const PROBE_ALL: [u32; 2] = [0x20, 0x1FFFF];
 /// One rasterized glyph before layout: ink pixels relative to the pen origin
 /// on the baseline (y down, negative above the baseline).
 pub(super) struct RawGlyph {
-    pub ch: char,
     pub advance: i32,
     pub ink: Vec<(i32, i32)>,
 }
@@ -44,44 +47,75 @@ pub(super) struct FaceMetrics {
     pub line_h: i32,
 }
 
-/// Rasterize every codepoint `source` covers that `wanted` still accepts.
-pub(super) fn rasterize_face(
-    source: &FaceSource<'_>,
-    wanted: &dyn Fn(char) -> bool,
-) -> Result<(FaceMetrics, Vec<RawGlyph>), FontError> {
-    use ab_glyph::{Font as _, ScaleFont as _};
-    let face = ab_glyph::FontRef::try_from_slice(source.bytes)
-        .map_err(|e| FontError::Parse(e.to_string()))?;
-    // ab_glyph scales against the font's ASCENT+DESCENT, not its em square,
-    // so a scale of `px` renders an em of `px * em / height` — smaller than
-    // the design size, and off the pixel grid. Convert, or every glyph comes
-    // out shrunk and mangled.
-    let px = source.px;
-    let raster_px = match face.units_per_em().filter(|em| *em > 0.0) {
-        Some(em) => px * face.height_unscaled() / em,
-        None => px,
-    };
-    let scaled = face.as_scaled(raster_px);
-    let ascent = scaled.ascent().round() as i32;
-    let descent = scaled.descent().round() as i32;
-    let metrics = FaceMetrics {
-        ascent,
-        line_h: (ascent - descent).max(1),
-    };
+/// One loaded face of a chain, ready to rasterize any glyph it maps.
+pub(super) struct Face {
+    font: ab_glyph::FontVec,
+    /// The ab_glyph scale that renders an em of the authored pixel size.
+    raster_px: f32,
+    pub metrics: FaceMetrics,
+}
 
-    let ss = SUPERSAMPLE.max(1);
-    let mut glyphs = Vec::new();
-    for ch in candidate_chars(&face, source.ranges) {
-        if !wanted(ch) {
-            continue;
-        }
-        let id = face.glyph_id(ch);
-        if id.0 == 0 {
-            continue; // the face has no glyph for this codepoint
-        }
-        let advance = scaled.h_advance(id).round() as i32;
+impl std::fmt::Debug for Face {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Face")
+            .field("raster_px", &self.raster_px)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Face {
+    /// Parse `source` (copying its bytes, so the face outlives the caller's
+    /// buffer).
+    pub fn open(source: &FaceSource<'_>) -> Result<Face, FontError> {
+        let font = ab_glyph::FontVec::try_from_vec(source.bytes.to_vec())
+            .map_err(|e| FontError::Parse(e.to_string()))?;
+        // ab_glyph scales against the font's ASCENT+DESCENT, not its em
+        // square, so a scale of `px` renders an em of `px * em / height` —
+        // smaller than the design size, and off the pixel grid. Convert, or
+        // every glyph comes out shrunk and mangled.
+        let px = source.px;
+        let raster_px = match font.units_per_em().filter(|em| *em > 0.0) {
+            Some(em) => px * font.height_unscaled() / em,
+            None => px,
+        };
+        let scaled = font.as_scaled(raster_px);
+        let ascent = scaled.ascent().round() as i32;
+        let descent = scaled.descent().round() as i32;
+        let metrics = FaceMetrics {
+            ascent,
+            line_h: (ascent - descent).max(1),
+        };
+        Ok(Face {
+            font,
+            raster_px,
+            metrics,
+        })
+    }
+
+    /// Every printable codepoint this face maps within `ranges` (none =
+    /// everything it maps) that `wanted` still accepts, ascending.
+    pub fn coverage(&self, ranges: &[[u32; 2]], wanted: &dyn Fn(char) -> bool) -> Vec<char> {
+        candidate_chars(&self.font, ranges)
+            .into_iter()
+            .filter(|&ch| wanted(ch) && self.font.glyph_id(ch).0 != 0)
+            .collect()
+    }
+
+    /// Pen advance of `ch`, in font-pixels, without rasterizing it.
+    pub fn advance(&self, ch: char) -> i32 {
+        let scaled = self.font.as_scaled(self.raster_px);
+        scaled.h_advance(self.font.glyph_id(ch)).round().max(0.0) as i32
+    }
+
+    /// Rasterize `ch` at the design size.
+    pub fn raster(&self, ch: char) -> RawGlyph {
+        let id = self.font.glyph_id(ch);
+        let ss = SUPERSAMPLE.max(1);
         let mut ink = Vec::new();
-        if let Some(outline) = face.outline_glyph(id.with_scale(raster_px * ss as f32)) {
+        if let Some(outline) = self
+            .font
+            .outline_glyph(id.with_scale(self.raster_px * ss as f32))
+        {
             let bounds = outline.px_bounds();
             let (hi_x, hi_y) = (bounds.min.x.floor() as i32, bounds.min.y.floor() as i32);
             // Take the centre subpixel of each target pixel, in ABSOLUTE
@@ -98,19 +132,16 @@ pub(super) fn rasterize_face(
                 }
             });
         }
-        glyphs.push(RawGlyph {
-            ch,
-            advance: advance.max(0),
+        RawGlyph {
+            advance: self.advance(ch),
             ink,
-        });
+        }
     }
-    Ok((metrics, glyphs))
 }
 
 /// Every printable codepoint to try, in ascending order: the declared
 /// ranges, or (none declared) everything the face maps.
-fn candidate_chars(face: &ab_glyph::FontRef<'_>, ranges: &[[u32; 2]]) -> Vec<char> {
-    use ab_glyph::Font as _;
+fn candidate_chars(face: &ab_glyph::FontVec, ranges: &[[u32; 2]]) -> Vec<char> {
     let mut out: Vec<char> = if ranges.is_empty() {
         let [lo, hi] = PROBE_ALL;
         let mut chars: Vec<char> = (lo..=hi).filter_map(char::from_u32).collect();
@@ -134,36 +165,39 @@ fn candidate_chars(face: &ab_glyph::FontRef<'_>, ranges: &[[u32; 2]]) -> Vec<cha
     out
 }
 
-/// The built-in 5×7 ASCII table as raw glyphs, baseline at the bottom row.
-/// `replacement` adds its U+FFFD box — wanted only when the table is the
-/// primary face: at the end of a real font's chain a 5×7 box would be a
-/// speck, and the chain draws a body-sized box instead.
-pub(super) fn builtin_glyphs(replacement: bool) -> (FaceMetrics, Vec<RawGlyph>) {
-    use crate::builtin::{glyph, ADVANCE, GLYPH_H, GLYPH_W};
-    let raw = |ch: char| {
-        let rows = glyph(ch);
-        let mut ink = Vec::new();
-        for (row, bits) in rows.iter().enumerate() {
-            for col in 0..GLYPH_W {
-                if (bits >> (GLYPH_W - 1 - col)) & 1 == 1 {
-                    ink.push((col, row as i32 - GLYPH_H));
-                }
-            }
-        }
-        RawGlyph {
-            ch,
-            advance: ADVANCE,
-            ink,
-        }
-    };
-    let glyphs = (0x20u8..0x7F)
-        .map(char::from)
-        .chain(replacement.then_some('\u{FFFD}'))
-        .map(raw)
-        .collect();
-    let metrics = FaceMetrics {
+/// The built-in 5×7 table's vertical metrics (baseline at the bottom row).
+pub(super) fn builtin_metrics() -> FaceMetrics {
+    use crate::builtin::GLYPH_H;
+    FaceMetrics {
         ascent: GLYPH_H,
         line_h: GLYPH_H,
-    };
-    (metrics, glyphs)
+    }
+}
+
+/// The codepoints the built-in table draws: printable ASCII, plus its U+FFFD
+/// box when `replacement` — wanted only when the table is the primary face:
+/// at the end of a real font's chain a 5×7 box would be a speck, and the
+/// chain draws a body-sized box instead.
+pub(super) fn builtin_chars(replacement: bool) -> Vec<char> {
+    (0x20u8..0x7F)
+        .map(char::from)
+        .chain(replacement.then_some('\u{FFFD}'))
+        .collect()
+}
+
+/// One built-in glyph as raw ink, baseline at the bottom row.
+pub(super) fn builtin_raw(ch: char) -> RawGlyph {
+    use crate::builtin::{glyph, ADVANCE, GLYPH_H, GLYPH_W};
+    let mut ink = Vec::new();
+    for (row, bits) in glyph(ch).iter().enumerate() {
+        for col in 0..GLYPH_W {
+            if (bits >> (GLYPH_W - 1 - col)) & 1 == 1 {
+                ink.push((col, row as i32 - GLYPH_H));
+            }
+        }
+    }
+    RawGlyph {
+        advance: ADVANCE,
+        ink,
+    }
 }

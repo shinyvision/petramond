@@ -1,30 +1,120 @@
-//! The theme kit: one atlas of 9-sliceable parts with per-state faces, a
-//! palette, widget metrics, and the font atlas.
+//! The theme kit: 9-sliceable parts with per-state faces on one or more
+//! atlas pages, a palette, widget metrics, and the UI font.
 //!
 //! A part is looked up by key (`button.danger`, `panel.large`…); widgets pick
-//! a *face* by state name (`default`, `hover`, `pressed`, `disabled`, `on`,
-//! `off`, `selected`, `focus`, `empty`, `full`) with fallback to `default`.
-//! Node `style` overrides the widget's default part key, so re-skinning is
-//! data-only. The placeholder theme synthesizes flat programmer art for every
-//! part so documents render (and tests run) before the real kit exists.
+//! a *face* by [`FaceState`] with fallback to `default`. Node `style`
+//! overrides the widget's default part key, so re-skinning is data-only.
+//!
+//! A theme is a STACK of manifests (see [`Theme::load_stack`]): the base kit
+//! first, then pack overlays that add or replace parts by key, add palette
+//! entries and metrics, and may bring their own font. Each layer's atlas is
+//! its own page ([`crate::TexId::ThemePage`]), so several packs can each add
+//! chrome without sharing one PNG. State names and palette references are
+//! checked when the stack loads, not at paint time.
+//!
+//! The placeholder theme synthesizes flat programmer art for every part so
+//! documents render (and tests run) before the real kit exists.
+
+mod env;
+mod load;
+mod placeholder;
+
+pub use env::ThemeEnv;
+pub use load::ThemeLayer;
 
 use crate::doc::{Node, NodeKind};
-use crate::layout::{LayoutEnv, SlotMetrics};
 use crate::validate::StyleLookup;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// A CPU RGBA image the host uploads once (theme atlas, font atlas).
+/// A CPU RGBA image the host uploads (theme atlas pages, the font atlas).
 #[derive(Clone, Debug)]
 pub struct ImageData {
     pub rgba: Vec<u8>,
     pub size: (u32, u32),
 }
 
-/// One drawable face of a part: an atlas pixel rect plus optional 9-slice
-/// insets `[l, t, r, b]` (1x-art px = logical px).
+/// Every face state a widget can ask a part for. Manifests name them by
+/// [`FaceState::name`]; an unknown name is a load error, not a silent miss.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FaceState {
+    Default,
+    Hover,
+    Pressed,
+    Disabled,
+    Selected,
+    Focus,
+    Off,
+    On,
+    /// A checkbox/toggle's hovered or pressed look per position — for
+    /// controls whose handle sits in a different place in each position.
+    OffHover,
+    OnHover,
+    OffPressed,
+    OnPressed,
+    /// Gauge backgrounds and fills.
+    Empty,
+    Full,
+}
+
+impl FaceState {
+    pub const ALL: [FaceState; 14] = [
+        FaceState::Default,
+        FaceState::Hover,
+        FaceState::Pressed,
+        FaceState::Disabled,
+        FaceState::Selected,
+        FaceState::Focus,
+        FaceState::Off,
+        FaceState::On,
+        FaceState::OffHover,
+        FaceState::OnHover,
+        FaceState::OffPressed,
+        FaceState::OnPressed,
+        FaceState::Empty,
+        FaceState::Full,
+    ];
+
+    /// The manifest spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            FaceState::Default => "default",
+            FaceState::Hover => "hover",
+            FaceState::Pressed => "pressed",
+            FaceState::Disabled => "disabled",
+            FaceState::Selected => "selected",
+            FaceState::Focus => "focus",
+            FaceState::Off => "off",
+            FaceState::On => "on",
+            FaceState::OffHover => "off.hover",
+            FaceState::OnHover => "on.hover",
+            FaceState::OffPressed => "off.pressed",
+            FaceState::OnPressed => "on.pressed",
+            FaceState::Empty => "empty",
+            FaceState::Full => "full",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<FaceState> {
+        FaceState::ALL.into_iter().find(|s| s.name() == name)
+    }
+}
+
+/// Palette entries the widgets themselves paint with. Every theme stack must
+/// define them (checked at load).
+pub mod palette {
+    pub const TEXT: &str = "text";
+    pub const TEXT_MUTED: &str = "text_muted";
+    pub const TEXT_DISABLED: &str = "text_disabled";
+    pub const SELECTION: &str = "selection";
+    pub const REQUIRED: [&str; 4] = [TEXT, TEXT_MUTED, TEXT_DISABLED, SELECTION];
+}
+
+/// One drawable face of a part: an atlas page, a pixel rect on it, plus
+/// optional 9-slice insets `[l, t, r, b]` (1x-art px = logical px).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PartFace {
+    pub page: u16,
     pub rect: [u32; 4],
     pub slice: Option<[i32; 4]>,
 }
@@ -32,7 +122,8 @@ pub struct PartFace {
 /// A themed part: state-keyed faces plus label styling.
 #[derive(Clone, Debug, Default)]
 pub struct Part {
-    faces: BTreeMap<String, PartFace>,
+    faces: BTreeMap<FaceState, PartFace>,
+    /// Palette key the label paints with (validated at load).
     pub label_color: Option<String>,
     /// Logical px the label shifts while pressed (classic push-in).
     pub pressed_label_offset: [i32; 2],
@@ -42,22 +133,22 @@ impl Part {
     /// The face for `state`, falling back to `default`, then to the part's
     /// first face (state-only parts like checkbox have `off`/`on` but no
     /// `default`).
-    pub fn face(&self, state: &str) -> Option<&PartFace> {
+    pub fn face(&self, state: FaceState) -> Option<&PartFace> {
         self.faces
-            .get(state)
-            .or_else(|| self.faces.get("default"))
+            .get(&state)
+            .or_else(|| self.faces.get(&FaceState::Default))
             .or_else(|| self.faces.values().next())
     }
 
     /// The face for exactly `state` — no fallback (overlay faces like a
     /// slot's `hover`/`selected` highlight, drawn only when present).
-    pub fn face_if(&self, state: &str) -> Option<&PartFace> {
-        self.faces.get(state)
+    pub fn face_if(&self, state: FaceState) -> Option<&PartFace> {
+        self.faces.get(&state)
     }
 
     /// Natural (w, h) of the resting face — the part's authored pixel size.
     pub fn natural(&self) -> (i32, i32) {
-        match self.face("default") {
+        match self.face(FaceState::Default) {
             Some(f) => (f.rect[2] as i32, f.rect[3] as i32),
             None => (0, 0),
         }
@@ -66,7 +157,7 @@ impl Part {
 
 /// Layout-facing metrics with kit-tuned defaults.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Metrics {
     pub button_h: i32,
     /// Horizontal padding inside a button around its label.
@@ -117,151 +208,36 @@ pub struct Theme {
     palette: BTreeMap<String, [f32; 4]>,
     parts: BTreeMap<String, Part>,
     pub metrics: Metrics,
-    pub atlas: ImageData,
-    /// The font's glyph atlas, generated from [`Theme::ui_font`].
-    pub font: ImageData,
+    /// Atlas pages, one per stack layer that brings art; faces index them.
+    pages: Vec<ImageData>,
     ui_font: std::sync::Arc<crate::text::Font>,
 }
 
-// ---- theme JSON --------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct ThemeJson {
-    format: u32,
-    #[serde(default)]
-    palette: BTreeMap<String, String>,
-    atlas: String,
-    #[serde(default)]
-    font: Option<FontJson>,
-    parts: BTreeMap<String, PartJson>,
-    #[serde(default)]
-    metrics: Metrics,
-}
-
-/// The theme's font: a real font FILE plus the pixel size it was designed
-/// for (a pixel font rasterized off its design grid loses whole stems, so the
-/// size is authored, never guessed), optionally limited to inclusive
-/// codepoint `ranges`, and followed by `fallback` faces that fill whatever
-/// the primary lacks — a pack can add a script without replacing the face.
-#[derive(Deserialize)]
-struct FontJson {
-    #[serde(flatten)]
-    face: FaceJson,
-    #[serde(default)]
-    fallback: Vec<FaceJson>,
-}
-
-#[derive(Deserialize)]
-struct FaceJson {
-    file: String,
-    px: f32,
-    #[serde(default)]
-    ranges: Vec<[u32; 2]>,
-}
-
-#[derive(Deserialize)]
-struct PartFaceJson {
-    rect: [u32; 4],
-    #[serde(default)]
-    slice: Option<[i32; 4]>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum PartJson {
-    /// Shorthand: one stateless face.
-    Single(PartFaceJson),
-    Multi {
-        states: BTreeMap<String, PartFaceJson>,
-        #[serde(default)]
-        label_color: Option<String>,
-        #[serde(default)]
-        pressed_label_offset: [i32; 2],
-    },
-}
-
 impl Theme {
-    /// Parse a theme manifest; `read` resolves image paths named by the
-    /// manifest (relative to it) to file bytes.
-    pub fn load(json: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Theme, ThemeError> {
-        let t: ThemeJson =
-            serde_json::from_str(json).map_err(|e| ThemeError(format!("theme manifest: {e}")))?;
-        if t.format != 1 {
-            return Err(ThemeError(format!("unsupported theme format {}", t.format)));
-        }
-        let mut palette = BTreeMap::new();
-        for (k, v) in t.palette {
-            palette.insert(
-                k.clone(),
-                parse_hex(&v).ok_or_else(|| {
-                    ThemeError(format!("palette '{k}': bad color '{v}' (want #RRGGBB[AA])"))
-                })?,
-            );
-        }
-        let mut parts = BTreeMap::new();
-        for (key, pj) in t.parts {
-            let part = match pj {
-                PartJson::Single(f) => {
-                    let mut faces = BTreeMap::new();
-                    faces.insert(
-                        "default".to_owned(),
-                        PartFace {
-                            rect: f.rect,
-                            slice: f.slice,
-                        },
-                    );
-                    Part {
-                        faces,
-                        label_color: None,
-                        pressed_label_offset: [0, 0],
-                    }
-                }
-                PartJson::Multi {
-                    states,
-                    label_color,
-                    pressed_label_offset,
-                } => Part {
-                    faces: states
-                        .into_iter()
-                        .map(|(s, f)| {
-                            (
-                                s,
-                                PartFace {
-                                    rect: f.rect,
-                                    slice: f.slice,
-                                },
-                            )
-                        })
-                        .collect(),
-                    label_color,
-                    pressed_label_offset,
-                },
-            };
-            if part.face("default").is_none() {
-                return Err(ThemeError(format!("part '{key}' has no faces")));
-            }
-            parts.insert(key, part);
-        }
-        let atlas = load_png(&t.atlas, read)?;
-        let ui_font = match &t.font {
-            Some(font) => load_font(font, read)?,
-            None => crate::text::Font::builtin(),
-        };
-        let (rgba, size) = ui_font.build_atlas();
-        Ok(Theme {
-            palette,
-            parts,
-            metrics: t.metrics,
-            atlas,
-            font: ImageData { rgba, size },
-            ui_font: std::sync::Arc::new(ui_font),
-        })
-    }
-
     /// The theme's UI font — the one font its documents are measured, hit
-    /// tested and painted with (the atlas in [`Theme::font`] is built from it).
+    /// tested and painted with. Its glyph atlas grows as text first uses a
+    /// glyph: hosts re-upload [`Theme::font_atlas`] whenever
+    /// `ui_font().atlas_revision()` moves.
     pub fn ui_font(&self) -> &std::sync::Arc<crate::text::Font> {
         &self.ui_font
+    }
+
+    /// The font's glyph atlas as it stands now (see [`Theme::ui_font`]).
+    pub fn font_atlas(&self) -> ImageData {
+        let (rgba, size) = self.ui_font.build_atlas();
+        ImageData { rgba, size }
+    }
+
+    /// Every atlas page, indexed by [`PartFace::page`] and
+    /// [`crate::TexId::ThemePage`].
+    pub fn pages(&self) -> &[ImageData] {
+        &self.pages
+    }
+
+    /// The size of atlas page `page` (`(1, 1)` for a page that does not
+    /// exist, so a stray index samples nothing rather than dividing by zero).
+    pub fn page_size(&self, page: u16) -> (u32, u32) {
+        self.pages.get(page as usize).map_or((1, 1), |p| p.size)
     }
 
     pub fn part(&self, key: &str) -> Option<&Part> {
@@ -280,19 +256,25 @@ impl Theme {
             return [0; 4];
         }
         self.part_for(node)
-            .and_then(|p| p.face("default"))
+            .and_then(|p| p.face(FaceState::Default))
             .and_then(|f| f.slice)
             .unwrap_or([0; 4])
     }
 
-    /// A palette color by key; `#RRGGBB[AA]` literals pass through. Unknown
-    /// keys are loud magenta rather than an error, so a missing palette entry
-    /// is visible instead of fatal.
+    /// A palette color by key; `#RRGGBB[AA]` literals pass through. A key
+    /// missing at paint time (a document's bound palette name) is loud
+    /// magenta rather than an error, so the gap is visible instead of fatal;
+    /// the keys widgets and parts name are checked at load.
     pub fn color(&self, key: &str) -> [f32; 4] {
         if let Some(c) = self.palette.get(key) {
             return *c;
         }
-        parse_hex(key).unwrap_or([1.0, 0.0, 1.0, 1.0])
+        load::parse_hex(key).unwrap_or([1.0, 0.0, 1.0, 1.0])
+    }
+
+    /// Whether `key` names a palette entry or is a colour literal.
+    pub fn has_color(&self, key: &str) -> bool {
+        self.palette.contains_key(key) || load::parse_hex(key).is_some()
     }
 
     /// The effective part for a node: its `style` override, else the widget
@@ -302,14 +284,6 @@ impl Theme {
             Some(key) => self.parts.get(key),
             None => default_style_key(&node.kind).and_then(|k| self.parts.get(k)),
         }
-    }
-
-    /// Every texture the host should upload, with its paint id.
-    pub fn textures(&self) -> [(crate::paint::TexId, &ImageData); 2] {
-        [
-            (crate::paint::TexId::ThemeAtlas, &self.atlas),
-            (crate::paint::TexId::Font, &self.font),
-        ]
     }
 }
 
@@ -326,839 +300,5 @@ pub fn default_style_key(kind: &NodeKind) -> Option<&'static str> {
     crate::widget_policy::style_key(kind)
 }
 
-fn parse_hex(s: &str) -> Option<[f32; 4]> {
-    let hex = s.strip_prefix('#')?;
-    let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
-    let (r, g, b, a) = match hex.len() {
-        6 => (byte(0)?, byte(2)?, byte(4)?, 255),
-        8 => (byte(0)?, byte(2)?, byte(4)?, byte(6)?),
-        _ => return None,
-    };
-    Some([
-        r as f32 / 255.0,
-        g as f32 / 255.0,
-        b as f32 / 255.0,
-        a as f32 / 255.0,
-    ])
-}
-
-/// The manifest's face chain (primary, then fallbacks) as one font.
-fn load_font(
-    font: &FontJson,
-    read: &dyn Fn(&str) -> Option<Vec<u8>>,
-) -> Result<crate::text::Font, ThemeError> {
-    let faces: Vec<&FaceJson> = std::iter::once(&font.face).chain(&font.fallback).collect();
-    let bytes = faces
-        .iter()
-        .map(|f| read(&f.file).ok_or_else(|| ThemeError(format!("font '{}' not found", f.file))))
-        .collect::<Result<Vec<_>, _>>()?;
-    let sources: Vec<crate::text::FaceSource<'_>> = faces
-        .iter()
-        .zip(&bytes)
-        .map(|(f, bytes)| crate::text::FaceSource {
-            bytes,
-            px: f.px,
-            ranges: &f.ranges,
-        })
-        .collect();
-    crate::text::Font::from_faces(&sources)
-        .map_err(|e| ThemeError(format!("font '{}': {e}", font.face.file)))
-}
-
-fn load_png(path: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<ImageData, ThemeError> {
-    let bytes = read(path).ok_or_else(|| ThemeError(format!("missing theme image '{path}'")))?;
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| ThemeError(format!("'{path}': {e}")))?
-        .to_rgba8();
-    let size = img.dimensions();
-    Ok(ImageData {
-        rgba: img.into_raw(),
-        size,
-    })
-}
-
-// ---- layout env ---------------------------------------------------------------
-
-/// The solver's window into the theme + the host's document-image registry
-/// (image natural sizes live outside the theme).
-pub struct ThemeEnv<'a> {
-    pub theme: &'a Theme,
-    /// The host's integer GUI scale — only `small` labels read it.
-    pub gui_scale: i32,
-    pub image_size: &'a dyn Fn(&str) -> Option<(i32, i32)>,
-}
-
-impl LayoutEnv for ThemeEnv<'_> {
-    fn gui_scale(&self) -> i32 {
-        self.gui_scale.max(1)
-    }
-
-    fn leaf_size(
-        &self,
-        node: &Node,
-        text: Option<&str>,
-        image: Option<&str>,
-        avail_w: Option<i32>,
-    ) -> (i32, i32) {
-        let m = &self.theme.metrics;
-        let part_natural = |fallback: (i32, i32)| {
-            self.theme
-                .part_for(node)
-                .map(|p| p.natural())
-                .filter(|&(w, h)| w > 0 && h > 0)
-                .unwrap_or(fallback)
-        };
-        match &node.kind {
-            NodeKind::Label {
-                wrap, scale, small, ..
-            } => {
-                let text = text.unwrap_or("");
-                let font = self.theme.ui_font();
-                if *scale > 1 {
-                    let (w, h) = font.measure(text, None);
-                    (w * *scale as i32, h * *scale as i32)
-                } else if *small {
-                    // Drawn at `gui_scale - 1` physical px per font pixel, so
-                    // it occupies that fraction of the logical box. Round UP:
-                    // the reserved box must never be narrower than the ink.
-                    let step = (self.gui_scale() - 1).max(1);
-                    let full = self.gui_scale().max(1);
-                    let down = |v: i32| (v * step + full - 1) / full;
-                    let avail = avail_w.map(|w| w * self.gui_scale().max(1) / step);
-                    let (w, h) = font.measure(text, if *wrap { avail } else { None });
-                    (down(w), down(h))
-                } else {
-                    font.measure(text, if *wrap { avail_w } else { None })
-                }
-            }
-            NodeKind::Button { icon, frames, .. } => {
-                // An image-backed button's natural size is ONE frame of its
-                // sheet, not the theme face's label metrics.
-                if let Some(name) = image {
-                    let sheet = (self.image_size)(name).unwrap_or((0, 0));
-                    return crate::paint_walk::frame_cell(sheet, *frames);
-                }
-                let icon_w = icon
-                    .as_deref()
-                    .and_then(|k| self.theme.part(k))
-                    .map(|p| p.natural().0)
-                    .unwrap_or(0);
-                let text_w = self.theme.ui_font().width(text.unwrap_or(""));
-                let gap = if icon_w > 0 && text_w > 0 { 4 } else { 0 };
-                (icon_w + gap + text_w + m.button_pad * 2, m.button_h)
-            }
-            NodeKind::Checkbox => part_natural((10, 10)),
-            NodeKind::Toggle { .. } => part_natural((18, 10)),
-            NodeKind::Slider { .. } => {
-                let handle_h = self
-                    .theme
-                    .part("slider.handle")
-                    .map(|p| p.natural().1)
-                    .unwrap_or(0);
-                let track_h = part_natural((m.slider_w, 6)).1;
-                (m.slider_w, handle_h.max(track_h))
-            }
-            NodeKind::TextInput { .. } => (m.input_w, part_natural((m.input_w, m.button_h)).1),
-            NodeKind::Slot { .. } => (m.slot, m.slot),
-            NodeKind::SlotGrid { cols, rows, .. } => {
-                let (c, r) = (*cols as i32, *rows as i32);
-                (
-                    c * m.slot + (c - 1).max(0) * m.slot_gap,
-                    r * m.slot + (r - 1).max(0) * m.slot_gap,
-                )
-            }
-            NodeKind::Gauge { .. } => part_natural((0, 0)),
-            NodeKind::Image { frames, .. } => {
-                let sheet = image
-                    .and_then(|name| (self.image_size)(name))
-                    .unwrap_or((0, 0));
-                crate::paint_walk::frame_cell(sheet, *frames)
-            }
-            NodeKind::Rotimage { .. } => image
-                .and_then(|name| (self.image_size)(name))
-                .unwrap_or((0, 0)),
-            NodeKind::Badge { .. } => {
-                let text_w = self.theme.ui_font().width(text.unwrap_or(""));
-                let h = part_natural((0, self.theme.ui_font().line_h() + m.badge_pad * 2)).1;
-                (text_w + m.badge_pad * 2, h)
-            }
-            NodeKind::TabBar { tabs } => {
-                let widths = crate::widget::tab_widths(self.theme, tabs);
-                let gaps = m.tab_gap * (widths.len() as i32 - 1).max(0);
-                (widths.iter().sum::<i32>() + gaps, m.tab_h)
-            }
-            NodeKind::Alert { .. } => {
-                // Icon cell + text inside the frame insets; the text wraps
-                // whenever the available width constrains it (an alert that
-                // overflows its own frame is never right).
-                let insets = self
-                    .theme
-                    .part_for(node)
-                    .and_then(|p| p.face("default"))
-                    .and_then(|f| f.slice)
-                    .unwrap_or([4, 4, 4, 4]);
-                let icon = self
-                    .theme
-                    .part(&format!(
-                        "{}.icon",
-                        node.style.as_deref().unwrap_or_else(|| {
-                            default_style_key(&node.kind).unwrap_or("alert.info")
-                        })
-                    ))
-                    .map(|p| p.natural())
-                    .unwrap_or((0, 0));
-                let gap = if icon.0 > 0 { 4 } else { 0 };
-                let chrome_w = insets[0] + icon.0 + gap + insets[2];
-                let font = self.theme.ui_font();
-                let text_avail = avail_w.map(|a| (a - chrome_w).max(font.max_advance()));
-                let (text_w, text_h) = font.measure(text.unwrap_or(""), text_avail);
-                (
-                    chrome_w + text_w,
-                    insets[1] + icon.1.max(text_h) + insets[3],
-                )
-            }
-            _ => (0, 0),
-        }
-    }
-
-    fn slot_metrics(&self) -> SlotMetrics {
-        SlotMetrics {
-            slot: self.theme.metrics.slot,
-            gap: self.theme.metrics.slot_gap,
-        }
-    }
-
-    fn container_insets(&self, node: &Node) -> [i32; 4] {
-        self.theme.container_insets(node)
-    }
-
-    fn scrollbar_width(&self) -> i32 {
-        self.theme.metrics.scrollbar_w
-    }
-}
-
-// ---- placeholder theme ---------------------------------------------------------
-
-impl Theme {
-    /// A synthesized programmer-art theme covering every default part key:
-    /// flat fills with 2px borders, distinct hues per state. Lets documents
-    /// render and tests run before the real kit exists; replaced visually by
-    /// the shipped `assets/ui/theme/`.
-    pub fn placeholder() -> Theme {
-        let mut atlas = PlaceholderAtlas::new(256, 256);
-        let mut parts: BTreeMap<String, Part> = BTreeMap::new();
-
-        let base_border = [90, 100, 110, 255];
-        let single = |atlas: &mut PlaceholderAtlas,
-                      parts: &mut BTreeMap<String, Part>,
-                      key: &str,
-                      w: u32,
-                      h: u32,
-                      fill: [u8; 4],
-                      slice: Option<[i32; 4]>| {
-            let rect = atlas.cell(w, h, fill, base_border);
-            let mut faces = BTreeMap::new();
-            faces.insert("default".to_owned(), PartFace { rect, slice });
-            parts.insert(
-                key.to_owned(),
-                Part {
-                    faces,
-                    label_color: None,
-                    pressed_label_offset: [0, 0],
-                },
-            );
-        };
-        let multi = |atlas: &mut PlaceholderAtlas,
-                     parts: &mut BTreeMap<String, Part>,
-                     key: &str,
-                     w: u32,
-                     h: u32,
-                     slice: Option<[i32; 4]>,
-                     states: &[(&str, [u8; 4])]| {
-            let mut faces = BTreeMap::new();
-            for (state, fill) in states {
-                let rect = atlas.cell(w, h, *fill, base_border);
-                faces.insert((*state).to_owned(), PartFace { rect, slice });
-            }
-            parts.insert(
-                key.to_owned(),
-                Part {
-                    faces,
-                    label_color: Some("text".to_owned()),
-                    pressed_label_offset: [0, 1],
-                },
-            );
-        };
-
-        let sl4 = Some([4, 4, 4, 4]);
-        single(
-            &mut atlas,
-            &mut parts,
-            "panel.large",
-            32,
-            32,
-            [24, 32, 40, 255],
-            sl4,
-        );
-        single(
-            &mut atlas,
-            &mut parts,
-            "panel.inset",
-            16,
-            16,
-            [16, 22, 28, 255],
-            sl4,
-        );
-        single(
-            &mut atlas,
-            &mut parts,
-            "section.titled",
-            32,
-            32,
-            [28, 36, 44, 255],
-            Some([4, 12, 4, 4]),
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "button.default",
-            24,
-            20,
-            sl4,
-            &[
-                ("default", [45, 58, 70, 255]),
-                ("hover", [62, 80, 96, 255]),
-                ("pressed", [35, 45, 55, 255]),
-                ("disabled", [38, 42, 46, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "button.success",
-            24,
-            20,
-            sl4,
-            &[
-                ("default", [40, 90, 45, 255]),
-                ("hover", [55, 115, 60, 255]),
-                ("pressed", [30, 70, 35, 255]),
-                ("disabled", [40, 52, 42, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "button.danger",
-            24,
-            20,
-            sl4,
-            &[
-                ("default", [110, 40, 40, 255]),
-                ("hover", [140, 55, 55, 255]),
-                ("pressed", [85, 30, 30, 255]),
-                ("disabled", [56, 40, 40, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "checkbox",
-            10,
-            10,
-            None,
-            &[
-                ("off", [30, 38, 46, 255]),
-                ("on", [80, 190, 90, 255]),
-                ("disabled", [40, 44, 48, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "toggle",
-            18,
-            10,
-            None,
-            &[
-                ("off", [55, 60, 66, 255]),
-                ("on", [70, 170, 80, 255]),
-                ("disabled", [42, 46, 50, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "slot",
-            18,
-            18,
-            Some([1, 1, 1, 1]),
-            &[
-                ("default", [20, 26, 32, 255]),
-                ("hover", [90, 110, 130, 160]),
-            ],
-        );
-        single(
-            &mut atlas,
-            &mut parts,
-            "scrollbar.track",
-            8,
-            24,
-            [18, 24, 30, 255],
-            Some([2, 2, 2, 2]),
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "scrollbar.thumb",
-            8,
-            16,
-            Some([2, 2, 2, 2]),
-            &[
-                ("default", [90, 100, 110, 255]),
-                ("hover", [120, 132, 144, 255]),
-            ],
-        );
-        single(
-            &mut atlas,
-            &mut parts,
-            "slider.track",
-            24,
-            6,
-            [30, 60, 90, 255],
-            Some([2, 2, 2, 2]),
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "slider.handle",
-            8,
-            14,
-            None,
-            &[
-                ("default", [150, 160, 170, 255]),
-                ("hover", [190, 200, 210, 255]),
-                ("pressed", [120, 130, 140, 255]),
-                ("disabled", [80, 84, 88, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "list.row",
-            32,
-            26,
-            sl4,
-            &[
-                ("default", [26, 34, 42, 255]),
-                ("hover", [38, 50, 62, 255]),
-                ("selected", [50, 70, 100, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "tab",
-            24,
-            20,
-            sl4,
-            &[
-                ("default", [34, 44, 54, 255]),
-                ("hover", [50, 64, 78, 255]),
-                ("selected", [24, 32, 40, 255]),
-                ("disabled", [36, 40, 44, 255]),
-            ],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "input",
-            32,
-            18,
-            sl4,
-            &[
-                ("default", [16, 20, 24, 255]),
-                ("focus", [22, 30, 40, 255]),
-                ("disabled", [30, 32, 34, 255]),
-            ],
-        );
-        single(
-            &mut atlas,
-            &mut parts,
-            "badge",
-            16,
-            13,
-            [40, 52, 64, 255],
-            Some([2, 2, 2, 2]),
-        );
-        for (level, fill) in [
-            ("info", [30, 60, 110, 255]),
-            ("warning", [110, 90, 20, 255]),
-            ("success", [30, 90, 40, 255]),
-            ("danger", [110, 35, 35, 255]),
-        ] {
-            single(
-                &mut atlas,
-                &mut parts,
-                &format!("alert.{level}"),
-                32,
-                20,
-                fill,
-                sl4,
-            );
-        }
-        multi(
-            &mut atlas,
-            &mut parts,
-            "gauge.arrow",
-            24,
-            17,
-            None,
-            &[("empty", [40, 44, 48, 255]), ("full", [230, 230, 230, 255])],
-        );
-        multi(
-            &mut atlas,
-            &mut parts,
-            "gauge.flame",
-            14,
-            14,
-            None,
-            &[("empty", [40, 40, 40, 255]), ("full", [230, 140, 40, 255])],
-        );
-        single(&mut atlas, &mut parts, "label", 1, 1, [0, 0, 0, 0], None);
-
-        let mut palette = BTreeMap::new();
-        for (k, v) in [
-            ("text", "#E8EDF2"),
-            ("text_muted", "#9AA7B4"),
-            ("text_disabled", "#5E6B78"),
-            ("accent", "#57C956"),
-            ("danger", "#E4574F"),
-            ("selection", "#3E6FD9"),
-            ("dim", "#00000080"),
-        ] {
-            palette.insert(k.to_owned(), parse_hex(v).unwrap());
-        }
-
-        let ui_font = crate::text::Font::builtin();
-        let (rgba, size) = ui_font.build_atlas();
-        Theme {
-            palette,
-            parts,
-            metrics: Metrics::default(),
-            atlas: atlas.finish(),
-            font: ImageData { rgba, size },
-            ui_font: std::sync::Arc::new(ui_font),
-        }
-    }
-}
-
-/// Shelf-packs flat-colored bordered cells into an RGBA atlas.
-struct PlaceholderAtlas {
-    rgba: Vec<u8>,
-    size: (u32, u32),
-    cursor: (u32, u32),
-    row_h: u32,
-}
-
-impl PlaceholderAtlas {
-    fn new(w: u32, h: u32) -> PlaceholderAtlas {
-        PlaceholderAtlas {
-            rgba: vec![0; (w * h * 4) as usize],
-            size: (w, h),
-            cursor: (0, 0),
-            row_h: 0,
-        }
-    }
-
-    fn cell(&mut self, w: u32, h: u32, fill: [u8; 4], border: [u8; 4]) -> [u32; 4] {
-        if self.cursor.0 + w > self.size.0 {
-            self.cursor = (0, self.cursor.1 + self.row_h + 1);
-            self.row_h = 0;
-        }
-        assert!(
-            self.cursor.1 + h <= self.size.1,
-            "placeholder atlas overflow"
-        );
-        let (x0, y0) = self.cursor;
-        for y in 0..h {
-            for x in 0..w {
-                let on_border = x == 0 || y == 0 || x == w - 1 || y == h - 1;
-                let c = if on_border { border } else { fill };
-                let i = (((y0 + y) * self.size.0 + x0 + x) * 4) as usize;
-                self.rgba[i..i + 4].copy_from_slice(&c);
-            }
-        }
-        self.cursor.0 += w + 1;
-        self.row_h = self.row_h.max(h);
-        [x0, y0, w, h]
-    }
-
-    fn finish(self) -> ImageData {
-        ImageData {
-            rgba: self.rgba,
-            size: self.size,
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::doc::Document;
-
-    #[test]
-    fn placeholder_theme_has_every_default_part() {
-        let t = Theme::placeholder();
-        for key in [
-            "panel.large",
-            "button.default",
-            "button.danger",
-            "checkbox",
-            "toggle",
-            "slot",
-            "scrollbar.thumb",
-            "slider.track",
-            "slider.handle",
-            "list.row",
-            "input",
-            "badge",
-            "alert.info",
-        ] {
-            assert!(t.part(key).is_some(), "missing part '{key}'");
-        }
-        assert!(t.part("checkbox").unwrap().face("on").is_some());
-        assert!(
-            t.part("checkbox").unwrap().face("bogus_state").is_some(),
-            "unknown states fall back to a face"
-        );
-        let (aw, ah) = t.atlas.size;
-        assert_eq!(t.atlas.rgba.len(), (aw * ah * 4) as usize);
-    }
-
-    #[test]
-    fn only_compound_buttons_use_their_face_as_container_insets() {
-        let t = Theme::placeholder();
-        let leaf = Document::from_json(
-            r#"{
-            "format": 1, "kind": "petramond:x", "class": "screen",
-            "root": { "type": "button", "id": "leaf", "text": "OK" }
-        }"#,
-        )
-        .unwrap();
-        assert_eq!(t.container_insets(&leaf.root), [0; 4]);
-
-        let compound = Document::from_json(
-            r#"{
-            "format": 1, "kind": "petramond:x", "class": "screen",
-            "root": { "type": "button", "id": "compound", "children": [
-                { "type": "label", "text": "OK" }
-            ] }
-        }"#,
-        )
-        .unwrap();
-        let authored = t
-            .part("button.default")
-            .and_then(|part| part.face("default"))
-            .and_then(|face| face.slice)
-            .expect("placeholder compound button has sliced chrome");
-        assert_eq!(t.container_insets(&compound.root), authored);
-    }
-
-    fn tiny_png() -> Vec<u8> {
-        let img = image::RgbaImage::new(4, 4);
-        let mut bytes = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
-        bytes.into_inner()
-    }
-
-    fn shipped_font_bytes() -> Vec<u8> {
-        std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../assets/ui/font/DepartureMono-Regular.otf"
-        ))
-        .expect("shipped font is vendored")
-    }
-
-    /// A theme whose font is the shipped face, loaded like the game does.
-    fn shipped_font_theme() -> Theme {
-        let json = r#"{ "format": 1, "atlas": "kit.png",
-            "font": { "file": "ui.otf", "px": 11 },
-            "parts": { "panel.large": { "rect": [0, 0, 4, 4] } } }"#;
-        let (png, font) = (tiny_png(), shipped_font_bytes());
-        Theme::load(json, &|p| match p {
-            "kit.png" => Some(png.clone()),
-            "ui.otf" => Some(font.clone()),
-            _ => None,
-        })
-        .expect("theme with the shipped font loads")
-    }
-
-    /// Measurement belongs to the theme, not the process: two themes with
-    /// different fonts coexist, and each one's tab widths (the hit-test
-    /// geometry) follow the font that same theme paints with.
-    #[test]
-    fn two_themes_measure_with_their_own_fonts() {
-        let real = shipped_font_theme();
-        let placeholder = Theme::placeholder();
-        let tabs = [crate::doc::TabSpec {
-            key: "world".into(),
-            icon: None,
-            label: Some("World".into()),
-        }];
-        let pad = |t: &Theme| t.metrics.button_pad * 2;
-        let real_w = crate::widget::tab_widths(&real, &tabs)[0];
-        let placeholder_w = crate::widget::tab_widths(&placeholder, &tabs)[0];
-        assert_eq!(real_w, real.ui_font().width("World") + pad(&real));
-        assert_eq!(
-            placeholder_w,
-            placeholder.ui_font().width("World") + pad(&placeholder)
-        );
-        assert_ne!(
-            real.ui_font().width("World"),
-            placeholder.ui_font().width("World"),
-            "the two fonts genuinely differ"
-        );
-    }
-
-    /// Coverage is manifest data: a primary limited to ASCII plus a fallback
-    /// face for the accents yields one font covering both.
-    #[test]
-    fn theme_font_ranges_and_fallback_faces_come_from_the_manifest() {
-        let json = r#"{ "format": 1, "atlas": "kit.png",
-            "font": { "file": "ui.otf", "px": 11, "ranges": [[32, 126]],
-                      "fallback": [ { "file": "ui.otf", "px": 11, "ranges": [[192, 255]] } ] },
-            "parts": { "panel.large": { "rect": [0, 0, 4, 4] } } }"#;
-        let (png, font) = (tiny_png(), shipped_font_bytes());
-        let t = Theme::load(json, &|p| match p {
-            "kit.png" => Some(png.clone()),
-            "ui.otf" => Some(font.clone()),
-            _ => None,
-        })
-        .expect("theme with a fallback face loads");
-        let f = t.ui_font();
-        assert!(f.has_glyph('A') && f.has_glyph('\u{c4}'));
-        assert!(!f.has_glyph('\u{3a9}'), "outside every declared range");
-        assert_eq!(t.font.size, f.atlas_size());
-    }
-
-    #[test]
-    fn theme_json_parses_shorthand_and_state_parts() {
-        let json = r##"{
-            "format": 1,
-            "palette": { "text": "#E8EDF2", "accent": "#57C95680" },
-            "atlas": "kit.png",
-            "parts": {
-                "panel.large": { "rect": [0,0,64,64], "slice": [8,8,8,8] },
-                "button.default": {
-                    "states": {
-                        "default": { "rect": [0,64,32,20], "slice": [4,4,4,4] },
-                        "hover":   { "rect": [32,64,32,20], "slice": [4,4,4,4] }
-                    },
-                    "label_color": "text",
-                    "pressed_label_offset": [0, 1]
-                }
-            },
-            "metrics": { "slot": 20 }
-        }"##;
-        // 1x1 transparent png.
-        let png = {
-            let img = image::RgbaImage::new(4, 4);
-            let mut bytes = std::io::Cursor::new(Vec::new());
-            img.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
-            bytes.into_inner()
-        };
-        let t = Theme::load(json, &|p| (p == "kit.png").then(|| png.clone())).unwrap();
-        assert_eq!(t.part("panel.large").unwrap().natural(), (64, 64));
-        let b = t.part("button.default").unwrap();
-        assert_eq!(b.face("hover").unwrap().rect, [32, 64, 32, 20]);
-        assert_eq!(
-            b.face("pressed").unwrap().rect,
-            [0, 64, 32, 20],
-            "fallback to default"
-        );
-        assert_eq!(b.pressed_label_offset, [0, 1]);
-        assert_eq!(t.metrics.slot, 20);
-        assert_eq!(t.color("accent")[3], 128.0 / 255.0);
-        assert_eq!(t.color("#FF0000"), [1.0, 0.0, 0.0, 1.0]);
-        assert_eq!(
-            t.color("nope"),
-            [1.0, 0.0, 1.0, 1.0],
-            "missing key is loud magenta"
-        );
-        // Font defaults to the builtin table, and the uploaded atlas is the
-        // one built from the font that measures.
-        assert_eq!(t.font.size, crate::text::Font::builtin().atlas_size());
-        assert_eq!(t.font.size, t.ui_font().atlas_size());
-    }
-
-    #[test]
-    fn alerts_wrap_when_width_constrained() {
-        let t = Theme::placeholder();
-        let env = ThemeEnv {
-            theme: &t,
-            gui_scale: 1,
-            image_size: &|_| None,
-        };
-        let doc = Document::from_json(
-            r#"{
-            "format": 1, "kind": "petramond:x", "class": "screen",
-            "root": { "type": "column", "children": [
-                { "type": "alert", "level": "info", "text": "A rather long warning message" }
-            ] }
-        }"#,
-        )
-        .unwrap();
-        let alert = &doc.root.children[0];
-        let text = Some("A rather long warning message");
-        let (w_free, h_free) = env.leaf_size(alert, text, None, None);
-        let (w_tight, h_tight) = env.leaf_size(alert, text, None, Some(100));
-        assert!(
-            w_tight <= 100,
-            "constrained alert fits its width: {w_tight}"
-        );
-        assert!(w_tight < w_free);
-        assert!(
-            h_tight > h_free,
-            "wrapped alert grows taller instead of overflowing"
-        );
-    }
-
-    #[test]
-    fn theme_env_supplies_widget_naturals() {
-        let t = Theme::placeholder();
-        let env = ThemeEnv {
-            theme: &t,
-            gui_scale: 1,
-            image_size: &|name| (name == "wheel.png").then_some((32, 32)),
-        };
-        let doc = Document::from_json(
-            r#"{
-            "format": 1, "kind": "petramond:x", "class": "screen",
-            "root": { "type": "column", "children": [
-                { "type": "button", "id": "b", "text": "OK" },
-                { "type": "checkbox", "id": "c" },
-                { "type": "slot_grid", "role": "hotbar", "cols": 9, "rows": 1 },
-                { "type": "image", "image": "wheel.png" },
-                { "type": "image", "image": "missing.png" }
-            ] }
-        }"#,
-        )
-        .unwrap();
-        let n = &doc.root.children;
-        assert_eq!(
-            env.leaf_size(&n[0], Some("OK"), None, None),
-            (t.ui_font().width("OK") + 12, 20)
-        );
-        assert_eq!(env.leaf_size(&n[1], None, None, None), (10, 10));
-        assert_eq!(env.leaf_size(&n[2], None, None, None), (18 * 9, 18));
-        assert_eq!(
-            env.leaf_size(&n[3], None, Some("wheel.png"), None),
-            (32, 32)
-        );
-        assert_eq!(
-            env.leaf_size(&n[4], None, Some("missing.png"), None),
-            (0, 0)
-        );
-    }
-}
+mod tests;

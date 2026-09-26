@@ -16,17 +16,14 @@
 //! capital, a fallback script) never enlarges every other glyph.
 
 mod atlas;
+mod glyphs;
 mod raster;
 
+use glyphs::{fallback_glyph, GlyphSet, Source};
 use raster::{FaceMetrics, RawGlyph};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Mutex;
-
-/// Codepoints below this resolve through a dense table (Latin, Greek,
-/// Cyrillic — the text the UI actually draws); the rest through a map.
-const DENSE_LIMIT: u32 = 0x800;
-const NO_GLYPH: u32 = u32::MAX;
 
 /// Glyphs whose ink defines the TEXT BODY — the band a caret or a selection
 /// should cover. Deliberately excludes accented capitals, whose headroom the
@@ -117,11 +114,7 @@ pub struct Font {
     line_advance: i32,
     max_advance: i32,
     body: (i32, i32),
-    /// Every real glyph, then the fallback last.
-    glyphs: Vec<Glyph>,
-    dense: Vec<u32>,
-    sparse: HashMap<char, u32>,
-    atlas_size: (u32, u32),
+    glyphs: GlyphSet,
     /// Memoised wraps: layout measures a wrapped label and paint wraps it
     /// again, every frame — both now read one shaping.
     wraps: Mutex<WrapCache>,
@@ -144,22 +137,20 @@ struct Wrapped {
 /// screen shows, small enough that churning text cannot grow it unbounded.
 const WRAP_CACHE_CAP: usize = 4096;
 
-/// Where one chain member's raw glyphs came from.
-struct Contribution {
-    metrics: FaceMetrics,
-    glyphs: Vec<RawGlyph>,
-}
-
 impl Font {
     /// The built-in 5×7 ASCII table — the fallback when no font file loads.
     pub fn builtin() -> Font {
-        let (metrics, glyphs) = raster::builtin_glyphs(true);
-        Font::assemble(vec![Contribution { metrics, glyphs }], false)
+        let metrics = raster::builtin_metrics();
+        let covered = raster::builtin_chars(true)
+            .into_iter()
+            .map(|ch| (ch, 0))
+            .collect();
+        Font::assemble(vec![Source::Builtin], covered, metrics, false)
             .expect("the built-in table always assembles")
     }
 
-    /// Rasterize one TrueType/OpenType face at `px` pixels per EM — every
-    /// codepoint it maps — closed by the built-in table.
+    /// Load one TrueType/OpenType face at `px` pixels per EM, closed by the
+    /// built-in table.
     pub fn from_ttf(bytes: &[u8], px: f32) -> Result<Font, FontError> {
         Font::from_faces(&[FaceSource {
             bytes,
@@ -168,105 +159,76 @@ impl Font {
         }])
     }
 
-    /// A fallback chain: the first face is primary (its ascent/descent set
-    /// the line box); each later face fills only codepoints every earlier
-    /// face lacks; the built-in table closes the chain.
+    /// A fallback chain: the first face sets the line box, each later face
+    /// fills missing codepoints, and the built-in table closes the chain.
     pub fn from_faces(faces: &[FaceSource<'_>]) -> Result<Font, FontError> {
-        let mut parts: Vec<Contribution> = Vec::new();
-        let mut covered: std::collections::HashSet<char> = std::collections::HashSet::new();
+        let mut sources = Vec::new();
+        let mut covered = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut primary = None;
         for source in faces {
-            let (metrics, glyphs) = raster::rasterize_face(source, &|ch| !covered.contains(&ch))?;
-            covered.extend(glyphs.iter().map(|g| g.ch));
-            parts.push(Contribution { metrics, glyphs });
+            let face = raster::Face::open(source)?;
+            let chars = face.coverage(source.ranges, &|ch| !seen.contains(&ch));
+            if primary.is_none() {
+                if !chars.iter().any(|&ch| !face.raster(ch).ink.is_empty()) {
+                    return Err(FontError::Empty);
+                }
+                primary = Some(face.metrics);
+            }
+            let index = u16::try_from(sources.len())
+                .map_err(|_| FontError::Parse("too many fallback faces".into()))?;
+            for ch in chars {
+                seen.insert(ch);
+                covered.push((ch, index));
+            }
+            sources.push(Source::Face(face));
         }
-        let primary_has_ink = parts
-            .first()
-            .is_some_and(|p| p.glyphs.iter().any(|g| !g.ink.is_empty()));
-        if !primary_has_ink {
-            return Err(FontError::Empty);
-        }
-        let (metrics, mut glyphs) = raster::builtin_glyphs(false);
-        glyphs.retain(|g| !covered.contains(&g.ch));
-        parts.push(Contribution { metrics, glyphs });
-        Font::assemble(parts, true)
+        let primary = primary.ok_or(FontError::Empty)?;
+        let index = u16::try_from(sources.len())
+            .map_err(|_| FontError::Parse("too many fallback faces".into()))?;
+        covered.extend(
+            raster::builtin_chars(false)
+                .into_iter()
+                .filter(|ch| !seen.contains(ch))
+                .map(|ch| (ch, index)),
+        );
+        sources.push(Source::Builtin);
+        Font::assemble(sources, covered, primary, true)
     }
 
-    /// Lay every contribution's glyphs against the primary's baseline, pick
-    /// the fallback, and pack the atlas. `boxed_fallback`: with no U+FFFD in
-    /// the chain, draw a hollow box over the text body.
-    fn assemble(parts: Vec<Contribution>, boxed_fallback: bool) -> Result<Font, FontError> {
-        let primary = parts.first().map(|p| p.metrics).ok_or(FontError::Empty)?;
-        let baseline = primary.ascent;
+    fn assemble(
+        sources: Vec<Source>,
+        covered: Vec<(char, u16)>,
+        primary: FaceMetrics,
+        boxed_fallback: bool,
+    ) -> Result<Font, FontError> {
         let line_h = primary.line_h;
-
-        let mut glyphs: Vec<Glyph> = Vec::new();
-        let mut chars: Vec<char> = Vec::new();
-        for part in parts {
-            for raw in part.glyphs {
-                glyphs.push(place(&raw, baseline));
-                chars.push(raw.ch);
-            }
-        }
-        let find = |ch: char| chars.iter().position(|c| *c == ch);
+        let glyphs = GlyphSet::new(sources, covered, primary.ascent)?;
         let body = {
             let top = BODY_TOP_SAMPLE
                 .chars()
-                .filter_map(|ch| find(ch).map(|i| &glyphs[i]))
+                .filter_map(|ch| glyphs.own_glyph(ch))
                 .filter(|g| g.bounds[3] > 0)
                 .map(|g| g.bounds[1])
                 .min()
                 .unwrap_or(0);
             let bottom = BODY_BOTTOM_SAMPLE
                 .chars()
-                .filter_map(|ch| find(ch).map(|i| &glyphs[i]))
+                .filter_map(|ch| glyphs.own_glyph(ch))
                 .filter(|g| g.bounds[3] > 0)
                 .map(|g| g.bounds[1] + g.bounds[3])
                 .max()
                 .unwrap_or(line_h);
             (top, bottom.max(top + 1))
         };
-
-        // Unknown codepoints share one glyph: U+FFFD from the chain, else a
-        // hollow box over the body — never a blank, so a missing glyph shows.
-        let fallback = match find('\u{FFFD}') {
-            Some(i) if !boxed_fallback || glyphs[i].bounds[3] > 0 => glyphs[i].clone(),
-            _ => {
-                let advance = find('?').map_or(line_h / 2, |i| glyphs[i].advance).max(3);
-                hollow_box(advance, body)
-            }
-        };
-        glyphs.push(fallback);
-
-        let sizes: Vec<(u32, u32)> = glyphs
-            .iter()
-            .map(|g| (g.bounds[2] as u32, g.bounds[3] as u32))
-            .collect();
-        let (origins, atlas_size) = atlas::pack(&sizes)?;
-        for (glyph, [x, y]) in glyphs.iter_mut().zip(origins) {
-            glyph.atlas = [x, y, glyph.bounds[2] as u32, glyph.bounds[3] as u32];
-        }
-
-        let mut dense = vec![NO_GLYPH; DENSE_LIMIT as usize];
-        let mut sparse = HashMap::new();
-        for (i, ch) in chars.iter().enumerate() {
-            match dense.get_mut(*ch as usize) {
-                Some(slot) => *slot = i as u32,
-                None => {
-                    sparse.insert(*ch, i as u32);
-                }
-            }
-        }
-        let max_advance = glyphs.iter().map(|g| g.advance).max().unwrap_or(1).max(1);
+        glyphs.seal_fallback(fallback_glyph(&glyphs, boxed_fallback, body, line_h));
+        let max_advance = glyphs.max_advance();
         Ok(Font {
             line_h,
-            // One blank pixel row between lines, like the built-in font.
             line_advance: line_h + 2,
             max_advance,
             body,
             glyphs,
-            dense,
-            sparse,
-            atlas_size,
             wraps: Mutex::default(),
         })
     }
@@ -301,29 +263,21 @@ impl Font {
 
     /// How many codepoints resolve to a real glyph (fallback excluded).
     pub fn glyph_count(&self) -> usize {
-        self.glyphs.len() - 1
-    }
-
-    fn index(&self, ch: char) -> Option<u32> {
-        let i = match self.dense.get(ch as usize) {
-            Some(&i) => i,
-            None => *self.sparse.get(&ch)?,
-        };
-        (i != NO_GLYPH).then_some(i)
+        self.glyphs.count()
     }
 
     pub fn glyph(&self, ch: char) -> &Glyph {
-        let i = self.index(ch).unwrap_or(self.glyphs.len() as u32 - 1);
-        &self.glyphs[i as usize]
+        self.glyphs.glyph(ch)
     }
 
     /// Whether `ch` has its own glyph (false = it draws the fallback).
     pub fn has_glyph(&self, ch: char) -> bool {
-        self.index(ch).is_some()
+        self.glyphs.has(ch)
     }
 
+    /// The pen advance of `ch`, without rasterizing its bitmap.
     pub fn advance(&self, ch: char) -> i32 {
-        self.glyph(ch).advance
+        self.glyphs.advance(ch)
     }
 
     /// Width of `s` on one line, in font-pixels.
@@ -462,7 +416,12 @@ impl Font {
     // ---- atlas ---------------------------------------------------------
 
     pub fn atlas_size(&self) -> (u32, u32) {
-        self.atlas_size
+        self.glyphs.atlas_size()
+    }
+
+    /// Increases when a newly used glyph adds pixels to the atlas.
+    pub fn atlas_revision(&self) -> u64 {
+        self.glyphs.revision()
     }
 
     /// The atlas pixel rect `[x, y, w, h]` of `ch`'s glyph bitmap.
@@ -472,9 +431,9 @@ impl Font {
 
     /// The atlas as tightly-packed RGBA (white glyphs on transparent).
     pub fn build_atlas(&self) -> (Vec<u8>, (u32, u32)) {
-        let (w, h) = self.atlas_size;
+        let (w, h) = self.glyphs.atlas_size();
         let mut rgba = vec![0u8; (w * h * 4) as usize];
-        for glyph in &self.glyphs {
+        for glyph in self.glyphs.rasterized() {
             let [ax, ay, gw, _] = glyph.atlas;
             for (i, _) in glyph.bitmap.iter().enumerate().filter(|(_, lit)| **lit) {
                 let (x, y) = (ax + i as u32 % gw, ay + i as u32 / gw);

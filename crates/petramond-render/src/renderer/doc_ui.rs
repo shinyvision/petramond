@@ -4,8 +4,9 @@
 //!
 //! petramond-ui vertices are physical px (y down); the px→NDC conversion happens
 //! here on upload so the shared crate stays resolution-agnostic. Batches map
-//! `TexId` to bind groups: the theme atlas + font upload once (lazily), and
-//! per-batch scissor rects carry the runtime's clip semantics to the GPU.
+//! `TexId` to bind groups: the theme's atlas pages upload once (lazily), the
+//! font atlas again whenever painting rasterized new glyphs, and per-batch
+//! scissor rects carry the runtime's clip semantics to the GPU.
 
 use super::*;
 
@@ -35,8 +36,11 @@ pub(super) struct DocUi {
 }
 
 struct ThemeBinds {
-    atlas: wgpu::BindGroup,
+    /// One bind per theme atlas page, indexed by `TexId::ThemePage`.
+    pages: Vec<wgpu::BindGroup>,
     font: wgpu::BindGroup,
+    /// The font atlas revision `font` was uploaded at.
+    font_revision: u64,
 }
 
 struct DynamicBind {
@@ -131,14 +135,35 @@ impl Renderer {
         self.ui.doc_ui.overlay_start = draw.overlay_start.min(self.ui.doc_ui.batches.len());
     }
 
+    /// Upload the theme pages once, and the font atlas whenever its
+    /// revision moved (glyphs rasterize the first time anything draws them —
+    /// this frame's paint included, which is why this runs after it).
     fn ensure_doc_theme_binds(&mut self) {
-        if self.ui.doc_ui.theme_binds.is_some() {
-            return;
-        }
         let theme = petramond::gui::doc_theme::theme();
-        let atlas = self.doc_texture_bind(&theme.atlas, "doc ui theme atlas");
-        let font = self.doc_texture_bind(&theme.font, "doc ui font atlas");
-        self.ui.doc_ui.theme_binds = Some(ThemeBinds { atlas, font });
+        let revision = theme.ui_font().atlas_revision();
+        match &self.ui.doc_ui.theme_binds {
+            Some(binds) if binds.font_revision == revision => {}
+            Some(_) => {
+                let font = self.doc_texture_bind(&theme.font_atlas(), "doc ui font atlas");
+                if let Some(binds) = &mut self.ui.doc_ui.theme_binds {
+                    binds.font = font;
+                    binds.font_revision = revision;
+                }
+            }
+            None => {
+                let pages = theme
+                    .pages()
+                    .iter()
+                    .map(|page| self.doc_texture_bind(page, "doc ui theme page"))
+                    .collect();
+                let font = self.doc_texture_bind(&theme.font_atlas(), "doc ui font atlas");
+                self.ui.doc_ui.theme_binds = Some(ThemeBinds {
+                    pages,
+                    font,
+                    font_revision: revision,
+                });
+            }
+        }
     }
 
     fn ensure_doc_image_binds(&mut self) {
@@ -300,7 +325,10 @@ impl UiPass {
         for batch in batches {
             let bind = match batch.tex {
                 petramond_ui::TexId::Solid => &self.icon_atlas.bind,
-                petramond_ui::TexId::ThemeAtlas => &binds.atlas,
+                petramond_ui::TexId::ThemePage(i) => match binds.pages.get(i as usize) {
+                    Some(bind) => bind,
+                    None => continue,
+                },
                 petramond_ui::TexId::Font => &binds.font,
                 petramond_ui::TexId::DocImage(i) => {
                     match self.doc_ui.frame_images.get(i as usize).and_then(
