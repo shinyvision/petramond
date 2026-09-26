@@ -109,6 +109,9 @@ struct RawMobDef {
     /// Whether it refuses to walk off ledges taller than its routes drop.
     #[serde(default)]
     edge_guard: bool,
+    /// Route-search tuning; omitted = the engine defaults.
+    #[serde(default)]
+    nav: super::nav::NavTuning,
     /// Fluid behavior (see [`Buoyancy`]); omitted = `swim`.
     #[serde(default)]
     buoyancy: Buoyancy,
@@ -404,6 +407,7 @@ fn convert(
     patches: &[petramond_world::registry::RawDataPatch],
 ) -> Result<MobDef, String> {
     r.size.validate()?;
+    r.nav.validate()?;
     if !(0.0..=4.0).contains(&r.gravity_scale) {
         return Err("gravity_scale must be finite and inside [0, 4]".into());
     }
@@ -510,6 +514,7 @@ fn convert(
         footsteps: r.footsteps,
         self_ao: r.self_ao.clamp(0.0, 1.0),
         edge_guard: r.edge_guard,
+        nav: r.nav,
         buoyancy: r.buoyancy,
         tolerates: convert_tolerance(r.tolerates)?,
         gravity_scale: r.gravity_scale,

@@ -408,8 +408,9 @@ fn body_occupied(ctx: &AiCtx, dest: IVec3) -> bool {
             && d.y < ctx.head_height
             && -d.y < height
     };
-    ctx.mobs.iter().enumerate().any(|(i, m)| {
-        if i == ctx.mob_index || !m.active {
+    let reach = ctx.half_width + ctx.mobs.max_half_extent();
+    ctx.mobs.near(center, reach).any(|(i, m)| {
+        if i == ctx.mob_index {
             return false;
         }
         let s = super::super::def(m.kind).size;
@@ -442,8 +443,8 @@ fn reject_for_cohesion(
 fn companion_within(ctx: &AiCtx, rule: WanderCohesion, pos: WorldPos, radius: i32) -> bool {
     let r = radius.max(0) as f32;
     let r2 = r * r;
-    ctx.mobs.iter().enumerate().any(|(i, mob)| {
-        if i == ctx.mob_index || !mob.active || mob.kind != rule.companion || mob.confined() {
+    ctx.mobs.near(pos, r).any(|(i, mob)| {
+        if i == ctx.mob_index || mob.kind != rule.companion || mob.confined() {
             return false;
         }
         let d = mob.pos - pos;
@@ -562,6 +563,7 @@ mod tests {
 
     use super::*;
     use crate::mob::brain::AiMob;
+    use crate::mob::spatial::MobSnapshot;
     use crate::mob::{Mob, MobRng, MobTagValue};
     use crate::world::World;
     use petramond_world::block::Block;
@@ -577,7 +579,7 @@ mod tests {
     fn make_ctx<'a>(
         world: &'a World,
         rng: &'a mut MobRng,
-        mobs: &'a [AiMob],
+        mobs: &'a MobSnapshot,
         mob_index: usize,
         pos: WorldPos,
     ) -> AiCtx<'a> {
@@ -710,7 +712,8 @@ mod tests {
                 tags: Default::default(),
             },
         ];
-        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+        let snap = MobSnapshot::from_mobs(mobs.clone());
+        let ctx = make_ctx(&world, &mut rng, &snap, 0, mobs[0].pos);
         assert!(
             !companion_within(&ctx, rule, mobs[0].pos, 5),
             "self, wrong kind, and inactive mobs do not count"
@@ -727,7 +730,8 @@ mod tests {
             },
         ];
         let mut rng = MobRng::new(1);
-        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+        let snap = MobSnapshot::from_mobs(mobs.clone());
+        let ctx = make_ctx(&world, &mut rng, &snap, 0, mobs[0].pos);
         assert!(
             companion_within(&ctx, rule, mobs[0].pos, 5),
             "an active desired mob inside the wander radius counts"
@@ -758,7 +762,8 @@ mod tests {
                 tags: Default::default(),
             },
         ];
-        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+        let snap = MobSnapshot::from_mobs(mobs.clone());
+        let ctx = make_ctx(&world, &mut rng, &snap, 0, mobs[0].pos);
 
         assert!(
             reject_for_cohesion(&ctx, rule, true, IVec3::new(20, 64, 0), 5),
@@ -798,7 +803,8 @@ mod tests {
                 tags: Default::default(),
             },
         ];
-        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+        let snap = MobSnapshot::from_mobs(mobs.clone());
+        let ctx = make_ctx(&world, &mut rng, &snap, 0, mobs[0].pos);
 
         assert!(
             !companion_within(&ctx, rule, mobs[0].pos, 10),
@@ -845,7 +851,8 @@ mod tests {
                 )])),
             },
         ];
-        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+        let snap = MobSnapshot::from_mobs(mobs.clone());
+        let ctx = make_ctx(&world, &mut rng, &snap, 0, mobs[0].pos);
 
         assert!(
             !companion_within(&ctx, rule, mobs[0].pos, 5),
@@ -870,7 +877,8 @@ mod tests {
             active: true,
             tags: Default::default(),
         }];
-        let ctx = make_ctx(&world, &mut rng, &mobs, 1, WorldPos::new(0.5, 64.0, 0.5));
+        let snap = MobSnapshot::from_mobs(mobs.clone());
+        let ctx = make_ctx(&world, &mut rng, &snap, 1, WorldPos::new(0.5, 64.0, 0.5));
         assert!(
             body_occupied(&ctx, IVec3::new(3, 64, 0)),
             "the other sheep's cell is covered"
@@ -921,7 +929,13 @@ mod tests {
         let mut picked = 0;
         for seed in 0..20 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
+            let mut ctx = make_ctx(
+                &world,
+                &mut rng,
+                MobSnapshot::empty(),
+                0,
+                WorldPos::new(8.5, 65.0, 8.5),
+            );
             ctx.confined_region = Some(&region);
             let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
             if let Some(goal) = ai.tick(&mut ctx).goal {
@@ -947,7 +961,13 @@ mod tests {
         let region = region_for(&world, IVec3::new(5, 65, 5));
         assert!(region.cells.len() < MIN_REGION_WANDER_CELLS);
         let mut rng = MobRng::new(3);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(5.5, 65.0, 5.5));
+        let mut ctx = make_ctx(
+            &world,
+            &mut rng,
+            MobSnapshot::empty(),
+            0,
+            WorldPos::new(5.5, 65.0, 5.5),
+        );
         ctx.confined_region = Some(&region);
         let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
         for _ in 0..50 {
@@ -976,7 +996,13 @@ mod tests {
         let mut picked = 0;
         for seed in 0..30 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
+            let mut ctx = make_ctx(
+                &world,
+                &mut rng,
+                MobSnapshot::empty(),
+                0,
+                WorldPos::new(8.5, 65.0, 8.5),
+            );
             let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
             if let Some(goal) = ai.tick(&mut ctx).goal {
                 picked += 1;
@@ -1006,7 +1032,13 @@ mod tests {
             }
         });
         let mut rng = MobRng::new(1);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
+        let mut ctx = make_ctx(
+            &world,
+            &mut rng,
+            MobSnapshot::empty(),
+            0,
+            WorldPos::new(8.5, 65.0, 8.5),
+        );
         let pick = pick_destination(&mut ctx, wander_tuning(10), plains_habitat(), true);
         assert!(pick.goal.is_none() && pick.exhausted, "sealed = exhausted");
 
@@ -1034,7 +1066,13 @@ mod tests {
         });
         for seed in 0..10 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.0, 8.5));
+            let mut ctx = make_ctx(
+                &world,
+                &mut rng,
+                MobSnapshot::empty(),
+                0,
+                WorldPos::new(8.5, 65.0, 8.5),
+            );
             let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
             assert_eq!(ai.tick(&mut ctx).goal, None, "seed {seed}");
         }
@@ -1099,7 +1137,13 @@ mod tests {
         let mut picked = 0;
         for seed in 0..30 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(7.5, 65.0, 7.5));
+            let mut ctx = make_ctx(
+                &world,
+                &mut rng,
+                MobSnapshot::empty(),
+                0,
+                WorldPos::new(7.5, 65.0, 7.5),
+            );
             let pick = pick_destination(&mut ctx, tuning(6), plains_habitat(), true);
             if let Some(goal) = pick.goal {
                 picked += 1;
@@ -1122,7 +1166,13 @@ mod tests {
         let mut picked = 0;
         for seed in 0..30 {
             let mut rng = MobRng::new(seed);
-            let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(7.5, 65.0, 7.5));
+            let mut ctx = make_ctx(
+                &world,
+                &mut rng,
+                MobSnapshot::empty(),
+                0,
+                WorldPos::new(7.5, 65.0, 7.5),
+            );
             if pick_destination(&mut ctx, tuning(6), plains_habitat(), true)
                 .goal
                 .is_some()
@@ -1148,7 +1198,13 @@ mod tests {
             chunk.set_fluid(8, 65, 8, Block::Water, 0);
         });
         let mut rng = MobRng::new(1);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.2, 8.5));
+        let mut ctx = make_ctx(
+            &world,
+            &mut rng,
+            MobSnapshot::empty(),
+            0,
+            WorldPos::new(8.5, 65.2, 8.5),
+        );
         ctx.cell = IVec3::new(8, 66, 8);
         ctx.in_fluid = Some(Block::Water);
         let mut ai = WanderAi::new(
@@ -1180,7 +1236,13 @@ mod tests {
             }
         });
         let mut rng = MobRng::new(1);
-        let mut ctx = make_ctx(&world, &mut rng, &[], 0, WorldPos::new(8.5, 65.2, 8.5));
+        let mut ctx = make_ctx(
+            &world,
+            &mut rng,
+            MobSnapshot::empty(),
+            0,
+            WorldPos::new(8.5, 65.2, 8.5),
+        );
         ctx.cell = IVec3::new(8, 66, 8);
         ctx.in_fluid = Some(Block::Water);
         let mut ai = WanderAi::new(

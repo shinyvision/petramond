@@ -24,7 +24,7 @@ use super::anim::AnimKind;
 // anim-state readback) keep their path while the type lives with the
 // animation impl.
 pub use super::anim::AnimLayer;
-use super::brain::{AiCtx, AttackIntent, BehaviorOutput, Brain, TickInputs};
+use super::brain::{AiCtx, AttackIntent, BehaviorOutput, Brain, HeadLook, TickInputs};
 use super::confined;
 use super::damage::DeathState;
 use super::kinematics::{route_steering_supported, DriveIntent, KinematicPose};
@@ -253,6 +253,46 @@ pub struct Instance {
     held: [Option<petramond_world::item::ItemType>; 2],
     /// The retained draw set this body wears (presentation only, never saved).
     draw: crate::world::draw::BodyDraw,
+    /// The continuous part of the last brain decision, replayed on the ticks
+    /// a reduced-rate mob coasts without thinking (see `manager::lod`).
+    /// Transient; never persisted.
+    held_decision: HeldDecision,
+}
+
+/// The continuous channels of a settled brain decision — what a mob keeps
+/// doing between decisions when its brain runs at a reduced rate. One-shot
+/// channels (a strike, an animation start, tag writes) and the goal (the
+/// navigator already holds it) are deliberately absent.
+#[derive(Copy, Clone, Debug, Default)]
+struct HeldDecision {
+    head_look: Option<HeadLook>,
+    facing: Option<f32>,
+    speed_scale: Option<f32>,
+    idle_anim: Option<u8>,
+}
+
+impl HeldDecision {
+    fn of(decision: &BehaviorOutput) -> Self {
+        HeldDecision {
+            head_look: decision.head_look,
+            facing: decision.facing,
+            speed_scale: decision.speed_scale,
+            idle_anim: decision.idle_anim,
+        }
+    }
+
+    /// The decision a coasting tick acts on: these channels, still engaged
+    /// on `target`.
+    fn replay(self, target: Option<EntityRef>) -> BehaviorOutput {
+        BehaviorOutput {
+            head_look: self.head_look,
+            facing: self.facing,
+            speed_scale: self.speed_scale,
+            idle_anim: self.idle_anim,
+            target,
+            ..BehaviorOutput::default()
+        }
+    }
 }
 
 /// A dig driven from outside, a tick at a time, on the mining clock a
@@ -335,7 +375,8 @@ impl Instance {
             contacts: Vec::new(),
             brain: super::build_brain(d),
             nav: Navigator::new(d.size.head_cells(), d.size.half_width, d.size.height)
-                .tolerating(d.tolerates.blocks),
+                .tolerating(d.tolerates.blocks)
+                .with_tuning(d.nav),
             unstick: Default::default(),
             escape: Default::default(),
             rng: MobRng::new(seed),
@@ -343,6 +384,7 @@ impl Instance {
             dig: DrivenDig::default(),
             held: [None; 2],
             draw: Default::default(),
+            held_decision: HeldDecision::default(),
         }
     }
 
@@ -363,6 +405,13 @@ impl Instance {
     #[inline]
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Whether this mob's navigator has a route search suspended for budget,
+    /// waiting to continue.
+    #[inline]
+    pub(super) fn nav_search_waiting(&self) -> bool {
+        self.nav.search_waiting()
     }
 
     /// Take the melee strike the brain latched this tick, if any — the manager
@@ -604,11 +653,16 @@ impl Instance {
     ///
     /// `inputs` is the tick-wide shared perception state; `anchor` is the player
     /// nearest this mob (the default target for player-anchored decisions).
+    /// `think` is false on the ticks a reduced-rate mob COASTS (see
+    /// `manager::lod`): the body moves and follows its route, but the brain,
+    /// the confinement refresh and route planning are skipped, and the last
+    /// decision's continuous channels are replayed.
     pub fn tick(
         &mut self,
         dt: f32,
         inputs: &TickInputs,
         regions: &mut confined::RegionCache,
+        think: bool,
         anchor: &PlayerAnchor,
         mob_index: usize,
         despawn_radius: Option<f32>,
@@ -676,17 +730,7 @@ impl Instance {
             }
         }
 
-        // Distance-despawn: a mob with a row-level radius is culled immediately once it
-        // is outside that radius, and randomly once beyond the eligibility distance.
-        // Species with no radius persist while loaded.
-        if let Some(radius) = despawn_radius {
-            let dist2 = (self.pos - player_pos).length_squared();
-            // The roll is drawn only when eligible, so a near mob's brain RNG
-            // stream is untouched by this rule.
-            self.distance_despawned = despawn_now(dist2, radius, || self.rng.next_f32());
-        } else {
-            self.distance_despawned = false;
-        }
+        self.check_distance_despawn(player_pos, despawn_radius);
 
         // A mod-authored pose replaces the whole locomotion step: no
         // navigation, no brain locomotion, no integration — the body is
@@ -766,7 +810,7 @@ impl Instance {
                 self.confined_checked_rev,
                 self.confined_free_age,
             );
-        let due = self.confined_cooldown == 0 || region_dropped;
+        let due = think && (self.confined_cooldown == 0 || region_dropped);
         if due && !verdict_stale {
             self.confined_cooldown = confined::CHECK_INTERVAL;
             self.confined_free_age = self
@@ -812,7 +856,7 @@ impl Instance {
         }
 
         let nav_idle = self.nav.is_idle();
-        let decision = {
+        let decision = if think {
             let mut ctx = AiCtx {
                 reach: Some(world.reach_budget()),
                 mob_id: self.id,
@@ -842,7 +886,11 @@ impl Instance {
                 confined_region: self.confined_region.as_deref(),
                 rng: &mut self.rng,
             };
-            self.brain.decide(&mut ctx)
+            let decision = self.brain.decide(&mut ctx);
+            self.held_decision = HeldDecision::of(&decision);
+            decision
+        } else {
+            self.held_decision.replay(self.current_target)
         };
         self.attack = decision.attack;
         self.current_target = decision.target;
@@ -885,14 +933,22 @@ impl Instance {
         // The pathfinder treats every OTHER entity as a soft obstacle to bend
         // around — except the brain's current target (a zombie paths TO the
         // player it hunts, never around them).
-        let obstacles = super::nav::NavObstacles {
+        let nav_inputs = super::nav::NavInputs {
             self_id: self.id,
             target: self.current_target,
             mobs: inputs.mobs,
             players: inputs.players,
+            budget: inputs.path_budget,
         };
-        self.nav
-            .update_goal_when_supported(decision.goal, cell, world, can_repath, &obstacles);
+        if think {
+            self.nav.update_goal_when_supported(
+                decision.goal,
+                cell,
+                world,
+                can_repath,
+                &nav_inputs,
+            );
+        }
         let (wish, jump) = if can_steer {
             self.nav.follow_steered(self.pos, self.on_ground, world)
         } else {
@@ -995,6 +1051,45 @@ impl Instance {
         }
         self.apply_expression(dt, d, named_anims, &decision);
         Some((was_on_ground, motion_start + Vec3::from(healed)))
+    }
+}
+
+impl Instance {
+    /// Distance-despawn: a mob with a row-level radius is culled immediately once it
+    /// is outside that radius, and randomly once beyond the eligibility distance.
+    /// Species with no radius persist while loaded.
+    fn check_distance_despawn(
+        &mut self,
+        player_pos: petramond_math::world_pos::WorldPos,
+        despawn_radius: Option<f32>,
+    ) {
+        if let Some(radius) = despawn_radius {
+            let dist2 = (self.pos - player_pos).length_squared();
+            // The roll is drawn only when eligible, so a near mob's brain RNG
+            // stream is untouched by this rule.
+            self.distance_despawned = despawn_now(dist2, radius, || self.rng.next_f32());
+        } else {
+            self.distance_despawned = false;
+        }
+    }
+
+    /// A tick skipped for simulation distance (see `manager::lod`): nothing
+    /// simulates, but the distance-despawn rule still applies, and the pose
+    /// is held so the body rests exactly where it stopped instead of
+    /// replaying its last interpolation step.
+    pub(super) fn tick_frozen(
+        &mut self,
+        player_pos: petramond_math::world_pos::WorldPos,
+        despawn_radius: Option<f32>,
+    ) {
+        self.prev_pos = self.pos;
+        self.prev_yaw = self.yaw;
+        self.prev_tilt = self.tilt;
+        self.prev_anim_time = self.anim_time;
+        self.prev_head_yaw = self.head_yaw;
+        self.prev_head_pitch = self.head_pitch;
+        self.prev_hurt = self.hurt_timer;
+        self.check_distance_despawn(player_pos, despawn_radius);
     }
 }
 

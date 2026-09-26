@@ -110,12 +110,15 @@ pub struct TickInputs<'a> {
     pub players: &'a [PlayerAnchor],
     /// The gameplay noises audible this tick.
     pub noises: &'a [Noise],
-    /// Snapshot of live mobs at the start of this tick.
-    pub mobs: &'a [AiMob],
+    /// Snapshot of live mobs at the start of this tick, spatially indexed.
+    pub mobs: &'a super::spatial::MobSnapshot,
     /// Rigid movement obstacles for this mob. Soft bodies receive the complete
     /// start-of-tick solid snapshot; a moving solid receives only exact peer
     /// supports, with every other solid handled by the simultaneous solver.
     pub solid: &'a [petramond_world::collision::DynBox],
+    /// This tick's shared route-search budget (see `nav::PATH_TICK_BUDGET`),
+    /// or `None` to search unbudgeted.
+    pub path_budget: Option<&'a super::nav::PathBudget>,
     /// Complete start-of-tick solid snapshot the ESCAPE pre-pass judges
     /// against (what a body stuck inside geometry must get out of, and where
     /// it may land). Moving solids otherwise receive just their exact
@@ -192,8 +195,11 @@ pub struct AiCtx<'a> {
     /// Index of this mob in [`mobs`](Self::mobs), so companion-aware behaviors can
     /// ignore the mob making the decision.
     pub mob_index: usize,
-    /// Snapshot of live mobs at the start of this tick.
-    pub mobs: &'a [AiMob],
+    /// Snapshot of live mobs at the start of this tick. Neighbour queries go
+    /// through its spatial index ([`MobSnapshot::near`](super::spatial::MobSnapshot::near))
+    /// and entity lookups through its id map — it offers no whole-population
+    /// scan, so a behavior's cost stays proportional to what is around it.
+    pub mobs: &'a super::spatial::MobSnapshot,
     /// The deciding mob's OWN tag map (start-of-tick view) — the read side of
     /// per-mob tag state. The scripted node ships it across the ABI as
     /// `AiNodeCtx::tags`; writes ride [`BehaviorOutput::tag_writes`] and land
@@ -219,8 +225,13 @@ impl AiCtx<'_> {
     pub fn entity_alive(&self, who: EntityRef) -> bool {
         match who {
             EntityRef::Player(pid) => self.players.iter().any(|a| a.id == pid),
-            EntityRef::Mob(id) => self.mobs.iter().any(|m| m.id == id && m.active),
+            EntityRef::Mob(id) => self.mobs.live(id).is_some(),
         }
+    }
+
+    /// The live snapshot of mob `id` (`None` when unknown, dead or frozen).
+    pub fn live_mob(&self, id: u64) -> Option<&AiMob> {
+        self.mobs.live(id)
     }
 
     /// `who`'s live body-centre position, or `None` when it is gone/dead.
@@ -230,8 +241,7 @@ impl AiCtx<'_> {
             EntityRef::Player(pid) => self.players.iter().find(|a| a.id == pid).map(|a| a.pos),
             EntityRef::Mob(id) => self
                 .mobs
-                .iter()
-                .find(|m| m.id == id && m.active)
+                .live(id)
                 .map(|m| m.pos + Vec3::new(0.0, super::def(m.kind).size.height * 0.5, 0.0)),
         }
     }

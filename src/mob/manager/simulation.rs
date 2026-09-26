@@ -8,7 +8,7 @@ use crate::world::World;
 use petramond_math::math::Vec3;
 use petramond_world::body::Body;
 
-use super::{nearest_anchor, Mobs};
+use super::{lod, nearest_anchor, Mobs};
 
 /// One player's presence as the mob simulation sees it: an AI/despawn anchor
 /// plus (for non-spectators) a pushable body. The mobs target whichever anchor
@@ -238,6 +238,10 @@ impl Mobs {
     /// not-yet-loaded chunk is frozen — not simulated, and excluded from pushing — until
     /// the unload harvests it into that chunk's record. This mirrors the dropped-item
     /// freeze and stops a mob from falling through missing terrain at the streamed edge.
+    ///
+    /// The [simulation distance](super::SimDistance) decides how much of each living mob's
+    /// tick runs: the full tick near a player, physics on a reduced-rate brain
+    /// farther out, and nothing but the despawn rule beyond (see `lod`).
     pub fn tick(
         &mut self,
         dt: f32,
@@ -245,9 +249,10 @@ impl Mobs {
         anchors: &[PlayerAnchor],
         freeze_unloaded: bool,
     ) -> MobTickEvents {
-        let mut ai_mobs = std::mem::take(&mut self.ai_scratch);
-        ai_mobs.clear();
-        ai_mobs.extend(self.list.iter().map(|m| AiMob {
+        // The start-of-tick AI view, spatially indexed once for every
+        // neighbour query and id lookup this tick (see `mob::spatial`).
+        let mut ai_mobs = std::mem::take(&mut self.ai_snapshot);
+        ai_mobs.rebuild(self.list.iter().map(|m| AiMob {
             id: m.id(),
             kind: m.kind,
             pos: m.pos,
@@ -279,6 +284,27 @@ impl Mobs {
         self.confined_regions.set_now(world.current_tick());
         let mut confined_regions = std::mem::take(&mut self.confined_regions);
 
+        // What each mob runs this tick, by its distance from the players
+        // (see `lod`).
+        let now = world.current_tick();
+        let mut steps = std::mem::take(&mut self.step_scratch);
+        steps.clear();
+        steps.extend(
+            self.list
+                .iter()
+                .map(|m| self.sim_distance.step(m, anchors, now)),
+        );
+        // Route searches share one budget per tick; searches suspended on an
+        // earlier tick (and continuing this one) get a reserved share so they
+        // always progress.
+        self.path_budget.refill(
+            self.list
+                .iter()
+                .zip(&steps)
+                .filter(|(m, step)| **step == lod::SimStep::Think && m.nav_search_waiting())
+                .count(),
+        );
+
         // Phase 1: every instance proposes its terrain-resolved transform from
         // the same start-of-tick state. Soft bodies see rigid peers as fixed
         // obstacles. A rigid body sees only an exact support during ordinary
@@ -291,12 +317,16 @@ impl Mobs {
                 mob.clear_drive();
                 continue;
             }
-            ticked[i] = true;
-            let meta = &MOB_META[mob.kind.0 as usize];
             let d = def(mob.kind);
             // Every player-facing decision (chase target, head look, despawn
             // distance, strike geometry) anchors on the NEAREST player.
             let anchor = *nearest_anchor(anchors, mob.pos);
+            if steps[i] == lod::SimStep::Frozen {
+                mob.tick_frozen(anchor.pos, d.despawn_radius);
+                continue;
+            }
+            ticked[i] = true;
+            let meta = &MOB_META[mob.kind.0 as usize];
             let peer_obstacles = if d.collision == super::MobCollision::Solid {
                 supporting_solid.clear();
                 super::append_body_supports(
@@ -316,6 +346,7 @@ impl Mobs {
                 players: anchors,
                 noises: &self.heard,
                 mobs: &ai_mobs,
+                path_budget: Some(&self.path_budget),
                 solid: peer_obstacles,
                 solid_escape: &solid,
             };
@@ -323,6 +354,7 @@ impl Mobs {
                 dt,
                 &inputs,
                 &mut confined_regions,
+                steps[i] == lod::SimStep::Think,
                 &anchor,
                 i,
                 d.despawn_radius,
@@ -333,6 +365,7 @@ impl Mobs {
         }
 
         self.confined_regions = confined_regions;
+        self.step_scratch = steps;
 
         // Phase 2: solve solid peers from their complete proposals, then
         // commit every selected prefix together. Stable-id sorting keeps the
@@ -464,10 +497,7 @@ impl Mobs {
                 // disconnected, mob culled) fizzles the strike whole.
                 let target_pos = match intent.target {
                     EntityRef::Player(pid) => anchors.iter().find(|a| a.id == pid).map(|a| a.pos),
-                    EntityRef::Mob(id) => ai_mobs
-                        .iter()
-                        .find(|m| m.id == id && m.active)
-                        .map(|m| m.pos),
+                    EntityRef::Mob(id) => ai_mobs.live(id).map(|m| m.pos),
                 };
                 if let Some(target_pos) = target_pos {
                     let mut away = target_pos - mob.pos;
@@ -515,15 +545,14 @@ impl Mobs {
         self.exposure_scratch = exposure;
         self.motion_finish_scratch = motion_finish;
         self.pending_noises = pending_noises;
-        self.ai_scratch = ai_mobs;
-        self.resolve_pushes(world, anchors, freeze_unloaded);
+        self.ai_snapshot = ai_mobs;
+        self.resolve_pushes(anchors);
         for i in 0..self.list.len() {
             if self.list[i].is_distance_despawned() {
                 self.spill_container(i);
             }
         }
-        self.list
-            .retain(|m| !m.is_despawned() && !m.is_distance_despawned());
+        self.retain_instances(|m| !m.is_despawned() && !m.is_distance_despawned());
         out
     }
 
@@ -536,19 +565,24 @@ impl Mobs {
     /// Computed from a single up-front snapshot of every compound body. Each mob pair is
     /// visited once and its deepest segment overlap yields one equal-and-opposite
     /// separation, so segment count and list order cannot multiply the shove. A mob that
-    /// isn't pushable this tick (dead, or frozen over an unloaded chunk) neither pushes
-    /// nor is pushed.
+    /// isn't pushable this tick (dead, or frozen over an unloaded chunk or by simulation
+    /// distance) neither pushes nor is pushed.
     /// The same overlap tests double as the TOUCH perception channel: every
     /// overlapping entity is recorded on the mob as a contact (`EntityRef`),
     /// which next tick's AI reads as `AiCtx::contacts` (the `chase_contact`
     /// node's input). A mob that doesn't participate this tick gets its
     /// contacts cleared, so nothing stales through death or a freeze.
-    fn resolve_pushes(&mut self, world: &World, anchors: &[PlayerAnchor], freeze_unloaded: bool) {
+    fn resolve_pushes(&mut self, anchors: &[PlayerAnchor]) {
         // `None` marks a mob that doesn't participate this tick; index aligns with `list`.
         let mut bodies = std::mem::take(&mut self.push_scratch);
         bodies.clear();
-        bodies.extend(self.list.iter().map(|m| {
-            is_pushable(m, world, freeze_unloaded).then(|| {
+        // A mob pushes only while alive (a corpse ragdolls in place — its
+        // `pos` is the ragdoll origin, so shoving it would warp the corpse)
+        // and actually simulating this tick (not frozen over unloaded
+        // terrain or by simulation distance).
+        let ticked = &self.ticked_scratch;
+        bodies.extend(self.list.iter().enumerate().map(|(i, m)| {
+            (!m.is_dead() && ticked[i]).then(|| {
                 let size = def(m.kind).size;
                 PushBody {
                     pos: m.pos,
@@ -701,11 +735,4 @@ fn terrain_under_mob_is_final(world: &World, mob: &Instance) -> bool {
     c.y >= petramond_world::chunk::WORLD_MIN_Y
         && world.physics_cell_final_at(c.x, c.y, c.z)
         && world.physics_cell_final_at(c.x, c.y - 1, c.z)
-}
-
-/// Whether `mob` takes part in soft pushing this tick: it must be alive (a corpse
-/// ragdolls in place — its `pos` is the ragdoll origin, so shoving it would warp the
-/// corpse) and actually simulating (not frozen over an unloaded chunk).
-fn is_pushable(mob: &Instance, world: &World, freeze_unloaded: bool) -> bool {
-    !mob.is_dead() && (!freeze_unloaded || terrain_under_mob_is_final(world, mob))
 }

@@ -173,6 +173,11 @@ pub fn build_server_with_pool(
     // the next open — nothing re-reads settings.json mid-session.
     world.set_disabled_mods(disabled_mods.clone());
     world.set_keep_inventory(opened.keep_inventory);
+    // Mobs far from every player simulate at a reduced rate or not at all;
+    // the headless host overrides this from its settings.
+    world
+        .mobs_mut()
+        .set_sim_distance(crate::mob::SimDistance::default());
     // BEFORE core systems install below — the day/night cycle captures it.
     world.set_day_cycle_ticks(crate::server::daynight::cycle_ticks_for_day_minutes(
         opened.day_minutes,

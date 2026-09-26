@@ -33,7 +33,7 @@ impl Mobs {
         mob.skylight = skylight;
         mob.blocklight = blocklight;
         let id = mob.id();
-        self.list.push(mob);
+        self.push_instance(mob);
         Some(id)
     }
 
@@ -129,7 +129,7 @@ impl Mobs {
             i -= 1;
             let c = self.list[i].pos.block();
             if SectionPos::from_world(c.x, c.y, c.z) == Some(pos) {
-                let mob = self.list.swap_remove(i);
+                let mob = self.swap_remove_instance(i);
                 if !mob.is_dead() {
                     taken.push(SavedMob::of(&mob));
                 }
@@ -192,7 +192,7 @@ impl Mobs {
     pub fn remove(&mut self, index: usize) -> bool {
         if index < self.list.len() {
             self.spill_container(index);
-            self.list.swap_remove(index);
+            self.swap_remove_instance(index);
             true
         } else {
             false

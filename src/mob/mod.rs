@@ -35,6 +35,7 @@ pub use path::CLIMB_CELLS;
 mod populate;
 mod ragdoll;
 pub mod riding;
+mod spatial;
 mod spawn;
 pub mod tags;
 
@@ -48,7 +49,7 @@ pub use brain::Brain;
 pub use instance::{hurt_flash01, DigStep, Instance};
 pub use manager::{
     DeathDrop, MobAttack, MobExposureDamage, MobFall, MobSpill, MobTickEvents, Mobs, PlayerAnchor,
-    ShearDrop,
+    ShearDrop, SimDistance,
 };
 pub use nav::mob_can_reach;
 #[cfg(any(test, feature = "test-support"))]
@@ -799,6 +800,9 @@ pub struct MobDef {
     /// routes plan to drop (`"edge_guard"` row), as a sneaking player does;
     /// knockback and jumps still carry it off.
     pub edge_guard: bool,
+    /// Route-search tuning (`"nav"` row, optional): the navigator's search
+    /// cap and same-goal refresh cadence — see [`nav::NavTuning`].
+    pub nav: nav::NavTuning,
     /// How this species behaves in fluids (`"buoyancy"` row, default `swim`) —
     /// see [`Buoyancy`].
     pub buoyancy: Buoyancy,

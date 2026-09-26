@@ -668,3 +668,51 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
         pairs.len()
     );
 }
+
+/// The id → index map must track every way the live set changes: spawns,
+/// `swap_remove` despawns, section harvests and the end-of-tick cull.
+#[test]
+fn index_of_id_tracks_every_live_set_mutation() {
+    let assert_consistent = |mobs: &Mobs| {
+        for (i, m) in mobs.instances().iter().enumerate() {
+            assert_eq!(mobs.index_of_id(m.id()), Some(i), "mob {} at {i}", m.id());
+        }
+    };
+    let mut mobs = Mobs::new(0);
+    for x in 0..6 {
+        let pos = WorldPos::new(f64::from(x) * 20.0 + 8.0, 64.0, 8.0);
+        assert!(mobs.spawn(Mob::Owl, pos, 0.0));
+    }
+    assert_consistent(&mobs);
+    let removed = mobs.instances()[1].id();
+    assert!(mobs.remove(1));
+    assert_eq!(mobs.index_of_id(removed), None);
+    assert_consistent(&mobs);
+
+    let harvested = mobs.take_in_section(SectionPos::new(0, 4, 0));
+    assert_eq!(
+        harvested.len(),
+        1,
+        "only the first owl sits in section (0, 4, 0)"
+    );
+    assert_consistent(&mobs);
+
+    // A death with no ragdoll presentation leaves the live set at the end of
+    // the next tick.
+    let victim = mobs.instances()[0].id();
+    let lethal = MobDamageFeedback {
+        components: vec![crate::mob::MobDamageFeedbackComponent::DecreaseHealth],
+    };
+    assert!(mobs
+        .damage_mob(0, 1000.0, None, true, None, &lethal)
+        .is_some());
+    let world = World::new(0, 1);
+    let anchor = PlayerAnchor {
+        pos: WorldPos::new(8.0, 64.0, 8.0),
+        ..Default::default()
+    };
+    mobs.tick(0.05, &world, &[anchor], false);
+    assert_eq!(mobs.index_of_id(victim), None, "the cull drops the id");
+    assert_eq!(mobs.len(), 3);
+    assert_consistent(&mobs);
+}

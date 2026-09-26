@@ -8,14 +8,14 @@
 //! (currently the `idle_*` animation count), so the per-tick idle-animation behavior
 //! only ever picks animations the model actually has.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
 use petramond_world::chunk::ChunkPos;
 
-use super::brain::AiMob;
 use super::noise::Noise;
+use super::spatial::MobSnapshot;
 use super::{
     append_body_supports, body_has_peer_support, body_separation, body_separation_from_body, def,
     instance, solid_boxes, terrain_safe_motion_prefix, BodyMotion, EntityRef, Instance,
@@ -25,11 +25,13 @@ use super::{
 mod control;
 mod drops;
 mod lifecycle;
+mod lod;
 mod simulation;
 #[cfg(test)]
 mod tests;
 
 pub use drops::{DeathDrop, MobSpill, ShearDrop};
+pub use lod::SimDistance;
 use simulation::PushBody;
 pub use simulation::{MobAttack, MobExposureDamage, MobFall, MobTickEvents, PlayerAnchor};
 
@@ -57,13 +59,30 @@ fn nearest_anchor(
 const SPAWN_RNG_SALT: u64 = 0x5EED_5EED_5EED_5EED;
 
 pub struct Mobs {
+    /// The live set. Mutated ONLY through [`push_instance`](Self::push_instance),
+    /// [`swap_remove_instance`](Self::swap_remove_instance) and
+    /// [`retain_instances`](Self::retain_instances), which keep `index_by_id`
+    /// in step.
     list: Vec<Instance>,
+    /// Stable id → current index in `list` — the O(1) resolver behind
+    /// [`index_of_id`](Self::index_of_id).
+    index_by_id: FxHashMap<u64, usize>,
     /// Monotonic counter seeding each mob's deterministic AI.
     spawn_counter: u64,
     /// Deterministic RNG driving the per-tick natural-spawn picker.
     rng: MobRng,
-    /// Reused per-tick AI snapshot buffer (one entry per live mob).
-    ai_scratch: Vec<AiMob>,
+    /// How much of each mob's tick runs by its distance from the players
+    /// (see [`lod`]). [`SimDistance::UNLIMITED`] until the server installs
+    /// its setting through [`set_sim_distance`](Self::set_sim_distance).
+    sim_distance: SimDistance,
+    /// Per-mob schedule for this tick (index-aligned with `list`).
+    step_scratch: Vec<lod::SimStep>,
+    /// The tick's shared route-search budget, refilled at the start of
+    /// every [`tick`](Self::tick) (see `nav::PATH_TICK_BUDGET`).
+    path_budget: super::nav::PathBudget,
+    /// Reused per-tick AI snapshot (one entry per live mob), spatially
+    /// indexed for the tick's neighbour queries.
+    ai_snapshot: MobSnapshot,
     /// Reused per-tick body snapshot buffer (index-aligned with `list`).
     push_scratch: Vec<Option<PushBody>>,
     /// Index-aligned soft-push sums, reused across ticks.
@@ -134,9 +153,13 @@ impl Mobs {
     pub fn new(seed: u64) -> Self {
         Mobs {
             list: Vec::new(),
+            index_by_id: FxHashMap::default(),
             spawn_counter: 0,
             rng: MobRng::new(seed ^ SPAWN_RNG_SALT),
-            ai_scratch: Vec::new(),
+            sim_distance: SimDistance::UNLIMITED,
+            step_scratch: Vec::new(),
+            path_budget: super::nav::PathBudget::default(),
+            ai_snapshot: MobSnapshot::default(),
             push_scratch: Vec::new(),
             push_velocity_scratch: Vec::new(),
             push_order_scratch: Vec::new(),
@@ -218,6 +241,17 @@ impl Mobs {
         self.heard.clear();
     }
 
+    /// Install the simulation-distance policy (sanitized: see
+    /// [`SimDistance::sanitized`]).
+    pub fn set_sim_distance(&mut self, policy: SimDistance) {
+        self.sim_distance = policy.sanitized();
+    }
+
+    /// The simulation-distance policy in force.
+    pub fn sim_distance(&self) -> SimDistance {
+        self.sim_distance
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.list.len()
@@ -290,7 +324,35 @@ impl Mobs {
     /// mob is gone. Actions arriving over the wire carry ids (indices shift
     /// under despawns between the click and the consuming tick).
     pub fn index_of_id(&self, id: u64) -> Option<usize> {
-        self.list.iter().position(|m| m.id() == id)
+        self.index_by_id.get(&id).copied()
+    }
+
+    /// Append `mob` to the live set.
+    fn push_instance(&mut self, mob: Instance) {
+        self.index_by_id.insert(mob.id(), self.list.len());
+        self.list.push(mob);
+    }
+
+    /// Remove the mob at `index` by `swap_remove`, renumbering the last mob
+    /// into the hole.
+    fn swap_remove_instance(&mut self, index: usize) -> Instance {
+        let mob = self.list.swap_remove(index);
+        self.index_by_id.remove(&mob.id());
+        if let Some(moved) = self.list.get(index) {
+            self.index_by_id.insert(moved.id(), index);
+        }
+        mob
+    }
+
+    /// Keep only the mobs `keep` accepts, preserving their order.
+    fn retain_instances(&mut self, keep: impl FnMut(&Instance) -> bool) {
+        let before = self.list.len();
+        self.list.retain(keep);
+        if self.list.len() != before {
+            self.index_by_id.clear();
+            self.index_by_id
+                .extend(self.list.iter().enumerate().map(|(i, m)| (m.id(), i)));
+        }
     }
 
     /// Whether placing `block` at cell `p` would clip into any live mob — its collision

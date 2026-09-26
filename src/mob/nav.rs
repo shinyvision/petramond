@@ -14,29 +14,30 @@
 //! AABB against partial shapes per candidate edge ([`navigation_step_gate`] — so
 //! a 1/16 ladder panel is routed around instead of walked into, while the
 //! open 15/16 of its cell stays walkable), and prices the cells other
-//! entities occupy ([`NavObstacles`]) so routes bend around mobs and players
+//! entities occupy ([`NavInputs`]) so routes bend around mobs and players
 //! without ever being walled off by them.
-
-use rustc_hash::FxHashMap;
 
 use crate::world::{SectionCursor, World};
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::{Aabb, Block};
 use petramond_world::collision;
 
-use super::brain::AiMob;
-use super::path::{self, PathParams};
+use super::path::PathParams;
+use super::spatial::MobSnapshot;
 use super::{def, EntityRef, PlayerAnchor};
 
 mod budget;
 mod hazards;
 mod kept;
+mod plan;
 mod probe;
 mod step_gate;
 
-pub use budget::ReachBudget;
+pub use budget::{PathBudget, ReachBudget};
 pub(super) use hazards::foothold_in_hazard;
 pub use kept::KeptBoxes;
+pub(super) use plan::NavInputs;
+pub use plan::NavTuning;
 pub(super) use probe::destination_reachable;
 #[cfg(any(test, feature = "test-support"))]
 pub use probe::route_path;
@@ -133,6 +134,13 @@ pub struct Navigator {
     /// What the live hazard guard refused on recent routes; persistent
     /// refusals back off like a partial route instead of recomputing.
     refusals: hazards::Refusals,
+    /// This species' same-goal refresh cadence ([`REPATH_TICKS`] unless its
+    /// row tunes it) — the interval a reachable route refreshes at and the
+    /// base of the unreachable backoff.
+    repath_ticks: u32,
+    /// A route search the tick's budget could not finish, continuing next
+    /// tick while the current route is still followed.
+    pending: Option<plan::PendingSearch>,
     #[cfg(test)]
     recomputes: u32,
 }
@@ -154,6 +162,8 @@ impl Navigator {
             since_path: 0,
             repath_interval: REPATH_TICKS,
             refusals: hazards::Refusals::default(),
+            repath_ticks: REPATH_TICKS,
+            pending: None,
             #[cfg(test)]
             recomputes: 0,
         }
@@ -167,8 +177,10 @@ impl Navigator {
 
     /// No active path — the mob has arrived, given up, or was never tasked. The
     /// brain reads this (via `AiCtx::nav_idle`) to know it may pick a new goal.
+    /// A mob whose route search is still running is NOT idle, even with no
+    /// route to walk yet — it has a destination, just not the way there.
     pub fn is_idle(&self) -> bool {
-        self.goal.is_none() || self.index >= self.path.len()
+        self.goal.is_none() || (self.index >= self.path.len() && self.pending.is_none())
     }
 
     /// The current path (foothold cells, start→goal), for tests to observe re-pathing.
@@ -191,132 +203,9 @@ impl Navigator {
         self.goal_best = f32::INFINITY;
         self.goal_stall = 0;
         self.since_path = 0;
-        self.repath_interval = REPATH_TICKS;
+        self.repath_interval = self.repath_ticks;
         self.refusals = hazards::Refusals::default();
-    }
-
-    /// Set the navigation goal and keep the path fresh. A *new* goal is pathed at once
-    /// (resetting progress + the stuck tally); the *same* goal held across ticks costs
-    /// nothing until [`REPATH_TICKS`] elapse, then it is re-pathed to refresh a route
-    /// the changing world may have invalidated or shortened. `None` clears the path.
-    ///
-    /// Periodic and new-goal pathfinding is paused while `can_repath` is false. A
-    /// falling mob keeps following its existing route instead of recomputing from
-    /// transient mid-air cells.
-    pub fn update_goal_when_supported(
-        &mut self,
-        goal: Option<IVec3>,
-        start: IVec3,
-        world: &World,
-        can_repath: bool,
-        obstacles: &NavObstacles,
-    ) {
-        match goal {
-            None => {
-                if self.goal.is_some() {
-                    self.clear();
-                }
-            }
-            Some(g) => {
-                if !can_repath {
-                    return;
-                }
-                if self.goal != Some(g) {
-                    // A new goal: path to it afresh and reset the stuck tally — this is a
-                    // deliberate new destination, not the same one re-evaluated. It also
-                    // drops any unreachable-goal backoff from the previous cell.
-                    self.repath_interval = REPATH_TICKS;
-                    self.recompute(start, g, world, obstacles, true);
-                    self.goal = Some(g);
-                    self.stuck = 0;
-                    self.goal_best = f32::INFINITY;
-                    self.goal_stall = 0;
-                } else {
-                    // Same goal held: refresh the route at the current interval. A
-                    // reachable route uses the normal cadence; repeated partial/failed
-                    // routes stretch this interval to avoid exhausting A* every second for
-                    // an unreachable target. The stuck tally is left to keep climbing
-                    // across refreshes, so a mob wedged the whole time still abandons the
-                    // goal rather than re-pathing forever.
-                    self.since_path = self.since_path.saturating_add(1);
-                    if self.since_path >= self.repath_interval {
-                        self.recompute(start, g, world, obstacles, false);
-                    }
-                }
-            }
-        }
-    }
-
-    /// (Re)compute the path from `start` to `goal`, resetting the waypoint cursor to the
-    /// first step and the repath timer. Shared by a goal change and the periodic refresh.
-    ///
-    /// Both cases try to PRESERVE the waypoint the mob is already walking toward
-    /// when it is still a valid immediate step toward the new route: a chased
-    /// target crossing a cell boundary changes the goal several times a second,
-    /// and re-picking between equal-cost first steps every time snaps the mob
-    /// laterally mid-stride. Keeping the in-progress step costs at most one cell
-    /// of detour; `preserve_waypoint_path` refuses anything worse.
-    fn recompute(
-        &mut self,
-        start: IVec3,
-        goal: IVec3,
-        world: &World,
-        obstacles: &NavObstacles,
-        goal_changed: bool,
-    ) {
-        let cursor = world.cursor();
-        let solid = nav_solid_fn(&cursor);
-        let support = nav_support_fn(&cursor, self.half_width);
-        let fluid = nav_fluid_fn(&cursor);
-        let step_allowed = navigation_step_gate(&cursor, self.params, self.height);
-        let costs = entity_cell_costs(obstacles, start);
-        let escape_cost = hazards::escape_cost(&cursor, self.params, start);
-        let cell_cost = |c: IVec3| costs.get(&c).copied().unwrap_or(0) + escape_cost(c);
-        let old_waypoint = (self.index < self.path.len()).then(|| self.path[self.index]);
-        self.path = old_waypoint
-            .and_then(|wp| {
-                preserve_waypoint_path(
-                    start,
-                    wp,
-                    goal,
-                    self.params,
-                    &solid,
-                    &support,
-                    &fluid,
-                    &step_allowed,
-                    &cell_cost,
-                )
-            })
-            .unwrap_or_else(|| {
-                path::find_path_nav(
-                    start,
-                    goal,
-                    self.params,
-                    &solid,
-                    &support,
-                    &fluid,
-                    &step_allowed,
-                    cell_cost,
-                )
-            });
-        self.path_reaches_goal = self.path.last().is_some_and(|&last| last == goal);
-        // Index 1 = the first cell to walk to (path[0] is the start).
-        self.index = if self.path.len() > 1 {
-            1
-        } else {
-            self.path.len()
-        };
-        self.since_path = 0;
-        let refused_again = self.refusals.replan();
-        if (self.path_reaches_goal || goal_changed) && !refused_again {
-            self.repath_interval = REPATH_TICKS;
-        } else {
-            self.repath_interval = next_repath_backoff(self.repath_interval);
-        }
-        #[cfg(test)]
-        {
-            self.recomputes += 1;
-        }
+        self.pending = None;
     }
 
     /// [`follow`](Self::follow) plus collision-aware steering: the raw wish aims
@@ -600,79 +489,6 @@ fn deflect_wish(
     deflected.normalize_or_zero()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn preserve_waypoint_path(
-    start: IVec3,
-    waypoint: IVec3,
-    goal: IVec3,
-    params: PathParams,
-    solid: &impl Fn(IVec3) -> bool,
-    support: &impl Fn(IVec3) -> bool,
-    fluid: &impl Fn(IVec3) -> bool,
-    step_allowed: &impl Fn(IVec3, IVec3) -> bool,
-    cell_cost: &impl Fn(IVec3) -> u32,
-) -> Option<Vec<IVec3>> {
-    if waypoint == start {
-        return None;
-    }
-    let step = path::find_path_nav(
-        start,
-        waypoint,
-        params,
-        solid,
-        support,
-        fluid,
-        step_allowed,
-        cell_cost,
-    );
-    if step.last() != Some(&waypoint) || step.len() > 2 {
-        return None;
-    }
-    if waypoint == goal {
-        return Some(step);
-    }
-    let suffix = path::find_path_nav(
-        waypoint,
-        goal,
-        params,
-        solid,
-        support,
-        fluid,
-        step_allowed,
-        cell_cost,
-    );
-    if suffix.first() != Some(&waypoint) || suffix.len() <= 1 {
-        return None;
-    }
-    // Preserving is only worth it while the waypoint stays ON THE WAY. A goal
-    // that moved to the mob's own cell or behind it makes the suffix double
-    // back through `start` (start → wp → start → …) or hairpin off the
-    // preserved step; steering then projects the body as already PAST the
-    // waypoint along that return leg and walks it back to where it stands —
-    // one tick out, one tick back, every tick, for as long as the goal keeps
-    // flipping (the herd-at-the-lure shaking). A route that revisits the
-    // start, or turns more than 90° at the preserved step, is never a
-    // one-cell detour: fall through to the direct search instead.
-    if suffix.contains(&start) {
-        return None;
-    }
-    let (ax, az) = (waypoint.x - start.x, waypoint.z - start.z);
-    let (bx, bz) = (suffix[1].x - waypoint.x, suffix[1].z - waypoint.z);
-    if ax * bx + az * bz < 0 {
-        return None;
-    }
-    let mut stitched = step;
-    stitched.extend_from_slice(&suffix[1..]);
-    Some(stitched)
-}
-
-fn next_repath_backoff(current: u32) -> u32 {
-    current
-        .max(REPATH_TICKS)
-        .saturating_mul(2)
-        .min(MAX_REPATH_BACKOFF_TICKS)
-}
-
 /// How far ahead (centre distance) a touching body counts as "in the way" —
 /// the mob's own half-width plus a pressing margin that covers the other
 /// body's radius.
@@ -716,7 +532,7 @@ impl Unstick {
         half_width: f32,
         contacts: &[EntityRef],
         target: Option<EntityRef>,
-        mobs: &[AiMob],
+        mobs: &MobSnapshot,
         players: &[PlayerAnchor],
     ) -> Vec3 {
         if wish == Vec3::ZERO {
@@ -756,7 +572,7 @@ fn blocking_bearing(
     half_width: f32,
     contacts: &[EntityRef],
     target: Option<EntityRef>,
-    mobs: &[AiMob],
+    mobs: &MobSnapshot,
     players: &[PlayerAnchor],
 ) -> Option<Vec3> {
     let mut best: Option<(Vec3, f32)> = None;
@@ -773,7 +589,7 @@ fn blocking_bearing(
         }
         match c {
             EntityRef::Mob(id) => {
-                if let Some(m) = mobs.iter().find(|m| m.id == *id && m.active) {
+                if let Some(m) = mobs.live(*id) {
                     consider(m.pos);
                 }
             }
@@ -927,90 +743,6 @@ pub(super) fn nav_support_fn<'c, 'w>(
                 .any(|b| b.min[0] < hi && b.max[0] > lo && b.min[2] < hi && b.max[2] > lo),
         }
     }
-}
-
-/// Cost of routing through a cell another entity's body occupies — about a
-/// 20-cell detour ([`path`]'s flat step costs 10), so ANY local way around a
-/// standing mob or player (over a trough, around a pen-mate) always beats
-/// pressing through them, while a genuinely packed crowd still resolves by
-/// paying it (the search never deadlocks, and the surcharge stays out of the
-/// heuristic so A* remains admissible).
-const ENTITY_CELL_COST: u32 = 200;
-/// Entities farther than this from the path start are ignored when pricing
-/// cells — far bodies cannot matter to a local route.
-const ENTITY_AVOID_RANGE: f32 = 32.0;
-
-/// Soft obstacles the pathfinder routes around: the OTHER entities near this
-/// mob. The mob's current TARGET is exempt — a zombie chasing the player must
-/// path TO the player, not around them — and so is the mob itself.
-pub(super) struct NavObstacles<'a> {
-    pub self_id: u64,
-    pub target: Option<EntityRef>,
-    pub mobs: &'a [AiMob],
-    pub players: &'a [PlayerAnchor],
-}
-
-impl NavObstacles<'static> {
-    /// No obstacles — tests and callers without an entity snapshot.
-    #[cfg(test)]
-    pub fn none() -> Self {
-        NavObstacles {
-            self_id: 0,
-            target: None,
-            mobs: &[],
-            players: &[],
-        }
-    }
-}
-
-/// Price the cells covered by every avoided entity's body AABB. Overlapping
-/// bodies stack, so the middle of a herd costs more than its edge.
-fn entity_cell_costs(avoid: &NavObstacles, start: IVec3) -> FxHashMap<IVec3, u32> {
-    let mut costs: FxHashMap<IVec3, u32> = FxHashMap::default();
-    let (ox, oz) = (f64::from(start.x) + 0.5, f64::from(start.z) + 0.5);
-    let mut mark = |min: [f64; 3], max: [f64; 3]| {
-        let ddx = ((min[0] + max[0]) * 0.5 - ox) as f32;
-        let ddz = ((min[2] + max[2]) * 0.5 - oz) as f32;
-        if ddx * ddx + ddz * ddz > ENTITY_AVOID_RANGE * ENTITY_AVOID_RANGE {
-            return;
-        }
-        for x in (min[0].floor() as i32)..=(max[0].floor() as i32) {
-            for y in (min[1].floor() as i32)..=(max[1].floor() as i32) {
-                for z in (min[2].floor() as i32)..=(max[2].floor() as i32) {
-                    let slot = costs.entry(IVec3::new(x, y, z)).or_insert(0);
-                    *slot = slot.saturating_add(ENTITY_CELL_COST);
-                }
-            }
-        }
-    };
-    for m in avoid.mobs {
-        if !m.active || m.id == avoid.self_id || avoid.target == Some(EntityRef::Mob(m.id)) {
-            continue;
-        }
-        let s = def(m.kind).size;
-        // A long body (a boat) marks its enclosing square — conservative, and
-        // its rigid hull is a real obstacle a route should bend around.
-        let half = f64::from(s.half_length.unwrap_or(s.half_width).max(s.half_width));
-        mark(
-            [m.pos.x - half, m.pos.y, m.pos.z - half],
-            [
-                m.pos.x + half,
-                m.pos.y + f64::from(s.height),
-                m.pos.z + half,
-            ],
-        );
-    }
-    for p in avoid.players {
-        if avoid.target == Some(EntityRef::Player(p.id)) {
-            continue;
-        }
-        let Some(body) = p.body else {
-            continue;
-        };
-        let (mn, mx) = body.aabb();
-        mark(mn, mx);
-    }
-    costs
 }
 
 #[cfg(test)]

@@ -23,17 +23,17 @@
 //! progress instead of standing still.
 
 use rustc_hash::FxHashMap;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
 mod box_memo;
 mod reach;
+mod search;
 
 pub use box_memo::{fits_a_table, BoxFacts, BoxLeads, Fact};
 pub use reach::{reachable_nav, reachable_on, walk_region, BoxGraph, NavWorld, Planned, Reads};
+pub use search::{NavSearch, SearchPoll, SearchProbes};
 
 /// Cells one climb edge rises. The body delivers it with a jump on land and a
 /// shore climb from fluid footing (`entity::shore`), which reads this reach.
@@ -467,6 +467,10 @@ pub(super) fn find_path(
 ///   detour exists, yet never wall off the only route. Costs are in the same
 ///   scale as the step costs ([`COST_FLAT`] = 10 per cell); the heuristic
 ///   ignores them, so they only ever ADD cost and A* stays admissible.
+///
+/// The one-shot wrapper over [`NavSearch`], which the navigator drives
+/// directly so a search can span ticks under the path budget.
+#[cfg(any(test, feature = "test-support"))]
 #[allow(clippy::too_many_arguments)]
 pub fn find_path_nav(
     start: IVec3,
@@ -478,91 +482,20 @@ pub fn find_path_nav(
     step_allowed: impl Fn(IVec3, IVec3) -> bool,
     cell_cost: impl Fn(IVec3) -> u32,
 ) -> Vec<IVec3> {
-    let passable_col = |c: IVec3| body_clear(c, params, solid);
-    // A cell is a foothold if its floor *supports* it (solid ground, a partial
-    // shape's top, or the fluid surface) and the body fits above. Submerged
-    // fluid cells are passable, not footholds.
-    let memo = CellMemo::<2048>::default();
-    let foothold = |c: IVec3| {
-        memo.get(c, |c| {
-            is_navigation_foothold_with(c, params, solid, support, &fluid)
-        })
-    };
-
-    if !foothold(start) {
-        return Vec::new();
-    }
-    if start == goal {
-        return vec![start];
-    }
-
-    // Octile distance: the cost of the cheapest diagonal-then-straight route over
-    // flat ground, ignoring height (vertical moves cost ≥ COST_FLAT, so this stays
-    // admissible). Manhattan would over-estimate now that diagonals exist.
-    let h = |c: IVec3| -> u32 {
-        let dx = (c.x - goal.x).unsigned_abs();
-        let dz = (c.z - goal.z).unsigned_abs();
-        let (lo, hi) = if dx < dz { (dx, dz) } else { (dz, dx) };
-        COST_DIAG * lo + COST_FLAT * (hi - lo)
-    };
-
-    let mut g_score: FxHashMap<IVec3, u32> = FxHashMap::default();
-    let mut came_from: FxHashMap<IVec3, IVec3> = FxHashMap::default();
-    let mut open: BinaryHeap<Reverse<(u32, u32, [i32; 3])>> = BinaryHeap::new();
-
-    g_score.insert(start, 0);
-    open.push(Reverse((h(start), 0, start.to_array())));
-
-    // Best cell seen so far by heuristic, for the closest-reachable fallback.
-    let mut best = start;
-    let mut best_h = h(start);
-    let mut expanded = 0usize;
-    let mut steps: Vec<(IVec3, u32)> = Vec::with_capacity(8);
-
-    while let Some(Reverse((_, g_at_pop, pos_arr))) = open.pop() {
-        let current = IVec3::from_array(pos_arr);
-        // Skip stale heap entries (a cheaper path to `current` was found after this
-        // entry was queued).
-        if g_at_pop > *g_score.get(&current).unwrap_or(&u32::MAX) {
-            continue;
-        }
-        if current == goal {
-            return reconstruct(&came_from, current);
-        }
-        let hc = h(current);
-        if hc < best_h {
-            best_h = hc;
-            best = current;
-        }
-
-        expanded += 1;
-        if expanded >= params.max_nodes {
-            break;
-        }
-
-        neighbors(
-            current,
-            &params,
-            &foothold,
-            &passable_col,
-            solid,
-            &step_allowed,
-            &mut steps,
-        );
-        for &(next, step_cost) in &steps {
-            let tentative = g_score[&current]
-                .saturating_add(step_cost)
-                .saturating_add(cell_cost(next));
-            if tentative < *g_score.get(&next).unwrap_or(&u32::MAX) {
-                came_from.insert(next, current);
-                g_score.insert(next, tentative);
-                open.push(Reverse((tentative + h(next), tentative, next.to_array())));
-            }
-        }
-    }
-
-    // Goal unreachable within the budget: walk toward the closest cell we found.
-    reconstruct(&came_from, best)
+    NavSearch::default()
+        .solve(
+            start,
+            goal,
+            params,
+            &SearchProbes {
+                solid,
+                support,
+                fluid: &fluid,
+                step_allowed: &step_allowed,
+                cell_cost: &cell_cost,
+            },
+        )
+        .0
 }
 
 /// The walkable neighbours of foothold `a`: for each cardinal direction, exactly one

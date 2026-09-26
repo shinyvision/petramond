@@ -234,7 +234,7 @@ fn a_locked_mob_target_is_struck_and_a_vanished_one_fizzles() {
     let far_player = WorldPos::new(80.0, 64.9, 80.0);
 
     let mut c = ctx(&world, &mut rng, pos, 0.0, far_player);
-    let mobs = [victim];
+    let mobs = crate::mob::spatial::MobSnapshot::from_mobs([victim]);
     c.mobs = &mobs;
     c.target = Some(EntityRef::Mob(7));
     let intent = ai.tick(&mut c).attack.expect("locked mob target in reach");

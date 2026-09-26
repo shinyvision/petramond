@@ -152,7 +152,7 @@ impl AiBehavior for MeleeAttackAi {
                 if id == ctx.mob_id {
                     return BehaviorOutput::default();
                 }
-                match ctx.mobs.iter().find(|m| m.id == id && m.active) {
+                match ctx.live_mob(id) {
                     Some(m) => {
                         let size = def(m.kind).size;
                         // `AiMob::pos` is feet; strike geometry wants the body centre.

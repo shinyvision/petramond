@@ -1,4 +1,6 @@
 use super::*;
+use crate::mob::brain::AiMob;
+use crate::mob::path;
 use mod_api::Route;
 use petramond_math::facing::Facing;
 use petramond_math::world_pos::WorldPos;
@@ -252,7 +254,7 @@ fn closed_door_blocks_the_crossing_edge() {
     let (world, start, goal, door) = world_with_door_in_wall(false);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
 
     assert_ne!(
         nav.path().last(),
@@ -272,7 +274,7 @@ fn open_door_allows_the_cleared_crossing_edge() {
     let (world, start, goal, door) = world_with_door_in_wall(true);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
 
     assert_eq!(nav.path().last(), Some(&goal), "open door is routeable");
     assert!(
@@ -292,7 +294,7 @@ fn open_door_still_blocks_the_swung_edge() {
     let goal = IVec3::new(5, 64, 1);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
 
     assert_eq!(nav.path().last(), Some(&goal), "a detour remains possible");
     assert!(
@@ -328,7 +330,7 @@ fn a_ladder_panel_blocks_only_the_edge_it_physically_blocks() {
 
     // Entering the ladder cell from the open side is fine — the cell is NOT
     // a blanket wall.
-    nav.update_goal_when_supported(Some(ladder), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(ladder), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.path().last(),
         Some(&ladder),
@@ -340,7 +342,7 @@ fn a_ladder_panel_blocks_only_the_edge_it_physically_blocks() {
     // the best-effort route never steps through the panel.
     let mut nav = Navigator::new(1, 0.25, 0.9);
     let goal = IVec3::new(4, 64, 2);
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_ne!(
         nav.path().last(),
         Some(&goal),
@@ -358,13 +360,13 @@ fn a_ladder_panel_blocks_only_the_edge_it_physically_blocks() {
 fn a_touching_body_ahead_veers_the_wish_to_a_side() {
     let pos = WorldPos::new(0.5, 64.0, 0.5);
     let wish = Vec3::new(1.0, 0.0, 0.0);
-    let blocking = [AiMob {
+    let blocking = MobSnapshot::from_mobs([AiMob {
         id: 2,
         kind: crate::mob::Mob::Sheep,
         pos: WorldPos::new(1.4, 64.0, 0.5),
         active: true,
         tags: Default::default(),
-    }];
+    }]);
     let contacts = [EntityRef::Mob(2)];
 
     // Dead ahead: the wish veers sideways (id-picked side), keeping forward speed.
@@ -394,13 +396,13 @@ fn a_touching_body_ahead_veers_the_wish_to_a_side() {
     );
 
     // A body BEHIND the travel direction is not ours to dodge.
-    let behind = [AiMob {
+    let behind = MobSnapshot::from_mobs([AiMob {
         id: 2,
         kind: crate::mob::Mob::Sheep,
         pos: WorldPos::new(-0.4, 64.0, 0.5),
         active: true,
         tags: Default::default(),
-    }];
+    }]);
     assert_eq!(
         Unstick::default().steer(wish, pos, 1, 0.45, &contacts, None, &behind, &[]),
         wish
@@ -416,13 +418,13 @@ fn the_veer_commits_to_its_side_instead_of_flip_flopping() {
     // wish (and the body facing) every other tick.
     let pos = WorldPos::new(0.5, 64.0, 0.5);
     let wish = Vec3::new(1.0, 0.0, 0.0);
-    let blocking = [AiMob {
+    let blocking = MobSnapshot::from_mobs([AiMob {
         id: 2,
         kind: crate::mob::Mob::Sheep,
         pos: WorldPos::new(1.4, 64.0, 0.5),
         active: true,
         tags: Default::default(),
-    }];
+    }]);
     let contacts = [EntityRef::Mob(2)];
 
     let mut latch = Unstick::default();
@@ -448,10 +450,10 @@ fn the_veer_commits_to_its_side_instead_of_flip_flopping() {
     // flip the committed side while the commitment is live.
     let mut latch = Unstick::default();
     let first = latch.steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
-    let other_side = [AiMob {
+    let other_side = MobSnapshot::from_mobs([AiMob {
         pos: WorldPos::new(1.3, 64.0, f64::from(0.4 - first.z.signum() * 0.2)),
-        ..blocking[0].clone()
-    }];
+        ..blocking.by_id(2).expect("blocker").1.clone()
+    }]);
     let second = latch.steer(wish, pos, 1, 0.45, &contacts, None, &other_side, &[]);
     assert_eq!(
         first.z.signum(),
@@ -473,7 +475,7 @@ fn a_one_high_block_wall_is_routable_but_a_one_high_fence_wall_is_not() {
         stone_world.set_block_world(x, 64, 1, Block::Stone);
     }
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    nav.update_goal_when_supported(Some(goal), start, &stone_world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &stone_world, true, &NavInputs::none());
     assert_eq!(
         nav.path().last(),
         Some(&goal),
@@ -486,7 +488,7 @@ fn a_one_high_block_wall_is_routable_but_a_one_high_fence_wall_is_not() {
         fence_world.set_block_world(x, 64, 1, Block::OakFence);
     }
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    nav.update_goal_when_supported(Some(goal), start, &fence_world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &fence_world, true, &NavInputs::none());
     assert_ne!(
         nav.path().last(),
         Some(&goal),
@@ -764,7 +766,7 @@ fn a_step_beside_the_fence_opens_the_route_over_it() {
     let start = IVec3::new(3, 64, 0);
     let goal = IVec3::new(4, 64, 2);
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.path().last(),
         Some(&goal),
@@ -847,7 +849,7 @@ fn no_diagonal_step_cuts_past_a_partial_shapes_corner() {
     let start = IVec3::new(3, 64, 1);
     let goal = IVec3::new(4, 64, 0);
     let mut nav = Navigator::new(2, 0.45, 1.4);
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(nav.path().last(), Some(&goal), "the goal stays reachable");
     assert!(
         nav.path()
@@ -864,18 +866,19 @@ fn routes_bend_around_another_mobs_body() {
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
     let blocker_cell = IVec3::new(4, 64, 1);
-    let mobs = [AiMob {
+    let mobs = MobSnapshot::from_mobs([AiMob {
         id: 7,
         kind: crate::mob::Mob::Sheep,
         pos: WorldPos::new(4.5, 64.0, 1.5),
         active: true,
         tags: Default::default(),
-    }];
-    let obstacles = NavObstacles {
+    }]);
+    let obstacles = NavInputs {
         self_id: 1,
         target: None,
         mobs: &mobs,
         players: &[],
+        budget: None,
     };
     let mut nav = Navigator::new(1, 0.25, 0.9);
     nav.update_goal_when_supported(Some(goal), start, &world, true, &obstacles);
@@ -903,18 +906,19 @@ fn a_blocked_corridor_is_rounded_rather_than_pushed_through() {
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
     let blocker_cell = IVec3::new(4, 64, 1);
-    let mobs = [AiMob {
+    let mobs = MobSnapshot::from_mobs([AiMob {
         id: 7,
         kind: crate::mob::Mob::Sheep,
         pos: WorldPos::new(4.5, 64.0, 1.5),
         active: true,
         tags: Default::default(),
-    }];
-    let obstacles = NavObstacles {
+    }]);
+    let obstacles = NavInputs {
         self_id: 1,
         target: None,
         mobs: &mobs,
         players: &[],
+        budget: None,
     };
     let mut nav = Navigator::new(1, 0.25, 0.9);
     nav.update_goal_when_supported(Some(goal), start, &world, true, &obstacles);
@@ -938,18 +942,19 @@ fn a_truly_blocked_crowd_still_resolves_by_paying_the_cost() {
     }
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
-    let mobs = [AiMob {
+    let mobs = MobSnapshot::from_mobs([AiMob {
         id: 7,
         kind: crate::mob::Mob::Sheep,
         pos: WorldPos::new(4.5, 64.0, 1.5),
         active: true,
         tags: Default::default(),
-    }];
-    let obstacles = NavObstacles {
+    }]);
+    let obstacles = NavInputs {
         self_id: 1,
         target: None,
         mobs: &mobs,
         players: &[],
+        budget: None,
     };
     let mut nav = Navigator::new(1, 0.25, 0.9);
     nav.update_goal_when_supported(Some(goal), start, &world, true, &obstacles);
@@ -969,18 +974,19 @@ fn the_locked_target_is_never_avoided() {
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
     let on_the_way = IVec3::new(4, 64, 1);
-    let mobs = [AiMob {
+    let mobs = MobSnapshot::from_mobs([AiMob {
         id: 7,
         kind: crate::mob::Mob::Sheep,
         pos: WorldPos::new(4.5, 64.0, 1.5),
         active: true,
         tags: Default::default(),
-    }];
-    let obstacles = NavObstacles {
+    }]);
+    let obstacles = NavInputs {
         self_id: 1,
         target: Some(EntityRef::Mob(7)),
         mobs: &mobs,
         players: &[],
+        budget: None,
     };
     let mut nav = Navigator::new(1, 0.25, 0.9);
     nav.update_goal_when_supported(Some(goal), start, &world, true, &obstacles);
@@ -1008,11 +1014,12 @@ fn players_are_soft_obstacles_unless_targeted() {
     let players = [anchor];
 
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    let avoid = NavObstacles {
+    let avoid = NavInputs {
         self_id: 1,
         target: None,
-        mobs: &[],
+        mobs: MobSnapshot::empty(),
         players: &players,
+        budget: None,
     };
     nav.update_goal_when_supported(Some(goal), start, &world, true, &avoid);
     assert_eq!(nav.path().last(), Some(&goal));
@@ -1023,11 +1030,12 @@ fn players_are_soft_obstacles_unless_targeted() {
     );
 
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    let chase = NavObstacles {
+    let chase = NavInputs {
         self_id: 1,
         target: Some(EntityRef::Player(players[0].id)),
-        mobs: &[],
+        mobs: MobSnapshot::empty(),
         players: &players,
+        budget: None,
     };
     nav.update_goal_when_supported(Some(goal), start, &world, true, &chase);
     assert!(
@@ -1048,7 +1056,7 @@ fn re_paths_a_held_goal_when_the_world_changes() {
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
     // Initial path: a straight run along z = 1, passing through (4, 64, 1).
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     let stale: Vec<IVec3> = nav.path().to_vec();
     let blocked = IVec3::new(4, 64, 1);
     assert!(
@@ -1064,7 +1072,7 @@ fn re_paths_a_held_goal_when_the_world_changes() {
     // For the first REPATH_TICKS-1 held ticks the stale route is kept verbatim (no
     // per-tick re-pathing — holding a goal stays cheap).
     for _ in 0..REPATH_TICKS - 1 {
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
         assert_eq!(
             nav.path(),
             stale.as_slice(),
@@ -1073,7 +1081,7 @@ fn re_paths_a_held_goal_when_the_world_changes() {
     }
 
     // The REPATH_TICKS-th held tick refreshes the route, which now avoids the wall.
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_ne!(
         nav.path(),
         stale.as_slice(),
@@ -1169,8 +1177,10 @@ fn changed_goal_repath_preserves_the_current_waypoint_when_still_valid() {
     nav.index = 1;
     nav.goal = Some(first_goal);
     nav.path_reaches_goal = true;
+    // Past the one-cell drift hold, so the moved goal is re-searched now.
+    nav.since_path = plan::GOAL_DRIFT_REPATH_TICKS;
 
-    nav.update_goal_when_supported(Some(moved_goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(moved_goal), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.path().get(1),
         Some(&old_waypoint),
@@ -1202,7 +1212,7 @@ fn a_goal_at_or_behind_the_mob_never_stitches_a_u_turn_through_the_kept_waypoint
     nav.path_reaches_goal = true;
 
     // Goal = own cell: a hold, not a route.
-    nav.update_goal_when_supported(Some(start), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(start), start, &world, true, &NavInputs::none());
     assert!(nav.is_idle(), "holding position is arrival, never a detour");
     assert!(
         !nav.path().contains(&old_waypoint),
@@ -1218,7 +1228,7 @@ fn a_goal_at_or_behind_the_mob_never_stitches_a_u_turn_through_the_kept_waypoint
     nav.goal = Some(first_goal);
     nav.path_reaches_goal = true;
     let behind = IVec3::new(1, 64, 1);
-    nav.update_goal_when_supported(Some(behind), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(behind), start, &world, true, &NavInputs::none());
     assert_ne!(nav.path().get(1), Some(&old_waypoint));
     assert!(!nav.path()[1..].contains(&start));
     assert_eq!(nav.path().last(), Some(&behind));
@@ -1254,7 +1264,7 @@ fn same_goal_repath_preserves_the_current_waypoint_when_still_valid() {
     nav.path_reaches_goal = true;
     nav.since_path = REPATH_TICKS - 1;
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.path().get(1),
         Some(&old_waypoint),
@@ -1267,7 +1277,7 @@ fn unreachable_goal_backs_off_consecutive_same_goal_repaths() {
     let (world, start, goal) = pillar_world();
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(nav.recomputes(), 1);
     assert_ne!(
         nav.path().last(),
@@ -1276,11 +1286,11 @@ fn unreachable_goal_backs_off_consecutive_same_goal_repaths() {
     );
 
     for _ in 0..REPATH_TICKS - 1 {
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     }
     assert_eq!(nav.recomputes(), 1, "no retry before the base interval");
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.recomputes(),
         2,
@@ -1288,7 +1298,7 @@ fn unreachable_goal_backs_off_consecutive_same_goal_repaths() {
     );
 
     for _ in 0..(REPATH_TICKS * 2 - 1) {
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     }
     assert_eq!(
         nav.recomputes(),
@@ -1296,7 +1306,7 @@ fn unreachable_goal_backs_off_consecutive_same_goal_repaths() {
         "a second failed retry waits for the doubled backoff interval"
     );
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.recomputes(),
         3,
@@ -1310,21 +1320,9 @@ fn goal_cell_change_resets_unreachable_backoff_immediately() {
     let reachable = IVec3::new(2, 64, 1);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    nav.update_goal_when_supported(
-        Some(unreachable),
-        start,
-        &world,
-        true,
-        &NavObstacles::none(),
-    );
+    nav.update_goal_when_supported(Some(unreachable), start, &world, true, &NavInputs::none());
     for _ in 0..REPATH_TICKS {
-        nav.update_goal_when_supported(
-            Some(unreachable),
-            start,
-            &world,
-            true,
-            &NavObstacles::none(),
-        );
+        nav.update_goal_when_supported(Some(unreachable), start, &world, true, &NavInputs::none());
     }
     assert_eq!(
         nav.recomputes(),
@@ -1332,7 +1330,7 @@ fn goal_cell_change_resets_unreachable_backoff_immediately() {
         "the unreachable goal has entered backoff"
     );
 
-    nav.update_goal_when_supported(Some(reachable), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(reachable), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.recomputes(),
         3,
@@ -1352,20 +1350,20 @@ fn reachable_goal_keeps_the_base_repath_interval() {
     let goal = IVec3::new(8, 64, 1);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(nav.recomputes(), 1);
     assert_eq!(nav.path().last(), Some(&goal));
 
     for expected in 2..=3 {
         for _ in 0..REPATH_TICKS - 1 {
-            nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+            nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
         }
         assert_eq!(
             nav.recomputes(),
             expected - 1,
             "no early reachable-goal repath"
         );
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
         assert_eq!(
             nav.recomputes(),
             expected,
@@ -1380,7 +1378,7 @@ fn held_goal_does_not_repath_while_airborne() {
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     let stale: Vec<IVec3> = nav.path().to_vec();
     let blocked = IVec3::new(4, 64, 1);
     assert!(stale.contains(&blocked));
@@ -1389,16 +1387,16 @@ fn held_goal_does_not_repath_while_airborne() {
     world.set_block_world(blocked.x, blocked.y + 1, blocked.z, Block::Stone);
 
     for _ in 0..REPATH_TICKS - 1 {
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     }
     assert_eq!(nav.path(), stale.as_slice());
 
     for _ in 0..5 {
-        nav.update_goal_when_supported(Some(goal), start, &world, false, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, false, &NavInputs::none());
         assert_eq!(nav.path(), stale.as_slice(), "mid-air repath is paused");
     }
 
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_ne!(
         nav.path(),
         stale.as_slice(),
@@ -1415,14 +1413,14 @@ fn re_path_does_not_reset_the_stuck_tally() {
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
 
     // Drive enough held ticks to cross several re-path intervals AND the stuck limit,
     // following from a fixed position each tick so no progress is ever made.
     let wedged = WorldPos::new(1.5, 64.0, 1.5);
     let mut gave_up = false;
     for _ in 0..STUCK_TICKS + REPATH_TICKS {
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
         nav.follow(wedged, true);
         if nav.is_idle() {
             gave_up = true;

@@ -108,6 +108,7 @@ impl AiBehavior for ChaseContactAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mob::spatial::MobSnapshot;
     use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::World;
@@ -133,7 +134,7 @@ mod tests {
         pos: WorldPos,
         players: &'a [PlayerAnchor],
         contacts: &'a [EntityRef],
-        mobs: &'a [AiMob],
+        mobs: &'a MobSnapshot,
     ) -> AiCtx<'a> {
         let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
         c.half_width = 0.45;
@@ -161,16 +162,37 @@ mod tests {
         }];
         let bump = [EntityRef::Player(PlayerId(3))];
 
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &bump, &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &bump,
+            MobSnapshot::empty(),
+        ));
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
         assert!(out.goal.is_some(), "the bump locks and chases");
 
         // No further touches: the lock persists for memory_ticks - 1, then drops.
         for t in 1..40 {
-            let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], &[]));
+            let out = ai.tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &[],
+                MobSnapshot::empty(),
+            ));
             assert!(out.target.is_some(), "still locked at untouched tick {t}");
         }
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &[],
+            MobSnapshot::empty(),
+        ));
         assert_eq!(out.target, None, "40 untouched ticks drop the lock");
     }
 
@@ -182,13 +204,13 @@ mod tests {
         let mob = WorldPos::new(8.5, 64.0, 8.5);
         // A sheep (not on any whitelist — contact needs none) pressed into it,
         // plus a bogus self-contact which must never lock.
-        let mobs = [AiMob {
+        let mobs = MobSnapshot::from_mobs([AiMob {
             id: 9,
             kind: Mob::Sheep,
             pos: WorldPos::new(9.2, 64.0, 8.5),
             active: true,
             tags: Default::default(),
-        }];
+        }]);
         let bumps = [EntityRef::Mob(1), EntityRef::Mob(9)];
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &bumps, &mobs));
         assert_eq!(
@@ -222,9 +244,23 @@ mod tests {
             EntityRef::Player(PlayerId(3)),
         ];
 
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &first, &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &first,
+            MobSnapshot::empty(),
+        ));
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &both, &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &both,
+            MobSnapshot::empty(),
+        ));
         assert_eq!(
             out.target,
             Some(EntityRef::Player(PlayerId(3))),

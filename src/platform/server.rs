@@ -31,11 +31,19 @@ pub struct ServerSettings {
     /// world keeps loaded around players. A client requesting less (its own
     /// view-distance option) is streamed less; requesting more clamps here.
     pub view_distance: i32,
+    /// How far from the nearest player mobs simulate, in chunks — fully,
+    /// then at a reduced AI rate, then frozen (see `mob::SimDistance`).
+    /// Independent of `view_distance`: loading more of the world no longer
+    /// costs mob simulation.
+    pub simulation_distance: crate::mob::SimDistance,
 }
 
 impl Default for ServerSettings {
     fn default() -> Self {
-        Self { view_distance: 32 }
+        Self {
+            view_distance: 32,
+            simulation_distance: crate::mob::SimDistance::default(),
+        }
     }
 }
 
@@ -76,14 +84,17 @@ fn load_settings() -> ServerSettings {
 }
 
 /// `petramond_server <world-name>` — configured by `settings.json` beside the
-/// binary (`view_distance`); env overrides: `PETRAMOND_SEED` (new worlds
+/// binary (`view_distance`, `simulation_distance`); env overrides: `PETRAMOND_SEED` (new worlds
 /// only), `PETRAMOND_RD` (streaming radius > settings.json), `PETRAMOND_PORT`
 /// (default 7434, 0 = ephemeral).
 pub fn run() {
     super::init_logging();
     let Some(world_name) = std::env::args().nth(1) else {
         eprintln!("usage: petramond_server <world-name>");
-        eprintln!("  settings.json (beside the binary): view_distance <4..64>");
+        eprintln!(
+            "  settings.json (beside the binary): view_distance <4..64>, \
+             simulation_distance {{full_chunks, reduced_chunks, reduced_interval}}"
+        );
         eprintln!("  env: PETRAMOND_SEED=<u32>  PETRAMOND_RD=<4..64>  PETRAMOND_PORT=<port>");
         std::process::exit(2);
     };
@@ -102,7 +113,11 @@ pub fn run() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(crate::net::DEFAULT_PORT);
 
-    let server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
+    let mut server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
+    server
+        .world
+        .mobs_mut()
+        .set_sim_distance(settings.simulation_distance);
     let mut handle = ServerHandle::spawn(server);
     let port = match handle.open_to_lan(port) {
         Ok(port) => port,

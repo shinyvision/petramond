@@ -167,6 +167,13 @@ impl Instance {
         self.kinematic = None;
     }
 
+    /// Whether a mod is steering or posing this body this tick (a pending
+    /// drive or kinematic pose) — such a body keeps the full tick whatever
+    /// its simulation distance.
+    pub(super) fn externally_driven(&self) -> bool {
+        self.drive.is_some() || self.kinematic.is_some()
+    }
+
     #[cfg(test)]
     pub(super) fn drive_pending(&self) -> bool {
         self.drive.is_some()

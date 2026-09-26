@@ -137,9 +137,8 @@ impl ChaseSoundAi {
             // Never its own footsteps, and only whitelisted, still-live species.
             id != ctx.mob_id
                 && ctx
-                    .mobs
-                    .iter()
-                    .any(|m| m.id == id && m.active && self.mob_targets.contains(&m.kind))
+                    .live_mob(id)
+                    .is_some_and(|m| self.mob_targets.contains(&m.kind))
         };
         let nearest_mob = ctx
             .noises
@@ -202,6 +201,7 @@ impl AiBehavior for ChaseSoundAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mob::spatial::MobSnapshot;
     use crate::mob::{brain::AiMob, MobRng, Noise, NoiseKind, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::World;
@@ -243,7 +243,7 @@ mod tests {
         pos: WorldPos,
         players: &'a [PlayerAnchor],
         noises: &'a [Noise],
-        mobs: &'a [AiMob],
+        mobs: &'a MobSnapshot,
     ) -> AiCtx<'a> {
         let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
         c.half_width = 0.22;
@@ -271,17 +271,38 @@ mod tests {
         }
 
         let noises = [step(player, EntityRef::Player(PlayerId(3)))];
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &noises, &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &noises,
+            MobSnapshot::empty(),
+        ));
         assert!(out.goal.is_some(), "a heard step locks and chases");
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
 
         // Silent ticks: the chase persists on the LIVE position for
         // memory_ticks - 1 ticks, then the lock drops.
         for t in 1..40 {
-            let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], &[]));
+            let out = ai.tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &[],
+                MobSnapshot::empty(),
+            ));
             assert!(out.goal.is_some(), "still locked at silent tick {t}");
         }
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &[],
+            MobSnapshot::empty(),
+        ));
         assert_eq!(out.goal, None, "40 silent ticks drop the lock");
         assert_eq!(out.target, None);
     }
@@ -297,30 +318,65 @@ mod tests {
         let noise = [step(player, EntityRef::Player(PlayerId(3)))];
 
         assert!(ai
-            .tick(&mut ctx(&world, &mut rng, mob, &players, &noise, &[]))
+            .tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &noise,
+                MobSnapshot::empty()
+            ))
             .goal
             .is_some());
         // 39 silent ticks, then one more noise: the countdown restarts whole.
         for _ in 0..39 {
             assert!(ai
-                .tick(&mut ctx(&world, &mut rng, mob, &players, &[], &[]))
+                .tick(&mut ctx(
+                    &world,
+                    &mut rng,
+                    mob,
+                    &players,
+                    &[],
+                    MobSnapshot::empty()
+                ))
                 .goal
                 .is_some());
         }
         assert!(ai
-            .tick(&mut ctx(&world, &mut rng, mob, &players, &noise, &[]))
+            .tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &noise,
+                MobSnapshot::empty()
+            ))
             .goal
             .is_some());
         for t in 1..40 {
             assert!(
-                ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], &[]))
-                    .goal
-                    .is_some(),
+                ai.tick(&mut ctx(
+                    &world,
+                    &mut rng,
+                    mob,
+                    &players,
+                    &[],
+                    MobSnapshot::empty()
+                ))
+                .goal
+                .is_some(),
                 "reset countdown holds at tick {t}"
             );
         }
         assert!(ai
-            .tick(&mut ctx(&world, &mut rng, mob, &players, &[], &[]))
+            .tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &[],
+                MobSnapshot::empty()
+            ))
             .goal
             .is_none());
     }
@@ -336,8 +392,15 @@ mod tests {
         let noises = [step(far, EntityRef::Player(PlayerId(3)))];
 
         assert_eq!(
-            ai.tick(&mut ctx(&world, &mut rng, mob, &players, &noises, &[]))
-                .goal,
+            ai.tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &noises,
+                MobSnapshot::empty()
+            ))
+            .goal,
             None,
             "an out-of-range noise does not exist to this mob"
         );
@@ -355,16 +418,30 @@ mod tests {
                 mob,
                 &near_players,
                 &near_noise,
-                &[]
+                MobSnapshot::empty()
             ))
             .goal
             .is_some());
         for _ in 0..40 {
-            ai.tick(&mut ctx(&world, &mut rng, mob, &players, &noises, &[]));
+            ai.tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &noises,
+                MobSnapshot::empty(),
+            ));
         }
         assert_eq!(
-            ai.tick(&mut ctx(&world, &mut rng, mob, &players, &noises, &[]))
-                .goal,
+            ai.tick(&mut ctx(
+                &world,
+                &mut rng,
+                mob,
+                &players,
+                &noises,
+                MobSnapshot::empty()
+            ))
+            .goal,
             None,
             "a target that outran hearing is lost after memory_ticks"
         );
@@ -381,7 +458,14 @@ mod tests {
         let players = [anchor(3, a), anchor(4, b)];
 
         let only_a = [step(a, EntityRef::Player(PlayerId(3)))];
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &only_a, &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &only_a,
+            MobSnapshot::empty(),
+        ));
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
 
         // B stomps closer while A stays audible: the lock holds on A.
@@ -389,7 +473,14 @@ mod tests {
             step(b, EntityRef::Player(PlayerId(4))),
             step(a, EntityRef::Player(PlayerId(3))),
         ];
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &both, &[]));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &players,
+            &both,
+            MobSnapshot::empty(),
+        ));
         assert_eq!(
             out.target,
             Some(EntityRef::Player(PlayerId(3))),
@@ -403,7 +494,7 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mob = WorldPos::new(2.5, 64.0, 2.5);
         let prey_pos = WorldPos::new(7.5, 64.0, 2.5);
-        let mobs = [
+        let mobs = MobSnapshot::from_mobs([
             AiMob {
                 id: 1, // the listener itself
                 kind: Mob::Owl,
@@ -418,7 +509,7 @@ mod tests {
                 active: true,
                 tags: Default::default(),
             },
-        ];
+        ]);
 
         // Chance 1.0 with the sheep whitelisted: the first heard tick locks it.
         let mut ai = ChaseSoundAi::new(12.0, 40, 1.0, vec![Mob::Sheep]);
@@ -449,13 +540,13 @@ mod tests {
         let prey_pos = WorldPos::new(4.5, 64.0, 2.5); // mob noise NEARER
         let player = WorldPos::new(9.5, 64.9, 2.5);
         let players = [anchor(3, player)];
-        let mobs = [AiMob {
+        let mobs = MobSnapshot::from_mobs([AiMob {
             id: 9,
             kind: Mob::Sheep,
             pos: prey_pos,
             active: true,
             tags: Default::default(),
-        }];
+        }]);
         let noises = [
             step(prey_pos, EntityRef::Mob(9)),
             step(player, EntityRef::Player(PlayerId(3))),
@@ -475,20 +566,20 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mob = WorldPos::new(2.5, 64.0, 2.5);
         let prey_pos = WorldPos::new(7.5, 64.0, 2.5);
-        let alive = [AiMob {
+        let alive = MobSnapshot::from_mobs([AiMob {
             id: 9,
             kind: Mob::Sheep,
             pos: prey_pos,
             active: true,
             tags: Default::default(),
-        }];
-        let dead = [AiMob {
+        }]);
+        let dead = MobSnapshot::from_mobs([AiMob {
             id: 9,
             kind: Mob::Sheep,
             pos: prey_pos,
             active: false,
             tags: Default::default(),
-        }];
+        }]);
         let noises = [step(prey_pos, EntityRef::Mob(9))];
         let mut ai = ChaseSoundAi::new(12.0, 40, 1.0, vec![Mob::Sheep]);
         assert!(ai

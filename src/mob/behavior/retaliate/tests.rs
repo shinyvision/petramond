@@ -1,4 +1,5 @@
 use super::*;
+use crate::mob::spatial::MobSnapshot;
 use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
 use crate::player::PlayerId;
 use crate::world::World;
@@ -23,7 +24,7 @@ fn ctx<'a>(
     rng: &'a mut MobRng,
     pos: WorldPos,
     players: &'a [PlayerAnchor],
-    mobs: &'a [AiMob],
+    mobs: &'a MobSnapshot,
     attacker: Option<(EntityRef, u32)>,
 ) -> AiCtx<'a> {
     let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
@@ -49,7 +50,14 @@ fn a_hidden_archer_causes_escape_until_sight_returns() {
         ..Default::default()
     }];
     let memory = Some((EntityRef::Player(PlayerId(7)), 0));
-    let out = ai.tick(&mut ctx(&world, &mut rng, pos, &players, &[], memory));
+    let out = ai.tick(&mut ctx(
+        &world,
+        &mut rng,
+        pos,
+        &players,
+        MobSnapshot::empty(),
+        memory,
+    ));
     assert_eq!(out.claims, EscapeRoute::HOLDS);
     assert!(out.target.is_none());
     assert!(
@@ -59,7 +67,14 @@ fn a_hidden_archer_causes_escape_until_sight_returns() {
     for y in 64..67 {
         assert!(world.set_block_world(5, y, 8, Block::Air));
     }
-    let out = ai.tick(&mut ctx(&world, &mut rng, pos, &players, &[], memory));
+    let out = ai.tick(&mut ctx(
+        &world,
+        &mut rng,
+        pos,
+        &players,
+        MobSnapshot::empty(),
+        memory,
+    ));
     assert!(
         out.claims.is_empty(),
         "in sight, nothing is held: melee may strike"
@@ -81,7 +96,7 @@ fn a_fresh_grudge_chases_the_attacker_and_ages_out() {
         active: true,
         tags: Default::default(),
     };
-    let mobs = [biter];
+    let mobs = MobSnapshot::from_mobs([biter]);
     let grudge = Some((EntityRef::Mob(9), 0));
 
     let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &mobs, grudge));
@@ -99,20 +114,27 @@ fn a_dead_or_absent_attacker_ends_the_grudge() {
     let mut rng = MobRng::new(1);
     let mut ai = RetaliateAi::new(200, 0, EscapeRoute::default());
     let mob = WorldPos::new(2.5, 64.0, 2.5);
-    let corpse = [AiMob {
+    let corpse = MobSnapshot::from_mobs([AiMob {
         id: 9,
         kind: Mob::Sheep,
         pos: WorldPos::new(7.5, 64.0, 2.5),
         active: false,
         tags: Default::default(),
-    }];
+    }]);
     let grudge = Some((EntityRef::Mob(9), 0));
     let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &corpse, grudge));
     assert_eq!(out.target, None, "no vengeance on a corpse");
 
     // A player attacker who disconnected resolves to nothing the same way.
     let gone = Some((EntityRef::Player(PlayerId(7)), 0));
-    let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &[], gone));
+    let out = ai.tick(&mut ctx(
+        &world,
+        &mut rng,
+        mob,
+        &[],
+        MobSnapshot::empty(),
+        gone,
+    ));
     assert_eq!(out.target, None);
 }
 
@@ -129,7 +151,14 @@ fn a_player_attacker_is_chased_by_live_anchor_position() {
         ..Default::default()
     }];
     let grudge = Some((EntityRef::Player(PlayerId(7)), 3));
-    let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], grudge));
+    let out = ai.tick(&mut ctx(
+        &world,
+        &mut rng,
+        mob,
+        &players,
+        MobSnapshot::empty(),
+        grudge,
+    ));
     assert_eq!(out.target, Some(EntityRef::Player(PlayerId(7))));
     assert!(out.goal.is_some());
 }
@@ -140,13 +169,13 @@ fn the_warmup_delays_the_counter_and_rehits_cannot_rewind_it() {
     let mut rng = MobRng::new(1);
     let mut ai = RetaliateAi::new(200, 20, EscapeRoute::default());
     let mob = WorldPos::new(2.5, 64.0, 2.5);
-    let biter = [AiMob {
+    let biter = MobSnapshot::from_mobs([AiMob {
         id: 9,
         kind: Mob::Sheep,
         pos: WorldPos::new(7.5, 64.0, 2.5),
         active: true,
         tags: Default::default(),
-    }];
+    }]);
 
     // The hit tick and the following warmup window: the mob reels, no
     // target — it cannot answer on the tick it was struck. The attacker

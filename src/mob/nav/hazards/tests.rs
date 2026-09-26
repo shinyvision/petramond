@@ -1,6 +1,6 @@
 use super::*;
 use crate::entity::fluid_fixture::{self, block, BRINE, CINDER, SYRUP};
-use crate::mob::nav::{self, NavObstacles, Navigator};
+use crate::mob::nav::{self, NavInputs, Navigator};
 use crate::world::World;
 use petramond_world::chunk::{Chunk, ChunkPos};
 
@@ -52,7 +52,7 @@ fn world() -> World {
 
 fn route(world: &World, start: IVec3, goal: IVec3, half: f32, height: f32) -> Navigator {
     let mut nav = Navigator::new(height.ceil() as i32, half, height);
-    nav.update_goal_when_supported(Some(goal), start, world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, world, true, &NavInputs::none());
     nav
 }
 
@@ -223,7 +223,7 @@ fn a_live_hazard_stops_a_stale_route_and_forces_a_repath() {
         "stop before falling below the hazard's surface"
     );
     let recomputes = nav.recomputes();
-    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+    nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(nav.recomputes(), recomputes + 1);
     assert_eq!(nav.path().last(), Some(&goal));
     assert!(!nav.path().contains(&IVec3::new(6, 64, 8)));
@@ -291,7 +291,7 @@ fn a_persistent_live_refusal_repaths_once_then_waits_for_the_interval() {
             nav.avoid_hazards(pos, 0.0, body(), veered, false, 0.2, &world.cursor()),
             (Vec3::ZERO, false)
         );
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
         if tick == 0 {
             assert_eq!(
                 nav.recomputes(),
@@ -331,7 +331,7 @@ fn alternating_refusals_wait_for_the_interval_too() {
             nav.avoid_hazards(pos, 0.0, body(), wish, false, 0.2, &world.cursor()),
             (Vec3::ZERO, false)
         );
-        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     }
     assert!(
         nav.recomputes() - before <= 1 + ticks / super::super::REPATH_TICKS,
