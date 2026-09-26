@@ -85,7 +85,7 @@ impl Game {
     /// action table: `(full_id, label, category, default binding)`.
     pub fn client_bindable_actions(
         &self,
-    ) -> Vec<(String, String, String, petramond_world::controls::Binding)> {
+    ) -> Vec<(String, String, String, petramond_input::controls::Binding)> {
         self.client_mods
             .key_actions()
             .iter()
@@ -94,7 +94,7 @@ impl Game {
                     a.full_id.clone(),
                     a.label.clone(),
                     a.category.clone(),
-                    petramond_world::controls::Binding::key(a.default_code),
+                    petramond_input::controls::Binding::key(a.default_code),
                 )
             })
             .collect()

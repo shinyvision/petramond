@@ -5,12 +5,12 @@ use rustc_hash::FxHashMap;
 use serde_json::Value;
 
 use super::{ease, inertial, number, only_keys, Compiler, Obj};
-use crate::animation::expr::intern;
-use crate::animation::graph::{
+use crate::expr::intern;
+use crate::graph::{
     declared, ClipRef, ClipTemplate, EventId, ExprId, Pick, PlayRule, Rule, SegmentDef, SlotId,
     Until,
 };
-use crate::animation::pose::swap_side;
+use crate::pose::swap_side;
 
 const RULE_KEYS: &[&str] = &[
     "id",
@@ -46,7 +46,7 @@ pub(super) struct GateDef {
     pub when: ExprId,
 }
 
-/// The per-clip marker events for [`Graph::marker_events`](crate::animation::graph::Graph).
+/// The per-clip marker events for [`Graph::marker_events`](crate::graph::Graph).
 pub(super) type MarkerEvents = Vec<[Box<[Option<EventId>]>; 2]>;
 
 impl Compiler<'_> {

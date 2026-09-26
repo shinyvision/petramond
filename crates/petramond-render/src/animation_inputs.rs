@@ -21,8 +21,8 @@
 use std::sync::Arc;
 
 use petramond::player::RigId;
-use petramond_world::animation::expr::intern;
-use petramond_world::animation::{Animator, EventId, Graph, ParamId};
+use petramond_anim::expr::intern;
+use petramond_anim::{Animator, EventId, Graph, ParamId};
 use petramond_world::item::ItemType;
 
 use crate::animator_claims::ClaimDriver;

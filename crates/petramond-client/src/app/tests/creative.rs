@@ -4,8 +4,8 @@ use crate::app::schematic_library::LibraryPage;
 mod history;
 mod notices;
 use petramond::player::PlayerMode;
+use petramond_input::controls::Control;
 use petramond_world::{
-    controls::Control,
     gui_state::GuiKind,
     item::{ItemStack, ItemType},
 };
@@ -616,7 +616,7 @@ fn creative_menu_visual_check() {
 #[test]
 fn ctrl_scroll_cycles_the_held_wand_without_changing_hotbar_slots() {
     use crate::game::selection_tool::SelectionMode;
-    use petramond_world::controls::Modifiers;
+    use petramond_input::controls::Modifiers;
     let mut app = creative_app();
     let wand = ItemType::by_name("petramond:schematic_wand").unwrap();
     app.add_to_inventory(ItemStack::new(wand, 1));
@@ -733,7 +733,7 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
 #[test]
 fn ctrl_scroll_raises_and_lowers_the_preview_before_wand_or_hotbar_bindings() {
     use crate::game::selection_tool::SelectionMode;
-    use petramond_world::controls::Modifiers;
+    use petramond_input::controls::Modifiers;
     let mut app = creative_app();
     app.close_screen();
     app.game

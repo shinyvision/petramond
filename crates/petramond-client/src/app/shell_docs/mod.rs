@@ -156,7 +156,7 @@ fn controller_for(kind: GuiKind) -> ShellController {
 /// headers count), resolved through the controller's own row builder.
 #[cfg(test)]
 pub(in crate::app) fn controls_action_row_index(
-    table: &petramond_world::controls::ActionTable,
+    table: &petramond_input::controls::ActionTable,
     action_id: &str,
 ) -> Option<usize> {
     options_controls::row_entries(table)

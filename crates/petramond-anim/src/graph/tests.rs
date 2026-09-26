@@ -1,9 +1,9 @@
 use glam::Vec3;
 
 use super::Graph;
-use crate::animation::library::ClipLibrary;
-use crate::animation::test_rig::{clip, rig};
-use crate::bbmodel::Model;
+use crate::library::ClipLibrary;
+use crate::test_rig::{clip, rig};
+use petramond_world::bbmodel::Model;
 
 fn library(rig: &Model) -> ClipLibrary {
     let mut lib = ClipLibrary::new();

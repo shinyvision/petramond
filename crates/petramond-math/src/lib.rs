@@ -10,5 +10,6 @@ pub mod math;
 pub mod noise;
 pub mod pose;
 pub mod random;
+pub mod view_volume;
 pub mod wire_enum;
 pub mod world_pos;

@@ -25,7 +25,7 @@ pub mod level;
 pub mod mobs;
 pub mod palette;
 pub mod player;
-pub(crate) use petramond_world::region;
+pub(crate) use petramond_region as region;
 pub mod settings;
 mod worlds;
 

@@ -309,7 +309,7 @@ impl NameCache {
             petramond::player::AnimatorValue::Name(n) => match self.names.get(n.as_str()) {
                 Some(v) => *v,
                 None => {
-                    let v = petramond_world::animation::expr::intern(n);
+                    let v = petramond_anim::expr::intern(n);
                     self.names.insert(n.as_str().into(), v);
                     v
                 }

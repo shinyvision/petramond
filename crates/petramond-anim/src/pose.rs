@@ -5,7 +5,7 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::bbmodel::{Animation, Channel, Model};
+use petramond_world::bbmodel::{Animation, Channel, Model};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LocalPose {

@@ -1,6 +1,8 @@
 use glam::Vec3;
 
-use crate::bbmodel::{Animation, Channel, Interpolation, Keyframe, Marker, MarkerKind, Model};
+use petramond_world::bbmodel::{
+    Animation, Channel, Interpolation, Keyframe, Marker, MarkerKind, Model,
+};
 
 /// root → leftArm → leftHand → leftFinger, root → rightArm → rightHand.
 pub fn rig() -> Model {

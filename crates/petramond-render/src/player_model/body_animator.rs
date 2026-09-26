@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use petramond::player::rigs::{self, Presenter};
 use petramond::player::RigId;
-use petramond_world::animation::{Graph, LocalPose};
+use petramond_anim::{Graph, LocalPose};
 use rustc_hash::FxHashMap;
 
 use crate::animation_inputs::{flag, BodyDriver, BodyMotion};

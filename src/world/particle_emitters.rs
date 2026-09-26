@@ -9,13 +9,13 @@ use std::sync::LazyLock;
 
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::view_volume::ViewVolume;
 use petramond_world::block::{Block, CellView, ParticleEmitter, ParticleEmitterAnchor};
 use petramond_world::block_model::{self, BlockModelKind};
 use petramond_world::chunk::{section_local, SectionPos, SECTION_SIZE};
 use petramond_world::light::BlockLight6;
 use petramond_world::particle_emitters::particle_size;
 use petramond_world::torch::{TorchPlacement, POLE_HEIGHT};
-use petramond_world::view_volume::ViewVolume;
 
 use super::store::World;
 

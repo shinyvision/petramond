@@ -2,7 +2,7 @@ use super::{
     app, app_with_grass, cursor_over_craft_result, cursor_over_menu, cursor_over_slot,
     cursor_over_widget, panel_gap_point,
 };
-use petramond_world::controls::{Control, Modifiers};
+use petramond_input::controls::{Control, Modifiers};
 use petramond_world::item::{ItemStack, ItemType};
 
 fn search_recipes(app: &mut super::TestApp, screen: (u32, u32), query: &str) {
@@ -24,7 +24,7 @@ fn replace_recipe_search(app: &mut super::TestApp, screen: (u32, u32), query: &s
         ctrl: true,
         ..Modifiers::default()
     });
-    assert!(app.handle_text_shortcut_code(petramond_world::keycode::KeyCode::KeyA));
+    assert!(app.handle_text_shortcut_code(petramond_input::keycode::KeyCode::KeyA));
     app.set_modifiers(Modifiers::default());
     assert!(app.handle_text_input(query));
     app.solve_menu_frame_for_test(screen);
@@ -105,7 +105,7 @@ fn unaffordable_recipe_row_stays_disabled_and_cannot_be_selected() {
 
 #[test]
 fn crafting_search_owns_key_presses_but_not_releases_or_escape() {
-    use petramond_world::keycode::KeyCode;
+    use petramond_input::keycode::KeyCode;
 
     let mut app = app();
     assert!(app.handle_raw_key(KeyCode::KeyW, true));

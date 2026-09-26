@@ -9,6 +9,7 @@ description = "Petramond wgpu renderer: pipelines, composed texture atlas, camer
 petramond = { path = "../.." }
 petramond-math = { path = "../petramond-math" }
 petramond-world = { path = "../petramond-world" }
+petramond-anim = { path = "../petramond-anim" }
 mod-api = { path = "../../mod-api" }
 petramond-mesh = { path = "../petramond-mesh" }
 petramond-util = { path = "../petramond-util" }
@@ -27,6 +28,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
+petramond-anim = { path = "../petramond-anim", features = ["test-support"] }
 petramond-mesh = { path = "../petramond-mesh", features = ["test-support"] }
 petramond = { path = "../..", features = ["test-support"] }
 # Pack WGSL parse/validate tests (the same naga wgpu embeds): a shader typo

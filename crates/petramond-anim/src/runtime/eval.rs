@@ -4,13 +4,13 @@
 use glam::Vec3;
 
 use super::{Animator, FiredMarker, MARKER_WEIGHT};
-use crate::animation::graph::{
+use crate::graph::{
     ClipTime, Ease, Graph, MachineNode, Node, NodeId, BUILTIN_STATE_PROGRESS, BUILTIN_STATE_TIME,
 };
-use crate::animation::inertia::{settle_halflife, Inertia};
-use crate::animation::library::ClipId;
-use crate::animation::pose::LocalPose;
-use crate::bbmodel::Channel;
+use crate::inertia::{settle_halflife, Inertia};
+use crate::library::ClipId;
+use crate::pose::LocalPose;
+use petramond_world::bbmodel::Channel;
 
 #[derive(Default)]
 pub(super) struct MachineRt {

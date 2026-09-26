@@ -5,7 +5,7 @@
 use super::app;
 use crate::app::screen::AppScreen;
 use crate::game::GameEvents;
-use petramond_world::controls::Control;
+use petramond_input::controls::Control;
 
 fn events() -> GameEvents {
     GameEvents::default()

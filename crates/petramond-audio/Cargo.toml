@@ -3,7 +3,7 @@ name = "petramond-audio"
 version = "0.4.0"
 edition = "2021"
 license = "MIT"
-description = "Client-side sound playback engine (rodio); the sound registry stays in the core crate."
+description = "Client-side sound playback engine (rodio) and the music catalog; the sound registry stays in the core crate."
 
 [features]
 default = ["playback"]
@@ -18,4 +18,6 @@ test-support = []
 petramond-math = { path = "../petramond-math" }
 petramond-world = { path = "../petramond-world" }
 log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"], optional = true }

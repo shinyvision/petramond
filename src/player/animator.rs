@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mod_api::AnimationClipInfo;
-use petramond_world::animation::{ClipLibrary, Graph};
+use petramond_anim::{ClipLibrary, Graph};
 use petramond_world::assets::{self, CatalogLayer};
 use petramond_world::bbmodel::{bedrock, Model};
 use serde_json::{Map, Value};

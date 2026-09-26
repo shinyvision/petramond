@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
 use crate::keymap::{key_code, mouse_button, text_key_from_named};
+use petramond_input::controls::Modifiers;
 use petramond_render::camera::Camera;
 use petramond_render::{new_renderer_from_target, Renderer};
-use petramond_world::controls::Modifiers;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};

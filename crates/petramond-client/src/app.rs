@@ -41,9 +41,9 @@ use crate::app::pointer::PointerState;
 use crate::game::presentation::GamePresentationScratch;
 use crate::game::Game;
 use petramond_audio::Audio;
+use petramond_input::controls::{BindableAction, Control, Modifiers};
 use petramond_render::camera::Camera;
 use petramond_render::Scene;
-use petramond_world::controls::{BindableAction, Control, Modifiers};
 
 const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
 
@@ -124,9 +124,9 @@ pub struct App {
     /// Every remappable action of the current session: the engine actions
     /// plus what the loaded client mods registered. Rebuilt on session
     /// start/end (`rebuild_action_table`).
-    action_table: petramond_world::controls::ActionTable,
+    action_table: petramond_input::controls::ActionTable,
     /// Which bound actions are currently held (raw input → action edges).
-    binding_engine: petramond_world::controls::BindingEngine,
+    binding_engine: petramond_input::controls::BindingEngine,
     /// The action ID armed for remapping on the Options → Controls screen
     /// (`None` = not remapping; engine ids like `jump`, mod ids like
     /// `minimap:open_map`). While set, raw input is CAPTURED as the new
@@ -134,7 +134,7 @@ pub struct App {
     remap: Option<String>,
     /// The modifier key held down while remapping (a chord starter). If it
     /// releases with nothing else captured, the tap binds the modifier itself.
-    remap_armed_mod: Option<petramond_world::keycode::KeyCode>,
+    remap_armed_mod: Option<petramond_input::keycode::KeyCode>,
     /// Whether the open Options flow was entered from the pause menu (Back
     /// returns there) rather than the title screen.
     options_from_pause: bool,
@@ -273,8 +273,8 @@ impl App {
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
             settings,
-            action_table: petramond_world::controls::ActionTable::engine(),
-            binding_engine: petramond_world::controls::BindingEngine::default(),
+            action_table: petramond_input::controls::ActionTable::engine(),
+            binding_engine: petramond_input::controls::BindingEngine::default(),
             remap: None,
             remap_armed_mod: None,
             options_from_pause: false,

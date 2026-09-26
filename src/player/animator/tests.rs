@@ -114,7 +114,7 @@ fn a_pack_layer_merges_into_the_engine_document_by_key() {
         "rig clips take the engine's"
     );
 
-    let mut animator = petramond_world::animation::Animator::new(std::sync::Arc::new(graph), 1);
+    let mut animator = petramond_anim::Animator::new(std::sync::Arc::new(graph), 1);
     let main = animator.graph().slot("main").unwrap();
     animator.set_named("spear", 1.0);
     animator.fire_named("swing");

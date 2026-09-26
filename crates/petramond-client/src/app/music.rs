@@ -106,7 +106,7 @@ impl MusicDirector {
     /// A random track other than the one that just played. With a single track
     /// loaded, that one repeats — the alternative is silence.
     fn pick(&mut self) -> Option<MusicTrack> {
-        let count = petramond_world::music_registry::defs().len();
+        let count = petramond_audio::music_registry::defs().len();
         if count == 0 {
             return None;
         }
@@ -178,7 +178,7 @@ mod tests {
     /// rotation (or, worse, plays one twice running) without failing anything.
     #[test]
     fn the_next_track_is_never_the_last_and_every_other_is_reachable() {
-        let count = petramond_world::music_registry::defs().len();
+        let count = petramond_audio::music_registry::defs().len();
         assert!(
             count >= 2,
             "the rotation needs alternatives to choose among"

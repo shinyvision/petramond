@@ -2,6 +2,13 @@
 //! block/item domain, section/column storage, and the data half of the world
 //! (`world::WorldData`). No GPU, no audio, no networking, no WASM — the
 //! engine crate layers orchestration on top.
+//!
+//! Client and persistence code that only consumes this crate lives in its own
+//! crates so everything depending on the core (worldgen, mesh) does not link
+//! it: input bindings in `petramond-input`, the animator graph runtime in
+//! `petramond-anim`, the music catalog in `petramond-audio`, the region-file
+//! container in `petramond-region`, and view-volume culling math in
+//! `petramond-math`.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -12,7 +19,6 @@ pub use petramond_util::{memory, paths, test_time, texture_mips};
 
 pub mod ai_vocab;
 pub mod animated_model;
-pub mod animation;
 pub mod asset_cache;
 pub mod assets;
 pub mod bbmodel;
@@ -31,7 +37,6 @@ pub mod condition;
 pub mod connect;
 pub mod construction;
 pub mod container;
-pub mod controls;
 pub mod crafting;
 pub mod damage;
 pub mod door;
@@ -44,16 +49,13 @@ pub mod furnace;
 pub mod gui_state;
 pub mod inventory;
 pub mod item;
-pub mod keycode;
 pub mod ladder;
 pub mod light;
 pub mod loot;
 pub mod mining;
-pub mod music_registry;
 pub mod pack_manifest;
 pub mod pane;
 pub mod particle_emitters;
-pub mod region;
 pub mod registry;
 pub mod section;
 pub mod shade;
@@ -67,5 +69,4 @@ pub mod tile;
 pub mod tile_alpha;
 pub mod torch;
 pub mod trapdoor;
-pub mod view_volume;
 pub mod world;

@@ -26,7 +26,7 @@ use super::mob_model::{bake_model_cubes, body_tint};
 use super::PlayerRenderInstance;
 use petramond::player::model::{PLAYER_HIP_HEIGHT, PLAYER_MODEL_SCALE};
 use petramond::player::rigs::Rig;
-use petramond_world::animation::LocalPose;
+use petramond_anim::LocalPose;
 use petramond_world::bbmodel::Model;
 
 /// The grip point in model pixels, in the main grip's rest frame: centred in

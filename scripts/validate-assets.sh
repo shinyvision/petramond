@@ -8,6 +8,7 @@ cd "$repo_root"
 
 # Data catalogs and their cross-references.
 "${cargo_cmd[@]}" test --profile fasttest -p petramond-world --lib shipped_
+"${cargo_cmd[@]}" test --profile fasttest -p petramond-audio --no-default-features --lib shipped_
 "${cargo_cmd[@]}" test --profile fasttest -p petramond-world --lib \
     block_model::tests::every_registered_model_compiles_with_geometry_and_texture -- --exact
 "${cargo_cmd[@]}" test --profile fasttest -p petramond --lib \

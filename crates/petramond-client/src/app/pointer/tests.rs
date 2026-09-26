@@ -1,5 +1,5 @@
 use super::*;
-use petramond_world::controls::Control;
+use petramond_input::controls::Control;
 
 #[test]
 fn scroll_step_needs_a_full_notch() {

@@ -1,0 +1,12 @@
+[package]
+name = "petramond-input"
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+description = "Windowing-toolkit-free input vocabulary: key/mouse identities and the key-binding engine."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

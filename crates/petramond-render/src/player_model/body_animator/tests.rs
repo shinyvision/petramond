@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use petramond::player::RigId;
-use petramond_world::animation::library::ClipLibrary;
-use petramond_world::animation::test_rig::{clip, rig};
-use petramond_world::animation::{Graph, PlaySpec};
+use petramond_anim::library::ClipLibrary;
+use petramond_anim::test_rig::{clip, rig};
+use petramond_anim::{Graph, PlaySpec};
 
 use super::{BodyAnimators, LOCAL_BODY};
 

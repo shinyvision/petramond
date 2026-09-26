@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use petramond::player::RigId;
-use petramond_world::animation::{Animator, EventId, Graph, ParamId};
+use petramond_anim::{Animator, EventId, Graph, ParamId};
 
 use crate::animation_inputs::{flag, BodyDriver, BodyMotion};
 use crate::views::LocalMotion;

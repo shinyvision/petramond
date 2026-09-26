@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 use petramond::player::rigs::{self, Presenter, Rig};
-use petramond_world::animation::{ClipId, LocalPose, MirrorMap};
+use petramond_anim::{ClipId, LocalPose, MirrorMap};
 use petramond_world::item::ItemType;
 
 use super::item_model::ItemVertex;

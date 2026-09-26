@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use petramond::player::{AnimatorClock, AnimatorPlay, RigId};
-use petramond_world::animation::library::ClipLibrary;
-use petramond_world::animation::test_rig::{clip, rig};
-use petramond_world::animation::{Animator, Graph};
+use petramond_anim::library::ClipLibrary;
+use petramond_anim::test_rig::{clip, rig};
+use petramond_anim::{Animator, Graph};
 
 use super::ClaimDriver;
 use crate::views::AnimatorParamRow;

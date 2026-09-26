@@ -5,10 +5,10 @@ use super::{
     declared, BlendNode, BoneDrive, ClipNode, ClipTemplate, ClipTime, Ease, ExprId, Gate, Graph,
     Layer, MachineNode, Node, NodeId, ParamId, SlotId, Transition, VarLayout, BUILTINS, SLOT_VARS,
 };
-use crate::animation::expr::{intern, Expr};
-use crate::animation::library::{ClipId, ClipLibrary};
-use crate::animation::pose::MirrorMap;
-use crate::bbmodel::{Channel, Model};
+use crate::expr::{intern, Expr};
+use crate::library::{ClipId, ClipLibrary};
+use crate::pose::MirrorMap;
+use petramond_world::bbmodel::{Channel, Model};
 
 mod rules;
 

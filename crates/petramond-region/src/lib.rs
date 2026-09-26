@@ -24,9 +24,9 @@ use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::chunk::{SectionPos, SECTION_MIN_CY};
 use petramond_util::atomic_file::{self, Durability};
 use petramond_util::bytecodec::{read_u16, read_u32, write_u16, write_u32};
+use petramond_world::chunk::{SectionPos, SECTION_MIN_CY};
 
 /// Columns per region edge (32 → 1024 columns per region, each a vertical stack).
 pub const REGION_SHIFT: i32 = 5;
@@ -283,6 +283,7 @@ fn too_large(what: &'static str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_world::chunk::SECTION_MAX_CY;
     use std::fs;
 
     #[test]
@@ -290,7 +291,7 @@ mod tests {
         // Sweep XZ (incl. negatives + region edges) across the full cy range so the
         // packed (lx | lz | cy) local index inverts back to the same section.
         for &(cx, cz) in &[(0, 0), (-1, -1), (31, 31), (-32, 32), (100, -77)] {
-            for cy in crate::chunk::SECTION_MIN_CY..=crate::chunk::SECTION_MAX_CY {
+            for cy in SECTION_MIN_CY..=SECTION_MAX_CY {
                 let pos = SectionPos::new(cx, cy, cz);
                 let (rx, rz) = region_of(pos);
                 let lidx = local_index(pos);

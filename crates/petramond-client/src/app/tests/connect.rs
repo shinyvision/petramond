@@ -11,11 +11,11 @@ use crate::game::{Game, GameEvents};
 use petramond::net::protocol::{JoinData, ModEntry, SelfRestore};
 use petramond::player::PlayerId;
 use petramond::server::handle::ServerHandle;
+use petramond_input::controls::{Control, TextKey, TextShortcut};
 use petramond_math::math::Vec3;
 use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_ui::UiValue;
-use petramond_world::controls::{Control, TextKey, TextShortcut};
 use petramond_world::gui_state::GuiKind;
 
 const SCREEN: (u32, u32) = (1280, 720);

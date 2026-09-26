@@ -3,12 +3,12 @@ use std::sync::Arc;
 use glam::Vec3;
 
 use super::{Animator, PlaySpec, PlayState};
-use crate::animation::expr::intern;
-use crate::animation::graph::Graph;
-use crate::animation::library::ClipLibrary;
-use crate::animation::pose::LocalPose;
-use crate::animation::test_rig::{clip, rig, with_marker};
-use crate::bbmodel::{Channel, Interpolation, Keyframe, Model};
+use crate::expr::intern;
+use crate::graph::Graph;
+use crate::library::ClipLibrary;
+use crate::pose::LocalPose;
+use crate::test_rig::{clip, rig, with_marker};
+use petramond_world::bbmodel::{Channel, Interpolation, Keyframe, Model};
 
 const DT: f32 = 0.01;
 

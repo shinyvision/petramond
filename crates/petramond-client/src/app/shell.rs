@@ -4,8 +4,8 @@
 //! that forward platform keyboard events into the GUI-document runtime.
 
 use super::{now_seconds, App, AppScreen};
+use petramond_input::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 use petramond_render::camera::Camera;
-use petramond_world::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 
 /// One World Settings row: an installed pack. Content-only packs (no `id`)
 /// are listed but not toggleable — disable semantics are namespace-based and
@@ -164,7 +164,7 @@ impl App {
     /// Resolve a physical key + tracked modifiers into a text shortcut and
     /// forward it. Clipboard access lives inside the document UI (`AppUi`
     /// owns its own clipboard), so no host clipboard is threaded through.
-    pub fn handle_text_shortcut_code(&mut self, code: petramond_world::keycode::KeyCode) -> bool {
+    pub fn handle_text_shortcut_code(&mut self, code: petramond_input::keycode::KeyCode) -> bool {
         let Some(shortcut) = text_shortcut_from_key_code(code, self.modifiers) else {
             return false;
         };

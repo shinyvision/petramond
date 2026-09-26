@@ -25,7 +25,7 @@ pub(super) enum RowEntry {
 /// The list rows in display order: table order, a header wherever the
 /// category changes. Shared by `populate` (builds the bound items) and
 /// `handle` (maps a clicked row index back to its action id).
-pub(super) fn row_entries(table: &petramond_world::controls::ActionTable) -> Vec<RowEntry> {
+pub(super) fn row_entries(table: &petramond_input::controls::ActionTable) -> Vec<RowEntry> {
     let mut rows = Vec::new();
     let mut current: Option<&str> = None;
     for row in table.rows() {

@@ -80,7 +80,7 @@ pub struct ModKeyAction {
     /// Controls-screen category: the owning pack's display name.
     pub category: String,
     /// The registered DEFAULT key (the player may remap it away).
-    pub default_code: petramond_world::keycode::KeyCode,
+    pub default_code: petramond_input::keycode::KeyCode,
     mod_index: usize,
     action_id: u32,
 }
@@ -1136,15 +1136,15 @@ fn dispatch_unit(instance: &mut ModInstance, world: &World, call: &GuestCall, wh
 /// player's live remaps deliberately don't move this set — a mod key that was
 /// valid at pack load must not turn invalid because the player rebound Sneak.
 fn reserved_key(key: &str) -> bool {
-    let defaults = petramond_world::controls::BindingSet::default();
-    let default_bound = |code: petramond_world::keycode::KeyCode| {
-        petramond_world::controls::BindableAction::ALL
+    let defaults = petramond_input::controls::BindingSet::default();
+    let default_bound = |code: petramond_input::keycode::KeyCode| {
+        petramond_input::controls::BindableAction::ALL
             .iter()
-            .any(|a| defaults.binding(*a).input == petramond_world::controls::BoundInput::Key(code))
+            .any(|a| defaults.binding(*a).input == petramond_input::controls::BoundInput::Key(code))
     };
     PHYSICAL_KEYS.iter().any(|(code, name)| {
         *name == key
-            && (petramond_world::controls::fixed_control_from_key_code(*code).is_some()
+            && (petramond_input::controls::fixed_control_from_key_code(*code).is_some()
                 || default_bound(*code))
     })
 }
@@ -1240,8 +1240,8 @@ fn delete_local_world_storage_at(base: &Path, world_dir_name: &str) -> std::io::
 
 /// The bindable physical keys and their stable ABI names — the one table
 /// behind [`key_code_for_name`] and [`reserved_key`].
-const PHYSICAL_KEYS: &[(petramond_world::keycode::KeyCode, &str)] = {
-    use petramond_world::keycode::KeyCode;
+const PHYSICAL_KEYS: &[(petramond_input::keycode::KeyCode, &str)] = {
+    use petramond_input::keycode::KeyCode;
     &[
         (KeyCode::KeyA, "key_a"),
         (KeyCode::KeyB, "key_b"),
@@ -1283,7 +1283,7 @@ const PHYSICAL_KEYS: &[(petramond_world::keycode::KeyCode, &str)] = {
 };
 
 /// The `KeyCode` behind a registered default-key name (`"key_m"` → `KeyM`).
-pub fn key_code_for_name(name: &str) -> Option<petramond_world::keycode::KeyCode> {
+pub fn key_code_for_name(name: &str) -> Option<petramond_input::keycode::KeyCode> {
     PHYSICAL_KEYS
         .iter()
         .find(|(_, bindable)| *bindable == name)

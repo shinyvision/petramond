@@ -1,7 +1,7 @@
 use super::*;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::schematic::CreativeAction;
-use petramond_world::{controls::Modifiers, keycode::KeyCode};
+use petramond_input::{controls::Modifiers, keycode::KeyCode};
 
 fn shortcut(app: &mut TestApp, redo: bool) {
     app.set_modifiers(Modifiers {

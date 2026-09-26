@@ -6,12 +6,12 @@
 //! owns the behavior they call into.
 
 use super::{App, AppScreen};
-use petramond_world::controls::{
+use petramond_input::controls::{
     fixed_control_from_key_code, is_modifier_key, ActionOut, BindMods, Binding, BoundInput,
     Control, ScrollDir,
 };
+use petramond_input::keycode::{KeyCode, MouseButton};
 use petramond_world::gui_state::PointerButton;
-use petramond_world::keycode::{KeyCode, MouseButton};
 
 impl App {
     /// Resolve a raw keyboard event through the binding table (fixed fallback
@@ -153,7 +153,7 @@ impl App {
     /// release first — an action must not stay down across the swap.
     pub(super) fn rebuild_action_table(&mut self) {
         self.release_input_bindings();
-        let mut table = petramond_world::controls::ActionTable::engine();
+        let mut table = petramond_input::controls::ActionTable::engine();
         if let Some(game) = self.game.as_ref() {
             for (id, label, category, default) in game.client_bindable_actions() {
                 table.push_registered_action(id, label, category, default);

@@ -45,8 +45,8 @@ fn both_remap_hints_fit_the_fixed_hint_box() {
 /// "Previous Ho...". Widen the panel or shorten the wording.
 #[test]
 fn every_engine_action_label_fits_the_controls_row() {
+    use petramond_input::controls::BindableAction;
     use petramond_ui::{solve, InstTree, ThemeEnv, UiState};
-    use petramond_world::controls::BindableAction;
     let doc =
         petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsControls)
             .expect("controls document loads");

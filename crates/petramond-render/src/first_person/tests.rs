@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use petramond::player::RigId;
-use petramond_world::animation::library::ClipLibrary;
-use petramond_world::animation::test_rig::{clip, rig, with_marker};
-use petramond_world::animation::Graph;
+use petramond_anim::library::ClipLibrary;
+use petramond_anim::test_rig::{clip, rig, with_marker};
+use petramond_anim::Graph;
 
 use super::driver::Driver;
 use crate::views::{AimTarget, LocalMotion};

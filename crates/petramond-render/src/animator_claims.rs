@@ -20,7 +20,7 @@
 //! motion instead of cross-dissolving.
 
 use petramond::player::{AnimatorClock, RigId};
-use petramond_world::animation::{
+use petramond_anim::{
     Animator, ClipId, EventId, Graph, ParamId, PlayId, PlaySpec, PlayState, SlotId,
 };
 

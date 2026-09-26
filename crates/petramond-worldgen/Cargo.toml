@@ -15,6 +15,7 @@ worldgen-tests = []
 petramond-math = { path = "../petramond-math" }
 petramond-util = { path = "../petramond-util" }
 petramond-world = { path = "../petramond-world" }
+petramond-region = { path = "../petramond-region" }
 mod-api = { path = "../../mod-api" }
 log = "0.4"
 rustc-hash = "2"

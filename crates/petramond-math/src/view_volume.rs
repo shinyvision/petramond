@@ -2,8 +2,8 @@
 //! (streaming, draws, emitters) and the renderer. Pure math over the loaded
 //! world — no camera state, no GPU types.
 
-use crate::mathh::{IVec3, Mat4, Vec3, Vec4};
-use petramond_math::world_pos::WorldPos;
+use crate::math::{IVec3, Mat4, Vec3, Vec4};
+use crate::world_pos::WorldPos;
 
 #[cfg(test)]
 mod tests;

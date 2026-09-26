@@ -1,0 +1,11 @@
+[package]
+name = "petramond-region"
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+description = "Region-file container for section records, shared by the save layer and the worldgen column cache."
+
+[dependencies]
+petramond-util = { path = "../petramond-util" }
+petramond-world = { path = "../petramond-world" }
+rustc-hash = "2"

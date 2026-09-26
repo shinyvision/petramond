@@ -9,7 +9,7 @@
 use rustc_hash::FxHashMap;
 
 use super::expr::intern;
-use crate::bbmodel::{bedrock, Animation, Model};
+use petramond_world::bbmodel::{bedrock, Animation, Model};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ClipId(pub(crate) u32);

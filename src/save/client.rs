@@ -63,7 +63,7 @@ pub struct ClientSettings {
     pub screen_shake: bool,
     /// Remapped controls (Options → Controls). Actions absent here use their
     /// defaults, so files from before a binding existed stay valid.
-    pub bindings: petramond_world::controls::BindingSet,
+    pub bindings: petramond_input::controls::BindingSet,
 }
 
 /// Decorative-particle density: emitter-derived particles (torch flames…) and
@@ -113,7 +113,7 @@ impl Default for ClientSettings {
             music_volume: 1.0,
             particles: ParticlesMode::Full,
             screen_shake: true,
-            bindings: petramond_world::controls::BindingSet::default(),
+            bindings: petramond_input::controls::BindingSet::default(),
         }
     }
 }

@@ -41,7 +41,7 @@ use rustc_hash::FxHashMap;
 use super::expr::Expr;
 use super::library::{ClipId, ClipLibrary};
 use super::pose::MirrorMap;
-use crate::bbmodel::{Channel, Model};
+use petramond_world::bbmodel::{Channel, Model};
 
 mod parse;
 

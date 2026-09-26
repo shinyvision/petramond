@@ -234,7 +234,7 @@ fn world_map_drag_fill_latency() {
     for _ in 0..10 {
         frame(&mut app);
     }
-    use petramond_world::keycode::KeyCode;
+    use petramond_input::keycode::KeyCode;
     assert!(app.app.handle_raw_key(KeyCode::KeyM, true));
     let _ = app.app.handle_raw_key(KeyCode::KeyM, false);
     frame(&mut app);
@@ -377,7 +377,7 @@ fn world_map_zoom_out_frame_profile() {
     for _ in 0..10 {
         frame(&mut app);
     }
-    use petramond_world::keycode::KeyCode;
+    use petramond_input::keycode::KeyCode;
     assert!(app.app.handle_raw_key(KeyCode::KeyM, true));
     let _ = app.app.handle_raw_key(KeyCode::KeyM, false);
     let mut open_frames = Vec::new();

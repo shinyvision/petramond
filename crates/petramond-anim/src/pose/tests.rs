@@ -1,7 +1,7 @@
 use glam::{Mat4, Vec3};
 
 use super::{swap_side, LocalPose, MirrorMap};
-use crate::bbmodel::Model;
+use petramond_world::bbmodel::Model;
 
 /// A left/right symmetric rig whose arms carry mirrored rest rotations, with a
 /// clip that turns the body and the left arm about all three axes at once.

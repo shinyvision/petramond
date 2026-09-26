@@ -2,9 +2,9 @@
 //! and code start over whatever the layers beneath are doing.
 
 use super::Animator;
-use crate::animation::graph::{Ease, ExprId, Graph, Until};
-use crate::animation::inertia::{settle_halflife, Inertia};
-use crate::animation::library::ClipId;
+use crate::graph::{Ease, ExprId, Graph, Until};
+use crate::inertia::{settle_halflife, Inertia};
+use crate::library::ClipId;
 
 /// A montage started from code rather than a graph rule.
 #[derive(Clone, Debug, PartialEq)]

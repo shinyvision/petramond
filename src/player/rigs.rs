@@ -19,7 +19,7 @@
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
-use petramond_world::animation::{ClipId, Graph};
+use petramond_anim::{ClipId, Graph};
 use petramond_world::bbmodel::Model;
 use petramond_world::item::ItemRenderKind;
 use serde::{Deserialize, Serialize};

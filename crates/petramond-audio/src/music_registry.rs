@@ -13,12 +13,13 @@
 //! The rows live in `assets/music.json`, a layered catalog like `sounds.json`:
 //! add an engine track by adding a const + name here and a row + asset there;
 //! a pack overrides an engine row by bare name or ADDS a track with a
-//! namespaced (`mod_id:name`) key (see [`crate::registry`] for the shared
-//! rules). Because the scheduler picks uniformly over the whole loaded table,
+//! namespaced (`mod_id:name`) key (see [`petramond_world::registry`] for the
+//! shared rules). Because the scheduler picks uniformly over the whole loaded table,
 //! a pack that adds tracks joins the rotation with no engine change.
 
 use std::sync::LazyLock;
 
+use petramond_world::registry;
 use serde::Deserialize;
 
 /// A soundtrack piece, identified by its opaque runtime id (the row index in
@@ -74,8 +75,8 @@ pub struct MusicDef {
     /// The row's registry name (`"petramond:firefly"`, `"mod_id:theme"`).
     pub name: &'static str,
     /// The track's source clip (OGG/Vorbis), as an asset-relative path
-    /// (`music/...`) resolved through [`crate::assets`] — so a pack can
-    /// replace a track by shipping the same path. Unlike a sound clip it is
+    /// (`music/...`) resolved through [`petramond_world::assets`] — so a pack
+    /// can replace a track by shipping the same path. Unlike a sound clip it is
     /// read and decoded when the track PLAYS, never at startup.
     pub file: &'static str,
     /// Base linear gain on top of the master/music mixer volumes (`1.0` = as
@@ -115,14 +116,14 @@ pub fn defs() -> &'static [MusicDef] {
     catalog().rows()
 }
 
-fn catalog() -> &'static crate::registry::Catalog<MusicDef> {
-    static TABLE: LazyLock<crate::registry::Catalog<MusicDef>> =
-        LazyLock::new(|| crate::registry::read_catalog("music.json", "music track", parse_layers));
+fn catalog() -> &'static registry::Catalog<MusicDef> {
+    static TABLE: LazyLock<registry::Catalog<MusicDef>> =
+        LazyLock::new(|| registry::read_catalog("music.json", "music track", parse_layers));
     &TABLE
 }
 
-fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<MusicDef>, String> {
-    crate::registry::load_catalog(
+fn parse_layers(texts: &[&str]) -> Result<registry::Catalog<MusicDef>, String> {
+    registry::load_catalog(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.tracks),
         |r| &r.track,
@@ -148,6 +149,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<MusicDef>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petramond_world::assets;
 
     /// The shipped `assets/music.json` must cover the engine track set — the
     /// startup gate, surfaced as a test — and every row's clip must actually
@@ -157,7 +159,7 @@ mod tests {
     #[test]
     fn shipped_music_json_loads_fully_and_every_clip_resolves() {
         let (text, path) =
-            crate::assets::read_base_text("music.json").expect("assets/music.json must ship");
+            assets::read_base_text("music.json").expect("assets/music.json must ship");
         let table = parse_layers(&[&text])
             .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
             .rows();
@@ -172,7 +174,7 @@ mod tests {
                 "name → id → def → name round-trips"
             );
             assert!(
-                crate::assets::read_bytes(def.file).is_some(),
+                assets::read_bytes(def.file).is_some(),
                 "track '{name}' clip '{}' is missing",
                 def.file
             );
@@ -181,8 +183,7 @@ mod tests {
 
     #[test]
     fn pack_layers_override_by_name_and_add_namespaced_tracks() {
-        let (base, _) =
-            crate::assets::read_base_text("music.json").expect("assets/music.json must ship");
+        let (base, _) = assets::read_base_text("music.json").expect("assets/music.json must ship");
         let layer = r#"{"tracks": [
             {"track": "petramond:firefly", "file": "music/firefly.ogg", "gain": 0.5},
             {"track": "mymod:theme", "file": "music/theme.ogg"}

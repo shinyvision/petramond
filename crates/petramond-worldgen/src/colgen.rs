@@ -14,9 +14,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use petramond_region::{REGION_SHIFT, REGION_SIZE};
 use petramond_util::bytecodec::{deflate, inflate, put_u32, put_u64, put_u8, Reader};
 use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
-use petramond_world::region::{REGION_SHIFT, REGION_SIZE};
 
 /// Disposable generation cache format. Version 11 rebalances natural cavern density.
 pub const VERSION: u8 = 11;
@@ -147,7 +147,7 @@ pub fn decode_record(pos: ChunkPos, seed: u32, blob: &[u8]) -> Option<ColumnGenR
 
 /// The present column positions in one cache file (for the open-time manifest).
 pub fn read_cache_indices(path: &Path) -> io::Result<Vec<u16>> {
-    petramond_world::region::read_region_indices(path)
+    petramond_region::read_region_indices(path)
 }
 
 /// Merge records into their cache files (read-modify-write per file), mirroring
@@ -164,10 +164,10 @@ pub fn write_records(colgen_dir: &Path, recs: Vec<ColumnGenRecord>) -> Vec<PathB
         let records = group
             .iter()
             .map(|rec| (local_index(rec.pos), encode_record(rec)));
-        let _ = petramond_world::region::merge_region(
+        let _ = petramond_region::merge_region(
             &path,
             records,
-            petramond_world::region::MergePolicy::Rebuildable,
+            petramond_region::MergePolicy::Rebuildable,
         );
         touched.push(path);
     }

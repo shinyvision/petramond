@@ -552,7 +552,7 @@ impl World {
     /// `is_empty` test in the common case rather than a walk.
     pub fn collect_block_draws(
         &self,
-        view: &petramond_world::view_volume::ViewVolume,
+        view: &petramond_math::view_volume::ViewVolume,
         out: &mut Vec<BlockDrawInstance>,
     ) {
         out.clear();
