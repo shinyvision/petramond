@@ -1,4 +1,4 @@
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::container::Container;
 use petramond_world::gui_state::GuiKind;
@@ -33,7 +33,7 @@ impl MenuAnchor {
     /// Whether the anchored thing is still there to hold a session open. A
     /// block anchor always is (a broken block's session just shows no slots);
     /// a mob must be in the world and alive.
-    pub fn present(self, world: &World) -> bool {
+    pub fn present(self, world: &ServerWorld) -> bool {
         match self {
             MenuAnchor::Block(_) => true,
             MenuAnchor::Mob(id) => live_mob(world, id).is_some(),
@@ -41,7 +41,7 @@ impl MenuAnchor {
     }
 
     /// The slot storage behind the anchor.
-    pub fn container(self, world: &World) -> Option<&Container> {
+    pub fn container(self, world: &ServerWorld) -> Option<&Container> {
         match self {
             MenuAnchor::Block(pos) => world.container_at(pos),
             MenuAnchor::Mob(id) => {
@@ -55,7 +55,7 @@ impl MenuAnchor {
     /// mob's slots ride its own record. `None` = nothing is stored there.
     pub fn edit_container<R>(
         self,
-        world: &mut World,
+        world: &mut ServerWorld,
         edit: impl FnOnce(&mut Container) -> R,
     ) -> Option<R> {
         match self {
@@ -72,7 +72,7 @@ impl MenuAnchor {
     }
 }
 
-fn live_mob(world: &World, id: u64) -> Option<usize> {
+fn live_mob(world: &ServerWorld, id: u64) -> Option<usize> {
     let index = world.mobs().index_of_id(id)?;
     (!world.mobs().instances()[index].is_dead()).then_some(index)
 }

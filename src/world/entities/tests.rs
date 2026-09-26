@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use super::*;
 use crate::mob::EntityRef;
 use petramond_math::world_pos::WorldPos;
@@ -34,9 +35,11 @@ fn drop_at(x: f32, z: f32) -> DroppedItem {
 #[test]
 fn dropped_reaction_transforms_the_stack_in_water() {
     // A content-only fixture pack — no wasm build involved.
-    let Some(root) = crate::modding::tests::stage_mods_fixture("dropped-reaction", &[]) else {
-        return;
-    };
+    let root = std::env::temp_dir().join(format!(
+        "petramond-fixture-dropped-reaction-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
     let pack = root.join("mods").join("testreact");
     std::fs::create_dir_all(&pack).unwrap();
     std::fs::write(
@@ -59,7 +62,12 @@ fn dropped_reaction_transforms_the_stack_in_water() {
         ] }"#,
     )
     .unwrap();
-    crate::modding::tests::run_child_test(&root, "world::entities::tests::dropped_reaction_inner");
+    let run = petramond_world::test_child::run_ignored(
+        "world::entities::tests::dropped_reaction_inner",
+        [("PETRAMOND_MODS", root.join("mods"))],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    run.assert_passed();
 }
 
 /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
@@ -73,7 +81,7 @@ fn dropped_reaction_inner() {
     let (flour, dough) = (by_key("testreact:flour"), by_key("testreact:dough"));
     assert!(flour.dropped_reaction().is_some(), "the row resolved");
 
-    let mut w = World::new(1, 4);
+    let mut w = ServerWorld::new(1, 4);
     w.clear_world();
     w.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
@@ -113,8 +121,8 @@ fn dropped_reaction_inner() {
     assert_eq!(w.item_entities()[0].stack.item, dough);
 }
 
-fn open_world() -> World {
-    let mut w = World::new(1, 4);
+fn open_world() -> ServerWorld {
+    let mut w = ServerWorld::new(1, 4);
     w.clear_world();
     w.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
@@ -337,7 +345,7 @@ fn a_lodged_item_holds_until_its_block_goes_then_drops_loose() {
 #[test]
 fn lifetime_advances_and_despawns_at_the_limit() {
     // No save attached, so the timer never pauses — it just counts up.
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let mut item = drop_at(0.5, 0.5);
     item.ticks_lived = ITEM_LIFETIME_TICKS - 2;
     w.spawn_item(item);
@@ -352,7 +360,7 @@ fn lifetime_advances_and_despawns_at_the_limit() {
 
 #[test]
 fn pickup_waits_out_the_delay_then_collects() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let player = WorldPos::new(0.5, 64.0, 0.5);
     w.spawn_item(drop_at(0.5, 0.5)); // ticks_lived 0: inside the delay window
     let mut collected = 0u32;
@@ -384,7 +392,7 @@ fn pickup_waits_out_the_delay_then_collects() {
 
 #[test]
 fn pickup_splits_off_only_the_part_that_fits() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
     item.ticks_lived = 1234; // past the delay, with a partly-elapsed despawn timer
@@ -433,7 +441,7 @@ fn pickup_splits_off_only_the_part_that_fits() {
 
 #[test]
 fn pickup_replans_existing_request_before_splitting_more() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
@@ -479,7 +487,7 @@ fn a_split_drop_tracks_the_original_instead_of_drifting() {
     // Regression: the split used to spawn at rest while the original kept its
     // velocity, so once the magnet let go they fell on different arcs and
     // landed apart. Cloning the physics state keeps them locked together.
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let mut item = DroppedItem::new(
         WorldPos::new(0.5, 80.0, 0.5),
         ItemStack::new(ItemType::Dirt, 10),
@@ -505,7 +513,7 @@ fn a_split_drop_tracks_the_original_instead_of_drifting() {
 
 #[test]
 fn pickup_leaves_a_drop_with_no_room() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
@@ -530,7 +538,7 @@ fn pickup_leaves_a_drop_with_no_room() {
 /// there with nowhere to go.
 #[test]
 fn magnet_skips_a_drop_that_was_not_requested() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let target = WorldPos::new(0.5, 65.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
     item.pos = WorldPos::new(0.5, 64.5, 0.5); // 0.5 below the target, within attract range
@@ -551,7 +559,7 @@ fn magnet_skips_a_drop_that_was_not_requested() {
 /// above it.
 #[test]
 fn magnet_pulls_a_requested_drop() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let target = WorldPos::new(0.5, 65.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
     item.pos = WorldPos::new(0.5, 64.5, 0.5);
@@ -577,7 +585,7 @@ fn magnet_pulls_a_requested_drop() {
 #[test]
 fn magnet_pulls_toward_the_requester_not_the_nearest_player() {
     let p1 = PlayerId(1);
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let p0_pos = WorldPos::new(1.2, 64.0, 0.5); // inside attract, farther
     let p1_pos = WorldPos::new(0.1, 64.0, 0.5); // inside attract, nearer
     let mut item = drop_at(0.5, 0.5);
@@ -602,7 +610,7 @@ fn magnet_pulls_toward_the_requester_not_the_nearest_player() {
 /// per-tick sweep, so other players can claim the drop next tick.
 #[test]
 fn stale_requests_release_when_the_requester_is_gone() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
@@ -628,16 +636,16 @@ fn a_drop_waits_for_the_section_under_it_to_arrive() {
     use petramond_world::chunk::ChunkPos;
     let dir = std::env::temp_dir().join(format!("petramond-drop-freeze-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
     w.attach_save(opened.save, opened.saved);
     let column = ChunkPos::new(0, 0);
-    w.ensure_column(column);
+    w.data.ensure_column(column);
     w.insert_empty_column_for_test(column);
     // The drop's own section (cy 4) is loaded; the one under it (cy 3) is
     // still in flight.
     let floor = SectionPos::new(0, 3, 0);
-    w.gen.awaited_overlays.insert(floor);
+    w.side.gen.awaited_overlays.insert(floor);
     w.note_stream_nonfinal(floor);
     let start = drop_at(2.5, 2.5).pos; // y = 64.5, the first row of cy 4
     w.spawn_item(drop_at(2.5, 2.5));
@@ -649,7 +657,7 @@ fn a_drop_waits_for_the_section_under_it_to_arrive() {
         start,
         "held still over terrain that has not arrived"
     );
-    w.gen.awaited_overlays.remove(&floor);
+    w.side.gen.awaited_overlays.remove(&floor);
     w.settle_stream_nonfinal(floor);
     for _ in 0..10 {
         w.tick_item_physics(0.05, &[]);
@@ -665,7 +673,7 @@ fn a_drop_waits_for_the_section_under_it_to_arrive() {
 fn unloading_a_section_harvests_only_its_items() {
     // take_items_in_section is what an unload uses to bundle a section's drops
     // into its save record (and so pause their timers). drop_at puts y=64 → cy 4.
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     w.spawn_item(drop_at(2.5, 2.5)); // section (0, 4, 0)
     w.spawn_item(drop_at(20.5, 2.5)); // section (1, 4, 0)
     let taken = w
@@ -678,7 +686,7 @@ fn unloading_a_section_harvests_only_its_items() {
 
 #[test]
 fn items_group_by_owning_section_for_flush() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     w.spawn_item(drop_at(2.5, 2.5)); // (0, 4, 0)
     w.spawn_item(drop_at(5.5, 9.5)); // (0, 4, 0)
     w.spawn_item(drop_at(20.5, 2.5)); // (1, 4, 0)
@@ -691,7 +699,7 @@ fn items_group_by_owning_section_for_flush() {
 /// carrying both counts; the survivor keeps its own identity and pose.
 #[test]
 fn nearby_compatible_stacks_merge_into_one_entity() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     w.spawn_item(drop_at(0.5, 0.5));
     w.spawn_item(drop_at(1.2, 0.5)); // 0.7 away
     w.dropped_items_mut().merge_nearby();
@@ -704,7 +712,7 @@ fn nearby_compatible_stacks_merge_into_one_entity() {
 /// own entity instead of producing an oversized stack.
 #[test]
 fn merging_respects_the_max_stack_size() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     for x in [0.5, 1.1] {
         let mut item = drop_at(x, 0.5);
         item.stack = ItemStack::new(ItemType::Dirt, 40);
@@ -724,7 +732,7 @@ fn merging_respects_the_max_stack_size() {
 /// Different item kinds never merge, even sharing a cell.
 #[test]
 fn different_items_do_not_merge() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     w.spawn_item(drop_at(0.5, 0.5));
     let mut other = drop_at(0.6, 0.6);
     other.stack.item = ItemType::Stone;
@@ -736,7 +744,7 @@ fn different_items_do_not_merge() {
 /// Drops farther than the merge radius stay separate even when compatible.
 #[test]
 fn drops_beyond_the_radius_do_not_merge() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     w.spawn_item(drop_at(0.5, 0.5));
     w.spawn_item(drop_at(1.8, 0.5)); // 1.3 away
     w.dropped_items_mut().merge_nearby();
@@ -747,7 +755,7 @@ fn drops_beyond_the_radius_do_not_merge() {
 /// whose inventory already reserved those items.
 #[test]
 fn requested_drops_never_merge() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let mut flying = drop_at(0.5, 0.5);
     flying.pickup_requested = Some(P0);
     w.spawn_item(flying);
@@ -765,7 +773,7 @@ fn requested_drops_never_merge() {
 /// never shortens an item's remaining life.
 #[test]
 fn merged_pile_keeps_the_most_remaining_lifetime() {
-    let mut w = World::new(0, 0);
+    let mut w = ServerWorld::new(0, 0);
     let mut old = drop_at(0.5, 0.5);
     old.ticks_lived = ITEM_LIFETIME_TICKS - 200;
     w.spawn_item(old);

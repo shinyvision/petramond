@@ -20,7 +20,7 @@ fn chat_texts(msgs: &[ServerToClient]) -> Vec<String> {
 #[test]
 fn targeted_chat_reaches_only_listed_sessions() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let remote_s = server.add_session_for_test(player);
     let remote_id = server.sessions[remote_s].id;
 
@@ -67,7 +67,7 @@ fn a_published_body_claim_reaches_the_addressed_sessions_movement() {
     use crate::player::MOVE_SCALE_DEFAULT;
 
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let other = crate::server::session_build::spawn_player(server.world.seed);
+    let other = crate::server::session_build::spawn_player(server.world.data().seed);
     let s = server.add_session_for_test(other);
     assert_ne!(s, 0, "the claimed body must not be the host session");
 
@@ -177,7 +177,7 @@ fn a_mod_cue_reaches_only_the_session_it_names_and_never_coalesces() {
     use crate::events::{tick::TickEvents, ClientEvent};
 
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let other_s = server.add_session_for_test(player);
     let other_id = server.sessions[other_s].id;
     assert_ne!(other_s, 0);
@@ -364,7 +364,7 @@ fn post_handlers_act_for_the_events_player_and_systems_for_nobody() {
     use std::sync::{Arc, Mutex};
 
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let second = server.add_session_for_test(player);
     let second_id = server.sessions[second].id;
 

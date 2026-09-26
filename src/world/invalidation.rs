@@ -1,28 +1,29 @@
 //! Dirty-mark fan-out: the light and mesh invalidation choke points edits,
 //! ingest, and sky-cover moves route through.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
 use rustc_hash::FxHashSet;
 
 use petramond_world::chunk::{self, ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE};
 
-use super::store::{SkyCoverChange, World, WorldRole};
+use super::store::SkyCoverChange;
 
-impl World {
+impl<S: WorldSide> World<S> {
     pub(super) fn mark_light_dirty_pos(&mut self, pos: SectionPos) {
-        if let Some(s) = self.section_mut(pos) {
+        if let Some(s) = self.data.section_mut(pos) {
             s.mark_light_dirty();
-            // Headless rebakes are demanded from the mark itself (no mesh
-            // pump to demand them). Client/combined section-grained marks
-            // (ingest, unload, topology) stay mesh-demanded, so far edges
-            // keep their dormant-until-visible behaviour; EDIT marks demand
-            // explicitly via `mark_light_dirty_demanded`.
-            if self.role == WorldRole::ServerHeadless {
-                self.relight_demand.insert(pos);
+            // Without a mesh pump (the server), rebakes are demanded from the
+            // mark itself. A replica's section-grained marks (ingest, unload,
+            // topology) stay mesh-demanded, so far edges keep their
+            // dormant-until-visible behaviour; EDIT marks demand explicitly
+            // via `mark_light_dirty_demanded`.
+            if self.side.replica().is_none() {
+                self.data.relight_demand.insert(pos);
             }
         }
-        if self.light_deferred.contains(&pos) {
-            self.deferred_rechecks.insert(pos);
+        if self.data.light_deferred.contains(&pos) {
+            self.data.deferred_rechecks.insert(pos);
         }
     }
 
@@ -32,27 +33,27 @@ impl World {
     /// meshes — the landed bake's diff requeues them if anything changed).
     pub(super) fn mark_light_dirty_demanded(&mut self, pos: SectionPos) {
         self.mark_light_dirty_pos(pos);
-        if self.sections.contains_key(&pos) {
-            self.relight_demand.insert(pos);
+        if self.data.sections.contains_key(&pos) {
+            self.data.relight_demand.insert(pos);
         }
     }
 
     pub(super) fn queue_dirty_mesh(&mut self, pos: SectionPos) {
-        // A headless server never meshes: with nobody pumping `tick_mesh_budget`,
-        // anything queued here would only accumulate.
-        if self.role == WorldRole::ServerHeadless {
+        // The server never meshes: it has no presentation to queue into.
+        let Some(replica) = self.side.replica_mut() else {
             return;
-        }
-        if let Some(job) = self.terrain.mesh_job_cancels.get(&pos) {
+        };
+        let terrain = &mut replica.terrain;
+        if let Some(job) = terrain.mesh_job_cancels.get(&pos) {
             job.cancel();
         }
-        if let Some(s) = self.section_mut(pos) {
+        if let Some(s) = self.data.section_mut(pos) {
             s.dirty = true;
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
-            self.terrain.light_blocked_meshes.remove(&pos);
-            self.terrain.hidden_parked.remove(&pos);
-            self.terrain.sealed_parked.remove(&pos);
-            self.terrain.dirty_meshes.push(pos);
+            terrain.light_blocked_meshes.remove(&pos);
+            terrain.hidden_parked.remove(&pos);
+            terrain.sealed_parked.remove(&pos);
+            terrain.dirty_meshes.push(pos);
         }
     }
 
@@ -100,7 +101,7 @@ impl World {
             wx.div_euclid(SECTION_SIZE as i32),
             wz.div_euclid(SECTION_SIZE as i32),
         );
-        let note_persist = self.save.is_some();
+        let note_persist = self.persisting();
         for dz in -1..=1 {
             for dx in -1..=1 {
                 let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
@@ -114,7 +115,7 @@ impl World {
                         continue;
                     }
                     if note_persist {
-                        self.light_edited_since_persist.insert(pos);
+                        self.data.light_edited_since_persist.insert(pos);
                     }
                     self.mark_light_dirty_demanded(pos);
                 }
@@ -141,7 +142,7 @@ impl World {
                         let pos = SectionPos::new(cp.cx, cy, cp.cz);
                         if change.affects(pos)
                             && self
-                                .sections
+                                .data.sections
                                 .get(&pos)
                                 .is_some_and(|s| !(from_persist && s.light_from_persist))
                             && seen.insert(pos)
@@ -153,8 +154,8 @@ impl World {
             }
         }
         for pos in affected {
-            if edited && self.save.is_some() {
-                self.light_edited_since_persist.insert(pos);
+            if edited && self.persisting() {
+                self.data.light_edited_since_persist.insert(pos);
             }
             self.mark_light_and_mesh_dirty_pos(pos);
         }
@@ -213,7 +214,7 @@ impl World {
         let Some((center, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return;
         };
-        let note_persist = self.save.is_some();
+        let note_persist = self.persisting();
         for dy in -1..=1 {
             for dz in -1..=1 {
                 for dx in -1..=1 {
@@ -224,8 +225,8 @@ impl World {
                     }
                     let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
                     self.mark_light_dirty_demanded(pos);
-                    if note_persist && self.sections.contains_key(&pos) {
-                        self.light_edited_since_persist.insert(pos);
+                    if note_persist && self.data.sections.contains_key(&pos) {
+                        self.data.light_edited_since_persist.insert(pos);
                     }
                 }
             }
@@ -246,7 +247,7 @@ impl World {
     ///
     /// [`mark_light_dirty_around_cell_radius`]: Self::mark_light_dirty_around_cell_radius
     pub(super) fn relight_cell(&mut self, wx: i32, wy: i32, wz: i32, radius: i32) {
-        if self.role == WorldRole::ClientReplica {
+        if self.side.server().is_none() {
             if radius >= 0 {
                 self.mark_light_dirty_around_cell_radius(wx, wy, wz, radius);
             }
@@ -269,45 +270,13 @@ impl World {
     /// dirty the cell's section, so no pending batch whose region holds the
     /// cell can relight around it unseeded.
     pub(super) fn queue_incremental_relight(&mut self, cell: petramond_math::math::IVec3) -> bool {
-        if self.role == WorldRole::ClientReplica
+        if self.side.server().is_none()
             || !petramond_world::world::light::edit_relightable(&self.data.sections, cell)
         {
             return false;
         }
         self.data.light_edits.push((cell, Self::LIGHT_REACH));
         true
-    }
-
-    /// Drain the queued incremental relights: one BFS pass over the stored
-    /// cubes for the whole batch, installing the sections whose light moved.
-    /// When any queued cell's region cannot be trusted any more (a neighbour
-    /// evicted or dirtied since it was queued), EVERY queued cell falls back
-    /// to its full-rebake mark — a partial batch would relight against cells
-    /// whose own change it never seeded.
-    pub(in crate::world) fn apply_light_edits(&mut self) {
-        if self.data.light_edits.is_empty() {
-            return;
-        }
-        let edits = std::mem::take(&mut self.data.light_edits);
-        let cells: Vec<_> = edits.iter().map(|&(cell, _)| cell).collect();
-        match petramond_world::world::light::relight_edits(
-            &self.data.sections,
-            &self.data.columns,
-            &cells,
-        ) {
-            Some(relit) => {
-                for r in relit {
-                    self.install_light_cubes(r.pos, r.skylight, r.blocklight, r.mask, false);
-                }
-            }
-            None => {
-                for (cell, radius) in edits {
-                    if radius >= 0 {
-                        self.mark_light_dirty_around_cell_radius(cell.x, cell.y, cell.z, radius);
-                    }
-                }
-            }
-        }
     }
 
     /// Queue a remesh of every section whose mesh samples world cell
@@ -371,6 +340,45 @@ impl World {
     }
 }
 
+impl ServerWorld {
+    /// Drain the queued incremental relights (only the server queues them —
+    /// see [`relight_cell`](World::relight_cell)): one BFS pass over the stored
+    /// cubes for the whole batch, installing the sections whose light moved.
+    /// When any queued cell's region cannot be trusted any more (a neighbour
+    /// evicted or dirtied since it was queued), EVERY queued cell falls back
+    /// to its full-rebake mark — a partial batch would relight against cells
+    /// whose own change it never seeded.
+    pub(in crate::world) fn apply_light_edits(&mut self) {
+        if self.data.light_edits.is_empty() {
+            return;
+        }
+        let edits = std::mem::take(&mut self.data.light_edits);
+        let cells: Vec<_> = edits.iter().map(|&(cell, _)| cell).collect();
+        match petramond_world::world::light::relight_edits(
+            &self.data.sections,
+            &self.data.columns,
+            &cells,
+        ) {
+            Some(relit) => {
+                for r in relit {
+                    self.install_light_cubes(r.pos, r.skylight, r.blocklight);
+                    // Changed light is new shippable content, exactly like a
+                    // landed bake (see `pump_light_bakes`).
+                    self.side.replication.light_ship_log.insert(r.pos);
+                    self.side.replication.bump_terrain_revision();
+                }
+            }
+            None => {
+                for (cell, radius) in edits {
+                    if radius >= 0 {
+                        self.mark_light_dirty_around_cell_radius(cell.x, cell.y, cell.z, radius);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,8 +389,8 @@ mod tests {
     /// A settled 3×3×3 block of sections: a solid stone floor layer (fully
     /// opaque, so it never bakes), an air layer under a one-cell stone roof at
     /// y = 15, and open sky above — every bakeable section's light landed.
-    fn settled_room() -> World {
-        let mut w = World::new(0, 4);
+    fn settled_room() -> ServerWorld {
+        let mut w = ServerWorld::new(0, 4);
         for cy in -1..=1 {
             for cz in -1..=1 {
                 for cx in -1..=1 {
@@ -401,7 +409,7 @@ mod tests {
                 }
             }
         }
-        for column in w.columns.values_mut() {
+        for column in w.data.columns.values_mut() {
             for z in 0..SECTION_SIZE {
                 for x in 0..SECTION_SIZE {
                     column.set_surface_y(x, z, SECTION_SIZE as i32 - 1);
@@ -411,7 +419,7 @@ mod tests {
         }
         for _ in 0..2500 {
             w.pump_light_bakes();
-            if w.sections.values().all(|s| !s.light_dirty || s.all_opaque()) {
+            if w.data.sections.values().all(|s| !s.light_dirty || s.all_opaque()) {
                 return w;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -429,16 +437,16 @@ mod tests {
         assert!(w.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
 
         assert!(
-            w.sections.values().all(|s| !s.light_dirty || s.all_opaque()),
+            w.data.sections.values().all(|s| !s.light_dirty || s.all_opaque()),
             "an incremental edit marks nothing for a full rebake"
         );
-        assert!(w.relight_demand.is_empty());
-        assert_eq!(w.light_edits.len(), 1, "the edit waits for the next drain");
+        assert!(w.data.relight_demand.is_empty());
+        assert_eq!(w.data.light_edits.len(), 1, "the edit waits for the next drain");
 
         w.pump_light_bakes();
-        assert!(w.light_edits.is_empty());
-        assert!(!w.blocklight_rgb_at_world(torch.x + 1, torch.y, torch.z).is_dark());
-        for (&pos, section) in w.sections.iter() {
+        assert!(w.data.light_edits.is_empty());
+        assert!(!w.data.blocklight_rgb_at_world(torch.x + 1, torch.y, torch.z).is_dark());
+        for (&pos, section) in w.data.sections.iter() {
             if section.all_opaque() {
                 continue;
             }
@@ -458,11 +466,11 @@ mod tests {
     #[test]
     fn an_edit_beside_an_absent_section_marks_the_full_rebake() {
         let mut w = settled_room();
-        w.sections.remove(&SectionPos::new(1, 0, 0));
+        w.data.sections.remove(&SectionPos::new(1, 0, 0));
         let torch = petramond_math::math::IVec3::new(12, 4, 8);
         assert!(w.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
-        assert!(w.light_edits.is_empty());
-        assert!(w.sections[&SectionPos::new(0, 0, 0)].light_dirty);
-        assert!(w.relight_demand.contains(&SectionPos::new(0, 0, 0)));
+        assert!(w.data.light_edits.is_empty());
+        assert!(w.data.sections[&SectionPos::new(0, 0, 0)].light_dirty);
+        assert!(w.data.relight_demand.contains(&SectionPos::new(0, 0, 0)));
     }
 }

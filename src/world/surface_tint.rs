@@ -1,21 +1,21 @@
 //! Presentation-only top-down surface sampling: per-column height + color
 //! grids with lazily built 5×5 biome-blended tints (the map/minimap feed).
 
+use crate::world::{World, WorldSide};
 use std::sync::Arc;
 
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_world::column::{Column, NO_SURFACE};
 use petramond_world::section::Section;
 
-use super::store::World;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Whether the column is loaded, and if so its payload revision — the
     /// change-detection half of [`client_surface_column`](Self::client_surface_column).
     pub fn client_surface_column_revision(&self, pos: ChunkPos) -> Option<u64> {
-        self.columns
+        self.data.columns
             .contains_key(&pos)
-            .then(|| self.column_payload_revision(pos))
+            .then(|| self.data.column_payload_revision(pos))
     }
 
     /// Final top-down surface samples for one whole chunk column, for
@@ -32,7 +32,7 @@ impl World {
         pos: ChunkPos,
         out: &mut [Option<(i16, [u8; 3])>; 256],
     ) -> bool {
-        let Some(column) = self.columns.get(&pos) else {
+        let Some(column) = self.data.columns.get(&pos) else {
             return false;
         };
         let mut tints = SurfaceTintGrids::new(self, pos, column);
@@ -51,8 +51,8 @@ impl World {
                     Some((_, section)) => *section,
                     None => {
                         let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                        let section = (SectionPos::cy_in_range(cy) && self.stream_writable(sp))
-                            .then(|| self.sections.get(&sp).map(Arc::as_ref))
+                        let section = (SectionPos::cy_in_range(cy) && self.data.stream_writable(sp))
+                            .then(|| self.data.sections.get(&sp).map(Arc::as_ref))
                             .flatten();
                         sections.push((cy, section));
                         section
@@ -93,13 +93,11 @@ struct SurfaceTintGrids<'a> {
 }
 
 impl<'a> SurfaceTintGrids<'a> {
-    fn new(world: &'a World, pos: ChunkPos, column: &'a Column) -> Self {
+    fn new<S: WorldSide>(world: &'a World<S>, pos: ChunkPos, column: &'a Column) -> Self {
         let halo = world
-            .gen
-            .column_gen
-            .get(&pos)
+            .column_gen(pos)
             .map(|column| column.mesh_biome_slice())
-            .or_else(|| world.column_biome_halos.get(&pos).map(|halo| halo.as_ref()))
+            .or_else(|| world.data.column_biome_halos.get(&pos).map(|halo| halo.as_ref()))
             .filter(|halo| halo.len() == 20 * 20);
         Self {
             halo,

@@ -6,8 +6,8 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
 /// A grass floor at `y = 63` over one chunk, so footholds sit at `y = 64`.
-fn flat_world() -> World {
-    let mut world = World::new(0, 1);
+fn flat_world() -> ServerWorld {
+    let mut world = ServerWorld::new(0, 1);
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {

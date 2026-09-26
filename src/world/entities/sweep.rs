@@ -3,11 +3,12 @@
 //! section once per tick, so each sweep asks only the ones its segment can
 //! reach instead of every instance in the world.
 
+use crate::world::ServerWorld;
+use petramond_world::world::raycast;
 use std::collections::HashMap;
 
 use crate::mob::EntityRef;
-use crate::player::RayFilter;
-use crate::world::World;
+use petramond_world::world::raycast::RayFilter;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 
@@ -27,7 +28,7 @@ pub(super) struct SweepBodies {
 impl SweepBodies {
     /// Bucket every mob that can be struck. Gathered once per tick, only
     /// while something is in flight.
-    pub(super) fn gather(world: &World) -> Self {
+    pub(super) fn gather(world: &ServerWorld) -> Self {
         let mut buckets: HashMap<IVec3, Vec<u32>> = HashMap::new();
         let mut reach: f32 = 0.0;
         for (i, m) in world.mobs().instances().iter().enumerate() {
@@ -107,7 +108,7 @@ pub(super) fn sweep(
     let dir = motion / length;
     let world = ctx.world;
     let terrain =
-        crate::player::Player::raycast_filtered(from, dir, length, RayFilter::Collidable, world)
+        raycast::filtered(from, dir, length, RayFilter::Collidable, world.data())
             .map(|(hit, distance)| {
                 (
                     distance,
@@ -139,7 +140,7 @@ pub(super) fn sweep(
                 (p[2] - from.z) as f32,
             )
         };
-        if let Some(t) = crate::player::ray_vs_aabb(Vec3::ZERO, dir, rel(lo), rel(hi)) {
+        if let Some(t) = raycast::ray_vs_aabb(Vec3::ZERO, dir, rel(lo), rel(hi)) {
             consider(t, ImpactTarget::Player(anchor.id));
         }
     }

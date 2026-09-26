@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use std::sync::Arc;
 
 use petramond_math::math::IVec3;
@@ -9,21 +10,20 @@ use petramond_world::chunk::{
 use petramond_world::section::Section;
 use petramond_worldgen::driver::ChunkGenerator;
 
-use super::World;
 
-fn install_column_summary(world: &mut World, generator: &ChunkGenerator, pos: ChunkPos) {
-    world.ensure_column(pos);
+fn install_column_summary(world: &mut ServerWorld, generator: &ChunkGenerator, pos: ChunkPos) {
+    world.data.ensure_column(pos);
     world.set_column_gen(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
 }
 
 #[test]
 fn failed_section_mut_lookup_does_not_pollute_the_random_tick_index() {
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     let absent = SectionPos::new(0, SECTION_MAX_CY + 1, 0);
 
-    assert!(world.section_mut(absent).is_none());
+    assert!(world.data.section_mut(absent).is_none());
     assert!(
-        !world.random_tick_dirty.contains(&absent),
+        !world.data.random_tick_dirty.contains(&absent),
         "a failed boundary probe must not become derived-index work"
     );
 }
@@ -34,25 +34,25 @@ fn same_height_surface_swap_bumps_the_column_revision() {
     // spread, …) keeps the heightmap, but revision-gated surface
     // sampling must still see the column move or the swapped color is
     // never resampled.
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     let sp = SectionPos::new(0, 4, 0);
     let mut s = Section::new(0, 4, 0);
     s.set_block(8, 0, 8, Block::Stone);
     world.insert_section_for_test(sp, s);
-    let column = world.ensure_column(sp.chunk_pos());
+    let column = world.data.ensure_column(sp.chunk_pos());
     column.set_surface_y(8, 8, 64);
     column.set_sky_cover_y(8, 8, 64);
 
-    let before = world.column_payload_revision(sp.chunk_pos());
+    let before = world.data.column_payload_revision(sp.chunk_pos());
     world.set_block_world(8, 64, 8, Block::Dirt);
     assert_eq!(
-        world.columns[&sp.chunk_pos()].surface_y(8, 8),
+        world.data.columns[&sp.chunk_pos()].surface_y(8, 8),
         64,
         "fixture: the swap must not move the heightmap"
     );
     assert_ne!(
         before,
-        world.column_payload_revision(sp.chunk_pos()),
+        world.data.column_payload_revision(sp.chunk_pos()),
         "a same-height surface swap must move the column revision"
     );
 }
@@ -62,50 +62,49 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     // The adaptive relight radius: light values bound how far a plain
     // solid⇄air edit can matter, so mining inside unlit solid rock (the
     // hot gameplay path) must trigger NO light invalidation or rebake.
-    let mut world = World::new(0, 4);
+    let mut world = ServerWorld::new(0, 4);
     let pos = SectionPos::new(0, 0, 0);
     let mut section = Section::new(0, 0, 0);
     section.blocks_mut().fill(Block::Stone.id());
     section.recompute_opaque_count();
     world.insert_section_for_test(pos, section);
     {
-        let s = world.section_mut(pos).unwrap();
+        let s = world.data.section_mut(pos).unwrap();
         s.set_skylight(vec![0u8; SECTION_VOLUME].into());
         s.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
     }
     // The fixture insert demands a bake; only the edits below are under test.
-    world.relight_demand.clear();
-    assert!(!world.sections[&pos].light_dirty, "fixture: settled dark");
+    world.data.relight_demand.clear();
+    assert!(!world.data.sections[&pos].light_dirty, "fixture: settled dark");
 
     assert!(world.set_block_world(8, 8, 8, Block::Air));
     assert!(
-        !world.sections[&pos].light_dirty,
+        !world.data.sections[&pos].light_dirty,
         "no light can reach the opened cell, so nothing may invalidate"
     );
-    assert!(world.relight_demand.is_empty());
+    assert!(world.data.relight_demand.is_empty());
 
     // Control: the same break beside cached light must invalidate.
-    world
-        .section_mut(pos)
+    world.data.section_mut(pos)
         .unwrap()
         .set_skylight(vec![petramond_world::chunk::SKY_FULL; SECTION_VOLUME].into());
     assert!(world.set_block_world(8, 4, 8, Block::Air));
     assert!(
-        world.sections[&pos].light_dirty,
+        world.data.sections[&pos].light_dirty,
         "a break beside lit cells must invalidate light"
     );
-    assert!(world.relight_demand.contains(&pos));
+    assert!(world.data.relight_demand.contains(&pos));
 }
 
 #[test]
 fn glass_raises_the_visible_surface_without_raising_sky_cover() {
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     let cp = ChunkPos::new(0, 0);
 
     assert!(world.set_block_world(8, 0, 8, Block::Stone));
     assert!(world.set_block_world(8, 64, 8, Block::Glass));
 
-    let column = &world.columns[&cp];
+    let column = &world.data.columns[&cp];
     assert_eq!(column.surface_y(8, 8), 64);
     assert_eq!(
         column.sky_cover_y(8, 8),
@@ -125,7 +124,7 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
     let dir = std::env::temp_dir().join(format!("petramond-stale-light-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     world.attach_save(opened.save, opened.saved);
 
     let a = SectionPos::new(0, 4, 0);
@@ -141,22 +140,22 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
         s.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
         s.mark_light_clean();
         world.insert_section_for_test(sp, s);
-        world.section_mut(sp).expect("loaded").modified = true;
+        world.data.section_mut(sp).expect("loaded").modified = true;
     }
     world.flush_modified_chunks();
     assert!(
-        world.saved_index().contains(b),
+        world.data.saved_index().contains(b),
         "fixture: B's record is on disk"
     );
     assert!(
-        !world.sections[&b].light_dirty,
+        !world.data.sections[&b].light_dirty,
         "fixture: B persisted with clean light"
     );
 
     // The edit in A, one cell from the seam: B's cached AND persisted
     // light are now stale.
     world.set_block_world(15, 65, 8, Block::Stone);
-    assert!(world.sections[&b].light_dirty);
+    assert!(world.data.sections[&b].light_dirty);
 
     let snap = world
         .snapshot_section_for_save(b, Vec::new(), Vec::new(), false)
@@ -172,33 +171,34 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
 
 #[test]
 fn mesh_column_index_tracks_multiple_vertical_meshes() {
-    let mut world = World::new(0, 0);
+    let mut world = crate::world::ReplicaWorld::new(0, 0);
+    let terrain = &mut world.side.terrain;
     let lower = SectionPos::new(4, 0, -2);
     let upper = SectionPos::new(4, 1, -2);
     let column = lower.chunk_pos();
 
-    assert!(!world.column_has_mesh(column));
-    world.install_mesh(lower, ChunkMesh::empty());
-    world.install_mesh(upper, ChunkMesh::empty());
-    assert!(world.column_has_mesh(column));
-    let bits = world.terrain.mesh_column_cys[&column];
+    assert!(!terrain.column_has_mesh(column));
+    terrain.install_mesh(lower, ChunkMesh::empty());
+    terrain.install_mesh(upper, ChunkMesh::empty());
+    assert!(terrain.column_has_mesh(column));
+    let bits = terrain.mesh_column_cys[&column];
     assert_eq!(bits.count_ones(), 2);
 
-    assert!(world.remove_mesh(lower));
-    assert!(world.column_has_mesh(column));
-    assert_eq!(world.terrain.mesh_column_cys[&column].count_ones(), 1);
+    assert!(terrain.remove_mesh(lower));
+    assert!(terrain.column_has_mesh(column));
+    assert_eq!(terrain.mesh_column_cys[&column].count_ones(), 1);
 
-    assert!(world.remove_mesh(upper));
-    assert!(!world.column_has_mesh(column));
-    assert!(!world.terrain.mesh_column_cys.contains_key(&column));
+    assert!(terrain.remove_mesh(upper));
+    assert!(!terrain.column_has_mesh(column));
+    assert!(!terrain.mesh_column_cys.contains_key(&column));
 }
 
 #[test]
 fn virtual_full_opaque_summary_blocks_collision_without_raw_voxels() {
     use petramond_world::{section::SectionSummary, world::WorldData};
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     let pos = ChunkPos::new(0, 0);
-    world.ensure_column(pos);
+    world.data.ensure_column(pos);
     let mut summaries = vec![SectionSummary::Unknown; WorldData::column_section_range().count()];
     summaries[0] = SectionSummary::FullOpaque;
     world
@@ -208,21 +208,21 @@ fn virtual_full_opaque_summary_blocks_collision_without_raw_voxels() {
 
     let y = SECTION_MIN_CY * SECTION_SIZE as i32;
     assert_eq!(
-        Block::from_id(world.chunk_block(0, y, 0)),
+        Block::from_id(world.data.chunk_block(0, y, 0)),
         Block::Air,
         "raw reads stay exact: absent voxel buffers still read as air"
     );
     assert_eq!(
-        world.physics_block(0, y, 0),
+        world.data.physics_block(0, y, 0),
         Block::Stone,
         "physics reads may use the generated full-opaque summary"
     );
     assert!(
-        !world.collision_boxes_at(0, y, 0).is_empty(),
+        !world.data.collision_boxes_at(0, y, 0).is_empty(),
         "virtual full-opaque summary should collide as a full block"
     );
     assert!(
-        !world.placement_cell_open(IVec3::new(0, y, 0)),
+        !world.data.placement_cell_open(IVec3::new(0, y, 0)),
         "placement must not treat absent known-solid terrain as open air"
     );
 }
@@ -253,20 +253,20 @@ fn heightmap_recompute_preserves_generated_cave_mouth_surface() {
         panic!("test seed/search window must contain at least one cave-mouth column");
     };
 
-    let mut world = World::new(seed, 0);
-    world.ensure_column(cp);
+    let mut world = ServerWorld::new(seed, 0);
+    world.data.ensure_column(cp);
     world.set_column_gen(cp, Arc::clone(&col));
 
     let cy = cave_top.div_euclid(SECTION_SIZE as i32);
     let sp = SectionPos::new(cp.cx, cy, cp.cz);
     let section = generator.generate_section(sp, &col);
-    world.sections.insert(sp, Arc::new(section));
+    world.data.sections.insert(sp, Arc::new(section));
     world.note_section_loaded(sp);
 
     world.recompute_column_heightmaps(cp);
 
     assert_eq!(
-        world.columns.get(&cp).unwrap().surface_y(x, z),
+        world.data.columns.get(&cp).unwrap().surface_y(x, z),
         cave_top,
         "heightmap refresh must not restore original pre-cave surface {original}"
     );
@@ -274,26 +274,26 @@ fn heightmap_recompute_preserves_generated_cave_mouth_surface() {
 
 #[test]
 fn heightmap_recompute_keeps_glass_out_of_direct_sky_cover() {
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     let cp = ChunkPos::new(0, 0);
     let ground = SectionPos::new(0, 0, 0);
     let roof = SectionPos::new(0, 4, 0);
 
     let mut ground_section = Section::new(0, 0, 0);
     ground_section.set_block(8, 0, 8, Block::Stone);
-    world.sections.insert(ground, Arc::new(ground_section));
+    world.data.sections.insert(ground, Arc::new(ground_section));
     world.note_section_loaded(ground);
     let mut roof_section = Section::new(0, 4, 0);
     roof_section.set_block(8, 0, 8, Block::Glass);
-    world.sections.insert(roof, Arc::new(roof_section));
+    world.data.sections.insert(roof, Arc::new(roof_section));
     world.note_section_loaded(roof);
 
-    let column = world.ensure_column(cp);
+    let column = world.data.ensure_column(cp);
     column.set_surface_y(8, 8, 64);
     column.set_sky_cover_y(8, 8, 64);
 
     assert!(world.recompute_column_heightmaps(cp).is_some());
-    let column = &world.columns[&cp];
+    let column = &world.data.columns[&cp];
     assert_eq!(column.surface_y(8, 8), 64);
     assert_eq!(
         column.sky_cover_y(8, 8),
@@ -332,8 +332,8 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
         panic!("test seed/search window must contain a diggable surface column");
     };
 
-    let mut world = World::new(seed, 0);
-    let column = world.ensure_column(cp);
+    let mut world = ServerWorld::new(seed, 0);
+    let column = world.data.ensure_column(cp);
     column.set_surface_y(x, z, ground);
     column.set_sky_cover_y(x, z, ground);
     world.set_column_gen(cp, col);
@@ -344,7 +344,7 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
         cp.cz * SECTION_SIZE as i32 + z as i32,
     )
     .unwrap();
-    world.sections.insert(
+    world.data.sections.insert(
         ground_sp,
         Arc::new(Section::new(cp.cx, ground_sp.cy, cp.cz)),
     );
@@ -363,13 +363,13 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
         z,
         Block::Stone,
     );
-    world.sections.insert(lower_sp, Arc::new(lower_section));
+    world.data.sections.insert(lower_sp, Arc::new(lower_section));
     world.note_section_loaded(lower_sp);
 
     world.recompute_column_heightmaps(cp);
 
     assert_eq!(
-        world.columns.get(&cp).unwrap().surface_y(x, z),
+        world.data.columns.get(&cp).unwrap().surface_y(x, z),
         lower,
         "a loaded dug shaft must not be covered again by the generated fallback"
     );
@@ -383,7 +383,7 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     world.attach_save(opened.save, opened.saved);
     let cp = ChunkPos::new(0, 0);
     let shaft_x = 8;
@@ -392,7 +392,7 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     let top = SectionPos::new(0, 4, 0);
     let lower = SectionPos::new(0, 2, 0);
 
-    let column = world.ensure_column(cp);
+    let column = world.data.ensure_column(cp);
     column.set_surface_y(shaft_x, shaft_z, cover_y);
     column.set_sky_cover_y(shaft_x, shaft_z, cover_y);
 
@@ -408,28 +408,28 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
         .set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
     lower_section.dirty = false;
 
-    world.sections.insert(top, Arc::new(top_section));
+    world.data.sections.insert(top, Arc::new(top_section));
     world.note_section_loaded(top);
-    world.sections.insert(lower, Arc::new(lower_section));
+    world.data.sections.insert(lower, Arc::new(lower_section));
     world.note_section_loaded(lower);
 
     assert!(
-        !world.sections.get(&lower).unwrap().light_dirty,
+        !world.data.sections.get(&lower).unwrap().light_dirty,
         "fixture lower section starts with settled dark skylight"
     );
     assert!(
-        !world.sections.get(&lower).unwrap().dirty,
+        !world.data.sections.get(&lower).unwrap().dirty,
         "fixture lower section starts with no pending mesh work"
     );
 
     assert!(world.set_block_world(shaft_x as i32, cover_y, shaft_z as i32, Block::Air));
 
     assert!(
-        world.sections.get(&lower).unwrap().light_dirty,
+        world.data.sections.get(&lower).unwrap().light_dirty,
         "removing sky cover must invalidate skylight below the edited section"
     );
     assert!(
-        world.light_edited_since_persist.contains(&lower),
+        world.data.light_edited_since_persist.contains(&lower),
         "distant light invalidation must be tracked in case eviction beats the rebake"
     );
 
@@ -439,14 +439,14 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     let mut landed = false;
     for _ in 0..2500 {
         world.pump_light_bakes();
-        if !world.sections.get(&lower).unwrap().light_dirty {
+        if !world.data.sections.get(&lower).unwrap().light_dirty {
             landed = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(landed, "the marked distant section must rebake unprompted");
-    let lower_section = world.sections.get(&lower).unwrap();
+    let lower_section = world.data.sections.get(&lower).unwrap();
     assert_eq!(
         lower_section.skylight_at(shaft_x, 8, shaft_z),
         petramond_world::chunk::SKY_FULL,
@@ -465,24 +465,24 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
 fn air_edit_into_absent_full_opaque_section_materializes_generated_base() {
     let seed = 0x51EED;
     let generator = ChunkGenerator::new(seed);
-    let mut world = World::new(seed, 0);
+    let mut world = ServerWorld::new(seed, 0);
     install_column_summary(&mut world, &generator, ChunkPos::new(0, 0));
 
     let y = SECTION_MIN_CY * SECTION_SIZE as i32;
     let sp = SectionPos::from_world(0, y, 0).unwrap();
     assert!(
-        !world.sections.contains_key(&sp),
+        !world.data.sections.contains_key(&sp),
         "the deep generated-solid section starts summary-only"
     );
 
     assert!(world.set_block_world(0, y, 0, Block::Air));
     assert!(
-        world.sections.contains_key(&sp),
+        world.data.sections.contains_key(&sp),
         "editing virtual solid materializes the generated section"
     );
-    assert_eq!(Block::from_id(world.chunk_block(0, y, 0)), Block::Air);
+    assert_eq!(Block::from_id(world.data.chunk_block(0, y, 0)), Block::Air);
     assert_ne!(
-        Block::from_id(world.chunk_block(1, y, 0)),
+        Block::from_id(world.data.chunk_block(1, y, 0)),
         Block::Air,
         "materialization preserves the generated solid neighbours instead of creating an empty section"
     );

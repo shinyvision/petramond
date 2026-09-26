@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use std::collections::BTreeMap;
 
 use petramond_math::math::IVec3;
@@ -8,10 +9,9 @@ use petramond_world::item::{ItemStack, ItemType};
 use petramond_world::world::placement::authored::{Inputs, Turn};
 
 use super::CellStatus;
-use crate::world::World;
 
-fn world() -> World {
-    let mut w = World::new(1, 1);
+fn world() -> ServerWorld {
+    let mut w = ServerWorld::new(1, 1);
     w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
     for x in 0..16 {
         for z in 0..16 {
@@ -22,7 +22,7 @@ fn world() -> World {
 }
 
 /// Build `block` at `at` with authored properties, the way a structure does.
-fn author(w: &mut World, block: Block, at: IVec3, props: &[(&str, &str)]) {
+fn author(w: &mut ServerWorld, block: Block, at: IVec3, props: &[(&str, &str)]) {
     let props: BTreeMap<String, String> = props
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))

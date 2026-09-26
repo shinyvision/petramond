@@ -95,7 +95,7 @@ impl ServerGame {
         // windows). `None` = unchanged, the client keeps what it has.
         let env = self
             .broadcast
-            .env_update(self.world.environment().shader_params().clone());
+            .env_update(self.world.data().environment().shader_params().clone());
         SharedTickRows {
             tick: self.world.current_tick(),
             clock: crate::server::daynight::current_clock(&self.world),

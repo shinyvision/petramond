@@ -551,7 +551,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             HostRet::ModelGroup(ctx.world.model_group(p).map(|(_, base, _)| {
                 mod_api::ModelGroupData {
                     base: [base.x, base.y, base.z],
-                    facing: match ctx.world.model_facing_at(base.x, base.y, base.z) {
+                    facing: match ctx.world.data().model_facing_at(base.x, base.y, base.z) {
                         petramond_math::facing::Facing::North => mod_api::Facing::North,
                         petramond_math::facing::Facing::South => mod_api::Facing::South,
                         petramond_math::facing::Facing::West => mod_api::Facing::West,
@@ -658,9 +658,9 @@ fn spawn_item_stacks(
     variant: petramond_world::item::VariantId,
 ) {
     let cell = pos.block();
-    let sky = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
+    let sky = ctx.world.data().skylight6_at_world(cell.x, cell.y, cell.z);
     let block = petramond_world::light::BlockLight6::from_x2(
-        ctx.world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
+        ctx.world.data().blocklight_rgb_at_world(cell.x, cell.y, cell.z),
     );
     let mut remaining = count;
     let mut i = 0u32;
@@ -716,7 +716,7 @@ fn fill_inventory(
 
 /// The world half of a give: drop what the inventory refused, at `at`.
 fn drop_leftovers(
-    world: &mut crate::world::World,
+    world: &mut crate::world::ServerWorld,
     at: petramond_math::world_pos::WorldPos,
     leftovers: Vec<ItemStack>,
 ) {
@@ -724,9 +724,9 @@ fn drop_leftovers(
         let seed = drop_seed(world.current_tick(), at, i as u32);
         let cell = at.block();
         let mut drop = DroppedItem::new(at, leftover, seed);
-        drop.skylight = world.skylight6_at_world(cell.x, cell.y, cell.z);
+        drop.skylight = world.data().skylight6_at_world(cell.x, cell.y, cell.z);
         drop.blocklight = petramond_world::light::BlockLight6::from_x2(
-            world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
+            world.data().blocklight_rgb_at_world(cell.x, cell.y, cell.z),
         );
         world.spawn_item(drop);
     }
@@ -763,13 +763,13 @@ mod tests {
     use crate::events::{PostQueue, RosterRefs, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_world::chunk::{ChunkPos, SECTION_VOLUME};
 
     #[test]
     fn spawn_mob_initializes_cached_light_before_first_render_snapshot() {
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         let section = world
             .section_at_world_mut_for_test(8, 64, 8)
@@ -810,7 +810,7 @@ mod tests {
     #[test]
     fn checked_spawn_requires_a_loaded_clear_body_pose() {
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         world.set_block_world(8, 64, 8, petramond_world::block::Block::Stone);
         let mut nobody = RosterRefs::empty();
@@ -871,7 +871,7 @@ mod tests {
     #[test]
     fn mob_snapshot_id_survives_unrelated_despawn_index_shift() {
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         assert!(world
             .mobs_mut()
             .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn mob_queries_distinguish_missing_mobs_and_expose_authoritative_anim_state() {
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         assert!(world
             .mobs_mut()
             .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
@@ -1076,7 +1076,7 @@ mod tests {
     #[test]
     fn a_dead_mob_is_gone_to_every_id_addressed_call() {
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         assert!(world
             .mobs_mut()
             .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));

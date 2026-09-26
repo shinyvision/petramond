@@ -1,41 +1,67 @@
-use crate::world::store::World;
+use crate::world::{ReplicaWorld, ServerWorld, World, WorldSide};
 use petramond_world::chunk::{self, SectionPos};
 
 use super::{RESULT_DRAIN_MIN, RESULT_DRAIN_TIME_BUDGET};
 
-impl World {
-    /// Drain and apply finished light bakes — the light half of the pump,
-    /// public so a headless server loop can keep light current with no mesh
-    /// machinery attached. `tick_mesh_budget` calls this internally, so the
-    /// combined/client worlds behave exactly as before.
-    ///
-    /// This is ALSO where marked rebakes are REQUESTED: edits mark light
-    /// dirty into `relight_demand` (`mark_light_dirty_pos`), so invalidated
-    /// light rebakes even when no queued mesh demands it — a distant
-    /// sky-cover segment whose meshes only requeue if the landed cubes prove
-    /// changed, or a headless server with no mesh pump at all. First-time
-    /// bakes still come from the streamer's `flush_settled_deferred`.
+/// A bake that landed and changed a section's cached light.
+pub(in crate::world) struct LandedLight {
+    pub(in crate::world) pos: SectionPos,
+    /// The section had no baked light before (its sampling neighbours were
+    /// parked on it and rebuild anyway).
+    pub(in crate::world) first_bake: bool,
+    /// Which border regions' cells changed (`light::region_bit`).
+    pub(in crate::world) mask: u32,
+}
+
+impl ServerWorld {
+    /// Drain and apply finished light bakes with no mesh machinery attached —
+    /// the server's light pump. A landed bake is new shippable content:
+    /// `LightData` for recipients that already hold the section, and (via the
+    /// terrain revision) a replan for those still waiting on the light-final
+    /// ship gate.
     ///
     /// Queued incremental relights drain first: they install exact cubes on
     /// the spot, and whatever they decline lands in `relight_demand` in time
     /// for this same pump to request its full rebakes.
     pub fn pump_light_bakes(&mut self) {
         self.apply_light_edits();
-        if !self.relight_demand.is_empty() {
-            let target = self.last_load_target;
-            let bakes: Vec<SectionPos> = std::mem::take(&mut self.relight_demand)
+        for landed in self.drain_light_bakes() {
+            self.side.replication.light_ship_log.insert(landed.pos);
+            self.side.replication.bump_terrain_revision();
+        }
+    }
+}
+
+impl<S: WorldSide> World<S> {
+    /// The light half of either side's pump: request marked rebakes and apply
+    /// the landed ones, returning the sections whose cached light changed.
+    ///
+    /// This is ALSO where marked rebakes are REQUESTED: edits mark light
+    /// dirty into `relight_demand` (`mark_light_dirty_pos`), so invalidated
+    /// light rebakes even when no queued mesh demands it — a distant
+    /// sky-cover segment whose meshes only requeue if the landed cubes prove
+    /// changed, or the server with no mesh pump at all. First-time bakes
+    /// still come from the streamer's `flush_settled_deferred`.
+    pub(in crate::world) fn drain_light_bakes(&mut self) -> Vec<LandedLight> {
+        let mut landed = Vec::new();
+        if !self.data.relight_demand.is_empty() {
+            let target = self.data.last_load_target;
+            let bakes: Vec<SectionPos> = std::mem::take(&mut self.data.relight_demand)
                 .into_iter()
                 .filter(|pos| {
                     let bakeable = self
-                        .sections
+                        .data.sections
                         .get(pos)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque());
                     // Deferred first-timers bake once their gen neighbourhood
                     // settles (streamer-owned), and a prediction bundle bakes its
                     // own snapshot — requesting here would double-bake either.
                     bakeable
-                        && !self.light_deferred.contains(pos)
-                        && !self.terrain.prediction_terrain.owns_light(*pos)
+                        && !self.data.light_deferred.contains(pos)
+                        && !self
+                            .side
+                            .replica()
+                            .is_some_and(|r| r.terrain.prediction_terrain.owns_light(*pos))
                 })
                 .collect();
             // Streaming seam rebakes arrive in adjacent bursts; groups of 3+
@@ -64,6 +90,7 @@ impl World {
                 }
             }
         }
+        let persisting = self.persisting();
         let start = std::time::Instant::now();
         let mut drained = 0usize;
         while drained < RESULT_DRAIN_MIN || start.elapsed() < RESULT_DRAIN_TIME_BUDGET {
@@ -72,7 +99,7 @@ impl World {
             };
             drained += 1;
             let fresh = self
-                .sections
+                .data.sections
                 .get(&res.pos)
                 .is_some_and(|s| s.light_dirty && s.light_revision == res.revision);
             if !fresh {
@@ -83,20 +110,20 @@ impl World {
                 // every mesh whose 3×3×3 reads it parks in
                 // `light_blocked_meshes` until an unrelated edit.
                 let rebake = self
-                    .sections
+                    .data.sections
                     .get(&res.pos)
                     .is_some_and(|s| s.light_dirty && !s.all_opaque())
-                    && !self.light_deferred.contains(&res.pos);
+                    && !self.data.light_deferred.contains(&res.pos);
                 if rebake {
                     let key = self
-                        .last_load_target
+                        .data.last_load_target
                         .map_or(0, |t| t.section_priority_key(res.pos));
                     self.light_bakes
                         .request(key, res.pos, &self.data.sections, &self.data.columns);
                 }
                 continue;
             }
-            let Some(s) = self.section_mut(res.pos) else {
+            let Some(s) = self.data.section_mut(res.pos) else {
                 continue;
             };
             // Region-diff the landing cubes against the cached ones so a
@@ -123,32 +150,34 @@ impl World {
                 // Byte-identical rebake: the cached cubes and every mesh built
                 // from them remain exact — just settle the dirty flag.
                 s.mark_light_clean();
-                if self.save.is_some() {
+                if persisting {
                     // The pending edit-staleness resolved: the cells' light is
                     // proven unchanged, so any persisted cubes remain exact.
-                    self.light_edited_since_persist.remove(&res.pos);
+                    self.data.light_edited_since_persist.remove(&res.pos);
                 }
                 continue;
             }
-            self.install_light_cubes(res.pos, res.skylight, res.blocklight, mask, first_bake);
+            self.install_light_cubes(res.pos, res.skylight, res.blocklight);
+            landed.push(LandedLight {
+                pos: res.pos,
+                first_bake,
+                mask,
+            });
         }
-        self.flush_light_blocked_meshes();
+        landed
     }
 
     /// Install changed light cubes on `pos` — a landed bake, or an incremental
-    /// relight — and publish the change: `mask` names the mesh-sampling
-    /// regions that changed (see `light::cube_region_changes`); a `first_bake`
-    /// needs no neighbour requeue (its samplers were parked on its dirty
-    /// light and rebuild anyway).
+    /// relight — with the persistence bookkeeping. Publishing the change is
+    /// the side's job: a replica requeues meshes, the server ships it.
     pub(in crate::world) fn install_light_cubes(
         &mut self,
         pos: SectionPos,
         skylight: std::sync::Arc<[u8]>,
         blocklight: std::sync::Arc<[petramond_world::light::LightRgb]>,
-        mask: u32,
-        first_bake: bool,
     ) {
-        let Some(s) = self.section_mut(pos) else {
+        let persisting = self.persisting();
+        let Some(s) = self.data.section_mut(pos) else {
             return;
         };
         s.set_skylight(skylight);
@@ -157,30 +186,35 @@ impl World {
         // The cached light changed, so any in-flight mesh built from the old
         // light is now stale: bump so its result is discarded and re-queue.
         s.mesh_revision = s.mesh_revision.wrapping_add(1);
-        self.bump_lighting_revision();
-        if self.save.is_some() {
+        self.data.bump_lighting_revision();
+        if persisting {
             // An already-persisted record must rewrite with the new cubes
             // (see `relit_since_persist`); unknown-to-disk sections are
             // filtered at the persist gate. The fresh cubes also resolve any
             // pending edit-staleness — they supersede it.
-            self.relit_since_persist.insert(pos);
-            self.light_edited_since_persist.remove(&pos);
-        }
-        if self.role == crate::world::WorldRole::ServerHeadless {
-            // Changed light is new shippable content: LightData for
-            // recipients that already hold the section, and (via the
-            // revision) a replan for those still waiting on the light-final
-            // ship gate. No meshes to relight headless (`queue_dirty_mesh`).
-            self.replication.light_ship_log.insert(pos);
-            self.bump_terrain_revision();
-        } else {
-            self.terrain.dirty_meshes.push(pos);
-            if !first_bake {
-                self.requeue_meshes_sampling_changed_regions(pos, mask);
-            }
+            self.data.relit_since_persist.insert(pos);
+            self.data.light_edited_since_persist.remove(&pos);
         }
     }
+}
 
+impl ReplicaWorld {
+    /// The replica's light pump (run from `tick_mesh_budget`): a landed
+    /// change requeues the section's own mesh and every neighbour mesh that
+    /// sampled the changed cells, then parked meshes whose light is ready
+    /// re-enter the queue.
+    pub fn pump_light_bakes(&mut self) {
+        for landed in self.drain_light_bakes() {
+            self.side.terrain.dirty_meshes.push(landed.pos);
+            if !landed.first_bake {
+                self.requeue_meshes_sampling_changed_regions(landed.pos, landed.mask);
+            }
+        }
+        self.flush_light_blocked_meshes();
+    }
+}
+
+impl ReplicaWorld {
     /// A landed rebake changed cells in some of `pos`'s border regions: any
     /// neighbour whose installed or in-flight mesh sampled those cells through
     /// its one-cell pad must rebuild. Already queued/parked neighbours are left
@@ -199,9 +233,9 @@ impl World {
                         continue;
                     }
                     let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-                    if self.terrain.dirty_meshes.contains(p)
-                        || self.terrain.light_blocked_meshes.contains(&p)
-                        || !self.sections.contains_key(&p)
+                    if self.side.terrain.dirty_meshes.contains(p)
+                        || self.side.terrain.light_blocked_meshes.contains(&p)
+                        || !self.data.sections.contains_key(&p)
                     {
                         continue;
                     }
@@ -225,7 +259,7 @@ impl World {
                 for dx in -1..=1 {
                     let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                     if self
-                        .sections
+                        .data.sections
                         .get(&p)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
                         && !self.section_sealed_by_loaded_neighbors(p)
@@ -234,11 +268,11 @@ impl World {
                         // neighbourhood settles (`flush_settled_deferred`); requesting
                         // it here would bake a half-landed neighbourhood and be
                         // immediately redone. Still wait on it.
-                        if !self.light_deferred.contains(&p)
-                            && !self.terrain.prediction_terrain.owns_light(p)
+                        if !self.data.light_deferred.contains(&p)
+                            && !self.side.terrain.prediction_terrain.owns_light(p)
                         {
                             let key = self
-                                .last_load_target
+                                .data.last_load_target
                                 .map_or(0, |t| t.section_priority_key(p));
                             self.light_bakes.request(
                                 key,
@@ -256,7 +290,7 @@ impl World {
     }
 
     fn mesh_light_dependencies_pending(&self, pos: SectionPos) -> bool {
-        if self.terrain.prediction_terrain.owns_mesh(pos) {
+        if self.side.terrain.prediction_terrain.owns_mesh(pos) {
             return true;
         }
         for dy in -1..=1 {
@@ -264,7 +298,7 @@ impl World {
                 for dx in -1..=1 {
                     let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                     if self
-                        .sections
+                        .data.sections
                         .get(&p)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
                         && !self.section_sealed_by_loaded_neighbors(p)
@@ -278,22 +312,22 @@ impl World {
     }
 
     pub(super) fn flush_light_blocked_meshes(&mut self) {
-        if self.terrain.light_blocked_meshes.is_empty() {
+        if self.side.terrain.light_blocked_meshes.is_empty() {
             return;
         }
         let ready: Vec<SectionPos> = self
-            .terrain
+            .side.terrain
             .light_blocked_meshes
             .iter()
             .copied()
             .filter(|&pos| {
-                !self.sections.contains_key(&pos) || !self.mesh_light_dependencies_pending(pos)
+                !self.data.sections.contains_key(&pos) || !self.mesh_light_dependencies_pending(pos)
             })
             .collect();
         for pos in ready {
-            self.terrain.light_blocked_meshes.remove(&pos);
-            if self.sections.contains_key(&pos) {
-                self.terrain.dirty_meshes.push(pos);
+            self.side.terrain.light_blocked_meshes.remove(&pos);
+            if self.data.sections.contains_key(&pos) {
+                self.side.terrain.dirty_meshes.push(pos);
             }
         }
     }

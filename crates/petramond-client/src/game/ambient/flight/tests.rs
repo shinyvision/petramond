@@ -57,7 +57,7 @@ fn activation<'a>(intensity: f32, weight: &'a dyn Fn(u8) -> f32) -> Activation<'
 
 fn collect(
     spec: &AmbientSpec,
-    world: &World,
+    world: &ReplicaWorld,
     cam: WorldPos,
     time: f32,
     intensity: f32,
@@ -75,13 +75,13 @@ fn collect(
 
 /// A 3×3-chunk dirt plateau (top face 65) split down x = 0 into biome 1
 /// (west) and biome 2 (east).
-fn habitat() -> World {
+fn habitat() -> ReplicaWorld {
     habitat_with_height(|_, _| 64)
 }
 
-fn habitat_with_height(height: impl Fn(i32, i32) -> usize) -> World {
+fn habitat_with_height(height: impl Fn(i32, i32) -> usize) -> ReplicaWorld {
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-    let mut world = World::new(0, 1);
+    let mut world = ReplicaWorld::new(0, 1);
     for cz in -1..=1 {
         for cx in -1..=1 {
             let mut chunk = Chunk::new(cx, cz);
@@ -251,7 +251,7 @@ fn an_admitted_flier_survives_its_whole_orbit_over_steps_and_density_borders() {
                 wing.pos - right + up,
             ] {
                 let floor = world
-                    .precipitation_ceiling_y(corner.x.floor() as i32, corner.z.floor() as i32)
+                    .data().precipitation_ceiling_y(corner.x.floor() as i32, corner.z.floor() as i32)
                     .unwrap();
                 assert!(
                     corner.y > floor as f64 + 1.0,
@@ -279,7 +279,7 @@ fn roofs_and_overhangs_reject_flights_even_above_a_ground_floor() {
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
     let ground =
-        |world: &World, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
+        |world: &ReplicaWorld, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
     assert!(ground(&world, 0.5).is_some());
     for roof in [Block::OakPlanks, Block::Glass, Block::StoneSlab] {
         assert!(world.set_block_world(0, 70, 8, roof));
@@ -311,7 +311,7 @@ fn canopies_reject_ground_flights_instead_of_lifting_them_to_the_treetop() {
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
     let ground =
-        |world: &World, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
+        |world: &ReplicaWorld, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
     let original = ground(&world, 0.5);
     assert!(original.is_some());
     for canopy_y in [67, 75] {

@@ -2,6 +2,7 @@
 //! ticks, light queries, collision-shape classification, and the
 //! model-group swap.
 
+use petramond_world::world::raycast;
 use mod_api::{HostCall, HostRet};
 
 use petramond_math::math::IVec3;
@@ -232,7 +233,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // never change them), so a loaded-column read cannot lie: no
         // stream-final gate needed.
         HostCall::BiomeAt { pos } => {
-            sim_query(move |ctx| HostRet::MaybeByte(ctx.world.biome_at_world(pos[0], pos[1])))
+            sim_query(move |ctx| HostRet::MaybeByte(ctx.world.data().biome_at_world(pos[0], pos[1])))
         }
         // The SURFACE can lie mid-stream (the generated base shows where a
         // saved overlay is about to land), so the found footing must be
@@ -241,7 +242,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::SurfaceYAt { pos } => sim_query(move |ctx| {
             let y = ctx
                 .world
-                .surface_collision_y(pos[0], pos[1])
+                .data().surface_collision_y(pos[0], pos[1])
                 .filter(|&y| ctx.world.block_if_stream_final(pos[0], y, pos[1]).is_some());
             HostRet::MaybeI32(y)
         }),
@@ -312,7 +313,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             sim_query(move |ctx| {
                 HostRet::Raycast(
-                    crate::player::Player::raycast_filtered(from, dir, max, filter, ctx.world).map(
+                    raycast::filtered(from, dir, max, filter, ctx.world.data()).map(
                         |(hit, distance)| mod_api::RaycastHitData {
                             block: hit.block.to_array(),
                             face: hit.normal.to_array(),
@@ -416,17 +417,17 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             let p = IVec3::from(pos);
             HostRet::Light(ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
                 mod_api::LightData {
-                    combined: ctx.world.combined_light6_at_world(p.x, p.y, p.z),
-                    sky: ctx.world.skylight6_at_world(p.x, p.y, p.z),
-                    block: ctx.world.blocklight6_at_world(p.x, p.y, p.z),
-                    block_rgb: ctx.world.blocklight6_rgb_at_world(p.x, p.y, p.z),
+                    combined: ctx.world.data().combined_light6_at_world(p.x, p.y, p.z),
+                    sky: ctx.world.data().skylight6_at_world(p.x, p.y, p.z),
+                    block: ctx.world.data().blocklight6_at_world(p.x, p.y, p.z),
+                    block_rgb: ctx.world.data().blocklight6_rgb_at_world(p.x, p.y, p.z),
                 }
             }))
         }),
         HostCall::CollisionShapeAt { pos } => sim_query(|ctx| {
             let p = IVec3::from(pos);
             HostRet::CollisionShape(ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
-                match ctx.world.collision_shape_class(p.x, p.y, p.z) {
+                match ctx.world.data().collision_shape_class(p.x, p.y, p.z) {
                     crate::world::CollisionShapeClass::Empty => mod_api::CollisionShape::Empty,
                     crate::world::CollisionShapeClass::Partial => mod_api::CollisionShape::Partial,
                     crate::world::CollisionShapeClass::Full => mod_api::CollisionShape::Full,
@@ -448,12 +449,12 @@ mod tests {
     use crate::modding::host::guards::SIM_BATCH_MAX;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_world::block::Block;
     use petramond_world::chunk::ChunkPos;
 
     /// Publish a SimCtx over `world` and run `f`, as if inside a dispatch.
-    fn with_world_ctx(world: &mut World, f: impl FnOnce()) {
+    fn with_world_ctx(world: &mut ServerWorld, f: impl FnOnce()) {
         let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
@@ -525,7 +526,7 @@ mod tests {
             },
         );
         assert!(matches!(got, HostRet::Names(v) if v.len() == SIM_BATCH_MAX));
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         with_world_ctx(&mut world, || {
@@ -549,7 +550,7 @@ mod tests {
     fn raycast_filters_stop_on_what_they_say_and_report_the_distance() {
         use petramond_world::block::Block;
         let mut store = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         world.set_block_world(4, 64, 8, Block::Poppy);
@@ -617,7 +618,7 @@ mod tests {
     #[test]
     fn light_at_answers_none_for_unloaded_cells() {
         let mut store = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         with_world_ctx(&mut world, || {
@@ -641,7 +642,7 @@ mod tests {
     #[test]
     fn collision_shape_classifies_geometry_and_gates_unloaded() {
         let mut store = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         assert!(world.set_block_world(8, 63, 8, Block::Stone));
@@ -690,7 +691,7 @@ mod tests {
         );
         assert!(matches!(inverted, HostRet::Error(_)), "inverted box");
 
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         assert!(world.set_block_world(4, 66, 5, Block::Stone));
@@ -756,7 +757,7 @@ mod tests {
     #[test]
     fn a_draw_on_someone_elses_block_answers_false_and_the_mod_lives() {
         let mut store = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         // An engine block: loaded, readable, and not this mod's.
@@ -844,7 +845,7 @@ mod tests {
 
         let mut seen: Vec<[f64; 3]> = Vec::new();
         for facing in [Facing::North, Facing::East, Facing::South, Facing::West] {
-            let mut world = World::new(1, 4);
+            let mut world = ServerWorld::new(1, 4);
             world.clear_world();
             for (cx, cz) in [(0, 0), (-1, 0), (0, -1), (-1, -1)] {
                 world.insert_empty_column_for_test(ChunkPos::new(cx, cz));
@@ -888,7 +889,7 @@ mod tests {
     #[test]
     fn local_to_world_gates_an_unreadable_cell() {
         let mut store = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         with_world_ctx(&mut world, || {

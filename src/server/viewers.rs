@@ -11,7 +11,7 @@ use petramond_math::math::IVec3;
 
 use crate::events::tick::TickEvents;
 use crate::mob::Mobs;
-use crate::world::World;
+use crate::world::ServerWorld;
 
 /// Viewer counts per chest and the mob holds counted among them.
 #[derive(Default)]
@@ -62,7 +62,7 @@ impl ContainerViewers {
     /// its viewers however often it asks, as a player's open screen does.
     pub fn set_mob_hold(
         &mut self,
-        world: &World,
+        world: &ServerWorld,
         mob_id: u64,
         pos: IVec3,
         open: bool,

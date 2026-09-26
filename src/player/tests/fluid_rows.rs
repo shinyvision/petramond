@@ -37,7 +37,7 @@ fn wet_locomotion_ignores_sprint_at_every_step_rate() {
                         ..Default::default()
                     };
                     for _ in 0..hz * 2 {
-                        player.update(1.0 / hz as f32, &world, input);
+                        player.update(1.0 / hz as f32, world.data(), input);
                     }
                     player.pos - start
                 };
@@ -60,7 +60,7 @@ fn entry_brakes_a_fast_fall() {
             let mut player = p(WorldPos::new(5.5, 79.0, 8.5));
             player.vel = Vec3::new(SPRINT, -super::super::movement::TERMINAL, 0.0);
             for _ in 0..hz {
-                player.update(1.0 / hz as f32, &world, Input::default());
+                player.update(1.0 / hz as f32, world.data(), Input::default());
             }
             assert!(
                 player.pos.y > (FLOOR_Y + 2) as f64,
@@ -84,12 +84,13 @@ fn immersion_follows_the_probe_and_the_real_flow_height() {
         let mut world = pool(Block::Air, FLOOR_Y - 1);
         set_flow(&mut world, 8, 8, fluid, 6);
         assert_eq!(
-            world.body_fluid(feet, HEIGHT, Buoyancy::Swim).is_some(),
+            world.data().body_fluid(feet, HEIGHT, Buoyancy::Swim).is_some(),
             probe_reaches_a_thin_flow,
             "{name}: a thin flow immerses exactly the probes below its surface"
         );
         assert!(
             world
+                .data()
                 .body_fluid(feet + Vec3::Y * 0.5, HEIGHT, Buoyancy::Swim)
                 .is_none(),
             "{name}: air above a thin flow has no drag"
@@ -102,7 +103,7 @@ fn immersion_follows_the_probe_and_the_real_flow_height() {
             };
             let mut player = p(feet);
             for _ in 0..5 {
-                player.update(0.05, &world, wade);
+                player.update(0.05, world.data(), wade);
             }
             let wet_speed = SWIM_SPEED * fluid.fluid_def().unwrap().motion.speed_scale;
             assert!(player.on_ground, "{name}: wading still stands on the floor");
@@ -114,6 +115,7 @@ fn immersion_follows_the_probe_and_the_real_flow_height() {
         set_flow(&mut world, 8, 8, fluid, crate::world::fluid::FALLING);
         assert!(
             world
+                .data()
                 .body_fluid(feet + Vec3::Y * 0.1, HEIGHT, Buoyancy::Swim)
                 .is_some(),
             "{name}: a falling stream fills its cell"
@@ -126,7 +128,7 @@ fn a_current_carries_an_idle_swimmer() {
     let start = WorldPos::new(7.5, FLOOR_Y as f64, 8.5);
     let mut player = p(start);
     for _ in 0..20 {
-        player.update(0.05, &world, Input::default());
+        player.update(0.05, world.data(), Input::default());
     }
     assert!(
         player.pos.x > start.x + 0.1,

@@ -2,13 +2,13 @@ use super::*;
 use crate::mob::spatial::MobSnapshot;
 use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
 use crate::player::PlayerId;
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
-fn flat_world() -> World {
-    let mut world = World::new(0, 1);
+fn flat_world() -> ServerWorld {
+    let mut world = ServerWorld::new(0, 1);
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
@@ -20,7 +20,7 @@ fn flat_world() -> World {
 }
 
 fn ctx<'a>(
-    world: &'a World,
+    world: &'a ServerWorld,
     rng: &'a mut MobRng,
     pos: WorldPos,
     players: &'a [PlayerAnchor],

@@ -1,24 +1,25 @@
+use crate::world::ServerWorld;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::world::store::{LoadAnchor, LoadTarget, World};
+use crate::world::store::{LoadAnchor, LoadTarget};
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 
-impl World {
+impl ServerWorld {
     /// Whether `sp`'s light is presentable: baked (possibly stale — a pending
     /// rebake follows as `LightData`) or fully opaque (never bakes; neighbour
     /// meshes cull against it and sample nothing). The terrain sender holds a
     /// section back until this holds, so every install lands light-complete
     /// and the replica performs NO light work of its own.
     pub fn section_light_final(&self, sp: SectionPos) -> bool {
-        self.sections
+        self.data.sections
             .get(&sp)
             .is_some_and(|s| s.has_baked_light() || s.all_opaque())
     }
 
     /// Drain the sections whose server bake landed since the last streaming
-    /// pump (ServerHeadless fills it in `pump_light_bakes`).
+    /// pump (filled by `ServerWorld::pump_light_bakes`).
     pub fn take_light_ship_log(&mut self) -> Vec<SectionPos> {
-        self.replication.light_ship_log.drain().collect()
+        self.side.replication.light_ship_log.drain().collect()
     }
 
     /// Opaque key over everything the per-connection wanted-vs-sent diff
@@ -34,7 +35,7 @@ impl World {
             anchor.cx,
             anchor.cy,
             anchor.cz,
-            anchor.radius.clamp(1, self.render_dist),
+            anchor.radius.clamp(1, self.data.render_dist),
         )
     }
 
@@ -43,7 +44,7 @@ impl World {
         let mut h = rustc_hash::FxHasher::default();
         (
             self.terrain_target_key(anchor),
-            self.replication.terrain_revision,
+            self.side.replication.terrain_revision,
         )
             .hash(&mut h);
         h.finish()
@@ -92,6 +93,7 @@ impl World {
         let mut band_lo_of = |world: &Self, cp: ChunkPos| {
             *band_los.entry(cp).or_insert_with(|| {
                 world
+                    .side
                     .gen
                     .column_gen
                     .get(&cp)
@@ -127,7 +129,7 @@ impl World {
                 }
                 let sp = SectionPos::new(cp.cx, cy, cp.cz);
                 if sent_sections.contains(&sp)
-                    || !self.stream_writable(sp)
+                    || !self.data.stream_writable(sp)
                     || !self.section_light_final(sp)
                 {
                     continue;
@@ -147,7 +149,7 @@ impl World {
         // and unloads client-side through the same message.
         let drop_columns: Vec<ChunkPos> = sent_columns
             .iter()
-            .filter(|cp| !Self::column_kept(target, **cp) || !self.columns.contains_key(cp))
+            .filter(|cp| !Self::column_kept(target, **cp) || !self.data.columns.contains_key(cp))
             .copied()
             .collect();
         let dropped_cols: FxHashSet<ChunkPos> = drop_columns.iter().copied().collect();
@@ -163,7 +165,7 @@ impl World {
                     (SECTION_MIN_CY..=petramond_world::chunk::SECTION_MAX_CY).contains(&cy),
                     "sent_by_column cy out of world range"
                 );
-                if column_gone || !self.sections.contains_key(&sp) {
+                if column_gone || !self.data.sections.contains_key(&sp) {
                     drop_sections.push(sp);
                 }
             }

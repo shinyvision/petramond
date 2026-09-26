@@ -155,7 +155,7 @@ fn a_dig_accrues_on_consecutive_ticks_and_collects_its_drop() {
     );
     assert_eq!(drain(&mut server), vec![(ActorAction::Dig, None)]);
     assert_eq!(
-        Block::from_id(server.world().chunk_block(target.x, target.y, target.z)),
+        Block::from_id(server.world().data().chunk_block(target.x, target.y, target.z)),
         Block::Air
     );
     let carried = server.world().mobs().instances()[0].container().clone();
@@ -229,7 +229,7 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
     );
     assert_eq!(drain(&mut server), vec![(ActorAction::Place, None)]);
     assert_eq!(
-        Block::from_id(server.world().chunk_block(on_floor.x, on_floor.y, on_floor.z)),
+        Block::from_id(server.world().data().chunk_block(on_floor.x, on_floor.y, on_floor.z)),
         Block::Cobblestone
     );
     let carried = |server: &ServerGame| {
@@ -264,7 +264,7 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
         vec![(ActorAction::Place, Some(ActionRefusal::MissingItems))]
     );
     assert_eq!(
-        Block::from_id(server.world().chunk_block(second.x, second.y, second.z)),
+        Block::from_id(server.world().data().chunk_block(second.x, second.y, second.z)),
         Block::Air
     );
 }
@@ -433,7 +433,7 @@ fn a_cell_of_two_parts_goes_in_a_click_at_a_time_each_paid_with_its_own_item() {
     place(&mut server);
     assert_eq!(carried(&server, Block::StoneSlab), 0);
     assert_eq!(
-        server.world().slab_state_at(cell.x, cell.y, cell.z),
+        server.world().data().slab_state_at(cell.x, cell.y, cell.z),
         both,
         "two clicks leave the cell as recorded"
     );

@@ -36,14 +36,14 @@ pub const BACKUP: &str = "level.dat.bak";
 pub struct LevelData {
     pub seed: u32,
     /// The world's game-tick counter at save time, restored through
-    /// [`crate::world::World::restore_tick`] so scheduled ticks and
+    /// [`crate::world::ServerWorld::restore_tick`] so scheduled ticks and
     /// tick-anchored state (the `petramond:clock` day cycle) continue across
     /// sessions instead of restarting at 0.
     pub tick: u64,
     /// The world KV map (`mod_id:key` → bytes).
     pub world_kv: BTreeMap<String, Vec<u8>>,
     /// Chunk columns whose one-time worldgen herd already spawned. Restored
-    /// through [`crate::world::World::set_populated_columns`] so the stock
+    /// through [`crate::world::ServerWorld::set_populated_columns`] so the stock
     /// never re-mints across sessions.
     pub populated_columns: BTreeSet<ChunkPos>,
 }

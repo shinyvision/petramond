@@ -14,7 +14,7 @@
 //! goes. Everything else — pickup, lifetime, replication, persistence — is
 //! shared.
 
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::fluid::{Buoyancy, FluidCurrent, Immersion};
 use petramond_world::item::ItemStack;
@@ -351,7 +351,7 @@ impl DroppedItem {
     pub fn step_loose(
         &mut self,
         dt: f32,
-        world: &World,
+        world: &ServerWorld,
         magnet_target: Option<petramond_math::world_pos::WorldPos>,
     ) {
         debug_assert!(matches!(self.motion, Motion::Loose));
@@ -360,8 +360,8 @@ impl DroppedItem {
         let cells = world.cursor();
         let boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
         let feet = self.pos - Vec3::Y * ITEM_HALF_EXTENT;
-        let immersion = world.body_fluid(feet, 2.0 * ITEM_HALF_EXTENT, Buoyancy::Swim);
-        let current = world.fluid_current_at(self.pos);
+        let immersion = world.data().body_fluid(feet, 2.0 * ITEM_HALF_EXTENT, Buoyancy::Swim);
+        let current = world.data().fluid_current_at(self.pos);
         self.integrate_with_flow(dt, magnet_target, &boxes, immersion, current);
     }
 

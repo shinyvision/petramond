@@ -177,14 +177,14 @@ fn shore_climb_inner() {
     }
 }
 
-fn world() -> World {
+fn world() -> ServerWorld {
     let mut chunk = Chunk::new(0, 0);
     for x in 0..16 {
         for z in 0..16 {
             chunk.set_block(x, 63, z, Block::Stone);
         }
     }
-    let mut world = World::new(0, 1);
+    let mut world = ServerWorld::new(0, 1);
     world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
     world.insert_section_for_test(SectionPos::new(0, 4, 0), Section::new(0, 4, 0));
     world
@@ -192,7 +192,7 @@ fn world() -> World {
 
 fn tick(
     mob: &mut Instance,
-    world: &World,
+    world: &ServerWorld,
     anchors: &[PlayerAnchor],
     regions: &mut confined::RegionCache,
 ) {

@@ -1,12 +1,14 @@
-//! World: manages loaded chunks, requests async generation, serves
-//! neighbour-block queries for meshing.
+//! World: the cubic voxel world and the orchestration around it, as two
+//! types sharing one deterministic core — [`ServerWorld`] (generation,
+//! simulation, replication capture, persistence) and [`ReplicaWorld`]
+//! (installs from the connection, meshes for the renderer). `side` says what
+//! each owns; [`World::data`] is the read-only query surface both share.
 //!
-//! Gen is off-thread: see `worker` module. The facade keeps the public `World`
-//! API stable while the implementation is split by responsibility.
+//! Gen is off-thread: see the `worker` module.
 
 // The data half (WorldData + pure-data query modules) lives in
 // `petramond_world::world`; this module layers orchestration on top.
-pub use petramond_world::world::data::{WorldData, WorldRole};
+pub use petramond_world::world::data::WorldData;
 pub use petramond_world::world::{
     data, environment, load_targets, placement as placement_types, shape_bake_validate, tick_state,
 };
@@ -18,6 +20,7 @@ pub(crate) mod cells;
 pub mod chest;
 mod column_heightmaps;
 pub mod construction;
+mod content;
 mod container;
 mod cursor;
 mod custom_bake;
@@ -33,6 +36,7 @@ mod kv;
 mod light;
 mod mesh_pool;
 mod mesh_queue;
+pub mod mirror;
 mod mobs;
 mod model;
 mod particle_emitters;
@@ -43,9 +47,12 @@ mod query;
 mod relocated_world_crate_tests;
 mod remote;
 mod render_handoff;
+pub mod replication;
 pub mod sapling;
 pub(crate) mod schematic;
+pub mod session;
 mod shape_refine;
+mod side;
 mod sim_guard;
 mod slab;
 mod snapshot;
@@ -75,20 +82,27 @@ pub use petramond_world::world::query::CollisionShapeClass;
 pub use render_handoff::TerrainRenderHandoff;
 pub use store::LoadAnchor;
 pub use store::VERTICAL_LOAD_RADIUS;
-pub use store::{MemoryCensus, World, RENDER_DIST};
+pub use mirror::ReplicaMirror;
+pub use side::{ReplicaSide, ServerSide, WorldSide};
+pub use store::{MemoryCensus, ReplicaWorld, ServerWorld, World, RENDER_DIST};
 pub use stream::StreamEvent;
+pub use tick::TICK_DT;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testutil {
+    //! World fixtures, one per side of the split: sim, streaming and
+    //! replication tests build a [`ServerWorld`], presentation tests a
+    //! [`ReplicaWorld`].
+
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
-    use super::store::World;
+    use super::side::WorldSide;
+    use super::store::{ReplicaWorld, ServerWorld, World};
 
-    /// A world with a 3×3 block of loaded chunks around the origin, a solid
-    /// stone floor at y=64, air above.
-    pub fn flat_world() -> World {
-        let mut w = World::new(0, 1);
+    /// Install a 3×3 block of chunks around the origin with a solid stone
+    /// floor at y=64, air above.
+    pub fn install_flat_floor<S: WorldSide>(w: &mut World<S>) {
         for cz in -1..=1 {
             for cx in -1..=1 {
                 let mut c = Chunk::new(cx, cz);
@@ -100,6 +114,19 @@ pub mod testutil {
                 w.insert_chunk_for_test(ChunkPos::new(cx, cz), c);
             }
         }
+    }
+
+    /// A server world over the [`install_flat_floor`] fixture.
+    pub fn flat_server_world() -> ServerWorld {
+        let mut w = ServerWorld::new(0, 1);
+        install_flat_floor(&mut w);
+        w
+    }
+
+    /// A replica over the [`install_flat_floor`] fixture.
+    pub fn flat_replica_world() -> ReplicaWorld {
+        let mut w = ReplicaWorld::new(0, 1);
+        install_flat_floor(&mut w);
         w
     }
 }

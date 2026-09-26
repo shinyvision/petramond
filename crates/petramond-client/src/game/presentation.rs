@@ -54,13 +54,13 @@ const MIN_FOOTSTEP_WALK_WEIGHT: f32 = 0.35;
 /// ground every light level is zero — true, and no way to draw a body coming
 /// up out of it (or sunk into it by anything else): it is lit by the open
 /// air it stands up into, the first cell above that is not an opaque block.
-fn lit_cell(world: &petramond::world::World, cell: IVec3) -> IVec3 {
+fn lit_cell(world: &petramond::world::ReplicaWorld, cell: IVec3) -> IVec3 {
     const RISE: i32 = 4;
     (0..=RISE)
         .map(|dy| cell + IVec3::new(0, dy, 0))
         .find(|c| {
             world
-                .block_if_loaded(c.x, c.y, c.z)
+                .data().block_if_loaded(c.x, c.y, c.z)
                 .is_none_or(|block| !block.is_opaque())
         })
         .unwrap_or(cell)
@@ -71,17 +71,17 @@ fn lit_cell(world: &petramond::world::World, cell: IVec3) -> IVec3 {
 /// collides, so the body stands on the block beneath it, but the cover is what
 /// the foot presses. A plant does not lie flat, so it is still walked through.
 fn footstep_ground(
-    world: &petramond::world::World,
+    world: &petramond::world::ReplicaWorld,
     pos: petramond_math::world_pos::WorldPos,
 ) -> Option<Block> {
     let feet = (pos + Vec3::new(0.0, 0.05, 0.0)).block();
-    if let Some(cover) = world.block_if_loaded(feet.x, feet.y, feet.z) {
-        if petramond_world::block::rests_flat_on_floor(world, feet, cover) {
+    if let Some(cover) = world.data().block_if_loaded(feet.x, feet.y, feet.z) {
+        if petramond_world::block::rests_flat_on_floor(world.data(), feet, cover) {
             return Some(cover);
         }
     }
     let below = (pos - Vec3::new(0.0, 0.1, 0.0)).block();
-    world.block_if_loaded(below.x, below.y, below.z)
+    world.data().block_if_loaded(below.x, below.y, below.z)
 }
 
 // Entity blob-shadow tuning. The gather owns all of it: the renderer just
@@ -221,9 +221,9 @@ impl GamePresentationScratch {
                     spin: entry.curr.spin,
                     prev_flight: entry.prev.flight,
                     flight: entry.curr.flight,
-                    skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                    skylight: world.data().skylight6_at_world(c.x, c.y, c.z),
                     blocklight: petramond_world::light::BlockLight6::from_x2(
-                        world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                        world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
                     ),
                 }
             }));
@@ -320,9 +320,9 @@ impl GamePresentationScratch {
                     pos: anchor,
                     set: std::sync::Arc::clone(set),
                     frame,
-                    skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                    skylight: world.data().skylight6_at_world(c.x, c.y, c.z),
                     blocklight: petramond_world::light::BlockLight6::from_x2(
-                        world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                        world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
                     ),
                 });
         }
@@ -380,9 +380,9 @@ impl GamePresentationScratch {
                 head_yaw: curr.head_yaw,
                 prev_head_pitch: prev.head_pitch,
                 head_pitch: curr.head_pitch,
-                skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                skylight: world.data().skylight6_at_world(c.x, c.y, c.z),
                 blocklight: petramond_world::light::BlockLight6::from_x2(
-                    world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                    world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
                 ),
                 hurt_flash: petramond::mob::hurt_flash01(
                     prev.hurt_timer,
@@ -569,9 +569,9 @@ impl GamePresentationScratch {
                     seated: p.curr.mount.is_some_and(mount_renders_seated),
                     seat_tilt,
                     hurt: p.hurt_flash01(),
-                    skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                    skylight: world.data().skylight6_at_world(c.x, c.y, c.z),
                     blocklight: petramond_world::light::BlockLight6::from_x2(
-                        world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                        world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
                     ),
                     bones: push_bones(&mut self.bone_offsets, p.bones.current()),
                 },
@@ -640,7 +640,7 @@ impl GamePresentationScratch {
         player_row: Option<PlayerPresentation>,
     ) {
         self.shadows.clear();
-        let world = &game.replica;
+        let world = game.replica.data();
         // A generous box around the feet — the decal is at most a couple of
         // blocks across and sits below the body, never above it.
         let visible = |feet: petramond_math::world_pos::WorldPos| {
@@ -845,12 +845,12 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
     // one producer that answers for a placed model's world extent.
     let model = game
         .replica
-        .model_outline_box(block)
+        .data().model_outline_box(block)
         .map(|(base, min, max)| ModelCrack { base, min, max });
     // The ONE box producer answers for every box family at once; nothing here
     // asks which family it is.
     let mut resolved = Vec::new();
-    game.replica.shape_draw_boxes(block, &mut resolved);
+    game.replica.data().shape_draw_boxes(block, &mut resolved);
     let shape_boxes = (!resolved.is_empty()).then(|| {
         let mut boxes = [CrackBox {
             min: [0.0; 3],
@@ -877,7 +877,7 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
         visual_box: if model.is_some() || shape_boxes.is_some() {
             None
         } else {
-            game.replica.selection_box_at(block.x, block.y, block.z)
+            game.replica.data().selection_box_at(block.x, block.y, block.z)
         },
         shape_boxes,
         model,

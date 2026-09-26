@@ -27,6 +27,7 @@
 //! other block in the footprint refuses growth, and the sapling waits and
 //! tries again later.
 
+use crate::world::ServerWorld;
 use crate::world::WorldData;
 use std::collections::HashMap;
 
@@ -37,7 +38,6 @@ use petramond_worldgen::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
 use petramond_worldgen::rng::FeatureRng;
 
 use super::fragile::FRAGILE;
-use super::store::World;
 
 /// Salt for the sapling growth RNG stream — distinct from the worldgen feature salt
 /// so a grown tree and a worldgen tree at the same spot don't share a stream.
@@ -51,17 +51,17 @@ const ADVANCE_CHANCE: f32 = 0.5;
 pub struct Sapling;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Sapling {
-    fn random_tick(&self, world: &mut World, pos: IVec3) {
+    fn random_tick(&self, world: &mut ServerWorld, pos: IVec3) {
         // A fresh deterministic stream per (sapling, tick): the tick number folds
         // into the salt so the same cell rolls differently every tick, while the
         // result stays a pure function of (seed, tick, pos) — reproducible for the
         // deterministic multiplayer simulation.
         let salt = SAPLING_SALT ^ world.current_tick();
-        let mut rng = FeatureRng::positional(world.seed, salt, pos.x, pos.y, pos.z);
+        let mut rng = FeatureRng::positional(world.data.seed, salt, pos.x, pos.y, pos.z);
         if !rng.chance(ADVANCE_CHANCE) {
             return;
         }
-        let sapling = Block::from_id(world.chunk_block(pos.x, pos.y, pos.z));
+        let sapling = Block::from_id(world.data.chunk_block(pos.x, pos.y, pos.z));
         match sapling.next_stage() {
             // A growing stage advances by becoming the next stage's block row
             // — stage is plain block identity, riding the ordinary edit path
@@ -76,7 +76,7 @@ impl crate::world::engine_behavior::EngineBlockBehavior for Sapling {
     // A sapling is fragile: an update that takes away its soil (or floods its cell)
     // breaks it exactly like a flower. Delegate the support hook to the shared
     // FRAGILE behaviour rather than duplicate its break.
-    fn neighbor_update(&self, world: &mut World, pos: IVec3) {
+    fn neighbor_update(&self, world: &mut ServerWorld, pos: IVec3) {
         FRAGILE.neighbor_update(world, pos);
     }
 }
@@ -107,7 +107,7 @@ fn pick_growth(
     petramond_worldgen::data::features::by_name(picked)
 }
 
-impl World {
+impl ServerWorld {
     /// Try to grow the final-stage sapling at `pos` (block `sapling`) into its tree.
     /// Picks the tree from the row's `grows_into` choices, checks the feature's
     /// ground-anchoring gate against the live
@@ -138,7 +138,7 @@ impl World {
         // exactly the `surf ≥ origin.y - 1` contract `is_anchored` checks.
         // Runs on an rng COPY so `generate` still sees the post-pick stream.
         let anchored = cf.feature.is_anchored(
-            &mut |wx, wz| match self.block_if_loaded(wx, pos.y - 1, wz) {
+            &mut |wx, wz| match self.data.block_if_loaded(wx, pos.y - 1, wz) {
                 Some(b)
                     if b != Block::Air
                         && b != Block::Water
@@ -161,7 +161,7 @@ impl World {
         // world itself is untouched until we decide the tree fits. The sink borrows
         // `self` immutably only for this block; the owned overlay outlives it.
         let writes = {
-            let mut sink = GrowSink::new(self);
+            let mut sink = GrowSink::new(&self.data);
             let mut ctx = FeatureCtx::new(&mut sink);
             // Canopy-open oracle against the LIVE world: a canopy cell may be
             // anything the tree is allowed to consume (the validation set
@@ -171,7 +171,7 @@ impl World {
             // counts open here; validation refuses any write that reaches one.
             cf.feature.generate(
                 &mut ctx,
-                &mut |p: IVec3| match self.block_if_loaded(p.x, p.y, p.z) {
+                &mut |p: IVec3| match self.data.block_if_loaded(p.x, p.y, p.z) {
                     None => true,
                     Some(b) => {
                         b == Block::Air
@@ -195,7 +195,7 @@ impl World {
             if cell == pos {
                 continue;
             }
-            match self.block_if_loaded(cell.x, cell.y, cell.z) {
+            match self.data.block_if_loaded(cell.x, cell.y, cell.z) {
                 // A snow blanket yields like a fragile plant does (the snow
                 // layer row is fragile today, but displacing a blanket is
                 // policy here, not a row fact): leaves may now write over it.
@@ -212,7 +212,7 @@ impl World {
                 // column, saved-but-unloaded, solid/water summary) refuses
                 // growth as before.
                 None => match WorldData::split_world(cell.x, cell.y, cell.z) {
-                    Some((sp, ..)) if self.section_summary(sp) == SectionSummary::Empty => {}
+                    Some((sp, ..)) if self.data.section_summary(sp) == SectionSummary::Empty => {}
                     _ => return,
                 },
             }
@@ -223,8 +223,7 @@ impl World {
         // log, so the trunk base lands there and the sapling is consumed.
         for (cell, block) in writes {
             if cell != pos
-                && self
-                    .block_if_loaded(cell.x, cell.y, cell.z)
+                && self.data.block_if_loaded(cell.x, cell.y, cell.z)
                     .is_some_and(Block::is_log)
             {
                 continue;
@@ -240,12 +239,12 @@ impl World {
 /// the feature builds exactly as it would in worldgen, but "does it fit?" can inspect
 /// the whole intended write set first.
 struct GrowSink<'a> {
-    world: &'a World,
+    world: &'a WorldData,
     overlay: HashMap<IVec3, Block>,
 }
 
 impl<'a> GrowSink<'a> {
-    fn new(world: &'a World) -> Self {
+    fn new(world: &'a WorldData) -> Self {
         Self {
             world,
             overlay: HashMap::new(),
@@ -282,19 +281,19 @@ mod tests {
     /// it (so its sections are eligible for random ticks), and a dirt floor under the
     /// centre — so a sapling at (8,64,8) is supported and any tree it grows stays in
     /// loaded chunks.
-    fn world_with_grove() -> World {
-        let mut w = World::new(1, 4);
+    fn world_with_grove() -> ServerWorld {
+        let mut w = ServerWorld::new(1, 4);
         for cz in -1..=1 {
             for cx in -1..=1 {
                 w.insert_chunk_for_test(ChunkPos::new(cx, cz), Chunk::new(cx, cz));
             }
         }
-        w.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
+        w.data.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
         w
     }
 
-    fn block(w: &World, x: i32, y: i32, z: i32) -> Block {
-        Block::from_id(w.chunk_block(x, y, z))
+    fn block(w: &ServerWorld, x: i32, y: i32, z: i32) -> Block {
+        Block::from_id(w.data.chunk_block(x, y, z))
     }
 
     /// The final growth-stage row of a sapling's chain — the row `grow_sapling`
@@ -309,7 +308,7 @@ mod tests {
     /// Plant an oak sapling at its FINAL growth stage at (8,64,8) on a dirt
     /// floor wide enough for the oak root splay's anchoring gate; return its
     /// position.
-    fn plant_oak(w: &mut World) -> IVec3 {
+    fn plant_oak(w: &mut ServerWorld) -> IVec3 {
         let pos = IVec3::new(8, 64, 8);
         for z in -4..=20 {
             for x in -4..=20 {
@@ -322,7 +321,7 @@ mod tests {
 
     /// Is there any leaf in a generous box around the trunk (covers a small OR a
     /// giant oak's canopy, so the test doesn't care which the RNG picked).
-    fn has_canopy(w: &World) -> bool {
+    fn has_canopy(w: &ServerWorld) -> bool {
         (64..=90).any(|y| (3..=13).any(|x| (3..=13).any(|z| block(w, x, y, z).is_leaves())))
     }
 

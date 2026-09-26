@@ -1,7 +1,7 @@
 use super::*;
 use crate::entity::fluid_fixture::{self, block, BRINE, CINDER, SYRUP};
 use crate::mob::nav::{self, NavInputs, Navigator};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_world::chunk::{Chunk, ChunkPos};
 
 #[test]
@@ -38,19 +38,19 @@ fn body() -> MobSize {
     crate::mob::def(crate::mob::by_key("bodyfluid:swim").unwrap()).size
 }
 
-fn world() -> World {
+fn world() -> ServerWorld {
     let mut chunk = Chunk::new(0, 0);
     for x in 0..16 {
         for z in 0..16 {
             chunk.set_block(x, 63, z, Block::Stone);
         }
     }
-    let mut world = World::new(0, 1);
+    let mut world = ServerWorld::new(0, 1);
     world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
     world
 }
 
-fn route(world: &World, start: IVec3, goal: IVec3, half: f32, height: f32) -> Navigator {
+fn route(world: &ServerWorld, start: IVec3, goal: IVec3, half: f32, height: f32) -> Navigator {
     let mut nav = Navigator::new(height.ceil() as i32, half, height);
     nav.update_goal_when_supported(Some(goal), start, world, true, &NavInputs::none());
     nav

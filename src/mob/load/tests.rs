@@ -185,7 +185,7 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
     let world = {
         use petramond_world::block::Block;
         use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-        let mut w = crate::world::World::new(0, 1);
+        let mut w = crate::world::ServerWorld::new(0, 1);
         let mut c = Chunk::new(0, 0);
         for zz in 0..CHUNK_SZ {
             for xx in 0..CHUNK_SX {
@@ -543,7 +543,7 @@ fn dynamic_pack_mob_flows_end_to_end() {
 #[ignore = "spawned by dynamic_pack_mob_flows_end_to_end with a fixture pack env"]
 fn dynamic_pack_mob_inner() {
     use super::super::{def, defs, Mob, Mobs};
-    use crate::world::World;
+    use crate::world::ServerWorld;
 
     let engine = ENGINE_MOB_NAMES.len();
     // --- Registration: one fresh id past the engine set, name-addressed. ---
@@ -556,7 +556,7 @@ fn dynamic_pack_mob_inner() {
     );
 
     // --- Spawnable programmatically; the data brain builds on spawn. ---
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     let home = WorldPos::new(8.0, 64.0, 8.0);
     assert!(mobs.spawn(z, home, 0.0));

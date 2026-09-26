@@ -7,7 +7,7 @@
 /// rather than a re-derivation of it — generation/light/mesh pumping, the
 /// resident-memory census, and deterministic ticking.
 pub mod stream {
-    pub use crate::world::{MemoryCensus, World};
+    pub use crate::world::{MemoryCensus, ServerWorld};
     pub use petramond_math::facing::Facing;
 
     /// Run `n` deterministic game ticks over a streamed world.
@@ -15,7 +15,7 @@ pub mod stream {
     /// A containment audit has no other honest way to ask "does this water
     /// move": the fluid sim only ever acts on the tick, and re-deriving its
     /// spread rules in a tool would just be a mirror that can go stale.
-    pub fn tick(world: &mut World, n: u32) {
+    pub fn tick(world: &mut ServerWorld, n: u32) {
         let recipes = petramond_world::crafting::Recipes::default();
         for _ in 0..n {
             world.game_tick(&recipes);
@@ -30,7 +30,7 @@ pub mod stream {
     /// Returns false when the placement refuses (unknown row, blocked
     /// footprint).
     pub fn place_block(
-        world: &mut World,
+        world: &mut ServerWorld,
         name: &str,
         place_pos: [i32; 3],
         player_facing: petramond_math::facing::Facing,
@@ -61,7 +61,7 @@ pub mod stream {
 
     /// Set a placed model block's per-instance parts mask (which optional
     /// `parts` cubes draw), e.g. the forge furnace's `coals`.
-    pub fn set_model_parts(world: &mut World, pos: [i32; 3], parts: u32) -> bool {
+    pub fn set_model_parts(world: &mut ServerWorld, pos: [i32; 3], parts: u32) -> bool {
         world.set_model_parts(
             petramond_math::math::IVec3::new(pos[0], pos[1], pos[2]),
             parts,
@@ -95,7 +95,7 @@ pub mod mods {
     /// the scratch state is dropped immediately.
     pub fn load(seed: u32) -> WorldgenMods {
         let mut host = crate::modding::ModHost::load(seed, &Default::default());
-        let mut world = crate::world::World::new(seed, 4);
+        let mut world = crate::world::ServerWorld::new(seed, 4);
         let mut bus = crate::events::EventBus::default();
         let mut systems = crate::events::TickSystems::default();
         let mut sound = 1u64;

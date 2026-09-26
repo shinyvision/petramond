@@ -1,15 +1,16 @@
+use crate::world::ServerWorld;
 use std::collections::{HashMap, HashSet};
 
 use crate::entity::{DroppedItem, Motion};
 use petramond_math::math::Vec3;
 use petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE;
 
-use super::{terrain_under_drop_is_final, World};
+use super::terrain_under_drop_is_final;
 
 #[cfg(test)]
 mod tests;
 
-impl World {
+impl ServerWorld {
     /// Nearest active item entities over terrain ready for simulation.
     pub(crate) fn nearest_item_entities(
         &self,
@@ -21,7 +22,7 @@ impl World {
             return Vec::new();
         }
         let mut candidates: Vec<_> = self
-            .dropped_items
+            .side.entities.dropped_items
             .items
             .iter()
             .filter_map(|item| {
@@ -49,7 +50,7 @@ impl World {
         let requested: HashSet<_> = impulses.iter().map(|(id, _)| *id).collect();
         // Scan once; only requested entities need the terrain readiness probe.
         let eligible: HashMap<_, _> = self
-            .dropped_items
+            .side.entities.dropped_items
             .items
             .iter()
             .enumerate()
@@ -61,14 +62,14 @@ impl World {
             })
             .map(|(index, item)| (item.id, index))
             .collect();
-        let max_speed = MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::events::tick::TICK_DT;
+        let max_speed = MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::world::TICK_DT;
         impulses
             .iter()
             .map(|(id, delta)| {
                 let Some(&index) = eligible.get(id) else {
                     return false;
                 };
-                let item = &mut self.dropped_items.items[index];
+                let item = &mut self.side.entities.dropped_items.items[index];
                 let velocity = item.vel + *delta;
                 if !velocity.length_squared().is_finite()
                     || velocity.length_squared() > max_speed * max_speed

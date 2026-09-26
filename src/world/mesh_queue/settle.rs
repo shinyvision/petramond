@@ -1,9 +1,9 @@
 //! Replica-side mesh settling: a freshly ingested section whose neighbours
 //! are still arriving is meshed once they have, not once per arrival.
 
+use crate::world::ReplicaWorld;
 use petramond_world::chunk::SectionPos;
 
-use crate::world::World;
 
 /// Pump frames a section waits after its latest arrival before meshing with
 /// an incomplete neighbourhood — long enough for the rest of a batch to land.
@@ -20,13 +20,13 @@ pub(in crate::world) struct MeshSettle {
     deadline: u64,
 }
 
-impl World {
+impl ReplicaWorld {
     pub(in crate::world) fn defer_stream_mesh(&mut self, pos: SectionPos) {
-        if !self.sections.contains_key(&pos) {
+        if !self.data.sections.contains_key(&pos) {
             return;
         }
-        let frame = self.terrain.mesh_pump_frame;
-        let entry = self.terrain.mesh_settle.entry(pos).or_insert(MeshSettle {
+        let frame = self.side.terrain.mesh_pump_frame;
+        let entry = self.side.terrain.mesh_settle.entry(pos).or_insert(MeshSettle {
             quiet_after: frame + QUIET_FRAMES,
             deadline: frame + DEADLINE_FRAMES,
         });
@@ -37,11 +37,11 @@ impl World {
     /// (and forgets the entry) once the neighbourhood is complete, the section
     /// is near the player, the quiet window has elapsed, or the deadline hit.
     pub(in crate::world) fn stream_mesh_waiting(&mut self, pos: SectionPos) -> bool {
-        let Some(pending) = self.terrain.mesh_settle.get(&pos) else {
+        let Some(pending) = self.side.terrain.mesh_settle.get(&pos) else {
             return false;
         };
-        let frame = self.terrain.mesh_pump_frame;
-        let near = self.last_load_target.is_none_or(|t| {
+        let frame = self.side.terrain.mesh_pump_frame;
+        let near = self.data.last_load_target.is_none_or(|t| {
             (pos.cx - t.center.cx).abs() <= NEAR_RADIUS
                 && (pos.cz - t.center.cz).abs() <= NEAR_RADIUS
                 && (pos.cy - t.center_cy).abs() <= NEAR_RADIUS
@@ -51,8 +51,8 @@ impl World {
                 (-1..=1).all(|dx| {
                     let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                     !SectionPos::cy_in_range(n.cy)
-                        || self.sections.contains_key(&n)
-                        || self.section_summary(n)
+                        || self.data.sections.contains_key(&n)
+                        || self.data.section_summary(n)
                             == petramond_world::section::SectionSummary::Empty
                 })
             })
@@ -60,7 +60,7 @@ impl World {
         if !near && !complete && frame < pending.quiet_after && frame < pending.deadline {
             return true;
         }
-        self.terrain.mesh_settle.remove(&pos);
+        self.side.terrain.mesh_settle.remove(&pos);
         false
     }
 }

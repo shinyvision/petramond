@@ -2,7 +2,7 @@
 //!
 //! A [`Noise`] is one tick-scoped record of an audible gameplay action: a player
 //! or mob footstep, a block placed, a block broken. Emitters push records into the
-//! world's noise sink ([`World::push_noise`](crate::world::World::push_noise));
+//! world's noise sink ([`World::push_noise`](crate::world::ServerWorld::push_noise));
 //! the mob manager hands the accumulated batch to every mob's AI tick as
 //! `AiCtx::noises`, then clears it. Nothing here decides who *reacts* — hearing
 //! radii, memory, and target policy live on the listening brain nodes

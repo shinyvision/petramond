@@ -2,7 +2,8 @@
 //! tick state, and every query/mutation that stays inside the data layer.
 //!
 //! The orchestration wrapper (`World` in the engine crate) owns job pools,
-//! streaming, replication, and entity stores, and derefs here.
+//! streaming, replication, and entity stores, and exposes this through an
+//! explicit `data()` accessor.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
@@ -18,27 +19,10 @@ use super::load_targets::LoadTarget;
 use super::saved_index::SavedIndex;
 use super::tick_state::TickState;
 
-/// Which half of the client/server split this `World` instance plays.
-/// DEV TOOLING ONLY uses [`Combined`](WorldRole::Combined):
-/// one world runs the sim AND meshes for the renderer.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum WorldRole {
-    /// Today's single world: gen + sim + light + mesh.
-    #[default]
-    Combined,
-    /// The internal server's sim world: gen + light + sim, NO meshing — every
-    /// mesh-queueing entry point is a no-op so the dirty-mesh queue cannot
-    /// grow with nobody pumping it.
-    ServerHeadless,
-    /// A client's replica: no gen, no sim ticks. Sections are installed from
-    /// the connection (`world::remote`); it computes its own light, meshes,
-    /// and serves collision/raycast/placement queries.
-    ClientReplica,
-}
-
 /// The world state that lives outside the voxel grid and the tick queue: the
 /// hooks blocks declare, the world's persistent key/value map, which packs
 /// this world disabled, and the custom-shape collision bakes.
+#[derive(Default)]
 pub struct ContentState {
     /// Behavior hooks fired this tick (see `block::behavior::wasm`), in fire
     /// order. Drained right after the world tick and dispatched to the owner;
@@ -75,11 +59,9 @@ pub struct ContentState {
 /// entity, player, modding, or render. Orchestration state that needs those —
 /// streaming jobs, mesh queues, replication, the session roster, the mob and
 /// dropped-item stores, the save handle — lives on `World`, which wraps
-/// this and derefs to it.
+/// this and hands out shared access through `World::data`.
 pub struct WorldData {
     pub seed: u32,
-    /// Client/server role (see [`WorldRole`]); fixed at construction.
-    pub role: WorldRole,
     /// Loaded section voxel data. Private to the `world` module: every external
     /// mutation routes through an accessor (`set_block_world`, the dirty-mesh queue)
     /// so the queue stays the single source of truth for what needs remeshing.
@@ -158,12 +140,12 @@ pub struct WorldData {
     pub missing_columns_settled: bool,
     /// Each loaded column's per-cy `SectionSummary`s for ABSENT sections — the
     /// occupancy facts physics/placement read without loading (or generating)
-    /// the section. On a server/combined world the streamer derives it once
+    /// the section. On a server world the streamer derives it once
     /// when the column's gen data lands; on a replica it arrives in the
     /// server's `ColumnPayload`. Indexed `cy - SECTION_MIN_CY`.
     pub column_summaries: FxHashMap<ChunkPos, Box<[SectionSummary]>>,
     /// Replica-only tint halos and deep-band floors carried by ColumnPayload.
-    /// Combined/server worlds read the same facts from `column_gen`.
+    /// Server worlds read the same facts from `column_gen`.
     pub column_biome_halos: FxHashMap<ChunkPos, Arc<[u8]>>,
     pub column_deep_band_los: FxHashMap<ChunkPos, i32>,
     /// Sections whose light went dirty since the last
@@ -222,11 +204,11 @@ pub struct WorldData {
 }
 
 impl WorldData {
-    /// An empty world: nothing loaded, nothing queued, no save attached.
-    pub fn new(seed: u32, role: WorldRole, render_dist: i32) -> Self {
+    /// An empty world at `seed` streaming `render_dist` chunks around its
+    /// anchors: no sections, no columns, a fresh tick state.
+    pub fn new(seed: u32, render_dist: i32) -> Self {
         Self {
             seed,
-            role,
             sections: FxHashMap::default(),
             columns: FxHashMap::default(),
             column_payload_revisions: FxHashMap::default(),
@@ -253,13 +235,7 @@ impl WorldData {
             light_edited_since_persist: FxHashSet::default(),
             sim: TickState::new(seed),
             environment: WorldEnvironment::default(),
-            content: ContentState {
-                block_hooks: Vec::new(),
-                world_kv: BTreeMap::new(),
-                disabled_mods: std::collections::BTreeSet::new(),
-                custom_bake: FxHashMap::default(),
-                custom_bake_dirty: FxHashSet::default(),
-            },
+            content: ContentState::default(),
             stream_nonfinal: FxHashSet::default(),
             saved: SavedIndex::default(),
         }
@@ -296,12 +272,6 @@ impl WorldData {
     /// by the engine, so the owning mod should re-apply it from its own state.
     pub fn set_shader_param(&mut self, key: String, value: [f32; 4]) {
         self.environment.set_shader_param(key, value);
-    }
-
-    /// Client/server role, fixed at construction.
-    #[inline]
-    pub fn role(&self) -> WorldRole {
-        self.role
     }
 
     #[inline]

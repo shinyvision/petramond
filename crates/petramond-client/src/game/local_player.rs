@@ -3,7 +3,8 @@
 //! (`Game::look`/`Game::targeted_mob`). None of this touches the sessions —
 //! the results reach the sim as the next `PlayerUpdate` message.
 
-use petramond::player::{self, Input, Player};
+use petramond_world::world::raycast;
+use petramond::player::{self, Input};
 use petramond_math::math::Vec3;
 
 use super::camera_rig::{EyeInputs, STEP_CAMERA_EPS};
@@ -132,7 +133,7 @@ impl Game {
         // Physics gates on the REPLICA's loaded columns: until the spawn area's
         // payloads land, the player holds still (exactly the fresh-world
         // stream-in wait; absent-Mixed sections would read as air and lie).
-        if spectator || self.player.columns_loaded(&self.replica) {
+        if spectator || self.player.columns_loaded(self.replica.data()) {
             // Solid entities (a boat's hull) block the predicted body exactly
             // like the server's integration does — sourced from the
             // interpolated replicated rows, the same transform they render at.
@@ -141,7 +142,7 @@ impl Game {
             while remaining > 0.0 {
                 let step = remaining.min(player::DT_MAX);
                 self.player
-                    .update_with_obstacles(step, &self.replica, player_input, &obstacles);
+                    .update_with_obstacles(step, self.replica.data(), player_input, &obstacles);
                 remaining -= step;
             }
         }
@@ -224,7 +225,7 @@ impl Game {
             }
         }
         if push != Vec3::ZERO {
-            self.player.shove(push * dt, &self.replica);
+            self.player.shove(push * dt, self.replica.data());
             self.sync_camera_to_player_eye(dt);
         }
     }
@@ -276,7 +277,7 @@ impl Game {
     /// entity kinds. At most one of `targeted_mob`/`targeted_player` is set
     /// (the click actions carry them on the wire).
     pub(super) fn refresh_target(&mut self) {
-        let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.replica);
+        let block_hit = raycast::with_dist(self.cam.pos, self.cam.forward(), self.replica.data());
         self.look = block_hit.map(|(h, _)| h);
         // The use-click target: a held item may declare a fluid-stopping use
         // ray (a boat item targets the water surface); everything else keeps
@@ -295,7 +296,7 @@ impl Game {
             .or_else(|| fluid_ray(self.self_view.inventory.off_hand()));
         self.use_look = match held_fluid_ray {
             Some(ray) => {
-                Player::raycast_use_ray(self.cam.pos, self.cam.forward(), &self.replica, ray)
+                raycast::use_ray(self.cam.pos, self.cam.forward(), self.replica.data(), ray)
                     .map(|(h, _)| h)
             }
             None => self.look,

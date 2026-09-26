@@ -337,7 +337,7 @@ impl ServerGame {
                     cy: (eye.y.floor() as i32).div_euclid(16),
                     cz: (eye.z.floor() as i32).div_euclid(16),
                     // The session's requested view distance; world/streaming
-                    // clamp it to the server budget (`world.render_dist`).
+                    // clamp it to the server budget (`world.data().render_dist`).
                     radius: sess.transport.view_radius,
                 }
             })
@@ -572,7 +572,7 @@ impl ServerGame {
                 break;
             };
             let cp = sp.chunk_pos();
-            let column_revision = self.world.column_payload_revision(cp);
+            let column_revision = self.world.data().column_payload_revision(cp);
             let fresh_column =
                 sync.sent_column_revisions.get(&cp).copied() != Some(column_revision);
             if *allowance < 1 + usize::from(fresh_column) {
@@ -606,7 +606,7 @@ impl ServerGame {
                 break;
             };
             let cp = sp.chunk_pos();
-            let column_revision = self.world.column_payload_revision(cp);
+            let column_revision = self.world.data().column_payload_revision(cp);
             let fresh_column =
                 sync.sent_column_revisions.get(&cp).copied() != Some(column_revision);
             if *allowance < 1 + usize::from(fresh_column) {

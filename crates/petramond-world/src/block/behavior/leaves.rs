@@ -30,7 +30,7 @@ impl BlockBehavior for Leaves {
     }
 
     fn random_tick(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
-        if !leaf_supported(world, pos) {
+        if !leaf_supported(world.data(), pos) {
             // A leaf cut off from wood crumbles: break it as a natural break so it
             // gets the same burst + rolled drops a hand-break would — for leaves,
             // the 10% chance of a matching sapling (see the leaf rows' `drop`).

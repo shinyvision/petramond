@@ -54,15 +54,15 @@ impl Game {
     /// open side.
     pub(super) fn dig_dust(&mut self, cell: IVec3, normal: IVec3) {
         let world = &self.replica;
-        let block = Block::from_id(world.chunk_block(cell.x, cell.y, cell.z));
+        let block = Block::from_id(world.data().chunk_block(cell.x, cell.y, cell.z));
         // A cell already broken (a replicated dig outlives its block by a
         // beat) sheds nothing.
         if block == Block::Air {
             return;
         }
         let lit = cell + normal;
-        let (sky, blk) = world.dynamic_light_at_world(lit.x, lit.y, lit.z);
-        let kv_tint = world.cell_burst_tint(cell);
+        let (sky, blk) = world.data().dynamic_light_at_world(lit.x, lit.y, lit.z);
+        let kv_tint = world.data().cell_burst_tint(cell);
         self.burst(
             crate::particle::BLOCK_DUST,
             crate::particle::BurstEvent::struck(cell, normal, block, kv_tint, sky, blk),

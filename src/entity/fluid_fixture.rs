@@ -8,7 +8,7 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, SectionPos};
 use petramond_world::section::Section;
 
-use crate::world::World;
+use crate::world::ServerWorld;
 
 /// A jump-climb fluid with a current.
 pub const BRINE: &str = "bodyfluid:brine";
@@ -141,7 +141,7 @@ pub fn block(name: &str) -> Block {
 }
 
 /// A 16×16 pool of `fluid` from [`FLOOR_Y`] up to and including `top`.
-pub fn pool(fluid: Block, top: i32) -> World {
+pub fn pool(fluid: Block, top: i32) -> ServerWorld {
     let mut chunk = Chunk::new(0, 0);
     for z in 0..16 {
         for x in 0..16 {
@@ -151,13 +151,13 @@ pub fn pool(fluid: Block, top: i32) -> World {
             }
         }
     }
-    let mut world = World::new(0, 1);
+    let mut world = ServerWorld::new(0, 1);
     world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
     world
 }
 
 /// Raise stone from the floor up to `top` (inclusive) for every `x >= from_x`.
-pub fn bank(world: &mut World, from_x: i32, top: i32) {
+pub fn bank(world: &mut ServerWorld, from_x: i32, top: i32) {
     for z in 0..16 {
         for x in from_x..16 {
             for y in FLOOR_Y..=top {
@@ -173,7 +173,7 @@ pub fn beside_bank(from_x: i32, top: i32) -> petramond_math::world_pos::WorldPos
 }
 
 /// Write fluid `meta` for `fluid` into the cell at [`FLOOR_Y`].
-pub fn set_flow(world: &mut World, x: i32, z: i32, fluid: Block, meta: u8) {
+pub fn set_flow(world: &mut ServerWorld, x: i32, z: i32, fluid: Block, meta: u8) {
     if world.section_at_world_mut_for_test(x, FLOOR_Y, z).is_none() {
         let (cx, cy, cz) = (x.div_euclid(16), FLOOR_Y.div_euclid(16), z.div_euclid(16));
         world.insert_section_for_test(SectionPos::new(cx, cy, cz), Section::new(cx, cy, cz));
@@ -192,7 +192,7 @@ pub fn set_flow(world: &mut World, x: i32, z: i32, fluid: Block, meta: u8) {
 
 /// A one-deep brine sheet flowing toward +X: a source at `x = 4`, one level
 /// thinner per cell out to `x = 10`.
-pub fn flowing_brine() -> World {
+pub fn flowing_brine() -> ServerWorld {
     let brine = block(BRINE);
     let mut world = pool(Block::Air, FLOOR_Y - 1);
     for x in 4..=10 {

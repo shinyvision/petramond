@@ -81,7 +81,7 @@ use crate::events::{
 };
 use crate::mob::{Mob, MobCategory};
 use crate::player::BonePose;
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 
 pub use client::{ClientCommand, ClientImageData, ClientOverlayRegistration};
@@ -250,12 +250,12 @@ impl ModHost {
     /// server and a headless one alike.
     pub fn initialize(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         bus: &mut EventBus,
         systems: &mut TickSystems,
         next_spatial_sound_handle: &mut u64,
     ) {
-        let mut gen_hooks = gen::GenHooksBuilder::new(world.seed);
+        let mut gen_hooks = gen::GenHooksBuilder::new(world.data().seed);
         let mut ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration> =
             std::collections::HashMap::new();
         let mut hostile_order = self.hostile_spawners.len();
@@ -620,7 +620,7 @@ impl ModHost {
 }
 
 fn hostile_kind_for_key(
-    world: &World,
+    world: &ServerWorld,
     key: &str,
     candidate: &HostileSpawnCandidate,
 ) -> Option<Mob> {
@@ -633,7 +633,7 @@ fn hostile_kind_for_key(
         return None;
     }
     if petramond_world::registry::namespace(def.name)
-        .is_some_and(|ns| world.disabled_mods().contains(ns))
+        .is_some_and(|ns| world.data().disabled_mods().contains(ns))
     {
         return None;
     }

@@ -12,7 +12,7 @@ use super::step_gate::{navigation_step_gate, navigation_step_gate_on};
 use super::{fluid_footing, hazards, nav_fluid_fn, nav_loaded_fn, nav_solid_fn, nav_support_fn};
 use crate::mob::path::{self, CellCache, Fact, NavWorld, PathParams, Planned};
 use crate::mob::{def, Instance, Mob};
-use crate::world::World;
+use crate::world::ServerWorld;
 
 /// Whether a body (`params`, physical `height`) standing at foothold `start`
 /// can genuinely path to `dest` within [`REACH_PROBE_NODES`]. Entity
@@ -26,7 +26,7 @@ use crate::world::World;
 /// `None` when `budget` is present and spent: the answer is UNKNOWN this tick
 /// and the caller must defer, not guess (see [`REACH_PROBE_TICK_BUDGET`]).
 pub(in crate::mob) fn destination_reachable(
-    world: &World,
+    world: &ServerWorld,
     start: IVec3,
     dest: IVec3,
     mut params: PathParams,
@@ -59,7 +59,7 @@ pub(in crate::mob) fn destination_reachable(
 /// current navigation cell with its real body. `false` when the mob is not on
 /// a foothold (airborne — nothing is provable, callers retry later). The
 /// `MobCanReach` HostCall's engine seam.
-pub fn mob_can_reach(world: &World, mob: &Instance, dest: IVec3) -> bool {
+pub fn mob_can_reach(world: &ServerWorld, mob: &Instance, dest: IVec3) -> bool {
     let d = super::def(mob.kind);
     let params = d.path_params();
     let cursor = world.cursor();
@@ -148,7 +148,7 @@ trait GraphSearch {
 /// Run `search` over species `kind`'s moves through `kept`'s box, `planned`
 /// cells read as built.
 fn search_over<S: GraphSearch>(
-    world: &World,
+    world: &ServerWorld,
     kind: Mob,
     params: PathParams,
     planned: &[IVec3],
@@ -226,7 +226,7 @@ impl GraphSearch for FloodOver<'_> {
 /// budget cannot cover `max_nodes` more expansions: unknown, ask again next
 /// tick. The `PathProbe` HostCall's engine seam.
 pub fn route_probe(
-    world: &World,
+    world: &ServerWorld,
     kind: Mob,
     from: IVec3,
     to: IVec3,
@@ -273,7 +273,7 @@ pub struct FloodAsk<'a> {
 /// probe per cell would, and a detour inside the box is never cut short the
 /// way a capped search is: `Deferred` when this tick's route budget cannot
 /// cover `max_nodes`, `Exceeded` when the box holds more footholds.
-pub fn walk_region(world: &World, kind: Mob, ask: FloodAsk<'_>) -> mod_api::Flood {
+pub fn walk_region(world: &ServerWorld, kind: Mob, ask: FloodAsk<'_>) -> mod_api::Flood {
     let max_nodes = ask.max_nodes.min(ROUTE_PROBE_TICK_BUDGET);
     let budget = world.route_probe_budget();
     if !budget.covers(max_nodes) {
@@ -310,7 +310,7 @@ pub fn walk_region(world: &World, kind: Mob, ask: FloodAsk<'_>) -> mod_api::Floo
 /// navigator plans them with no bodies in the way (a best-effort partial
 /// route when the goal is out of reach). A diagnostic seam.
 #[cfg(any(test, feature = "test-support"))]
-pub fn route_path(world: &World, kind: Mob, from: IVec3, to: IVec3) -> Vec<IVec3> {
+pub fn route_path(world: &ServerWorld, kind: Mob, from: IVec3, to: IVec3) -> Vec<IVec3> {
     let d = def(kind);
     let params = d.path_params();
     let cursor = world.cursor();
@@ -332,7 +332,7 @@ pub fn route_path(world: &World, kind: Mob, from: IVec3, to: IVec3) -> Vec<IVec3
 
 /// Which of `cells` a body of species `kind` could stand in: a navigation
 /// foothold with room for the body, not in a hazard.
-pub fn footholds(world: &World, kind: Mob, cells: &[IVec3]) -> Vec<bool> {
+pub fn footholds(world: &ServerWorld, kind: Mob, cells: &[IVec3]) -> Vec<bool> {
     let d = def(kind);
     let params = d.path_params();
     let cursor = world.cursor();
@@ -358,7 +358,7 @@ pub fn footholds(world: &World, kind: Mob, cells: &[IVec3]) -> Vec<bool> {
 /// answers `false` instead of dropping a body into it, and the confinement
 /// half is why a pen someone built stays a pen — the engine's own confinement
 /// probe, asked positionally so the answer arrives BEFORE a mob exists.
-pub fn site_open(world: &World, kind: Mob, cell: IVec3) -> bool {
+pub fn site_open(world: &ServerWorld, kind: Mob, cell: IVec3) -> bool {
     let d = def(kind);
     let params = d.path_params();
     let cursor = world.cursor();

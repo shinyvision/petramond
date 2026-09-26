@@ -7,6 +7,7 @@
 //! wrappers plus the tick driver that supplies the recipe set the storage
 //! layer is kept ignorant of.
 
+use crate::world::{ReplicaWorld, ServerWorld, World, WorldSide};
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE};
@@ -14,9 +15,8 @@ use petramond_world::container::Container;
 use petramond_world::crafting::Recipes;
 use petramond_world::furnace::{Furnace, FURNACE_SLOTS};
 
-use super::store::World;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Advance every loaded furnace by one game tick, smelting per `recipes`.
     /// Furnaces are section-owned, so this fans out to each section, then
     /// swaps any furnace whose lit state changed onto its matching skin row
@@ -35,10 +35,10 @@ impl World {
         // (a potential copy-on-write clone) for chest/door-only ones. Sorted:
         // set order reflects streaming history, and the lit-flip block writes
         // must land in a deterministic order (the multiplayer tick contract).
-        let mut candidates: Vec<_> = self.block_entity_sections.iter().copied().collect();
+        let mut candidates: Vec<_> = self.data.block_entity_sections.iter().copied().collect();
         candidates.sort_unstable_by_key(|p| (p.cx, p.cy, p.cz));
         for cpos in candidates {
-            let Some(section) = self.sections.get_mut(&cpos) else {
+            let Some(section) = self.data.sections.get_mut(&cpos) else {
                 continue;
             };
             if section.furnaces().is_empty() {
@@ -59,14 +59,14 @@ impl World {
 
     /// The furnace state at a world block position, if one is stored there.
     pub fn furnace_at(&self, pos: IVec3) -> Option<&Furnace> {
-        let (c, lx, ly, lz) = self.chunk_at_world(pos.x, pos.y, pos.z)?;
+        let (c, lx, ly, lz) = self.data.chunk_at_world(pos.x, pos.y, pos.z)?;
         c.furnace_at(lx, ly, lz)
     }
 
     /// The furnace state and its container slots at a world position,
     /// split-borrowed for GUI edits and the furnace view.
     pub fn furnace_parts_mut(&mut self, pos: IVec3) -> Option<(&mut Furnace, &mut Container)> {
-        let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
+        let (c, lx, ly, lz) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
         c.furnace_parts_mut(lx, ly, lz)
     }
 
@@ -74,7 +74,7 @@ impl World {
     /// block: default machine state, an empty 3-slot container, and the
     /// facing. No-op if the owning chunk is not loaded or `y` is out of range.
     pub fn insert_furnace(&mut self, pos: IVec3, facing: Facing) {
-        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+        if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.insert_furnace(lx, ly, lz, Furnace::default());
             c.insert_container(lx, ly, lz, Container::with_len(FURNACE_SLOTS));
             c.insert_entity_facing(lx, ly, lz, facing);
@@ -127,8 +127,8 @@ mod tests {
         section.insert_entity_facing(x, y, z, Facing::East);
     }
 
-    fn block(world: &World, x: i32, y: i32, z: i32) -> Block {
-        Block::from_id(world.chunk_block(x, y, z))
+    fn block(world: &ServerWorld, x: i32, y: i32, z: i32) -> Block {
+        Block::from_id(world.data.chunk_block(x, y, z))
     }
 
     fn count_tile(mesh: &ChunkMesh, tile: Tile) -> usize {
@@ -138,39 +138,21 @@ mod tests {
             .count()
     }
 
-    /// Clear a section's `light_dirty` flag by installing a settled (all-zero) skylight
-    /// cube, so `tick_mesh_budget` builds its mesh now instead of deferring behind the
-    /// async light bake. The furnace tile count is what's under test, not the light
-    /// value, so a zero cube is fine.
-    fn settle_section_light(world: &mut World, wx: i32, wy: i32, wz: i32) {
-        world
-            .section_at_world_mut_for_test(wx, wy, wz)
-            .expect("section loaded")
-            .set_skylight(vec![0u8; SECTION_VOLUME].into());
-    }
-
     /// A lit flip is a row swap through the ordinary block-write lanes: the
-    /// block id flips to the lit row (remeshing to the lit front), while the
-    /// sibling entity maps — machine counters, container slots, facing — and
-    /// the cell's mod KV survive the swap. Going out swaps back.
+    /// block id flips to the lit row, while the sibling entity maps — machine
+    /// counters, container slots, facing — and the cell's mod KV survive the
+    /// swap. Going out swaps back.
     #[test]
     fn furnace_lit_flip_swaps_the_row_and_preserves_the_block_entity() {
-        // Build just the furnace's section (0,4,0) — world (8,64,8) → section-local
-        // (8,0,8) — so the mesh budget isn't spent on a column's other sections.
         let spos = SectionPos::new(0, 4, 0);
         let mut section = Section::new(spos.cx, spos.cy, spos.cz);
         section.set_block(8, 0, 8, Block::Furnace);
         insert_fueled_furnace(&mut section, 8, 0, 8);
-        section.set_skylight(vec![0u8; SECTION_VOLUME].into()); // settle light
 
-        let mut world = World::new(0, 0);
+        let mut world = ServerWorld::new(0, 0);
         world.insert_section_for_test(spos, section);
         let pos = IVec3::new(8, 64, 8);
         assert!(world.cell_kv_set(8, 64, 8, "testmod:note".into(), vec![9]));
-        world.mesh_section_blocking_for_test(spos);
-        let mesh = world.terrain.meshes.get(&spos).expect("initial mesh built");
-        assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 4);
-        assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 0);
 
         world.game_tick(&furnace_recipes());
         assert_eq!(block(&world, 8, 64, 8), Block::FurnaceLit, "lit row swap");
@@ -185,26 +167,16 @@ mod tests {
             "container slots survive"
         );
         assert_eq!(
-            world.cell_kv_get(8, 64, 8, "testmod:note"),
+            world.data.cell_kv_get(8, 64, 8, "testmod:note"),
             Some(&[9u8][..]),
             "cell KV survives"
         );
         assert_eq!(
-            world.sections.get(&spos).unwrap().entity_facing(8, 0, 8),
+            world.data.sections.get(&spos).unwrap().entity_facing(8, 0, 8),
             Facing::East,
             "the facing (unified cell state, wiped by ordinary block writes) \
              is carried across the row swap"
         );
-        // The lit row emits block light, so the swap re-dirties this section's
-        // light. That would otherwise defer the texture-swap remesh behind the
-        // async light bake, so re-settle the light synchronously here — exactly
-        // as the test does before the initial mesh.
-        settle_section_light(&mut world, 8, 64, 8);
-        world.mesh_section_blocking_for_test(spos);
-
-        let mesh = world.terrain.meshes.get(&spos).expect("relit mesh rebuilt");
-        assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 0);
-        assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 4);
 
         // Burn out: drain the fuel and input, then let the flame die — the
         // skin swaps back to the unlit row.
@@ -217,6 +189,32 @@ mod tests {
         world.game_tick(&furnace_recipes());
         assert_eq!(block(&world, 8, 64, 8), Block::Furnace, "extinguish swap");
         assert!(world.furnace_at(pos).is_some(), "machine state still there");
+    }
+
+    /// The lit row is its own mesh skin: a replica meshing a furnace section
+    /// draws the unlit front, and the lit row (what the server's flip ships
+    /// as a block delta) draws the lit front.
+    #[test]
+    fn a_replica_meshes_each_furnace_row_with_its_own_front() {
+        let spos = SectionPos::new(0, 4, 0);
+        for (row, front, other) in [
+            (Block::Furnace, "furnace_front", "furnace_front_on"),
+            (Block::FurnaceLit, "furnace_front_on", "furnace_front"),
+        ] {
+            let mut section = Section::new(spos.cx, spos.cy, spos.cz);
+            section.set_block(8, 0, 8, row);
+            insert_fueled_furnace(&mut section, 8, 0, 8);
+            // Settled light, so the mesh builds now instead of waiting on a bake;
+            // the tile count is what's under test, not the light value.
+            section.set_skylight(vec![0u8; SECTION_VOLUME].into());
+
+            let mut replica = ReplicaWorld::new(0, 0);
+            replica.insert_section_for_test(spos, section);
+            replica.mesh_section_blocking_for_test(spos);
+            let mesh = replica.side.terrain.meshes.get(&spos).expect("mesh built");
+            assert_eq!(count_tile(mesh, Tile::named(front)), 4, "{row:?}");
+            assert_eq!(count_tile(mesh, Tile::named(other)), 0, "{row:?}");
+        }
     }
 
     #[test]
@@ -236,7 +234,7 @@ mod tests {
         section.set_block(9, 1, 8, Block::Furnace);
         insert_fueled_furnace(&mut section, 9, 1, 8); // world (9,65,8)
 
-        let mut world = World::new(0, 0);
+        let mut world = ServerWorld::new(0, 0);
         world.insert_section_for_test(spos, section);
         let recipes = furnace_recipes();
 

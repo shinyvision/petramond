@@ -169,7 +169,7 @@ impl Game {
     }
 
     #[cfg(test)]
-    pub fn replica_for_test(&self) -> &petramond::world::World {
+    pub fn replica_for_test(&self) -> &petramond::world::ReplicaWorld {
         &self.replica
     }
 

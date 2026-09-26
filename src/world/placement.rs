@@ -2,13 +2,13 @@
 //! world (slab stacking, general placement, support checks, finish paths).
 //! The plan/outcome/trait VOCABULARY lives in `petramond_world::world::placement`.
 
-use crate::world::World;
+use crate::world::{World, WorldSide};
 use petramond_world::block::{Aabb, Block, ShapeState};
 pub use petramond_world::world::placement::*;
 
 use petramond_math::math::IVec3;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// The placement ladder: whether `block` can be placed at all for this
     /// click, and if so which state write lands where. `None` is a refused
     /// spot — the click neither places nor consumes the held item. `occupied`
@@ -26,7 +26,7 @@ impl World {
         match block
             .shape_kind_def()
             .placement
-            .placement_plan(self, block, inputs, occupied)
+            .placement_plan(&self.data, block, inputs, occupied)
         {
             PlacementOutcome::Plan(plan) => Some(plan),
             PlacementOutcome::Refused => None,
@@ -59,7 +59,7 @@ impl World {
         } else {
             ShapeState::NONE
         };
-        self.finish_single_cell_placement(
+        self.data.finish_single_cell_placement(
             block,
             inputs.place_pos,
             state,
@@ -123,7 +123,7 @@ impl World {
             ..
         } in &plan.writes
         {
-            let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) else {
+            let Some((section, lx, ly, lz)) = self.data.chunk_at_world_mut(c.x, c.y, c.z) else {
                 return false;
             };
             // An AUGMENTING write adds a part to a cell that already holds
@@ -168,7 +168,7 @@ impl World {
                 }
             }
         }
-        self.terrain.vis_dirty = true;
+        self.mark_visibility_dirty();
         self.refresh_region(&cells);
         true
     }

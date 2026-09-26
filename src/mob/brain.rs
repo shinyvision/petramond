@@ -16,7 +16,7 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::world::World;
+use crate::world::ServerWorld;
 pub use mod_api::{ChannelClaims, DecisionChannel};
 use petramond_math::math::{IVec3, Vec3};
 
@@ -105,7 +105,7 @@ impl AiMob {
 /// by the manager and threaded to each instance. New world-level perception
 /// channels extend this struct, not the instance tick signature.
 pub struct TickInputs<'a> {
-    pub world: &'a World,
+    pub world: &'a ServerWorld,
     /// Every connected player's anchor.
     pub players: &'a [PlayerAnchor],
     /// The gameplay noises audible this tick.
@@ -143,7 +143,7 @@ pub struct AiCtx<'a> {
     /// Horizontal body radius from centre to side, for standable/pathing probes.
     pub half_width: f32,
     /// Read-only world, for sampling standable destinations / line-of-sight.
-    pub world: &'a World,
+    pub world: &'a ServerWorld,
     /// This tick's shared reachability-probe budget (see
     /// `nav::REACH_PROBE_TICK_BUDGET`), or `None` for an unbudgeted context.
     /// A policy that samples destinations must DEFER when it runs out, never

@@ -209,13 +209,13 @@ fn shader_params_replicate_into_the_replica_environment() {
     for _ in 0..3 {
         game.tick(TICK_DT, &crate::game::GameInput::default());
     }
-    let server_params = game.server.world().environment().shader_params().clone();
+    let server_params = game.server.world().data().environment().shader_params().clone();
     assert!(
         server_params.contains_key(petramond::rules::daynight::SKY_TIME_PARAM)
             && server_params.contains_key(petramond::rules::daynight::SKY_LIGHT_PARAM),
         "day/night published its params server-side"
     );
-    let replica_params = game.game.replica.environment().shader_params().clone();
+    let replica_params = game.game.replica.data().environment().shader_params().clone();
     assert_eq!(
         *replica_params, *server_params,
         "the replica environment mirrors the server's param map"

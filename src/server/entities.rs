@@ -8,7 +8,7 @@ use petramond_math::math::Vec3;
 const SPLASH_MIN_FALL: f32 = 1.5;
 /// Falls at least this deep play the fluid's big splash sound.
 const SPLASH_BIG_FALL: f32 = 5.0;
-use crate::world::World;
+use crate::world::ServerWorld;
 
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
@@ -223,9 +223,9 @@ impl ServerGame {
             return;
         }
         let cell = feet.block();
-        let Some(surface) = self.world.fluid_surface_at(cell).or_else(|| {
+        let Some(surface) = self.world.data().fluid_surface_at(cell).or_else(|| {
             self.world
-                .fluid_surface_at(cell - petramond_math::math::IVec3::Y)
+                .data().fluid_surface_at(cell - petramond_math::math::IVec3::Y)
         }) else {
             return;
         };
@@ -432,9 +432,9 @@ fn queue_mob_sound(
 /// position, so the held item, particles, and dropped items are lit — and
 /// coloured — by nearby emitters just like the static blocks around them.
 pub fn light_at_pos(
-    world: &World,
+    world: &ServerWorld,
     pos: petramond_math::world_pos::WorldPos,
 ) -> (u8, petramond_world::light::BlockLight6) {
     let c = pos.block();
-    world.dynamic_light_at_world(c.x, c.y, c.z)
+    world.data().dynamic_light_at_world(c.x, c.y, c.z)
 }

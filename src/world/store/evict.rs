@@ -1,23 +1,27 @@
+use crate::world::{World, WorldSide};
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-use super::World;
+use super::for_each_column_cy;
 
-impl World {
+impl<S: WorldSide> World<S> {
     pub(in crate::world) fn remove_section(&mut self, pos: SectionPos) {
-        self.terrain.prediction_terrain.cancel_section(pos);
-        if let Some(job) = self.terrain.mesh_job_cancels.remove(&pos) {
-            job.cancel();
+        if let Some(replica) = self.side.replica_mut() {
+            replica.terrain.forget_section(pos);
         }
-        if let Some(job) = self.gen.pending_section_jobs.remove(&pos) {
-            job.cancel();
+        if let Some(server) = self.side.server_mut() {
+            if let Some(job) = server.gen.pending_section_jobs.remove(&pos) {
+                job.cancel();
+            }
+            server.gen.awaited_overlays.remove(&pos);
+            server.gen.disk_primary_sections.remove(&pos);
         }
-        self.remove_pending_section(pos);
-        let section_removed = self.sections.remove(&pos).is_some();
+        self.forget_stream_section(pos);
+        let section_removed = self.data.sections.remove(&pos).is_some();
         if section_removed {
             self.note_section_unloaded(pos);
-            self.bump_column_payload_revision(pos.chunk_pos());
+            self.data.bump_column_payload_revision(pos.chunk_pos());
         }
-        self.block_entity_sections.remove(&pos);
+        self.data.block_entity_sections.remove(&pos);
         // Mod draw sets are per-cell presentation state: they die with the
         // section like every other per-cell record. Without this the replica's
         // map grows monotonically with distance travelled and keeps drawing
@@ -25,27 +29,13 @@ impl World {
         if section_removed {
             self.forget_block_draws_in_section(pos);
         }
-        self.particle_emitter_sections.remove(&pos);
-        self.gen.awaited_overlays.remove(&pos);
-        self.settle_stream_nonfinal(pos);
-        self.gen.disk_primary_sections.remove(&pos);
-        if self.remove_mesh(pos) {
-            self.terrain
-                .mesh_upload_dirty_columns
-                .insert(pos.chunk_pos());
-        }
-        self.terrain.dirty_meshes.remove(pos);
-        self.terrain.mesh_settle.remove(&pos);
-        self.terrain.light_blocked_meshes.remove(&pos);
-        self.light_deferred.remove(&pos);
-        self.deferred_rechecks.remove(&pos);
-        self.terrain.deep_sections.remove(&pos);
-        self.terrain.visible_deep.remove(&pos);
-        self.terrain.hidden_parked.remove(&pos);
-        self.terrain.sealed_parked.remove(&pos);
+        self.data.particle_emitter_sections.remove(&pos);
+        self.forget_section_mesh(pos);
+        self.data.light_deferred.remove(&pos);
+        self.data.deferred_rechecks.remove(&pos);
         self.light_bakes.cancel(pos);
-        self.light_edited_since_persist.remove(&pos);
-        self.evict_custom_bake_section(pos);
+        self.data.light_edited_since_persist.remove(&pos);
+        self.data.evict_custom_bake_section(pos);
         self.mark_light_dirty_neighborhood(pos, false);
         self.mark_dirty_neighborhood(pos, false);
     }
@@ -55,119 +45,155 @@ impl World {
     pub(in crate::world) fn remove_column(&mut self, pos: ChunkPos) {
         // An evicted column is missing again if an anchor still wants it —
         // the settled short-circuit must not hide it from the next scan.
-        self.missing_columns_settled = false;
+        self.data.missing_columns_settled = false;
         let bits = self.data.section_column_cys.get(&pos).copied().unwrap_or(0);
-        Self::for_each_column_cy(bits, |cy| {
+        for_each_column_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.forget_block_draws_in_section(sp);
-            self.terrain.prediction_terrain.cancel_section(sp);
-            self.sections.remove(&sp);
-            self.block_entity_sections.remove(&sp);
-            self.particle_emitter_sections.remove(&sp);
-            self.terrain.meshes.remove(&sp);
-            if let Some(job) = self.terrain.mesh_job_cancels.remove(&sp) {
-                job.cancel();
+            if let Some(replica) = self.side.replica_mut() {
+                replica.terrain.meshes.remove(&sp);
+                replica.terrain.forget_section(sp);
             }
-            self.terrain.repack_forced.remove(&sp);
-            self.terrain.dirty_meshes.remove(sp);
-            self.terrain.mesh_settle.remove(&sp);
-            self.terrain.light_blocked_meshes.remove(&sp);
-            self.light_deferred.remove(&sp);
-            self.deferred_rechecks.remove(&sp);
-            self.terrain.deep_sections.remove(&sp);
-            self.terrain.visible_deep.remove(&sp);
-            self.terrain.hidden_parked.remove(&sp);
-            self.terrain.sealed_parked.remove(&sp);
+            self.data.sections.remove(&sp);
+            self.data.block_entity_sections.remove(&sp);
+            self.data.particle_emitter_sections.remove(&sp);
+            self.data.light_deferred.remove(&sp);
+            self.data.deferred_rechecks.remove(&sp);
             self.light_bakes.cancel(sp);
-            self.light_edited_since_persist.remove(&sp);
+            self.data.light_edited_since_persist.remove(&sp);
         });
-        self.clear_mesh_column_index(pos);
-        self.clear_section_column_index(pos);
-        self.terrain.mesh_upload_revisions.remove(&pos);
-        self.terrain.mesh_upload_dirty_columns.remove(&pos);
-        self.terrain.mesh_release_after.remove(&pos);
-        self.columns.remove(&pos);
-        self.column_payload_revisions.remove(&pos);
-        self.gen.column_gen.remove(&pos);
-        self.column_summaries.remove(&pos);
-        self.column_biome_halos.remove(&pos);
-        self.column_deep_band_los.remove(&pos);
-        if let Some(Some(job)) = self.gen.pending.remove(&pos) {
-            job.cancel();
+        if let Some(replica) = self.side.replica_mut() {
+            let terrain = &mut replica.terrain;
+            terrain.mesh_columns.remove(&pos);
+            terrain.mesh_column_cys.remove(&pos);
+            terrain.mesh_upload_revisions.remove(&pos);
+            terrain.mesh_upload_dirty_columns.remove(&pos);
+            terrain.mesh_release_after.remove(&pos);
         }
-        let section_jobs: Vec<_> = self
-            .gen
-            .pending_section_jobs
-            .keys()
-            .filter(|sp| sp.chunk_pos() == pos)
-            .copied()
-            .collect();
-        for sp in section_jobs {
-            if let Some(job) = self.gen.pending_section_jobs.remove(&sp) {
+        self.clear_section_column_index(pos);
+        self.data.columns.remove(&pos);
+        self.data.column_payload_revisions.remove(&pos);
+        self.data.column_summaries.remove(&pos);
+        self.data.column_biome_halos.remove(&pos);
+        self.data.column_deep_band_los.remove(&pos);
+        if let Some(server) = self.side.server_mut() {
+            let gen = &mut server.gen;
+            gen.column_gen.remove(&pos);
+            if let Some(Some(job)) = gen.pending.remove(&pos) {
                 job.cancel();
             }
+            gen.pending_section_jobs.retain(|sp, job| {
+                let keep = sp.chunk_pos() != pos;
+                if !keep {
+                    job.cancel();
+                }
+                keep
+            });
         }
-        self.clear_pending_sections_for_column(pos);
-        self.gen.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
-        self.gen
-            .disk_primary_sections
-            .retain(|sp| sp.chunk_pos() != pos);
-        self.evict_custom_bake_column(pos);
+        self.forget_stream_column(pos);
+        if let Some(server) = self.side.server_mut() {
+            let gen = &mut server.gen;
+            gen.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
+            gen.disk_primary_sections.retain(|sp| sp.chunk_pos() != pos);
+        }
+        self.data.evict_custom_bake_column(pos);
     }
 
     /// Drop all loaded sections, columns, meshes, and the in-flight gen set — the
     /// regen path.
     pub fn clear_world(&mut self) {
-        self.terrain.prediction_terrain.cancel_all();
-        self.sections.clear();
-        self.terrain.deep_sections.clear();
-        self.terrain.visible_deep.clear();
-        self.terrain.hidden_parked.clear();
-        self.terrain.sealed_parked.clear();
-        self.block_entity_sections.clear();
-        self.draw_stream.block_draws.clear();
-        self.draw_stream.block_draw_sections.clear();
-        self.particle_emitter_sections.clear();
-        self.columns.clear();
-        self.column_payload_revisions.clear();
-        self.gen.column_gen.clear();
-        self.column_summaries.clear();
-        self.column_biome_halos.clear();
-        self.column_deep_band_los.clear();
-        self.terrain.meshes.clear();
-        for job in self.terrain.mesh_job_cancels.values() {
-            job.cancel();
+        if let Some(replica) = self.side.replica_mut() {
+            replica.terrain.clear();
         }
-        self.terrain.mesh_job_cancels.clear();
-        self.terrain.mesh_settle.clear();
-        self.terrain.mesh_columns.clear();
-        self.terrain.mesh_column_cys.clear();
+        self.data.sections.clear();
+        self.data.block_entity_sections.clear();
+        self.draws.block_draws.clear();
+        self.draws.block_draw_sections.clear();
+        self.data.particle_emitter_sections.clear();
+        self.data.columns.clear();
+        self.data.column_payload_revisions.clear();
+        self.data.column_summaries.clear();
+        self.data.column_biome_halos.clear();
+        self.data.column_deep_band_los.clear();
         self.data.section_column_cys.clear();
         self.data.section_column_rt.clear();
-        self.random_tick_dirty.clear();
-        self.terrain.mesh_upload_revisions.clear();
-        self.terrain.mesh_upload_dirty_columns.clear();
-        self.terrain.mesh_release_after.clear();
-        self.terrain.repack_forced.clear();
-        self.terrain.light_blocked_meshes.clear();
-        self.light_deferred.clear();
-        self.light_edited_since_persist.clear();
-        self.deferred_recheck_needed = false;
-        self.deferred_rechecks.clear();
-        for job in self.gen.pending.values().flatten() {
-            job.cancel();
+        self.data.random_tick_dirty.clear();
+        self.data.light_deferred.clear();
+        self.data.light_edited_since_persist.clear();
+        self.data.deferred_recheck_needed = false;
+        self.data.deferred_rechecks.clear();
+        if let Some(server) = self.side.server_mut() {
+            let gen = &mut server.gen;
+            gen.column_gen.clear();
+            for job in gen.pending.values().flatten() {
+                job.cancel();
+            }
+            gen.pending.clear();
+            for job in gen.pending_section_jobs.values() {
+                job.cancel();
+            }
+            gen.pending_section_jobs.clear();
+            gen.pending_sections.clear();
+            gen.pending_section_columns.clear();
+            gen.pending_overlays.clear();
+            gen.awaited_overlays.clear();
+            gen.disk_primary_sections.clear();
         }
-        self.gen.pending.clear();
-        for job in self.gen.pending_section_jobs.values() {
-            job.cancel();
-        }
-        self.gen.pending_section_jobs.clear();
-        self.clear_all_pending_sections();
-        self.gen.pending_overlays.clear();
-        self.gen.awaited_overlays.clear();
-        self.rebuild_stream_nonfinal();
-        self.gen.disk_primary_sections.clear();
-        self.clear_custom_bake();
+        // Every in-flight set is empty on either side now.
+        self.data.stream_nonfinal.clear();
+        self.data.clear_custom_bake();
         self.bump_terrain_revision();
+    }
+
+    /// Drop section `pos` from the server's pending-generation bookkeeping
+    /// (and re-derive its stream finality). A replica has none.
+    fn forget_stream_section(&mut self, pos: SectionPos) {
+        let Some(server) = self.side.server_mut() else {
+            return;
+        };
+        let gen = &mut server.gen;
+        if gen.pending_sections.remove(&pos) {
+            let column = pos.chunk_pos();
+            if let Some(count) = gen.pending_section_columns.get_mut(&column) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    gen.pending_section_columns.remove(&column);
+                }
+            }
+        }
+        if !gen.pending_sections.contains(&pos)
+            && !gen.awaited_overlays.contains(&pos)
+            && !gen.pending_overlays.contains_key(&pos)
+        {
+            self.data.stream_nonfinal.remove(&pos);
+        }
+    }
+
+    /// Drop column `pos` from the server's pending-generation bookkeeping and
+    /// rebuild stream finality from what is still in flight. A replica has none.
+    fn forget_stream_column(&mut self, pos: ChunkPos) {
+        let Some(server) = self.side.server_mut() else {
+            return;
+        };
+        let gen = &mut server.gen;
+        gen.pending_sections.retain(|sp| sp.chunk_pos() != pos);
+        gen.pending_section_columns.remove(&pos);
+        self.data.stream_nonfinal = gen
+            .pending_sections
+            .iter()
+            .chain(gen.awaited_overlays.iter())
+            .chain(gen.pending_overlays.keys())
+            .copied()
+            .collect();
+    }
+
+    /// Drop section `pos`'s mesh from the replica's presentation, marking its
+    /// packed column for a rebuild. A server never meshes.
+    fn forget_section_mesh(&mut self, pos: SectionPos) {
+        if let Some(replica) = self.side.replica_mut() {
+            if replica.terrain.remove_mesh(pos) {
+                replica.terrain.mesh_upload_dirty_columns.insert(pos.chunk_pos());
+            }
+        }
     }
 }

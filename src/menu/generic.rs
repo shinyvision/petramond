@@ -9,7 +9,7 @@
 //! machine state rather than authored layout.
 
 use super::{ContainerMenu, ContainerTarget, MenuAnchor};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_world::container::{Container, SlotSpec};
 use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
 use petramond_world::gui_state::ContainerView;
@@ -52,7 +52,7 @@ impl ContainerMenu {
     /// container publish through this ONE view — the chest is not a kind the
     /// render path knows by name. (The furnace still draws its own view; it
     /// carries cook/burn gauges the plain slot view has no room for.)
-    pub fn open_container_view(&self, world: &World) -> Option<ContainerView> {
+    pub fn open_container_view(&self, world: &ServerWorld) -> Option<ContainerView> {
         Some(ContainerView {
             slots: self.open_container(world)?.slots.clone(),
         })
@@ -71,7 +71,7 @@ impl ContainerMenu {
     }
 
     /// The open session's backing container, read-only.
-    pub(super) fn open_container<'a>(&self, world: &'a World) -> Option<&'a Container> {
+    pub(super) fn open_container<'a>(&self, world: &'a ServerWorld) -> Option<&'a Container> {
         self.container_anchor()?.container(world)
     }
 
@@ -79,7 +79,7 @@ impl ContainerMenu {
     /// it is anchored on.
     pub(super) fn edit_open_container<R>(
         &self,
-        world: &mut World,
+        world: &mut ServerWorld,
         edit: impl FnOnce(&mut Container) -> R,
     ) -> Option<R> {
         self.container_anchor()?.edit_container(world, edit)
@@ -104,7 +104,7 @@ impl ContainerMenu {
     /// and mod container slot through.
     pub(super) fn container_slot_interaction(
         &self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         i: usize,
@@ -123,7 +123,7 @@ impl ContainerMenu {
 
     fn container_click_slot(
         &self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         i: usize,
@@ -138,7 +138,7 @@ impl ContainerMenu {
         });
     }
 
-    fn container_shift_slot(&self, world: &mut World, inv: &mut Inventory, i: usize) {
+    fn container_shift_slot(&self, world: &mut ServerWorld, inv: &mut Inventory, i: usize) {
         self.edit_open_container(world, |c| {
             if let Some(slot) = c.slots.get_mut(i) {
                 inv.pull_from(slot);
@@ -149,7 +149,7 @@ impl ContainerMenu {
     /// The gather a double-click performs: sweep matching items from the open
     /// container's slots AND the inventory onto the cursor — or the inventory
     /// alone when no block-entity container is open.
-    pub(super) fn collect_to_cursor(&self, world: &mut World, inv: &mut Inventory) {
+    pub(super) fn collect_to_cursor(&self, world: &mut ServerWorld, inv: &mut Inventory) {
         if self.container_anchor().is_some() {
             self.collect_to_cursor_in_container(world, inv);
         } else {
@@ -157,7 +157,7 @@ impl ContainerMenu {
         }
     }
 
-    fn collect_to_cursor_in_container(&self, world: &mut World, inv: &mut Inventory) {
+    fn collect_to_cursor_in_container(&self, world: &mut ServerWorld, inv: &mut Inventory) {
         self.edit_open_container(world, |c| inv.collect_to_cursor_including(&mut c.slots));
     }
 
@@ -171,7 +171,7 @@ impl ContainerMenu {
     /// never targets.
     pub(super) fn container_shift_from_inventory(
         &self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         i: usize,

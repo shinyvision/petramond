@@ -11,12 +11,12 @@
 //! admits a cell by its stored state: every animated row stores one (its
 //! placement front, or its shape's own state).
 
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::animated_model::{AnimatedModelDef, AnimatedPose};
 use petramond_world::block::{Block, ShapeNeighborhood};
 use petramond_world::light::BlockLight6;
 
-use super::store::World;
 
 /// One animated block to draw this frame: where, what, how it is posed by its
 /// own state, and the light at its cell. The client eases the open fraction
@@ -30,13 +30,13 @@ pub struct AnimatedBlock {
     pub blocklight: BlockLight6,
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Gather every loaded animated block into `out` (cleared first). Visits
     /// only the block-entity section index, not every loaded section.
     pub fn collect_animated_blocks(&self, out: &mut Vec<AnimatedBlock>) {
         out.clear();
-        for sp in &self.block_entity_sections {
-            let Some(section) = self.sections.get(sp) else {
+        for sp in &self.data.block_entity_sections {
+            let Some(section) = self.data.sections.get(sp) else {
                 continue;
             };
             let (ox, oy, oz) = section.origin_world();
@@ -51,9 +51,9 @@ impl World {
                     pos,
                     block,
                     pose,
-                    skylight: self.skylight6_at_world(pos.x, pos.y, pos.z),
+                    skylight: self.data.skylight6_at_world(pos.x, pos.y, pos.z),
                     blocklight: BlockLight6::from_x2(
-                        self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
+                        self.data.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
                     ),
                 });
             }
@@ -67,8 +67,8 @@ impl World {
         &self,
         pos: IVec3,
     ) -> Option<(&'static AnimatedModelDef, AnimatedPose)> {
-        let block = ShapeNeighborhood::block(self, pos);
-        block.animated_pose(ShapeNeighborhood::shape_state(self, pos))
+        let block = ShapeNeighborhood::block(&self.data, pos);
+        block.animated_pose(ShapeNeighborhood::shape_state(&self.data, pos))
     }
 }
 
@@ -81,8 +81,8 @@ mod tests {
     use petramond_world::trapdoor::TrapdoorState;
     use petramond_world::world::placement::PlacementPlan;
 
-    fn world() -> World {
-        let mut w = World::new(1, 4);
+    fn world() -> ServerWorld {
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w

@@ -103,7 +103,7 @@ impl Game {
         // target cell — it feeds the dig-sound pick.
         let mining_block = view
             .mining
-            .map(|(p, _)| Block::from_id(self.replica.chunk_block(p.x, p.y, p.z)));
+            .map(|(p, _)| Block::from_id(self.replica.data().chunk_block(p.x, p.y, p.z)));
         // The one in-progress eat belongs to a HAND: its progress animates the
         // hand that is carrying the food, and only that one.
         let eating = self.eating_progress();

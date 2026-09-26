@@ -16,7 +16,7 @@ use crate::server::game::{ServerGame, ServerParts};
 use crate::server::player::ConnectedPlayer;
 use crate::server::progression::RecipeCatalog;
 use crate::worker::JobPool;
-use crate::world::{World, WorldRole};
+use crate::world::ServerWorld;
 use petramond_math::math::Vec3;
 use petramond_world::crafting::load_recipes_for;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
@@ -164,7 +164,7 @@ pub fn build_server_with_pool(
     }
     // The SERVER world: sim + gen + light, no meshing (a replica draws).
     let mut world =
-        World::new_with_pool(seed, render_dist, WorldRole::ServerHeadless, pool.clone());
+        ServerWorld::with_pool(seed, render_dist, pool.clone());
     perf.mark("pool_and_world");
     // Section records deflate on the same shared pool.
     let save = opened.save.map(|(mut save, saved)| {
@@ -330,7 +330,7 @@ pub fn spawn_player(seed: u32) -> Player {
     Player::new(feet)
 }
 
-pub fn attach_save(world: &mut World, save: Option<(WorldSave, crate::world::SavedIndex)>) {
+pub fn attach_save(world: &mut ServerWorld, save: Option<(WorldSave, crate::world::SavedIndex)>) {
     if let Some((save, saved)) = save {
         world.attach_save(save, saved);
     }

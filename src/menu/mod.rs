@@ -14,7 +14,7 @@ pub use target::{ContainerTarget, MenuAnchor};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_math::facing::Facing;
     use petramond_math::math::IVec3;
     use petramond_world::block::Block;
@@ -75,8 +75,8 @@ mod tests {
         );
     }
 
-    fn world_with_empty_chunk() -> World {
-        let mut world = World::new(1, 1);
+    fn world_with_empty_chunk() -> ServerWorld {
+        let mut world = ServerWorld::new(1, 1);
         let pos = petramond_world::chunk::ChunkPos::new(0, 0);
         world.clear_world();
         world.insert_chunk_for_test(pos, petramond_world::chunk::Chunk::new(0, 0));

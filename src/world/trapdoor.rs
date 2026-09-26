@@ -7,17 +7,17 @@
 //! its animated block model and its collision is read live from the state, so a
 //! toggle needs no remesh.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::trapdoor::TrapdoorState;
 
-use super::store::World;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// The trapdoor state at world `pos`, or `None` when no trapdoor is
     /// recorded there or the cell is unloaded.
     #[inline]
     pub fn trapdoor_state_at(&self, wx: i32, wy: i32, wz: i32) -> Option<TrapdoorState> {
-        let (c, lx, ly, lz) = self.chunk_at_world(wx, wy, wz)?;
+        let (c, lx, ly, lz) = self.data.chunk_at_world(wx, wy, wz)?;
         c.trapdoor_state(lx, ly, lz)
     }
 
@@ -28,16 +28,14 @@ impl World {
     pub fn toggle_trapdoor(&mut self, pos: IVec3) -> Option<bool> {
         let mut state = self.trapdoor_state_at(pos.x, pos.y, pos.z)?;
         state.open = !state.open;
-        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+        if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.set_trapdoor_state(lx, ly, lz, state);
         }
         // A toggle rewrites the cell state with NO block-id write, so it never
         // passes the announce choke point — log its delta explicitly (the new
         // open bit reaches replicas with it) and invalidate the nav caches the
         // same way: an opened hatch is a way down NOW.
-        if self.replication.replication_capture {
-            self.record_block_delta(pos.x, pos.y, pos.z);
-        }
+        self.record_block_delta(pos.x, pos.y, pos.z);
         self.push_nav_change(pos);
         Some(state.open)
     }
@@ -53,8 +51,8 @@ mod tests {
 
     const TRAPDOOR: Block = Block::OakTrapdoor;
 
-    fn world_with_a_trapdoor(top: bool) -> (World, IVec3) {
-        let mut w = World::new(1, 4);
+    fn world_with_a_trapdoor(top: bool) -> (ServerWorld, IVec3) {
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let pos = IVec3::new(5, 64, 5);
@@ -89,7 +87,7 @@ mod tests {
     /// face, plans — through the shared placement ladder, so this is the rule
     /// the server write and the client ghost both run.
     fn clicked(normal: IVec3, spot_y: f32, player_facing: Facing) -> TrapdoorState {
-        let mut w = World::new(1, 4);
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let hit = IVec3::new(5, 64, 5);
@@ -140,11 +138,11 @@ mod tests {
     #[test]
     fn toggling_swaps_the_collision_slab_between_flat_and_upright() {
         let (mut w, pos) = world_with_a_trapdoor(false);
-        let flat = w.collision_boxes_at(pos.x, pos.y, pos.z)[0];
+        let flat = w.data.collision_boxes_at(pos.x, pos.y, pos.z)[0];
         assert!(flat.max[1] - flat.min[1] < 0.5, "closed: a flat panel");
 
         assert_eq!(w.toggle_trapdoor(pos), Some(true));
-        let upright = w.collision_boxes_at(pos.x, pos.y, pos.z)[0];
+        let upright = w.data.collision_boxes_at(pos.x, pos.y, pos.z)[0];
         assert!(
             (upright.max[1] - upright.min[1] - 1.0).abs() < 1e-5,
             "open: standing full height"

@@ -2,7 +2,7 @@
 //! that feed them to `petramond_world::exposure::BodyExposure::tick` for
 //! players and mobs alike.
 
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_world::condition::BodyConditions;
 use petramond_world::exposure::{BodyExposure, ExposureDamage};
 use petramond_world::{fluid::FluidDef, fluid_math::fluid_height};
@@ -25,7 +25,7 @@ impl ExposureScratch {
     /// [`damage`](Self::damage) with what is due.
     pub fn tick(
         &mut self,
-        world: &World,
+        world: &ServerWorld,
         boxes: impl IntoIterator<Item = WorldBox>,
         exposure: &mut BodyExposure,
     ) {
@@ -44,7 +44,7 @@ impl ExposureScratch {
 /// meaningless. A fluid's surface excludes the empty space above a thin flow,
 /// and contained fluids count like any other.
 fn gather_touched_fluids(
-    world: &World,
+    world: &ServerWorld,
     boxes: impl IntoIterator<Item = WorldBox>,
     out: &mut Vec<&'static FluidDef>,
 ) -> bool {
@@ -64,7 +64,7 @@ fn gather_touched_fluids(
                     let Some(above) = world.block_if_stream_final(x, y + 1, z) else {
                         return false;
                     };
-                    let height = fluid_height(world.fluid_meta_world(x, y, z), above, def.block);
+                    let height = fluid_height(world.data().fluid_meta_world(x, y, z), above, def.block);
                     if min[1] + CONTACT_EPS < f64::from(y) + f64::from(height) {
                         out.push(def);
                     }
@@ -80,7 +80,7 @@ fn gather_touched_fluids(
 /// [`gather_touched_fluids`] into a fresh list; `None` for unknown terrain.
 #[cfg(test)]
 pub(crate) fn touched_fluids(
-    world: &World,
+    world: &ServerWorld,
     boxes: impl IntoIterator<Item = WorldBox>,
 ) -> Option<Vec<&'static FluidDef>> {
     let mut out = Vec::new();

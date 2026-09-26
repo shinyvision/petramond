@@ -1,19 +1,16 @@
-use crate::world::store::World;
 #[cfg(test)]
+use crate::world::ReplicaWorld;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-use super::{
-    max_mesh_jobs_in_flight, CANDIDATE_SCAN_PER_MESH_JOB, MESH_SUBMIT_TIME_BUDGET,
-    MIN_MESH_JOBS_PER_PUMP,
-};
+use super::{max_mesh_jobs_in_flight, CANDIDATE_SCAN_PER_MESH_JOB, MESH_SUBMIT_TIME_BUDGET, MIN_MESH_JOBS_PER_PUMP};
 
-impl World {
+impl ReplicaWorld {
     /// Drain finished meshes and submit newly-dirty sections to the off-thread mesh
     /// pool, capped per frame. The render thread never builds a mesh here — it only
     /// snapshots a section + its neighbourhood (cheap) and drains results — so a heavy
     /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
-        self.terrain.mesh_pump_frame += 1;
+        self.side.terrain.mesh_pump_frame += 1;
         self.drain_prediction_terrain();
         self.pump_light_bakes();
         self.drain_finished_meshes();
@@ -30,7 +27,7 @@ impl World {
         // Never let the pool's FIFO channel outgrow the cap: leave the rest of the backlog in
         // the nearest-first `dirty_meshes` so a just-edited section isn't stuck behind it.
         let in_flight_room =
-            max_mesh_jobs_in_flight().saturating_sub(self.terrain.mesh_jobs_in_flight);
+            max_mesh_jobs_in_flight().saturating_sub(self.side.terrain.mesh_jobs_in_flight);
         if in_flight_room == 0 {
             return;
         }
@@ -41,33 +38,33 @@ impl World {
         // Ingest can raise this every frame while thousands of sections arrive.
         // One refresh per eight frames keeps the O(deep) BFS bounded; parked
         // sections re-enter automatically on the next refresh.
-        if self.terrain.vis_dirty && self.terrain.mesh_pump_frame.is_multiple_of(8) {
+        if self.side.terrain.vis_dirty && self.side.terrain.mesh_pump_frame.is_multiple_of(8) {
             self.refresh_deep_visibility();
         }
         if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
             return;
         }
-        let target = self.last_load_target;
+        let target = self.data.last_load_target;
         let candidates = self
-            .terrain
+            .side.terrain
             .dirty_meshes
             .pop_nearest_batch(candidate_cap, target);
         let mut submitted = 0usize;
         for (i, &pos) in candidates.iter().enumerate() {
             if submitted > 0 && submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                 for &rest in &candidates[i..] {
-                    self.terrain.dirty_meshes.push(rest);
+                    self.side.terrain.dirty_meshes.push(rest);
                 }
                 break;
             }
-            if !self.sections.contains_key(&pos) {
+            if !self.data.sections.contains_key(&pos) {
                 continue;
             }
             // A predicted light -> mesh bundle owns this presentation until
             // its revision-fresh result lands. In particular, do not clear an
             // all-air section's old mesh between the two atomic stages.
-            if self.terrain.prediction_terrain.owns_mesh(pos) {
-                self.terrain.light_blocked_meshes.insert(pos);
+            if self.side.terrain.prediction_terrain.owns_mesh(pos) {
+                self.side.terrain.light_blocked_meshes.insert(pos);
                 continue;
             }
             // Hidden deep section: nothing can see it — park it out of the hot
@@ -76,8 +73,8 @@ impl World {
             // Repack-forced sections are exempt: their (released) geometry is still
             // part of the packed column buffer, so the repack needs a fresh mesh
             // even if nothing can currently see the section.
-            if self.section_hidden(pos) && !self.terrain.repack_forced.contains(&pos) {
-                self.terrain.hidden_parked.insert(pos);
+            if self.section_hidden(pos) && !self.side.terrain.repack_forced.contains(&pos) {
+                self.side.terrain.hidden_parked.insert(pos);
                 continue;
             }
             // All-air sections emit nothing: settle them (dropping any ghost mesh)
@@ -85,19 +82,19 @@ impl World {
             if self.clear_mesh_if_section_produces_no_mesh(pos) {
                 if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
-                        self.terrain.dirty_meshes.push(rest);
+                        self.side.terrain.dirty_meshes.push(rest);
                     }
                     break;
                 }
                 continue;
             }
             if self.section_sealed_by_loaded_neighbors(pos)
-                && !self.terrain.repack_forced.contains(&pos)
+                && !self.side.terrain.repack_forced.contains(&pos)
             {
-                self.terrain.sealed_parked.insert(pos);
-                self.terrain.dirty_meshes.remove(pos);
-                self.terrain.light_blocked_meshes.remove(&pos);
-                if let Some(s) = self.section_mut(pos) {
+                self.side.terrain.sealed_parked.insert(pos);
+                self.side.terrain.dirty_meshes.remove(pos);
+                self.side.terrain.light_blocked_meshes.remove(&pos);
+                if let Some(s) = self.data.section_mut(pos) {
                     s.dirty = false;
                     // Invalidate a snapshot taken before the final sealing
                     // neighbour landed. Keep any installed mesh as the fail-safe.
@@ -108,30 +105,30 @@ impl World {
             // Don't snapshot from stale light: a section whose 3×3×3 light isn't baked
             // yet parks outside the hot dirty queue, so the snapshot always carries final light.
             if self.request_light_dependencies(pos) {
-                self.terrain.light_blocked_meshes.insert(pos);
+                self.side.terrain.light_blocked_meshes.insert(pos);
                 if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
-                        self.terrain.dirty_meshes.push(rest);
+                        self.side.terrain.dirty_meshes.push(rest);
                     }
                     break;
                 }
                 continue;
             }
             if self.stream_mesh_waiting(pos) {
-                self.terrain.dirty_meshes.push(pos);
+                self.side.terrain.dirty_meshes.push(pos);
                 continue;
             }
             if let Some(job) = self.build_mesh_job(pos) {
                 let key = target.map_or(0, |t| t.section_priority_key(pos));
-                let cancel = self.terrain.mesh_pool.submit(key, job);
-                self.terrain.mesh_job_cancels.insert(pos, cancel);
-                self.terrain.mesh_jobs_in_flight += 1;
+                let cancel = self.side.terrain.mesh_pool.submit(key, job);
+                self.side.terrain.mesh_job_cancels.insert(pos, cancel);
+                self.side.terrain.mesh_jobs_in_flight += 1;
                 submitted += 1;
                 if submitted >= target_jobs
                     || (submitted > 0 && submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
                 {
                     for &rest in &candidates[i + 1..] {
-                        self.terrain.dirty_meshes.push(rest);
+                        self.side.terrain.dirty_meshes.push(rest);
                     }
                     break;
                 }
@@ -146,7 +143,7 @@ impl World {
         use std::time::{Duration, Instant};
         for dz in -1..=1 {
             for dx in -1..=1 {
-                self.ensure_column(ChunkPos::new(pos.cx + dx, pos.cz + dz));
+                self.data.ensure_column(ChunkPos::new(pos.cx + dx, pos.cz + dz));
             }
         }
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -154,8 +151,8 @@ impl World {
             self.tick_mesh_budget(8);
             // Up to date once a mesh exists AND the section isn't queued/in-flight for a
             // fresher one (a re-dirty sets `dirty`, the drained result clears it).
-            let ready = self.terrain.meshes.contains_key(&pos)
-                && self.sections.get(&pos).is_none_or(|s| !s.dirty);
+            let ready = self.side.terrain.meshes.contains_key(&pos)
+                && self.data.sections.get(&pos).is_none_or(|s| !s.dirty);
             if ready {
                 return;
             }

@@ -52,7 +52,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     // once the server's light bake lands (the light-final ship gate); with the
     // inline test pool that completes inside the pump.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-    while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
+    while game.replica.data().chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(
             std::time::Instant::now() < deadline,
             "the server floor replicated"
@@ -60,7 +60,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         frame(&mut game);
     }
     assert!(
-        game.replica.loaded_section_count() > 0,
+        game.replica.data().loaded_section_count() > 0,
         "replica sections appear from the pipe"
     );
     assert!(
@@ -70,7 +70,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         "the install seeded the server's baked light — the replica never bakes"
     );
     assert!(
-        game.replica.chunk_loaded(0, 0),
+        game.replica.data().chunk_loaded(0, 0),
         "the column data replicated (heightmap/biome/summaries)"
     );
 
@@ -78,7 +78,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     assert!(game.server.world_mut().set_block_world(8, 66, 8, Block::Dirt));
     frame(&mut game);
     assert_eq!(
-        game.replica.chunk_block(8, 66, 8),
+        game.replica.data().chunk_block(8, 66, 8),
         Block::Dirt.id(),
         "a block placed server-side shows up in the replica after the pump"
     );
@@ -116,7 +116,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         frame(&mut game);
     }
     assert!(
-        !game.replica.chunk_loaded(0, 0),
+        !game.replica.data().chunk_loaded(0, 0),
         "the left-behind column unloaded from the replica"
     );
     assert!(
@@ -135,7 +135,7 @@ fn server_rebakes_replicate_as_light_data() {
 
     // Wait for the lit floor section to ship.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-    while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
+    while game.replica.data().chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(std::time::Instant::now() < deadline, "the floor replicated");
         frame(&mut game);
     }

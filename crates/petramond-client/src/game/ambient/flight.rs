@@ -16,7 +16,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
 use glam::Vec3;
 use petramond::entity::hash01;
-use petramond::world::World;
+use petramond::world::ReplicaWorld;
 use petramond_world::particle_emitters::{AmbientLight, AmbientSpec, FlightSpec};
 
 use super::super::presentation::{ParticleAtlas, ParticlePresentation};
@@ -64,7 +64,7 @@ pub(super) fn orbit_ground(
     spec: &AmbientSpec,
     flight: &FlightSpec,
     act: &Activation,
-    world: &World,
+    world: &ReplicaWorld,
     x: f64,
     z: f64,
     roll: f32,
@@ -77,14 +77,14 @@ pub(super) fn orbit_ground(
     let (rx, rz) = (f64::from(rx), f64::from(rz));
     for wz in (z - rz).floor() as i32..=(z + rz).floor() as i32 {
         for wx in (x - rx).floor() as i32..=(x + rx).floor() as i32 {
-            let biome = world.biome_at_world(wx, wz)?;
+            let biome = world.data().biome_at_world(wx, wz)?;
             if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, biome)
                 || !act.admits(roll, biome)
             {
                 return None;
             }
-            let ground = world.precipitation_ceiling_y(wx, wz)?;
-            let support = world.block_if_loaded(wx, ground, wz)?;
+            let ground = world.data().precipitation_ceiling_y(wx, wz)?;
+            let support = world.data().block_if_loaded(wx, ground, wz)?;
             if !flight.ground.is_empty() && !flight.ground.iter().any(|&t| support.has_tag(t)) {
                 return None;
             }
@@ -167,7 +167,7 @@ pub(super) fn derive_flight(
             let tint = colour(spec, seed ^ 9);
             let (skylight, blocklight) = match spec.light {
                 AmbientLight::Sky => (SKY_OPEN_LIGHT, petramond_world::light::BlockLight6::DARK),
-                AmbientLight::World => world.dynamic_light_at_world(
+                AmbientLight::World => world.data().dynamic_light_at_world(
                     px.floor() as i32,
                     pos.y.floor() as i32,
                     pz.floor() as i32,

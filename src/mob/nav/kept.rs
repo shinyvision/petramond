@@ -14,7 +14,7 @@ use petramond_math::math::IVec3;
 
 use crate::mob::path::{self, BoxFacts, BoxLeads, Fact, PathParams, Reads};
 use crate::mob::Mob;
-use crate::world::World;
+use crate::world::ServerWorld;
 
 /// The lanes of a kept box's [`BoxFacts`]. Every one is a fact of the world
 /// alone, never of one search's planned cells, so the table outlives the
@@ -49,7 +49,7 @@ pub struct KeptBox {
 }
 
 impl KeptBox {
-    fn new(world: &World, kind: Mob, inner: (IVec3, IVec3), reads: Reads) -> Self {
+    fn new(world: &ServerWorld, kind: Mob, inner: (IVec3, IVec3), reads: Reads) -> Self {
         let outer = reads.around(inner.0, inner.1);
         KeptBox {
             kind,
@@ -73,7 +73,7 @@ impl KeptBox {
     }
 
     /// Bring the box up to date with the world, or report that it cannot be.
-    fn refresh(&mut self, world: &World) -> bool {
+    fn refresh(&mut self, world: &ServerWorld) -> bool {
         if self.streamed != stream_witness(world, self.outer) {
             return false;
         }
@@ -108,7 +108,7 @@ impl KeptBoxes {
     /// brought up to date — or over a fresh one for `fresh_span`, kept after.
     pub(super) fn over<R>(
         &self,
-        world: &World,
+        world: &ServerWorld,
         kind: Mob,
         params: PathParams,
         span: (IVec3, IVec3),
@@ -150,7 +150,7 @@ impl KeptBoxes {
 
 /// Which of the box's sections are loaded and final, folded to one number:
 /// streaming replaces what a cell reads without any change being announced.
-fn stream_witness(world: &World, (min, max): (IVec3, IVec3)) -> u64 {
+fn stream_witness(world: &ServerWorld, (min, max): (IVec3, IVec3)) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     let step = petramond_world::chunk::SECTION_SIZE as i32;
     let (lo, hi) = (
@@ -162,7 +162,7 @@ fn stream_witness(world: &World, (min, max): (IVec3, IVec3)) -> u64 {
             for cx in lo.x..=hi.x {
                 let (x, y, z) = (cx * step, cy * step, cz * step);
                 hasher.write_u8(
-                    u8::from(world.section_loaded_at(x, y, z))
+                    u8::from(world.data().section_loaded_at(x, y, z))
                         | u8::from(world.physics_cell_final_at(x, y, z)) << 1,
                 );
             }

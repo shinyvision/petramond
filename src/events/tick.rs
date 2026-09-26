@@ -8,10 +8,8 @@ use crate::player::PlayerId;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
-/// Fixed simulation timestep: 20 game ticks per second, independent of frame
-/// rate. World simulation (block updates, scheduled ticks, water flow) advances
-/// in whole steps of this size.
-pub const TICK_DT: f32 = 0.05;
+/// Fixed simulation timestep (20 TPS) — the world's own tick step.
+pub use crate::world::TICK_DT;
 
 /// One sound a mod emitted on the tick (`EmitSound` HostCall): resolved to a
 /// runtime [`Sound`](petramond_world::sound_registry::Sound) id at call time, carried through the

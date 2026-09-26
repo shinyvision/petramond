@@ -44,7 +44,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             let Some(pos) = SectionPos::from_world(origin[0], origin[1], origin[2]) else {
                 return HostRet::FoundBlocks(Some(Vec::new()));
             };
-            let Some(section) = ctx.world.section_ref(pos) else {
+            let Some(section) = ctx.world.data().section_ref(pos) else {
                 return HostRet::FoundBlocks(Some(Vec::new()));
             };
             let mut indices: Vec<_> = section
@@ -67,7 +67,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             ))
         }),
         HostCall::WorldKvGet { key } => {
-            sim_query(|ctx| HostRet::Bytes(ctx.world.world_kv_get(&key).map(<[u8]>::to_vec)))
+            sim_query(|ctx| HostRet::Bytes(ctx.world.data().world_kv_get(&key).map(<[u8]>::to_vec)))
         }
         HostCall::WorldKvSet { key, value } => guarded_write(mod_id, key, value.len(), |key| {
             sim_call(|ctx| ctx.world.world_kv_set(key, value))
@@ -79,7 +79,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             let p = IVec3::from(pos);
             HostRet::Bytes(
                 ctx.world
-                    .cell_kv_get(p.x, p.y, p.z, &key)
+                    .data().cell_kv_get(p.x, p.y, p.z, &key)
                     .map(<[u8]>::to_vec),
             )
         }),
@@ -90,8 +90,8 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                     // Aggregate cap: a NEW key on a cell already at the limit
                     // is an error (overwrites always pass) — see
                     // `CELL_KV_MAX_KEYS` for why cells must stay small.
-                    if ctx.world.cell_kv_get(p.x, p.y, p.z, &key).is_none()
-                        && ctx.world.cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
+                    if ctx.world.data().cell_kv_get(p.x, p.y, p.z, &key).is_none()
+                        && ctx.world.data().cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
                     {
                         return HostRet::Error(format!(
                             "cell {p:?} already holds {CELL_KV_MAX_KEYS} KV keys"
@@ -121,7 +121,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                         .map(|pos| {
                             let p = IVec3::from(pos);
                             ctx.world
-                                .cell_kv_get(p.x, p.y, p.z, &key)
+                                .data().cell_kv_get(p.x, p.y, p.z, &key)
                                 .map(<[u8]>::to_vec)
                         })
                         .collect(),
@@ -149,8 +149,8 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                                 let Some(value) = value else {
                                     return ctx.world.cell_kv_remove(p.x, p.y, p.z, &key);
                                 };
-                                if ctx.world.cell_kv_get(p.x, p.y, p.z, &key).is_none()
-                                    && ctx.world.cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
+                                if ctx.world.data().cell_kv_get(p.x, p.y, p.z, &key).is_none()
+                                    && ctx.world.data().cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
                                 {
                                     return false;
                                 }

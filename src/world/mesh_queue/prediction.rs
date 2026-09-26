@@ -1,11 +1,12 @@
+use crate::world::ReplicaWorld;
 use crate::world::WorldData;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
-use crate::world::store::{SkyCoverChange, World};
+use crate::world::store::SkyCoverChange;
 use petramond_world::chunk::{self, ChunkPos, SectionPos};
 
-impl World {
+impl ReplicaWorld {
     /// Present a reconciliation/rollback edit without blocking the client
     /// owner thread. The corrective light and meshes publish together after
     /// revision validation.
@@ -19,7 +20,7 @@ impl World {
         let Some(work) = self.prepare_prediction_terrain(previous) else {
             return;
         };
-        let requeue = self.terrain.prediction_terrain.submit(work);
+        let requeue = self.side.terrain.prediction_terrain.submit(work);
         self.requeue_prediction_meshes(&requeue);
     }
 
@@ -37,9 +38,9 @@ impl World {
             return;
         };
         let guarded: Vec<_> = work.guards.iter().map(|guard| guard.pos).collect();
-        let requeue = self.terrain.prediction_terrain.cancel_overlapping(&guarded);
+        let requeue = self.side.terrain.prediction_terrain.cancel_overlapping(&guarded);
         self.requeue_prediction_meshes(&requeue);
-        let pool = Arc::clone(self.terrain.prediction_terrain.pool());
+        let pool = Arc::clone(self.side.terrain.prediction_terrain.pool());
         let result = run_prediction_terrain_synchronously(work, &pool)
             .expect("an uncancelled synchronous prediction bundle completes");
         let installed = self.install_prediction_terrain_result(result);
@@ -72,7 +73,7 @@ impl World {
                     for dx in -1..=1 {
                         let pos =
                             SectionPos::new(mesh_pos.cx + dx, mesh_pos.cy + dy, mesh_pos.cz + dz);
-                        if self.sections.contains_key(&pos) && sampled_seen.insert(pos) {
+                        if self.data.sections.contains_key(&pos) && sampled_seen.insert(pos) {
                             sampled.push(pos);
                         }
                     }
@@ -83,7 +84,7 @@ impl World {
             .iter()
             .copied()
             .filter(|pos| {
-                self.sections
+                self.data.sections
                     .get(pos)
                     .is_some_and(|section| section.light_dirty && !section.all_opaque())
             })
@@ -92,7 +93,7 @@ impl World {
         let guards: Vec<SectionGuard> = sampled
             .into_iter()
             .filter_map(|pos| {
-                self.sections.get(&pos).map(|section| SectionGuard {
+                self.data.sections.get(&pos).map(|section| SectionGuard {
                     pos,
                     light_revision: section.light_revision,
                     mesh_revision: section.mesh_revision,
@@ -108,7 +109,7 @@ impl World {
                 let job = snapshot_batch(base, &members, &self.data.sections, &self.data.columns)?;
                 let mut prev = Vec::with_capacity(members.len());
                 for pos in job.member_positions() {
-                    let section = self.sections.get(&pos).expect("batch members are loaded");
+                    let section = self.data.sections.get(&pos).expect("batch members are loaded");
                     prev.push((section.skylight_arc(), section.blocklight_arc()));
                 }
                 lights.push(PredictionLightUnit::Batch { job, prev });
@@ -116,7 +117,7 @@ impl World {
                 for pos in members {
                     let job =
                         LightBakeJob::snapshot(0, pos, &self.data.sections, &self.data.columns)?;
-                    let section = self.sections.get(&pos).expect("filtered on presence");
+                    let section = self.data.sections.get(&pos).expect("filtered on presence");
                     lights.push(PredictionLightUnit::Single(Box::new(PredictionLightJob {
                         job,
                         prev_skylight: section.skylight_arc(),
@@ -127,7 +128,7 @@ impl World {
         }
         let mut meshes = Vec::with_capacity(candidates.len());
         for pos in candidates {
-            let Some(section) = self.sections.get(&pos) else {
+            let Some(section) = self.data.sections.get(&pos) else {
                 continue;
             };
             if section.is_empty_air() {
@@ -177,23 +178,23 @@ impl World {
             for dy in -1..=1 {
                 for dz in -1..=1 {
                     for dx in -1..=1 {
-                        let gap = World::axis_gap(lx, dx)
-                            + World::axis_gap(ly, dy)
-                            + World::axis_gap(lz, dz);
+                        let gap = Self::axis_gap(lx, dx)
+                            + Self::axis_gap(ly, dy)
+                            + Self::axis_gap(lz, dz);
                         if gap > SAMPLER_REACH {
                             continue;
                         }
                         let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
-                        if !self.sections.contains_key(&pos) {
+                        if !self.data.sections.contains_key(&pos) {
                             continue;
                         }
                         if seen.insert(pos) {
                             candidates.push(pos);
                         }
                         // The pad samples one cell across each bordering face.
-                        let samples_cell = (dx == 0 || World::axis_gap(lx, dx) == 1)
-                            && (dy == 0 || World::axis_gap(ly, dy) == 1)
-                            && (dz == 0 || World::axis_gap(lz, dz) == 1);
+                        let samples_cell = (dx == 0 || Self::axis_gap(lx, dx) == 1)
+                            && (dy == 0 || Self::axis_gap(ly, dy) == 1)
+                            && (dz == 0 || Self::axis_gap(lz, dz) == 1);
                         if samples_cell && !always_mesh.contains(&pos) {
                             always_mesh.push(pos);
                         }
@@ -218,7 +219,7 @@ impl World {
                 wx.div_euclid(chunk::SECTION_SIZE as i32),
                 wz.div_euclid(chunk::SECTION_SIZE as i32),
             );
-            let Some(column) = self.columns.get(&cpos) else {
+            let Some(column) = self.data.columns.get(&cpos) else {
                 continue;
             };
             let new_cover = column.sky_cover_y(chunk::lx(wx), chunk::lz(wz));
@@ -239,7 +240,7 @@ impl World {
                     let old_id = previous
                         .iter()
                         .find(|(cell, _)| cell.x == wx && cell.y == wy && cell.z == wz)
-                        .map_or_else(|| self.chunk_block(wx, wy, wz), |(_, id)| *id);
+                        .map_or_else(|| self.data.chunk_block(wx, wy, wz), |(_, id)| *id);
                     !petramond_world::block::Block::from_id(old_id).transmits_direct_skylight()
                 })
                 .unwrap_or(petramond_world::column::NO_SURFACE);
@@ -280,17 +281,17 @@ impl World {
                 for dz in -1..=1 {
                     for dx in -1..=1 {
                         let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
-                        if seen.contains(&pos) || !self.sections.contains_key(&pos) {
+                        if seen.contains(&pos) || !self.data.sections.contains_key(&pos) {
                             continue;
                         }
-                        let pending = self.terrain.dirty_meshes.contains(pos)
-                            || self.terrain.light_blocked_meshes.contains(&pos)
-                            || self.light_deferred.contains(&pos)
+                        let pending = self.side.terrain.dirty_meshes.contains(pos)
+                            || self.side.terrain.light_blocked_meshes.contains(&pos)
+                            || self.data.light_deferred.contains(&pos)
                             // A mesh job queued on / in flight through the
                             // worker pool: the bundle's fresh build supersedes
                             // it (install cancels the job; a stale result is
                             // revision-fenced at the drain).
-                            || self.terrain.mesh_job_cancels.contains_key(&pos);
+                            || self.side.terrain.mesh_job_cancels.contains_key(&pos);
                         if pending && seen.insert(pos) {
                             candidates.push(pos);
                         }
@@ -306,7 +307,7 @@ impl World {
     /// authoritative light landing, unload, or newer prediction rejects the
     /// entire bundle and hands its mesh targets back to the ordinary pipeline.
     pub(super) fn drain_prediction_terrain(&mut self) {
-        while let Some(completion) = self.terrain.prediction_terrain.try_recv() {
+        while let Some(completion) = self.side.terrain.prediction_terrain.try_recv() {
             let installed = completion
                 .result
                 .is_some_and(|result| self.install_prediction_terrain_result(result));
@@ -323,18 +324,18 @@ impl World {
         use crate::world::prediction_render::{PredictionMeshResult, PredictionTerrainResult};
 
         let guards_fresh = result.guards.iter().all(|guard| {
-            self.sections.get(&guard.pos).is_some_and(|section| {
+            self.data.sections.get(&guard.pos).is_some_and(|section| {
                 section.light_revision == guard.light_revision
                     && section.mesh_revision == guard.mesh_revision
             })
         });
         let lights_fresh = result.lights.iter().all(|light| {
-            self.sections.get(&light.result.pos).is_some_and(|section| {
+            self.data.sections.get(&light.result.pos).is_some_and(|section| {
                 section.light_dirty && section.light_revision == light.result.revision
             })
         });
         let meshes_fresh = result.meshes.iter().all(|mesh| {
-            self.sections
+            self.data.sections
                 .get(&mesh.pos())
                 .is_some_and(|section| section.mesh_revision == mesh.revision())
         });
@@ -352,7 +353,7 @@ impl World {
         for light in lights {
             let pos = light.result.pos;
             self.light_bakes.cancel(pos);
-            if let Some(section) = self.section_mut(pos) {
+            if let Some(section) = self.data.section_mut(pos) {
                 if light.mask == 0 {
                     // Byte-identical rebake: the cached cubes and every mesh
                     // built from them remain exact — settle the flag only.
@@ -373,37 +374,37 @@ impl World {
             }
         }
         if changed_light {
-            self.bump_lighting_revision();
+            self.data.bump_lighting_revision();
         }
 
         let mut installed = FxHashSet::default();
         for mesh in meshes {
             let pos = mesh.pos();
-            if let Some(job) = self.terrain.mesh_job_cancels.get(&pos) {
+            if let Some(job) = self.side.terrain.mesh_job_cancels.get(&pos) {
                 job.cancel();
             }
             match mesh {
                 PredictionMeshResult::Built { mut mesh, .. } => {
                     mesh.mesh_dirty = true;
-                    self.install_mesh(pos, *mesh);
+                    self.side.terrain.install_mesh(pos, *mesh);
                 }
                 PredictionMeshResult::Remove { .. } => {
-                    if self.remove_mesh(pos) {
-                        self.terrain
+                    if self.side.terrain.remove_mesh(pos) {
+                        self.side.terrain
                             .mesh_upload_dirty_columns
                             .insert(pos.chunk_pos());
                     }
                 }
             }
             installed.insert(pos);
-            self.terrain.upload_urgent_columns.insert(pos.chunk_pos());
-            self.terrain.dirty_meshes.remove(pos);
-            self.terrain.light_blocked_meshes.remove(&pos);
-            self.terrain.hidden_parked.remove(&pos);
-            self.terrain.sealed_parked.remove(&pos);
-            self.light_deferred.remove(&pos);
-            self.deferred_rechecks.remove(&pos);
-            if let Some(section) = self.section_mut(pos) {
+            self.side.terrain.upload_urgent_columns.insert(pos.chunk_pos());
+            self.side.terrain.dirty_meshes.remove(pos);
+            self.side.terrain.light_blocked_meshes.remove(&pos);
+            self.side.terrain.hidden_parked.remove(&pos);
+            self.side.terrain.sealed_parked.remove(&pos);
+            self.data.light_deferred.remove(&pos);
+            self.data.deferred_rechecks.remove(&pos);
+            if let Some(section) = self.data.section_mut(pos) {
                 section.dirty = false;
             }
         }
@@ -421,9 +422,9 @@ impl World {
                         }
                         let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                         if installed.contains(&p)
-                            || self.terrain.dirty_meshes.contains(p)
-                            || self.terrain.light_blocked_meshes.contains(&p)
-                            || !self.sections.contains_key(&p)
+                            || self.side.terrain.dirty_meshes.contains(p)
+                            || self.side.terrain.light_blocked_meshes.contains(&p)
+                            || !self.data.sections.contains_key(&p)
                         {
                             continue;
                         }
@@ -438,9 +439,9 @@ impl World {
 
     fn requeue_prediction_meshes(&mut self, positions: &[SectionPos]) {
         for &pos in positions {
-            self.terrain.light_blocked_meshes.remove(&pos);
-            if self.sections.contains_key(&pos) {
-                self.terrain.dirty_meshes.push(pos);
+            self.side.terrain.light_blocked_meshes.remove(&pos);
+            if self.data.sections.contains_key(&pos) {
+                self.side.terrain.dirty_meshes.push(pos);
             }
         }
     }

@@ -1,6 +1,6 @@
 pub(crate) mod capture;
 
-use super::World;
+use crate::world::ServerWorld;
 use crate::schematic::share::GhostPlacement;
 use crate::schematic::store::Store;
 
@@ -16,7 +16,7 @@ pub struct WorldSchematics {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ghost {
     pub placement: GhostPlacement,
-    pub viewers: Vec<crate::player::PlayerId>,
+    pub viewers: Vec<crate::world::session::PlayerId>,
 }
 
 impl Default for WorldSchematics {
@@ -28,12 +28,12 @@ impl Default for WorldSchematics {
     }
 }
 
-impl World {
+impl ServerWorld {
     pub fn schematics(&self) -> &WorldSchematics {
-        &self.schematics
+        &self.side.schematics
     }
 
     pub fn schematics_mut(&mut self) -> &mut WorldSchematics {
-        &mut self.schematics
+        &mut self.side.schematics
     }
 }

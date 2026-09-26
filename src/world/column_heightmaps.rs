@@ -2,18 +2,18 @@
 //! envelope ([`SkyCoverChange`]) streaming and edits use to bound skylight
 //! invalidation.
 
+use crate::world::ServerWorld;
 use crate::world::WorldData;
 use petramond_world::block::Block;
 use petramond_world::chunk::{section_idx, ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_world::column::NO_SURFACE;
 
-use super::store::World;
 use petramond_world::world::column_heightmaps::SkyCoverChange;
 
 /// Recompute a column's visible surface and direct-sky cover from its
 /// currently-loaded sections. Used after overlaying saved terrain, whose
 /// blocks can differ from generation. Returns the changed cover envelope.
-impl World {
+impl ServerWorld {
     pub(super) fn recompute_column_heightmaps(&mut self, cpos: ChunkPos) -> Option<SkyCoverChange> {
         // Gather both maps under immutable section borrows, then write the
         // column once (the section and column maps are distinct fields).
@@ -25,7 +25,7 @@ impl World {
             if surface_remaining == 0 && sky_remaining == 0 {
                 break;
             }
-            let Some(section) = self.sections.get(&SectionPos::new(cpos.cx, cy, cpos.cz)) else {
+            let Some(section) = self.data.sections.get(&SectionPos::new(cpos.cx, cy, cpos.cz)) else {
                 continue;
             };
             let oy = cy * SECTION_SIZE as i32;
@@ -57,7 +57,7 @@ impl World {
         // Floor the scan at the generated surface only while that surface section is
         // absent. Once loaded, its blocks are authoritative; otherwise a streaming
         // recompute can "restore" ground over a player-dug sky shaft.
-        let bare = self.gen.column_gen.get(&cpos).cloned();
+        let bare = self.side.gen.column_gen.get(&cpos).cloned();
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
                 let i = lz * SECTION_SIZE + lx;
@@ -70,14 +70,14 @@ impl World {
                     ground,
                     cpos.cz * SECTION_SIZE as i32 + lz as i32,
                 )
-                .is_some_and(|sp| self.sections.contains_key(&sp));
+                .is_some_and(|sp| self.data.sections.contains_key(&sp));
                 if !ground_loaded && ground != NO_SURFACE {
                     surf[i] = surf[i].max(ground);
                     sky[i] = sky[i].max(ground);
                 }
             }
         }
-        let col = self.ensure_column(cpos);
+        let col = self.data.ensure_column(cpos);
         let mut payload_changed = false;
         let mut sky_change: Option<SkyCoverChange> = None;
         for lz in 0..SECTION_SIZE {
@@ -101,7 +101,7 @@ impl World {
             }
         }
         if payload_changed {
-            self.bump_column_payload_revision(cpos);
+            self.data.bump_column_payload_revision(cpos);
         }
         sky_change
     }

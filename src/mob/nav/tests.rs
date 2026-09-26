@@ -211,9 +211,9 @@ fn wide_mob_does_not_turn_before_clearing_a_corner() {
 
 /// A single chunk with a solid grass floor at `y = 63`, so footholds sit at
 /// `y = 64` across it — enough terrain for `find_path` to route over.
-fn flat_world() -> World {
+fn flat_world() -> ServerWorld {
     use petramond_world::chunk::{Chunk, ChunkPos};
-    let mut world = World::new(0, 2);
+    let mut world = ServerWorld::new(0, 2);
     world.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
     for x in 0..12 {
         for z in 0..4 {
@@ -223,7 +223,7 @@ fn flat_world() -> World {
     world
 }
 
-fn pillar_world() -> (World, IVec3, IVec3) {
+fn pillar_world() -> (ServerWorld, IVec3, IVec3) {
     let mut world = flat_world();
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 66, 1);
@@ -232,7 +232,7 @@ fn pillar_world() -> (World, IVec3, IVec3) {
     (world, start, goal)
 }
 
-fn world_with_door_in_wall(open: bool) -> (World, IVec3, IVec3, IVec3) {
+fn world_with_door_in_wall(open: bool) -> (ServerWorld, IVec3, IVec3, IVec3) {
     let mut world = flat_world();
     let door = IVec3::new(4, 64, 1);
     for x in 0..12 {
@@ -528,7 +528,7 @@ fn a_climb_under_a_partial_shape_overhead_is_refused() {
     let (from, to) = (IVec3::new(4, 64, 1), IVec3::new(5, 65, 1));
     world.set_block_world(5, 64, 1, Block::Stone);
     let d = def(crate::mob::Mob::Sheep);
-    let climbs = |world: &World| {
+    let climbs = |world: &ServerWorld| {
         navigation_step_gate(&world.cursor(), d.path_params(), d.size.height)(from, to)
     };
     assert!(climbs(&world));
@@ -546,7 +546,7 @@ fn a_climb_is_refused_where_the_real_rise_is_more_than_one_block() {
     world.set_block_world(5, 64, 1, Block::Stone);
     let (from, to) = (IVec3::new(4, 65, 1), IVec3::new(5, 66, 1));
     let d = def(crate::mob::Mob::Sheep);
-    let climbs = |world: &World| {
+    let climbs = |world: &ServerWorld| {
         navigation_step_gate(&world.cursor(), d.path_params(), d.size.height)(from, to)
     };
     world.set_block_world(5, 65, 1, Block::Stone);
@@ -567,7 +567,7 @@ fn a_route_probe_cut_short_is_undecided_never_closed() {
     }
     let (from, to) = (IVec3::new(0, 64, 0), IVec3::new(0, 64, 2));
     let probe =
-        |world: &World, nodes| route_probe(world, crate::mob::Mob::Sheep, from, to, &[], nodes);
+        |world: &ServerWorld, nodes| route_probe(world, crate::mob::Mob::Sheep, from, to, &[], nodes);
     assert_eq!(probe(&world, 4), Some(Route::Undecided));
     assert_eq!(probe(&world, 400), Some(Route::Open));
     world.set_block_world(11, 64, 1, Block::Stone);
@@ -601,7 +601,7 @@ fn a_walk_region_agrees_with_a_route_probe_for_every_cell_of_its_box() {
     let kind = crate::mob::Mob::Sheep;
     let (min, max) = (IVec3::new(0, 62, 0), IVec3::new(11, 69, 5));
     let start = IVec3::new(1, 64, 1);
-    let agrees = |world: &World, blocked: &[IVec3], toward: bool| {
+    let agrees = |world: &ServerWorld, blocked: &[IVec3], toward: bool| {
         world.route_probe_budget().refill();
         let ask = FloodAsk {
             from: start,
@@ -624,7 +624,7 @@ fn a_walk_region_agrees_with_a_route_probe_for_every_cell_of_its_box() {
                     // A probe inside the box searches what the floods keep:
                     // the same verdict for the same expansions as one that
                     // reads the world afresh.
-                    let probe = |world: &World| {
+                    let probe = |world: &ServerWorld| {
                         world.route_probe_budget().refill();
                         let route = route_probe(world, kind, a, b, blocked, 4000);
                         (route, world.route_probe_budget().remaining())
@@ -1248,8 +1248,8 @@ fn same_goal_repath_preserves_the_current_waypoint_when_still_valid() {
         start,
         goal,
         params,
-        |c| world.blocks_movement_at(c.x, c.y, c.z),
-        |c| world.fluid_cell_at(c.x, c.y, c.z),
+        |c| world.data().blocks_movement_at(c.x, c.y, c.z),
+        |c| world.data().fluid_cell_at(c.x, c.y, c.z),
     );
     assert_ne!(
         direct.get(1),

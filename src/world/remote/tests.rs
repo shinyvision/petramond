@@ -1,10 +1,11 @@
+use crate::world::{ReplicaWorld, ServerWorld};
 use crate::world::remote::payload::SectionPayloadExt;
 use crate::world::WorldData;
 use std::sync::Arc;
 
-use crate::net::protocol::BlockDelta;
+use crate::world::replication::BlockDelta;
 use crate::worker::JobPool;
-use crate::world::store::{LoadTarget, World, WorldRole};
+use crate::world::store::LoadTarget;
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
@@ -14,12 +15,11 @@ use petramond_world::section::Section;
 use petramond_world::slab::SlabSlot;
 use petramond_world::torch::TorchPlacement;
 
-/// A flat-floored source world (Combined runs the same content paths the
-/// headless server will) and a fresh replica, sharing ONE job pool — the
-/// in-process (singleplayer / listen-host) topology.
-fn server_and_replica() -> (World, World) {
+/// A flat-floored server world and a fresh replica, sharing ONE job pool —
+/// the in-process (singleplayer / listen-host) topology.
+fn server_and_replica() -> (ServerWorld, ReplicaWorld) {
     let pool = Arc::new(JobPool::new(2));
-    let mut server = World::new_with_pool(0, 1, WorldRole::Combined, pool.clone());
+    let mut server = ServerWorld::with_pool(0, 1, pool.clone());
     for cz in -1..=1 {
         for cx in -1..=1 {
             let mut c = Chunk::new(cx, cz);
@@ -31,7 +31,7 @@ fn server_and_replica() -> (World, World) {
             server.insert_chunk_for_test(ChunkPos::new(cx, cz), c);
         }
     }
-    let replica = World::new_with_pool(0, 1, WorldRole::ClientReplica, pool);
+    let replica = ReplicaWorld::with_pool(0, 1, pool);
     (server, replica)
 }
 
@@ -47,13 +47,13 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
     assert!(server.set_block_world(pos.x, pos.y, pos.z, Block::Furnace));
     server.insert_furnace(pos, Facing::South);
 
-    for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+    for cp in server.data.columns.keys().copied().collect::<Vec<_>>() {
         replica.install_remote_column(server.column_payload(cp).unwrap());
     }
-    for s in server.sections.values() {
+    for s in server.data.sections.values() {
         replica.install_remote_section(s.to_payload());
     }
-    let replica_block = |r: &World| Block::from_id(r.chunk_block(4, 65, 4));
+    let replica_block = |r: &ReplicaWorld| Block::from_id(r.data.chunk_block(4, 65, 4));
     assert_eq!(
         replica_block(&replica),
         Block::Furnace,
@@ -70,7 +70,7 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
     }
     server.game_tick(&petramond_world::crafting::Recipes::default());
     assert_eq!(
-        Block::from_id(server.chunk_block(4, 65, 4)),
+        Block::from_id(server.data.chunk_block(4, 65, 4)),
         Block::FurnaceLit,
         "fixture: the server swapped the lit row"
     );
@@ -115,7 +115,7 @@ fn column_payload_keeps_visible_glass_separate_from_sky_cover() {
     assert!(server.set_block_world(8, 80, 8, Block::Glass));
     replica.install_remote_column(server.column_payload(cp).unwrap());
 
-    let column = &replica.columns[&cp];
+    let column = &replica.data.columns[&cp];
     assert_eq!(column.surface_y(8, 8), 80);
     assert_eq!(
         column.sky_cover_y(8, 8),
@@ -143,7 +143,7 @@ fn replica_converges_on_payloads_and_deltas() {
         StairState::new(Facing::South, StairHalf::Top),
     ));
     assert!(server.set_block_world(7, 65, 7, Block::Torch));
-    server.insert_torch(IVec3::new(7, 65, 7), TorchPlacement::East);
+    server.data.insert_torch(IVec3::new(7, 65, 7), TorchPlacement::East);
     assert!(server.place_log(IVec3::new(1, 65, 6), Block::OakLog, LogAxis::X));
     assert!(server.set_block_world(2, 65, 6, Block::OakSapling));
     assert!(server.set_block_world(1, 65, 1, Block::Chest));
@@ -175,17 +175,17 @@ fn replica_converges_on_payloads_and_deltas() {
     // deliberately withheld so the summaries have to answer for it.
     let held_back = SectionPos::new(0, -2, 0);
     assert!(
-        server.sections.contains_key(&held_back),
+        server.data.sections.contains_key(&held_back),
         "fixture: deep stone loaded"
     );
     let columns: Vec<_> = server
-        .columns
+        .data.columns
         .keys()
         .copied()
         .map(|cp| server.column_payload(cp).expect("column loaded"))
         .collect();
     let sections: Vec<_> = server
-        .sections
+        .data.sections
         .iter()
         .filter(|(sp, _)| **sp != held_back)
         .map(|(_, s)| s.to_payload())
@@ -215,7 +215,7 @@ fn replica_converges_on_payloads_and_deltas() {
         state: None,
         cell_kv: vec![],
     });
-    assert_eq!(replica.chunk_block(200, 65, 200), 0);
+    assert_eq!(replica.data.chunk_block(200, 65, 200), 0);
 
     // Raw content converges (blocks + fluid meta) at every touched cell.
     for (x, y, z) in [
@@ -236,13 +236,13 @@ fn replica_converges_on_payloads_and_deltas() {
         (10, 65, 10),
     ] {
         assert_eq!(
-            replica.chunk_block(x, y, z),
-            server.chunk_block(x, y, z),
+            replica.data.chunk_block(x, y, z),
+            server.data.chunk_block(x, y, z),
             "block id diverged at ({x},{y},{z})"
         );
         assert_eq!(
-            replica.fluid_meta_world(x, y, z),
-            server.fluid_meta_world(x, y, z),
+            replica.data.fluid_meta_world(x, y, z),
+            server.data.fluid_meta_world(x, y, z),
             "fluid meta diverged at ({x},{y},{z})"
         );
     }
@@ -250,7 +250,7 @@ fn replica_converges_on_payloads_and_deltas() {
 
     // Every state map reads back through the public query surface.
     assert_eq!(
-        replica.cell_kv_get(2, 65, 2, "testmod:heat"),
+        replica.data.cell_kv_get(2, 65, 2, "testmod:heat"),
         Some(&[7u8, 1][..])
     );
     assert_eq!(
@@ -262,23 +262,23 @@ fn replica_converges_on_payloads_and_deltas() {
         server.door_state_at(5, 66, 5)
     );
     assert_eq!(
-        replica.stair_state_at(6, 65, 6),
-        server.stair_state_at(6, 65, 6)
+        replica.data.stair_state_at(6, 65, 6),
+        server.data.stair_state_at(6, 65, 6)
     );
     assert_eq!(
-        replica.torch_placement(IVec3::new(7, 65, 7)),
+        replica.data.torch_placement(IVec3::new(7, 65, 7)),
         TorchPlacement::East
     );
     assert_eq!(replica.log_axis_at(1, 65, 6), LogAxis::X);
     assert_eq!(
-        replica.slab_state_at(6, 65, 1),
-        server.slab_state_at(6, 65, 1)
+        replica.data.slab_state_at(6, 65, 1),
+        server.data.slab_state_at(6, 65, 1)
     );
     assert_eq!(
-        replica.model_offset_at(11, 65, 10),
-        server.model_offset_at(11, 65, 10)
+        replica.data.model_offset_at(11, 65, 10),
+        server.data.model_offset_at(11, 65, 10)
     );
-    assert_eq!(replica.model_facing_at(10, 65, 10), Facing::East);
+    assert_eq!(replica.data.model_facing_at(10, 65, 10), Facing::East);
     let mut chests = Vec::new();
     replica.collect_animated_blocks(&mut chests);
     assert!(
@@ -295,15 +295,15 @@ fn replica_converges_on_payloads_and_deltas() {
         Facing::South
     );
     assert_eq!(
-        Block::from_id(replica.chunk_block(4, 65, 4)),
+        Block::from_id(replica.data.chunk_block(4, 65, 4)),
         Block::FurnaceLit,
         "the lit furnace face replicates as its block row"
     );
 
     // Absent sections answer physics/placement from the column summaries.
-    assert!(!replica.sections.contains_key(&held_back));
-    assert_eq!(replica.physics_block(2, -20, 2), Block::Stone);
-    assert!(!replica.placement_cell_open(IVec3::new(2, -20, 2)));
+    assert!(!replica.data.sections.contains_key(&held_back));
+    assert_eq!(replica.data.physics_block(2, -20, 2), Block::Stone);
+    assert!(!replica.data.placement_cell_open(IVec3::new(2, -20, 2)));
 
     // Authoritative light is server-owned: installs queue MESH work only. A lightless
     // payload installs light-CLEAN (the ship gate only lets one through
@@ -328,12 +328,12 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     // Converge on the pristine floor first (the delta path needs installed
     // sections on the replica).
     let columns: Vec<_> = server
-        .columns
+        .data.columns
         .keys()
         .copied()
         .map(|cp| server.column_payload(cp).expect("column loaded"))
         .collect();
-    let sections: Vec<_> = server.sections.values().map(|s| s.to_payload()).collect();
+    let sections: Vec<_> = server.data.sections.values().map(|s| s.to_payload()).collect();
     for c in columns {
         replica.install_remote_column(c);
     }
@@ -358,7 +358,7 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
         ),
     ));
     assert!(server.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
-    server.insert_torch(torch, TorchPlacement::East);
+    server.data.insert_torch(torch, TorchPlacement::East);
     assert!(server.place_door(door, Block::OakDoor, Facing::East));
     assert!(server.place_slab_layer(
         slab,
@@ -427,10 +427,10 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
         replica.apply_remote_delta(d.clone());
     }
     assert_eq!(
-        replica.stair_state_at(stair.x, stair.y, stair.z),
-        server.stair_state_at(stair.x, stair.y, stair.z)
+        replica.data.stair_state_at(stair.x, stair.y, stair.z),
+        server.data.stair_state_at(stair.x, stair.y, stair.z)
     );
-    assert_eq!(replica.torch_placement(torch), TorchPlacement::East);
+    assert_eq!(replica.data.torch_placement(torch), TorchPlacement::East);
     assert_eq!(
         replica.door_state_at(door.x, door.y, door.z),
         server.door_state_at(door.x, door.y, door.z)
@@ -440,16 +440,16 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
         server.door_state_at(door.x, door.y + 1, door.z)
     );
     assert_eq!(
-        replica.slab_state_at(slab.x, slab.y, slab.z),
-        server.slab_state_at(slab.x, slab.y, slab.z)
+        replica.data.slab_state_at(slab.x, slab.y, slab.z),
+        server.data.slab_state_at(slab.x, slab.y, slab.z)
     );
     assert_eq!(replica.log_axis_at(log.x, log.y, log.z), LogAxis::X);
     assert_eq!(
-        replica.model_offset_at(model.x + 1, model.y, model.z),
-        server.model_offset_at(model.x + 1, model.y, model.z)
+        replica.data.model_offset_at(model.x + 1, model.y, model.z),
+        server.data.model_offset_at(model.x + 1, model.y, model.z)
     );
     assert_eq!(
-        replica.model_facing_at(model.x, model.y, model.z),
+        replica.data.model_facing_at(model.x, model.y, model.z),
         Facing::East
     );
     let mut chests = Vec::new();
@@ -468,7 +468,7 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
         replica.apply_remote_delta(d);
     }
     assert_eq!(
-        replica.stair_state_at(stair.x, stair.y, stair.z),
+        replica.data.stair_state_at(stair.x, stair.y, stair.z),
         petramond_world::block_state::StairState::default(),
         "a cleared cell reads the default state again"
     );
@@ -484,12 +484,12 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
     let base = IVec3::new(5, 65, 5);
     assert!(server.place_door(base, Block::OakDoor, Facing::East));
     let columns: Vec<_> = server
-        .columns
+        .data.columns
         .keys()
         .copied()
         .map(|cp| server.column_payload(cp).expect("column loaded"))
         .collect();
-    let sections: Vec<_> = server.sections.values().map(|s| s.to_payload()).collect();
+    let sections: Vec<_> = server.data.sections.values().map(|s| s.to_payload()).collect();
     for c in columns {
         replica.install_remote_column(c);
     }
@@ -525,8 +525,8 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
 
 /// A hand-built column payload: flat maps, all-unknown summaries, and the
 /// given deep band floor — the minimum a replica needs to classify deep.
-fn column_payload_fixture(pos: ChunkPos, deep_band_lo: i32) -> crate::net::protocol::ColumnPayload {
-    use crate::net::protocol::{ColumnPayload, SectionBytes};
+fn column_payload_fixture(pos: ChunkPos, deep_band_lo: i32) -> crate::world::replication::ColumnPayload {
+    use crate::world::replication::{ColumnPayload, SectionBytes};
     use petramond_world::chunk::SECTION_SIZE;
     let flat = |n: usize| SectionBytes(Arc::from(vec![0u8; n].into_boxed_slice()));
     ColumnPayload {
@@ -554,7 +554,7 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
         s
     };
     let make_replica = || {
-        let mut r = World::new_with_role(0, 4, WorldRole::ClientReplica);
+        let mut r = ReplicaWorld::new(0, 4);
         // View centre far above the section so the always-mesh near ring
         // doesn't mask the classification.
         r.set_replica_view_center(0, 10, 0);
@@ -566,7 +566,7 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
     replica.install_remote_column(column_payload_fixture(deep_pos.chunk_pos(), 2));
     replica.install_remote_section(solid.to_payload());
     assert!(
-        replica.terrain.deep_sections.contains(&deep_pos),
+        replica.side.terrain.deep_sections.contains(&deep_pos),
         "a below-band section installed after its column classifies deep"
     );
 
@@ -574,19 +574,19 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
     let mut replica = make_replica();
     replica.install_remote_section(solid.to_payload());
     assert!(
-        !replica.terrain.deep_sections.contains(&deep_pos),
+        !replica.side.terrain.deep_sections.contains(&deep_pos),
         "without a band floor the section stays (safely) non-deep"
     );
     replica.install_remote_column(column_payload_fixture(deep_pos.chunk_pos(), 2));
     assert!(
-        replica.terrain.deep_sections.contains(&deep_pos),
+        replica.side.terrain.deep_sections.contains(&deep_pos),
         "the column install must re-classify already-installed sections"
     );
 }
 
 #[test]
 fn replication_log_coalesces_latest_wins_and_respects_capture() {
-    let mut w = crate::world::testutil::flat_world();
+    let mut w = crate::world::testutil::flat_server_world();
     assert!(w.set_block_world(2, 70, 2, Block::Stone));
     assert!(w.take_block_deltas().is_empty(), "capture off logs nothing");
 
@@ -624,7 +624,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     use rustc_hash::{FxHashMap, FxHashSet};
 
     let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
-    let mut w = World::new(0, 2);
+    let mut w = ServerWorld::new(0, 2);
     let sp = SectionPos::new(0, 4, 0);
     let mut section = Section::new(0, 4, 0);
     section.set_block(0, 0, 0, Block::Stone);
@@ -705,7 +705,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
 
     // A loaded section whose saved overlay is still in flight is NOT
     // final: it must not ship until the overlay resolves.
-    w.gen.awaited_overlays.insert(SectionPos::new(1, 4, 0));
+    w.side.gen.awaited_overlays.insert(SectionPos::new(1, 4, 0));
     w.note_stream_nonfinal(SectionPos::new(1, 4, 0));
     let plan = w.plan_terrain_send(
         anchor(0),
@@ -718,7 +718,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
         !plan.sections.contains(&SectionPos::new(1, 4, 0)),
         "an in-flight section must not be sent (its base would lie)"
     );
-    w.gen.awaited_overlays.clear();
+    w.side.gen.awaited_overlays.clear();
     w.rebuild_stream_nonfinal();
     let plan = w.plan_terrain_send(
         anchor(0),
@@ -768,10 +768,10 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
     use rustc_hash::{FxHashMap, FxHashSet};
 
     let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
-    let mut w = World::new(0, 8);
+    let mut w = ServerWorld::new(0, 8);
     let cp = ChunkPos::new(0, 0);
     let gen = petramond_worldgen::driver::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
-    let band_lo = *World::surface_window_for_column(&gen, 0).start();
+    let band_lo = *ServerWorld::surface_window_for_column(&gen, 0).start();
     w.set_column_gen(cp, Arc::new(gen));
 
     // Deepest legal cy: a surface anchor at band_lo+2 has vwin down to
@@ -788,14 +788,14 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
     section.set_skylight(sky());
     w.insert_section_for_test(deep, section);
     assert!(
-        w.section_light_final(deep) && w.stream_writable(deep),
+        w.section_light_final(deep) && w.data.stream_writable(deep),
         "fixture must be ship-final"
     );
 
     // Place the surface anchor so its vertical window (radius 5) and near
     // ring both miss SECTION_MIN_CY.
     let surface_cy = (deep_cy + 6).max(band_lo + 2);
-    assert!(!World::vertical_window(surface_cy, 0).contains(&deep_cy));
+    assert!(!ServerWorld::vertical_window(surface_cy, 0).contains(&deep_cy));
     let plan = w.plan_terrain_send(
         LoadAnchor {
             cx: 0,
@@ -833,7 +833,7 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
 
 #[test]
 fn sealed_mixed_section_is_not_final_without_light() {
-    let mut world = World::new(0, 16);
+    let mut world = ServerWorld::new(0, 16);
     let center = SectionPos::new(0, 0, 0);
     let mut cavity = Section::new(0, 0, 0);
     cavity.blocks_mut().fill(Block::Stone.id());
@@ -854,7 +854,7 @@ fn sealed_mixed_section_is_not_final_without_light() {
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
     }
-    world.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
+    world.data.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
 
     assert!(world.section_sealed_by_loaded_neighbors(center));
     assert!(
@@ -863,30 +863,28 @@ fn sealed_mixed_section_is_not_final_without_light() {
     );
 }
 
+/// The server has no mesh queue to fill (the mesh pipeline is replica
+/// state), yet its edits keep light bookkeeping current; the same edit on a
+/// replica queues the meshes it touched.
 #[test]
-fn server_headless_never_queues_mesh_work() {
-    let mut headless = World::new_with_role(0, 1, WorldRole::ServerHeadless);
-    headless.insert_empty_column_for_test(ChunkPos::new(0, 0));
-    assert!(headless.set_block_world(8, 64, 8, Block::Stone));
-    assert_eq!(
-        headless.dirty_mesh_count(),
-        0,
-        "nobody pumps a headless world's meshes; the queue must stay empty"
-    );
-    // Light bookkeeping still runs — the server keeps light current.
+fn server_edits_relight_while_replica_edits_queue_meshes() {
+    let mut server = ServerWorld::new(0, 1);
+    server.insert_empty_column_for_test(ChunkPos::new(0, 0));
+    assert!(server.set_block_world(8, 64, 8, Block::Stone));
     assert!(
-        headless
+        server
             .section_at_world_for_test(8, 64, 8)
             .unwrap()
-            .light_dirty
+            .light_dirty,
+        "the server keeps light current without any mesh pump"
     );
 
-    let mut combined = World::new(0, 1);
-    combined.insert_empty_column_for_test(ChunkPos::new(0, 0));
-    assert!(combined.set_block_world(8, 64, 8, Block::Stone));
+    let mut replica = ReplicaWorld::new(0, 1);
+    replica.insert_empty_column_for_test(ChunkPos::new(0, 0));
+    assert!(replica.set_block_world(8, 64, 8, Block::Stone));
     assert!(
-        combined.dirty_mesh_count() > 0,
-        "the combined world still queues meshes as before"
+        replica.dirty_mesh_count() > 0,
+        "a replica edit queues its meshes"
     );
 }
 
@@ -896,7 +894,7 @@ fn server_headless_never_queues_mesh_work() {
 #[test]
 fn send_target_clamps_anchor_radius_to_the_world_budget() {
     use crate::world::LoadAnchor;
-    let w = World::new_with_role(0, 4, WorldRole::ServerHeadless);
+    let w = ServerWorld::new(0, 4);
     let key = |radius| {
         w.terrain_target_key(LoadAnchor {
             cx: 0,
@@ -917,10 +915,10 @@ fn send_target_clamps_anchor_radius_to_the_world_budget() {
 #[test]
 fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
     let (mut server, mut replica) = server_and_replica();
-    for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+    for cp in server.data.columns.keys().copied().collect::<Vec<_>>() {
         replica.install_remote_column(server.column_payload(cp).unwrap());
     }
-    for s in server.sections.values() {
+    for s in server.data.sections.values() {
         replica.install_remote_section(s.to_payload());
     }
 
@@ -943,7 +941,7 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
         replica.apply_remote_delta(d);
     }
     assert_eq!(
-        replica.cell_kv_get(2, 65, 2, "testmod:color"),
+        replica.data.cell_kv_get(2, 65, 2, "testmod:color"),
         Some(&[200u8, 30, 40][..]),
         "the KV rides the block delta's snapshot"
     );
@@ -954,14 +952,14 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
         replica.apply_remote_cell_kv(kv);
     }
     assert_eq!(
-        replica.cell_kv_get(2, 65, 2, "testmod:color"),
+        replica.data.cell_kv_get(2, 65, 2, "testmod:color"),
         Some(&[9u8][..])
     );
     assert!(server.cell_kv_remove(2, 65, 2, "testmod:color"));
     for kv in server.take_cell_kv_deltas() {
         replica.apply_remote_cell_kv(kv);
     }
-    assert_eq!(replica.cell_kv_get(2, 65, 2, "testmod:color"), None);
+    assert_eq!(replica.data.cell_kv_get(2, 65, 2, "testmod:color"), None);
 
     // A CORRECTIVE delta — `block_delta_at`'s snapshot of an UNCHANGED cell,
     // shipped whenever a click resolves to nothing — must not erase replica
@@ -974,7 +972,7 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
     let corrective = server.block_delta_at(IVec3::new(2, 65, 2)).unwrap();
     replica.apply_remote_delta(corrective);
     assert_eq!(
-        replica.cell_kv_get(2, 65, 2, "testmod:color"),
+        replica.data.cell_kv_get(2, 65, 2, "testmod:color"),
         Some(&[5u8, 6, 7][..]),
         "a corrective snapshot must carry the cell's KV across its wipe"
     );
@@ -986,7 +984,7 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
     // replica that the server holds clean.
     assert!(server.cell_kv_set(2, 65, 2, "testmod:ghost".into(), vec![1]));
     assert!(server.set_block_world(2, 65, 2, Block::Dirt));
-    assert_eq!(server.cell_kv_get(2, 65, 2, "testmod:ghost"), None);
+    assert_eq!(server.data.cell_kv_get(2, 65, 2, "testmod:ghost"), None);
     let blocks = server.take_block_deltas();
     let kvs = server.take_cell_kv_deltas();
     assert!(
@@ -1000,7 +998,7 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
         replica.apply_remote_cell_kv(kv);
     }
     assert_eq!(
-        replica.cell_kv_get(2, 65, 2, "testmod:ghost"),
+        replica.data.cell_kv_get(2, 65, 2, "testmod:ghost"),
         None,
         "no ghost KV survives on the replica after the wipe"
     );
@@ -1030,10 +1028,10 @@ fn retained_draw_sets_ride_the_section_to_a_late_joiner() {
     // Everything the delta lane had to say has already been said.
     let _ = server.take_block_draw_deltas();
 
-    for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+    for cp in server.data.columns.keys().copied().collect::<Vec<_>>() {
         replica.install_remote_column(server.column_payload(cp).unwrap());
     }
-    for sp in server.sections.keys().copied().collect::<Vec<_>>() {
+    for sp in server.data.sections.keys().copied().collect::<Vec<_>>() {
         replica.install_remote_section(server.section_payload(sp).unwrap());
     }
 
@@ -1083,10 +1081,10 @@ fn a_draw_set_costs_nothing_to_resubmit_and_dies_with_its_block() {
         "a machine at rest redraws itself every tick; that must not replicate"
     );
 
-    for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+    for cp in server.data.columns.keys().copied().collect::<Vec<_>>() {
         replica.install_remote_column(server.column_payload(cp).unwrap());
     }
-    for sp in server.sections.keys().copied().collect::<Vec<_>>() {
+    for sp in server.data.sections.keys().copied().collect::<Vec<_>>() {
         replica.install_remote_section(server.section_payload(sp).unwrap());
     }
     assert!(replica.block_draw_at(pos).is_some(), "fixture: shipped");

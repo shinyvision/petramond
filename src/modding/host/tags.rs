@@ -120,7 +120,7 @@ mod tests {
     use crate::events::{PostEvent, PostEventKind, PostQueue, RosterRefs, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_math::world_pos::WorldPos;
 
     /// The tag lifecycle events fire on PRESENCE TRANSITIONS through the ABI
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn tag_presence_transitions_emit_post_events() {
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         assert!(world
             .mobs_mut()
             .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));

@@ -98,7 +98,7 @@ fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
     );
     assert!(events.player_at(0).placed_block.is_none());
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(p.x, p.y, p.z)),
+        Block::from_id(game.server.world().data().chunk_block(p.x, p.y, p.z)),
         Block::Air,
         "the source should be scooped out of the world"
     );
@@ -130,7 +130,7 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
     run_water_ticks(&mut game, 30);
     let flow = src + IVec3::X;
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(flow.x, flow.y, flow.z)),
+        Block::from_id(game.server.world().data().chunk_block(flow.x, flow.y, flow.z)),
         Block::Water,
         "the source should have spread onto the shelf"
     );
@@ -193,7 +193,7 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
         "the source behind the flow must be scooped"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(src.x, src.y, src.z)),
+        Block::from_id(game.server.world().data().chunk_block(src.x, src.y, src.z)),
         Block::Air
     );
     assert_eq!(
@@ -225,7 +225,7 @@ fn filling_needs_a_source_within_reach() {
 
     assert!(!events.player_at(0).used_item);
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(p.x, p.y, p.z)),
+        Block::from_id(game.server.world().data().chunk_block(p.x, p.y, p.z)),
         Block::Water,
         "out-of-reach water must stay"
     );
@@ -447,7 +447,7 @@ fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
 const POOL_TOP: IVec3 = IVec3::new(8, 66, 8);
 
 fn block_at(game: &super::common::TestGame, p: IVec3) -> Block {
-    Block::from_id(game.server.world().chunk_block(p.x, p.y, p.z))
+    Block::from_id(game.server.world().data().chunk_block(p.x, p.y, p.z))
 }
 
 #[test]

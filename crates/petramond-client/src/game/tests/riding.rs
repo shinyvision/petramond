@@ -50,14 +50,14 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
         petramond::mob::riding::dismount_spot(
             seat,
             0.0,
-            |feet| petramond::mob::riding::player_body_free(game.server.world(), feet, &obstacles,),
+            |feet| petramond::mob::riding::player_body_free(game.server.world().data(), feet, &obstacles,),
             |_| true,
         )
         .is_none(),
         "the fixture must obstruct all ordinary dismount probes"
     );
     assert!(
-        !petramond::mob::riding::player_body_free(game.server.world(), seat, &obstacles),
+        !petramond::mob::riding::player_body_free(game.server.world().data(), seat, &obstacles),
         "the transient seat transform is deliberately unsafe to reload detached"
     );
 
@@ -86,7 +86,7 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     let restored = saved.restore();
     let obstacles = game.server.world().mobs().solid_obstacles();
     assert!(
-        petramond::mob::riding::player_body_free(game.server.world(), restored.pos, &obstacles),
+        petramond::mob::riding::player_body_free(game.server.world().data(), restored.pos, &obstacles),
         "the persisted copy stands clear of the mount: {:?}",
         restored.pos
     );

@@ -1,14 +1,16 @@
+use crate::world::ServerWorld;
+use crate::world::store::for_each_column_cy;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-use crate::world::store::{LoadTarget, World};
+use crate::world::store::LoadTarget;
 
-impl World {
+impl ServerWorld {
     /// [`unload_far`] keeping the UNION of the anchors' keep shapes: a column
     /// (or kept column's section) survives if any anchor still wants it, with
     /// the same hysteresis slack as the single-anchor path.
     pub(super) fn unload_far_multi(&mut self, targets: &[LoadTarget]) {
         let drop_columns: Vec<ChunkPos> = self
-            .columns
+            .data.columns
             .keys()
             .filter(|p| !targets.iter().any(|t| Self::column_kept(*t, **p)))
             .copied()
@@ -29,7 +31,7 @@ impl World {
                     continue;
                 }
                 let in_surface = self
-                    .gen
+                    .side.gen
                     .column_gen
                     .get(&cp)
                     .is_some_and(|col| Self::surface_window_for_column(col, 2).contains(&cy));
@@ -48,7 +50,7 @@ impl World {
         let vwindow = Self::vertical_window(target.center_cy, 2);
 
         let drop_columns: Vec<ChunkPos> = self
-            .columns
+            .data.columns
             .keys()
             .filter(|p| !Self::column_kept(target, **p))
             .copied()
@@ -69,7 +71,7 @@ impl World {
                         continue;
                     }
                     let in_surface =
-                        self.gen.column_gen.get(&cp).is_some_and(|col| {
+                        self.side.gen.column_gen.get(&cp).is_some_and(|col| {
                             Self::surface_window_for_column(col, 2).contains(&cy)
                         });
                     if !in_surface {
@@ -97,7 +99,7 @@ impl World {
         // eviction the region could only fall back to full rebakes.
         self.apply_light_edits();
         // Persist (harvesting entities into the record) before anything leaves memory.
-        if self.save.is_some() {
+        if self.side.save.is_some() {
             let mut snaps = Vec::new();
             for &cpos in &drop_columns {
                 let bits = self
@@ -106,7 +108,7 @@ impl World {
                     .get(&cpos)
                     .copied()
                     .unwrap_or(0);
-                Self::for_each_column_cy(bits, |cy| {
+                for_each_column_cy(bits, |cy| {
                     if let Some(snap) =
                         self.harvest_section_snapshot(SectionPos::new(cpos.cx, cy, cpos.cz))
                     {
@@ -119,7 +121,7 @@ impl World {
                     snaps.push(snap);
                 }
             }
-            if let Some(save) = self.save.as_mut() {
+            if let Some(save) = self.side.save.as_mut() {
                 save.save_sections(&mut self.data.saved, snaps);
             }
             self.flush_pending_colgen_records();
@@ -132,10 +134,10 @@ impl World {
         }
         for sp in drop_sections {
             self.remove_section(sp);
-            self.gen.pending_overlays.remove(&sp);
+            self.side.gen.pending_overlays.remove(&sp);
             self.settle_stream_nonfinal(sp);
             self.remove_pending_section(sp);
-            if let Some(job) = self.gen.pending_section_jobs.remove(&sp) {
+            if let Some(job) = self.side.gen.pending_section_jobs.remove(&sp) {
                 job.cancel();
             }
         }
@@ -147,7 +149,7 @@ impl World {
     /// Drop any buffered disk overlays for a column that is no longer wanted, so a
     /// section whose column was evicted before its overlay could land doesn't linger.
     fn drop_overlays_for_column(&mut self, pos: ChunkPos) {
-        self.gen
+        self.side.gen
             .pending_overlays
             .retain(|sp, _| sp.chunk_pos() != pos);
     }

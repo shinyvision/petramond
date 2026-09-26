@@ -17,7 +17,7 @@ use crate::server::player::ConnectedPlayer;
 use crate::server::progression::RecipeCatalog;
 use crate::server::sessions::SessionRegistry;
 use crate::server::viewers::ContainerViewers;
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::crafting::Recipes;
 
@@ -79,7 +79,7 @@ pub struct SharedTickRows {
 /// reaches a field: the rest of the engine and the client talk to the server
 /// through the methods below and the message pipe.
 pub struct ServerGame {
-    pub(in crate::server) world: World,
+    pub(in crate::server) world: ServerWorld,
     /// The connected players' simulation sessions (see [`SessionRegistry`]).
     pub(in crate::server) sessions: SessionRegistry,
     /// Player identities promoted through `op`. Persisted in the world's
@@ -114,7 +114,7 @@ pub struct ServerGame {
 /// The pieces a freshly built server starts from (see
 /// [`crate::server::session_build`]).
 pub(in crate::server) struct ServerParts {
-    pub world: World,
+    pub world: ServerWorld,
     pub local: Option<ConnectedPlayer>,
     pub operators: crate::server::permissions::Operators,
     pub accounts: crate::server::accounts::PlayerRegistry,
@@ -146,14 +146,14 @@ impl ServerGame {
     }
 
     /// The authoritative world (read-only).
-    pub fn world(&self) -> &World {
+    pub fn world(&self) -> &ServerWorld {
         &self.world
     }
 
     /// The authoritative world, for fixtures that stage terrain and entities
     /// directly.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn world_mut(&mut self) -> &mut World {
+    pub fn world_mut(&mut self) -> &mut ServerWorld {
         &mut self.world
     }
 
@@ -171,7 +171,7 @@ impl ServerGame {
     /// The world and the sessions at once, for fixtures staging a session
     /// against world state (a menu opened on a placed block).
     #[cfg(any(test, feature = "test-support"))]
-    pub fn world_and_sessions_mut(&mut self) -> (&mut World, &mut SessionRegistry) {
+    pub fn world_and_sessions_mut(&mut self) -> (&mut ServerWorld, &mut SessionRegistry) {
         (&mut self.world, &mut self.sessions)
     }
 

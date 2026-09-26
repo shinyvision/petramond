@@ -113,7 +113,7 @@ pub fn dismount_spot(
 /// the feet. No ground within that drop is not safe. Server placement and
 /// client prediction share it so both pick the same spot.
 pub fn dismount_footing_safe(
-    world: &crate::world::World,
+    world: &crate::world::WorldData,
     feet: petramond_math::world_pos::WorldPos,
 ) -> bool {
     let (min, max) = player_body_aabb(feet);
@@ -146,7 +146,7 @@ pub fn dismount_footing_safe(
 /// Whether a standing player body at `feet` overlaps neither cell collision
 /// nor a dynamic solid body. Fluid is not collision; callers rank dryness.
 pub fn player_body_free(
-    world: &crate::world::World,
+    world: &crate::world::WorldData,
     feet: petramond_math::world_pos::WorldPos,
     obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
@@ -166,7 +166,7 @@ pub fn player_body_free(
 /// absent mixed section or an in-flight saved overlay from masquerading as
 /// open air while a mounted player's detached snapshot is chosen.
 pub fn player_body_known_free(
-    world: &crate::world::World,
+    world: &crate::world::ServerWorld,
     feet: petramond_math::world_pos::WorldPos,
     obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
@@ -183,7 +183,7 @@ pub fn player_body_known_free(
             }
         }
     }
-    player_body_free(world, feet, obstacles)
+    player_body_free(world.data(), feet, obstacles)
 }
 
 #[inline]
@@ -291,7 +291,7 @@ mod tests {
             let mut world = pool(Block::Air, floor);
             world.set_block_world(x, y, 8, block(name));
             assert_eq!(
-                dismount_footing_safe(&world, feet),
+                dismount_footing_safe(world.data(), feet),
                 safe,
                 "{name} at ({x}, {y})"
             );
@@ -304,8 +304,8 @@ mod tests {
         let spot = dismount_spot(
             feet,
             0.0,
-            |at| player_body_free(&world, at, &[]),
-            |at| dismount_footing_safe(&world, at),
+            |at| player_body_free(world.data(), at, &[]),
+            |at| dismount_footing_safe(world.data(), at),
         )
         .expect("a free spot");
         assert!(

@@ -8,15 +8,16 @@
 //! [`Block`]'s own (position-less) accessors answer the authored-origin cell. See
 //! [`petramond_world::block_model`].
 
+use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::block_model::{self, BlockModelKind};
 
-use super::store::{SkyCoverChange, World};
+use super::store::SkyCoverChange;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Place model `block` with its rotated-footprint base at `base`: write the block id to
     /// every footprint cell and record each non-zero authored offset, THEN relight +
     /// remesh the affected region once (so cells never flash the wrong sub-geometry).
@@ -43,7 +44,7 @@ impl World {
         // Write block + offset for every cell first (no remesh yet), so the region is
         // fully consistent before any mesh is rebuilt.
         for &(c, off) in &cells {
-            let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) else {
+            let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(c.x, c.y, c.z) else {
                 return false;
             };
             chunk.set_block(lx, ly, lz, block);
@@ -61,10 +62,10 @@ impl World {
     /// If `pos` is a bbmodel-block cell, the whole multi-block group: its kind, the
     /// rotated-footprint base, and every footprint cell. `None` for a non-model cell.
     pub fn model_group(&self, pos: IVec3) -> Option<(BlockModelKind, IVec3, Vec<IVec3>)> {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         let kind = block.model_kind()?;
-        let off = self.model_offset_at(pos.x, pos.y, pos.z);
-        let facing = self.model_facing_at(pos.x, pos.y, pos.z);
+        let off = self.data.model_offset_at(pos.x, pos.y, pos.z);
+        let facing = self.data.model_facing_at(pos.x, pos.y, pos.z);
         let base = block_model::base_from_cell(pos, kind, off, facing);
         Some((
             kind,
@@ -82,7 +83,7 @@ impl World {
     /// recursing. A model row cannot be swapped INTO a non-model cell — that
     /// is a placement, not a costume change.
     pub fn swap_block(&mut self, pos: IVec3, new_block: Block) -> bool {
-        let current = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        let current = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         if current.model_kind().is_some() {
             self.swap_model_block(pos, new_block)
         } else if new_block.model_kind().is_some() {
@@ -109,10 +110,10 @@ impl World {
         let Some(new_kind) = new_block.model_kind() else {
             return false;
         };
-        if Block::from_id(self.chunk_block(pos.x, pos.y, pos.z)) == new_block {
+        if Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z)) == new_block {
             return true; // already there — an idempotent no-op
         }
-        let facing = self.model_facing_at(pos.x, pos.y, pos.z);
+        let facing = self.data.model_facing_at(pos.x, pos.y, pos.z);
         let new_cells = block_model::oriented_footprint_cells(base, new_kind, facing);
         // Compare the actual occupied cell sets, not just the declared boxes: a
         // non-rectangular footprint's occupancy comes from the geometry split.
@@ -124,13 +125,12 @@ impl World {
         // half-swapped group with a stale mesh.
         if new_cells
             .iter()
-            .any(|&(c, _)| self.chunk_at_world(c.x, c.y, c.z).is_none())
+            .any(|&(c, _)| self.data.chunk_at_world(c.x, c.y, c.z).is_none())
         {
             return false;
         }
         for &(c, off) in &new_cells {
-            let (chunk, lx, ly, lz) = self
-                .chunk_at_world_mut(c.x, c.y, c.z)
+            let (chunk, lx, ly, lz) = self.data.chunk_at_world_mut(c.x, c.y, c.z)
                 .expect("cell resolution verified above");
             // `set_block` clears the cell's model state AND its mod cell KV
             // (per-cell state dies with the block) — a swap is the same placed
@@ -169,7 +169,7 @@ impl World {
         };
         if cells
             .iter()
-            .any(|&c| self.chunk_at_world(c.x, c.y, c.z).is_none())
+            .any(|&c| self.data.chunk_at_world(c.x, c.y, c.z).is_none())
         {
             return false;
         }
@@ -186,7 +186,7 @@ impl World {
         // change value. Self-healing that only heals the cell you asked about
         // is the bug it was built to prevent.
         let has = |c: IVec3, key: &str, want: &[u8]| {
-            self.cell_kv_get(c.x, c.y, c.z, key)
+            self.data.cell_kv_get(c.x, c.y, c.z, key)
                 .is_some_and(|v| v == want)
         };
         let unchanged = cells.iter().all(|&c| {
@@ -243,7 +243,7 @@ impl World {
         let mut sky_changed: std::collections::HashMap<(i32, i32), SkyCoverChange> =
             std::collections::HashMap::new();
         for &c in cells {
-            let block = Block::from_id(self.chunk_block(c.x, c.y, c.z));
+            let block = Block::from_id(self.data.chunk_block(c.x, c.y, c.z));
             if let Some(change) = self.update_column_heights_after_set(c.x, c.y, c.z, block) {
                 sky_changed
                     .entry((c.x, c.z))
@@ -281,8 +281,8 @@ mod tests {
     const WB: Block = Block::FurnitureWorkbench;
 
     /// A world with a single empty chunk at (0,0) installed, for placement tests.
-    fn world_with_empty_chunk() -> World {
-        let mut w = World::new(1, 4);
+    fn world_with_empty_chunk() -> ServerWorld {
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
@@ -292,7 +292,7 @@ mod tests {
     fn placing_a_multiblock_fills_its_whole_footprint_with_offsets() {
         let mut w = world_with_empty_chunk();
         let origin = IVec3::new(5, 64, 5);
-        assert!(w.model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench));
+        assert!(w.data.model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench));
         assert!(w.place_model_block(origin, WB));
 
         // Every occupied cell holds the block id, and the group resolves back to it.
@@ -301,18 +301,17 @@ mod tests {
         assert_eq!(found_origin, origin);
         assert_eq!(cells.len(), 4, "the 2×2×1 workbench fills four cells");
         for &c in &cells {
-            assert_eq!(Block::from_id(w.chunk_block(c.x, c.y, c.z)), WB, "{c:?}");
+            assert_eq!(Block::from_id(w.data.chunk_block(c.x, c.y, c.z)), WB, "{c:?}");
             // A non-zero authored cell knows its offset; querying from it finds the same base.
             assert_eq!(w.model_group(c).unwrap().1, origin);
         }
         // The far corner (origin + 1x + 1y) carries a non-zero offset.
         assert_eq!(
-            w.model_offset_at(origin.x + 1, origin.y + 1, origin.z),
+            w.data.model_offset_at(origin.x + 1, origin.y + 1, origin.z),
             [1, 1, 0]
         );
         // Each cell has its own cell-local collision (per-cell split, not the whole box).
-        assert!(!w
-            .collision_boxes_at(origin.x, origin.y, origin.z)
+        assert!(!w.data.collision_boxes_at(origin.x, origin.y, origin.z)
             .is_empty());
     }
 
@@ -330,7 +329,7 @@ mod tests {
             IVec3::new(4, 64, 5),
             "facing north puts the front-left workbench cell at the clicked anchor"
         );
-        assert!(w.model_footprint_clear_facing(
+        assert!(w.data.model_footprint_clear_facing(
             base,
             BlockModelKind::FurnitureWorkbench,
             Facing::North
@@ -347,8 +346,8 @@ mod tests {
         assert!(cells.contains(&(anchor + IVec3::new(0, 1, 0))));
         assert!(cells.contains(&(anchor + IVec3::new(-1, 1, 0))));
         for c in cells {
-            assert_eq!(Block::from_id(w.chunk_block(c.x, c.y, c.z)), WB);
-            assert_eq!(w.model_facing_at(c.x, c.y, c.z), Facing::North);
+            assert_eq!(Block::from_id(w.data.chunk_block(c.x, c.y, c.z)), WB);
+            assert_eq!(w.data.model_facing_at(c.x, c.y, c.z), Facing::North);
         }
     }
 
@@ -359,7 +358,7 @@ mod tests {
         // Block one of the footprint cells (the +x neighbour) with stone.
         w.set_block_world(origin.x + 1, origin.y, origin.z, Block::Stone);
         assert!(
-            !w.model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench),
+            !w.data.model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench),
             "an occupied footprint cell must fail the gate"
         );
     }
@@ -384,12 +383,12 @@ mod tests {
         ));
         w.set_block_world(pos.x, pos.y, pos.z, Block::Air);
         assert!(
-            w.cell_kv_get(pos.x, pos.y, pos.z, "farm:moisture")
+            w.data.cell_kv_get(pos.x, pos.y, pos.z, "farm:moisture")
                 .is_none(),
             "a replaced block takes its cell KV with it"
         );
         assert_eq!(
-            w.cell_kv_get(neighbour.x, neighbour.y, neighbour.z, "farm:moisture"),
+            w.data.cell_kv_get(neighbour.x, neighbour.y, neighbour.z, "farm:moisture"),
             Some(&[1u8][..]),
             "the neighbour's KV is untouched"
         );
@@ -407,7 +406,7 @@ mod tests {
         ));
         w.remove_compound(origin).expect("removes the group");
         assert!(
-            w.cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state")
+            w.data.cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state")
                 .is_none(),
             "breaking a model block clears its anchor's cell KV"
         );
@@ -451,12 +450,12 @@ mod tests {
         assert_eq!(removed.len(), 4);
         for c in removed {
             assert_eq!(
-                Block::from_id(w.chunk_block(c.x, c.y, c.z)),
+                Block::from_id(w.data.chunk_block(c.x, c.y, c.z)),
                 Block::Air,
                 "{c:?}"
             );
             assert_eq!(
-                w.model_offset_at(c.x, c.y, c.z),
+                w.data.model_offset_at(c.x, c.y, c.z),
                 [0, 0, 0],
                 "offset cleared"
             );
@@ -481,8 +480,8 @@ mod tests {
         assert!(cells.len() > 1, "fixture: this row is multi-cell");
 
         assert!(w.set_model_parts(origin, 0b101, None));
-        let mask_at = |w: &World, c: IVec3| {
-            w.cell_kv_get(c.x, c.y, c.z, block_model::PARTS_KV_KEY)
+        let mask_at = |w: &ServerWorld, c: IVec3| {
+            w.data.cell_kv_get(c.x, c.y, c.z, block_model::PARTS_KV_KEY)
                 .map(<[u8; 4]>::try_from)
                 .and_then(Result::ok)
                 .map(u32::from_le_bytes)

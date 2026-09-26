@@ -1,25 +1,26 @@
+use crate::world::{World, WorldSide};
 use petramond_world::chunk::{
     ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
 };
 use petramond_worldgen::driver::ColumnGen;
 
-use crate::world::store::{LoadTarget, World, VERTICAL_LOAD_RADIUS};
+use crate::world::store::{LoadTarget, VERTICAL_LOAD_RADIUS};
 
 const SURFACE_WINDOW_BELOW: i32 = 2;
 const SURFACE_WINDOW_ABOVE: i32 = 1;
 const HORIZONTAL_KEEP_SLACK: i32 = 2;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Whether `cp` is wanted under ANY current anchor. The multi-anchor form
     /// of `last_load_target + column_wanted`, used wherever "is this column
     /// coming?" must hold for every player (the sim guard's in-flight
     /// classification, keep checks). Identical to the single check while
     /// `extra_load_targets` is empty.
     pub(in crate::world) fn column_wanted_by_any_target(&self, cp: ChunkPos) -> bool {
-        self.last_load_target
+        self.data.last_load_target
             .is_some_and(|t| Self::column_wanted(t, cp))
             || self
-                .extra_load_targets
+                .data.extra_load_targets
                 .iter()
                 .any(|t| Self::column_wanted(*t, cp))
     }
@@ -31,11 +32,9 @@ impl World {
     /// and the anchor's own column is always the nearest-first column job.
     pub(in crate::world) fn anchor_underground(&self, target: LoadTarget) -> bool {
         let band_lo = self
-            .gen
-            .column_gen
-            .get(&target.center)
+            .column_gen(target.center)
             .map(|col| *Self::surface_window_for_column(col, 0).start())
-            .or_else(|| self.column_deep_band_los.get(&target.center).copied());
+            .or_else(|| self.data.column_deep_band_los.get(&target.center).copied());
         band_lo.is_some_and(|lo| target.center_cy < lo)
     }
 
@@ -134,12 +133,12 @@ impl World {
     }
 
     pub(super) fn within_current_keep_radius(&self, pos: ChunkPos) -> bool {
-        let Some(target) = self.last_load_target else {
+        let Some(target) = self.data.last_load_target else {
             return true;
         };
         Self::column_kept(target, pos)
             || self
-                .extra_load_targets
+                .data.extra_load_targets
                 .iter()
                 .any(|t| Self::column_kept(*t, pos))
     }

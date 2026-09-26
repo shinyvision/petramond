@@ -3,9 +3,12 @@
 //! crate cannot link. Module internals they exercise are exposed through each
 //! source module's `test_exports` shim (test-support builds only).
 
+use crate::world::ServerWorld;
+
+
 #[cfg(test)]
 mod behavior_dirt {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::block::behavior::test_shims::dirt::*;
     use petramond_world::block::behavior::BlockBehavior;
@@ -14,8 +17,8 @@ mod behavior_dirt {
 
     /// A world with one loaded chunk at (0,0). Coords kept a few blocks inside the
     /// 16-wide chunk so a `SPREAD_RADIUS` scan stays within the loaded cell.
-    fn world_with_chunk() -> World {
-        let mut w = World::new(1, 1);
+    fn world_with_chunk() -> ServerWorld {
+        let mut w = ServerWorld::new(1, 1);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
@@ -53,7 +56,7 @@ mod behavior_dirt {
         w.set_block_world(p.x, p.y, p.z, Block::Dirt);
         w.set_block_world(p.x + 1, p.y, p.z, Block::Grass);
         DIRT.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
     }
 
     #[test]
@@ -62,7 +65,7 @@ mod behavior_dirt {
         let p = IVec3::new(8, 70, 8);
         w.set_block_world(p.x, p.y, p.z, Block::Dirt);
         DIRT.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
     }
 
     #[test]
@@ -75,7 +78,7 @@ mod behavior_dirt {
         w.set_block_world(p.x + 1, p.y, p.z, Block::Grass); // grass in range
         w.set_block_world(p.x, p.y + 1, p.z, Block::Stone); // but covered on top
         DIRT.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
     }
 
     #[test]
@@ -88,7 +91,7 @@ mod behavior_dirt {
         w.set_block_world(p.x + 1, p.y, p.z, Block::Grass); // grass in range
         w.set_block_world(p.x, p.y + 1, p.z, Block::OakLeaves); // leaf canopy on top
         DIRT.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
     }
 
     #[test]
@@ -101,21 +104,21 @@ mod behavior_dirt {
         w.set_block_world(p.x + 1, p.y, p.z, Block::Grass); // grass in range
         w.set_block_world(p.x, p.y + 1, p.z, Block::Water); // but flooded on top
         DIRT.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
     }
 }
 
 #[cfg(test)]
 mod behavior_grass {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::block::behavior::test_shims::grass::*;
     use petramond_world::block::behavior::BlockBehavior;
 
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    fn world_with_chunk() -> World {
-        let mut w = World::new(1, 1);
+    fn world_with_chunk() -> ServerWorld {
+        let mut w = ServerWorld::new(1, 1);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
@@ -127,7 +130,7 @@ mod behavior_grass {
         w.set_block_world(p.x, p.y, p.z, Block::Grass);
         w.set_block_world(p.x, p.y + 1, p.z, Block::Stone);
         GRASS.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
     }
 
     #[test]
@@ -136,7 +139,7 @@ mod behavior_grass {
         let p = IVec3::new(8, 70, 8);
         w.set_block_world(p.x, p.y, p.z, Block::Grass);
         GRASS.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
     }
 
     #[test]
@@ -148,7 +151,7 @@ mod behavior_grass {
         w.set_block_world(p.x, p.y, p.z, Block::Grass);
         w.set_block_world(p.x, p.y + 1, p.z, Block::OakLeaves);
         GRASS.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Grass));
     }
 
     #[test]
@@ -160,13 +163,13 @@ mod behavior_grass {
         w.set_block_world(p.x, p.y, p.z, Block::Grass);
         w.set_block_world(p.x, p.y + 1, p.z, Block::Water);
         GRASS.random_tick(&mut w, p);
-        assert_eq!(w.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
+        assert_eq!(w.data.block_if_loaded(p.x, p.y, p.z), Some(Block::Dirt));
     }
 }
 
 #[cfg(test)]
 mod behavior_leaves {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::block::behavior::test_shims::leaves::*;
     use petramond_world::block::behavior::BlockBehavior;
@@ -174,8 +177,8 @@ mod behavior_leaves {
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    fn world_with_chunk() -> World {
-        let mut w = World::new(1, 1);
+    fn world_with_chunk() -> ServerWorld {
+        let mut w = ServerWorld::new(1, 1);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
@@ -183,7 +186,7 @@ mod behavior_leaves {
     /// Lay a straight +x run of `len` leaves from `start`, then a log — so the log
     /// sits exactly `len` face-steps from `start` through leaves. Stays inside the
     /// 16-wide chunk for `start.x + len <= 15`.
-    fn leaf_run_to_log(w: &mut World, start: IVec3, len: i32) {
+    fn leaf_run_to_log(w: &mut ServerWorld, start: IVec3, len: i32) {
         for i in 0..len {
             w.set_block_world(start.x + i, start.y, start.z, Block::OakLeaves);
         }
@@ -234,7 +237,7 @@ mod behavior_leaves {
         w.set_block_world(p.x, p.y, p.z, Block::OakLeaves); // isolated → unsupported
         LEAVES.random_tick(&mut w, p);
         assert_eq!(
-            w.block_if_loaded(p.x, p.y, p.z),
+            w.data.block_if_loaded(p.x, p.y, p.z),
             Some(Block::Air),
             "the leaf decayed"
         );
@@ -269,23 +272,23 @@ mod behavior_wasm {
             "bare unknowns still error"
         );
 
-        let mut world = crate::world::testutil::flat_world();
+        let mut world = crate::world::testutil::flat_server_world();
         let pos = IVec3::new(1, 65, 1);
         a.random_tick(&mut world, pos);
         a.neighbor_update(&mut world, pos);
-        let hooks = world.take_block_hooks();
+        let hooks = world.data.take_block_hooks();
         assert_eq!(hooks.len(), 2);
         assert_eq!(hooks[0].kind, BlockHookKind::RandomTick);
         assert_eq!(hooks[1].kind, BlockHookKind::NeighborUpdate);
         assert_eq!(hooks[0].key, "testmod:zap");
         assert_eq!(hooks[0].pos, pos);
-        assert!(world.take_block_hooks().is_empty(), "take drains");
+        assert!(world.data.take_block_hooks().is_empty(), "take drains");
     }
 }
 
 #[cfg(test)]
 mod shape_kind {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::block::shape_kind_test_shim::*;
 
@@ -298,7 +301,7 @@ mod shape_kind {
     fn collision_state_free_kinds_resolve_identically() {
         use petramond_world::block::Block;
         use petramond_world::chunk::ChunkPos;
-        let mut world = World::new(0, 1);
+        let mut world = ServerWorld::new(0, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         // Neighbours that a state-reading family WOULD react to (a fence arm, a
         // stair corner, a pane join), so a mis-flagged kind cannot pass by
@@ -781,7 +784,7 @@ mod shape_kind {
 
 #[cfg(test)]
 mod registry_palette {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::registry::test_exports::*;
 
@@ -1023,18 +1026,18 @@ mod registry_palette {
         assert_eq!(glow.to_item(), glow_item);
 
         // --- Placeable + breakable through World. ---
-        let mut w = World::new(1, 4);
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let (x, y, z) = (5, 64, 5);
         assert!(w.set_block_world(x, y, z, glow), "placement succeeds");
-        assert_eq!(Block::from_id(w.chunk_block(x, y, z)), glow);
+        assert_eq!(Block::from_id(w.data.chunk_block(x, y, z)), glow);
         assert!(
-            !w.collision_boxes_at(x, y, z).is_empty(),
+            !w.data.collision_boxes_at(x, y, z).is_empty(),
             "the placed block collides via its row's boxes"
         );
         assert!(w.set_block_world(x, y, z, Block::Air), "break succeeds");
-        assert_eq!(Block::from_id(w.chunk_block(x, y, z)), Block::Air);
+        assert_eq!(Block::from_id(w.data.chunk_block(x, y, z)), Block::Air);
 
         // --- Save palette: dynamic entry pinned by name, engine ids stable. ---
         let save = std::path::PathBuf::from(std::env::var_os("PETRAMOND_DYNPACK_SAVE").unwrap());
@@ -1073,7 +1076,7 @@ mod registry_palette {
 
 #[cfg(test)]
 mod world_fence {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::world::fence::test_exports::*;
 
@@ -1082,8 +1085,8 @@ mod world_fence {
     use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    fn world() -> World {
-        let mut w = World::new(0, 4);
+    fn world() -> ServerWorld {
+        let mut w = ServerWorld::new(0, 4);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
@@ -1095,19 +1098,19 @@ mod world_fence {
         // The probe shape is REAL: masks are refined per-cell state now, so
         // the cell must hold the block whose state the cascade maintains.
         assert!(w.set_block_world(p.x, p.y, p.z, Block::OakFence));
-        assert_eq!(w.fence_mask_at(p), 0, "isolated fence is a bare post");
+        assert_eq!(w.data.fence_mask_at(p), 0, "isolated fence is a bare post");
 
         w.set_block_world(7, 64, 8, Block::Stone);
         w.set_block_world(9, 64, 8, Block::OakFence);
         assert_eq!(
-            w.fence_mask_at(p),
+            w.data.fence_mask_at(p),
             petramond_world::pane::WEST | petramond_world::pane::EAST
         );
 
         w.set_block_world(7, 64, 8, Block::OakLeaves);
         w.set_block_world(8, 64, 9, Block::Glass);
         assert_eq!(
-            w.fence_mask_at(p),
+            w.data.fence_mask_at(p),
             petramond_world::pane::EAST,
             "transparent blocks must not grow fence arms"
         );
@@ -1126,7 +1129,7 @@ mod world_fence {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.fence_mask_at(p), petramond_world::pane::EAST);
+        assert_eq!(w.data.fence_mask_at(p), petramond_world::pane::EAST);
 
         // Stair west of the fence, also facing east: its open side faces the fence.
         assert!(w.place_stair(
@@ -1134,7 +1137,7 @@ mod world_fence {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.fence_mask_at(p), petramond_world::pane::EAST);
+        assert_eq!(w.data.fence_mask_at(p), petramond_world::pane::EAST);
     }
 
     #[test]
@@ -1150,22 +1153,22 @@ mod world_fence {
             index,
         };
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(0)));
-        assert_eq!(w.fence_mask_at(p), 0, "a single slab is not a full face");
+        assert_eq!(w.data.fence_mask_at(p), 0, "a single slab is not a full face");
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(1)));
-        assert_eq!(w.fence_mask_at(p), petramond_world::pane::NORTH);
+        assert_eq!(w.data.fence_mask_at(p), petramond_world::pane::NORTH);
     }
 }
 
 #[cfg(test)]
 mod world_ladder {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::world::ladder::test_exports::*;
 
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    fn world() -> World {
-        let mut w = World::new(0, 4);
+    fn world() -> ServerWorld {
+        let mut w = ServerWorld::new(0, 4);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
@@ -1177,13 +1180,13 @@ mod world_ladder {
         // An east-facing ladder hangs on the wall to its west.
         let wall = petramond_world::ladder::support_cell(ladder, Facing::East);
         assert!(
-            !w.ladder_supported_at(ladder, Facing::East),
+            !w.data.ladder_supported_at(ladder, Facing::East),
             "no wall, no support"
         );
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
-        assert!(w.ladder_supported_at(ladder, Facing::East));
+        assert!(w.data.ladder_supported_at(ladder, Facing::East));
         // A wall on a different side does not support this facing.
-        assert!(!w.ladder_supported_at(ladder, Facing::North));
+        assert!(!w.data.ladder_supported_at(ladder, Facing::North));
     }
 
     #[test]
@@ -1191,7 +1194,7 @@ mod world_ladder {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
         w.set_block_world(p.x, p.y, p.z, Block::LadderEast);
-        let boxes = w.collision_boxes_at(p.x, p.y, p.z);
+        let boxes = w.data.collision_boxes_at(p.x, p.y, p.z);
         assert_eq!(
             boxes,
             petramond_world::ladder::collision_boxes(Facing::East)
@@ -1220,14 +1223,14 @@ mod world_ladder {
         );
         assert!(w.commit_placement(&plan, true));
         assert_eq!(
-            Block::from_id(w.chunk_block(p.x, p.y, p.z)),
+            Block::from_id(w.data.chunk_block(p.x, p.y, p.z)),
             Block::LadderEast
         );
         // The point of facing-as-identity: a ladder-only section never
         // classifies as a block-entity section (no per-tick furnace fan-out,
         // no per-frame chest/door collection walks it).
         assert!(
-            w.block_entity_sections.is_empty(),
+            w.data.block_entity_sections.is_empty(),
             "a ladder must not index its section as a block-entity section"
         );
     }
@@ -1236,18 +1239,18 @@ mod world_ladder {
     fn climbable_query_reads_the_facing_row() {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
-        assert_eq!(w.climb_at(p.x, p.y, p.z), None);
+        assert_eq!(w.data.climb_at(p.x, p.y, p.z), None);
         w.set_block_world(p.x, p.y, p.z, Block::LadderSouth);
-        assert_eq!(w.climb_at(p.x, p.y, p.z), Some(Climb::Panel(Facing::South)));
+        assert_eq!(w.data.climb_at(p.x, p.y, p.z), Some(Climb::Panel(Facing::South)));
         // A non-climbable block never answers.
         w.set_block_world(p.x, p.y, p.z, Block::Stone);
-        assert_eq!(w.climb_at(p.x, p.y, p.z), None);
+        assert_eq!(w.data.climb_at(p.x, p.y, p.z), None);
     }
 }
 
 #[cfg(test)]
 mod world_pane {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::world::pane::test_exports::*;
 
@@ -1256,8 +1259,8 @@ mod world_pane {
     use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    fn world() -> World {
-        let mut w = World::new(0, 4);
+    fn world() -> ServerWorld {
+        let mut w = ServerWorld::new(0, 4);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
@@ -1269,19 +1272,19 @@ mod world_pane {
         // The probe shape is REAL: masks are refined per-cell state now, so
         // the cell must hold the block whose state the cascade maintains.
         assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
-        assert_eq!(w.pane_mask_at(p), 0, "isolated pane is a bare post");
+        assert_eq!(w.data.pane_mask_at(p), 0, "isolated pane is a bare post");
 
         w.set_block_world(7, 64, 8, Block::Stone);
         w.set_block_world(9, 64, 8, Block::GlassPane);
         assert_eq!(
-            w.pane_mask_at(p),
+            w.data.pane_mask_at(p),
             petramond_world::pane::WEST | petramond_world::pane::EAST
         );
 
         w.set_block_world(8, 64, 7, Block::Chest);
         w.set_block_world(8, 64, 9, Block::Cactus);
         assert_eq!(
-            w.pane_mask_at(p),
+            w.data.pane_mask_at(p),
             petramond_world::pane::WEST | petramond_world::pane::EAST,
             "no_pane_connect blocks must not add arms"
         );
@@ -1300,7 +1303,7 @@ mod world_pane {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.pane_mask_at(p), petramond_world::pane::EAST);
+        assert_eq!(w.data.pane_mask_at(p), petramond_world::pane::EAST);
 
         // Stair west of the pane, also facing east: its open side faces the pane.
         assert!(w.place_stair(
@@ -1308,7 +1311,7 @@ mod world_pane {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.pane_mask_at(p), petramond_world::pane::EAST);
+        assert_eq!(w.data.pane_mask_at(p), petramond_world::pane::EAST);
     }
 
     #[test]
@@ -1324,15 +1327,15 @@ mod world_pane {
             index,
         };
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(0)));
-        assert_eq!(w.pane_mask_at(p), 0, "a single slab is not a full face");
+        assert_eq!(w.data.pane_mask_at(p), 0, "a single slab is not a full face");
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(1)));
-        assert_eq!(w.pane_mask_at(p), petramond_world::pane::NORTH);
+        assert_eq!(w.data.pane_mask_at(p), petramond_world::pane::NORTH);
     }
 }
 
 #[cfg(test)]
 mod world_torch {
-    use crate::world::World;
+    use crate::world::ServerWorld;
     #[allow(unused_imports)]
     use petramond_world::world::torch::test_exports::*;
 
@@ -1341,8 +1344,8 @@ mod world_torch {
     use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    fn world() -> World {
-        let mut w = World::new(0, 4);
+    fn world() -> ServerWorld {
+        let mut w = ServerWorld::new(0, 4);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
@@ -1359,7 +1362,7 @@ mod world_torch {
 
         let torch = stair - IVec3::new(1, 0, 0);
         assert!(
-            w.torch_supported_at(torch, TorchPlacement::West),
+            w.data.torch_supported_at(torch, TorchPlacement::West),
             "the full-height back face of a stair should hold a wall torch"
         );
     }
@@ -1379,7 +1382,7 @@ mod world_torch {
 
         let torch = slab + IVec3::new(1, 0, 0);
         assert!(
-            !w.torch_supported_at(torch, TorchPlacement::East),
+            !w.data.torch_supported_at(torch, TorchPlacement::East),
             "a single slab side is not a complete wall face"
         );
     }
@@ -1396,7 +1399,7 @@ mod world_torch {
 
         let torch = stair + IVec3::new(1, 0, 0);
         assert!(
-            !w.torch_supported_at(torch, TorchPlacement::East),
+            !w.data.torch_supported_at(torch, TorchPlacement::East),
             "the open side of a stair is not a complete wall face"
         );
     }
@@ -1408,7 +1411,7 @@ mod world_torch {
 
         let floor_torch = IVec3::new(8, 65, 8);
         assert!(
-            w.torch_supported_at(floor_torch, TorchPlacement::Floor),
+            w.data.torch_supported_at(floor_torch, TorchPlacement::Floor),
             "a fence's post top should hold a floor torch"
         );
 
@@ -1420,7 +1423,7 @@ mod world_torch {
             (fence + IVec3::new(0, 0, -1), TorchPlacement::North),
         ] {
             assert!(
-                !w.torch_supported_at(torch, placement),
+                !w.data.torch_supported_at(torch, placement),
                 "{placement:?} must not mount on a fence side"
             );
         }
@@ -1449,7 +1452,7 @@ mod world_torch {
             (slab + IVec3::new(0, 0, -1), TorchPlacement::North),
         ] {
             assert!(
-                w.torch_supported_at(torch, placement),
+                w.data.torch_supported_at(torch, placement),
                 "{placement:?} should be supported by a full slab stack"
             );
         }

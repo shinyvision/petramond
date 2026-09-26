@@ -3,6 +3,7 @@
 //! using a clicked block's own capability. Runs on the fixed tick, dispatched from
 //! `tick_place` after block interaction and before placement.
 
+use petramond_world::world::raycast;
 use super::game::ServerGame;
 use crate::entity::DroppedItem;
 use crate::events::tick::TickEvents;
@@ -58,7 +59,7 @@ impl ServerGame {
         // The CELL and FACE are what the claim is judged on, never the spot:
         // the server re-casts from its own latched look, so its hit point
         // differs by a hair from the client's on every legitimate click.
-        let authoritative = Player::raycast_use_ray(eye, sess.player.forward(), &self.world, ray)
+        let authoritative = raycast::use_ray(eye, sess.player.forward(), self.world.data(), ray)
             .map(|(hit, _)| (hit.block, hit.normal));
         if claimed.map(|c| (c.block, c.normal)) == authoritative {
             claimed
@@ -291,17 +292,17 @@ impl ServerGame {
             (p.eye(), p.forward())
         };
         let takes = |fluid: Block| fills.iter().any(|&(b, _)| b == fluid);
-        let Some((h, _)) = Player::raycast_fluid_sources(eye, dir, &self.world, takes) else {
+        let Some((h, _)) = raycast::fluid_sources(eye, dir, self.world.data(), takes) else {
             return false;
         };
-        let scooped = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
+        let scooped = Block::from_id(self.world.data().chunk_block(h.block.x, h.block.y, h.block.z));
         // Only a STILL SOURCE the bucket takes fills: flowing cells are
         // transparent to the ray and a solid hit is simply nothing to scoop
         // (the 2026-07-02 rule).
         let Some(&(_, becomes)) = fills.iter().find(|&&(b, _)| b == scooped) else {
             return false;
         };
-        if !self.world.is_fluid_source_world(h.block, scooped) {
+        if !self.world.data().is_fluid_source_world(h.block, scooped) {
             return false;
         }
         // The held-item swap must succeed BEFORE the world changes: with a full
@@ -341,11 +342,11 @@ impl ServerGame {
             let p = &self.sessions[s].player;
             (p.eye(), p.forward())
         };
-        let Some((h, _)) = Player::raycast_including_any_fluid(eye, dir, &self.world) else {
+        let Some((h, _)) = raycast::including_any_fluid(eye, dir, self.world.data()) else {
             return false;
         };
         // Fluids are themselves replaceable, so a fluid hit pours in place.
-        let looked_at = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
+        let looked_at = Block::from_id(self.world.data().chunk_block(h.block.x, h.block.y, h.block.z));
         let p = if crate::world::placement::replaces_in_place(looked_at) {
             h.block
         } else {
@@ -378,7 +379,7 @@ impl ServerGame {
                 return false;
             }
         }
-        let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
+        let target = Block::from_id(self.world.data().chunk_block(p.x, p.y, p.z));
         if !target.is_replaceable() {
             return false;
         }

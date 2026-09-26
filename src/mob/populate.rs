@@ -22,7 +22,7 @@
 
 use rustc_hash::FxHashSet;
 
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
 
@@ -115,7 +115,7 @@ fn wins_spacing(seed: u32, chunk: ChunkPos, own: u32) -> bool {
 /// (chance failed, or placement ran against final terrain), never when it was
 /// merely skipped as unloaded, so frontier chunks retry as they stream in.
 pub(super) fn attempt(
-    world: &World,
+    world: &ServerWorld,
     anchor: petramond_math::world_pos::WorldPos,
     checked: &mut FxHashSet<ChunkPos>,
 ) -> Vec<HerdSpawn> {
@@ -136,16 +136,16 @@ pub(super) fn attempt(
             }
             // Unloaded (e.g. a square corner outside the streamable disc):
             // skip WITHOUT checking off, so it rolls when it streams in.
-            if !world.chunk_loaded(chunk.cx, chunk.cz) {
+            if !world.data().chunk_loaded(chunk.cx, chunk.cz) {
                 continue;
             }
             if world.column_populated(chunk) {
                 checked.insert(chunk);
                 continue;
             }
-            let mut rng = chunk_rng(world.seed, chunk);
+            let mut rng = chunk_rng(world.data().seed, chunk);
             let draw = rng.next_f32();
-            if draw >= POPULATE_CHANCE || !wins_spacing(world.seed, chunk, draw.to_bits()) {
+            if draw >= POPULATE_CHANCE || !wins_spacing(world.data().seed, chunk, draw.to_bits()) {
                 checked.insert(chunk);
                 continue;
             }
@@ -166,7 +166,7 @@ pub(super) fn attempt(
 /// site's biome/ground admits, the group size, then members placed like a
 /// natural group — but with no player-distance band (the herd is "already
 /// there" when the player arrives) and no population caps.
-fn place_herd(world: &World, chunk: ChunkPos, rng: &mut MobRng) -> Option<Vec<Spawn>> {
+fn place_herd(world: &ServerWorld, chunk: ChunkPos, rng: &mut MobRng) -> Option<Vec<Spawn>> {
     let (kind, first) = anchor_member(world, chunk, rng)?;
     // Climate rarity: one roll gates the whole herd, from the chunk's own
     // deterministic stream — a failed roll re-rolls the same nothing next
@@ -190,7 +190,7 @@ fn place_herd(world: &World, chunk: ChunkPos, rng: &mut MobRng) -> Option<Vec<Sp
 /// Find the herd's first member: a valid foothold in the chunk plus a species
 /// whose spawn rule admits that site. Site-first (the biome decides what lives
 /// there), species drawn uniformly among the admitting passive rows.
-fn anchor_member(world: &World, chunk: ChunkPos, rng: &mut MobRng) -> Option<(Mob, Spawn)> {
+fn anchor_member(world: &ServerWorld, chunk: ChunkPos, rng: &mut MobRng) -> Option<(Mob, Spawn)> {
     for _ in 0..SITE_TRIES {
         let wx = chunk.cx * CHUNK_SX as i32 + rng.next_range(0, CHUNK_SX as i32 - 1);
         let wz = chunk.cz * CHUNK_SZ as i32 + rng.next_range(0, CHUNK_SZ as i32 - 1);
@@ -207,8 +207,8 @@ fn anchor_member(world: &World, chunk: ChunkPos, rng: &mut MobRng) -> Option<(Mo
 /// Pick uniformly among the passive, naturally-spawnable, enabled species whose
 /// rule admits this exact site (reservoir sampling, like the trickle's picker —
 /// but per site instead of per population room).
-fn choose_kind_for_site(world: &World, wx: i32, wz: i32, rng: &mut MobRng) -> Option<Mob> {
-    let disabled = world.disabled_mods();
+fn choose_kind_for_site(world: &ServerWorld, wx: i32, wz: i32, rng: &mut MobRng) -> Option<Mob> {
+    let disabled = world.data().disabled_mods();
     let mut chosen = None;
     let mut seen = 0i32;
     for d in defs() {
@@ -239,8 +239,8 @@ mod tests {
 
     /// A census-ready flat grass neighborhood: the anchor's chunk plus the four
     /// columns of the render-distance-1 streamable disc.
-    fn grass_world(seed: u32) -> World {
-        let mut world = World::new(seed, 1);
+    fn grass_world(seed: u32) -> ServerWorld {
+        let mut world = ServerWorld::new(seed, 1);
         for (cx, cz) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
             let mut chunk = Chunk::new(cx, cz);
             for z in 0..CHUNK_SZ {
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn herd_roll_is_deterministic_per_seed_and_terrain() {
         let seed = populating_seed();
-        let collect = |world: &World| {
+        let collect = |world: &ServerWorld| {
             let mut checked = FxHashSet::default();
             attempt(world, anchor(), &mut checked)
                 .into_iter()

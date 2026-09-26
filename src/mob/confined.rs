@@ -380,15 +380,15 @@ impl RegionCache {
 mod tests {
     use super::*;
     use crate::mob::path::PathParams;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     /// An `n`×`n` chunk grid of flat grass. The fill treats unloaded borders
     /// as inconclusive (free), so open-field tests pass regardless of grid
     /// size; pens must fit inside the grid.
-    fn flat_world_n(n: i32, mut edit: impl FnMut(&mut Chunk, i32, i32)) -> World {
-        let mut world = World::new(0, 1);
+    fn flat_world_n(n: i32, mut edit: impl FnMut(&mut Chunk, i32, i32)) -> ServerWorld {
+        let mut world = ServerWorld::new(0, 1);
         for cx in 0..n {
             for cz in 0..n {
                 let mut chunk = Chunk::new(cx, cz);
@@ -406,14 +406,14 @@ mod tests {
     }
 
     /// The default 3×3 grid (48×48 blocks) — room for ordinary test pens.
-    fn flat_world(edit: impl FnMut(&mut Chunk, i32, i32)) -> World {
+    fn flat_world(edit: impl FnMut(&mut Chunk, i32, i32)) -> ServerWorld {
         flat_world_n(3, edit)
     }
 
     /// Build stone walls (up to `y1` exclusive) around the WORLD-coord rect
     /// [x0, x1]×[z0, z1] into whichever chunk each wall cell lands in, on an
     /// `n`×`n` chunk grid.
-    fn walled_world_n(n: i32, x0: i32, z0: i32, x1: i32, z1: i32, height: i32) -> World {
+    fn walled_world_n(n: i32, x0: i32, z0: i32, x1: i32, z1: i32, height: i32) -> ServerWorld {
         flat_world_n(n, |chunk, cx, cz| {
             for wx in x0..=x1 {
                 for wz in z0..=z1 {
@@ -432,7 +432,7 @@ mod tests {
         })
     }
 
-    fn walled_world(x0: i32, z0: i32, x1: i32, z1: i32, height: i32) -> World {
+    fn walled_world(x0: i32, z0: i32, x1: i32, z1: i32, height: i32) -> ServerWorld {
         walled_world_n(3, x0, z0, x1, z1, height)
     }
 
@@ -440,7 +440,7 @@ mod tests {
         PathParams::for_body(2, 0.45)
     }
 
-    fn probe(world: &World, start: IVec3) -> Option<ConfinedRegion> {
+    fn probe(world: &ServerWorld, start: IVec3) -> Option<ConfinedRegion> {
         let cursor = world.cursor();
         let solid = crate::mob::nav::nav_solid_fn(&cursor);
         let support = crate::mob::nav::nav_support_fn(&cursor, params().half_width);
@@ -450,7 +450,7 @@ mod tests {
         confined_region(start, params(), &solid, &support, &fluid, &step, &loaded)
     }
 
-    fn check(world: &World, start: IVec3) -> bool {
+    fn check(world: &ServerWorld, start: IVec3) -> bool {
         probe(world, start).is_some()
     }
 
@@ -519,7 +519,7 @@ mod tests {
 
     /// A 5×5 pen of one-high fences. The fill must treat the fence as a wall
     /// even though a mob's physical jump could clear it.
-    fn fence_pen(extra: impl FnOnce(&mut World)) -> World {
+    fn fence_pen(extra: impl FnOnce(&mut ServerWorld)) -> ServerWorld {
         let mut world = flat_world(|_, _, _| {});
         for i in 21..=27 {
             for (x, z) in [(21, i), (27, i), (i, 21), (i, 27)] {

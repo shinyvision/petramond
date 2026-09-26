@@ -4,7 +4,7 @@ use crate::events::tick::TickEvents;
 use crate::events::{PostQueue, RosterRefs, SimCtx};
 use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::ChunkPos;
 
@@ -14,7 +14,7 @@ use petramond_world::chunk::ChunkPos;
 /// break-scatter use), never mint a second store at that cell.
 #[test]
 fn container_calls_canonicalize_to_the_group_anchor() {
-    let mut world = World::new(1, 4);
+    let mut world = ServerWorld::new(1, 4);
     world.clear_world();
     world.insert_chunk_for_test(
         ChunkPos::new(0, 0),
@@ -80,7 +80,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
     use petramond_math::math::IVec3;
     use petramond_world::block::Block;
     use petramond_world::item::{ItemStack, ItemType};
-    let mut world = World::new(1, 4);
+    let mut world = ServerWorld::new(1, 4);
     world.clear_world();
     world.insert_chunk_for_test(
         ChunkPos::new(0, 0),
@@ -207,7 +207,7 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
 fn a_transfer_moves_only_what_the_destination_admits() {
     use petramond_math::math::IVec3;
     use petramond_world::block::Block;
-    let mut world = World::new(1, 4);
+    let mut world = ServerWorld::new(1, 4);
     world.clear_world();
     world.insert_chunk_for_test(
         ChunkPos::new(0, 0),
@@ -287,7 +287,7 @@ fn a_mobs_carried_slots_are_a_container_and_spill_when_it_leaves() {
     use petramond_world::block::Block;
     use petramond_world::container::Container;
     use petramond_world::item::{ItemStack, ItemType};
-    let mut world = World::new(1, 4);
+    let mut world = ServerWorld::new(1, 4);
     world.clear_world();
     world.insert_chunk_for_test(
         ChunkPos::new(0, 0),

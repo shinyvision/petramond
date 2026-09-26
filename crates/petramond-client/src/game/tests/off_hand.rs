@@ -50,7 +50,7 @@ fn off_hand_places_when_the_main_hand_cannot_act() {
 
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(above.x, above.y, above.z)),
+        Block::from_id(game.server.world().data().chunk_block(above.x, above.y, above.z)),
         Block::Dirt,
         "the ladder's second pass places the off-hand block"
     );
@@ -92,7 +92,7 @@ fn the_main_hand_wins_when_both_hands_can_place() {
 
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(above.x, above.y, above.z)),
+        Block::from_id(game.server.world().data().chunk_block(above.x, above.y, above.z)),
         Block::Dirt,
         "the main hand acts whenever it can"
     );
@@ -123,7 +123,7 @@ fn an_empty_off_hand_never_runs_a_second_pass() {
     let p = events.player_at(0);
     assert!(p.placed_block.is_none() && !p.interacted && !p.used_item);
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(floor.x, floor.y + 1, floor.z)),
+        Block::from_id(game.server.world().data().chunk_block(floor.x, floor.y + 1, floor.z)),
         Block::Air,
         "an inert click with an empty off-hand does nothing"
     );
@@ -153,7 +153,7 @@ fn an_off_hand_change_after_receipt_denies_the_click() {
     game.server.tick_place(0, &mut events);
 
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(floor.x, floor.y + 1, floor.z)),
+        Block::from_id(game.server.world().data().chunk_block(floor.x, floor.y + 1, floor.z)),
         Block::Air,
         "the superseded click must not act on an item it never aimed"
     );
@@ -233,7 +233,7 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
     );
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.game.replica.chunk_block(above.x, above.y, above.z)),
+        Block::from_id(game.game.replica.data().chunk_block(above.x, above.y, above.z)),
         Block::Dirt,
         "the ghost writes the replica like any predicted place"
     );

@@ -228,7 +228,7 @@ impl Mobs {
 
     /// Record one gameplay noise for the NEXT mob AI batch (this tick's, when
     /// pushed before the mob stage). Emitters go through
-    /// [`World::push_noise`](crate::world::World::push_noise).
+    /// [`World::push_noise`](crate::world::ServerWorld::push_noise).
     pub fn push_noise(&mut self, noise: Noise) {
         self.pending_noises.push(noise);
     }

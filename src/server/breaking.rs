@@ -73,7 +73,7 @@ impl ServerGame {
             look.map(|t| t.block),
             break_held,
             barred,
-            &self.world,
+            self.world.data(),
             tool,
         ) {
             // Hold-path finish: if a TooFast BreakFinished was deferred for
@@ -172,7 +172,7 @@ impl ServerGame {
             return;
         }
 
-        let block = Block::from_id(self.world.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.world.data().chunk_block(pos.x, pos.y, pos.z));
         // Hold-path may have already cleared the cell before a lagged
         // BreakFinished arrives. If THIS session broke it, accept — never
         // deny/restore (that re-spawns the block and invites a second break).
@@ -432,7 +432,7 @@ impl ServerGame {
         if event.block.has_tag(petramond_world::block::BlockTag::BED) {
             self.clear_bed_spawn_at(event.pos);
         }
-        let (sky, blk) = break_light(&self.world, event.pos, breaker.normal);
+        let (sky, blk) = break_light(self.world.data(), event.pos, breaker.normal);
         // A COMPOSED cell (a slab stack) drops each of its parts as its own
         // material, each stamped with that part's own carried data, so a white
         // slab under an orange one comes back as one white and one orange —
@@ -440,7 +440,7 @@ impl ServerGame {
         // The engine asks the family; it does not know a slab from a stair.
         let part_drops = self
             .world
-            .cell_parts(event.pos)
+            .data().cell_parts(event.pos)
             .map(|parts| self.part_drop_stacks(event.pos, &parts));
         // A mod container is keyed at the block's container anchor — resolved
         // BEFORE the removal below clears the model-group metadata the anchor
@@ -450,7 +450,7 @@ impl ServerGame {
         // cell-KV entries BEFORE the removal below wipes the cell's KV, and
         // stamp them onto the block's own item drops as instance data.
         let carry_variant = self.carry_variant_at(container_pos, event.block, 0);
-        let broken_tint = self.world.cell_burst_tint(event.pos);
+        let broken_tint = self.world.data().cell_burst_tint(event.pos);
         // A compound block breaks as a whole: removing any cell clears every
         // member (the 2×2×1 workbench vanishes as one object, a door takes both
         // halves) and drops one item (the `spawn_drops` below). A client's
@@ -460,7 +460,7 @@ impl ServerGame {
             // almost everything; melting ice leaves water — see
             // `Block::break_residue`). The predicted clear applies the same
             // rule (`World::clear_broken_block`).
-            let below = Block::from_id(self.world.chunk_block(
+            let below = Block::from_id(self.world.data().chunk_block(
                 event.pos.x,
                 event.pos.y - 1,
                 event.pos.z,
@@ -581,7 +581,7 @@ impl ServerGame {
                 // KV) before this drain — no tint to sample.
                 tint: None,
             });
-            let (sky, blk) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
+            let (sky, blk) = self.world.data().dynamic_light_at_world(pos.x, pos.y, pos.z);
             // A natural break yields exactly what a bare-hand break would: most
             // fragile blocks are tier-0 (short grass yields nothing, a
             // flower/torch yields itself), while a tool-gated drop (the snow
@@ -626,7 +626,7 @@ impl ServerGame {
         let mut map = petramond_world::item::variant::VariantMap::new();
         for &key in carry {
             let stored = petramond_world::block::part_kv_key(key, part);
-            if let Some(v) = self.world.cell_kv_get(pos.x, pos.y, pos.z, &stored) {
+            if let Some(v) = self.world.data().cell_kv_get(pos.x, pos.y, pos.z, &stored) {
                 map.insert(key.to_owned(), v.to_vec());
             }
         }

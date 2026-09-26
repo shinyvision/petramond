@@ -5,6 +5,7 @@
 //! what rides the wire) stays in [`tick`](super::tick); this module owns the
 //! prediction logic itself.
 
+use petramond_world::world::raycast;
 use super::prediction;
 use super::tick::{GameInput, PlacePrediction, WorldEvent};
 use super::Game;
@@ -169,7 +170,7 @@ impl Game {
         // still come back over the wire.
         // Read the cell's tint BEFORE the clear wipes its KV — the local
         // burst event needs it (same capture the server does).
-        let broken_tint = self.replica.cell_burst_tint(pos);
+        let broken_tint = self.replica.data().cell_burst_tint(pos);
         let (request_id, predicted) = if self.prediction.can_predict() {
             match self.replica.clear_broken_block(pos) {
                 Some((block, cells)) => {
@@ -241,7 +242,7 @@ impl Game {
         // the SAME claim rule the server's built-in consumer runs — parity by
         // construction, not by two hand-kept copies.
         if let Some(look) = self.look {
-            let target = petramond_world::block::Block::from_id(self.replica.chunk_block(
+            let target = petramond_world::block::Block::from_id(self.replica.data().chunk_block(
                 look.block.x,
                 look.block.y,
                 look.block.z,
@@ -287,15 +288,15 @@ impl Game {
     /// has a result for.
     fn predicts_bucket_fill(&self, fills: &[(Block, petramond_world::item::ItemType)]) -> bool {
         let takes = |fluid: Block| fills.iter().any(|&(b, _)| b == fluid);
-        let hit = petramond::player::Player::raycast_fluid_sources(
+        let hit = raycast::fluid_sources(
             self.cam.pos,
             self.cam.forward(),
-            &self.replica,
+            self.replica.data(),
             takes,
         );
         hit.is_some_and(|(h, _)| {
-            let scooped = Block::from_id(self.replica.chunk_block(h.block.x, h.block.y, h.block.z));
-            takes(scooped) && self.replica.is_fluid_source_world(h.block, scooped)
+            let scooped = Block::from_id(self.replica.data().chunk_block(h.block.x, h.block.y, h.block.z));
+            takes(scooped) && self.replica.data().is_fluid_source_world(h.block, scooped)
         })
     }
 
@@ -306,14 +307,14 @@ impl Game {
     /// over-optimism policy as the engine-block place ghost.
     fn predicts_bucket_pour(&self) -> bool {
         use petramond_world::block::Block;
-        let Some((h, _)) = petramond::player::Player::raycast_including_any_fluid(
+        let Some((h, _)) = raycast::including_any_fluid(
             self.cam.pos,
             self.cam.forward(),
-            &self.replica,
+            self.replica.data(),
         ) else {
             return false;
         };
-        let looked = Block::from_id(self.replica.chunk_block(h.block.x, h.block.y, h.block.z));
+        let looked = Block::from_id(self.replica.data().chunk_block(h.block.x, h.block.y, h.block.z));
         let p = if petramond::world::placement::replaces_in_place(looked) {
             h.block
         } else {
@@ -322,7 +323,7 @@ impl Game {
             }
             h.block + h.normal
         };
-        Block::from_id(self.replica.chunk_block(p.x, p.y, p.z)).is_replaceable()
+        Block::from_id(self.replica.data().chunk_block(p.x, p.y, p.z)).is_replaceable()
     }
 
     /// Optimistic full place when the look target can accept the held block.
@@ -402,7 +403,7 @@ impl Game {
         // ahead of the whole place consumer, so a chest/table/furnace click
         // cancels a mod-block ghost exactly like an engine-block ghost
         // (holding a chain must predict like holding a fence).
-        let target = petramond_world::block::Block::from_id(self.replica.chunk_block(
+        let target = petramond_world::block::Block::from_id(self.replica.data().chunk_block(
             look.block.x,
             look.block.y,
             look.block.z,
@@ -432,7 +433,7 @@ impl Game {
         // (the furniture chair) gets the same footprint/body-gate refusal
         // prediction a bed or workbench does.
         if !block.is_engine() {
-            let looked_at = petramond_world::block::Block::from_id(self.replica.chunk_block(
+            let looked_at = petramond_world::block::Block::from_id(self.replica.data().chunk_block(
                 look.block.x,
                 look.block.y,
                 look.block.z,
@@ -482,7 +483,7 @@ impl Game {
         let place_pos = look.block + look.normal;
         let prev = self
             .replica
-            .chunk_block(place_pos.x, place_pos.y, place_pos.z);
+            .data().chunk_block(place_pos.x, place_pos.y, place_pos.z);
         if prev != petramond_world::block::Block::Air.0 {
             return PlacePrediction::No;
         }
@@ -544,7 +545,7 @@ impl Game {
         // previous id — the deny-rollback footprint.
         let previous_cells: Vec<(IVec3, u16)> = plan
             .cells()
-            .map(|c| (c, self.replica.chunk_block(c.x, c.y, c.z)))
+            .map(|c| (c, self.replica.data().chunk_block(c.x, c.y, c.z)))
             .collect();
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
@@ -620,14 +621,14 @@ impl Game {
         // unread replica cell reads as air — optimistic, and a stale read
         // rolls back like any engine ghost.
         let cur = petramond_world::block::Block::from_id(
-            self.replica.chunk_block(anchor.x, anchor.y, anchor.z),
+            self.replica.data().chunk_block(anchor.x, anchor.y, anchor.z),
         );
         if !cur.is_replaceable() || cur == write_block {
             return Some(PlacePrediction::No);
         }
         // The written row's SUPPORT gate — the server's twin, run against the
         // replica so the ghost refuses exactly what the server will refuse.
-        if !self.replica.placement_support_ok(write_block, anchor) {
+        if !self.replica.data().placement_support_ok(write_block, anchor) {
             return Some(PlacePrediction::No);
         }
         // The body-occupancy gate, fed by the shape's own bake of the
@@ -641,7 +642,7 @@ impl Game {
             // will write (absent before commit, so the ghost bakes from
             // neighbours + the default, then re-bakes on the authoritative
             // state delta).
-            let input = self.replica.bake_cell_input(anchor, write_block);
+            let input = self.replica.data().bake_cell_input(anchor, write_block);
             let Self {
                 client_mods,
                 replica,
@@ -653,7 +654,7 @@ impl Game {
             Some(b) => b,
             None => self
                 .replica
-                .custom_shape_boxes(anchor)
+                .data().custom_shape_boxes(anchor)
                 .unwrap_or_else(|| write_block.collision_boxes()),
         };
         if self.placement_blocked_by_body(anchor, boxes) {

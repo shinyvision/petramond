@@ -108,8 +108,8 @@ fn schematic_placement_updates_skipped_interior_cells_and_the_rotated_one_block_
             server.world.set_block_world(p.x, p.y, p.z, b);
         }
         // Generated decorations have no outstanding edit notification to rescue them.
-        server.world.sim.update_queue.clear();
-        server.world.sim.update_set.clear();
+        server.world.data().sim.update_queue.clear();
+        server.world.data().sim.update_set.clear();
         server
             .place_schematic(
                 0,
@@ -123,15 +123,15 @@ fn schematic_placement_updates_skipped_interior_cells_and_the_rotated_one_block_
         server
             .apply_creative(0, CreativeAction::Undo, &mut TickEvents::default())
             .unwrap();
-        server.world.sim.update_queue.clear();
-        server.world.sim.update_set.clear();
+        server.world.data().sim.update_queue.clear();
+        server.world.data().sim.update_set.clear();
         server
             .apply_creative(0, CreativeAction::Redo, &mut TickEvents::default())
             .unwrap();
 
         for (p, block) in unsupported {
             assert!(
-                server.world.sim.update_set.contains(&p),
+                server.world.data().sim.update_set.contains(&p),
                 "missing update at {p:?}, turn {turns}"
             );
             assert_eq!(
@@ -140,10 +140,10 @@ fn schematic_placement_updates_skipped_interior_cells_and_the_rotated_one_block_
                 "notification must defer to the ordinary behavior dispatch"
             );
         }
-        assert!(!server.world.sim.update_set.contains(&outside));
+        assert!(!server.world.data().sim.update_set.contains(&outside));
         for (p, _) in schematic.placed_cells(origin, turns).unwrap() {
             assert!(
-                server.world.sim.update_set.contains(&p),
+                server.world.data().sim.update_set.contains(&p),
                 "copied solids also receive updates"
             );
         }

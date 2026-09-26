@@ -5,7 +5,7 @@
 //! deterministic, no-loss mutation.
 
 use super::{ContainerMenu, ContainerTarget};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_world::gui_state::PointerButton;
 use petramond_world::gui_state::{MenuSlot, MAX_MENU_DRAG_SLOTS};
 use petramond_world::inventory::{
@@ -21,7 +21,7 @@ impl ContainerMenu {
     /// the cursor, and take-only/virtual outputs are never destinations.
     pub fn drag_slots(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slots: &[MenuSlot],
@@ -51,7 +51,7 @@ impl ContainerMenu {
     /// sink by the server menu stage.
     pub fn drop_slot(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         slot: MenuSlot,
         all: bool,
@@ -80,7 +80,7 @@ impl ContainerMenu {
     /// swaps nothing.
     pub fn swap_off_hand(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slot: MenuSlot,
@@ -116,7 +116,7 @@ impl ContainerMenu {
 
     fn drag_capacity(
         &self,
-        world: &World,
+        world: &ServerWorld,
         inv: &Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slot: MenuSlot,
@@ -162,7 +162,7 @@ impl ContainerMenu {
 
     fn place_cursor_in(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slot: MenuSlot,
@@ -197,7 +197,7 @@ impl ContainerMenu {
 
     fn drop_open_container_slot(
         &self,
-        world: &mut World,
+        world: &mut ServerWorld,
         slot: MenuSlot,
         all: bool,
     ) -> Option<ItemStack> {

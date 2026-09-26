@@ -9,7 +9,7 @@ use crate::events::tick::TickEvents;
 use crate::events::{Attach, EventBus, PlayerRoster, PostEvent, SimCtx, TickSystems};
 use crate::modding::ModHost;
 use crate::player::PlayerId;
-use crate::world::World;
+use crate::world::ServerWorld;
 
 /// The WASM mod instances and the seams they (and the engine) register on.
 pub struct ModRuntime {
@@ -73,7 +73,7 @@ impl ModRuntime {
     /// Run every mod's `mod_init` (after the engine's own registrations, so
     /// mods sort behind the engine at equal priority). Init belongs to no
     /// player.
-    pub fn initialize(&mut self, world: &mut World) {
+    pub fn initialize(&mut self, world: &mut ServerWorld) {
         let Self {
             bus,
             systems,
@@ -100,7 +100,7 @@ impl ModRuntime {
     pub fn run_systems(
         &mut self,
         at: Attach,
-        world: &mut World,
+        world: &mut ServerWorld,
         players: &mut dyn PlayerRoster,
         feed: &mut TickEvents,
     ) {
@@ -114,7 +114,7 @@ impl ModRuntime {
     /// Drain the queued post events, each dispatched for its own player.
     pub fn drain_posts(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         players: &mut dyn PlayerRoster,
         feed: &mut TickEvents,
     ) {
@@ -128,7 +128,7 @@ impl ModRuntime {
     /// one place a server-side mod dispatch builds its context.
     pub fn dispatch<R>(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         players: &mut dyn PlayerRoster,
         actor: Option<PlayerId>,
         feed: &mut TickEvents,

@@ -1,33 +1,32 @@
+use crate::world::ReplicaWorld;
 use petramond_mesh::ChunkMesh;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-use super::World;
+use super::super::side::TerrainRenderState;
+use super::column_cy_bit;
 
-impl World {
+/// The replica's mesh store and the per-column indexes derived from it — the
+/// single funnel that keeps `meshes`, `mesh_columns`, `mesh_column_cys` and
+/// the upload bookkeeping in step.
+impl TerrainRenderState {
     #[inline]
     pub(in crate::world) fn column_has_mesh(&self, pos: ChunkPos) -> bool {
-        self.terrain.mesh_columns.contains(&pos)
-    }
-
-    /// Iterate the meshed section `cy` values recorded for a column bitset.
-    #[inline]
-    pub(in crate::world) fn for_each_mesh_cy(bits: u32, f: impl FnMut(i32)) {
-        Self::for_each_column_cy(bits, f);
+        self.mesh_columns.contains(&pos)
     }
 
     pub(in crate::world) fn install_mesh(&mut self, pos: SectionPos, mesh: ChunkMesh) {
-        self.terrain.meshes.insert(pos, mesh);
-        self.terrain.repack_forced.remove(&pos);
+        self.meshes.insert(pos, mesh);
+        self.repack_forced.remove(&pos);
         let column = pos.chunk_pos();
-        self.terrain.mesh_columns.insert(column);
-        *self.terrain.mesh_column_cys.entry(column).or_insert(0) |= Self::column_cy_bit(pos.cy);
+        self.mesh_columns.insert(column);
+        *self.mesh_column_cys.entry(column).or_insert(0) |= column_cy_bit(pos.cy);
         self.bump_mesh_upload_revision(column);
-        self.terrain.mesh_upload_dirty_columns.insert(column);
+        self.mesh_upload_dirty_columns.insert(column);
     }
 
     pub(in crate::world) fn remove_mesh(&mut self, pos: SectionPos) -> bool {
-        let removed = self.terrain.meshes.remove(&pos).is_some();
-        self.terrain.repack_forced.remove(&pos);
+        let removed = self.meshes.remove(&pos).is_some();
+        self.repack_forced.remove(&pos);
         if removed {
             let column = pos.chunk_pos();
             self.clear_mesh_cy(column, pos.cy);
@@ -37,30 +36,26 @@ impl World {
     }
 
     fn bump_mesh_upload_revision(&mut self, pos: ChunkPos) {
-        let revision = self.terrain.mesh_upload_revisions.entry(pos).or_insert(0);
+        let revision = self.mesh_upload_revisions.entry(pos).or_insert(0);
         *revision = revision.wrapping_add(1).max(1);
     }
 
     fn clear_mesh_cy(&mut self, pos: ChunkPos, cy: i32) {
-        let Some(bits) = self.terrain.mesh_column_cys.get_mut(&pos) else {
-            self.terrain.mesh_columns.remove(&pos);
+        let Some(bits) = self.mesh_column_cys.get_mut(&pos) else {
+            self.mesh_columns.remove(&pos);
             return;
         };
-        *bits &= !Self::column_cy_bit(cy);
+        *bits &= !column_cy_bit(cy);
         if *bits == 0 {
-            self.terrain.mesh_column_cys.remove(&pos);
-            self.terrain.mesh_columns.remove(&pos);
+            self.mesh_column_cys.remove(&pos);
+            self.mesh_columns.remove(&pos);
         }
     }
+}
 
-    /// Drop the column's mesh-index entries (meshes themselves already removed).
-    pub(in crate::world) fn clear_mesh_column_index(&mut self, pos: ChunkPos) {
-        self.terrain.mesh_columns.remove(&pos);
-        self.terrain.mesh_column_cys.remove(&pos);
-    }
-
+impl ReplicaWorld {
     /// Iterate loaded section meshes for rendering (caller culls by camera).
     pub fn iter_meshes(&self) -> impl Iterator<Item = (SectionPos, &ChunkMesh)> {
-        self.terrain.meshes.iter().map(|(p, m)| (*p, m))
+        self.side.terrain.meshes.iter().map(|(p, m)| (*p, m))
     }
 }

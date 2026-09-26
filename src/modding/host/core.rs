@@ -194,7 +194,7 @@ mod tests {
     use crate::events::tick::TickEvents;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::world::World;
+    use crate::world::ServerWorld;
 
     /// Shader params are the visual environment surface mods use for sky
     /// shaders and other pack-owned effects: own namespace or engine `petramond:*`,
@@ -203,7 +203,7 @@ mod tests {
     fn shader_param_writes_are_namespaced_and_tick_scoped() {
         let mut alpha = ModStoreData::new("alpha", 1);
         let mut beta = ModStoreData::new("beta", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
@@ -249,11 +249,11 @@ mod tests {
         });
 
         assert_eq!(
-            world.environment().shader_params().get("alpha:sky"),
+            world.data().environment().shader_params().get("alpha:sky"),
             Some(&[0.25, 0.5, 0.75, 1.0])
         );
         assert_eq!(
-            world.environment().shader_params().get("petramond:light"),
+            world.data().environment().shader_params().get("petramond:light"),
             Some(&[0.8, 0.0, 0.0, 0.0])
         );
         assert!(matches!(

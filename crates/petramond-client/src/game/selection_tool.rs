@@ -3,9 +3,10 @@
 
 mod extrude;
 
+use petramond_world::world::raycast;
 use super::world_tool::{ToolContext, ToolOverlay, WorldTool};
 use super::GameInput;
-use petramond::player::{Player, RayFilter};
+use petramond::player::RayFilter;
 use petramond::schematic::{Selection, PLACEMENT_REACH};
 
 /// The [`world_tool`](petramond_world::item::ItemType::world_tool) name of
@@ -87,12 +88,12 @@ impl WorldTool for SelectionTool {
         }
         self.cancel_extrusion();
         let (eye, forward) = (ctx.cam.pos, ctx.cam.forward());
-        let hit = Player::raycast_filtered(
+        let hit = raycast::filtered(
             eye,
             forward,
             PLACEMENT_REACH,
             RayFilter::Selectable,
-            ctx.world,
+            ctx.world.data(),
         )
         .map(|(h, _)| h.block.to_array());
         // Removal picks the selection's own geometry, so selected air erases.

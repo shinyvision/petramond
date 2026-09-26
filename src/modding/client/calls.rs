@@ -415,13 +415,13 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 ));
             }
             client_scope::with_active(|world| {
-                let params = world.environment().shader_params().clone();
+                let params = world.data().environment().shader_params().clone();
                 HostRet::EnvParams(keys.iter().map(|k| params.get(k).copied()).collect())
             })
             .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
         }
         HostCall::ClientBiomeAt { pos } => client_scope::with_active(|world| {
-            HostRet::MaybeByte(world.biome_at_world(pos[0], pos[1]))
+            HostRet::MaybeByte(world.data().biome_at_world(pos[0], pos[1]))
         })
         .unwrap_or_else(|| HostRet::Error("no client replica is active".into())),
         HostCall::ClientBlocksAt { positions } => {
@@ -461,7 +461,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 HostRet::BytesMany(
                     cells
                         .iter()
-                        .map(|&[x, y, z]| world.cell_kv_get(x, y, z, &key).map(<[u8]>::to_vec))
+                        .map(|&[x, y, z]| world.data().cell_kv_get(x, y, z, &key).map(<[u8]>::to_vec))
                         .collect(),
                 )
             })

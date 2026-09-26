@@ -91,7 +91,7 @@ fn settle(game: &mut TestGame, what: &str) -> Vec<ServerToClient> {
             .any(|m| matches!(kind(m), "SectionData" | "SectionCached"));
         quiet = if sections { 0 } else { quiet + 1 };
         recorded.extend(msgs);
-        if quiet >= 30 && game.replica.chunk_loaded(0, 0) && !home_column_payloads(game).is_empty()
+        if quiet >= 30 && game.replica.data().chunk_loaded(0, 0) && !home_column_payloads(game).is_empty()
         {
             return recorded;
         }
@@ -117,7 +117,7 @@ fn home_column_payloads(game: &TestGame) -> Vec<(SectionPos, SectionPayload)> {
 fn leave(game: &mut TestGame) -> Vec<ServerToClient> {
     place_player(game, FAR);
     frames_until(game, "the home column unloaded", |g| {
-        !g.replica.chunk_loaded(0, 0)
+        !g.replica.data().chunk_loaded(0, 0)
     })
 }
 

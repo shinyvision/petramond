@@ -78,7 +78,7 @@ use petramond::net::protocol::{ChatLine, ClientToServer, PlayerAction, SelfTrans
 #[cfg(test)]
 use petramond::player::PlayerMode;
 use petramond::player::{Player, RaycastHit};
-use petramond::world::World;
+use petramond::world::ReplicaWorld;
 #[cfg(test)]
 use petramond_math::math::IVec3;
 use petramond_render::camera::Camera;
@@ -157,11 +157,11 @@ pub struct Game {
     /// Chat lines received from the server and not yet adopted by the app's
     /// client-side chat history.
     pending_chat_lines: Vec<ChatLine>,
-    /// The client's REPLICA world (role `ClientReplica`): installed from the
+    /// The client's REPLICA world: installed from the
     /// server's terrain payloads + deltas, it owns light + meshes for the
     /// renderer and answers every client-side world read — collision, raycast,
     /// particles, door/chest presentation, environment sampling.
-    replica: World,
+    replica: ReplicaWorld,
     /// Optional presentation-only client WASM modules. They read the replica
     /// and publish document state/images; they never share the server mod
     /// instances or simulation mutation seams.

@@ -199,7 +199,7 @@ mod tests {
     use crate::events::{PostQueue, RosterRefs, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_math::world_pos::WorldPos;
 
     /// `EmitSound` feeds the NON-lossy tick queue (never audio directly) and
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn emit_sound_rides_the_tick_feed() {
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
@@ -251,7 +251,7 @@ mod tests {
     fn spatial_sound_calls_queue_resolved_commands_with_deterministic_handles() {
         fn run_once() -> (u64, u64, Vec<crate::events::tick::SpatialSoundCommand>) {
             let mut data = ModStoreData::new("alpha", 1);
-            let mut world = World::new(1, 1);
+            let mut world = ServerWorld::new(1, 1);
             assert!(world.mobs_mut().spawn(
                 crate::mob::Mob::Owl,
                 WorldPos::new(2.0, 80.0, 3.0),

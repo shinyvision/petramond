@@ -3,11 +3,11 @@
 //! only the world store can see — the live bodies a flight sweeps, and the
 //! announced block changes a lodged item watches its anchor through.
 
+use crate::world::ServerWorld;
 use std::collections::HashSet;
 
 use crate::entity::{DroppedItem, Motion};
 use crate::mob::{EntityRef, PlayerAnchor};
-use crate::world::World;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 
@@ -54,7 +54,7 @@ impl<'a> ChangedCells<'a> {
 
 /// What every item's step shares this tick beyond the entity itself.
 pub(super) struct StepCtx<'a> {
-    pub world: &'a World,
+    pub world: &'a ServerWorld,
     pub dt: f32,
     pub anchors: &'a [PlayerAnchor],
     pub changed: ChangedCells<'a>,
@@ -122,7 +122,7 @@ fn segment_meets_box(from: Vec3, motion: Vec3, lo: Vec3, hi: Vec3) -> bool {
     }
     let length = motion.length();
     length > 1e-6
-        && crate::player::ray_vs_aabb(from, motion / length, lo, hi).is_some_and(|t| t <= length)
+        && petramond_world::world::raycast::ray_vs_aabb(from, motion / length, lo, hi).is_some_and(|t| t <= length)
 }
 
 impl DroppedItem {
@@ -200,10 +200,10 @@ impl DroppedItem {
             return;
         }
         let a = stuck.anchor;
-        if !ctx.world.chunk_loaded(a.x >> 4, a.z >> 4) {
+        if !ctx.world.data.chunk_loaded(a.x >> 4, a.z >> 4) {
             return;
         }
-        if ctx.world.collision_boxes_at(a.x, a.y, a.z).is_empty() {
+        if ctx.world.data.collision_boxes_at(a.x, a.y, a.z).is_empty() {
             self.release();
         } else if let Motion::Stuck(stuck) = &mut self.motion {
             stuck.verified = true;

@@ -9,10 +9,10 @@
 //! cells it may flow into), this behaviour is what such a block DOES when its support
 //! changes.
 
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
-use super::store::World;
 
 /// Break behaviour for fragile blocks (the cross-plants and the torch). A block update
 /// that takes away the block's support resolves the verdict at the update itself: the
@@ -24,11 +24,11 @@ use super::store::World;
 pub struct Fragile;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Fragile {
-    fn neighbor_update(&self, world: &mut World, pos: IVec3) {
+    fn neighbor_update(&self, world: &mut ServerWorld, pos: IVec3) {
         // Dispatch already read this cell as the fragile block when the update was
         // queued; re-read — the cell may hold something else now (mined, replaced).
-        let block = Block::from_id(world.chunk_block(pos.x, pos.y, pos.z));
-        if !block.is_fragile() || world.fragile_supported(pos, block) {
+        let block = Block::from_id(world.data.chunk_block(pos.x, pos.y, pos.z));
+        if !block.is_fragile() || world.data.fragile_supported(pos, block) {
             return;
         }
         // Shatter it as a natural break — drops + burst, exactly as a hand-break.
@@ -50,21 +50,21 @@ mod tests {
     use petramond_world::torch::TorchPlacement;
 
     /// A world with one empty loaded chunk at the origin.
-    fn world() -> World {
-        let mut w = World::new(0, 4);
+    fn world() -> ServerWorld {
+        let mut w = ServerWorld::new(0, 4);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         w
     }
 
-    fn run_ticks(w: &mut World, n: u32) {
+    fn run_ticks(w: &mut ServerWorld, n: u32) {
         let r = Recipes::default();
         for _ in 0..n {
             w.game_tick(&r);
         }
     }
 
-    fn block(w: &World, p: IVec3) -> Block {
-        Block::from_id(w.chunk_block(p.x, p.y, p.z))
+    fn block(w: &ServerWorld, p: IVec3) -> Block {
+        Block::from_id(w.data.chunk_block(p.x, p.y, p.z))
     }
 
     /// A BOX SET's face is complete only where its matter reaches the
@@ -246,7 +246,7 @@ mod tests {
         let wall = TorchPlacement::West.support_cell(torch);
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
         w.set_block_world(torch.x, torch.y, torch.z, Block::Torch);
-        w.insert_torch(torch, TorchPlacement::West);
+        w.data.insert_torch(torch, TorchPlacement::West);
         run_ticks(&mut w, 2);
         assert_eq!(block(&w, torch), Block::Torch, "held up by its wall");
 
@@ -336,7 +336,7 @@ mod tests {
         ));
         let torch = stair - IVec3::X;
         w.set_block_world(torch.x, torch.y, torch.z, Block::Torch);
-        w.insert_torch(torch, TorchPlacement::West);
+        w.data.insert_torch(torch, TorchPlacement::West);
         run_ticks(&mut w, 2);
         assert_eq!(block(&w, torch), Block::Torch, "stair back holds torch");
     }
@@ -474,8 +474,8 @@ mod tests {
         // support is a ceiling — so without a gate it places on open air and
         // this very tick shatters it, eating the item.
         let mut never_occupied = |_: IVec3, _: &[petramond_world::block::Aabb]| false;
-        let mut plan = |w: &World, p: IVec3, b: Block| {
-            w.finish_single_cell_placement(
+        let mut plan = |w: &ServerWorld, p: IVec3, b: Block| {
+            w.data.finish_single_cell_placement(
                 b,
                 p,
                 petramond_world::block::ShapeState::NONE,

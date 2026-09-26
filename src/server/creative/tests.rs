@@ -202,14 +202,14 @@ fn instant_mining_keeps_a_repeat_delay_and_creative_placement_keeps_the_stack() 
         .input.pending_break_finished
         .extend([request(1, a), request(2, b)]);
     server.tick_mining(0, &mut events);
-    assert_eq!(server.world.chunk_block(a.x, a.y, a.z), Block::Air.id());
-    assert_eq!(server.world.chunk_block(b.x, b.y, b.z), Block::Stone.id());
+    assert_eq!(server.world.data().chunk_block(a.x, a.y, a.z), Block::Air.id());
+    assert_eq!(server.world.data().chunk_block(b.x, b.y, b.z), Block::Stone.id());
     server.world.restore_tick(server.world.current_tick() + 10);
     server.sessions[0]
         .input.pending_break_finished
         .push(request(3, b));
     server.tick_mining(0, &mut events);
-    assert_eq!(server.world.chunk_block(b.x, b.y, b.z), Block::Air.id());
+    assert_eq!(server.world.data().chunk_block(b.x, b.y, b.z), Block::Air.id());
     *server.sessions[0].player.inventory.slot_mut(0).unwrap() = Some(ItemStack::new(
         ItemType::Stone,
         ItemType::Stone.max_stack_size(),
@@ -377,7 +377,7 @@ fn grouped_placement_variants_vary_and_replay_without_consuming_the_creative_sta
                     &mut TickEvents::default()
                 )
                 .is_some());
-            let block = Block::from_id(server.world.chunk_block(p.x, p.y, p.z));
+            let block = Block::from_id(server.world.data().chunk_block(p.x, p.y, p.z));
             assert!(item.placement_variants().contains(&block));
             pass.push(block);
         }

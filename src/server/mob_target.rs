@@ -1,15 +1,16 @@
 //! Authoritative resolution of client-claimed mob targets.
 
+use petramond_world::world::raycast;
 use super::player::ConnectedPlayer;
-use crate::player::{self, Player};
-use crate::world::World;
+use crate::player;
+use crate::world::ServerWorld;
 
 /// Resolve a client-claimed stable mob id against `sess`'s current view ray
 /// in `world`. The id is only a claim: it must name the nearest live body
 /// before both terrain and reach, from the drift-bounded authoritative eye.
 /// Dead players and spectators have no actionable mob target.
 pub fn authoritative_mob_target(
-    world: &World,
+    world: &ServerWorld,
     sess: &ConnectedPlayer,
     requested: Option<u64>,
 ) -> Option<usize> {
@@ -20,7 +21,7 @@ pub fn authoritative_mob_target(
 
     let eye = super::movement::reach_eye(sess);
     let dir = sess.player.forward();
-    let terrain_dist = Player::raycast_with_dist(eye, dir, world)
+    let terrain_dist = raycast::with_dist(eye, dir, world.data())
         .map(|(_, distance)| distance)
         .unwrap_or(player::REACH);
     let limit = terrain_dist.min(player::REACH);

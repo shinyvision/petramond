@@ -11,7 +11,7 @@
 
 use petramond_render::atlas;
 
-use petramond::world::World;
+use petramond::world::ReplicaWorld;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::biome::Biome;
@@ -248,20 +248,20 @@ impl ParticleSystem {
     /// Advance every particle by `dt`: gravity, integrate position with simple
     /// block-ground stop, age, then cull dead. Culling uses swap-remove so the
     /// live slice stays packed at the front.
-    pub fn tick(&mut self, dt: f32, world: &World) {
+    pub fn tick(&mut self, dt: f32, world: &ReplicaWorld) {
         // Model-aware: a fleck settles on a bbmodel block's actual leg/top and drifts
         // through the empty space around it — the same `collision_boxes_at` shape source the
         // player/mob/item bodies collide against (here the point case, `World::point_blocked`).
-        self.tick_with(dt, &|p| world.point_blocked(p), &|p| {
+        self.tick_with(dt, &|p| world.data().point_blocked(p), &|p| {
             let c = p.block();
-            world.fluid_cell_at(c.x, c.y, c.z)
+            world.data().fluid_cell_at(c.x, c.y, c.z)
         });
         // Re-sample light each tick so a fleck dims/brightens as the lighting around
         // it changes (e.g. a torch broken in a dark cave), rather than staying frozen
         // at its spawn light.
         for p in &mut self.particles {
             let c = p.pos.block();
-            let (sky, block) = world.dynamic_light_at_world(c.x, c.y, c.z);
+            let (sky, block) = world.data().dynamic_light_at_world(c.x, c.y, c.z);
             p.skylight = sky;
             p.blocklight = block;
         }

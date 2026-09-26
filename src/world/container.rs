@@ -7,22 +7,22 @@
 //! mod — so these are thin world↔section coordinate wrappers for GUI edits,
 //! mod host calls, and breaking.
 
+use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::container::Container;
 
-use super::store::World;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// The container at a world block position, if one is stored there.
     pub fn container_at(&self, pos: IVec3) -> Option<&Container> {
-        let (c, lx, ly, lz) = self.chunk_at_world(pos.x, pos.y, pos.z)?;
+        let (c, lx, ly, lz) = self.data.chunk_at_world(pos.x, pos.y, pos.z)?;
         c.container_at(lx, ly, lz)
     }
 
     /// Mutable handle to the container at a world block position (GUI edits
     /// and mod `ContainerSet` writes).
     pub fn container_at_mut(&mut self, pos: IVec3) -> Option<&mut Container> {
-        let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
+        let (c, lx, ly, lz) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
         c.container_at_mut(lx, ly, lz)
     }
 
@@ -31,7 +31,7 @@ impl World {
     /// with more slots). No-op if the owning chunk is not loaded. Returns
     /// whether a container is present afterwards.
     pub fn ensure_container(&mut self, pos: IVec3, len: usize) -> bool {
-        let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
+        let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
         match c.container_at_mut(lx, ly, lz) {
@@ -45,7 +45,7 @@ impl World {
     /// Remove and return the container at a world position (block break),
     /// if any.
     pub fn take_container(&mut self, pos: IVec3) -> Option<Container> {
-        let (c, lx, ly, lz) = self.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
+        let (c, lx, ly, lz) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
         let container = c.take_container(lx, ly, lz);
         if container.is_some() {
             self.note_block_entity_change(pos);
@@ -69,7 +69,7 @@ impl World {
         // once the footprint is air this resolves to `pos` itself.
         let anchor = self.container_anchor(pos);
         self.forget_block_draw(anchor);
-        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+        if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.take_furnace(lx, ly, lz);
             self.note_block_entity_change(pos);
         }

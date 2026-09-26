@@ -148,7 +148,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
             if Block::from_id(
                 game.server
                     .world()
-                    .chunk_block(placed_at.x, placed_at.y, placed_at.z),
+                    .data().chunk_block(placed_at.x, placed_at.y, placed_at.z),
             ) == Block::Air
             {
                 let obs = out

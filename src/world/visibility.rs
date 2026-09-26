@@ -24,38 +24,20 @@
 //! 3×3×3 AND flags `vis_dirty`, and every refresh re-queues parked sections that
 //! became visible, so re-exposure needs no extra bookkeeping.
 
+use crate::world::{ReplicaWorld, World, WorldSide};
 use std::collections::VecDeque;
 
 use petramond_math::math::FACE_NEIGHBORS;
 use petramond_world::chunk::SectionPos;
 
-use super::store::World;
 
 const NEAR_LOAD_RADIUS: i32 = 2;
 
-impl World {
-    /// Classify a freshly-installed section. Deep = wholly below the column's
-    /// surface retention band (it cannot see the sky from any loaded position).
-    /// Sections without column data stay non-deep — non-deep always meshes, so
-    /// misclassification can only cost work, never visibility.
-    pub(super) fn classify_deep_on_install(&mut self, pos: SectionPos) {
-        let band_lo = self
-            .gen
-            .column_gen
-            .get(&pos.chunk_pos())
-            .map(|col| *Self::surface_window_for_column(col, 0).start())
-            .or_else(|| self.column_deep_band_los.get(&pos.chunk_pos()).copied());
-        let Some(band_lo) = band_lo else { return };
-        if pos.cy < band_lo {
-            self.terrain.deep_sections.insert(pos);
-        }
-        self.terrain.vis_dirty = true;
-    }
-
+impl<S: WorldSide> World<S> {
     /// Whether `pos` is inside any player's 5×5×5 section ring — always meshed, so
     /// the view is never missing walls while the visibility refresh lags a pump.
     pub(super) fn near_load_center(&self, pos: SectionPos) -> bool {
-        let Some(t) = self.last_load_target else {
+        let Some(t) = self.data.last_load_target else {
             return true;
         };
         let near = |target: super::store::LoadTarget| {
@@ -63,7 +45,7 @@ impl World {
                 && (pos.cy - target.center_cy).abs() <= NEAR_LOAD_RADIUS
                 && (pos.cz - target.center.cz).abs() <= NEAR_LOAD_RADIUS
         };
-        near(t) || self.extra_load_targets.iter().copied().any(near)
+        near(t) || self.data.extra_load_targets.iter().copied().any(near)
     }
 
     /// XZ variant of [`near_load_center`](Self::near_load_center) for whole
@@ -75,13 +57,30 @@ impl World {
             (pos.cx - target.center.cx).abs() <= NEAR_LOAD_RADIUS
                 && (pos.cz - target.center.cz).abs() <= NEAR_LOAD_RADIUS
         };
-        self.last_load_target.is_some_and(near) || self.extra_load_targets.iter().copied().any(near)
+        self.data.last_load_target.is_some_and(near) || self.data.extra_load_targets.iter().copied().any(near)
+    }
+}
+
+impl ReplicaWorld {
+    /// Classify a freshly-installed section. Deep = wholly below the column's
+    /// surface retention band (it cannot see the sky from any loaded position),
+    /// as the server's `ColumnPayload` reported it. Sections without column
+    /// data stay non-deep — non-deep always meshes, so misclassification can
+    /// only cost work, never visibility.
+    pub(super) fn classify_deep_on_install(&mut self, pos: SectionPos) {
+        let Some(&band_lo) = self.data.column_deep_band_los.get(&pos.chunk_pos()) else {
+            return;
+        };
+        if pos.cy < band_lo {
+            self.side.terrain.deep_sections.insert(pos);
+        }
+        self.side.terrain.vis_dirty = true;
     }
 
     /// Whether the mesh pump should park `pos` instead of meshing it.
     pub(super) fn section_hidden(&self, pos: SectionPos) -> bool {
-        self.terrain.deep_sections.contains(&pos)
-            && !self.terrain.visible_deep.contains(&pos)
+        self.side.terrain.deep_sections.contains(&pos)
+            && !self.side.terrain.visible_deep.contains(&pos)
             && !self.near_load_center(pos)
     }
 
@@ -90,7 +89,7 @@ impl World {
     /// edit, crossing); cost is O(deep sections) hash probes plus the BFS over
     /// actually-reachable cave sections, so it is bounded and main-thread safe.
     pub(super) fn refresh_deep_visibility(&mut self) {
-        self.terrain.vis_dirty = false;
+        self.side.terrain.vis_dirty = false;
 
         let mut visible: rustc_hash::FxHashSet<SectionPos> = rustc_hash::FxHashSet::default();
         let mut queue: VecDeque<SectionPos> = VecDeque::new();
@@ -98,8 +97,8 @@ impl World {
 
         // Seeds: deep sections bordering the visible region (non-deep or absent
         // positions), plus the player ring.
-        for &pos in &self.terrain.deep_sections {
-            let Some(s) = self.sections.get(&pos) else {
+        for &pos in &self.side.terrain.deep_sections {
+            let Some(s) = self.data.sections.get(&pos) else {
                 continue;
             };
             if self.near_load_center(pos) {
@@ -112,7 +111,7 @@ impl World {
             for d in FACE_NEIGHBORS {
                 let (dx, dy, dz) = (d.x, d.y, d.z);
                 let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-                if self.terrain.deep_sections.contains(&n) {
+                if self.side.terrain.deep_sections.contains(&n) {
                     continue;
                 }
                 // The neighbour's air region is visible by definition (non-deep),
@@ -122,7 +121,7 @@ impl World {
                 // look from, and a still-pending neighbour re-raises `vis_dirty`
                 // the moment it lands, re-running this refresh.
                 let n_side_open = self
-                    .sections
+                    .data.sections
                     .get(&n)
                     .is_some_and(|ns| ns.face_plane_open(-dx, -dy, -dz));
                 if !n_side_open {
@@ -140,7 +139,7 @@ impl World {
         // any of its open planes, exposing the neighbouring deep section's walls and
         // continuing wherever that neighbour's facing plane is open too.
         while let Some(pos) = queue.pop_front() {
-            let Some(s) = self.sections.get(&pos) else {
+            let Some(s) = self.data.sections.get(&pos) else {
                 continue;
             };
             for d in FACE_NEIGHBORS {
@@ -149,11 +148,11 @@ impl World {
                     continue;
                 }
                 let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-                if !self.terrain.deep_sections.contains(&n) {
+                if !self.side.terrain.deep_sections.contains(&n) {
                     continue;
                 }
                 visible.insert(n);
-                let Some(ns) = self.sections.get(&n) else {
+                let Some(ns) = self.data.sections.get(&n) else {
                     continue;
                 };
                 if ns.face_plane_open(-dx, -dy, -dz) && entered.insert(n) {
@@ -164,15 +163,15 @@ impl World {
 
         // Re-queue parked sections that just became visible (or entered the ring).
         let unpark: Vec<SectionPos> = self
-            .terrain
+            .side.terrain
             .hidden_parked
             .iter()
             .filter(|p| visible.contains(p) || self.near_load_center(**p))
             .copied()
             .collect();
         for pos in unpark {
-            self.terrain.hidden_parked.remove(&pos);
-            self.terrain.dirty_meshes.push(pos);
+            self.side.terrain.hidden_parked.remove(&pos);
+            self.side.terrain.dirty_meshes.push(pos);
         }
 
         // A sealed section is normally unreachable from outside, but a moving
@@ -180,7 +179,7 @@ impl World {
         // this the bounded wake-up path for clean-light and previously meshed
         // sections that had no first-light deferred entry to recheck.
         let unseal_near: Vec<SectionPos> = self
-            .terrain
+            .side.terrain
             .sealed_parked
             .iter()
             .filter(|p| self.near_load_center(**p))
@@ -190,13 +189,13 @@ impl World {
             self.queue_dirty_mesh(pos);
         }
 
-        self.terrain.visible_deep = visible;
+        self.side.terrain.visible_deep = visible;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::World;
+    use crate::world::ReplicaWorld;
     use crate::world::store::LoadTarget;
     use petramond_world::block::Block;
     use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
@@ -211,16 +210,16 @@ mod tests {
         section
     }
 
-    fn install(world: &mut World, section: Section) {
+    fn install(world: &mut ReplicaWorld, section: Section) {
         let pos = SectionPos::new(section.cx, section.cy, section.cz);
-        world.ensure_column(pos.chunk_pos());
-        world.sections.insert(pos, Arc::new(section));
+        world.data.ensure_column(pos.chunk_pos());
+        world.data.sections.insert(pos, Arc::new(section));
         world.note_section_loaded(pos);
         world.classify_deep_on_install(pos);
         world.queue_dirty_mesh(pos);
     }
 
-    fn pump(world: &mut World) {
+    fn pump(world: &mut ReplicaWorld) {
         for _ in 0..200 {
             world.tick_mesh_budget(8);
             if !world.has_dirty_meshes() {
@@ -232,18 +231,16 @@ mod tests {
 
     #[test]
     fn hidden_cave_parks_unmeshed_and_opens_when_dug_into() {
-        let mut world = World::new(1, 4);
+        let mut world = ReplicaWorld::new(1, 4);
         let generator = ChunkGenerator::new(1);
         let cpos = ChunkPos::new(0, 0);
-        world.ensure_column(cpos);
-        world
-            .gen
-            .column_gen
-            .insert(cpos, Arc::new(generator.generate_column_gen(0, 0)));
-
-        let band_lo = *World::surface_window_for_column(&world.gen.column_gen[&cpos], 0).start();
+        world.data.ensure_column(cpos);
+        // The band floor a replica learns from the server's ColumnPayload.
+        let column = generator.generate_column_gen(0, 0);
+        let band_lo = *ReplicaWorld::surface_window_for_column(&column, 0).start();
+        world.data.column_deep_band_los.insert(cpos, band_lo);
         // Keep the player ring far above the cave.
-        world.last_load_target = Some(LoadTarget::new(0, band_lo + 5, 0, 4));
+        world.data.last_load_target = Some(LoadTarget::new(0, band_lo + 5, 0, 4));
 
         // A solid "surface" section at the band floor over two deep sections that
         // share an internal air shaft — a cave sealed from the visible region.
@@ -270,7 +267,7 @@ mod tests {
                 "a sealed deep cave section must not mesh"
             );
             assert!(
-                world.terrain.hidden_parked.contains(&pos),
+                world.side.terrain.hidden_parked.contains(&pos),
                 "a sealed deep cave section parks for later re-exposure"
             );
         }
@@ -290,16 +287,15 @@ mod tests {
 
     #[test]
     fn player_ring_overrides_hidden_parking() {
-        let mut world = World::new(1, 4);
+        let mut world = ReplicaWorld::new(1, 4);
         let generator = ChunkGenerator::new(1);
         let cpos = ChunkPos::new(0, 0);
-        world.ensure_column(cpos);
-        world
-            .gen
-            .column_gen
-            .insert(cpos, Arc::new(generator.generate_column_gen(0, 0)));
-        let band_lo = *World::surface_window_for_column(&world.gen.column_gen[&cpos], 0).start();
-        world.last_load_target = Some(LoadTarget::new(0, band_lo + 5, 0, 4));
+        world.data.ensure_column(cpos);
+        // The band floor a replica learns from the server's ColumnPayload.
+        let column = generator.generate_column_gen(0, 0);
+        let band_lo = *ReplicaWorld::surface_window_for_column(&column, 0).start();
+        world.data.column_deep_band_los.insert(cpos, band_lo);
+        world.data.last_load_target = Some(LoadTarget::new(0, band_lo + 5, 0, 4));
 
         let deep = SectionPos::new(0, band_lo - 2, 0);
         let mut s = solid_section(deep);
@@ -308,14 +304,14 @@ mod tests {
 
         pump(&mut world);
         assert!(
-            world.terrain.hidden_parked.contains(&deep),
+            world.side.terrain.hidden_parked.contains(&deep),
             "an isolated deep pocket parks while the player is far away"
         );
 
         // The player descends within the two-section fail-safe radius: the ring
         // must pull the pocket back in even without a boundary opening.
-        world.last_load_target = Some(LoadTarget::new(deep.cx - 2, deep.cy, deep.cz, 4));
-        world.terrain.vis_dirty = true;
+        world.data.last_load_target = Some(LoadTarget::new(deep.cx - 2, deep.cy, deep.cz, 4));
+        world.side.terrain.vis_dirty = true;
         pump(&mut world);
         assert!(
             world.iter_meshes().any(|(p, _)| p == deep),

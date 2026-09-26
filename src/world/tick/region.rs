@@ -1,4 +1,4 @@
-use crate::world::World;
+use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::{
     block::Block,
@@ -6,7 +6,7 @@ use petramond_world::{
     chunk::{section_idx, SectionPos, SECTION_SIZE, WORLD_MAX_Y, WORLD_MIN_Y},
 };
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Recheck existing blocks in inclusive bounds without announcing fake terrain edits.
     pub(crate) fn queue_non_air_updates_in_box(&mut self, min: IVec3, max: IVec3) {
         let min = min.max(IVec3::new(-WORLD_BORDER, WORLD_MIN_Y, -WORLD_BORDER));
@@ -25,7 +25,7 @@ impl World {
             for cz in first.cz..=last.cz {
                 for cx in first.cx..=last.cx {
                     let sp = SectionPos::new(cx, cy, cz);
-                    let Some(section) = self.sections.get(&sp).filter(|s| !s.is_empty_air()) else {
+                    let Some(section) = self.data.sections.get(&sp).filter(|s| !s.is_empty_air()) else {
                         continue;
                     };
                     let (x, y, z) = sp.origin_world();

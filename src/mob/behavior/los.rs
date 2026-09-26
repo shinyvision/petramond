@@ -7,21 +7,21 @@
 //! gate and chase engagement share this test, so "can start hunting" and "can
 //! hit" agree on what a mob sees through.
 
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 
 const LOS_EPS: f32 = 0.001;
 
 /// Whether the straight line `from → to` crosses no world collision box.
-pub(super) fn line_clear(world: &World, from: WorldPos, to: WorldPos) -> bool {
+pub(super) fn line_clear(world: &ServerWorld, from: WorldPos, to: WorldPos) -> bool {
     line_clear_skipping(world, from, to, &[])
 }
 
 /// [`line_clear`], ignoring the boxes of the `skip` cells — the cells an
 /// action is aimed at, which may stand in its own way.
 pub(crate) fn line_clear_skipping(
-    world: &World,
+    world: &ServerWorld,
     from: WorldPos,
     to: WorldPos,
     skip: &[IVec3],
@@ -34,7 +34,7 @@ pub(crate) fn line_clear_skipping(
     !ray_hits_collision(world, from, delta / dist, dist, skip)
 }
 
-fn ray_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32, skip: &[IVec3]) -> bool {
+fn ray_hits_collision(world: &ServerWorld, eye: WorldPos, dir: Vec3, max_t: f32, skip: &[IVec3]) -> bool {
     let mut ix = eye.x.floor() as i32;
     let mut iy = eye.y.floor() as i32;
     let mut iz = eye.z.floor() as i32;
@@ -78,11 +78,11 @@ fn ray_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32, skip:
     }
 }
 
-fn cell_hits_collision(world: &World, eye: WorldPos, dir: Vec3, max_t: f32, cell: IVec3) -> bool {
+fn cell_hits_collision(world: &ServerWorld, eye: WorldPos, dir: Vec3, max_t: f32, cell: IVec3) -> bool {
     // In the eye's frame: the cell is within the ray's reach of it.
     let base = WorldPos::block_min(cell) - eye;
     world
-        .collision_boxes_at(cell.x, cell.y, cell.z)
+        .data().collision_boxes_at(cell.x, cell.y, cell.z)
         .iter()
         .any(|b| {
             let min = base + Vec3::from(b.min);

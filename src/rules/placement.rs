@@ -6,20 +6,10 @@ use petramond_math::math::Vec3;
 
 /// The furnace facing for a block placed while looking along `forward`: the front
 /// (mouth) points back toward the player — opposite the camera's horizontal look
-/// direction — snapped to the nearest cardinal.
+/// direction — snapped to the nearest cardinal. The rule itself is
+/// [`Facing::toward_viewer`], which the world's click judging shares.
 pub fn facing_from_forward(forward: Vec3) -> Facing {
-    let (fx, fz) = (-forward.x, -forward.z);
-    if fx.abs() >= fz.abs() {
-        if fx >= 0.0 {
-            Facing::East
-        } else {
-            Facing::West
-        }
-    } else if fz >= 0.0 {
-        Facing::South
-    } else {
-        Facing::North
-    }
+    Facing::toward_viewer(forward)
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@
 //! claiming consumer, plus the `used_unpredicted` echo for effects the
 //! initiator's replica could not foresee).
 
+use petramond_world::world::raycast;
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::events::{InteractAttempt, Outcome, PostEvent};
@@ -486,7 +487,7 @@ impl ServerGame {
         let Some(pos) = attempt.block else {
             return Claim::Pass;
         };
-        let block = Block::from_id(self.world.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.world.data().chunk_block(pos.x, pos.y, pos.z));
         if !petramond_world::block::builtin_claims_click(block, self.sessions[s].sneaking()) {
             return Claim::Pass;
         }
@@ -671,7 +672,6 @@ impl ServerGame {
 #[cfg(test)]
 mod tests {
     use crate::net::protocol::{PlayerAction, TargetRef};
-    use crate::player::Player;
     use petramond_math::math::{IVec3, Vec3};
     use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
@@ -820,7 +820,7 @@ mod tests {
             )
         };
         let ray = petramond_world::item::UseRay::Fluids(&[Block::Water]);
-        let (hit, _) = Player::raycast_use_ray(eye, fwd, &server.world, ray)
+        let (hit, _) = raycast::use_ray(eye, fwd, server.world.data(), ray)
             .expect("the aim ray reaches the pool");
         assert_eq!(
             hit.block,

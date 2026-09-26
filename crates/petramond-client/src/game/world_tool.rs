@@ -6,13 +6,13 @@
 use super::selection_tool::{SelectionTool, SELECTION_TOOL};
 use super::{Game, GameInput};
 use petramond::schematic::{Selection, SelectionFace};
-use petramond::world::World;
+use petramond::world::ReplicaWorld;
 use petramond_render::camera::Camera;
 
 /// What a tool reads and reports while it handles a frame.
 pub struct ToolContext<'a> {
     pub cam: &'a Camera,
-    pub world: &'a World,
+    pub world: &'a ReplicaWorld,
     /// A refusal to show the player; left alone when nothing went wrong.
     pub notice: &'a mut String,
 }

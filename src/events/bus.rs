@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use crate::events::tick::TickEvents;
 use crate::player::Player;
 use crate::player::PlayerId;
-use crate::world::World;
+use crate::world::ServerWorld;
 
 use super::payload::{
     AttackAttempt, BlockBreakPre, BlockPlacePre, CellsEditPre, DeferredAction, InteractAttempt,
@@ -48,7 +48,7 @@ pub enum Outcome {
 /// [`with_player`]: Self::with_player
 /// [`with_gui_state`]: Self::with_gui_state
 pub struct SimCtx<'a> {
-    pub world: &'a mut World,
+    pub world: &'a mut ServerWorld,
     /// The session this dispatch acts for; `None` = actor-less.
     pub actor: Option<PlayerId>,
     /// Every connected session, passed explicitly by the dispatch site.
@@ -228,7 +228,7 @@ macro_rules! pre_events {
                 /// mob's action).
                 pub fn $dispatch(
                     &mut self,
-                    world: &mut World,
+                    world: &mut ServerWorld,
                     players: &mut dyn PlayerRoster,
                     actor: Option<PlayerId>,
                     feed: &mut TickEvents,
@@ -374,7 +374,7 @@ impl EventBus {
     /// session — and actor-less for world events.
     pub fn drain_post(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         players: &mut dyn PlayerRoster,
         feed: &mut TickEvents,
     ) {
@@ -422,8 +422,8 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::item::ItemType;
 
-    fn sim() -> (World, TickEvents) {
-        (World::new(1, 1), TickEvents::default())
+    fn sim() -> (ServerWorld, TickEvents) {
+        (ServerWorld::new(1, 1), TickEvents::default())
     }
 
     /// The explicit roster: a handler reaches every session's player by id,

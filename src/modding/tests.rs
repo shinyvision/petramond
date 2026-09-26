@@ -9,7 +9,7 @@ use mod_api::{AttachSide, HostCall, Stage as ApiStage};
 
 use crate::events::tick::TickEvents;
 use crate::events::{Attach, EventBus, PostEvent, RosterRefs, Stage, TickSystems};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::Vec3;
 
 use super::instance::ModInstance;
@@ -22,7 +22,7 @@ mod conditions;
 /// A player-less simulation: the contract tests below exercise the host's
 /// failure policy, not any player's state.
 struct Sim {
-    world: World,
+    world: ServerWorld,
     feed: TickEvents,
     bus: EventBus,
     systems: TickSystems,
@@ -31,7 +31,7 @@ struct Sim {
 impl Sim {
     fn new() -> Self {
         Self {
-            world: World::new(1, 1),
+            world: ServerWorld::new(1, 1),
             feed: TickEvents::default(),
             bus: EventBus::default(),
             systems: TickSystems::default(),
@@ -514,9 +514,9 @@ fn sim_with_a_placed_machine() -> (
 }
 
 /// The parts mask stored at `c`.
-fn parts_mask_at(world: &World, c: petramond_math::math::IVec3) -> Option<u32> {
+fn parts_mask_at(world: &ServerWorld, c: petramond_math::math::IVec3) -> Option<u32> {
     world
-        .cell_kv_get(c.x, c.y, c.z, petramond_world::block_model::PARTS_KV_KEY)
+        .data().cell_kv_get(c.x, c.y, c.z, petramond_world::block_model::PARTS_KV_KEY)
         .map(<[u8; 4]>::try_from)
         .and_then(Result::ok)
         .map(u32::from_le_bytes)
@@ -594,7 +594,7 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
         assert_eq!(parts_mask_at(&sim.world, c), Some(PARTS), "{c:?}");
         assert_eq!(
             sim.world
-                .cell_kv_get(c.x, c.y, c.z, petramond_world::block::TINT_KV_KEY),
+                .data().cell_kv_get(c.x, c.y, c.z, petramond_world::block::TINT_KV_KEY),
             Some(&TINT[..]),
             "{c:?} takes the tint with the mask"
         );
@@ -611,12 +611,7 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
 
     // A client joining now streams the section, which is the ONLY way a
     // machine that last redrew itself before the join can reach it.
-    let mut replica = World::new_with_pool(
-        0,
-        1,
-        crate::world::WorldRole::ClientReplica,
-        std::sync::Arc::new(crate::worker::JobPool::new(1)),
-    );
+    let mut replica = ReplicaWorld::with_pool(0, 1, std::sync::Arc::new(crate::worker::JobPool::new(1)));
     let cp = petramond_world::chunk::ChunkPos::new(0, 0);
     replica.install_remote_column(sim.world.column_payload(cp).expect("a column payload"));
     let sp = petramond_world::chunk::SectionPos::from_world(anchor.x, anchor.y, anchor.z)
@@ -737,7 +732,7 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
     use petramond_world::gui_state::{intern_kind, MenuSlot, PointerButton};
     use petramond_world::item::{ItemStack, ItemType};
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world().seed);
+    let player = crate::server::session_build::spawn_player(server.world().data().seed);
     let s = server.add_session_for_test(player);
     let player_id = server.sessions()[s].id();
     server.sessions_mut()[0]

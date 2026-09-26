@@ -1,23 +1,13 @@
-use crate::world::store::World;
+use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::chunk::WORLD_MIN_Y;
 
-use super::{
-    amount, block_at, contact, fill_with_fluid, fillable, flowing, fluid_of, is_source, meta_at,
-    opposite, CARDINALS, DOWN, FALLING, SLOPE_FIND_DIST, UP,
-};
+use super::{amount, block_at, contact, fill_with_fluid, fillable, flowing, fluid_of, is_source, meta_at, opposite, CARDINALS, DOWN, FALLING, SLOPE_FIND_DIST, UP};
 use petramond_world::fluid::FluidDef;
 
-impl World {
-    /// Whether the cell holds a STILL SOURCE of `fluid` (level 0, not falling) —
-    /// the only fluid a bucket can scoop. Flowing/falling cells are an effect of
-    /// their source, not a unit of fluid: they drain on their own once cut off.
-    pub fn is_fluid_source_world(&self, pos: IVec3, fluid: Block) -> bool {
-        block_at(self, pos) == fluid && is_source(meta_at(self, pos))
-    }
-
+impl<S: WorldSide> World<S> {
     /// Set a fluid cell at world coords: write the cell, remesh its chunk (plus
     /// the neighbour across a shared border, whose culled faces change), and
     /// announce the change to neighbours. A fluid is itself transparent and a
@@ -39,10 +29,10 @@ impl World {
         };
         // Streaming-finality guard: never mutate a section whose gen result or saved
         // overlay is still in flight (see `world::sim_guard`).
-        if !self.stream_writable(cpos) {
+        if !self.data.stream_writable(cpos) {
             return false;
         }
-        if !self.sections.contains_key(&cpos) {
+        if !self.data.sections.contains_key(&cpos) {
             // Fluid spilling into open air below/around a cliff materializes the
             // section it flows into; a dry-up (setting air) into nothing is a no-op.
             if block == Block::Air || !self.materialize_section(cpos) {
@@ -51,12 +41,12 @@ impl World {
             // The flow chose this cell reading the ABSENT section as air; the
             // materialized base is authoritative and may hold terrain (or its own
             // generated fluid) there. Only genuinely open cells accept the flow.
-            if block != Block::Air && self.chunk_block(pos.x, pos.y, pos.z) != Block::Air.id() {
+            if block != Block::Air && self.data.chunk_block(pos.x, pos.y, pos.z) != Block::Air.id() {
                 return false;
             }
         }
         {
-            let Some(s) = self.section_mut(cpos) else {
+            let Some(s) = self.data.section_mut(cpos) else {
                 return false;
             };
             s.set_fluid(lx, ly, lz, block, meta);
@@ -81,16 +71,17 @@ impl World {
 ///
 /// `FluidSim` is **stateless with respect to `World`**: it holds no borrow of a
 /// world and no per-cell scratch that must outlive a call. Each method takes the
-/// `&World`/`&mut World` it operates on as a parameter, so the tick driver can
-/// construct a `FluidSim` at the call site and hand it the world (sequential
-/// reborrows) without ever storing a `&mut World` — see [`crate::world::tick`].
+/// `&ServerWorld`/`&mut ServerWorld` it operates on as a parameter (only the
+/// server simulates), so the tick driver can construct a `FluidSim` at the call
+/// site and hand it the world (sequential reborrows) without ever storing a
+/// `&mut ServerWorld` — see [`crate::world::tick`].
 /// Reads use [`block_at`]/[`meta_at`]; fluid and contact writes use the
 /// world's ordinary mutation paths.
 pub(super) struct FluidSim;
 
 impl FluidSim {
     /// The fluid flow update for the cell at `pos` (a scheduled tick).
-    pub(super) fn flow_check(&self, world: &mut World, pos: IVec3) {
+    pub(super) fn flow_check(&self, world: &mut ServerWorld, pos: IVec3) {
         let Some(fluid) = fluid_of(block_at(world, pos)) else {
             return; // no longer fluid
         };
@@ -136,7 +127,7 @@ impl FluidSim {
     ///      drop-off step — dead when that reaches zero. Every chain of
     ///      flowing fluid therefore leans on a real source or falling column;
     ///      there is no state in which flow sustains itself.
-    fn recompute(&self, world: &World, pos: IVec3, fluid: &'static FluidDef) -> Option<u8> {
+    fn recompute(&self, world: &ServerWorld, pos: IVec3, fluid: &'static FluidDef) -> Option<u8> {
         let fluid_block = fluid.block;
         let mut max_amount = 0u8;
         let mut sources = 0;
@@ -175,7 +166,7 @@ impl FluidSim {
     }
 
     /// Move this cell's fluid outward: down first, sideways when down is closed.
-    fn spread(&self, world: &mut World, pos: IVec3, meta: u8, fluid: &'static FluidDef) {
+    fn spread(&self, world: &mut ServerWorld, pos: IVec3, meta: u8, fluid: &'static FluidDef) {
         let below = pos + DOWN;
         match contact::react_to_downward_flow(world, below, fluid) {
             contact::DownwardContact::None => {}
@@ -218,7 +209,7 @@ impl FluidSim {
     /// fill each — but never a cell that already holds any fluid
     /// (existing fluid re-levels itself; overwriting it would double-move the
     /// flow in one tick).
-    fn spread_to_sides(&self, world: &mut World, pos: IVec3, meta: u8, fluid: &'static FluidDef) {
+    fn spread_to_sides(&self, world: &mut ServerWorld, pos: IVec3, meta: u8, fluid: &'static FluidDef) {
         // What the next ring would hold: a source or landing falling cell
         // carries the full amount, so it spreads at the fluid's own outflow;
         // a flowing cell at the last level pushes nothing further.
@@ -243,7 +234,7 @@ impl FluidSim {
     /// their final level immediately.
     fn spread_directions(
         &self,
-        world: &World,
+        world: &ServerWorld,
         pos: IVec3,
         fluid: &'static FluidDef,
     ) -> ([(IVec3, u8); 4], usize) {
@@ -283,7 +274,7 @@ impl FluidSim {
     /// both count the drop and tie.
     fn slope_distance(
         &self,
-        world: &World,
+        world: &ServerWorld,
         pos: IVec3,
         depth: i32,
         came_from: IVec3,
@@ -312,7 +303,7 @@ impl FluidSim {
     /// washable fragile block) or this fluid that is not a source. Source cells
     /// wall the search off: flow neither crosses nor competes with a full pool
     /// cell.
-    fn passable(&self, world: &World, pos: IVec3, fluid: Block) -> bool {
+    fn passable(&self, world: &ServerWorld, pos: IVec3, fluid: Block) -> bool {
         let b = block_at(world, pos);
         fillable(b) || (b == fluid && !is_source(meta_at(world, pos)))
     }
@@ -321,7 +312,7 @@ impl FluidSim {
     /// fall into, existing fluid of the same kind to merge with, or this fluid's
     /// quencher, which the downward pour enters and solidifies? The world floor
     /// is solid ground, not a drop.
-    fn drop_below(&self, world: &World, pos: IVec3, fluid: &'static FluidDef) -> bool {
+    fn drop_below(&self, world: &ServerWorld, pos: IVec3, fluid: &'static FluidDef) -> bool {
         let below = pos + DOWN;
         if below.y < WORLD_MIN_Y {
             return false;
@@ -331,7 +322,7 @@ impl FluidSim {
     }
 
     /// How many of the four horizontal neighbours are still SOURCES of this fluid.
-    fn source_neighbor_count(&self, world: &World, pos: IVec3, fluid: Block) -> usize {
+    fn source_neighbor_count(&self, world: &ServerWorld, pos: IVec3, fluid: Block) -> usize {
         CARDINALS
             .iter()
             .filter(|&&d| {

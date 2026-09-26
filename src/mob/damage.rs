@@ -2,7 +2,7 @@
 //! feedback, hurt flash, damage immunity, retaliation memory recording, the
 //! death state (ragdoll or bare), and the despawn queries the manager culls by.
 
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
 
 use super::instance::{hurt_flash01, Instance};
@@ -234,7 +234,7 @@ impl Instance {
     /// thereafter it steps, colliding each bone-corner against the world's blocks (so the
     /// corpse can't pass through terrain and falls off edges). The mob's `pos`/`yaw` stay
     /// frozen — they're the ragdoll's model→world `global` transform.
-    pub(super) fn tick_ragdoll(&mut self, dt: f32, world: &World, d: &MobDef, skeleton: &Skeleton) {
+    pub(super) fn tick_ragdoll(&mut self, dt: f32, world: &ServerWorld, d: &MobDef, skeleton: &Skeleton) {
         let vel = self.vel;
         let yaw = self.yaw;
         let pos = self.pos;
@@ -247,7 +247,7 @@ impl Instance {
             let anchor = pos.block();
             let solid = |c: IVec3| {
                 let w = c + anchor;
-                world.blocks_movement_at(w.x, w.y, w.z)
+                world.data().blocks_movement_at(w.x, w.y, w.z)
             };
             rag.step(dt, d.scale, pos.relative_to(anchor), yaw, &solid);
         } else {

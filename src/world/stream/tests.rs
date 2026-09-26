@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use super::*;
 
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use petramond_world::chunk::{
 };
 use petramond_world::section::Section;
 
-use crate::world::store::{LoadAnchor, LoadTarget, World};
+use crate::world::store::{LoadAnchor, LoadTarget};
 
 mod priorities;
 
@@ -18,11 +19,11 @@ mod priorities;
 /// it didn't exist after a reload.
 #[test]
 fn overlaid_saved_section_keeps_its_block_entities_live() {
-    let mut world = World::new(0, 4);
+    let mut world = ServerWorld::new(0, 4);
     let sp = SectionPos::new(0, 4, 0);
-    world.ensure_column(sp.chunk_pos());
+    world.data.ensure_column(sp.chunk_pos());
     // The generated base the overlay replaces.
-    world.sections.insert(sp, Arc::new(Section::new(0, 4, 0)));
+    world.data.sections.insert(sp, Arc::new(Section::new(0, 4, 0)));
     world.note_section_loaded(sp);
     // A saved section carrying a chest lands from disk.
     let mut saved = Section::new(0, 4, 0);
@@ -35,7 +36,7 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     );
     saved.insert_entity_facing(0, 0, 0, petramond_math::facing::Facing::default());
     world
-        .gen
+        .side.gen
         .pending_overlays
         .insert(sp, (saved, Vec::new(), Vec::new()));
     world.apply_pending_overlays();
@@ -49,7 +50,7 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
 /// mob record there must block caps, while unrelated far streaming must not.
 #[test]
 fn mob_census_waits_for_nearby_columns_and_overlays_only() {
-    let mut world = World::new(0, 2);
+    let mut world = ServerWorld::new(0, 2);
     let center = ChunkPos::new(0, 0);
     let census_radius = 9;
 
@@ -66,13 +67,13 @@ fn mob_census_waits_for_nearby_columns_and_overlays_only() {
     );
 
     let near = SectionPos::new(1, 4, 0);
-    world.gen.awaited_overlays.insert(near);
+    world.side.gen.awaited_overlays.insert(near);
     world.note_stream_nonfinal(near);
     assert!(!world.mob_census_loaded_around(center, census_radius));
-    world.gen.awaited_overlays.clear();
+    world.side.gen.awaited_overlays.clear();
 
     let far = SectionPos::new(20, 4, 0);
-    world.gen.awaited_overlays.insert(far);
+    world.side.gen.awaited_overlays.insert(far);
     world.note_stream_nonfinal(far);
     assert!(
         world.mob_census_loaded_around(center, census_radius),
@@ -118,7 +119,7 @@ fn water_kick_queues_source_water_over_a_drop() {
     // A source-water cell with air directly below (and that section loaded) must be
     // kicked into flowing on load. Build the section directly (no set_block_world, so
     // nothing else queues an update) — local y 1 water over local y 0 air.
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     let mut section = Section::new(0, 4, 0);
     for z in 0..SECTION_SIZE {
         for x in 0..SECTION_SIZE {
@@ -144,7 +145,7 @@ fn water_kick_queues_source_water_over_a_drop() {
 fn high_flight_still_wants_the_surface_band() {
     let generator = petramond_worldgen::driver::ChunkGenerator::new(0x51EED);
     let col = generator.generate_column_gen(0, 0);
-    let cys = World::wanted_section_cys(&col, SECTION_MAX_CY + 100, 0);
+    let cys = ServerWorld::wanted_section_cys(&col, SECTION_MAX_CY + 100, 0);
     let surface_cy = col
         .surf_range()
         .0
@@ -166,7 +167,7 @@ fn high_flight_still_wants_the_surface_band() {
 /// each anchor while evicting what no anchor wants.
 #[test]
 fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
-    let mut world = World::new(0, 4);
+    let mut world = ServerWorld::new(0, 4);
     let a = LoadAnchor {
         cx: 0,
         cy: 4,
@@ -187,22 +188,22 @@ fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
 
     let near = |p: &ChunkPos, cx: i32| (p.cx - cx).abs() <= 4 && p.cz.abs() <= 4;
     assert!(
-        world.gen.pending.keys().any(|p| near(p, 0)),
+        world.side.gen.pending.keys().any(|p| near(p, 0)),
         "anchor A's columns are requested"
     );
     assert!(
-        world.gen.pending.keys().any(|p| near(p, 40)),
+        world.side.gen.pending.keys().any(|p| near(p, 40)),
         "anchor B's columns are requested"
     );
     assert!(
-        world.gen.pending.keys().all(|p| near(p, 0) || near(p, 40)),
+        world.side.gen.pending.keys().all(|p| near(p, 0) || near(p, 40)),
         "nothing outside the anchors' union is requested"
     );
 
-    assert!(world.chunk_loaded(0, 0), "anchor A's column is kept");
-    assert!(world.chunk_loaded(40, 0), "anchor B's column is kept");
+    assert!(world.data.chunk_loaded(0, 0), "anchor A's column is kept");
+    assert!(world.data.chunk_loaded(40, 0), "anchor B's column is kept");
     assert!(
-        !world.chunk_loaded(20, 0),
+        !world.data.chunk_loaded(20, 0),
         "a column no anchor keeps is evicted"
     );
 }
@@ -213,22 +214,22 @@ fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
 /// loads again while the player stands still.
 #[test]
 fn settled_missing_scan_resumes_after_eviction() {
-    let mut world = World::new(0, 4);
+    let mut world = ServerWorld::new(0, 4);
     // Repeated same-target updates submit the whole wanted disc (64 per
     // call) and then settle.
     for _ in 0..100 {
         world.update_load(0, 4, 0);
-        if world.missing_columns_settled {
+        if world.data.missing_columns_settled {
             break;
         }
     }
     assert!(
-        world.missing_columns_settled,
+        world.data.missing_columns_settled,
         "a fully requested disc settles the scan"
     );
     let victim = ChunkPos::new(0, 0);
     assert!(
-        world.gen.pending.contains_key(&victim) || world.gen.column_gen.contains_key(&victim),
+        world.side.gen.pending.contains_key(&victim) || world.side.gen.column_gen.contains_key(&victim),
         "the player's own column is requested or loaded"
     );
 
@@ -236,12 +237,12 @@ fn settled_missing_scan_resumes_after_eviction() {
     // next same-target scan.
     world.remove_column(victim);
     assert!(
-        !world.missing_columns_settled,
+        !world.data.missing_columns_settled,
         "eviction un-settles the scan"
     );
     world.update_load(0, 4, 0);
     assert!(
-        world.gen.pending.contains_key(&victim),
+        world.side.gen.pending.contains_key(&victim),
         "the evicted column is re-requested by the next scan"
     );
 }
@@ -250,8 +251,8 @@ fn settled_missing_scan_resumes_after_eviction() {
 /// target, same requested set, no multi-anchor residue.
 #[test]
 fn single_anchor_multi_load_matches_update_load() {
-    let mut single = World::new(0x51EED, 3);
-    let mut multi = World::new(0x51EED, 3);
+    let mut single = ServerWorld::new(0x51EED, 3);
+    let mut multi = ServerWorld::new(0x51EED, 3);
     single.update_load(2, 5, -1);
     multi.update_load_multi(&[LoadAnchor {
         cx: 2,
@@ -260,10 +261,10 @@ fn single_anchor_multi_load_matches_update_load() {
         radius: 64,
     }]);
 
-    assert_eq!(single.last_load_target, multi.last_load_target);
-    assert!(multi.extra_load_targets.is_empty());
-    let sorted = |w: &World| {
-        let mut p: Vec<ChunkPos> = w.gen.pending.keys().copied().collect();
+    assert_eq!(single.data.last_load_target, multi.data.last_load_target);
+    assert!(multi.data.extra_load_targets.is_empty());
+    let sorted = |w: &ServerWorld| {
+        let mut p: Vec<ChunkPos> = w.side.gen.pending.keys().copied().collect();
         p.sort_by_key(|c| (c.cx, c.cz));
         p
     };
@@ -279,23 +280,23 @@ fn streaming_wants_a_full_horizontal_disc() {
     let target = LoadTarget::new(0, 5, 0, 16);
 
     assert!(
-        World::column_wanted(target, ChunkPos::new(10, 0)),
+        ServerWorld::column_wanted(target, ChunkPos::new(10, 0)),
         "positive X is wanted"
     );
     assert!(
-        World::column_wanted(target, ChunkPos::new(-10, 0)),
+        ServerWorld::column_wanted(target, ChunkPos::new(-10, 0)),
         "equal-distance negative X is wanted"
     );
     assert!(
-        World::column_wanted(target, ChunkPos::new(0, 16)),
+        ServerWorld::column_wanted(target, ChunkPos::new(0, 16)),
         "the circular boundary is included"
     );
     assert!(
-        !World::column_wanted(target, ChunkPos::new(12, 12)),
+        !ServerWorld::column_wanted(target, ChunkPos::new(12, 12)),
         "the square corner outside the disc is excluded"
     );
     assert!(
-        !World::column_kept(target, ChunkPos::new(-20, 0)),
+        !ServerWorld::column_kept(target, ChunkPos::new(-20, 0)),
         "columns beyond circular unload hysteresis are evicted"
     );
 }
@@ -356,18 +357,18 @@ fn surface_bias_orders_the_surface_shell_before_below_band_sections() {
 fn first_bake_defers_until_generation_neighborhood_settles() {
     use std::sync::Arc;
 
-    let mut world = World::new(0x51EED, 4);
+    let mut world = ServerWorld::new(0x51EED, 4);
     let target = LoadTarget::new(0, 4, 0, 4);
-    world.last_load_target = Some(target);
-    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.seed);
+    world.data.last_load_target = Some(target);
+    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.data.seed);
     for dz in -1..=1 {
         for dx in -1..=1 {
             let cp = ChunkPos::new(dx, dz);
             world
-                .gen
+                .side.gen
                 .column_gen
                 .insert(cp, Arc::new(generator.generate_column_gen(dx, dz)));
-            world.ensure_column(cp);
+            world.data.ensure_column(cp);
         }
     }
 
@@ -375,15 +376,15 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
     let sp = SectionPos::new(0, 4, 0);
     let mut section = Section::new(0, 4, 0);
     section.set_block(0, 0, 0, Block::Stone);
-    world.sections.insert(sp, Arc::new(section));
+    world.data.sections.insert(sp, Arc::new(section));
     world.note_section_loaded(sp);
     let generating = SectionPos::new(0, 5, 0);
     world.insert_pending_section(generating);
-    world.light_deferred.insert(sp);
+    world.data.light_deferred.insert(sp);
 
     world.flush_settled_deferred(target);
     assert!(
-        world.light_deferred.contains(&sp),
+        world.data.light_deferred.contains(&sp),
         "a neighbour's gen is in flight: the first bake must wait"
     );
     assert!(
@@ -396,22 +397,18 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
     world.remove_pending_section(generating);
     world.flush_settled_deferred(target);
     assert!(
-        !world.light_deferred.contains(&sp),
+        !world.data.light_deferred.contains(&sp),
         "settled sections leave the deferred set"
     );
     assert!(
         world.light_bakes.has_pending(),
         "the single first bake fires on settle"
     );
-    assert!(
-        !world.terrain.dirty_meshes.is_empty(),
-        "the first mesh queues alongside the first bake"
-    );
 }
 
 #[test]
 fn sealed_first_light_waits_for_player_proximity_then_bakes() {
-    let mut world = World::new(0, 0);
+    let mut world = ServerWorld::new(0, 0);
     let center = SectionPos::new(0, 0, 0);
     let mut cavity = Section::new(0, 0, 0);
     cavity.blocks_mut().fill(Block::Stone.id());
@@ -432,26 +429,26 @@ fn sealed_first_light_waits_for_player_proximity_then_bakes() {
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
     }
-    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.seed);
-    world.gen.column_gen.insert(
+    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.data.seed);
+    world.side.gen.column_gen.insert(
         center.chunk_pos(),
         Arc::new(generator.generate_column_gen(center.cx, center.cz)),
     );
 
     let far = LoadTarget::new(8, 0, 0, 0);
-    world.last_load_target = Some(far);
-    world.light_deferred.insert(center);
+    world.data.last_load_target = Some(far);
+    world.data.light_deferred.insert(center);
     world.flush_settled_deferred(far);
     assert!(
-        world.light_deferred.contains(&center),
+        world.data.light_deferred.contains(&center),
         "an unreachable sealed cavity can leave its first light deferred"
     );
     assert!(!world.light_bakes.has_pending());
 
     let near = LoadTarget::new(0, 0, 0, 0);
-    world.last_load_target = Some(near);
+    world.data.last_load_target = Some(near);
     world.flush_settled_deferred(near);
-    assert!(!world.light_deferred.contains(&center));
+    assert!(!world.data.light_deferred.contains(&center));
     assert!(
         world.light_bakes.has_pending(),
         "approaching the cavity must wake its first light bake"
@@ -460,21 +457,21 @@ fn sealed_first_light_waits_for_player_proximity_then_bakes() {
 
 #[test]
 fn stale_pending_columns_are_pruned_to_current_disc() {
-    let mut world = World::new(0, 16);
+    let mut world = ServerWorld::new(0, 16);
     let outside = ChunkPos::new(17, 0);
     let inside = ChunkPos::new(-10, 0);
-    world.gen.pending.insert(outside, None);
-    world.gen.pending.insert(inside, None);
+    world.side.gen.pending.insert(outside, None);
+    world.side.gen.pending.insert(inside, None);
 
     let target = LoadTarget::new(0, 5, 0, 16);
     world.prune_stale_column_requests(target);
 
     assert!(
-        !world.gen.pending.contains_key(&outside),
+        !world.side.gen.pending.contains_key(&outside),
         "queued work outside the disc should be dropped"
     );
     assert!(
-        world.gen.pending.contains_key(&inside),
+        world.side.gen.pending.contains_key(&inside),
         "queued work inside the disc stays queued"
     );
 }
@@ -483,24 +480,24 @@ fn stale_pending_columns_are_pruned_to_current_disc() {
 fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
     use std::sync::Arc;
 
-    let mut world = World::new(0x51EED, 8);
+    let mut world = ServerWorld::new(0x51EED, 8);
     let old = LoadTarget::new(0, 5, 0, 8);
     let newly_wanted = ChunkPos::new(9, 0);
     assert!(
-        !World::column_wanted(old, newly_wanted),
+        !ServerWorld::column_wanted(old, newly_wanted),
         "test setup: column starts outside the old disc"
     );
 
-    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.seed);
+    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.data.seed);
     let col = Arc::new(generator.generate_column_gen(newly_wanted.cx, newly_wanted.cz));
     world.set_column_gen(newly_wanted, col);
-    world.last_load_target = Some(old);
+    world.data.last_load_target = Some(old);
 
     world.update_load(1, 5, 0);
 
     assert!(
         world
-            .gen
+            .side.gen
             .pending_sections
             .iter()
             .any(|sp| sp.chunk_pos() == newly_wanted),
@@ -520,31 +517,40 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     let dir = std::env::temp_dir().join(format!("petramond-cubic-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
-    let mut world = World::new(0x51EED, 2);
+    let pool = Arc::new(crate::worker::JobPool::new(
+        crate::worker::JobPool::default_threads(),
+    ));
+    let mut world = ServerWorld::with_pool(0x51EED, 2, pool.clone());
     world.attach_save(opened.save, opened.saved);
+    // The replica the meshes are built on, fed through the connection's seams.
+    let mut replica = crate::world::ReplicaWorld::with_pool(0x51EED, 2, pool);
+    let mut mirror = crate::world::ReplicaMirror::new(&mut world);
     let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
 
     // Stream the origin column: generate (worker) + ingest. The later edit lands well
     // above the active vertical window; reload coverage comes from the save manifest.
     world.update_load(0, 8, 0);
-    while !world.chunk_loaded(0, 0) {
+    while !world.data.chunk_loaded(0, 0) {
         assert!(Instant::now() < deadline, "the origin column streamed in");
         world.poll();
     }
 
-    // Mesh the loaded sections. Poll until a mesh lands (inline-friendly; under a
-    // threaded pool the bake still completes inside the hard deadline).
-    while world.iter_meshes().next().is_none() {
+    // Mesh the loaded sections on the replica. Poll until a mesh lands
+    // (inline-friendly; under a threaded pool the bake still completes inside
+    // the hard deadline).
+    while replica.iter_meshes().next().is_none() {
         assert!(Instant::now() < deadline, "at least one section meshed");
         world.poll();
-        world.tick_mesh_budget(64);
+        world.pump_light_bakes();
+        mirror.sync(&mut world, &mut replica);
+        replica.tick_mesh_budget(64);
     }
 
     // Edit a block into the open air well above any terrain (max surface ~171): this
     // materializes section (0,15,0) on write.
     let edit = IVec3::new(4, 250, 4);
     assert!(world.set_block_world(edit.x, edit.y, edit.z, Block::Stone));
-    assert_eq!(world.chunk_block(edit.x, edit.y, edit.z), Block::Stone.id());
+    assert_eq!(world.data.chunk_block(edit.x, edit.y, edit.z), Block::Stone.id());
 
     // Flush to disk, then wait for the save thread to drain by reading the section back
     // through a blocking load (the channel is ordered, so this trails the write).
@@ -552,11 +558,11 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     let sp = SectionPos::from_world(edit.x, edit.y, edit.z).unwrap();
     {
         assert!(
-            world.saved_section_contains(sp),
+            world.data.saved_section_contains(sp),
             "edit's section is in the manifest"
         );
         let save = world.save().expect("save attached");
-        save.request_load(world.saved_index(), sp, false);
+        save.request_load(world.data.saved_index(), sp, false);
         let mut got = None;
         while got.is_none() {
             assert!(Instant::now() < deadline, "section read back from disk");
@@ -578,9 +584,9 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     // Evict everything, then re-stream: gen rebuilds the column and the saved section
     // overlays the edit back on.
     world.clear_world();
-    world.last_load_target = None;
+    world.data.last_load_target = None;
     world.update_load(0, 8, 0);
-    while world.chunk_block(edit.x, edit.y, edit.z) != Block::Stone.id() {
+    while world.data.chunk_block(edit.x, edit.y, edit.z) != Block::Stone.id() {
         assert!(
             Instant::now() < deadline,
             "the saved edit overlaid back on after reload"
@@ -588,7 +594,7 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
         world.poll();
     }
     assert_eq!(
-        world.chunk_block(edit.x, edit.y, edit.z),
+        world.data.chunk_block(edit.x, edit.y, edit.z),
         Block::Stone.id(),
         "the saved edit overlaid back on after reload"
     );
@@ -610,16 +616,16 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     // Settled = OBSERVABLE state (nothing pending), never a quiet window: a
     // tight no-sleep loop passes any fixed iteration count in microseconds
     // while disk/gen round-trips are still in flight.
-    let stream_settled = |world: &mut World| {
+    let stream_settled = |world: &mut ServerWorld| {
         use std::time::Instant;
         world.update_load(0, 8, 0);
         let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
         loop {
             world.poll();
-            if world.loaded_section_count() > 0
-                && world.gen.pending.is_empty()
-                && world.gen.pending_sections.is_empty()
-                && world.gen.awaited_overlays.is_empty()
+            if world.data.loaded_section_count() > 0
+                && world.side.gen.pending.is_empty()
+                && world.side.gen.pending_sections.is_empty()
+                && world.side.gen.awaited_overlays.is_empty()
             {
                 break;
             }
@@ -632,14 +638,14 @@ fn explored_terrain_reloads_from_disk_without_generating() {
 
     // Every section's light settled: baked-and-clean, or fully opaque
     // (never bakes). The first-persist gate waits for exactly this.
-    let light_settled = |world: &mut World| {
+    let light_settled = |world: &mut ServerWorld| {
         use std::time::Instant;
         let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
         while Instant::now() < deadline {
             world.poll();
             world.pump_light_bakes();
             let done = world
-                .sections
+                .data.sections
                 .values()
                 .all(|s| !s.light_dirty || s.all_opaque());
             if done {
@@ -652,21 +658,21 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     // First visit: generate, then flush (autosave path) — the flag persists
     // every explored section and the column-gen cache.
     let opened = crate::save::open_at(dir.clone()).expect("open save");
-    let mut world = World::new(0x51EED, 2);
+    let mut world = ServerWorld::new(0x51EED, 2);
     world.attach_save(opened.save, opened.saved);
     stream_settled(&mut world);
     assert!(light_settled(&mut world), "first-visit light bakes settle");
-    let first_sections: Vec<SectionPos> = world.sections.keys().copied().collect();
+    let first_sections: Vec<SectionPos> = world.data.sections.keys().copied().collect();
     assert!(!first_sections.is_empty());
     let first_blocks: std::collections::HashMap<SectionPos, Vec<u16>> = first_sections
         .iter()
-        .map(|sp| (*sp, world.sections[sp].blocks_iter().collect::<Vec<_>>()))
+        .map(|sp| (*sp, world.data.sections[sp].blocks_iter().collect::<Vec<_>>()))
         .collect();
     world.flush_modified_chunks();
     {
         for sp in &first_sections {
             assert!(
-                world.saved_section_contains(*sp),
+                world.data.saved_section_contains(*sp),
                 "explored section {sp:?} must persist"
             );
         }
@@ -680,7 +686,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
 
     // Reload: same area must come back entirely from disk.
     let opened = crate::save::open_at(dir.clone()).expect("reopen save");
-    let mut world = World::new(0x51EED, 2);
+    let mut world = ServerWorld::new(0x51EED, 2);
     world.attach_save(opened.save, opened.saved);
     world.set_stream_event_capture(true);
     stream_settled(&mut world);
@@ -701,7 +707,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     assert!(loaded > 0, "sections came back from disk");
     for (sp, blocks) in &first_blocks {
         let section = world
-            .sections
+            .data.sections
             .get(sp)
             .unwrap_or_else(|| panic!("section {sp:?} reloaded"));
         assert_eq!(
@@ -716,7 +722,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     // reloaded world, so a single dirty section here would mean the load
     // path re-queued a bake (the exact work persistence exists to skip).
     let relit = world
-        .sections
+        .data.sections
         .values()
         .filter(|s| s.light_dirty && !s.all_opaque())
         .count();
@@ -738,7 +744,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
 fn vertical_window_generates_near_the_player_not_the_whole_column() {
     use std::time::Instant;
 
-    let mut world = World::new(0xC0FFEE, 1);
+    let mut world = ServerWorld::new(0xC0FFEE, 1);
     // y=-60 is deep section cy=-4 (the would-be cave space); y=96 is the surface band.
     let deep = (0, -60, 0);
     let surface = (0, 96, 0);
@@ -749,31 +755,31 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
     let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     loop {
         world.poll();
-        if world.loaded_section_count() > 0
-            && world.gen.pending.is_empty()
-            && world.gen.pending_sections.is_empty()
+        if world.data.loaded_section_count() > 0
+            && world.side.gen.pending.is_empty()
+            && world.side.gen.pending_sections.is_empty()
         {
             break;
         }
         assert!(Instant::now() < deadline, "the surface window streamed in");
     }
     assert!(
-        world.section_loaded_at(surface.0, surface.1, surface.2),
+        world.data.section_loaded_at(surface.0, surface.1, surface.2),
         "a surface section streamed in around the player"
     );
     assert!(
-        !world.section_loaded_at(deep.0, deep.1, deep.2),
+        !world.data.section_loaded_at(deep.0, deep.1, deep.2),
         "the deep cave-space section is NOT generated while the player is at the surface"
     );
 
     // Descend to that deep section (cy -4): now it must stream in.
     world.update_load(0, -4, 0);
     let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-    while !world.section_loaded_at(deep.0, deep.1, deep.2) && Instant::now() < deadline {
+    while !world.data.section_loaded_at(deep.0, deep.1, deep.2) && Instant::now() < deadline {
         world.poll();
     }
     assert!(
-        world.section_loaded_at(deep.0, deep.1, deep.2),
+        world.data.section_loaded_at(deep.0, deep.1, deep.2),
         "the deep section streamed in once the player descended to it"
     );
 }
@@ -791,19 +797,19 @@ mod sea_ice_streaming {
     /// (15,15) holds sea ice at y = SEA_LEVEL.
     #[test]
     fn sea_ice_streams_into_the_live_world() {
-        let mut world = World::new(34, 2);
+        let mut world = ServerWorld::new(34, 2);
         world.update_load(6, 3, -1);
         let (wx, wy, wz) = (6 * 16 + 15, 63, -16 + 15);
         use std::time::Instant;
         let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-        while !world.section_loaded_at(wx, wy, wz) {
+        while !world.data.section_loaded_at(wx, wy, wz) {
             assert!(
                 Instant::now() < deadline,
                 "sea-ice section never streamed within the hard deadline"
             );
             world.poll();
         }
-        let live = Block::from_id(world.chunk_block(wx, wy, wz));
+        let live = Block::from_id(world.data.chunk_block(wx, wy, wz));
         let oneshot = petramond_worldgen::generate_chunk(34, 6, -1);
         let expected = oneshot.block(15, 63, 15);
         assert_eq!(expected, Block::Ice, "the pinned column still freezes");

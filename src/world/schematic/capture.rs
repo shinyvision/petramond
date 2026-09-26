@@ -1,4 +1,4 @@
-use super::World;
+use crate::world::ServerWorld;
 use crate::schematic::{CellData, ResolvedCell, Schematic, SchematicBuilder, SelectionBox};
 use petramond_math::math::IVec3;
 use petramond_world::{
@@ -28,7 +28,7 @@ pub(crate) struct Capture {
 
 impl Capture {
     pub(crate) fn new(
-        world: &World,
+        world: &ServerWorld,
         name: String,
         regions: Vec<SelectionBox>,
         include_air: bool,
@@ -75,12 +75,12 @@ impl Capture {
         // Retain final sections for compound members too. Cloning these handles
         // does not copy blocks, inventories or mod data; writes use copy-on-write.
         let mut sections = FxHashMap::default();
-        for (sp, section) in &world.sections {
+        for (sp, section) in &world.data.sections {
             if needed(*sp) && world.physics_cell_final_at(sp.cx * 16, sp.cy * 16, sp.cz * 16) {
                 sections.insert(*sp, SnapshotSection::Loaded(section.clone()));
             }
         }
-        for cp in world.columns.keys() {
+        for cp in world.data.columns.keys() {
             for cy in SECTION_MIN_CY..=SECTION_MAX_CY {
                 let sp = SectionPos::new(cp.cx, cy, cp.cz);
                 if needed(sp)
@@ -89,7 +89,7 @@ impl Capture {
                 {
                     sections.insert(
                         sp,
-                        SnapshotSection::Uniform(world.physics_block(
+                        SnapshotSection::Uniform(world.data.physics_block(
                             sp.cx * 16,
                             sp.cy * 16,
                             sp.cz * 16,

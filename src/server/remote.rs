@@ -336,7 +336,7 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
                 })
             }
             (ClientToServer::ModQuery, Stage::Helloed { .. }) => {
-                let mods = crate::modding::modset::active(server.world.disabled_mods())
+                let mods = crate::modding::modset::active(server.world.data().disabled_mods())
                     .into_iter()
                     .map(|m| ModEntry {
                         id: m.id,

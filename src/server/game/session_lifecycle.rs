@@ -30,7 +30,7 @@ impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn add_session_for_test(&mut self, player: crate::player::Player) -> usize {
         let id = crate::player::PlayerId(self.sessions.len() as u8);
-        let radius = self.world.render_dist;
+        let radius = self.world.data().render_dist;
         // A fresh session must receive the CURRENT env params even when the
         // map is static (a frozen clock freezes day/night AND weather params;
         // without this reseed a late joiner would render a default sky until
@@ -133,16 +133,16 @@ impl ServerGame {
 
         if let Some(save) = self.world.save() {
             save.save_level(crate::save::level::encode(
-                self.world.seed,
+                self.world.data().seed,
                 self.world.current_tick(),
-                self.world.world_kv(),
+                self.world.data().world_kv(),
                 self.world.populated_columns(),
             ));
             for (key, snapshot) in &players {
                 save.save_player(key, snapshot);
             }
             save.save_mods_json(crate::modding::modset::encode_active(
-                self.world.disabled_mods(),
+                self.world.data().disabled_mods(),
             ));
         }
     }

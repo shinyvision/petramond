@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::mob::{populate, spawn, Instance, Mob, SavedMob};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::Vec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
@@ -56,7 +56,7 @@ impl Mobs {
     /// off, or every join would refill the caps before those nearby mobs restore.
     pub fn spawn_tick(
         &mut self,
-        world: &World,
+        world: &ServerWorld,
         player_pos: petramond_math::world_pos::WorldPos,
     ) -> Vec<(u64, Mob, petramond_math::world_pos::WorldPos)> {
         // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
@@ -68,9 +68,9 @@ impl Mobs {
         if let Some(spawns) = chosen {
             for s in spawns {
                 let c = (s.pos + Vec3::new(0.0, 0.3, 0.0)).block();
-                let sky = world.skylight6_at_world(c.x, c.y, c.z);
+                let sky = world.data().skylight6_at_world(c.x, c.y, c.z);
                 let block = petramond_world::light::BlockLight6::from_x2(
-                    world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                    world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
                 );
                 if let Some(id) = self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
                     spawned.push((id, s.kind, s.pos));
@@ -89,7 +89,7 @@ impl Mobs {
     /// fully-failed placement retries in a later session.
     pub fn populate_tick(
         &mut self,
-        world: &World,
+        world: &ServerWorld,
         player_pos: petramond_math::world_pos::WorldPos,
     ) -> (
         Vec<(u64, Mob, petramond_math::world_pos::WorldPos)>,
@@ -102,9 +102,9 @@ impl Mobs {
             let mut any = false;
             for s in herd.spawns {
                 let c = (s.pos + Vec3::new(0.0, 0.3, 0.0)).block();
-                let sky = world.skylight6_at_world(c.x, c.y, c.z);
+                let sky = world.data().skylight6_at_world(c.x, c.y, c.z);
                 let block = petramond_world::light::BlockLight6::from_x2(
-                    world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                    world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
                 );
                 if let Some(id) = self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
                     spawned.push((id, s.kind, s.pos));

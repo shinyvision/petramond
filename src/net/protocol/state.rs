@@ -5,54 +5,8 @@ use petramond_math::math::{IVec3, Tilt};
 
 use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 
-/// A world cell changed. `block_id` is a wire block id; `fluid` the fluid meta
-/// byte when the cell holds a simulated fluid. Coalesced latest-wins per cell
-/// per tick, sent only for sections in the recipient's sent set.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockDelta {
-    pub pos: IVec3,
-    pub block_id: u16,
-    pub fluid: Option<u8>,
-    /// The cell's opaque per-cell block state after the change, `None` when
-    /// the cell carries none (the replica then CLEARS any stale state,
-    /// mirroring `clear_on_block_change` server-side). Verbatim store bytes;
-    /// the id-masked ones are rewritten at the transport boundary
-    /// (`ShapeState::remap_ids`).
-    pub state: Option<petramond_world::block::ShapeState>,
-    /// The cell's mod KV map after the change (empty for the common cell).
-    /// A delta ALWAYS carries the cell's current KV because the replica's
-    /// apply wipes the cell's KV exactly like a server-side write — without
-    /// this, a CORRECTIVE delta (a snapshot of an UNCHANGED cell) would
-    /// erase replica KV the server still holds (the gray-dye bug,
-    /// 2026-07-23). Sorted (BTreeMap iteration), so the wire is
-    /// deterministic.
-    pub cell_kv: Vec<(String, Vec<u8>)>,
-}
-
-/// One per-cell mod KV change on the wire — the live-delta sibling of the
-/// section payload's whole-map `CellKvEntry` list: a server-side
-/// `SectionKvSet`/`SectionKvDelete` on a loaded section ships the new value
-/// (`None` = deleted) to every client holding the section. Applied AFTER the
-/// batch's block deltas (a block write wipes the cell's KV on both sides, so
-/// a same-tick write-block-then-KV lands in order). Coalesced latest-wins per
-/// `(pos, key)` per tick.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CellKvDelta {
-    pub pos: IVec3,
-    pub key: String,
-    pub value: Option<Vec<u8>>,
-}
-
-/// One cell's mod DRAW SET as of the batch's tick, shipped WHOLE: the sets are
-/// a handful of prims and half a set draws nothing sensible. An empty `prims`
-/// clears the cell.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BlockDrawDelta {
-    pub pos: IVec3,
-    /// SHARED with the world's stored set: filtering the lane per recipient
-    /// costs a refcount bump per delta, not a prim-list deep copy per viewer.
-    pub prims: crate::world::draw::DrawPrims,
-}
+// Per-tick world deltas are world-owned (see `world::replication`).
+pub use crate::world::replication::{BlockDelta, BlockDrawDelta, CellKvDelta};
 
 /// One live mob's replicated state as of the batch's tick — everything the
 /// client's `MobPresentation` needs except light (client-sampled at `pos`).

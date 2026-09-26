@@ -2,13 +2,13 @@
 //! cells, and a record's status gated on every cell its object needs being
 //! final — unknown terrain is never read as empty or as already built.
 
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::construction::{self, Plan, Record, Status};
 use petramond_world::item::ItemStack;
 use petramond_world::world::placement::PlacementPlan;
 
-use super::World;
 
 #[cfg(test)]
 mod tests;
@@ -36,11 +36,11 @@ pub enum CellStatus {
     Unsupported(String),
 }
 
-impl World {
+impl ServerWorld {
     /// The cell at `pos` as a construction record, once it is stream-final.
     pub fn construction_record(&self, pos: IVec3) -> Option<Record> {
         self.physics_cell_final_at(pos.x, pos.y, pos.z)
-            .then(|| Record::at(self, pos))
+            .then(|| Record::at(&self.data, pos))
     }
 
     /// Measure `record` at `pos` against the world.
@@ -61,7 +61,7 @@ impl World {
         {
             return CellStatus::Unloaded;
         }
-        match construction::status(self, pos, record) {
+        match construction::status(&self.data, pos, record) {
             Status::Satisfied => CellStatus::Satisfied,
             Status::Place { missing, writes } => CellStatus::Place { missing, writes },
             Status::Pending(anchor) => CellStatus::Pending(anchor),

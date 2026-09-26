@@ -91,7 +91,7 @@ impl ServerGame {
             })
             .collect();
         // Interest never reaches past what the server streams at all.
-        let view_cap = self.world.render_dist.max(MIN_VIEW_CHUNKS);
+        let view_cap = self.world.data().render_dist.max(MIN_VIEW_CHUNKS);
         let selections: Vec<_> = self
             .sessions
             .iter_mut()

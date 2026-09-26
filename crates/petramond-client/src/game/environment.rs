@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use petramond::world::environment::ShaderParamMap;
-use petramond::world::World;
+use petramond::world::ReplicaWorld;
 use petramond_math::math::{lerp, IVec3, Vec3};
 use petramond_world::biome::{blended_fog_color, Biome};
 use petramond_world::block::Block;
@@ -26,7 +26,7 @@ impl Game {
         // a fluid must show its murk even while the player's eye is dry.
         let eye = self.render_camera().pos;
         let (fog, eye_fluid) = camera_fog(&self.replica, eye, |wx, wz| {
-            if let Some(id) = self.replica.column_biome(wx, wz) {
+            if let Some(id) = self.replica.data().column_biome(wx, wz) {
                 return Biome::from_id(id);
             }
 
@@ -37,7 +37,7 @@ impl Game {
             fog,
             eye_fluid,
             time: (now % 3600.0) as f32,
-            shader_params: self.replica.environment().shader_params().clone(),
+            shader_params: self.replica.data().environment().shader_params().clone(),
         }
     }
 }
@@ -48,7 +48,7 @@ impl Game {
 /// generator for columns it has not received), while a driver holding a plain
 /// world reads that world directly.
 pub fn camera_fog(
-    world: &World,
+    world: &ReplicaWorld,
     eye: petramond_math::world_pos::WorldPos,
     biome_at: impl FnMut(i32, i32) -> Biome,
 ) -> ([f32; 3], Option<Block>) {
@@ -61,9 +61,9 @@ pub fn camera_fog(
 }
 
 /// The fluid the camera eye is inside, judged by its medium's `eye_margin`.
-fn camera_eye_fluid(world: &World, eye: petramond_math::world_pos::WorldPos) -> Option<Block> {
+fn camera_eye_fluid(world: &ReplicaWorld, eye: petramond_math::world_pos::WorldPos) -> Option<Block> {
     let cell = eye.block();
-    let fluid = Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)).fluid()?;
+    let fluid = Block::from_id(world.data().chunk_block(cell.x, cell.y, cell.z)).fluid()?;
     let margin = fluid.fluid_def()?.medium.eye_margin;
     eye_inside(world, eye, fluid, margin).then_some(fluid)
 }
@@ -72,7 +72,7 @@ fn camera_eye_fluid(world: &World, eye: petramond_math::world_pos::WorldPos) -> 
 /// only an eye that far below the open surface does, so a barely-clipping eye
 /// (a shallow flowing film) stays dry; without one, any eye in the cell does.
 fn eye_inside(
-    world: &World,
+    world: &ReplicaWorld,
     eye: petramond_math::world_pos::WorldPos,
     fluid: Block,
     margin: Option<f32>,
@@ -82,13 +82,13 @@ fn eye_inside(
     };
     let cell = eye.block();
     // The same fluid above means an interior volume, not the open surface.
-    if Block::from_id(world.chunk_block(cell.x, cell.y + 1, cell.z)).fluid() == Some(fluid) {
+    if Block::from_id(world.data().chunk_block(cell.x, cell.y + 1, cell.z)).fluid() == Some(fluid) {
         return true;
     }
     eye.y < f64::from(surface_y_at(world, cell, eye.relative_to(cell), fluid) - margin)
 }
 
-fn surface_y_at(world: &World, cell: IVec3, eye_in_cell: Vec3, fluid: Block) -> f32 {
+fn surface_y_at(world: &ReplicaWorld, cell: IVec3, eye_in_cell: Vec3, fluid: Block) -> f32 {
     if fills_cell_at(world, cell.x, cell.y, cell.z, fluid) {
         return cell.y as f32 + 1.0;
     }
@@ -122,24 +122,24 @@ fn surface_y_at(world: &World, cell: IVec3, eye_in_cell: Vec3, fluid: Block) -> 
     cell.y as f32 + lerp(z0, z1, fz)
 }
 
-fn fluid_height_at(world: &World, wx: i32, wy: i32, wz: i32, fluid: Block) -> Option<f32> {
-    if Block::from_id(world.chunk_block(wx, wy, wz)).fluid() != Some(fluid) {
+fn fluid_height_at(world: &ReplicaWorld, wx: i32, wy: i32, wz: i32, fluid: Block) -> Option<f32> {
+    if Block::from_id(world.data().chunk_block(wx, wy, wz)).fluid() != Some(fluid) {
         return None;
     }
     Some(petramond::world::fluid::fluid_height(
-        world.fluid_meta_world(wx, wy, wz),
-        Block::from_id(world.chunk_block(wx, wy + 1, wz)),
+        world.data().fluid_meta_world(wx, wy, wz),
+        Block::from_id(world.data().chunk_block(wx, wy + 1, wz)),
         fluid,
     ))
 }
 
-fn fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32, fluid: Block) -> bool {
-    if Block::from_id(world.chunk_block(wx, wy, wz)).fluid() != Some(fluid) {
+fn fills_cell_at(world: &ReplicaWorld, wx: i32, wy: i32, wz: i32, fluid: Block) -> bool {
+    if Block::from_id(world.data().chunk_block(wx, wy, wz)).fluid() != Some(fluid) {
         return false;
     }
     petramond::world::fluid::fills_cell(
-        world.fluid_meta_world(wx, wy, wz),
-        Block::from_id(world.chunk_block(wx, wy + 1, wz)),
+        world.data().fluid_meta_world(wx, wy, wz),
+        Block::from_id(world.data().chunk_block(wx, wy + 1, wz)),
         fluid,
     )
 }

@@ -3,9 +3,10 @@
 //! commits with the place click — as a paste, or as the answer to a
 //! positioning the server opened.
 
+use petramond_world::world::raycast;
 use super::{Game, GameInput};
 use petramond::net::protocol::{ClientToServer, PlayerAction};
-use petramond::player::{Player, RayFilter, RaycastHit};
+use petramond::player::{RayFilter, RaycastHit};
 use petramond::schematic::share::SchematicRequest;
 use petramond::schematic::store::Digest;
 use petramond::schematic::{Scene, Schematic, PLACEMENT_REACH};
@@ -171,12 +172,12 @@ impl Game {
     /// crosshair, and commit on the place click.
     pub(super) fn schematic_preview_input(&mut self, input: &GameInput) {
         self.prepare_preview_scene();
-        let hit = Player::raycast_filtered(
+        let hit = raycast::filtered(
             self.cam.pos,
             self.cam.forward(),
             PLACEMENT_REACH,
             RayFilter::Selectable,
-            &self.replica,
+            self.replica.data(),
         )
         .map(|(h, _)| h);
         self.tools.preview.aim(hit);

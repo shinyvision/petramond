@@ -202,7 +202,7 @@ mod tests {
             pitch: 1.0,
         };
         server.broadcast.spatial_loops_mut().insert(7, restart);
-        let joiner = crate::server::session_build::spawn_player(server.world.seed);
+        let joiner = crate::server::session_build::spawn_player(server.world.data().seed);
         let s = server.add_session_for_test(joiner);
         let joiner_id = server.sessions[s].id;
 

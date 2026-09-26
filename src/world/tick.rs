@@ -8,7 +8,8 @@
 //! which drives `FluidSim` and the tick scheduler) lives in `world` and still
 //! implements the `block`-defined trait.
 //!
-//! A reaction receives `&mut World` and never stores world state on a block.
+//! A reaction receives `&mut ServerWorld` and never stores world state on a
+//! block. Only the server simulates: a replica has no tick.
 //!
 //! Ownership note: the whole simulation runs on the main thread inside
 //! [`World::game_tick`], driven by an accumulator in `Game::tick`. It mutates the
@@ -30,6 +31,7 @@
 //!   callback. Air picks are skipped on the spot and sections with nothing
 //!   random-tickable are skipped wholesale via a per-section counter.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use std::cmp::Reverse;
 
 use petramond_math::math::{IVec3, FACE_NEIGHBORS};
@@ -38,9 +40,13 @@ use petramond_world::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use petramond_world::crafting::Recipes;
 
 use super::sim_guard::{SimReadiness, SIM_RETRY_DELAY};
-use super::store::World;
 
 mod region;
+
+/// Fixed simulation timestep: 20 game ticks per second, independent of frame
+/// rate. World simulation (block updates, scheduled ticks, water flow) advances
+/// in whole steps of this size.
+pub const TICK_DT: f32 = 0.05;
 
 /// Random-tick draws per loaded 16³ section per tick.
 const RANDOM_TICK_SPEED: u32 = 3;
@@ -76,106 +82,11 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
         && old.collision_boxes() == new.collision_boxes()
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Current game-tick number (advances once per [`World::game_tick`]).
     #[inline]
     pub fn current_tick(&self) -> u64 {
-        self.sim.tick
-    }
-
-    /// Seed the tick counter from a save (`level.dat` v7), so scheduled ticks
-    /// and tick-anchored state (the `petramond:clock` day cycle) continue across
-    /// sessions instead of restarting at 0. Call once at session open, BEFORE
-    /// mods initialize — init-time `CurrentTick` host calls must already see
-    /// the restored value.
-    pub fn restore_tick(&mut self, tick: u64) {
-        self.sim.tick = tick;
-    }
-
-    /// Advance the world simulation by one fixed 50 ms step. Runs unconditionally
-    /// (even with no pending work) so cadence is independent of activity. Owns the
-    /// whole per-tick sequence so the order lives in one place.
-    ///
-    /// Order per tick, which must stay exact (reordering reorders the simulation):
-    /// 1. run the scheduled block ticks due now (these may set blocks, which
-    ///    enqueue fresh block updates),
-    /// 2. dispatch every queued block update — which may also SET blocks now: the
-    ///    support-loss reactions (fragile, door, grass) resolve their verdict at the
-    ///    update itself. Such a write enqueues fresh updates for the NEXT tick's
-    ///    batch, so the drain still terminates within the tick; a support chain
-    ///    collapses one cell per tick like it always did,
-    /// 3. advance furnace smelting on the same clock (needs `recipes`, which the
-    ///    storage layer is kept ignorant of — see `World::tick_furnaces`),
-    /// 4. run random block ticks near the player (probabilistic per-block
-    ///    behaviour, e.g. leaf decay; order-independent of the above).
-    ///
-    /// Item physics is paced per render frame (`Game::tick_entities`) and item
-    /// lifetime/pickup per tick by `Game` (it needs the player inventory), so
-    /// those stay in `Game`; everything the world owns alone sequences here.
-    pub fn game_tick(&mut self, recipes: &Recipes) {
-        debug_assert!(
-            self.role != crate::world::WorldRole::ClientReplica,
-            "a replica never simulates: the server owns the tick"
-        );
-        self.sim.tick = self.sim.tick.wrapping_add(1);
-        let now = self.sim.tick;
-
-        // 1. Run scheduled block ticks whose due time has arrived (EXECUTE phase).
-        let mut due = std::mem::take(&mut self.sim.batch_scratch);
-        due.clear();
-        while let Some(&Reverse((d, _, x, y, z))) = self.sim.scheduled.peek() {
-            if d > now {
-                break;
-            }
-            self.sim.scheduled.pop();
-            let pos = IVec3::new(x, y, z);
-            self.sim.scheduled_set.remove(&pos);
-            due.push(pos);
-        }
-        for pos in due.drain(..) {
-            // Streaming-finality gate (see `world::sim_guard`): a behaviour must not
-            // act on reads of sections whose streamed content is still in flight or
-            // absent-and-lying. In-flight blockers resolve within ticks — retry;
-            // unloaded blockers only resolve on a load event — drop, and let the
-            // on-load fluid kick re-arm the flow when the terrain streams in.
-            match self.sim_readiness_at(pos) {
-                SimReadiness::Ready => self.run_scheduled_tick(pos),
-                SimReadiness::Wait => self.schedule_block_tick(pos, SIM_RETRY_DELAY),
-                SimReadiness::Drop => {}
-            }
-        }
-
-        // 2. Dispatch the block updates accumulated since the last tick (ANNOUNCE
-        //    phase; may also set blocks — support rules resolve at the update).
-        //    MUST run after scheduled ticks: collapsing or reordering the
-        //    two reorders the simulation.
-        if !self.sim.update_queue.is_empty() {
-            let mut updates = due; // reuse the drained phase-1 buffer
-            updates.extend(self.sim.update_queue.drain(..));
-            self.sim.update_set.clear();
-            for pos in updates.drain(..) {
-                // Same streaming-finality gate as scheduled ticks; a Wait re-queues
-                // into the NEXT tick's batch (this tick's snapshot is already taken).
-                match self.sim_readiness_at(pos) {
-                    SimReadiness::Ready => self.dispatch_block_update(pos),
-                    SimReadiness::Wait => {
-                        self.queue_block_update(pos);
-                    }
-                    SimReadiness::Drop => {}
-                }
-            }
-            self.sim.batch_scratch = updates;
-        } else {
-            self.sim.batch_scratch = due;
-        }
-
-        // 3. Smelt every loaded furnace one tick (chunk-owned; cheap when none).
-        self.tick_furnaces(recipes);
-
-        // 4. Random block ticks: a few random cells per nearby section get a
-        //    probabilistic behaviour callback (today: leaf decay). Cheapest of all
-        //    when nothing is tickable — empty sections are skipped by their counter.
-        self.random_tick_sections();
+        self.data.sim.tick
     }
 
     /// Announce that the block at `(wx, wy, wz)` changed: relight what the
@@ -236,13 +147,12 @@ impl World {
     fn notify_block_change(&mut self, wx: i32, wy: i32, wz: i32, light_radius: i32, nav: bool) {
         // Replication rides the same choke point, for the same reason as the
         // relight: every editor announces here, so no block/water change a
-        // client could see can miss the delta log (see `record_block_delta`).
-        if self.replication.replication_capture {
-            self.record_block_delta(wx, wy, wz);
-        }
+        // client could see can miss the delta log (see `record_block_delta`,
+        // which logs only on a capturing server).
+        self.record_block_delta(wx, wy, wz);
         // The caller may have PROVED the change navigationally equivalent
         // (`edit_nav_relevant`); readers of the nav view then never see it.
-        self.sim.change_log.push(IVec3::new(wx, wy, wz), nav);
+        self.data.sim.change_log.push(IVec3::new(wx, wy, wz), nav);
         // Incremental when the region's stored light can be trusted, a
         // full-rebake mark (which carries the persist staleness notes)
         // otherwise — see `relight_cell`.
@@ -258,7 +168,7 @@ impl World {
     /// the announce choke point — the door toggle flips collision through
     /// the door map with no block write.
     pub(super) fn push_nav_change(&mut self, pos: IVec3) {
-        self.sim.change_log.push(pos, true);
+        self.data.sim.change_log.push(pos, true);
     }
 
     /// Every cell announced changed from log entry `seq` on — a block, a
@@ -266,33 +176,33 @@ impl World {
     /// whether entries were lost (then every cell may have changed).
     /// Streaming is not a change: a section loading or leaving is not here.
     pub fn changes_since(&self, seq: u64) -> (u64, Vec<IVec3>, bool) {
-        let (cells, lost) = self.sim.change_log.since(seq);
-        (self.sim.change_log.end(), cells, lost)
+        let (cells, lost) = self.data.sim.change_log.since(seq);
+        (self.data.sim.change_log.end(), cells, lost)
     }
 
     /// [`changes_since`](Self::changes_since), restricted to changes that
     /// could alter what a body walks on or through.
     pub fn nav_changes_since(&self, seq: u64) -> (u64, Vec<IVec3>, bool) {
-        let (cells, lost) = self.sim.change_log.nav_since(seq);
-        (self.sim.change_log.end(), cells, lost)
+        let (cells, lost) = self.data.sim.change_log.nav_since(seq);
+        (self.data.sim.change_log.end(), cells, lost)
     }
 
     /// The number the next announced change will carry: where a reader with
     /// nothing to check may move its place to without reading.
     pub fn changes_end(&self) -> u64 {
-        self.sim.change_log.end()
+        self.data.sim.change_log.end()
     }
 
     /// A counter that moves whenever anything a mob could walk on or through
     /// changed. Cheap staleness witness for verdicts derived from terrain.
     #[inline]
     pub fn nav_revision(&self) -> u64 {
-        self.sim.change_log.nav_revision()
+        self.data.sim.change_log.nav_revision()
     }
 
     pub(super) fn queue_block_update(&mut self, pos: IVec3) -> bool {
-        if self.sim.update_set.insert(pos) {
-            self.sim.update_queue.push_back(pos);
+        if self.data.sim.update_set.insert(pos) {
+            self.data.sim.update_queue.push_back(pos);
             true
         } else {
             false
@@ -308,11 +218,11 @@ impl World {
     /// Ask for `pos` to run a scheduled tick `delay` ticks from now. No-op if a
     /// tick is already pending for `pos` (first schedule wins).
     pub(super) fn schedule_block_tick(&mut self, pos: IVec3, delay: u64) {
-        if self.sim.scheduled_set.insert(pos) {
-            let due = self.sim.tick.wrapping_add(delay);
-            let seq = self.sim.scheduled_seq;
-            self.sim.scheduled_seq += 1;
-            self.sim
+        if self.data.sim.scheduled_set.insert(pos) {
+            let due = self.data.sim.tick.wrapping_add(delay);
+            let seq = self.data.sim.scheduled_seq;
+            self.data.sim.scheduled_seq += 1;
+            self.data.sim
                 .scheduled
                 .push(Reverse((due, seq, pos.x, pos.y, pos.z)));
         }
@@ -328,12 +238,122 @@ impl World {
     ///
     /// [`take_natural_breaks`]: Self::take_natural_breaks
     pub fn note_block_destroyed(&mut self, pos: IVec3, block: Block) {
-        self.sim.pending_breaks.push((pos, block));
+        self.data.sim.pending_breaks.push((pos, block));
         // Sweep any block-entity record the block owned (a torch's mount, a
         // chest/furnace front) — the same unconditional sweep the player-break
         // path uses, so no per-block arm is needed here and the block-entity
         // section index stays in sync.
         self.forget_block_entity_records(pos);
+    }
+
+    /// Destroy the block at `pos` the way the simulation does when it is lost — a
+    /// fragile block undermined, or a leaf decaying — by handing it the same break a
+    /// player's hand would: record it as a natural break (so `Game` plays the burst
+    /// and rolls its drops, e.g. a decayed leaf's 10% sapling) and clear the cell to
+    /// air. Reads the current occupant at `pos`; a no-op if that cell is already air.
+    pub fn break_block_naturally(&mut self, pos: IVec3) {
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
+        if block == Block::Air {
+            return;
+        }
+        self.note_block_destroyed(pos, block);
+        // Natural breaks leave the same residue a player break would (air for
+        // almost everything; melting ice leaves water — `Block::break_residue`).
+        let below = Block::from_id(self.data.chunk_block(pos.x, pos.y - 1, pos.z));
+        self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
+    }
+}
+
+impl ServerWorld {
+    /// Seed the tick counter from a save (`level.dat` v7), so scheduled ticks
+    /// and tick-anchored state (the `petramond:clock` day cycle) continue across
+    /// sessions instead of restarting at 0. Call once at session open, BEFORE
+    /// mods initialize — init-time `CurrentTick` host calls must already see
+    /// the restored value.
+    pub fn restore_tick(&mut self, tick: u64) {
+        self.data.sim.tick = tick;
+    }
+
+    /// Advance the world simulation by one fixed 50 ms step. Runs unconditionally
+    /// (even with no pending work) so cadence is independent of activity. Owns the
+    /// whole per-tick sequence so the order lives in one place.
+    ///
+    /// Order per tick, which must stay exact (reordering reorders the simulation):
+    /// 1. run the scheduled block ticks due now (these may set blocks, which
+    ///    enqueue fresh block updates),
+    /// 2. dispatch every queued block update — which may also SET blocks now: the
+    ///    support-loss reactions (fragile, door, grass) resolve their verdict at the
+    ///    update itself. Such a write enqueues fresh updates for the NEXT tick's
+    ///    batch, so the drain still terminates within the tick; a support chain
+    ///    collapses one cell per tick like it always did,
+    /// 3. advance furnace smelting on the same clock (needs `recipes`, which the
+    ///    storage layer is kept ignorant of — see `World::tick_furnaces`),
+    /// 4. run random block ticks near the player (probabilistic per-block
+    ///    behaviour, e.g. leaf decay; order-independent of the above).
+    ///
+    /// Item physics is paced per render frame (`Game::tick_entities`) and item
+    /// lifetime/pickup per tick by `Game` (it needs the player inventory), so
+    /// those stay in `Game`; everything the world owns alone sequences here.
+    pub fn game_tick(&mut self, recipes: &Recipes) {
+        self.data.sim.tick = self.data.sim.tick.wrapping_add(1);
+        let now = self.data.sim.tick;
+
+        // 1. Run scheduled block ticks whose due time has arrived (EXECUTE phase).
+        let mut due = std::mem::take(&mut self.data.sim.batch_scratch);
+        due.clear();
+        while let Some(&Reverse((d, _, x, y, z))) = self.data.sim.scheduled.peek() {
+            if d > now {
+                break;
+            }
+            self.data.sim.scheduled.pop();
+            let pos = IVec3::new(x, y, z);
+            self.data.sim.scheduled_set.remove(&pos);
+            due.push(pos);
+        }
+        for pos in due.drain(..) {
+            // Streaming-finality gate (see `world::sim_guard`): a behaviour must not
+            // act on reads of sections whose streamed content is still in flight or
+            // absent-and-lying. In-flight blockers resolve within ticks — retry;
+            // unloaded blockers only resolve on a load event — drop, and let the
+            // on-load fluid kick re-arm the flow when the terrain streams in.
+            match self.sim_readiness_at(pos) {
+                SimReadiness::Ready => self.run_scheduled_tick(pos),
+                SimReadiness::Wait => self.schedule_block_tick(pos, SIM_RETRY_DELAY),
+                SimReadiness::Drop => {}
+            }
+        }
+
+        // 2. Dispatch the block updates accumulated since the last tick (ANNOUNCE
+        //    phase; may also set blocks — support rules resolve at the update).
+        //    MUST run after scheduled ticks: collapsing or reordering the
+        //    two reorders the simulation.
+        if !self.data.sim.update_queue.is_empty() {
+            let mut updates = due; // reuse the drained phase-1 buffer
+            updates.extend(self.data.sim.update_queue.drain(..));
+            self.data.sim.update_set.clear();
+            for pos in updates.drain(..) {
+                // Same streaming-finality gate as scheduled ticks; a Wait re-queues
+                // into the NEXT tick's batch (this tick's snapshot is already taken).
+                match self.sim_readiness_at(pos) {
+                    SimReadiness::Ready => self.dispatch_block_update(pos),
+                    SimReadiness::Wait => {
+                        self.queue_block_update(pos);
+                    }
+                    SimReadiness::Drop => {}
+                }
+            }
+            self.data.sim.batch_scratch = updates;
+        } else {
+            self.data.sim.batch_scratch = due;
+        }
+
+        // 3. Smelt every loaded furnace one tick (chunk-owned; cheap when none).
+        self.tick_furnaces(recipes);
+
+        // 4. Random block ticks: a few random cells per nearby section get a
+        //    probabilistic behaviour callback (today: leaf decay). Cheapest of all
+        //    when nothing is tickable — empty sections are skipped by their counter.
+        self.random_tick_sections();
     }
 
     /// Take the blocks the simulation destroyed this tick (see [`note_block_destroyed`]),
@@ -343,31 +363,14 @@ impl World {
     /// [`note_block_destroyed`]: Self::note_block_destroyed
     /// [`game_tick`]: Self::game_tick
     pub fn take_natural_breaks(&mut self) -> Vec<(IVec3, Block)> {
-        std::mem::take(&mut self.sim.pending_breaks)
-    }
-
-    /// Destroy the block at `pos` the way the simulation does when it is lost — a
-    /// fragile block undermined, or a leaf decaying — by handing it the same break a
-    /// player's hand would: record it as a natural break (so `Game` plays the burst
-    /// and rolls its drops, e.g. a decayed leaf's 10% sapling) and clear the cell to
-    /// air. Reads the current occupant at `pos`; a no-op if that cell is already air.
-    pub fn break_block_naturally(&mut self, pos: IVec3) {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        if block == Block::Air {
-            return;
-        }
-        self.note_block_destroyed(pos, block);
-        // Natural breaks leave the same residue a player break would (air for
-        // almost everything; melting ice leaves water — `Block::break_residue`).
-        let below = Block::from_id(self.chunk_block(pos.x, pos.y - 1, pos.z));
-        self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
+        std::mem::take(&mut self.data.sim.pending_breaks)
     }
 
     /// Generic ANNOUNCE step: a neighbour of `pos` changed. Read the block there
     /// and route it to that block's [`behavior`](petramond_world::block::behavior). Names no
     /// concrete block — water (and any future reactor) carries its own reaction.
     fn dispatch_block_update(&mut self, pos: IVec3) {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         let behavior = block.behavior();
         // Engine behaviours (water/fragile/sapling/door) dispatch through the
         // orchestration registry; everything else through the data-layer object.
@@ -381,7 +384,7 @@ impl World {
     /// Read the block there and route it to that block's behaviour. Names no
     /// concrete block.
     fn run_scheduled_tick(&mut self, pos: IVec3) {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         let behavior = block.behavior();
         match crate::world::engine_behavior::engine_behavior(behavior.key()) {
             Some(engine) => engine.scheduled_tick(self, pos),
@@ -408,13 +411,13 @@ impl World {
         // Bring the random-tickable index up to date with this tick's edits
         // before it is read (see `World::random_tick_dirty`).
         self.repair_random_tick_index();
-        let Some(primary) = self.last_load_target else {
+        let Some(primary) = self.data.last_load_target else {
             return;
         };
         // (center, radius) per anchor; radii can differ only via render_dist.
         let mut anchors: Vec<(petramond_world::chunk::ChunkPos, i32)> =
-            Vec::with_capacity(1 + self.extra_load_targets.len());
-        for t in std::iter::once(&primary).chain(self.extra_load_targets.iter()) {
+            Vec::with_capacity(1 + self.data.extra_load_targets.len());
+        for t in std::iter::once(&primary).chain(self.data.extra_load_targets.iter()) {
             anchors.push((
                 t.center,
                 RANDOM_TICK_CHUNK_RADIUS.min((t.render_dist - 2).max(0)),
@@ -422,10 +425,10 @@ impl World {
         }
 
         // Gather phase: choose the cells to tick WITHOUT holding a section-map
-        // borrow across the dispatch (which mutates the world). `self.sim` and
-        // `self.sections` are disjoint fields, so the RNG draw and the block reads
+        // borrow across the dispatch (which mutates the world). `self.data.sim` and
+        // `self.data.sections` are disjoint fields, so the RNG draw and the block reads
         // borrow side by side.
-        let mut due = std::mem::take(&mut self.sim.batch_scratch);
+        let mut due = std::mem::take(&mut self.data.sim.batch_scratch);
         due.clear();
         for (i, &(center, r)) in anchors.iter().enumerate() {
             for dz in -r..=r {
@@ -495,14 +498,14 @@ impl World {
                 self.run_random_tick(pos);
             }
         }
-        self.sim.batch_scratch = due;
+        self.data.sim.batch_scratch = due;
     }
 
     /// Read the block at `pos` and run its random-tick behaviour. The block is
     /// re-read here (not carried from the gather pass) so an earlier tick in the
     /// same batch that changed this cell is respected — like `run_scheduled_tick`.
     fn run_random_tick(&mut self, pos: IVec3) {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         let behavior = block.behavior();
         match crate::world::engine_behavior::engine_behavior(behavior.key()) {
             Some(engine) => engine.random_tick(self, pos),
@@ -520,20 +523,20 @@ mod tests {
 
     /// A world with one empty loaded column at (0,0) (every section present, all air)
     /// and the player centred on it, so its sections are eligible for random ticks.
-    fn world_with_centered_chunk() -> World {
-        let mut world = World::new(1, 4);
+    fn world_with_centered_chunk() -> ServerWorld {
+        let mut world = ServerWorld::new(1, 4);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
-        world.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
+        world.data.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
         world
     }
 
     /// The random-tickable index, re-derived from scratch — what
     /// `repair_random_tick_index` must always agree with.
-    fn brute_random_tick_index(world: &World) -> Vec<(ChunkPos, u32)> {
+    fn brute_random_tick_index(world: &ServerWorld) -> Vec<(ChunkPos, u32)> {
         let mut out: std::collections::BTreeMap<(i32, i32), u32> = Default::default();
-        for (pos, section) in &world.sections {
+        for (pos, section) in &world.data.sections {
             if section.has_random_tickable() {
-                *out.entry((pos.cx, pos.cz)).or_insert(0) |= World::column_cy_bit(pos.cy);
+                *out.entry((pos.cx, pos.cz)).or_insert(0) |= crate::world::store::column_cy_bit(pos.cy);
             }
         }
         out.into_iter()
@@ -541,7 +544,7 @@ mod tests {
             .collect()
     }
 
-    fn live_random_tick_index(world: &World) -> Vec<(ChunkPos, u32)> {
+    fn live_random_tick_index(world: &ServerWorld) -> Vec<(ChunkPos, u32)> {
         let mut out: Vec<(ChunkPos, u32)> = world
             .data
             .section_column_rt
@@ -623,7 +626,7 @@ mod tests {
     }
 
     /// Fire one leaf random tick at `p` through the public behaviour path.
-    fn tick_leaf(world: &mut World, p: IVec3) {
+    fn tick_leaf(world: &mut ServerWorld, p: IVec3) {
         Block::OakLeaves.behavior().random_tick(world, p);
     }
 
@@ -633,7 +636,7 @@ mod tests {
         let p = IVec3::new(8, 70, 8);
         world.set_block_world(p.x, p.y - 1, p.z, Block::Grass);
         let mut seq = world.changes_end();
-        let mut take_nav_changes = |world: &World| {
+        let mut take_nav_changes = |world: &ServerWorld| {
             let (next, changed, lost) = world.nav_changes_since(seq);
             seq = next;
             (changed, lost)
@@ -681,7 +684,7 @@ mod tests {
         let p = IVec3::new(8, 70, 8);
         world.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
         tick_leaf(&mut world, p);
-        assert_eq!(world.chunk_block(p.x, p.y, p.z), Block::Air.id());
+        assert_eq!(world.data.chunk_block(p.x, p.y, p.z), Block::Air.id());
     }
 
     #[test]
@@ -691,7 +694,7 @@ mod tests {
         world.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
         world.set_block_world(p.x + 1, p.y, p.z, Block::OakLog);
         tick_leaf(&mut world, p);
-        assert_eq!(world.chunk_block(p.x, p.y, p.z), Block::OakLeaves.id());
+        assert_eq!(world.data.chunk_block(p.x, p.y, p.z), Block::OakLeaves.id());
     }
 
     #[test]
@@ -703,7 +706,7 @@ mod tests {
         world.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
         world.set_block_world(p.x, p.y + 1, p.z, Block::OakLeaves);
         tick_leaf(&mut world, p);
-        assert_eq!(world.chunk_block(p.x, p.y, p.z), Block::Air.id());
+        assert_eq!(world.data.chunk_block(p.x, p.y, p.z), Block::Air.id());
     }
 
     // The exact step-distance boundary is unit-tested next to the flood itself,
@@ -719,14 +722,14 @@ mod tests {
         let p = IVec3::new(0, 70, 8);
         world.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
         tick_leaf(&mut world, p);
-        assert_eq!(world.chunk_block(p.x, p.y, p.z), Block::OakLeaves.id());
+        assert_eq!(world.data.chunk_block(p.x, p.y, p.z), Block::OakLeaves.id());
     }
 
     #[test]
     fn section_counter_gates_the_section() {
         let mut world = world_with_centered_chunk();
         // The leaf at (8,70,8) lives in section (0,4,0); the counter gates that section.
-        let tickable = |w: &World| {
+        let tickable = |w: &ServerWorld| {
             w.section_at_world_for_test(8, 70, 8)
                 .unwrap()
                 .has_random_tickable()
@@ -750,7 +753,7 @@ mod tests {
         let mut decayed = false;
         for _ in 0..1_000_000 {
             world.game_tick(&recipes);
-            if world.chunk_block(p.x, p.y, p.z) == Block::Air.id() {
+            if world.data.chunk_block(p.x, p.y, p.z) == Block::Air.id() {
                 decayed = true;
                 break;
             }
@@ -764,11 +767,11 @@ mod tests {
     /// disc was centred only on `last_load_target`.
     #[test]
     fn random_ticks_reach_a_second_anchors_surroundings() {
-        let mut world = World::new(1, 4);
+        let mut world = ServerWorld::new(1, 4);
         // Primary anchor far away; the leaf lives near the EXTRA anchor only.
         world.insert_empty_column_for_test(ChunkPos::new(40, 0));
-        world.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
-        world.extra_load_targets = vec![LoadTarget::new(40, 4, 0, 4)];
+        world.data.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
+        world.data.extra_load_targets = vec![LoadTarget::new(40, 4, 0, 4)];
         let p = IVec3::new(40 * 16 + 8, 70, 8);
         world.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
 
@@ -776,7 +779,7 @@ mod tests {
         let mut decayed = false;
         for _ in 0..1_000_000 {
             world.game_tick(&recipes);
-            if world.chunk_block(p.x, p.y, p.z) == Block::Air.id() {
+            if world.data.chunk_block(p.x, p.y, p.z) == Block::Air.id() {
                 decayed = true;
                 break;
             }

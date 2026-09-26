@@ -29,7 +29,7 @@ impl ServerGame {
         let mut held = stack.and_then(|st| st.item.as_block());
         let pos = self.try_place(s, target, events)?;
         if stack.is_some_and(|st| !st.item.placement_variants().is_empty()) {
-            held = Some(Block::from_id(self.world.chunk_block(pos.x, pos.y, pos.z)));
+            held = Some(Block::from_id(self.world.data().chunk_block(pos.x, pos.y, pos.z)));
         }
         events.player(s).placed_block = held;
         let hand = self.sessions[s].player.acting_hand;
@@ -98,7 +98,7 @@ impl ServerGame {
         let variants = item.placement_variants();
         if !variants.is_empty() {
             let mut rng = petramond_worldgen::rng::FeatureRng::positional(
-                self.world.seed,
+                self.world.data().seed,
                 0x706c_6163_656d_656e ^ self.world.current_tick(),
                 p.x,
                 p.y,
@@ -108,7 +108,7 @@ impl ServerGame {
         }
         let slab_stacks_in_hit = self
             .world
-            .slab_stack_slot_in_hit(
+            .data().slab_stack_slot_in_hit(
                 block,
                 h.block,
                 self.sessions[s].held_slab_rotation(),
@@ -243,7 +243,7 @@ impl ServerGame {
         // redundant for the usual non-replaceable furniture (a replaceable cell
         // can't equal it) but guards the rare replaceable custom shape against a
         // no-op self-replace that would still burn a re-bake.
-        match self.world.block_if_loaded(anchor.x, anchor.y, anchor.z) {
+        match self.world.data().block_if_loaded(anchor.x, anchor.y, anchor.z) {
             Some(cur) if cur.is_replaceable() && cur != write_block => {}
             _ => return Some(None),
         }
@@ -252,7 +252,7 @@ impl ServerGame {
         // (a wall lamp's bracket wall, a hanging lamp's ceiling), so the guest
         // orients and the host still enforces. Without this a pack row could
         // declare `support` / `roots_face` and have placement ignore it.
-        if !self.world.placement_support_ok(write_block, anchor) {
+        if !self.world.data().placement_support_ok(write_block, anchor) {
             return Some(None);
         }
         // The body-occupancy gate every engine placement path runs: a custom
@@ -271,7 +271,7 @@ impl ServerGame {
             // The hypothetical cell's bake input — the SAME builder the
             // post-placement pump uses, so the gate and the pump bake from
             // identical inputs by construction.
-            let input = world.bake_cell_input(anchor, write_block);
+            let input = world.data().bake_cell_input(anchor, write_block);
             mods.dispatch(world, sessions, actor, events, |host, ctx| {
                 host.bake_placement_sim_boxes(ctx, shape_key, shape_kind, input)
             })
@@ -280,7 +280,7 @@ impl ServerGame {
             Some(b) => b,
             None => self
                 .world
-                .custom_shape_boxes(anchor)
+                .data().custom_shape_boxes(anchor)
                 .unwrap_or_else(|| write_block.collision_boxes()),
         };
         if self.placement_occupied_by_body(Some(s), anchor, boxes) {

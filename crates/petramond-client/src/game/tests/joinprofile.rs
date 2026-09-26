@@ -64,7 +64,7 @@ fn join_profile() {
             (feet.x.floor() as i32).div_euclid(16),
             (feet.z.floor() as i32).div_euclid(16),
         );
-        let installed = game.replica.loaded_section_count();
+        let installed = game.replica.data().loaded_section_count();
         let handoff = game.terrain_render_handoff();
         if t_first_mesh.is_none() && handoff.has_column_mesh(pc) {
             t_first_mesh = Some(t_click.elapsed());
@@ -148,7 +148,7 @@ fn join_profile_sync() {
             (feet.x.floor() as i32).div_euclid(16),
             (feet.z.floor() as i32).div_euclid(16),
         );
-        if t_first_server_install.is_none() && server.world().loaded_section_count() > 0 {
+        if t_first_server_install.is_none() && server.world().data().loaded_section_count() > 0 {
             t_first_server_install = Some(t_click.elapsed());
         }
         if t_server_spawn_light_final.is_none() {
@@ -169,12 +169,12 @@ fn join_profile_sync() {
                     })
                 })
             });
-            let any_loaded = server.world().loaded_section_count() > 0;
+            let any_loaded = server.world().data().loaded_section_count() > 0;
             if any_loaded && all_final {
                 t_server_spawn_light_final = Some(t_click.elapsed());
             }
         }
-        if t_first_client_install.is_none() && game.replica.loaded_section_count() > 0 {
+        if t_first_client_install.is_none() && game.replica.data().loaded_section_count() > 0 {
             t_first_client_install = Some(t_click.elapsed());
         }
         let handoff = game.terrain_render_handoff();

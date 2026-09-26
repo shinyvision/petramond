@@ -74,12 +74,12 @@ fn batch_markers(msg: &ServerToClient) -> bool {
 /// The first air cell carrying skylight inside section `sp` — an edit
 /// target where a stone fill genuinely changes the section's light.
 /// `None` for a section with no lit air (ocean/cave-band interiors).
-fn find_lit_air(world: &crate::world::World, sp: SectionPos) -> Option<(i32, i32, i32)> {
+fn find_lit_air(world: &crate::world::ServerWorld, sp: SectionPos) -> Option<(i32, i32, i32)> {
     let (ox, oy, oz) = sp.origin_world();
     (0..16)
         .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
         .map(|(x, y, z)| (ox + x, oy + y, oz + z))
-        .find(|&(x, y, z)| world.chunk_block(x, y, z) == 0 && world.skylight_at_world(x, y, z) > 0)
+        .find(|&(x, y, z)| world.data().chunk_block(x, y, z) == 0 && world.data().skylight_at_world(x, y, z) > 0)
 }
 
 /// The allowance shuts off below the reserve and the section budget never
@@ -113,7 +113,7 @@ fn starved_sessions_pause_streaming_and_resume_without_losing_any() {
     // Inline pool: gen/light finish inside the pump that queued them, so
     // loops stay compute-bound (no sleep-wait on background workers).
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 
@@ -157,7 +157,7 @@ fn starved_sessions_pause_streaming_and_resume_without_losing_any() {
 #[test]
 fn stream_batches_window_on_acks_and_stall_without_them() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 
@@ -216,7 +216,7 @@ fn stream_batches_window_on_acks_and_stall_without_them() {
 #[test]
 fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 
@@ -263,7 +263,7 @@ fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
 #[test]
 fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 

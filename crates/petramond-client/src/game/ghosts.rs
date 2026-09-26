@@ -234,7 +234,7 @@ impl Game {
         let origin = IVec3::from_array(index.placement.origin);
         let shows = |index: &Index, cell: &Cell| {
             index.record(cell).is_some_and(|(record, _)| {
-                construction::status(&self.replica, origin + cell.local, record)
+                construction::status(self.replica.data(), origin + cell.local, record)
                     != Status::Satisfied
             })
         };

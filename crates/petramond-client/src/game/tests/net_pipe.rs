@@ -86,7 +86,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     let mut ev = TickEvents::default();
     game.server.tick_place(0, &mut ev);
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(8, 64, 8)),
+        Block::from_id(game.server.world().data().chunk_block(8, 64, 8)),
         Block::Air,
         "nothing was placed above the out-of-reach block"
     );
@@ -469,7 +469,7 @@ fn shutdown_recovers_untaken_output_without_waiting_for_a_tick() {
 #[test]
 fn set_view_distance_moves_the_session_radius_and_only_the_host_moves_the_budget() {
     let mut game = game();
-    let server_rd = game.server.world().render_dist;
+    let server_rd = game.server.world().data().render_dist;
 
     // A guest's request moves only its own streaming radius (clamped 4..=64);
     // the server budget is the host's, not the guest's.
@@ -480,7 +480,7 @@ fn set_view_distance_moves_the_session_radius_and_only_the_host_moves_the_budget
         .apply_message(s, ClientToServer::SetViewDistance { chunks: 8 });
     assert_eq!(game.server.sessions()[s].transport().view_radius, 8);
     assert_eq!(
-        game.server.world().render_dist, server_rd,
+        game.server.world().data().render_dist, server_rd,
         "a guest request never moves the server budget"
     );
     game.server
@@ -492,5 +492,5 @@ fn set_view_distance_moves_the_session_radius_and_only_the_host_moves_the_budget
     game.server
         .apply_message(0, ClientToServer::SetViewDistance { chunks: 12 });
     assert_eq!(game.server.sessions()[0].transport().view_radius, 12);
-    assert_eq!(game.server.world().render_dist, 12);
+    assert_eq!(game.server.world().data().render_dist, 12);
 }

@@ -9,12 +9,12 @@
 //! animated block model), and its collision is read live from the door state, so a
 //! toggle needs no remesh — only the placement/break edits relight + remesh neighbours.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
 use petramond_world::block::{Block, CellView};
 use petramond_world::door::DoorState;
 
-use super::store::World;
 use petramond_world::world::query::door_support;
 
 /// Cell offset from a door's lower cell to its upper cell.
@@ -30,7 +30,7 @@ const UP: IVec3 = IVec3::new(0, 1, 0);
 pub struct Door;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Door {
-    fn neighbor_update(&self, world: &mut World, pos: IVec3) {
+    fn neighbor_update(&self, world: &mut ServerWorld, pos: IVec3) {
         // The cell may have changed after its update was queued (mined, replaced);
         // only break a door that is still there and still unsupported.
         if world.door_state_at(pos.x, pos.y, pos.z).is_none() || world.door_supported(pos) {
@@ -43,20 +43,20 @@ impl crate::world::engine_behavior::EngineBlockBehavior for Door {
 /// The door singleton a row points at (`behavior: &behavior::DOOR`).
 pub static DOOR: Door = Door;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// The door state (facing + open + which-half) at world `pos`, or `None` when no
     /// door is recorded there or the cell is unloaded. Read by the position-aware
     /// collision/selection (see `collision_boxes_at`) and
     /// the dynamic door renderer.
     #[inline]
     pub fn door_state_at(&self, wx: i32, wy: i32, wz: i32) -> Option<DoorState> {
-        let (c, lx, ly, lz) = self.chunk_at_world(wx, wy, wz)?;
+        let (c, lx, ly, lz) = self.data.chunk_at_world(wx, wy, wz)?;
         c.door_state(lx, ly, lz)
     }
 
     #[inline]
     fn set_door_state_world(&mut self, pos: IVec3, state: DoorState) {
-        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+        if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.set_door_state(lx, ly, lz, state);
         }
     }
@@ -70,7 +70,7 @@ impl World {
         let Some((lower, _)) = self.door_cells(pos) else {
             return false;
         };
-        let floor = self.physics_block(lower.x, lower.y - 1, lower.z);
+        let floor = self.data.physics_block(lower.x, lower.y - 1, lower.z);
         door_support(floor)
     }
 
@@ -82,7 +82,7 @@ impl World {
         let Some((lower, _)) = self.door_cells(pos) else {
             return;
         };
-        let block = Block::from_id(self.chunk_block(lower.x, lower.y, lower.z));
+        let block = Block::from_id(self.data.chunk_block(lower.x, lower.y, lower.z));
         self.note_block_destroyed(lower, block);
         self.remove_compound(pos);
     }
@@ -103,7 +103,7 @@ impl World {
             return false;
         }
         for (cell, top) in [(base, false), (upper, true)] {
-            if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(cell.x, cell.y, cell.z) {
+            if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(cell.x, cell.y, cell.z) {
                 // `set_block` clears any stale door entry; then record this cell's state.
                 c.set_block(lx, ly, lz, block);
                 c.set_door_state(
@@ -160,10 +160,9 @@ impl World {
             // passes the announce choke point — log its delta explicitly
             // (`state: Some(Door(..))` carries the new open bit to replicas)
             // and feed the confinement invalidation the same way: an opened
-            // door frees a pen NOW, not when the region cache ages out.
-            if self.replication.replication_capture {
-                self.record_block_delta(c.x, c.y, c.z);
-            }
+            // door frees a pen NOW, not when the region cache ages out. The
+            // recorder logs only on a capturing server.
+            self.record_block_delta(c.x, c.y, c.z);
             self.push_nav_change(c);
         }
         Some(lower)
@@ -178,8 +177,8 @@ mod tests {
 
     const DOOR: Block = Block::OakDoor;
 
-    fn world_with_floor() -> (World, IVec3) {
-        let mut w = World::new(1, 4);
+    fn world_with_floor() -> (ServerWorld, IVec3) {
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let base = IVec3::new(5, 64, 5);
@@ -188,7 +187,7 @@ mod tests {
         (w, base)
     }
 
-    fn run_ticks(w: &mut World, n: u32) {
+    fn run_ticks(w: &mut ServerWorld, n: u32) {
         let r = Recipes::default();
         for _ in 0..n {
             w.game_tick(&r);
@@ -198,12 +197,12 @@ mod tests {
     #[test]
     fn placing_fills_both_cells_with_paired_state() {
         let (mut w, base) = world_with_floor();
-        assert!(w.door_footprint_clear(base));
+        assert!(w.data.door_footprint_clear(base));
         assert!(w.place_door(base, DOOR, Facing::South));
         let upper = base + UP;
-        assert_eq!(Block::from_id(w.chunk_block(base.x, base.y, base.z)), DOOR);
+        assert_eq!(Block::from_id(w.data.chunk_block(base.x, base.y, base.z)), DOOR);
         assert_eq!(
-            Block::from_id(w.chunk_block(upper.x, upper.y, upper.z)),
+            Block::from_id(w.data.chunk_block(upper.x, upper.y, upper.z)),
             DOOR
         );
         let lo = w.door_state_at(base.x, base.y, base.z).unwrap();
@@ -215,35 +214,35 @@ mod tests {
 
     #[test]
     fn placement_needs_a_floor_and_two_clear_cells() {
-        let mut w = World::new(1, 4);
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let base = IVec3::new(5, 64, 5);
         // No floor below: a door can't float.
-        assert!(!w.door_footprint_clear(base));
+        assert!(!w.data.door_footprint_clear(base));
         // Add a floor — now clear.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Stone);
-        assert!(w.door_footprint_clear(base));
+        assert!(w.data.door_footprint_clear(base));
         // Block the upper cell — the 2-tall footprint is no longer clear.
         w.set_block_world(base.x, base.y + 1, base.z, Block::Stone);
-        assert!(!w.door_footprint_clear(base));
+        assert!(!w.data.door_footprint_clear(base));
     }
 
     #[test]
     fn a_door_needs_an_opaque_floor_not_a_chest_workbench_or_cactus() {
-        let mut w = World::new(1, 4);
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let base = IVec3::new(5, 64, 5);
         // A full opaque block holds a door up.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Stone);
-        assert!(w.door_footprint_clear(base));
+        assert!(w.data.door_footprint_clear(base));
         // Chests, the furniture workbench and cactuses are SOLID but NOT opaque (partial
         // models), so a door refuses to stand on them.
         for floor in [Block::Chest, Block::FurnitureWorkbench, Block::Cactus] {
             w.set_block_world(base.x, base.y - 1, base.z, floor);
             assert!(
-                !w.door_footprint_clear(base),
+                !w.data.door_footprint_clear(base),
                 "{floor:?} is not a valid door support",
             );
         }
@@ -255,19 +254,19 @@ mod tests {
         let upper = base + UP;
         w.place_door(base, DOOR, Facing::South);
         run_ticks(&mut w, 2); // settle: supported, nothing happens
-        assert_eq!(Block::from_id(w.chunk_block(base.x, base.y, base.z)), DOOR);
+        assert_eq!(Block::from_id(w.data.chunk_block(base.x, base.y, base.z)), DOOR);
 
         // Dig the floor out from under it: the door breaks at the undermining
         // update, in the first tick's dispatch.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Air);
         run_ticks(&mut w, 1);
         assert_eq!(
-            Block::from_id(w.chunk_block(base.x, base.y, base.z)),
+            Block::from_id(w.data.chunk_block(base.x, base.y, base.z)),
             Block::Air,
             "the undermined door's lower half breaks",
         );
         assert_eq!(
-            Block::from_id(w.chunk_block(upper.x, upper.y, upper.z)),
+            Block::from_id(w.data.chunk_block(upper.x, upper.y, upper.z)),
             Block::Air,
             "and its upper half goes with it (the pair breaks as one)",
         );
@@ -289,7 +288,7 @@ mod tests {
         w.set_block_world(base.x + 1, base.y, base.z, Block::Stone);
         w.set_block_world(base.x + 1, base.y, base.z, Block::Air);
         run_ticks(&mut w, 3);
-        assert_eq!(Block::from_id(w.chunk_block(base.x, base.y, base.z)), DOOR);
+        assert_eq!(Block::from_id(w.data.chunk_block(base.x, base.y, base.z)), DOOR);
         assert!(w.take_natural_breaks().is_empty());
     }
 
@@ -300,13 +299,13 @@ mod tests {
         let upper = base + UP;
 
         // Closed: the slab is thin on Z (sits on the south edge).
-        let closed = w.collision_boxes_at(base.x, base.y, base.z)[0];
+        let closed = w.data.collision_boxes_at(base.x, base.y, base.z)[0];
         assert!(closed.max[2] - closed.min[2] < 0.5);
 
         // Toggle from the UPPER cell flips BOTH halves to open (thin on X now).
         assert_eq!(w.toggle_door(upper), Some(base));
         for cell in [base, upper] {
-            let open = w.collision_boxes_at(cell.x, cell.y, cell.z)[0];
+            let open = w.data.collision_boxes_at(cell.x, cell.y, cell.z)[0];
             assert!(
                 open.max[0] - open.min[0] < 0.5,
                 "open slab should be thin on X"
@@ -318,7 +317,7 @@ mod tests {
         let removed = w.remove_compound(base).unwrap();
         assert_eq!(removed.len(), 2);
         for c in removed {
-            assert_eq!(Block::from_id(w.chunk_block(c.x, c.y, c.z)), Block::Air);
+            assert_eq!(Block::from_id(w.data.chunk_block(c.x, c.y, c.z)), Block::Air);
             assert!(w.door_state_at(c.x, c.y, c.z).is_none());
         }
     }

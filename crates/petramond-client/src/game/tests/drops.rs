@@ -56,7 +56,7 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
             game.server.game_tick_step(&mut feed);
         }
         assert_eq!(
-            Block::from_id(game.server.world().chunk_block(cell.x, cell.y, cell.z)),
+            Block::from_id(game.server.world().data().chunk_block(cell.x, cell.y, cell.z)),
             Block::Air,
             "{block:?} must shatter once unsupported"
         );

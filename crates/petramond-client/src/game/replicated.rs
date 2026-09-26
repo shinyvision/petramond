@@ -828,8 +828,8 @@ impl Game {
         let spot = petramond::mob::riding::dismount_spot(
             self.player.pos,
             self.player.yaw,
-            |feet| petramond::mob::riding::player_body_free(&self.replica, feet, &obstacles),
-            |feet| petramond::mob::riding::dismount_footing_safe(&self.replica, feet),
+            |feet| petramond::mob::riding::player_body_free(self.replica.data(), feet, &obstacles),
+            |feet| petramond::mob::riding::dismount_footing_safe(self.replica.data(), feet),
         );
         if let Some(feet) = spot {
             self.player.teleport(feet);
@@ -999,7 +999,7 @@ impl Game {
                         if delta_cells.contains(&pos) {
                             continue;
                         }
-                        let before = self.replica.chunk_block(pos.x, pos.y, pos.z);
+                        let before = self.replica.data().chunk_block(pos.x, pos.y, pos.z);
                         let _ = self.replica.set_block_world(
                             pos.x,
                             pos.y,
@@ -1016,7 +1016,7 @@ impl Game {
         }
         // Shader-param environment (day/night sky, mod visuals): applied into
         // the REPLICA world's `WorldEnvironment` — the map the renderer reads
-        // (`Game::environment` snapshots `replica.environment()` per frame).
+        // (`Game::environment` snapshots `replica.data().environment()` per frame).
         // `None` = unchanged since the last batch.
         if let Some(env) = update.env {
             for (key, value) in env {

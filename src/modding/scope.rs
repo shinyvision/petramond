@@ -93,11 +93,11 @@ mod tests {
     use super::*;
     use crate::events::tick::TickEvents;
     use crate::events::{PostQueue, RosterRefs};
-    use crate::world::World;
+    use crate::world::ServerWorld;
 
     #[test]
     fn scope_is_bounded_and_reentrancy_safe() {
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
 

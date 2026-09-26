@@ -6,7 +6,7 @@
 //! never straddle a slice — a slice pulls in every member of each compound it
 //! touches, both the ones it writes and the ones it overwrites.
 
-use super::World;
+use crate::world::ServerWorld;
 use crate::schematic::ResolvedCell;
 use petramond_math::math::IVec3;
 use petramond_world::{
@@ -114,15 +114,15 @@ const AIR: ResolvedCell = ResolvedCell {
     furnace: None,
 };
 
-impl World {
+impl ServerWorld {
     /// Snapshot one stream-final cell, including every persistent block-owned store.
     pub fn snapshot_cell(&self, pos: IVec3) -> Result<ResolvedCell, String> {
         self.cell_readable(pos)?;
         let mut data = ResolvedCell {
-            block: Block::from_id(self.chunk_block(pos.x, pos.y, pos.z)),
+            block: Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z)),
             ..AIR
         };
-        if let Some((s, x, y, z)) = self.chunk_at_world(pos.x, pos.y, pos.z) {
+        if let Some((s, x, y, z)) = self.data.chunk_at_world(pos.x, pos.y, pos.z) {
             data.state = s.cell_state(x, y, z);
             data.fluid = s.fluid_meta(x, y, z);
             data.kv = s
@@ -138,10 +138,10 @@ impl World {
 
     /// Whether the cell already holds exactly `data`, without copying it out.
     fn cell_holds(&self, pos: IVec3, data: &ResolvedCell) -> bool {
-        if Block::from_id(self.chunk_block(pos.x, pos.y, pos.z)) != data.block {
+        if Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z)) != data.block {
             return false;
         }
-        let Some((s, x, y, z)) = self.chunk_at_world(pos.x, pos.y, pos.z) else {
+        let Some((s, x, y, z)) = self.data.chunk_at_world(pos.x, pos.y, pos.z) else {
             return data.state == ShapeState::NONE
                 && data.fluid == 0
                 && data.kv.is_empty()
@@ -175,7 +175,7 @@ impl World {
         }
         let sp = petramond_world::chunk::SectionPos::from_world(p.x, p.y, p.z)
             .ok_or("Edit crosses the world height limit")?;
-        if !self.stream_writable(sp) || !self.physics_cell_final_at(p.x, p.y, p.z) {
+        if !self.data.stream_writable(sp) || !self.physics_cell_final_at(p.x, p.y, p.z) {
             return Err("Wait for the destination terrain to load".into());
         }
         Ok(())
@@ -230,7 +230,7 @@ impl World {
         &mut self,
         edit: &mut CellEdit,
         budget: usize,
-        hooks: &mut dyn FnMut(&mut World, CellHooks<'_>),
+        hooks: &mut dyn FnMut(&mut ServerWorld, CellHooks<'_>),
     ) -> Result<bool, String> {
         let (slice, cleared) = self.next_slice(edit, budget)?;
         if !slice.is_empty() || !cleared.is_empty() {
@@ -261,7 +261,7 @@ impl World {
             let removed = self.anchored_blocks(
                 cells
                     .iter()
-                    .map(|(p, _)| (*p, Block::from_id(self.chunk_block(p.x, p.y, p.z)))),
+                    .map(|(p, _)| (*p, Block::from_id(self.data.chunk_block(p.x, p.y, p.z)))),
             );
             self.install_cells(&cells);
             let placed = self.anchored_blocks(cells.iter().map(|(p, d)| (*p, d.block)));
@@ -370,8 +370,7 @@ impl World {
             self.forget_block_draw(*p);
         }
         for (p, data) in cells {
-            let (s, x, y, z) = self
-                .chunk_at_world_mut(p.x, p.y, p.z)
+            let (s, x, y, z) = self.data.chunk_at_world_mut(p.x, p.y, p.z)
                 .expect("materialized edit");
             s.take_container(x, y, z);
             s.take_furnace(x, y, z);
@@ -392,13 +391,11 @@ impl World {
             self.mark_custom_bake_edit(p.x, p.y, p.z, data.block);
             self.note_block_entity_change(*p);
         }
-        self.terrain.vis_dirty = true;
         self.refresh_region(&positions);
         // Neighbours see the completed edit; the copied cells retain their
         // authored connection/corner state until a later world edit changes it.
         for (p, data) in cells {
-            let (s, x, y, z) = self
-                .chunk_at_world_mut(p.x, p.y, p.z)
+            let (s, x, y, z) = self.data.chunk_at_world_mut(p.x, p.y, p.z)
                 .expect("materialized edit");
             if s.cell_state(x, y, z) != data.state {
                 s.set_cell_state(x, y, z, data.state);

@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use super::*;
 use crate::entity::{Heading, Stuck};
 use petramond_math::math::IVec3;
@@ -5,14 +6,14 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::{Chunk, ChunkPos};
 use petramond_world::item::{ItemStack, ItemType};
 
-fn world() -> World {
-    let mut world = World::new(1, 1);
+fn world() -> ServerWorld {
+    let mut world = ServerWorld::new(1, 1);
     world.clear_world();
     world.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
     world
 }
 
-fn spawn(world: &mut World, x: f32) -> u64 {
+fn spawn(world: &mut ServerWorld, x: f32) -> u64 {
     let mut item = DroppedItem::new(
         WorldPos::new(f64::from(x), 64.5, 4.5),
         ItemStack::new(ItemType::Dirt, 3),
@@ -56,7 +57,7 @@ fn impulses_compose_without_stealing_reserved_or_lodged_items() {
         .dropped_items_mut()
         .get_mut(reserved)
         .unwrap()
-        .request_pickup(crate::player::PlayerId(0));
+        .request_pickup(crate::world::session::PlayerId(0));
     world.dropped_items_mut().get_mut(lodged).unwrap().motion = Motion::Stuck(Stuck {
         heading: Heading {
             yaw: 0.0,

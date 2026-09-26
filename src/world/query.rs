@@ -1,15 +1,27 @@
-use super::store::World;
 
-impl World {
+use crate::world::{ReplicaWorld, ServerWorld};
+
+
+impl ServerWorld {
+    /// Anything still generating, loading from disk or waiting on an overlay.
+    pub fn has_pending_stream_work(&self) -> bool {
+        !self.side.gen.pending.is_empty()
+            || !self.side.gen.pending_sections.is_empty()
+            || !self.side.gen.awaited_overlays.is_empty()
+            || !self.side.gen.pending_overlays.is_empty()
+    }
+}
+
+impl ReplicaWorld {
     /// Work still needed before installed terrain is presentable; parked hidden
     /// sections do not consume meshing admission and are deliberately excluded.
     pub fn terrain_presentation_backlog(&self) -> (u32, u32) {
-        let mesh = self.terrain.dirty_meshes.len()
-            + self.terrain.mesh_jobs_in_flight
-            + self.terrain.light_blocked_meshes.len();
+        let mesh = self.side.terrain.dirty_meshes.len()
+            + self.side.terrain.mesh_jobs_in_flight
+            + self.side.terrain.light_blocked_meshes.len();
         (
             mesh.min(u32::MAX as usize) as u32,
-            self.terrain
+            self.side.terrain
                 .mesh_upload_dirty_columns
                 .len()
                 .min(u32::MAX as usize) as u32,
@@ -26,33 +38,28 @@ impl World {
     /// move, topology change, neighbour landing — can wake it, so it is not
     /// pending work.
     pub fn has_dirty_meshes(&self) -> bool {
-        !self.terrain.dirty_meshes.is_empty()
-            || (self.role != crate::world::WorldRole::ServerHeadless && self.terrain.vis_dirty)
-            || !self.terrain.light_blocked_meshes.is_empty()
-            || self.deferred_recheck_needed
-            || !self.deferred_rechecks.is_empty()
+        !self.side.terrain.dirty_meshes.is_empty()
+            || self.side.terrain.vis_dirty
+            || !self.side.terrain.light_blocked_meshes.is_empty()
+            || self.data.deferred_recheck_needed
+            || !self.data.deferred_rechecks.is_empty()
             || self.light_bakes.has_pending()
-            || self.terrain.prediction_terrain.has_pending()
-            || self.terrain.mesh_jobs_in_flight > 0
+            || self.side.terrain.prediction_terrain.has_pending()
+            || self.side.terrain.mesh_jobs_in_flight > 0
     }
-    /// Anything still generating, loading from disk or waiting on an overlay.
-    pub fn has_pending_stream_work(&self) -> bool {
-        !self.gen.pending.is_empty()
-            || !self.gen.pending_sections.is_empty()
-            || !self.gen.awaited_overlays.is_empty()
-            || !self.gen.pending_overlays.is_empty()
-    }
+
     /// Number of sections queued for (re)mesh — the streaming backlog.
     pub fn dirty_mesh_count(&self) -> usize {
-        self.terrain.dirty_meshes.len() + self.terrain.light_blocked_meshes.len()
+        self.side.terrain.dirty_meshes.len() + self.side.terrain.light_blocked_meshes.len()
     }
+
     /// (deep, visible-deep, hidden-parked) counts — a visibility diagnostic for
     /// streaming/perf tooling.
     pub fn deep_visibility_counts(&self) -> (usize, usize, usize) {
         (
-            self.terrain.deep_sections.len(),
-            self.terrain.visible_deep.len(),
-            self.terrain.hidden_parked.len(),
+            self.side.terrain.deep_sections.len(),
+            self.side.terrain.visible_deep.len(),
+            self.side.terrain.hidden_parked.len(),
         )
     }
 }
@@ -66,23 +73,23 @@ mod tests {
 
     #[test]
     fn full_spawn_support_rejects_water_leaves_partials_and_unloaded_cells() {
-        let mut world = World::new(0, 1);
+        let mut world = ServerWorld::new(0, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
 
-        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+        assert!(!world.data.block_is_full_spawn_support(8, 63, 8));
 
         assert!(world.set_block_world(8, 63, 8, Block::Grass));
-        assert!(world.block_is_full_spawn_support(8, 63, 8));
+        assert!(world.data.block_is_full_spawn_support(8, 63, 8));
 
         assert!(world.set_block_world(8, 63, 8, Block::Water));
-        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+        assert!(!world.data.block_is_full_spawn_support(8, 63, 8));
 
         assert!(world.set_block_world(8, 63, 8, Block::OakLeaves));
-        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+        assert!(!world.data.block_is_full_spawn_support(8, 63, 8));
 
         assert!(world.set_block_world(8, 63, 8, Block::OakStairs));
-        assert!(!world.block_is_full_spawn_support(8, 63, 8));
+        assert!(!world.data.block_is_full_spawn_support(8, 63, 8));
 
-        assert!(!world.block_is_full_spawn_support(128, 63, 128));
+        assert!(!world.data.block_is_full_spawn_support(128, 63, 128));
     }
 }

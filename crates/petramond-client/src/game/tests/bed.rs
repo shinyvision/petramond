@@ -44,7 +44,7 @@ fn clock(game: &super::common::TestGame) -> u64 {
     u64::from_le_bytes(
         game.server
             .world()
-            .world_kv_get(CLOCK_KEY)
+            .data().world_kv_get(CLOCK_KEY)
             .expect("core day/night publishes a clock")
             .try_into()
             .expect("8-byte LE clock"),

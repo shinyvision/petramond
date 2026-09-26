@@ -4,6 +4,8 @@
 //! action and the drain committing it judge through these same functions, so
 //! a request that was valid is re-proven, never assumed, at its turn.
 
+use crate::world::ServerWorld;
+use petramond_world::world::raycast;
 use mod_api::ActionRefusal;
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
@@ -15,10 +17,9 @@ use petramond_world::world::placement::{
     self, click_spots, HeldRotation, PlaceInputs, PlacementPlan,
 };
 
-use crate::player::{Player, RayFilter, RaycastHit};
+use petramond_world::world::raycast::{RayFilter, RaycastHit};
 
 use super::construction::CellStatus;
-use super::World;
 
 /// A live mob resolved for one action.
 #[derive(Clone, Copy, Debug)]
@@ -84,7 +85,7 @@ pub enum PlaceCheck {
     Refused(ActionRefusal),
 }
 
-impl World {
+impl ServerWorld {
     /// Resolve `mob_id` as an actor: a live mob.
     pub fn actor(&self, mob_id: u64) -> Result<Actor, ActionRefusal> {
         let index = self
@@ -121,7 +122,7 @@ impl World {
 
     /// What a crosshair along `dir` from `actor`'s eye rests on.
     fn crosshair(&self, actor: &Actor, dir: Vec3) -> Option<(RaycastHit, f32)> {
-        Player::raycast_filtered(actor.eye, dir, actor.reach, RayFilter::Selectable, self)
+        raycast::filtered(actor.eye, dir, actor.reach, RayFilter::Selectable, &self.data)
     }
 
     /// The click on the block at `pos` itself (a dig, a use): where `actor`
@@ -138,7 +139,7 @@ impl World {
         }
         let centre = WorldPos::block_center(pos) - actor.eye;
         let mut aims = Vec::with_capacity(5);
-        if let Some((min, max)) = self.selection_box_at(pos.x, pos.y, pos.z) {
+        if let Some((min, max)) = self.data.selection_box_at(pos.x, pos.y, pos.z) {
             let mid = (Vec3::from(min) + Vec3::from(max)) * 0.5;
             aims.push(WorldPos::block_min(pos) + mid - actor.eye);
         }
@@ -178,7 +179,7 @@ impl World {
             if hit.normal == IVec3::ZERO {
                 return Err(ActionRefusal::NoLineOfSight);
             }
-            let looked_at = Block::from_id(self.chunk_block(hit.block.x, hit.block.y, hit.block.z));
+            let looked_at = Block::from_id(self.data.chunk_block(hit.block.x, hit.block.y, hit.block.z));
             let target = placement::build_position(looked_at, hit.block, hit.normal);
             let builds = want
                 .writes
@@ -189,7 +190,7 @@ impl World {
             }
             let click = Click {
                 at: actor.eye + dir * dist,
-                facing: crate::rules::placement::facing_from_forward(dir),
+                facing: petramond_math::facing::Facing::toward_viewer(dir),
             };
             let key = (hit.block, hit.normal, click.facing);
             let known = judged
@@ -235,7 +236,7 @@ impl World {
         want.writes
             .iter()
             .find(|w| w.cell == want.anchor)
-            .is_some_and(|w| self.placement_support_ok(w.block, want.anchor))
+            .is_some_and(|w| self.data.placement_support_ok(w.block, want.anchor))
     }
 
     /// What the placement rules make of one click toward `want`, with each
@@ -279,7 +280,7 @@ impl World {
                         hit
                     });
                     match plan {
-                        Some(plan) if construction::advances(self, &plan, want, record, &paid) => {
+                        Some(plan) if construction::advances(&self.data, &plan, want, record, &paid) => {
                             return Ok((plan, paid));
                         }
                         None if body => refusal = ActionRefusal::BodyInTheWay,
@@ -305,14 +306,14 @@ impl World {
         let mut aims = Vec::new();
         for w in &writes.writes {
             let centre = WorldPos::block_center(w.cell) - actor.eye;
-            let own = Block::from_id(self.chunk_block(w.cell.x, w.cell.y, w.cell.z));
+            let own = Block::from_id(self.data.chunk_block(w.cell.x, w.cell.y, w.cell.z));
             if placement::replaces_in_place(own) {
                 aims.push(centre);
             }
             // Parts already standing in the cell are clicked on their own
             // faces: the ones turned toward the eye.
             if w.augments {
-                if let Some((min, max)) = self.selection_box_at(w.cell.x, w.cell.y, w.cell.z) {
+                if let Some((min, max)) = self.data.selection_box_at(w.cell.x, w.cell.y, w.cell.z) {
                     let (min, max) = (Vec3::from(min), Vec3::from(max));
                     let corner = WorldPos::block_min(w.cell) - actor.eye;
                     let mid = corner + (min + max) * 0.5;
@@ -331,7 +332,7 @@ impl World {
                 let on_face = centre + out * 0.5;
                 if writes.writes.iter().any(|o| o.cell == n)
                     || on_face.dot(out) <= 0.0
-                    || self.physics_block(n.x, n.y, n.z).is_replaceable()
+                    || self.data.physics_block(n.x, n.y, n.z).is_replaceable()
                 {
                     continue;
                 }
@@ -345,7 +346,7 @@ impl World {
                 for (a, b) in [(0.3, 0.0), (-0.3, 0.0), (0.0, 0.3), (0.0, -0.3)] {
                     aims.push(through + u.as_vec3() * a + v.as_vec3() * b);
                 }
-                if let Some((min, max)) = self.selection_box_at(n.x, n.y, n.z) {
+                if let Some((min, max)) = self.data.selection_box_at(n.x, n.y, n.z) {
                     let mid = (Vec3::from(min) + Vec3::from(max)) * 0.5;
                     aims.push(WorldPos::block_min(n) + mid - actor.eye);
                 }
@@ -365,7 +366,7 @@ impl World {
         if !self.physics_cell_final_at(pos.x, pos.y, pos.z) {
             return Err(ActionRefusal::Unloaded);
         }
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         if block == Block::Air {
             return Err(ActionRefusal::NothingToDo);
         }
@@ -407,7 +408,7 @@ impl World {
             CellStatus::Unsupported(_) => return refused(ActionRefusal::Unsupported),
             CellStatus::Place { missing, writes } => (missing, writes),
         };
-        if !construction::has_placement_face(self, &writes) {
+        if !construction::has_placement_face(&self.data, &writes) {
             return refused(ActionRefusal::NoFace);
         }
         if !self.holds_up(&writes) {
@@ -456,7 +457,7 @@ impl World {
         if let Err(refusal) = self.within_reach(actor, &cells) {
             return PlaceCheck::Refused(refusal);
         }
-        if !construction::has_placement_face(self, &writes) {
+        if !construction::has_placement_face(&self.data, &writes) {
             return PlaceCheck::Refused(ActionRefusal::NoFace);
         }
         if !self.holds_up(&writes) {
@@ -484,7 +485,7 @@ impl World {
     }
 }
 
-impl World {
+impl ServerWorld {
     /// Whether a living, non-spectating player (as the roster last published
     /// them) or a live mob stands in `boxes` at `cell`.
     pub fn body_in_the_way(&self, cell: IVec3, boxes: &[Aabb]) -> bool {
@@ -493,8 +494,8 @@ impl World {
                 && !p.spectator
                 && petramond_world::body::Body::new(
                     WorldPos::new(p.pos[0], p.pos[1], p.pos[2]),
-                    crate::player::HALF_W,
-                    crate::player::HEIGHT,
+                    crate::world::session::PLAYER_HALF_W,
+                    crate::world::session::PLAYER_HEIGHT,
                 )
                 .overlaps_block_boxes(cell, boxes)
         }) || self.mobs().any_overlapping_boxes(cell, boxes)

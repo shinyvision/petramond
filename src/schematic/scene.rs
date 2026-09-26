@@ -1,5 +1,5 @@
 use super::{ResolvedCell, Schematic};
-use crate::world::{World, WorldRole};
+use crate::world::ReplicaWorld;
 use petramond_math::math::IVec3;
 use petramond_world::{
     chunk::{SectionPos, SECTION_VOLUME, SKY_FULL},
@@ -23,7 +23,7 @@ impl Scene {
     pub fn from_cells(
         size: [i32; 3],
         cells: Vec<(IVec3, ResolvedCell)>,
-        bake: impl FnOnce(&mut World),
+        bake: impl FnOnce(&mut ReplicaWorld),
     ) -> Result<Self, String> {
         let origin = IVec3::new(0, petramond_world::chunk::WORLD_MIN_Y, 0);
         let cells = cells
@@ -36,7 +36,7 @@ impl Scene {
     pub fn prepare(
         schematic: &Schematic,
         turns: u8,
-        bake: impl FnOnce(&mut World),
+        bake: impl FnOnce(&mut ReplicaWorld),
     ) -> Result<Self, String> {
         let size = schematic.rotated_size(turns);
         let origin = IVec3::new(
@@ -52,7 +52,7 @@ impl Scene {
         size: [i32; 3],
         origin: IVec3,
         cells: Vec<(IVec3, ResolvedCell)>,
-        bake: impl FnOnce(&mut World),
+        bake: impl FnOnce(&mut ReplicaWorld),
     ) -> Result<Self, String> {
         let mut sections = HashMap::new();
         for (p, data) in &cells {
@@ -69,12 +69,7 @@ impl Scene {
             s.set_cell_state(x, y, z, data.state);
             s.cell_kv_restore(x, y, z, data.kv.clone());
         }
-        let mut world = World::new_with_pool(
-            0,
-            1,
-            WorldRole::ClientReplica,
-            Arc::new(crate::worker::JobPool::inline()),
-        );
+        let mut world = ReplicaWorld::with_pool(0, 1, Arc::new(crate::worker::JobPool::inline()));
         let sky: Arc<[u8]> = vec![SKY_FULL; SECTION_VOLUME].into();
         for (sp, mut section) in sections {
             section.set_skylight(sky.clone());
@@ -89,7 +84,7 @@ impl Scene {
             size,
             cells,
             sections: world
-                .sections
+                .data().sections
                 .iter()
                 .map(|(p, s)| (*p, s.clone()))
                 .collect(),

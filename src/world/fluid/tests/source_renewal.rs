@@ -5,7 +5,7 @@ fn only_water_renews_sources_between_neighboring_sources() {
     for fluid in [Block::Water, Block::Lava] {
         for source_below in [false, true] {
             for initial_meta in [None, Some(flowing(3)), Some(FALLING)] {
-                let mut w = flat_world();
+                let mut w = flat_server_world();
                 let y = if source_below { 66 } else { 65 };
                 let gap = IVec3::new(8, y, 8);
                 if source_below {
@@ -23,7 +23,7 @@ fn only_water_renews_sources_between_neighboring_sources() {
 
                 assert_eq!(block(&w, gap.x, gap.y, gap.z), fluid);
                 assert_eq!(
-                    w.is_fluid_source_world(gap, fluid),
+                    w.data.is_fluid_source_world(gap, fluid),
                     fluid == Block::Water,
                     "{fluid:?}, source below: {source_below}, initial meta: {initial_meta:?}"
                 );
@@ -34,7 +34,7 @@ fn only_water_renews_sources_between_neighboring_sources() {
 
 #[test]
 fn lava_fed_from_above_stays_falling_between_sources() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     let gap = IVec3::new(8, 65, 8);
     for offset in [-IVec3::X, IVec3::X, UP] {
         assert!(w.set_fluid_world(gap + offset, Block::Lava, 0));
@@ -43,12 +43,12 @@ fn lava_fed_from_above_stays_falling_between_sources() {
     run_ticks(&mut w, lava_ring() * 2);
 
     assert_eq!(block(&w, gap.x, gap.y, gap.z), Block::Lava);
-    assert!(is_falling(w.fluid_meta_world(gap.x, gap.y, gap.z)));
+    assert!(is_falling(w.data.fluid_meta_world(gap.x, gap.y, gap.z)));
 }
 
 #[test]
 fn lava_between_removed_sources_fully_drains() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     for x in [7, 9] {
         assert!(w.set_fluid_world(IVec3::new(x, 65, 8), Block::Lava, 0));
     }

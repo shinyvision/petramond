@@ -1,23 +1,24 @@
+use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
 use std::sync::Arc;
 
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY};
 use petramond_world::section::{Section, SectionSummary};
 
-use super::World;
 
-impl World {
-    /// Test shorthand for [`World::is_fluid_source_world`] on water.
+impl<S: WorldSide> World<S> {
+    /// Test shorthand for `WorldData::is_fluid_source_world` on water.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_water_source_world(&self, pos: petramond_math::math::IVec3) -> bool {
-        self.is_fluid_source_world(pos, petramond_world::block::Block::Water)
+        self.data
+            .is_fluid_source_world(pos, petramond_world::block::Block::Water)
     }
 
     /// Install a section for a test, mirroring the streamer's per-section install.
     #[cfg(any(test, feature = "test-support"))]
     pub fn insert_section_for_test(&mut self, pos: SectionPos, section: Section) {
-        self.ensure_column(pos.chunk_pos());
-        self.sections.insert(pos, Arc::new(section));
+        self.data.ensure_column(pos.chunk_pos());
+        self.data.sections.insert(pos, Arc::new(section));
         self.note_section_loaded(pos);
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
@@ -26,20 +27,12 @@ impl World {
         self.bump_terrain_revision();
     }
 
-    /// Fixture sections bypass the streamer's settle/defer path, so a headless
+    /// Fixture sections bypass the streamer's settle/defer path, so a server
     /// world would never bake them — and the light-final ship gate would hold
     /// them back forever. Feed the relight queue like an edit does.
     #[cfg(any(test, feature = "test-support"))]
     fn request_fixture_bake(&mut self, pos: SectionPos) {
-        self.relight_demand.insert(pos);
-    }
-
-    /// Mark a section's saved overlay in flight for a test: stream-finality
-    /// gated reads there must report unloaded until it lands.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
-        self.gen.awaited_overlays.insert(pos);
-        self.note_stream_nonfinal(pos);
+        self.data.relight_demand.insert(pos);
     }
 
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column
@@ -55,7 +48,7 @@ impl World {
     pub fn insert_chunk_for_test(&mut self, pos: ChunkPos, chunk: petramond_world::chunk::Chunk) {
         debug_assert_eq!((pos.cx, pos.cz), (chunk.cx, chunk.cz));
         let (column, sections) = crate::world::stream::split_generated_column(&chunk);
-        self.columns.insert(pos, column);
+        self.data.columns.insert(pos, column);
         // A test chunk is fully known, so record per-section summaries: its
         // absent sections are genuinely empty sky, and probes that consult
         // `section_summary` (sapling growth validation, physics) read them as
@@ -65,13 +58,13 @@ impl World {
         for (cy, section) in sections {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             sums[(cy - SECTION_MIN_CY) as usize] = section.summary();
-            self.sections.insert(sp, Arc::new(section));
+            self.data.sections.insert(sp, Arc::new(section));
             self.note_section_loaded(sp);
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
             self.request_fixture_bake(sp);
         }
-        self.column_summaries.insert(pos, sums);
+        self.data.column_summaries.insert(pos, sums);
         self.bump_terrain_revision();
     }
 
@@ -82,10 +75,10 @@ impl World {
     /// section present — the cubic analogue of the column era's "one empty loaded chunk".
     #[cfg(any(test, feature = "test-support"))]
     pub fn insert_empty_column_for_test(&mut self, pos: ChunkPos) {
-        self.ensure_column(pos);
+        self.data.ensure_column(pos);
         for cy in WorldData::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
-            self.sections
+            self.data.sections
                 .insert(sp, Arc::new(Section::new(pos.cx, cy, pos.cz)));
             self.note_section_loaded(sp);
             self.refresh_particle_emitter_index(sp);
@@ -100,7 +93,7 @@ impl World {
     #[cfg(any(test, feature = "test-support"))]
     pub fn section_at_world_for_test(&self, wx: i32, wy: i32, wz: i32) -> Option<&Section> {
         let pos = SectionPos::from_world(wx, wy, wz)?;
-        self.sections.get(&pos).map(|s| &**s)
+        self.data.sections.get(&pos).map(|s| &**s)
     }
 
     /// Mutable counterpart of [`section_at_world_for_test`](Self::section_at_world_for_test).
@@ -112,6 +105,16 @@ impl World {
         wz: i32,
     ) -> Option<&mut Section> {
         let pos = SectionPos::from_world(wx, wy, wz)?;
-        self.section_mut(pos)
+        self.data.section_mut(pos)
+    }
+}
+
+impl ServerWorld {
+    /// Mark a section's saved overlay in flight for a test: stream-finality
+    /// gated reads there must report unloaded until it lands.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
+        self.side.gen.awaited_overlays.insert(pos);
+        self.note_stream_nonfinal(pos);
     }
 }

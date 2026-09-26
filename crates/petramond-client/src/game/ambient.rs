@@ -31,7 +31,7 @@ use rustc_hash::FxHashMap;
 use glam::Vec3;
 
 use petramond::entity::hash01;
-use petramond::world::World;
+use petramond::world::ReplicaWorld;
 use petramond_world::particle_emitters::{
     self, AmbientHit, AmbientKill, AmbientLight, AmbientMotion, AmbientSpec, BurstSpec,
 };
@@ -134,7 +134,7 @@ impl AmbientDrives {
     /// this cost).
     pub fn collect(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         cam: petramond_math::world_pos::WorldPos,
         time: f32,
         density: f32,
@@ -253,7 +253,7 @@ impl Activation<'_> {
 
 /// The viewer this frame: the replica world, the camera, and the volume clock.
 struct View<'a> {
-    world: &'a World,
+    world: &'a ReplicaWorld,
     cam: petramond_math::world_pos::WorldPos,
     time: f32,
 }
@@ -343,16 +343,16 @@ fn wrap_offset(anchor: f32, cam: f64, d: f32) -> f32 {
 type ColumnInfoCache = FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>;
 
 fn column_info(
-    world: &World,
+    world: &ReplicaWorld,
     cache: &mut ColumnInfoCache,
     x: f64,
     z: f64,
 ) -> Option<(Option<f32>, u8)> {
     let key = (x.floor() as i32, z.floor() as i32);
     *cache.entry(key).or_insert_with(|| {
-        let biome = world.biome_at_world(key.0, key.1)?;
+        let biome = world.data().biome_at_world(key.0, key.1)?;
         let kill = world
-            .precipitation_ceiling_y(key.0, key.1)
+            .data().precipitation_ceiling_y(key.0, key.1)
             .map(|y| y as f32 + 1.0);
         Some((kill, biome))
     })
@@ -361,7 +361,7 @@ fn column_info(
 /// The kill height for a column that must have one — the precipitation path's
 /// original contract (`None` for unloaded columns AND for columns that block
 /// nothing).
-fn column_ceiling(world: &World, cache: &mut ColumnInfoCache, x: f64, z: f64) -> Option<(f32, u8)> {
+fn column_ceiling(world: &ReplicaWorld, cache: &mut ColumnInfoCache, x: f64, z: f64) -> Option<(f32, u8)> {
     let (kill, biome) = column_info(world, cache, x, z)?;
     Some((kill?, biome))
 }
@@ -534,7 +534,7 @@ fn derive_volume(
                         AmbientLight::Sky => {
                             (SKY_OPEN_LIGHT, petramond_world::light::BlockLight6::DARK)
                         }
-                        AmbientLight::World => world.dynamic_light_at_world(
+                        AmbientLight::World => world.data().dynamic_light_at_world(
                             hx.floor() as i32,
                             kill_y.floor() as i32,
                             hz.floor() as i32,
@@ -565,7 +565,7 @@ fn derive_volume(
         // a mote that would sit inside the wall is not drawn. Rejecting it
         // here also keeps it out of the shared cube budget — in a cavern
         // roughly a third of the band is rock.
-        if spec.kill == AmbientKill::Interior && world.blocks_movement_at(cx, cy, cz) {
+        if spec.kill == AmbientKill::Interior && world.data().blocks_movement_at(cx, cy, cz) {
             continue;
         }
         if spec.kill == AmbientKill::Ceiling || spec.biome_allow.is_some() || biome_gated {
@@ -598,7 +598,7 @@ fn derive_volume(
         alpha *= ((1.0 - t_band) / EDGE_FADE).min(1.0);
         let (skylight, blocklight) = match spec.light {
             AmbientLight::Sky => (SKY_OPEN_LIGHT, petramond_world::light::BlockLight6::DARK),
-            AmbientLight::World => world.dynamic_light_at_world(cx, cy, cz),
+            AmbientLight::World => world.data().dynamic_light_at_world(cx, cy, cz),
         };
         out.push(ParticlePresentation {
             quad_axes: None,

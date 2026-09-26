@@ -194,7 +194,7 @@ fn pick_destination(
         }
         let (x, z) = (ctx.cell.x + dx, ctx.cell.z + dz);
         // Unloaded columns can't be judged (and have no real blocks to stand on).
-        let biome = match ctx.world.column_biome(x, z) {
+        let biome = match ctx.world.data().column_biome(x, z) {
             Some(id) => Biome::from_id(id),
             None => continue,
         };
@@ -322,7 +322,7 @@ fn pick_region_destination(
         if (dx == 0 && dz == 0) || dx * dx + dz * dz > r2 {
             continue;
         }
-        let fit = match ctx.world.column_biome(dest.x, dest.z) {
+        let fit = match ctx.world.data().column_biome(dest.x, dest.z) {
             Some(id) => classify_biome(Biome::from_id(id), habitat),
             None => continue,
         };
@@ -356,7 +356,7 @@ fn pick_region_destination(
 /// on — is one the species steers off (`WanderTuning::avoid_ground`).
 fn floor_avoided(ctx: &AiCtx, avoid: &[Block], dest: IVec3) -> bool {
     !avoid.is_empty()
-        && avoid.contains(&Block::from_id(ctx.world.chunk_block(
+        && avoid.contains(&Block::from_id(ctx.world.data().chunk_block(
             dest.x,
             dest.y - 1,
             dest.z,
@@ -565,7 +565,7 @@ mod tests {
     use crate::mob::brain::AiMob;
     use crate::mob::spatial::MobSnapshot;
     use crate::mob::{Mob, MobRng, MobTagValue};
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
@@ -577,7 +577,7 @@ mod tests {
     }
 
     fn make_ctx<'a>(
-        world: &'a World,
+        world: &'a ServerWorld,
         rng: &'a mut MobRng,
         mobs: &'a MobSnapshot,
         mob_index: usize,
@@ -592,8 +592,8 @@ mod tests {
         c
     }
 
-    fn flat_grass_world(extra: impl FnOnce(&mut Chunk)) -> World {
-        let mut world = World::new(0, 1);
+    fn flat_grass_world(extra: impl FnOnce(&mut Chunk)) -> ServerWorld {
+        let mut world = ServerWorld::new(0, 1);
         let mut chunk = Chunk::new(0, 0);
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn companion_search_requires_another_active_desired_mob() {
-        let world = World::new(0, 1);
+        let world = ServerWorld::new(0, 1);
         let mut rng = MobRng::new(1);
         let rule = WanderCohesion {
             companion: Mob::Sheep,
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn cohesion_rejects_only_when_the_mob_started_grouped() {
-        let world = World::new(0, 1);
+        let world = ServerWorld::new(0, 1);
         let mut rng = MobRng::new(1);
         let rule = WanderCohesion {
             companion: Mob::Sheep,
@@ -781,7 +781,7 @@ mod tests {
 
     #[test]
     fn cohesion_can_notice_a_herd_out_to_the_search_radius() {
-        let world = World::new(0, 1);
+        let world = ServerWorld::new(0, 1);
         let mut rng = MobRng::new(1);
         let rule = WanderCohesion {
             companion: Mob::Sheep,
@@ -826,7 +826,7 @@ mod tests {
 
     #[test]
     fn cohesion_ignores_confined_companions() {
-        let world = World::new(0, 1);
+        let world = ServerWorld::new(0, 1);
         let mut rng = MobRng::new(1);
         let rule = WanderCohesion {
             companion: Mob::Sheep,
@@ -868,7 +868,7 @@ mod tests {
 
     #[test]
     fn a_destination_covered_by_another_body_is_rejected() {
-        let world = World::new(0, 1);
+        let world = ServerWorld::new(0, 1);
         let mut rng = MobRng::new(1);
         let mobs = [AiMob {
             id: 0,
@@ -891,7 +891,7 @@ mod tests {
 
     /// The real confinement fill for the tests below, so region-driven picks
     /// are exercised against exactly what the instance refresh would cache.
-    fn region_for(world: &World, start: IVec3) -> crate::mob::confined::ConfinedRegion {
+    fn region_for(world: &ServerWorld, start: IVec3) -> crate::mob::confined::ConfinedRegion {
         let params = PathParams::for_body(2, 0.45);
         let cursor = world.cursor();
         let solid = crate::mob::nav::nav_solid_fn(&cursor);
@@ -1219,7 +1219,7 @@ mod tests {
         );
 
         let goal = ai.tick(&mut ctx).goal.expect("fluid escape goal");
-        let fluid = |c: IVec3| world.fluid_cell_at(c.x, c.y, c.z);
+        let fluid = |c: IVec3| world.data().fluid_cell_at(c.x, c.y, c.z);
         assert!(
             !body_or_floor_touches(goal, ctx.path_params(), &fluid),
             "dry land is preferred when it is available: {goal:?}"
@@ -1257,7 +1257,7 @@ mod tests {
         );
 
         let goal = ai.tick(&mut ctx).goal.expect("fluid-surface fallback");
-        let fluid = |c: IVec3| world.fluid_cell_at(c.x, c.y, c.z);
+        let fluid = |c: IVec3| world.data().fluid_cell_at(c.x, c.y, c.z);
         assert!(
             body_or_floor_touches(goal, ctx.path_params(), &fluid),
             "without dry land, the mob should still swim to another fluid surface: {goal:?}"

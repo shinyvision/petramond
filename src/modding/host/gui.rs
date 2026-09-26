@@ -157,7 +157,7 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::player::PlayerId;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_math::math::IVec3;
     use petramond_math::world_pos::WorldPos;
 
@@ -167,7 +167,7 @@ mod tests {
     /// — while the per-session write reaches each viewer's own panel.
     #[test]
     fn gauges_reach_the_session_that_is_looking_and_implicit_writes_refuse() {
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut host = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut guest = Player::new(WorldPos::new(8.0, 80.0, 8.0));
         let mut host_gui = petramond_world::gui_state::empty_gui_state();

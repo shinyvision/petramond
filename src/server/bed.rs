@@ -20,7 +20,7 @@
 //! like the fresh spawn).
 
 use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::{Block, BlockTag};
 
@@ -224,7 +224,7 @@ impl ServerGame {
     /// random dry-land surface column near the origin — the fresh-spawn pick.
     fn respawn_position(&mut self, s: usize) -> petramond_math::world_pos::WorldPos {
         if let Some(bs) = self.sessions[s].player.bed_spawn {
-            if !self.world.chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) {
+            if !self.world.data().chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) {
                 // The bed's chunk isn't loaded, so it can't be verified (or
                 // rescanned) — trust the spot chosen when the spawn was set.
                 return cell_centre(bs.spot);
@@ -240,7 +240,7 @@ impl ServerGame {
             // The bed is gone — the spawn point disappears with it.
             self.sessions[s].player.bed_spawn = None;
         }
-        let surface = petramond_worldgen::spawn::find_spawn(self.world.seed);
+        let surface = petramond_worldgen::spawn::find_spawn(self.world.data().seed);
         petramond_math::world_pos::WorldPos::block_min(surface) + Vec3::new(0.5, 1.0, 0.5)
     }
 
@@ -278,7 +278,7 @@ impl ServerGame {
             let Some(bs) = self.sessions[s].player.bed_spawn else {
                 continue;
             };
-            if self.world.chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) && !bed_at(&self.world, bs.bed)
+            if self.world.data().chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) && !bed_at(&self.world, bs.bed)
             {
                 self.sessions[s].player.bed_spawn = None;
             }
@@ -290,8 +290,8 @@ impl ServerGame {
 /// sleep-flow dispatch keys on `interaction() == Sleep` (a use capability);
 /// spawn bookkeeping deliberately does not, so a pack's sleepable non-bed
 /// never inherits it.
-fn bed_at(world: &World, pos: IVec3) -> bool {
-    Block::from_id(world.chunk_block(pos.x, pos.y, pos.z)).has_tag(BlockTag::BED)
+fn bed_at(world: &ServerWorld, pos: IVec3) -> bool {
+    Block::from_id(world.data().chunk_block(pos.x, pos.y, pos.z)).has_tag(BlockTag::BED)
 }
 
 /// Feet position standing centred on top of the bed's base cell — the fallback
@@ -322,7 +322,7 @@ fn group_centre(cells: &[IVec3]) -> petramond_math::world_pos::WorldPos {
 /// then by coordinate — the same world state always wakes at the same spot.
 /// `None` when nothing within [`WAKE_SCAN_RADIUS`] qualifies (or the area
 /// isn't loaded).
-pub(super) fn find_wake_spot(world: &World, bed_cells: &[IVec3]) -> Option<IVec3> {
+pub(super) fn find_wake_spot(world: &ServerWorld, bed_cells: &[IVec3]) -> Option<IVec3> {
     let base_y = bed_cells.iter().map(|c| c.y).min()?;
     for r in 1..=WAKE_SCAN_RADIUS {
         let mut ring: Vec<IVec3> = Vec::new();
@@ -360,13 +360,13 @@ pub(super) fn find_wake_spot(world: &World, bed_cells: &[IVec3]) -> Option<IVec3
 /// Whether a player standing at the centre of cell `c` fits: the column is
 /// loaded (an absent section reads as air and would lie), feet and head cells
 /// hold no collision boxes, and the cell below does (solid footing).
-fn wake_spot_clear(world: &World, c: IVec3) -> bool {
-    if !world.chunk_loaded(c.x >> 4, c.z >> 4) {
+fn wake_spot_clear(world: &ServerWorld, c: IVec3) -> bool {
+    if !world.data().chunk_loaded(c.x >> 4, c.z >> 4) {
         return false;
     }
-    world.collision_boxes_at(c.x, c.y, c.z).is_empty()
-        && world.collision_boxes_at(c.x, c.y + 1, c.z).is_empty()
-        && !world.collision_boxes_at(c.x, c.y - 1, c.z).is_empty()
+    world.data().collision_boxes_at(c.x, c.y, c.z).is_empty()
+        && world.data().collision_boxes_at(c.x, c.y + 1, c.z).is_empty()
+        && !world.data().collision_boxes_at(c.x, c.y - 1, c.z).is_empty()
 }
 
 #[cfg(test)]
@@ -376,8 +376,8 @@ mod tests {
 
     /// A loaded, empty chunk at (0,0) with a stone floor at y=63 under a 4×4
     /// pad around (5..9, 5..9), so candidates have footing.
-    fn world_with_floor() -> World {
-        let mut w = World::new(1, 4);
+    fn world_with_floor() -> ServerWorld {
+        let mut w = ServerWorld::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         for x in 0..16 {
@@ -388,7 +388,7 @@ mod tests {
         w
     }
 
-    fn place_bed(w: &mut World, base: IVec3) -> Vec<IVec3> {
+    fn place_bed(w: &mut ServerWorld, base: IVec3) -> Vec<IVec3> {
         assert!(w.place_model_block(base, Block::Bed), "bed places");
         let (_, found_base, cells) = w.model_group(base).expect("bed group");
         assert_eq!(found_base, base);
@@ -412,8 +412,8 @@ mod tests {
                 .any(|c| (c.x - spot.x).abs().max((c.z - spot.z).abs()) == 1),
             "adjacent to a bed cell: {spot:?}"
         );
-        assert!(w.collision_boxes_at(spot.x, spot.y, spot.z).is_empty());
-        assert!(!w.collision_boxes_at(spot.x, spot.y - 1, spot.z).is_empty());
+        assert!(w.data().collision_boxes_at(spot.x, spot.y, spot.z).is_empty());
+        assert!(!w.data().collision_boxes_at(spot.x, spot.y - 1, spot.z).is_empty());
     }
 
     #[test]

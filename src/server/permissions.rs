@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::net::identity::{canonical_name, PlayerKey};
-use crate::world::World;
+use crate::world::ServerWorld;
 
 const OPERATORS_KEY: &str = "petramond:operators";
 
@@ -64,8 +64,8 @@ impl Operators {
     }
 }
 
-pub fn load(world: &World) -> Operators {
-    let Some(bytes) = world.world_kv_get(OPERATORS_KEY) else {
+pub fn load(world: &ServerWorld) -> Operators {
+    let Some(bytes) = world.data().world_kv_get(OPERATORS_KEY) else {
         return Operators::default();
     };
     let (keys, legacy_names) = match serde_json::from_slice::<Stored>(bytes) {
@@ -95,7 +95,7 @@ pub fn load(world: &World) -> Operators {
     }
 }
 
-pub fn store(world: &mut World, operators: &Operators) {
+pub fn store(world: &mut ServerWorld, operators: &Operators) {
     let stored = Stored::Current {
         keys: operators.keys.iter().map(PlayerKey::to_string).collect(),
         legacy_names: operators.legacy_names.clone(),
@@ -110,12 +110,7 @@ mod tests {
 
     #[test]
     fn legacy_name_lists_convert_to_the_first_claimant_only() {
-        let mut world = World::new_with_pool(
-            1,
-            2,
-            crate::world::WorldRole::ServerHeadless,
-            std::sync::Arc::new(crate::worker::JobPool::inline()),
-        );
+        let mut world = ServerWorld::with_pool(1, 2, std::sync::Arc::new(crate::worker::JobPool::inline()));
         world.world_kv_set(OPERATORS_KEY.into(), br#"[" Rachel ", "bob"]"#.to_vec());
         let mut ops = load(&world);
         let (rachel, mallory) = (PlayerKey([1; 32]), PlayerKey([2; 32]));

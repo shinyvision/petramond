@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
@@ -6,7 +7,7 @@ use crate::worker::{GenJob, GenOutput};
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_worldgen::driver::ColumnGen;
 
-use crate::world::store::{LoadTarget, SkyCoverChange, World, WorldRole};
+use crate::world::store::{LoadTarget, SkyCoverChange};
 
 use super::StreamEvent;
 
@@ -15,41 +16,22 @@ use super::StreamEvent;
 /// disc took ~100 frames just to drain at 128/frame), while the budget still keeps
 /// one frame from installing an unbounded burst and starving rendering.
 ///
-/// The budget is ROLE-aware: on a Combined world `poll` runs on the render
-/// thread, so it stays tight; the headless server world's poll runs on the
-/// ~200 Hz server pump with no frame to protect, and 750 µs there capped
-/// install throughput (~150 ms/s of drain time) right at RD32 sprint-flight
-/// demand — the server's own loaded set fell to half the wanted disc.
+/// The server world's poll runs on the ~200 Hz server pump with no frame to
+/// protect: a tighter 750 µs budget capped install throughput (~150 ms/s of
+/// drain time) right at RD32 sprint-flight demand — the server's own loaded
+/// set fell to half the wanted disc. Disk answers drain on the same budget.
 const GEN_DRAIN_MIN_PER_POLL: usize = 16;
-const GEN_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(750);
-const SERVER_GEN_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(2_500);
+const DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(2_500);
 const DISK_DRAIN_MIN_PER_POLL: usize = 16;
-const DISK_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(750);
 
-impl World {
-    fn gen_drain_time_budget(&self) -> std::time::Duration {
-        match self.role {
-            WorldRole::ServerHeadless => SERVER_GEN_DRAIN_TIME_BUDGET,
-            _ => GEN_DRAIN_TIME_BUDGET,
-        }
-    }
-
-    fn disk_drain_time_budget(&self) -> std::time::Duration {
-        match self.role {
-            WorldRole::ServerHeadless => SERVER_GEN_DRAIN_TIME_BUDGET,
-            _ => DISK_DRAIN_TIME_BUDGET,
-        }
-    }
-}
-
-impl World {
+impl ServerWorld {
     /// Install one column's shared gen data: set the per-column biome + an initial
     /// bare-ground surface and sky-cover maps, then keep the `Arc` for driving
     /// per-section jobs. Before features/player edits they are identical: the
     /// analytical top is solid ground or filtering water.
     fn install_column_gen(&mut self, pos: ChunkPos, col: Arc<ColumnGen>) {
         {
-            let column = self.ensure_column(pos);
+            let column = self.data.ensure_column(pos);
             for z in 0..SECTION_SIZE {
                 for x in 0..SECTION_SIZE {
                     column.set_biome(x, z, col.biome_at(x, z));
@@ -62,18 +44,18 @@ impl World {
             }
         }
         if self
-            .save
+            .side.save
             .as_ref()
             .is_some_and(|s| !s.colgen_manifest_contains(pos))
         {
-            self.gen
+            self.side.gen
                 .pending_colgen_records
-                .push(col.cache_record(self.seed));
+                .push(col.cache_record(self.data.seed));
         }
         self.set_column_gen(pos, col);
-        self.bump_column_payload_revision(pos);
-        if self.last_load_target.is_some_and(|t| t.center == pos)
-            || self.extra_load_targets.iter().any(|t| t.center == pos)
+        self.data.bump_column_payload_revision(pos);
+        if self.data.last_load_target.is_some_and(|t| t.center == pos)
+            || self.data.extra_load_targets.iter().any(|t| t.center == pos)
         {
             self.refresh_generation_priorities();
         }
@@ -85,14 +67,14 @@ impl World {
     /// memory policy, not a correctness gate.
     ///
     fn slim_settled_column_gen(&mut self, pos: ChunkPos) {
-        let Some(col) = self.gen.column_gen.get(&pos) else {
+        let Some(col) = self.side.gen.column_gen.get(&pos) else {
             return;
         };
         if !col.has_feature_windows() {
             return;
         }
         let slim = std::sync::Arc::new(col.slimmed());
-        self.gen.column_gen.insert(pos, slim);
+        self.side.gen.column_gen.insert(pos, slim);
     }
 
     /// The anchor that wants column `pos` most (min priority key) — the target
@@ -102,7 +84,7 @@ impl World {
     fn best_target_for_column(&self, target: LoadTarget, pos: ChunkPos) -> LoadTarget {
         let mut best = target;
         let mut best_key = target.column_priority_key(pos);
-        for t in &self.extra_load_targets {
+        for t in &self.data.extra_load_targets {
             let key = t.column_priority_key(pos);
             if key < best_key {
                 best = *t;
@@ -117,14 +99,14 @@ impl World {
     /// touches the buffer. Turning capture off drops anything already buffered.
     pub fn set_stream_event_capture(&mut self, on: bool) {
         if !on {
-            self.draw_stream.stream_events.clear();
+            self.side.stream_events.clear();
         }
-        self.draw_stream.stream_events_enabled = on;
+        self.side.stream_events_enabled = on;
     }
 
     /// Drain the section stream events buffered by `poll` since the last take.
     pub fn take_stream_events(&mut self) -> Vec<StreamEvent> {
-        std::mem::take(&mut self.draw_stream.stream_events)
+        std::mem::take(&mut self.side.stream_events)
     }
 
     /// Poll the worker and the save thread, then ingest: install each landed column's
@@ -148,10 +130,10 @@ impl World {
     /// finality transition shrinks an in-flight set, so length deltas suffice.
     fn stream_finality_fingerprint(&self) -> (usize, usize, usize, usize) {
         (
-            self.sections.len(),
-            self.gen.pending_sections.len(),
-            self.gen.awaited_overlays.len(),
-            self.gen.pending_overlays.len(),
+            self.data.sections.len(),
+            self.side.gen.pending_sections.len(),
+            self.side.gen.awaited_overlays.len(),
+            self.side.gen.pending_overlays.len(),
         )
     }
 
@@ -180,13 +162,9 @@ impl World {
     }
 
     fn poll_inner(&mut self) -> usize {
-        debug_assert!(
-            self.role != WorldRole::ClientReplica,
-            "a replica has no gen/save workers to poll; installs come from the connection"
-        );
         let target = self
-            .last_load_target
-            .unwrap_or_else(|| LoadTarget::new(0, 0, 0, self.render_dist));
+            .data.last_load_target
+            .unwrap_or_else(|| LoadTarget::new(0, 0, 0, self.data.render_dist));
         let mut new_columns = 0usize;
         let mut new_column_positions: Vec<ChunkPos> = Vec::new();
         let mut ingested: Vec<SectionPos> = Vec::new();
@@ -199,11 +177,11 @@ impl World {
         // 1. Drain worker outputs: column data, then the sections generated from it.
         self.drain_budgeted(
             GEN_DRAIN_MIN_PER_POLL,
-            self.gen_drain_time_budget(),
-            |w| w.worker.try_recv(),
+            DRAIN_TIME_BUDGET,
+            |w| w.side.worker.try_recv(),
             |w, out| match out {
                 GenOutput::Column { pos, col } => {
-                    let was_pending = w.gen.pending.remove(&pos).is_some();
+                    let was_pending = w.side.gen.pending.remove(&pos).is_some();
                     if !was_pending {
                         return;
                     }
@@ -219,57 +197,56 @@ impl World {
                 // in-flight forever — which would both hide the terrain and freeze
                 // the sim guard around it.
                 GenOutput::ColumnFailed(pos) => {
-                    w.gen.pending.remove(&pos);
+                    w.side.gen.pending.remove(&pos);
                     // No longer pending and not installed: the column is
                     // missing again — let the scan re-find it.
-                    w.missing_columns_settled = false;
-                    w.deferred_recheck_needed = true;
+                    w.data.missing_columns_settled = false;
+                    w.data.deferred_recheck_needed = true;
                 }
                 GenOutput::SectionFailed(sp) => {
                     w.remove_pending_section(sp);
-                    w.gen.pending_section_jobs.remove(&sp);
+                    w.side.gen.pending_section_jobs.remove(&sp);
                     w.queue_deferred_rechecks_around(sp);
                 }
                 // A hook is waiting on a fact another worker derives: run the
                 // job again at its priority. The section stays pending, so
                 // the streamer neither re-requests nor judges it absent.
                 GenOutput::SectionDeferred { sp, col, pending } => {
-                    if !w.gen.pending_section_jobs.contains_key(&sp)
+                    if !w.side.gen.pending_section_jobs.contains_key(&sp)
                         || !w.within_current_keep_radius(sp.chunk_pos())
                     {
                         w.remove_pending_section(sp);
-                        w.gen.pending_section_jobs.remove(&sp);
+                        w.side.gen.pending_section_jobs.remove(&sp);
                         return;
                     }
                     let band_lo = *Self::surface_window_for_column(&col, 0).start();
                     let underground = w.anchor_underground(target);
-                    let job = w.worker.submit(
+                    let job = w.side.worker.submit(
                         target.deferred_section_key(sp, band_lo, underground),
                         GenJob::ResumeSection {
                             pending,
                             col,
-                            seed: w.seed,
+                            seed: w.data.seed,
                         },
                     );
-                    w.gen.pending_section_jobs.insert(sp, job);
+                    w.side.gen.pending_section_jobs.insert(sp, job);
                 }
                 GenOutput::Section { sp, section } => {
                     if !w.remove_pending_section(sp) {
                         return;
                     }
-                    w.gen.pending_section_jobs.remove(&sp);
+                    w.side.gen.pending_section_jobs.remove(&sp);
                     if !w.within_current_keep_radius(sp.chunk_pos())
-                        || !w.gen.column_gen.contains_key(&sp.chunk_pos())
+                        || !w.side.gen.column_gen.contains_key(&sp.chunk_pos())
                     {
                         return;
                     }
-                    w.sections.insert(sp, section);
+                    w.data.sections.insert(sp, section);
                     w.note_section_loaded(sp);
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
-                    w.classify_deep_on_install(sp);
-                    if w.draw_stream.stream_events_enabled {
-                        w.draw_stream.stream_events.push(StreamEvent::Generated(sp));
+                    if w.side.stream_events_enabled {
+                        w.side.stream_events.push(StreamEvent::Generated(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -285,16 +262,16 @@ impl World {
         //     stays set so the existing `GenOutput::Column` arm resolves it.
         self.drain_budgeted(
             DISK_DRAIN_MIN_PER_POLL,
-            self.disk_drain_time_budget(),
-            |w| w.save.as_ref().and_then(|s| s.poll_loaded_column_gen()),
+            DRAIN_TIME_BUDGET,
+            |w| w.side.save.as_ref().and_then(|s| s.poll_loaded_column_gen()),
             |w, loaded| {
                 let pos = loaded.pos;
-                if !w.gen.pending.contains_key(&pos) {
+                if !w.side.gen.pending.contains_key(&pos) {
                     return;
                 }
                 match loaded.record {
                     Some(rec) => {
-                        w.gen.pending.remove(&pos);
+                        w.side.gen.pending.remove(&pos);
                         if !w.within_current_keep_radius(pos) {
                             return;
                         }
@@ -304,14 +281,14 @@ impl World {
                         new_column_positions.push(pos);
                     }
                     None => {
-                        if let Some(save) = w.save.as_mut() {
+                        if let Some(save) = w.side.save.as_mut() {
                             save.note_colgen_load_miss(pos);
                         }
-                        let job = w.worker.submit(
+                        let job = w.side.worker.submit(
                             target.column_priority_key(pos),
-                            GenJob::Column { pos, seed: w.seed },
+                            GenJob::Column { pos, seed: w.data.seed },
                         );
-                        if let Some(slot) = w.gen.pending.get_mut(&pos) {
+                        if let Some(slot) = w.side.gen.pending.get_mut(&pos) {
                             *slot = Some(job);
                         }
                     }
@@ -334,19 +311,19 @@ impl World {
         //    blocks win over the generated base.
         self.drain_budgeted(
             DISK_DRAIN_MIN_PER_POLL,
-            self.disk_drain_time_budget(),
-            |w| w.save.as_ref().and_then(|s| s.poll_loaded()),
+            DRAIN_TIME_BUDGET,
+            |w| w.side.save.as_ref().and_then(|s| s.poll_loaded()),
             |w, loaded| {
                 let sp = loaded.pos;
                 let loaded_store = loaded.store;
                 // The save thread answered: the record is no longer in flight (whatever
                 // the answer), so the sim guard must not keep the section blocked.
-                w.gen.awaited_overlays.remove(&sp);
+                w.side.gen.awaited_overlays.remove(&sp);
                 w.settle_stream_nonfinal(sp);
-                let disk_primary = w.gen.disk_primary_sections.remove(&sp);
+                let disk_primary = w.side.gen.disk_primary_sections.remove(&sp);
                 if disk_primary {
                     w.remove_pending_section(sp);
-                    w.gen.pending_section_jobs.remove(&sp);
+                    w.side.gen.pending_section_jobs.remove(&sp);
                 }
                 if !w.within_current_keep_radius(sp.chunk_pos()) {
                     return;
@@ -358,7 +335,7 @@ impl World {
                         mobs,
                     } => (*section, entities, mobs),
                     missing => {
-                        if let Some(save) = w.save.as_mut() {
+                        if let Some(save) = w.side.save.as_mut() {
                             match &missing {
                                 SectionRecord::Unreadable(unreadable) => save
                                     .note_section_unreadable(
@@ -376,42 +353,41 @@ impl World {
                         // the save). Overlay path: generation stands.
                         // Disk-primary path: no base exists — generate it after all.
                         if disk_primary {
-                            if let Some(col) = w.gen.column_gen.get(&sp.chunk_pos()).cloned() {
+                            if let Some(col) = w.side.gen.column_gen.get(&sp.chunk_pos()).cloned() {
                                 let band_lo = *Self::surface_window_for_column(&col, 0).start();
                                 let underground = w.anchor_underground(target);
-                                let job = w.worker.submit(
+                                let job = w.side.worker.submit(
                                     target.surface_biased_section_key(sp, band_lo, underground),
                                     GenJob::Section {
                                         sp,
                                         col,
-                                        seed: w.seed,
+                                        seed: w.data.seed,
                                     },
                                 );
                                 w.insert_pending_section(sp);
-                                w.gen.pending_section_jobs.insert(sp, job);
+                                w.side.gen.pending_section_jobs.insert(sp, job);
                             }
                         }
                         return;
                     }
                 };
                 if disk_primary {
-                    if !w.gen.column_gen.contains_key(&sp.chunk_pos()) {
+                    if !w.side.gen.column_gen.contains_key(&sp.chunk_pos()) {
                         return; // column evicted while the read was in flight
                     }
                     if !entities.is_empty() || !mobs.is_empty() {
-                        if let Some(save) = w.save.as_mut() {
+                        if let Some(save) = w.side.save.as_mut() {
                             save.note_record_holds_entities(sp);
                         }
                     }
-                    w.sections.insert(sp, Arc::new(section));
+                    w.data.sections.insert(sp, Arc::new(section));
                     w.note_section_loaded(sp);
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
-                    w.classify_deep_on_install(sp);
-                    w.dropped_items.extend(entities);
+                    w.side.entities.dropped_items.extend(entities);
                     w.restore_mobs(mobs);
-                    if w.draw_stream.stream_events_enabled {
-                        w.draw_stream.stream_events.push(StreamEvent::Loaded(sp));
+                    if w.side.stream_events_enabled {
+                        w.side.stream_events.push(StreamEvent::Loaded(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -420,7 +396,7 @@ impl World {
                         heightmap_recompute.insert(sp.chunk_pos());
                     }
                 } else {
-                    w.gen.pending_overlays.insert(sp, (section, entities, mobs));
+                    w.side.gen.pending_overlays.insert(sp, (section, entities, mobs));
                     w.note_stream_nonfinal(sp);
                 }
             },
@@ -428,10 +404,9 @@ impl World {
 
         // 4. Overlay any buffered saved sections whose generated section is now installed.
         let overlaid = self.apply_pending_overlays();
-        if self.draw_stream.stream_events_enabled {
+        if self.side.stream_events_enabled {
             for sp in &overlaid {
-                self.draw_stream
-                    .stream_events
+                self.side.stream_events
                     .push(StreamEvent::Loaded(*sp));
             }
         }
@@ -457,7 +432,7 @@ impl World {
         }
         // Bound the column-cache buffer during long exploration flights between
         // autosaves/unloads (each flush is one batched region write).
-        if self.gen.pending_colgen_records.len() >= 128 {
+        if self.side.gen.pending_colgen_records.len() >= 128 {
             self.flush_pending_colgen_records();
         }
 
@@ -468,7 +443,7 @@ impl World {
             // Belt-and-suspenders single-anchor rescan; skipped once settled
             // (the per-pump anchor update rescans whenever unsettled) and under
             // multi-anchor streaming, where `update_load_multi` owns the scan.
-            if !self.missing_columns_settled && self.extra_load_targets.is_empty() {
+            if !self.data.missing_columns_settled && self.data.extra_load_targets.is_empty() {
                 self.request_missing_columns(target);
             }
             return new_columns;
@@ -501,7 +476,7 @@ impl World {
         for &sp in &ingested {
             let cp = sp.chunk_pos();
             if !heightmap_recompute.contains(&cp) {
-                if let Some(change) = self.raise_column_heightmaps_from_section(sp) {
+                if let Some(change) = self.data.raise_column_heightmaps_from_section(sp) {
                     // Step 6 already invalidates a generated section's 3x3x3.
                     // Normal terrain/tree cover moves fit that band; only a
                     // larger vertical jump needs this extra map-wide pass.
@@ -566,30 +541,16 @@ impl World {
             }
         }
         for &sp in &affected {
-            // An all-air section (the sky band) emits nothing — settle its MESH
-            // immediately. Its light still bakes below (cave pockets must read
-            // dark, and headless/replica worlds have no lazy mesh-gate bake).
-            let no_mesh_output = self.clear_mesh_if_section_produces_no_mesh(sp);
+            // An all-air section (the sky band) produces no output. Its light
+            // still bakes below (cave pockets must read dark, and the server
+            // has no lazy mesh-gate bake).
+            let no_mesh_output = self.section_produces_no_mesh(sp);
             let stale = light_stale.contains(&sp);
-            if self.terrain.meshes.contains_key(&sp) {
-                // Already produced a mesh: remesh now (border culling moved).
-                // Relight only if a landing actually invalidated it — plus the
-                // in-flight-bake race: a bake requested before this landing
-                // read the pre-landing neighbourhood, so a still-dirty section
-                // re-marks (revision bump) to discard that result.
-                if stale || self.sections.get(&sp).is_some_and(|s| s.light_dirty) {
-                    self.mark_light_dirty_pos(sp);
-                    // The bump invalidated any in-flight bake; unqueue it so the
-                    // remesh's re-request isn't dedup-dropped (mirrors the
-                    // no-mesh branch below).
-                    self.light_bakes.cancel(sp);
-                }
-                self.queue_dirty_mesh(sp);
-            } else if self.sections.contains_key(&sp) {
-                // No output yet: its FIRST bake (if its light is dirty at all)
-                // and FIRST mesh run once, when the neighbourhood settles —
-                // not once per landing neighbour (the bulk of streaming's
-                // rebake/remesh churn came from eager marking here).
+            if self.data.sections.contains_key(&sp) {
+                // Its FIRST bake (if its light is dirty at all) runs once, when
+                // the neighbourhood settles — not once per landing neighbour
+                // (the bulk of streaming's rebake churn came from eager
+                // marking here).
                 if stale {
                     self.mark_light_dirty_pos(sp);
                 }
@@ -597,21 +558,21 @@ impl World {
                 // the settled re-request isn't dedup-dropped.
                 self.light_bakes.cancel(sp);
                 let needs_bake = self
-                    .sections
+                    .data.sections
                     .get(&sp)
                     .is_some_and(|s| s.light_dirty && !s.all_opaque());
                 if !no_mesh_output || needs_bake {
-                    self.light_deferred.insert(sp);
-                    self.deferred_rechecks.insert(sp);
+                    self.data.light_deferred.insert(sp);
+                    self.data.deferred_rechecks.insert(sp);
                 }
             }
         }
-        self.deferred_rechecks.extend(affected.iter().copied());
+        self.data.deferred_rechecks.extend(affected.iter().copied());
         self.flush_settled_deferred_if_needed(target);
 
         // 7. Kick generated/overlaid fluid that now has somewhere to flow.
         self.queue_loaded_section_fluid_updates(&ingested);
-        if !self.missing_columns_settled && self.extra_load_targets.is_empty() {
+        if !self.data.missing_columns_settled && self.data.extra_load_targets.is_empty() {
             self.request_missing_columns(target);
         }
         new_columns
@@ -627,14 +588,14 @@ impl World {
     /// saved section record in the square may still be awaiting or buffering its mobs.
     pub fn mob_census_loaded_around(&self, center: ChunkPos, radius: i32) -> bool {
         let radius = radius.max(0);
-        let stream_radius = self.render_dist.max(0);
+        let stream_radius = self.data.render_dist.max(0);
         for dz in -radius..=radius {
             for dx in -radius..=radius {
                 if dx * dx + dz * dz > stream_radius * stream_radius {
                     continue;
                 }
                 let pos = ChunkPos::new(center.cx + dx, center.cz + dz);
-                if !self.columns.contains_key(&pos) {
+                if !self.data.columns.contains_key(&pos) {
                     return false;
                 }
             }
@@ -647,8 +608,8 @@ impl World {
                 && dz.abs() <= radius
                 && dx * dx + dz * dz <= stream_radius * stream_radius
         };
-        !self.gen.awaited_overlays.iter().any(in_neighborhood)
-            && !self.gen.pending_overlays.keys().any(in_neighborhood)
+        !self.side.gen.awaited_overlays.iter().any(in_neighborhood)
+            && !self.side.gen.pending_overlays.keys().any(in_neighborhood)
     }
 
     /// Overlay every buffered saved section whose generated section is present: replace
@@ -657,28 +618,28 @@ impl World {
     /// section positions.
     pub(super) fn apply_pending_overlays(&mut self) -> Vec<SectionPos> {
         let ready: Vec<SectionPos> = self
-            .gen
+            .side.gen
             .pending_overlays
             .keys()
             .copied()
-            .filter(|sp| self.sections.contains_key(sp))
+            .filter(|sp| self.data.sections.contains_key(sp))
             .collect();
         for sp in &ready {
-            let (section, entities, mobs) = self.gen.pending_overlays.remove(sp).unwrap();
+            let (section, entities, mobs) = self.side.gen.pending_overlays.remove(sp).unwrap();
             self.settle_stream_nonfinal(*sp);
             // The record carried drops or mobs: remember that, so a later flush that finds
             // the section free of them rewrites the record instead of leaving stale
             // entities to resurrect (cross-session dupe).
             if !entities.is_empty() || !mobs.is_empty() {
-                if let Some(save) = self.save.as_mut() {
+                if let Some(save) = self.side.save.as_mut() {
                     save.note_record_holds_entities(*sp);
                 }
             }
-            self.sections.insert(*sp, Arc::new(section));
+            self.data.sections.insert(*sp, Arc::new(section));
             self.note_section_loaded(*sp);
             self.refresh_block_entity_index(*sp);
             self.refresh_particle_emitter_index(*sp);
-            self.dropped_items.extend(entities);
+            self.side.entities.dropped_items.extend(entities);
             self.restore_mobs(mobs);
         }
         ready

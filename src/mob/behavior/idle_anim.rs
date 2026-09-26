@@ -80,11 +80,11 @@ mod tests {
     use super::*;
     use crate::mob::model_meta::IdleAnimMeta;
     use crate::mob::MobRng;
-    use crate::world::World;
+    use crate::world::ServerWorld;
 
     /// Run `ai` until it starts an idle animation, returning the play-timer it set.
     fn ticks_until_start(ai: &mut IdleAnimAi, idle: &[IdleAnimMeta]) -> Option<u32> {
-        let world = World::new(0, 1);
+        let world = ServerWorld::new(0, 1);
         let mut rng = MobRng::new(7);
         for _ in 0..20_000 {
             let out = {
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn never_plays_an_idle_animation_while_in_fluid() {
-        let world = World::new(0, 1);
+        let world = ServerWorld::new(0, 1);
         let mut rng = MobRng::new(7);
         let idle = [IdleAnimMeta {
             length: 1.0,

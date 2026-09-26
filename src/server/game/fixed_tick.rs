@@ -310,7 +310,7 @@ impl ServerGame {
     /// not the static fallback. Cheap-gated on there being pending bakes. The
     /// bake is world work, dispatched actor-less.
     fn bake_dirty_custom_shapes(&mut self, events: &mut TickEvents) {
-        if !self.world.has_pending_custom_bakes() {
+        if !self.world.data().has_pending_custom_bakes() {
             return;
         }
         let Self {

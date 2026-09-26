@@ -54,7 +54,7 @@ const FLOOR_TOP: f32 = 65.0;
 
 #[test]
 fn particles_stay_inside_the_volume_and_above_the_ground() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let spec = rain_spec(AmbientHit::Die);
     let mut out = Vec::new();
     let mut ceilings = FxHashMap::default();
@@ -103,7 +103,7 @@ fn covered_camera_derives_nothing_below_the_roof() {
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     // A floor at y=64 AND a roof at y=80; the camera stands between them.
-    let mut world = petramond::world::World::new(0, 1);
+    let mut world = petramond::world::ReplicaWorld::new(0, 1);
     for cz in -1..=1 {
         for cx in -1..=1 {
             let mut c = Chunk::new(cx, cz);
@@ -152,7 +152,7 @@ fn covered_camera_derives_nothing_below_the_roof() {
 
 #[test]
 fn splashes_appear_at_the_kill_height_shortly_after_hits() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let spec = rain_spec(AmbientHit::Burst("resolved-by-caller".into()));
     let splash = splash_spec();
     let mut splashes_seen = 0;
@@ -196,7 +196,7 @@ fn splashes_appear_at_the_kill_height_shortly_after_hits() {
 
 #[test]
 fn jumping_does_not_restart_or_move_ground_splashes() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let spec = rain_spec(AmbientHit::Burst("resolved-by-caller".into()));
     let splash = splash_spec();
     let sample = |cam| {
@@ -239,7 +239,7 @@ fn jumping_does_not_restart_or_move_ground_splashes() {
 
 #[test]
 fn drives_ease_in_and_retire_after_easing_out() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let mut drives = AmbientDrives::default();
     drives.set("weather", 200, 1.0, [0.0, 0.0]);
     // Unknown bundle id: the drive exists but derives nothing — inert.
@@ -284,7 +284,7 @@ fn drives_ease_in_and_retire_after_easing_out() {
 /// and fails the cross-frame equality below.
 #[test]
 fn windy_advection_keeps_invariants_and_splash_anchors_static() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let spec = rain_spec(AmbientHit::Burst("resolved-by-caller".into()));
     // Zero launch speeds: droplets sit exactly ON their anchor for their
     // whole lifetime, so cross-frame anchor equality is directly
@@ -415,10 +415,10 @@ fn windy_advection_keeps_invariants_and_splash_anchors_static() {
 }
 
 /// A 3×3-chunk box: stone floor at y=64, stone roof at y=80, air between.
-fn roofed_world() -> petramond::world::World {
+fn roofed_world() -> petramond::world::ReplicaWorld {
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-    let mut world = petramond::world::World::new(0, 1);
+    let mut world = petramond::world::ReplicaWorld::new(0, 1);
     for cz in -1..=1 {
         for cx in -1..=1 {
             let mut c = Chunk::new(cx, cz);
@@ -603,7 +603,7 @@ fn ambient_particles_stay_world_anchored_when_the_camera_moves() {
     // Open air well above the fixture's floor: every mote survives, so
     // the two frames hold the same motes and nothing else can explain a
     // difference.
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let base_cam = WorldPos::new(8.0, 120.0, 8.0);
     let mut spec = rain_spec(AmbientHit::Die);
     spec.count_per_intensity = 400.0;
@@ -700,7 +700,7 @@ fn ambient_particles_stay_world_anchored_when_the_camera_moves() {
 /// world anchor affordable.
 #[test]
 fn a_teleported_camera_still_stands_in_a_full_volume() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let mut spec = rain_spec(AmbientHit::Die);
     spec.motion = AmbientMotion::Volume;
     spec.height = [8.0, 10.0];
@@ -749,7 +749,7 @@ fn a_teleported_camera_still_stands_in_a_full_volume() {
 /// fraction keeps a proportional share of the same slots.
 #[test]
 fn biome_density_thins_a_driven_fall_per_particle() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let spec = rain_spec(AmbientHit::Die);
     let sample = |weight: Option<&dyn Fn(u8) -> f32>| {
         let mut out = Vec::new();
@@ -795,7 +795,7 @@ fn biome_density_thins_a_driven_fall_per_particle() {
 
 #[test]
 fn biome_filter_gates_columns() {
-    let world = petramond::world::testutil::flat_world();
+    let world = petramond::world::testutil::flat_replica_world();
     let mut allowed = rain_spec(AmbientHit::Die);
     let mut denied = rain_spec(AmbientHit::Die);
     // The fixture's columns default to biome 0.

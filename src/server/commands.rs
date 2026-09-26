@@ -252,7 +252,7 @@ mod tests {
 
     fn server_with_guest() -> (ServerGame, usize) {
         let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-        let guest = crate::server::session_build::spawn_player(server.world.seed);
+        let guest = crate::server::session_build::spawn_player(server.world.data().seed);
         let s = server.add_session_for_test(guest);
         (server, s)
     }
@@ -347,7 +347,7 @@ mod tests {
 
         // The operator goes by a new name; an impostor takes the old one.
         server.sessions[guest].name = "Renamed".into();
-        let impostor = crate::server::session_build::spawn_player(server.world.seed);
+        let impostor = crate::server::session_build::spawn_player(server.world.data().seed);
         let s = server.add_session_for_test(impostor);
         server.sessions[s].name = name.clone();
         assert!(server.is_operator(guest), "rights stay with the identity");

@@ -6,7 +6,7 @@
 //! reorders or replaces engine steps.
 
 use crate::events::tick::TickEvents;
-use crate::world::World;
+use crate::world::ServerWorld;
 
 use super::bus::{PostQueue, SimCtx};
 use super::roster::PlayerRoster;
@@ -98,7 +98,7 @@ impl TickSystems {
     pub fn run(
         &mut self,
         at: Attach,
-        world: &mut World,
+        world: &mut ServerWorld,
         players: &mut dyn PlayerRoster,
         feed: &mut TickEvents,
         queue: &mut PostQueue,
@@ -136,7 +136,7 @@ mod tests {
         assert!(!systems.is_empty_at(Attach::Before(Stage::Mining)));
         assert!(systems.is_empty_at(Attach::After(Stage::Mining)));
 
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         systems.run(

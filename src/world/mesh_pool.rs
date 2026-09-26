@@ -181,7 +181,7 @@ pub(super) fn build_inline(job: MeshJob) -> Option<ChunkMesh> {
     build(job, crate::worker::JobCancel::new()).mesh
 }
 
-impl crate::world::World {
+impl crate::world::ReplicaWorld {
     /// Mesh one loaded section on the calling thread through the exact
     /// snapshot + pad path the pool's workers run — for instruments that
     /// time or inspect meshing without a pool.

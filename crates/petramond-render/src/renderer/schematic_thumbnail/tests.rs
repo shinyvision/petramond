@@ -3,7 +3,7 @@ use glam::IVec3;
 use petramond::schematic::{Scene, Selection};
 use petramond::{
     schematic::{CellData, ResolvedCell, Schematic, SchematicCell},
-    world::World,
+    world::ReplicaWorld,
 };
 use petramond_math::facing::Facing;
 use petramond_world::{
@@ -79,7 +79,7 @@ fn schematic_thumbnail_smoke() {
         );
     }
     let schematic = Schematic::from_cells("Thumbnail fixture".into(), [5, 5, 5], cells).unwrap();
-    let scene = Scene::prepare(&schematic, 0, |_: &mut World| {}).unwrap();
+    let scene = Scene::prepare(&schematic, 0, |_: &mut ReplicaWorld| {}).unwrap();
     let mut renderer = pollster::block_on(crate::new_offscreen_renderer(
         960,
         640,

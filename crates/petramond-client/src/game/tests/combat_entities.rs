@@ -1239,7 +1239,7 @@ fn cannot_place_a_solid_block_inside_a_mob() {
         "a solid block can't be placed inside the owl"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(8, 200, 8)),
+        Block::from_id(game.server.world().data().chunk_block(8, 200, 8)),
         Block::Air,
         "nothing was placed"
     );
@@ -1261,7 +1261,7 @@ fn cannot_place_a_solid_block_inside_a_mob() {
         "an empty cell places normally"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(0, 200, 0)),
+        Block::from_id(game.server.world().data().chunk_block(0, 200, 0)),
         Block::Dirt
     );
 }
@@ -1292,7 +1292,7 @@ fn cannot_place_a_solid_block_inside_another_player() {
         "a solid block can't be placed inside another live player"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(8, 200, 8)),
+        Block::from_id(game.server.world().data().chunk_block(8, 200, 8)),
         Block::Air,
         "nothing was placed"
     );
@@ -1316,7 +1316,7 @@ fn cannot_place_a_solid_block_inside_another_player() {
         "a spectator has no placement-blocking body"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(8, 200, 8)),
+        Block::from_id(game.server.world().data().chunk_block(8, 200, 8)),
         Block::Dirt
     );
     assert_eq!(

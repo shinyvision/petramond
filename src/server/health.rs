@@ -223,7 +223,7 @@ impl ServerGame {
             centre.y.floor() as i32,
             centre.z.floor() as i32,
         );
-        let (sky, blk) = self.world.dynamic_light_at_world(cell.0, cell.1, cell.2);
+        let (sky, blk) = self.world.data().dynamic_light_at_world(cell.0, cell.1, cell.2);
         for stack in stacks {
             let mut drop = crate::entity::DroppedItem::new(centre, stack, self.seeds.draw());
             drop.skylight = sky;
@@ -296,7 +296,7 @@ mod tests {
         use std::sync::{Arc, Mutex};
 
         let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-        let other = crate::server::session_build::spawn_player(server.world.seed);
+        let other = crate::server::session_build::spawn_player(server.world.data().seed);
         let victim_s = server.add_session_for_test(other);
         let victim_id = server.sessions[victim_s].id;
         assert_ne!(victim_s, 0, "the victim must not be the host session");

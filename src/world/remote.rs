@@ -8,15 +8,15 @@
 //! codec's exact per-entry encodings (`DoorState::encode`, `Facing::to_u8`, …)
 //! so replication is as lossless as a save/load roundtrip.
 //!
-//! The replica ([`WorldRole::ClientReplica`]) never generates, ticks, or
-//! saves: installs enter at the same post-ingest seam `poll()` uses for a
+//! The replica ([`ReplicaWorld`](super::ReplicaWorld)) has no generation, tick,
+//! or save to run — those operations exist only on `ServerWorld`. Installs enter at the same post-ingest seam `poll()` uses for a
 //! landed section (block-entity index, particle-emitter index, deep
 //! classification, light + mesh queueing) but touch NO gen bookkeeping, save
 //! bookkeeping, or `sim_guard` sets — on a replica those sets stay empty, so
 //! the streaming-finality guard is structurally idle. For ABSENT sections the
 //! replica answers physics/placement queries from the `ColumnPayload`
-//! summaries (`World::column_summaries`), mirroring how `column_gen` answers
-//! for the combined world.
+//! summaries (`WorldData::column_summaries`), mirroring how `column_gen`
+//! answers on the server.
 //!
 //! Deliberately absent from section payloads (they replicate
 //! elsewhere): container slot contents, furnace machine counters (only the

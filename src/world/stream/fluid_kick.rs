@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use rustc_hash::FxHashSet;
 
 use petramond_math::math::IVec3;
@@ -6,9 +7,8 @@ use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE};
 use petramond_world::section::Section;
 
 use crate::world::fluid::fluid_of;
-use crate::world::store::World;
 
-impl World {
+impl ServerWorld {
     /// Kick generated/overlaid fluid once its loaded neighbourhood gives it
     /// somewhere to go. Reads neighbours by world coordinate (so it crosses
     /// section and column seams) and only flows into a neighbour that is
@@ -23,7 +23,7 @@ impl World {
         let ingested_set: FxHashSet<SectionPos> = ingested.iter().copied().collect();
         let mut updates: Vec<IVec3> = Vec::new();
         for &sp in ingested {
-            let Some(section) = self.sections.get(&sp) else {
+            let Some(section) = self.data.sections.get(&sp) else {
                 continue;
             };
             if section.has_fluid() {
@@ -72,8 +72,8 @@ impl World {
                     let open_outflow = || {
                         KICK_OUTFLOW_DIRS.iter().any(|&d| {
                             let n = pos + IVec3::from(d);
-                            self.section_loaded_at(n.x, n.y, n.z)
-                                && self.chunk_block(n.x, n.y, n.z) == Block::Air.id()
+                            self.data.section_loaded_at(n.x, n.y, n.z)
+                                && self.data.chunk_block(n.x, n.y, n.z) == Block::Air.id()
                         })
                     };
                     // An unloaded neighbour reads as air, never as the quencher.
@@ -81,7 +81,7 @@ impl World {
                         fluid.quench.is_some_and(|q| {
                             KICK_CONTACT_DIRS.iter().any(|&d| {
                                 let n = pos + IVec3::from(d);
-                                self.chunk_block(n.x, n.y, n.z) == q.by.id()
+                                self.data.chunk_block(n.x, n.y, n.z) == q.by.id()
                             })
                         })
                     };
@@ -99,7 +99,7 @@ impl World {
     fn kick_outflow_planes(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
         let blocks = section.blocks();
         for &d in &KICK_OUTFLOW_DIRS {
-            let Some(neighbour) = self.sections.get(&offset_section(sp, d)) else {
+            let Some(neighbour) = self.data.sections.get(&offset_section(sp, d)) else {
                 continue; // absent: its own landing kick handles the seam
             };
             if !neighbour.has_air() {
@@ -107,7 +107,7 @@ impl World {
             }
             for_each_seam_cell(sp, d, |local, here, there| {
                 if is_fluid(blocks.get(local))
-                    && self.chunk_block(there.x, there.y, there.z) == Block::Air.id()
+                    && self.data.chunk_block(there.x, there.y, there.z) == Block::Air.id()
                 {
                     updates.push(here);
                 }
@@ -121,7 +121,7 @@ impl World {
     fn kick_inflow_planes(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
         let blocks = section.blocks();
         for &d in &KICK_INFLOW_DIRS {
-            let Some(neighbour) = self.sections.get(&offset_section(sp, d)) else {
+            let Some(neighbour) = self.data.sections.get(&offset_section(sp, d)) else {
                 continue;
             };
             if !neighbour.has_fluid() {
@@ -129,7 +129,7 @@ impl World {
             }
             for_each_seam_cell(sp, d, |local, _, there| {
                 if blocks.get(local) == Block::Air.id()
-                    && is_fluid(self.chunk_block(there.x, there.y, there.z))
+                    && is_fluid(self.data.chunk_block(there.x, there.y, there.z))
                 {
                     updates.push(there);
                 }
@@ -144,7 +144,7 @@ impl World {
     fn kick_quench_seams(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
         let blocks = section.blocks();
         for &d in &KICK_CONTACT_DIRS {
-            let Some(neighbour) = self.sections.get(&offset_section(sp, d)) else {
+            let Some(neighbour) = self.data.sections.get(&offset_section(sp, d)) else {
                 continue;
             };
             if !section.may_quench_against(neighbour) {
@@ -152,7 +152,7 @@ impl World {
             }
             for_each_seam_cell(sp, d, |local, here, there| {
                 let id = blocks.get(local);
-                let other = self.chunk_block(there.x, there.y, there.z);
+                let other = self.data.chunk_block(there.x, there.y, there.z);
                 if quenched_by(id, other) {
                     updates.push(here);
                 }
@@ -190,7 +190,7 @@ impl World {
                     if ingested.contains(&npos) {
                         continue; // its own interior scan covers it fully
                     }
-                    let Some(neighbour) = self.sections.get(&npos) else {
+                    let Some(neighbour) = self.data.sections.get(&npos) else {
                         continue;
                     };
                     let Some(metas) = neighbour.fluid_slice() else {

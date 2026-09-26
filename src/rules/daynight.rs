@@ -119,6 +119,11 @@ mod tests {
         // The spec point: a 15-minute day is 18 000 day ticks (36 000 cycle).
         assert_eq!(cycle_ticks_for_day_minutes(15), 36_000);
         assert_eq!(C, 36_000, "default day length is 15 minutes");
+        assert_eq!(
+            C,
+            crate::world::session::DEFAULT_DAY_CYCLE_TICKS,
+            "a fresh server world starts on the same default cycle"
+        );
         assert_eq!(cycle_ticks_for_day_minutes(10), 24_000);
         assert_eq!(cycle_ticks_for_day_minutes(30), 72_000);
         assert_eq!(cycle_ticks_for_day_minutes(5), 24_000, "clamped low");

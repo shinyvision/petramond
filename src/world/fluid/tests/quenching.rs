@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use super::*;
 use crate::world::engine_behavior::EngineBlockBehavior;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE};
@@ -8,7 +9,7 @@ fn water_from_above_or_any_side_makes_stone() {
     for direction in [UP].into_iter().chain(CARDINALS) {
         for meta in [0, flowing(2), FALLING] {
             for update_water in [false, true] {
-                let mut w = flat_world();
+                let mut w = flat_server_world();
                 let lava = IVec3::new(8, 65, 8);
                 let water = lava + direction;
                 assert!(w.set_fluid_world(lava, Block::Lava, meta));
@@ -24,7 +25,7 @@ fn water_from_above_or_any_side_makes_stone() {
                 );
                 assert_eq!(block(&w, water.x, water.y, water.z), Block::Water);
                 assert_eq!(block(&w, lava.x, lava.y - 1, lava.z), Block::Water);
-                assert_eq!(w.fluid_meta_world(lava.x, lava.y, lava.z), 0);
+                assert_eq!(w.data.fluid_meta_world(lava.x, lava.y, lava.z), 0);
             }
         }
     }
@@ -33,7 +34,7 @@ fn water_from_above_or_any_side_makes_stone() {
 #[test]
 fn falling_fluid_makes_stone_where_it_enters_the_other_fluid() {
     for (incoming, receiving) in [(Block::Lava, Block::Water), (Block::Water, Block::Lava)] {
-        let mut w = flat_world();
+        let mut w = flat_server_world();
         // A shaft keeps the contact vertical and the deeper fluid enclosed.
         for y in 63..=69 {
             for z in 7..=9 {
@@ -57,13 +58,13 @@ fn falling_fluid_makes_stone_where_it_enters_the_other_fluid() {
             }
         }
 
-        assert!(w.is_fluid_source_world(source, incoming));
+        assert!(w.data.is_fluid_source_world(source, incoming));
         for y in 66..=68 {
             assert_eq!(block(&w, 8, y, 8), incoming, "{incoming:?} at y={y}");
-            assert!(is_falling(w.fluid_meta_world(8, y, 8)));
+            assert!(is_falling(w.data.fluid_meta_world(8, y, 8)));
         }
         assert_eq!(block(&w, 8, 65, 8), Block::Stone, "{incoming:?} landing");
-        assert_eq!(w.fluid_meta_world(8, 65, 8), 0);
+        assert_eq!(w.data.fluid_meta_world(8, 65, 8), 0);
         assert_eq!(
             block(&w, 8, 64, 8),
             receiving,
@@ -76,7 +77,7 @@ fn falling_fluid_makes_stone_where_it_enters_the_other_fluid() {
 fn lava_above_water_reacts_only_when_it_flows_into_the_lower_cell() {
     for lava_meta in [0, flowing(2), FALLING] {
         for water_meta in [0, flowing(4), FALLING] {
-            let mut w = flat_world();
+            let mut w = flat_server_world();
             let lava = IVec3::new(8, 66, 8);
             let water = lava + DOWN;
             assert!(w.set_fluid_world(lava + UP, Block::Lava, 0));
@@ -87,14 +88,14 @@ fn lava_above_water_reacts_only_when_it_flows_into_the_lower_cell() {
                 FLUID.neighbor_update(&mut w, updated);
                 assert_eq!(block(&w, 8, 66, 8), Block::Lava);
                 assert_eq!(block(&w, 8, 65, 8), Block::Water);
-                assert_eq!(w.fluid_meta_world(8, 66, 8), lava_meta);
-                assert_eq!(w.fluid_meta_world(8, 65, 8), water_meta);
+                assert_eq!(w.data.fluid_meta_world(8, 66, 8), lava_meta);
+                assert_eq!(w.data.fluid_meta_world(8, 65, 8), water_meta);
             }
 
             FLUID.scheduled_tick(&mut w, lava);
 
             assert_eq!(block(&w, 8, 65, 8), Block::Stone, "water meta {water_meta}");
-            assert_eq!(w.fluid_meta_world(8, 65, 8), 0);
+            assert_eq!(w.data.fluid_meta_world(8, 65, 8), 0);
             assert_eq!(block(&w, 8, 66, 8), Block::Lava);
             for d in CARDINALS {
                 let side = lava + d;
@@ -113,7 +114,7 @@ fn lava_above_water_reacts_only_when_it_flows_into_the_lower_cell() {
 
 #[test]
 fn descending_lava_blocks_a_waterfall_only_when_it_reaches_the_water() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     // A water channel ends underneath the lava, then spills down a shaft.
     for y in 65..=70 {
         for x in 5..=9 {
@@ -148,8 +149,8 @@ fn descending_lava_blocks_a_waterfall_only_when_it_reaches_the_water() {
 
     assert_eq!(block(&w, 8, 68, 8), Block::Stone);
     assert_eq!(block(&w, 8, 69, 8), Block::Lava);
-    assert!(is_falling(w.fluid_meta_world(8, 69, 8)));
-    assert!(w.is_fluid_source_world(lava + UP, Block::Lava));
+    assert!(is_falling(w.data.fluid_meta_world(8, 69, 8)));
+    assert!(w.data.is_fluid_source_world(lava + UP, Block::Lava));
 
     run_ticks(&mut w, ring() * 10);
 
@@ -163,7 +164,7 @@ fn descending_lava_blocks_a_waterfall_only_when_it_reaches_the_water() {
 
 #[test]
 fn water_cools_its_other_contacts_while_the_falling_lava_waits_for_its_update() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     let water = IVec3::new(8, 67, 8);
     assert!(w.set_fluid_world(water, Block::Water, 0));
     assert!(w.set_fluid_world(water + UP, Block::Lava, FALLING));
@@ -191,7 +192,7 @@ fn water_cools_its_other_contacts_while_the_falling_lava_waits_for_its_update() 
 #[test]
 fn unfed_lava_drains_before_it_can_flow_down_into_water() {
     for meta in [flowing(2), flowing(6), FALLING] {
-        let mut w = flat_world();
+        let mut w = flat_server_world();
         let lava = IVec3::new(8, 66, 8);
         assert!(w.set_fluid_world(lava, Block::Lava, meta));
         assert!(w.set_fluid_world(lava + DOWN, Block::Water, 0));
@@ -200,7 +201,7 @@ fn unfed_lava_drains_before_it_can_flow_down_into_water() {
 
         assert_eq!(block(&w, 8, 65, 8), Block::Water);
         assert_eq!(block(&w, 8, 66, 8), Block::Lava);
-        assert_eq!(w.fluid_meta_world(8, 66, 8), meta);
+        assert_eq!(w.data.fluid_meta_world(8, 66, 8), meta);
 
         run_ticks(&mut w, lava_ring());
 
@@ -213,7 +214,7 @@ fn unfed_lava_drains_before_it_can_flow_down_into_water() {
 fn water_cools_lava_before_it_can_pour_into_water_below() {
     for direction in [UP].into_iter().chain(CARDINALS) {
         for update_offset in [IVec3::ZERO, direction] {
-            let mut w = flat_world();
+            let mut w = flat_server_world();
             let lava = IVec3::new(8, 66, 8);
             assert!(w.set_fluid_world(lava, Block::Lava, 0));
             assert!(w.set_fluid_world(lava + DOWN, Block::Water, 0));
@@ -230,7 +231,7 @@ fn water_cools_lava_before_it_can_pour_into_water_below() {
 #[test]
 fn downward_flow_resolves_the_waters_other_contacts_before_consuming_it() {
     for update_water_first in [false, true] {
-        let mut w = flat_world();
+        let mut w = flat_server_world();
         let water = IVec3::new(8, 67, 8);
         assert!(w.set_fluid_world(water, Block::Water, 0));
         for direction in [UP, DOWN, IVec3::X] {
@@ -251,7 +252,7 @@ fn downward_flow_resolves_the_waters_other_contacts_before_consuming_it() {
 
 #[test]
 fn water_arriving_beside_lava_during_the_same_tick_cools_it_before_it_pours() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     let water = IVec3::new(6, 66, 8);
     let lava = IVec3::new(8, 66, 8);
     for (x, y, z) in [(6, 65, 8), (7, 65, 8), (5, 66, 8), (6, 66, 7), (6, 66, 9)] {
@@ -269,23 +270,23 @@ fn water_arriving_beside_lava_during_the_same_tick_cools_it_before_it_pours() {
     assert_eq!(block(&w, 7, 66, 8), Block::Water);
     assert_eq!(block(&w, 8, 66, 8), Block::Stone);
     assert_eq!(block(&w, 8, 65, 8), Block::Water);
-    assert!(w.is_fluid_source_world(lava + UP, Block::Lava));
+    assert!(w.data.is_fluid_source_world(lava + UP, Block::Lava));
 }
 
 #[test]
 fn contact_waits_for_stream_final_neighbors_then_reacts_on_the_update() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     assert!(w.set_fluid_world(IVec3::new(15, 65, 8), Block::Lava, 0));
     assert!(w.set_fluid_world(IVec3::new(16, 65, 8), Block::Water, 0));
     let pending = SectionPos::new(1, 4, 0);
-    w.gen.awaited_overlays.insert(pending);
+    w.side.gen.awaited_overlays.insert(pending);
     w.note_stream_nonfinal(pending);
 
     run_ticks(&mut w, 1);
     assert_eq!(block(&w, 15, 65, 8), Block::Lava);
     assert_eq!(block(&w, 16, 65, 8), Block::Water);
 
-    w.gen.awaited_overlays.remove(&pending);
+    w.side.gen.awaited_overlays.remove(&pending);
     w.settle_stream_nonfinal(pending);
     run_ticks(&mut w, 1);
 
@@ -295,7 +296,7 @@ fn contact_waits_for_stream_final_neighbors_then_reacts_on_the_update() {
 
 #[test]
 fn a_refused_downward_quench_neither_spreads_sideways_nor_is_lost() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     let lava = IVec3::new(8, SECTION_SIZE as i32 * 4, 8);
     for d in CARDINALS {
         carve(&mut w, lava.x + d.x, lava.y, lava.z + d.z);
@@ -329,7 +330,7 @@ fn a_refused_downward_quench_neither_spreads_sideways_nor_is_lost() {
 
 #[test]
 fn lava_routes_downhill_into_water() {
-    let mut w = flat_world();
+    let mut w = flat_server_world();
     assert!(w.set_block_world(10, 63, 8, Block::Stone));
     assert!(w.set_fluid_world(IVec3::new(10, 64, 8), Block::Water, 0));
     assert!(w.set_fluid_world(IVec3::new(8, 65, 8), Block::Lava, 0));
@@ -361,7 +362,7 @@ fn vertical_contacts_rearm_across_sections_in_either_load_order() {
         (Block::Water, Block::Lava, 0),
     ] {
         for last in [lower, upper] {
-            let mut w = World::new(0, 1);
+            let mut w = ServerWorld::new(0, 1);
             for pos in [lower, upper] {
                 let mut section = Section::new(pos.cx, pos.cy, pos.cz);
                 for y in 0..SECTION_SIZE {

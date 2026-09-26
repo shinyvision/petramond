@@ -8,6 +8,14 @@ use crate::{
 use petramond_math::world_pos::WorldPos;
 
 impl WorldData {
+    /// Whether the cell holds a STILL SOURCE of `fluid` (level 0, not falling) —
+    /// the only fluid a bucket can scoop. Flowing/falling cells are an effect of
+    /// their source, not a unit of fluid: they drain on their own once cut off.
+    pub fn is_fluid_source_world(&self, pos: IVec3, fluid: Block) -> bool {
+        self.physics_block(pos.x, pos.y, pos.z) == fluid
+            && is_source(self.fluid_meta_world(pos.x, pos.y, pos.z))
+    }
+
     /// The real fluid volume at a point; air above a thin flow is never immersed.
     pub fn fluid_at_point(&self, point: WorldPos) -> Option<Immersion> {
         let sample = fluid_in_cell(&self.cursor(), point.block())?;

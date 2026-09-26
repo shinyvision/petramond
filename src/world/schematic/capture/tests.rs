@@ -1,3 +1,4 @@
+use crate::world::ServerWorld;
 use super::*;
 use petramond_world::{
     block::{CellCodec, CellView, ShapeFamily},
@@ -6,12 +7,8 @@ use petramond_world::{
     section::SectionSummary,
 };
 
-fn world() -> World {
-    World::new_with_pool(
-        0,
-        1,
-        crate::world::WorldRole::ServerHeadless,
-        Arc::new(crate::worker::JobPool::inline()),
+fn world() -> ServerWorld {
+    ServerWorld::with_pool(0, 1, Arc::new(crate::worker::JobPool::inline()),
     )
 }
 
@@ -138,11 +135,11 @@ fn missing_and_in_flight_terrain_is_not_saved_as_air_but_uniform_solid_is_preser
     };
     assert!(capture().is_err());
     world.insert_section_for_test(sp, Section::new(0, 0, 0));
-    world.sections.remove(&sp);
+    world.data.sections.remove(&sp);
     let mut summaries = vec![SectionSummary::Empty; (SECTION_MAX_CY - SECTION_MIN_CY + 1) as usize];
     summaries[(-SECTION_MIN_CY) as usize] = SectionSummary::FullOpaque;
     world
-        .column_summaries
+        .data.column_summaries
         .insert(sp.chunk_pos(), summaries.into_boxed_slice());
     let saved = Capture::new(&world, "Uniform".into(), vec![region], false, false)
         .unwrap()

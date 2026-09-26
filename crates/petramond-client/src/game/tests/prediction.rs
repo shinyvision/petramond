@@ -439,7 +439,7 @@ fn break_finished_without_observed_mining_is_denied() {
     let mut ev = TickEvents::default();
     game.server.tick_mining(0, &mut ev);
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Stone,
         "too-fast break must not clear the cell"
     );
@@ -493,12 +493,12 @@ fn two_instabreak_finishes_in_one_tick_window_both_accept() {
     game.server.tick_mining(0, &mut TickEvents::default());
 
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(a.x, a.y, a.z)),
+        Block::from_id(game.server.world().data().chunk_block(a.x, a.y, a.z)),
         Block::Air,
         "the first instabreak must clear its cell"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(b.x, b.y, b.z)),
+        Block::from_id(game.server.world().data().chunk_block(b.x, b.y, b.z)),
         Block::Air,
         "the second instabreak must clear its cell"
     );
@@ -539,12 +539,12 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
-        if Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
+        if Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
             break;
         }
     }
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air
     );
     assert!(
@@ -563,7 +563,7 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
     );
     game.server.tick_mining(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "lagged finish must NOT restore the block"
     );
@@ -623,7 +623,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
         "deferred TooFast must not ship corrective cells"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Stone,
         "server cell stays until the hold-path finishes"
     );
@@ -633,12 +633,12 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
-        if Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
+        if Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
             break;
         }
     }
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "hold-path clears the cell"
     );
@@ -688,7 +688,7 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
     );
     game.server.tick_mining(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "an observed full mining window accepts the client's finish"
     );
@@ -955,7 +955,7 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
     };
     game.game.apply_tick_update(Box::new(update));
     assert_eq!(
-        Block::from_id(game.game.replica.chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.game.replica.data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Stone,
         "an authoritative same-batch delta wins over the deny rollback"
     );
@@ -1000,12 +1000,12 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
 
     game.server.tick_place(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(a.x, a.y + 1, a.z)),
+        Block::from_id(game.server.world().data().chunk_block(a.x, a.y + 1, a.z)),
         Block::Dirt,
         "the block lands where the CLICK aimed (the client's ghost)"
     );
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(b.x, b.y + 1, b.z)),
+        Block::from_id(game.server.world().data().chunk_block(b.x, b.y + 1, b.z)),
         Block::Air,
         "the fresher look must not hijack the click"
     );
@@ -1156,7 +1156,7 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
         Block::from_id(
             game.game
                 .replica
-                .chunk_block(place_pos.x, place_pos.y, place_pos.z)
+                .data().chunk_block(place_pos.x, place_pos.y, place_pos.z)
         ),
         Block::Dirt,
         "replica cell must change immediately"
@@ -1235,7 +1235,7 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     assert_eq!(
         game.game
             .replica
-            .chunk_block(place_pos.x, place_pos.y, place_pos.z),
+            .data().chunk_block(place_pos.x, place_pos.y, place_pos.z),
         Block::Air.0,
         "an interactive target must never ghost a mod block"
     );
@@ -1250,7 +1250,7 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     assert_ne!(
         game.game
             .replica
-            .chunk_block(place_pos.x, place_pos.y, place_pos.z),
+            .data().chunk_block(place_pos.x, place_pos.y, place_pos.z),
         Block::Air.0,
         "the sneak click ghosts the custom block"
     );
@@ -1282,11 +1282,11 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
 
     let torch = wall - IVec3::X;
     assert_eq!(
-        Block::from_id(game.game.replica.chunk_block(torch.x, torch.y, torch.z)),
+        Block::from_id(game.game.replica.data().chunk_block(torch.x, torch.y, torch.z)),
         Block::Torch
     );
     assert_eq!(
-        game.game.replica.torch_placement(torch),
+        game.game.replica.data().torch_placement(torch),
         petramond_world::torch::TorchPlacement::West,
         "predicted place must record the wall mount for the same-frame mesh"
     );
@@ -1336,7 +1336,7 @@ fn optimistic_stair_place_records_orientation_immediately() {
 
     let cell = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.game.replica.chunk_block(cell.x, cell.y, cell.z)),
+        Block::from_id(game.game.replica.data().chunk_block(cell.x, cell.y, cell.z)),
         Block::OakStairs
     );
     assert_eq!(
@@ -1427,7 +1427,7 @@ fn optimistic_ladder_place_commits_the_facing_row() {
 
     let cell = wall + IVec3::X;
     assert_eq!(
-        game.game.replica.chunk_block(cell.x, cell.y, cell.z),
+        game.game.replica.data().chunk_block(cell.x, cell.y, cell.z),
         Block::LadderEast.id(),
         "the ghost is the facing row, not the held base row"
     );
@@ -1472,7 +1472,7 @@ fn slab_stack_click_is_not_predicted() {
     );
     let above = cell + IVec3::Y;
     assert_eq!(
-        game.game.replica.chunk_block(above.x, above.y, above.z),
+        game.game.replica.data().chunk_block(above.x, above.y, above.z),
         Block::Air.id(),
         "no ghost slab in the cell above"
     );
@@ -1494,7 +1494,7 @@ fn optimistic_break_clears_replica_and_queues_world_event() {
     game.game.predict_break_at_for_test(pos, Block::Poppy);
 
     assert_eq!(
-        Block::from_id(game.game.replica.chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.game.replica.data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "instant break must clear the replica immediately"
     );
@@ -1539,7 +1539,7 @@ fn denied_place_restores_cell_and_inventory_silently() {
     };
     game.game.apply_tick_update(Box::new(update));
     assert_eq!(
-        Block::from_id(game.game.replica.chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.game.replica.data().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "deny silently restores the cell"
     );
@@ -1620,7 +1620,7 @@ fn far_claim_does_not_grant_reach() {
     );
     game.server.tick_mining(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server.world().chunk_block(far.x, far.y, far.z)),
+        Block::from_id(game.server.world().data().chunk_block(far.x, far.y, far.z)),
         Block::Stone,
         "remote reach must not break the block"
     );

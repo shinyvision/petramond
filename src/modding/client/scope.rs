@@ -5,7 +5,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use crate::world::World;
+use crate::world::ReplicaWorld;
 use petramond_world::inventory::Inventory;
 
 thread_local! {
@@ -55,11 +55,11 @@ unsafe fn published<T, R>(
     Some(f(unsafe { &*(ptr as *const T) }))
 }
 
-pub(in crate::modding) fn enter<R>(world: &World, f: impl FnOnce() -> R) -> R {
+pub(in crate::modding) fn enter<R>(world: &ReplicaWorld, f: impl FnOnce() -> R) -> R {
     publish(&ACTIVE_WORLD, world, f)
 }
 
-pub(super) fn with_active<R>(f: impl FnOnce(&World) -> R) -> Option<R> {
+pub(super) fn with_active<R>(f: impl FnOnce(&ReplicaWorld) -> R) -> Option<R> {
     // SAFETY: `ACTIVE_WORLD` is only ever published by `enter` with a `&World`.
     unsafe { published(&ACTIVE_WORLD, f) }
 }

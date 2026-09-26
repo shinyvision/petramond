@@ -1,6 +1,6 @@
 //! Block-break presentation facts both sides derive from the same world state.
 
-use crate::world::World;
+use crate::world::WorldData;
 use petramond_math::math::IVec3;
 use petramond_world::light::BlockLight6;
 
@@ -9,7 +9,7 @@ use petramond_world::light::BlockLight6;
 /// neighbour (by combined `max(sky, block luminance)`) when the face is
 /// unknown. The server stamps it on the drop; the client lights the break
 /// particles from its replica with the same rule.
-pub fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, BlockLight6) {
+pub fn break_light(world: &WorldData, pos: IVec3, normal: Option<IVec3>) -> (u8, BlockLight6) {
     let at = |c: IVec3| world.dynamic_light_at_world(c.x, c.y, c.z);
     if let Some(n) = normal {
         return at(pos + n);

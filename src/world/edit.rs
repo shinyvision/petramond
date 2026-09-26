@@ -1,3 +1,4 @@
+use crate::world::{World, WorldSide};
 use crate::world::WorldData;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
@@ -6,9 +7,9 @@ use petramond_world::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use petramond_world::column::NO_SURFACE;
 use petramond_world::section::SectionSummary;
 
-use super::store::{SkyCoverChange, World};
+use super::store::SkyCoverChange;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Cells a player break at `pos` clears: every member of the compound
     /// block it belongs to (a door's two halves, a model's footprint), or the
     /// single cell. Used by optimistic client clears and server corrective-cell
@@ -20,8 +21,8 @@ impl World {
     /// Every cell of the compound block `pos` belongs to (see
     /// [`Block::compound_members`]), or `None` for a single-cell block.
     pub fn compound_cells(&self, pos: IVec3) -> Option<Vec<IVec3>> {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        let state = petramond_world::block::ShapeNeighborhood::shape_state(self, pos);
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
+        let state = petramond_world::block::ShapeNeighborhood::shape_state(&self.data, pos);
         let members = block.compound_members(pos, state)?;
         Some(members.into_iter().map(|(cell, _)| cell).collect())
     }
@@ -33,7 +34,7 @@ impl World {
     pub fn remove_compound(&mut self, pos: IVec3) -> Option<Vec<IVec3>> {
         let cells = self.compound_cells(pos)?;
         for &c in &cells {
-            if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) {
+            if let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(c.x, c.y, c.z) {
                 chunk.set_block(lx, ly, lz, Block::Air); // also clears the cell state
                 chunk.modified = true;
             }
@@ -48,19 +49,19 @@ impl World {
     /// model / single air). No drops. Returns `(broken_block, cells_with_prev)`
     /// or `None` when the cell is already air / unbreakable.
     pub fn clear_broken_block(&mut self, pos: IVec3) -> Option<(Block, Vec<(IVec3, u16)>)> {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+        let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         if block.hardness() < 0.0 {
             return None;
         }
         let cells: Vec<(IVec3, u16)> = self
             .break_footprint_cells(pos)
             .into_iter()
-            .map(|c| (c, self.chunk_block(c.x, c.y, c.z)))
+            .map(|c| (c, self.data.chunk_block(c.x, c.y, c.z)))
             .collect();
         if self.remove_compound(pos).is_none() {
             // Same residue rule as the server's authoritative break, so a
             // predicted ice break leaves the same water the server will.
-            let below = Block::from_id(self.chunk_block(pos.x, pos.y - 1, pos.z));
+            let below = Block::from_id(self.data.chunk_block(pos.x, pos.y - 1, pos.z));
             let _ = self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
         }
         Some((block, cells))
@@ -80,21 +81,21 @@ impl World {
         // still in flight must not change — the landing result would clobber the
         // write, or the write would be persisted over the player's on-disk record
         // (see `world::sim_guard`). The blocked state resolves within a few frames.
-        if !self.stream_writable(pos) {
+        if !self.data.stream_writable(pos) {
             return false;
         }
-        if !self.sections.contains_key(&pos) {
+        if !self.data.sections.contains_key(&pos) {
             // Building into absent sky materializes an empty section. Editing an absent
             // generated-solid/water section materializes its generated base first, so the
             // write changes one cell instead of replacing the whole section with air.
-            let summary = self.section_summary(pos);
+            let summary = self.data.section_summary(pos);
             let absent_air = matches!(summary, SectionSummary::Empty | SectionSummary::Unknown);
             if (b == Block::Air && absent_air) || !self.materialize_section(pos) {
                 return false;
             }
         }
         let old = {
-            let Some(s) = self.section_mut(pos) else {
+            let Some(s) = self.data.section_mut(pos) else {
                 return false;
             };
             let old = Block::from_id(s.block_raw(lx, ly, lz));
@@ -144,7 +145,7 @@ impl World {
         // changes — reads never resolve, they decode.
         self.refine_shape_states_around(wx, wy, wz);
         // Plane openness may have changed; deep-visibility must re-evaluate.
-        self.terrain.vis_dirty = true;
+        self.mark_visibility_dirty();
 
         // Announce the change: re-lights the influence reach and lets reactive
         // neighbours (e.g. water) re-evaluate on the next game tick. A proven
@@ -174,7 +175,7 @@ impl World {
     /// ordinary block-write lanes (delta capture, relight, remesh, block
     /// updates, save `modified`) — a skin swap needs no bespoke promotion.
     pub fn swap_block_skin(&mut self, pos: IVec3, to: Block) -> bool {
-        let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
+        let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
         let kv = chunk.cell_kv_take(lx, ly, lz);
@@ -183,7 +184,7 @@ impl World {
         // landed one cleared its state + KV. Either way the carried values
         // are what the cell must hold afterwards.
         let ok = self.set_block_world(pos.x, pos.y, pos.z, to);
-        if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+        if let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             if let Some(kv) = kv {
                 chunk.cell_kv_restore(lx, ly, lz, kv);
             }
@@ -206,8 +207,8 @@ impl World {
             return Self::LIGHT_REACH;
         }
         let value_at = |x: i32, y: i32, z: i32| {
-            self.skylight_at_world(x, y, z)
-                .max(self.blocklight_at_world(x, y, z)) as i32
+            self.data.skylight_at_world(x, y, z)
+                .max(self.data.blocklight_at_world(x, y, z)) as i32
         };
         let v = if old.is_opaque() && new == Block::Air {
             // Opening a cell: whatever enters comes through the six faces.
@@ -231,7 +232,7 @@ impl World {
 
     #[inline]
     pub fn log_axis_at(&self, wx: i32, wy: i32, wz: i32) -> LogAxis {
-        match self.chunk_at_world(wx, wy, wz) {
+        match self.data.chunk_at_world(wx, wy, wz) {
             Some((s, lx, ly, lz)) => s.log_axis(lx, ly, lz),
             None => LogAxis::Y,
         }
@@ -246,7 +247,7 @@ impl World {
         let Some((section_pos, _, _, _)) = WorldData::split_world(pos.x, pos.y, pos.z) else {
             return false;
         };
-        let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
+        let Some((section, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
         section.set_block(lx, ly, lz, block);
@@ -275,7 +276,7 @@ impl World {
             wx.div_euclid(SECTION_SIZE as i32),
             wz.div_euclid(SECTION_SIZE as i32),
         );
-        let column = self.column_at(wx, wz)?;
+        let column = self.data.column_at(wx, wz)?;
         let (old_surface, old_sky_cover) = (column.surface_y(lx, lz), column.sky_cover_y(lx, lz));
 
         let mut new_surface = old_surface;
@@ -291,7 +292,7 @@ impl World {
         } else if wy == old_surface {
             new_surface = NO_SURFACE;
             for y in (WORLD_MIN_Y..wy).rev() {
-                if self.chunk_block(wx, y, wz) != Block::Air.id() {
+                if self.data.chunk_block(wx, y, wz) != Block::Air.id() {
                     new_surface = y;
                     break;
                 }
@@ -307,7 +308,7 @@ impl World {
         } else if wy == old_sky_cover {
             new_sky_cover = NO_SURFACE;
             for y in (WORLD_MIN_Y..wy).rev() {
-                let below = Block::from_id(self.chunk_block(wx, y, wz));
+                let below = Block::from_id(self.data.chunk_block(wx, y, wz));
                 if !below.transmits_direct_skylight() {
                     new_sky_cover = y;
                     break;
@@ -317,12 +318,12 @@ impl World {
 
         let sky_cover_change = SkyCoverChange::between(old_sky_cover, new_sky_cover);
         if new_surface != old_surface || sky_cover_change.is_some() {
-            let col = self.columns.get_mut(&cpos).expect("column was read above");
+            let col = self.data.columns.get_mut(&cpos).expect("column was read above");
             col.set_surface_y(lx, lz, new_surface);
             col.set_sky_cover_y(lx, lz, new_sky_cover);
         }
         if surface_payload_changed || sky_cover_change.is_some() {
-            self.bump_column_payload_revision(cpos);
+            self.data.bump_column_payload_revision(cpos);
         }
         sky_cover_change
     }

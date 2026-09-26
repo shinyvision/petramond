@@ -23,7 +23,7 @@ fn body(name: &str, pos: WorldPos) -> Mobs {
 
 fn step(
     mobs: &mut Mobs,
-    world: &World,
+    world: &ServerWorld,
     drive: [f32; 2],
 ) -> super::super::simulation::MobTickEvents {
     assert!(mobs.set_mob_drive(0, Some(drive), None, None, false, false));
@@ -65,7 +65,7 @@ fn a_current_carries_an_idle_mob() {
     );
 }
 
-fn equal_intent_gets_equal_response(name: &str, world: &World) {
+fn equal_intent_gets_equal_response(name: &str, world: &ServerWorld) {
     let start = WorldPos::new(5.5, 70.0, 8.5);
     let mut mobs = body("swim", start);
     let mut player = crate::player::Player::new(start);
@@ -99,7 +99,7 @@ fn equal_intent_gets_equal_response(name: &str, world: &World) {
     );
 }
 
-fn swimmers_bob_and_floaters_settle(name: &str, world: &World) {
+fn swimmers_bob_and_floaters_settle(name: &str, world: &ServerWorld) {
     let mut mobs = body("swim", WorldPos::new(8.5, 74.5, 8.5));
     let (mut up, mut down) = (false, false);
     for tick in 0..200 {
@@ -145,7 +145,7 @@ fn swimmers_bob_and_floaters_settle(name: &str, world: &World) {
         "{name}: surface buoyancy settles without bobbing"
     );
     assert!(world
-        .body_fluid(hull.instances()[0].pos, 1.8, Buoyancy::Surface)
+        .data().body_fluid(hull.instances()[0].pos, 1.8, Buoyancy::Surface)
         .is_some());
 
     let mut dropped = body("surface", WorldPos::new(8.5, 90.0, 8.5));

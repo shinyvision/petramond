@@ -1,6 +1,6 @@
 use super::*;
 use crate::mob::MobRng;
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::ChunkPos;
@@ -9,7 +9,7 @@ use petramond_world::chunk::ChunkPos;
 /// strikes a published lock, so the classic strike tests provide one.
 /// The anchor slice is leaked: test-only, and `AiCtx` borrows it.
 fn ctx<'a>(
-    world: &'a World,
+    world: &'a ServerWorld,
     rng: &'a mut MobRng,
     pos: WorldPos,
     yaw: f32,
@@ -42,7 +42,7 @@ fn in_reach() -> (WorldPos, f32, WorldPos) {
 
 #[test]
 fn windup_announces_once_then_hits_on_its_impact_tick() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::from_params(&serde_json::json!({
         "reach":1.5,"damage":2.0,"knockback":5.0,"cooldown_ticks":10,
@@ -67,7 +67,7 @@ fn windup_announces_once_then_hits_on_its_impact_tick() {
 
 #[test]
 fn windup_rechecks_reach_and_cannot_transfer_to_a_new_target() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let (pos, yaw, player) = in_reach();
     for situation in 0..3 {
@@ -102,7 +102,7 @@ fn windup_rechecks_reach_and_cannot_transfer_to_a_new_target() {
 
 #[test]
 fn strikes_in_reach_then_is_gated_by_the_cooldown() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
     let (pos, yaw, player) = in_reach();
@@ -140,7 +140,7 @@ fn strikes_in_reach_then_is_gated_by_the_cooldown() {
 
 #[test]
 fn out_of_reach_or_facing_away_lands_nothing() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
     let pos = WorldPos::new(8.5, 64.0, 8.5);
@@ -171,7 +171,7 @@ fn out_of_reach_or_facing_away_lands_nothing() {
 
 #[test]
 fn block_between_mob_and_player_prevents_strike_without_cooldown() {
-    let mut world = World::new(0, 1);
+    let mut world = ServerWorld::new(0, 1);
     world.insert_empty_column_for_test(ChunkPos::new(0, 0));
     assert!(world.set_block_world(8, 64, 7, Block::Stone));
     let mut rng = MobRng::new(1);
@@ -200,7 +200,7 @@ fn no_lock_means_no_strike_even_in_reach() {
     // Attack executes on perception's decision; it never perceives on its
     // own. An unlocked mob standing on top of the player swings at nothing
     // — this is what makes a silent player safe beside a blind hunter.
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
     let (pos, yaw, player) = in_reach();
@@ -217,7 +217,7 @@ fn no_lock_means_no_strike_even_in_reach() {
 #[test]
 fn a_locked_mob_target_is_struck_and_a_vanished_one_fizzles() {
     use super::super::super::brain::AiMob;
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 4.0, 5.0, 10);
     let pos = WorldPos::new(8.5, 64.0, 8.5);

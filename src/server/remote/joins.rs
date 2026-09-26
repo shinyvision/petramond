@@ -55,13 +55,13 @@ impl ServerGame {
         let name = claim.name;
         let mut player = claim
             .restored
-            .unwrap_or_else(|| crate::server::session_build::spawn_player(self.world.seed));
+            .unwrap_or_else(|| crate::server::session_build::spawn_player(self.world.data().seed));
         // Reconcile the restored record against this world's catalog before
         // the handshake ships it (see `server::progression::catch_up`).
         crate::server::progression::catch_up(&mut player, self.catalog.unlocks());
         let data = Box::new(JoinData {
             player_id: id,
-            seed: self.world.seed,
+            seed: self.world.data().seed,
             clock: crate::server::daynight::current_clock(&self.world),
             tables: crate::net::remap::local_name_tables(),
             self_restore: self_restore_from(&player),
@@ -95,7 +95,7 @@ impl ServerGame {
         let local = self.sessions.first()?;
         Some(Box::new(JoinData {
             player_id: local.id,
-            seed: self.world.seed,
+            seed: self.world.data().seed,
             clock: crate::server::daynight::current_clock(&self.world),
             tables: crate::net::remap::local_name_tables(),
             self_restore: self_restore_from(&local.player),

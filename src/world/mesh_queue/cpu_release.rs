@@ -1,9 +1,10 @@
-use crate::world::store::World;
+use crate::world::ReplicaWorld;
+use crate::world::store::for_each_column_cy;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use super::{MESH_RELEASE_DELAY_FRAMES, MESH_RELEASE_SWEEP_INTERVAL};
 
-impl World {
+impl ReplicaWorld {
     /// Release the CPU mesh buffers of columns that have been upload-quiet for
     /// [`MESH_RELEASE_DELAY_FRAMES`] (stamped by `mark_column_uploaded`). The CPU
     /// copy only exists so a column repack can re-pack sibling sections; once a
@@ -13,16 +14,16 @@ impl World {
     /// "settled" verdict costs remesh work, never visible terrain.
     pub(super) fn release_settled_column_meshes(&mut self) {
         if !self
-            .terrain
+            .side.terrain
             .mesh_pump_frame
             .is_multiple_of(MESH_RELEASE_SWEEP_INTERVAL)
-            || self.terrain.mesh_release_after.is_empty()
+            || self.side.terrain.mesh_release_after.is_empty()
         {
             return;
         }
-        let frame = self.terrain.mesh_pump_frame;
+        let frame = self.side.terrain.mesh_pump_frame;
         let ripe: Vec<ChunkPos> = self
-            .terrain
+            .side.terrain
             .mesh_release_after
             .iter()
             .filter(|&(_, &after)| frame >= after)
@@ -36,25 +37,25 @@ impl World {
             // Bounded cost: (2·ring+1)² columns per anchor stay at full size;
             // the re-armed timer releases them once the anchor moves away.
             if self.column_near_load_center(pos) {
-                self.terrain
+                self.side.terrain
                     .mesh_release_after
                     .insert(pos, frame + MESH_RELEASE_DELAY_FRAMES);
                 continue;
             }
-            self.terrain.mesh_release_after.remove(&pos);
+            self.side.terrain.mesh_release_after.remove(&pos);
             // Still has upload or remesh work pending: skip. The eventual upload
             // re-stamps the column via `mark_column_uploaded`.
-            if self.terrain.mesh_upload_dirty_columns.contains(&pos) {
+            if self.side.terrain.mesh_upload_dirty_columns.contains(&pos) {
                 continue;
             }
-            let Some(&bits) = self.terrain.mesh_column_cys.get(&pos) else {
+            let Some(&bits) = self.side.terrain.mesh_column_cys.get(&pos) else {
                 continue;
             };
             let mut busy = false;
-            Self::for_each_mesh_cy(bits, |cy| {
+            for_each_column_cy(bits, |cy| {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.terrain.dirty_meshes.contains(sp)
-                    || self.terrain.light_blocked_meshes.contains(&sp)
+                if self.side.terrain.dirty_meshes.contains(sp)
+                    || self.side.terrain.light_blocked_meshes.contains(&sp)
                 {
                     busy = true;
                 }
@@ -62,9 +63,9 @@ impl World {
             if busy {
                 continue;
             }
-            Self::for_each_mesh_cy(bits, |cy| {
+            for_each_column_cy(bits, |cy| {
                 if let Some(mesh) = self
-                    .terrain
+                    .side.terrain
                     .meshes
                     .get_mut(&SectionPos::new(pos.cx, cy, pos.cz))
                 {

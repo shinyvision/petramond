@@ -1,13 +1,13 @@
 //! Server-side replication delta log: the per-tick coalesced block/fluid
 //! change capture and the sparse per-cell wire state it ships.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
 use petramond_world::block::Block;
 use petramond_world::chunk::section_idx;
 
-use super::store::World;
 
-impl World {
+impl ServerWorld {
     /// Turn the server-side replication log on/off (the server flips it on per
     /// tick while clients are connected). Turning capture off drops anything
     /// already logged, mirroring [`set_stream_event_capture`].
@@ -15,10 +15,10 @@ impl World {
     /// [`set_stream_event_capture`]: Self::set_stream_event_capture
     pub fn set_replication_capture(&mut self, on: bool) {
         if !on {
-            self.replication.block_delta_log.clear();
-            self.replication.cell_kv_delta_log.clear();
+            self.side.replication.block_delta_log.clear();
+            self.side.replication.cell_kv_delta_log.clear();
         }
-        self.replication.replication_capture = on;
+        self.side.replication.replication_capture = on;
     }
 
     /// Drain this tick's coalesced per-cell mod KV changes (latest value per
@@ -26,12 +26,13 @@ impl World {
     /// recipient applies them AFTER the same batch's block deltas — a block
     /// write wipes the cell's KV on both sides, so a same-tick
     /// write-block-then-KV sequence survives in order.
-    pub fn take_cell_kv_deltas(&mut self) -> Vec<crate::net::protocol::CellKvDelta> {
+    pub fn take_cell_kv_deltas(&mut self) -> Vec<crate::world::replication::CellKvDelta> {
         let mut out: Vec<_> = self
+            .side
             .replication
             .cell_kv_delta_log
             .drain()
-            .map(|((pos, key), value)| crate::net::protocol::CellKvDelta { pos, key, value })
+            .map(|((pos, key), value)| crate::world::replication::CellKvDelta { pos, key, value })
             .collect();
         out.sort_unstable_by(|a, b| {
             (a.pos.x, a.pos.y, a.pos.z, &a.key).cmp(&(b.pos.x, b.pos.y, b.pos.z, &b.key))
@@ -45,8 +46,9 @@ impl World {
     /// write their state maps AFTER the block write that announced the change
     /// (chest/furnace/torch insert their facing after `set_block_world`), so
     /// only the drain sees the whole tick's final state for the cell.
-    pub fn take_block_deltas(&mut self) -> Vec<crate::net::protocol::BlockDelta> {
+    pub fn take_block_deltas(&mut self) -> Vec<crate::world::replication::BlockDelta> {
         let mut out: Vec<_> = self
+            .side
             .replication
             .block_delta_log
             .drain()
@@ -56,7 +58,7 @@ impl World {
         for d in &mut out {
             // A section evicted since the write keeps the recorded state; the
             // recipient unloads it anyway.
-            if self.section_loaded_at(d.pos.x, d.pos.y, d.pos.z) {
+            if self.data.section_loaded_at(d.pos.x, d.pos.y, d.pos.z) {
                 d.state = self.cell_state_at(d.pos.x, d.pos.y, d.pos.z);
                 d.cell_kv = self.cell_kv_map_at(d.pos.x, d.pos.y, d.pos.z);
             }
@@ -64,6 +66,9 @@ impl World {
         out
     }
 
+}
+
+impl<S: WorldSide> World<S> {
     /// Snapshot a cell's whole mod KV map for the wire (sorted — BTreeMap
     /// iteration), empty for the common no-KV cell. Every delta carries it:
     /// the replica's apply wipes the cell's KV like a server-side write, so a
@@ -73,7 +78,7 @@ impl World {
         let Some((pos, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return Vec::new();
         };
-        let Some(s) = self.sections.get(&pos) else {
+        let Some(s) = self.data.sections.get(&pos) else {
             return Vec::new();
         };
         let cell = section_idx(lx, ly, lz) as u16;
@@ -90,15 +95,15 @@ impl World {
     pub fn block_delta_at(
         &self,
         pos: petramond_math::math::IVec3,
-    ) -> Option<crate::net::protocol::BlockDelta> {
-        if !self.section_loaded_at(pos.x, pos.y, pos.z) {
+    ) -> Option<crate::world::replication::BlockDelta> {
+        if !self.data.section_loaded_at(pos.x, pos.y, pos.z) {
             return None;
         }
-        let block_id = self.chunk_block(pos.x, pos.y, pos.z);
+        let block_id = self.data.chunk_block(pos.x, pos.y, pos.z);
         let fluid = Block::from_id(block_id)
             .is_fluid()
-            .then(|| self.fluid_meta_world(pos.x, pos.y, pos.z));
-        Some(crate::net::protocol::BlockDelta {
+            .then(|| self.data.fluid_meta_world(pos.x, pos.y, pos.z));
+        Some(crate::world::replication::BlockDelta {
             pos,
             block_id,
             fluid,
@@ -114,11 +119,19 @@ impl World {
     /// from it, so a fluid delta without it lands as a still source). Latest
     /// write per cell per tick wins by construction; the sparse per-cell state
     /// is re-read once more at the drain (`take_block_deltas`).
+    /// Logs only on a server with capture on; a replica never replicates.
     pub(super) fn record_block_delta(&mut self, wx: i32, wy: i32, wz: i32) {
-        let block_id = self.chunk_block(wx, wy, wz);
+        if !self
+            .side
+            .server()
+            .is_some_and(|s| s.replication.replication_capture)
+        {
+            return;
+        }
+        let block_id = self.data.chunk_block(wx, wy, wz);
         let fluid = Block::from_id(block_id)
             .is_fluid()
-            .then(|| self.fluid_meta_world(wx, wy, wz));
+            .then(|| self.data.fluid_meta_world(wx, wy, wz));
         let pos = petramond_math::math::IVec3::new(wx, wy, wz);
         let state = self.cell_state_at(wx, wy, wz);
         // KV deltas already logged for this cell are STALE: the block write
@@ -128,12 +141,16 @@ impl World {
         // written later this tick — ships in this delta's drain-time KV
         // snapshot instead (`cell_kv_set` skips the log while this delta is
         // pending).
-        self.replication
+        let Some(server) = self.side.server_mut() else {
+            return;
+        };
+        server
+            .replication
             .cell_kv_delta_log
             .retain(|(p, _), _| *p != pos);
-        self.replication.block_delta_log.insert(
+        server.replication.block_delta_log.insert(
             pos,
-            crate::net::protocol::BlockDelta {
+            crate::world::replication::BlockDelta {
                 pos,
                 block_id,
                 fluid,
@@ -155,7 +172,7 @@ impl World {
         wz: i32,
     ) -> Option<petramond_world::block::ShapeState> {
         let (pos, lx, ly, lz) = WorldData::split_world(wx, wy, wz)?;
-        let s = self.sections.get(&pos)?;
+        let s = self.data.sections.get(&pos)?;
         s.cell_states()
             .get(&(section_idx(lx, ly, lz) as u16))
             .copied()

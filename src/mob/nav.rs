@@ -17,7 +17,7 @@
 //! entities occupy ([`NavInputs`]) so routes bend around mobs and players
 //! without ever being walled off by them.
 
-use crate::world::{SectionCursor, World};
+use crate::world::{SectionCursor, ServerWorld};
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::{Aabb, Block};
 use petramond_world::collision;
@@ -223,7 +223,7 @@ impl Navigator {
         &mut self,
         pos: petramond_math::world_pos::WorldPos,
         on_ground: bool,
-        world: &World,
+        world: &ServerWorld,
     ) -> (Vec3, bool) {
         let (wish, jump) = self.follow(pos, on_ground);
         if jump || wish == Vec3::ZERO || self.index >= self.path.len() {
@@ -237,7 +237,7 @@ impl Navigator {
         }
         let (dx, dz) = cell_centre_offset(wp, pos);
         let remaining = (dx * dx + dz * dz).sqrt();
-        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
+        let boxes = |x: i32, y: i32, z: i32| world.data().collision_boxes_at(x, y, z);
         (
             deflect_wish(pos, self.half_width, self.height, wish, remaining, &boxes),
             jump,

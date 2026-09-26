@@ -174,7 +174,7 @@ mod tests {
     use crate::chunk::SECTION_SIZE;
 
     fn world_with_two_sections() -> WorldData {
-        let mut data = WorldData::new(0, crate::world::WorldRole::Combined, 4);
+        let mut data = WorldData::new(0, 4);
         for (pos, block) in [
             (SectionPos::new(0, 0, 0), Block::Stone),
             (SectionPos::new(1, 0, 0), Block::Glass),

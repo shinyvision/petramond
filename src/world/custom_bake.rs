@@ -10,14 +10,14 @@
 //! matter how many gates exist. The intern set is bounded by the shapes'
 //! distinct geometries, not by the world.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
 
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
-use super::store::World;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// A block at `(wx, wy, wz)` became `new_block`: drop the cached bake for the
     /// cell and its face neighbours (a custom shape may read them), and re-mark
     /// any custom cell dirty for the next bake pump. The single hook both the
@@ -35,14 +35,14 @@ impl World {
             (0, 0, 1),
         ] {
             let p = IVec3::new(wx + dx, wy + dy, wz + dz);
-            self.invalidate_custom_bake(p);
+            self.data.invalidate_custom_bake(p);
             let cell = if (dx, dy, dz) == (0, 0, 0) {
                 new_block
             } else {
-                Block::from_id(self.chunk_block(p.x, p.y, p.z))
+                Block::from_id(self.data.chunk_block(p.x, p.y, p.z))
             };
             if cell.is_custom_shape() {
-                self.content.custom_bake_dirty.insert(p);
+                self.data.content.custom_bake_dirty.insert(p);
             } else {
                 // The cell is no longer a custom shape: drop any stale baked
                 // light aperture so a later ungated read can't see it (the
@@ -62,7 +62,7 @@ impl World {
         boxes: Box<[petramond_world::block::ShapeRenderBox]>,
     ) {
         if let Some((sp, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) {
-            if let Some(section) = self.section_mut(sp) {
+            if let Some(section) = self.data.section_mut(sp) {
                 let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 section.set_shape_render(idx, boxes);
                 // A fresh bake must ALWAYS end in a remesh. The revision bump
@@ -87,7 +87,7 @@ impl World {
             mod_api::LightAperture::Open => false,
         };
         if let Some((sp, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) {
-            if let Some(section) = self.section_mut(sp) {
+            if let Some(section) = self.data.section_mut(sp) {
                 let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 if section.set_custom_light_aperture(idx, opaque) {
                     self.relight_aperture_change(pos, sp);
@@ -99,7 +99,7 @@ impl World {
     /// shape), relighting its section neighbourhood only on a real change.
     fn clear_custom_light_aperture(&mut self, pos: IVec3) {
         if let Some((sp, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) {
-            if let Some(section) = self.section_mut(sp) {
+            if let Some(section) = self.data.section_mut(sp) {
                 let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 if section.clear_custom_light_aperture(idx) {
                     self.relight_aperture_change(pos, sp);
@@ -146,17 +146,17 @@ mod tests {
 
     #[test]
     fn cache_stores_reads_and_invalidates() {
-        let mut w = World::new(0, 4);
+        let mut w = ServerWorld::new(0, 4);
         let pos = IVec3::new(3, 64, -7);
         let half = [Aabb {
             min: [0.0, 0.0, 0.0],
             max: [1.0, 0.5, 1.0],
         }];
-        assert_eq!(w.custom_shape_boxes(pos), None, "no bake yet");
-        w.set_custom_bake(pos, &half);
-        assert_eq!(w.custom_shape_boxes(pos), Some(&half[..]));
+        assert_eq!(w.data.custom_shape_boxes(pos), None, "no bake yet");
+        w.data.set_custom_bake(pos, &half);
+        assert_eq!(w.data.custom_shape_boxes(pos), Some(&half[..]));
         // An edit at the cell drops the bake (the next read falls back / re-bakes).
-        w.invalidate_custom_bake(pos);
-        assert_eq!(w.custom_shape_boxes(pos), None);
+        w.data.invalidate_custom_bake(pos);
+        assert_eq!(w.data.custom_shape_boxes(pos), None);
     }
 }

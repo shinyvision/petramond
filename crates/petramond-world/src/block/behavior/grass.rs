@@ -32,7 +32,7 @@ impl BlockBehavior for Grass {
     fn random_tick(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
         // Grass dies back to dirt when a solid cover smothers it or water drowns it —
         // neither leaves it a top it can live under.
-        if smothered(world, pos) || submerged(world, pos) {
+        if smothered(world.data(), pos) || submerged(world.data(), pos) {
             // Runs the usual block + light + mesh updates; the cell stays
             // random-tickable (dirt ticks too), so the counter is unchanged.
             world.set_block_world(pos.x, pos.y, pos.z, Block::Dirt);

@@ -1,7 +1,7 @@
 use super::collision::Axis;
 use super::state::{Input, Player, HEIGHT};
 use crate::entity::shore::ShoreClimb;
-use crate::world::{Climb, World};
+use crate::world::{Climb, WorldData};
 use petramond_math::math::Vec3;
 use petramond_world::block::Aabb;
 use petramond_world::collision::{self, DynBox};
@@ -156,7 +156,7 @@ impl Player {
     /// neither accumulates nor fights the movement controller — the player just drifts out
     /// of the overlap smoothly and can still walk against it. Vertical is ignored (pushing
     /// is horizontal); a noclip spectator has no body to jostle.
-    pub fn shove(&mut self, delta: Vec3, world: &World) {
+    pub fn shove(&mut self, delta: Vec3, world: &WorldData) {
         if self.is_spectator() || (delta.x == 0.0 && delta.z == 0.0) {
             return;
         }
@@ -176,7 +176,7 @@ impl Player {
     /// physics. Spectator mode ignores world solidity and may move through
     /// unloaded columns.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn update(&mut self, dt: f32, world: &World, input: Input) {
+    pub fn update(&mut self, dt: f32, world: &WorldData, input: Input) {
         self.update_with_obstacles(dt, world, input, &[]);
     }
 
@@ -188,7 +188,7 @@ impl Player {
     pub fn update_with_obstacles(
         &mut self,
         dt: f32,
-        world: &World,
+        world: &WorldData,
         input: Input,
         obstacles: &[DynBox],
     ) {

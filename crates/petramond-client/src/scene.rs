@@ -1,6 +1,10 @@
 //! Windowless scene capture: the real streaming world plus the real renderer,
 //! aimed at an image instead of a window.
 //!
+//! The world is the real split: a server world generates and lights, and a
+//! replica installs what it ships (through [`ReplicaMirror`], the same
+//! payload and delta seams a connection uses) and meshes it for the renderer.
+//!
 //! Enough surface to build a world at a seed, stream terrain in around a point,
 //! aim a camera, and get pixels back — so terrain and lighting work can be
 //! LOOKED at without launching the game. This is not a second render path:
@@ -11,7 +15,8 @@
 use std::time::{Duration, Instant};
 
 use petramond::world::environment::ShaderParamMap;
-use petramond::world::World;
+use petramond::world::{ReplicaMirror, ReplicaWorld, ServerWorld};
+use petramond::worker::JobPool;
 use petramond_math::math::{voxel_at, Vec3};
 use petramond_render::camera::Camera;
 use petramond_render::Renderer;
@@ -47,7 +52,11 @@ const MESH_BUDGET: usize = 4096;
 const NOON: f32 = 0.25;
 
 pub struct SceneCapture {
-    world: World,
+    /// The authoritative world: generation, light, and every edit a tool makes.
+    server: ServerWorld,
+    /// What the renderer draws: the server's terrain, replicated.
+    replica: ReplicaWorld,
+    mirror: ReplicaMirror,
     renderer: Renderer,
     camera: Camera,
     shader_params: ShaderParamMap,
@@ -91,8 +100,14 @@ impl SceneCapture {
             .iter()
             .filter_map(|p| p.id.clone())
             .collect();
+        // One pool for both sides, like the in-process session.
+        let jobs = std::sync::Arc::new(JobPool::new(JobPool::default_threads()));
+        let mut server = ServerWorld::with_pool(seed, render_distance, jobs.clone());
+        let mirror = ReplicaMirror::new(&mut server);
         let mut this = Self {
-            world: World::new(seed, render_distance),
+            server,
+            replica: ReplicaWorld::with_pool(seed, render_distance, jobs),
+            mirror,
             renderer,
             camera: Camera::new(petramond_math::world_pos::WorldPos::ZERO, aspect),
             shader_params: ShaderParamMap::new(),
@@ -117,8 +132,10 @@ impl SceneCapture {
     /// incomplete.
     pub fn load_around(&mut self, pos: [f32; 3], timeout: Duration) -> bool {
         let cell = voxel_at(Vec3::from(pos));
-        self.world
+        self.server
             .update_load(cell.x >> 4, cell.y >> 4, cell.z >> 4);
+        self.replica
+            .set_replica_view_center(cell.x >> 4, cell.y >> 4, cell.z >> 4);
         self.settle(timeout)
     }
 
@@ -131,21 +148,22 @@ impl SceneCapture {
         // Custom shapes bake FIRST: a dirty custom cell has no geometry until
         // its pack is asked, and the mesher would otherwise settle on the
         // static fallback and call it done.
-        self.client_mods.bake_custom_shapes(&mut self.world);
+        self.client_mods.bake_custom_shapes(&mut self.replica);
         let mut quiet = 0u32;
         let mut last = (0usize, 0usize);
         while Instant::now() < deadline {
-            self.world.poll();
-            self.client_mods.bake_custom_shapes(&mut self.world);
-            self.world.tick_mesh_budget(MESH_BUDGET);
+            self.pump_server();
+            self.client_mods.bake_custom_shapes(&mut self.replica);
+            self.replica.tick_mesh_budget(MESH_BUDGET);
             let now = (
-                self.world.loaded_section_count(),
-                self.world.iter_meshes().count(),
+                self.replica.data().loaded_section_count(),
+                self.replica.iter_meshes().count(),
             );
             // The counts must be nonzero as well as stable: a world that has not
             // produced its first section yet is "stable" too, and would settle
             // instantly.
-            if now == last && now.1 > 0 && !self.world.has_dirty_meshes() {
+            let busy = self.replica.has_dirty_meshes() || self.server.has_pending_stream_work();
+            if now == last && now.1 > 0 && !busy {
                 quiet += 1;
                 if quiet >= SETTLE_PUMPS {
                     return true;
@@ -212,7 +230,7 @@ impl SceneCapture {
     /// static-fallback cube this harness used to shoot for custom shapes.
     fn publish_block_draws(&mut self) {
         let mut rows = Vec::new();
-        self.world.collect_block_draws(
+        self.replica.collect_block_draws(
             &petramond_render::camera::ViewVolume::unbounded(),
             &mut rows,
         );
@@ -223,8 +241,9 @@ impl SceneCapture {
     /// exactly as the game's frame does.
     fn publish_camera(&mut self) {
         let eye = self.camera.pos;
-        let (fog, eye_fluid) = crate::game::environment::camera_fog(&self.world, eye, |wx, wz| {
-            self.world
+        let (fog, eye_fluid) = crate::game::environment::camera_fog(&self.replica, eye, |wx, wz| {
+            self.replica
+                .data()
                 .biome_at_world(wx, wz)
                 .map_or(Biome::PLAINS, Biome::from_id)
         });
@@ -242,7 +261,7 @@ impl SceneCapture {
     fn drain_uploads(&mut self) {
         for _ in 0..UPLOAD_PUMP_LIMIT {
             {
-                let mut terrain = self.world.terrain_render_handoff();
+                let mut terrain = self.replica.terrain_render_handoff();
                 self.renderer.sync_meshes(&mut terrain);
             }
             if !self.renderer.terrain_uploads_pending() {
@@ -250,9 +269,17 @@ impl SceneCapture {
             }
             // A column whose CPU mesh was released re-queues a forced remesh;
             // without pumping, the drain would spin until the cap.
-            self.world.tick_mesh_budget(MESH_BUDGET);
-            self.world.poll();
+            self.replica.tick_mesh_budget(MESH_BUDGET);
+            self.pump_server();
         }
+    }
+
+    /// One server step — ingest generation, land light bakes — then ship what
+    /// changed to the replica.
+    fn pump_server(&mut self) {
+        self.server.poll();
+        self.server.pump_light_bakes();
+        self.mirror.sync(&mut self.server, &mut self.replica);
     }
 
     /// Bring the terrain uploads up to date for the current camera, then
@@ -286,8 +313,10 @@ impl SceneCapture {
         &mut self.renderer
     }
 
-    /// The live world behind the camera, for probing what is being looked at.
-    pub fn world(&mut self) -> &mut World {
-        &mut self.world
+    /// The authoritative world behind the camera, for probing and editing
+    /// what is being looked at. Edits reach the drawn replica on the next
+    /// [`settle`](Self::settle) (or capture).
+    pub fn world(&mut self) -> &mut ServerWorld {
+        &mut self.server
     }
 }

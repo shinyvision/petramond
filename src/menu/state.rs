@@ -1,5 +1,5 @@
 use super::{ContainerTarget, MenuAnchor};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::crafting::CraftingStation;
 use petramond_world::gui_state::GuiKind;
@@ -58,7 +58,7 @@ impl ContainerMenu {
     /// Begin a furnace-screen session at `pos`: remember which furnace the GUI
     /// reads and edits. Defensively creates an empty entity if the block lacks one
     /// (placement always inserts one, so this is belt-and-braces).
-    pub fn open_furnace_screen(&mut self, world: &mut World, pos: IVec3) {
+    pub fn open_furnace_screen(&mut self, world: &mut ServerWorld, pos: IVec3) {
         if world.furnace_at(pos).is_none() {
             world.insert_furnace(pos, petramond_math::facing::Facing::default());
         }
@@ -76,7 +76,7 @@ impl ContainerMenu {
     /// Begin a chest-screen session at `pos`: remember which chest the GUI reads and
     /// edits. Defensively creates an empty chest if the block lacks one (placement
     /// always inserts one, so this is belt-and-braces).
-    pub fn open_chest_screen(&mut self, world: &mut World, pos: IVec3) {
+    pub fn open_chest_screen(&mut self, world: &mut ServerWorld, pos: IVec3) {
         if world.container_at(pos).is_none() {
             world.insert_chest(pos, petramond_math::facing::Facing::default());
         }
@@ -103,7 +103,7 @@ impl ContainerMenu {
     /// storage is its row's to size, so a mob anchor is taken as it is.
     pub fn open_document_gui(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         kind: GuiKind,
         anchor: Option<MenuAnchor>,
     ) {

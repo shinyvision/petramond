@@ -2,34 +2,30 @@
 //! (`flush_modified_chunks`) and eviction (`harvest_section_snapshot`), plus
 //! the save-handle plumbing.
 
+use crate::world::ServerWorld;
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
 use crate::save::{SectionSnapshot, WorldSave};
 use petramond_world::chunk::SectionPos;
 
-use super::store::{World, WorldRole};
 
-impl World {
+impl ServerWorld {
     /// Attach an on-disk save: enables section persistence (load-from-disk in the
     /// streamer and flush-on-evict) and gives `Game` a handle for level/entities.
-    /// Never on a replica — the server owns persistence; a replica persisting its
-    /// installed copies would shadow the authoritative world.
+    /// A server-only operation: a replica persisting its installed copies would
+    /// shadow the authoritative world, so it has no save to attach.
     pub fn attach_save(&mut self, save: WorldSave, saved: super::SavedIndex) {
-        debug_assert!(
-            self.role != WorldRole::ClientReplica,
-            "a replica must not persist replicated sections"
-        );
-        self.schematics.store = crate::schematic::store::Store::new(Some(save.dir()));
-        self.save = Some(save);
+        self.side.schematics.store = crate::schematic::store::Store::new(Some(save.dir()));
+        self.side.save = Some(save);
         self.data.saved = saved;
     }
 
     pub fn save(&self) -> Option<&WorldSave> {
-        self.save.as_ref()
+        self.side.save.as_ref()
     }
 
     pub fn save_mut(&mut self) -> Option<&mut WorldSave> {
-        self.save.as_mut()
+        self.side.save.as_mut()
     }
 
     /// The single snapshot-and-persist gate shared by [`flush_modified_chunks`]
@@ -54,28 +50,28 @@ impl World {
         mobs: Vec<SavedMob>,
         record_holds_entities: bool,
     ) -> Option<SectionSnapshot> {
-        let section = self.sections.get(&pos)?;
+        let section = self.data.sections.get(&pos)?;
         // Derived explored terrain and authoritative edits/entities live in
         // separate stores. First cache persistence waits for final light so the
         // common path writes and compresses the record only once.
         let light_final = !section.light_dirty || section.all_opaque();
         let authoritative_exists =
-            self.save.as_ref().is_some() && self.data.saved.authoritative_contains(pos);
+            self.side.save.as_ref().is_some() && self.data.saved.authoritative_contains(pos);
         let explored_exists =
-            self.save.as_ref().is_some() && self.data.saved.explored_contains(pos);
+            self.side.save.as_ref().is_some() && self.data.saved.explored_contains(pos);
         let explored_first_persist = light_final && !authoritative_exists && !explored_exists;
         // A record already on disk whose light rebaked since it was written
         // (a lightless neighbour landed at the explored boundary, or an edit's
         // spill) rewrites, or its saved cubes diverge from its neighbours'.
         let relit_persisted = light_final
-            && self.relit_since_persist.contains(&pos)
+            && self.data.relit_since_persist.contains(&pos)
             && (authoritative_exists || explored_exists);
         // An edit dirtied this record's baked light and the rebake hasn't
         // landed (eviction/quit racing the bake): rewrite the record NOW —
         // the snapshot omits dirty light, so reload rebakes instead of
         // loading the pre-edit cubes as clean (a permanent dark seam).
         let light_stale_persisted = !light_final
-            && self.light_edited_since_persist.contains(&pos)
+            && self.data.light_edited_since_persist.contains(&pos)
             && (authoritative_exists || explored_exists);
         let authoritative =
             section.modified || !entities.is_empty() || !mobs.is_empty() || record_holds_entities;
@@ -95,7 +91,7 @@ impl World {
     /// untouched) so their lifetime timers persist; they stay active in memory. Called
     /// on autosave and on quit; a no-op without an attached save.
     pub fn flush_modified_chunks(&mut self) {
-        if self.save.is_none() {
+        if self.side.save.is_none() {
             return;
         }
         // Queued incremental relights land first: a clean section's cubes
@@ -103,16 +99,16 @@ impl World {
         self.apply_light_edits();
         // Flush's harvest policy: CLONE the resting drops and mobs (they stay active in
         // memory) so a crash can't lose them.
-        let mut by_section = self.dropped_items.items_by_section();
-        let mut mobs_by_section = self.mobs.saved_by_section();
-        let positions: Vec<SectionPos> = self.sections.keys().copied().collect();
+        let mut by_section = self.side.entities.dropped_items.items_by_section();
+        let mut mobs_by_section = self.side.entities.mobs.saved_by_section();
+        let positions: Vec<SectionPos> = self.data.sections.keys().copied().collect();
         let mut snaps = Vec::new();
         let mut persisted = Vec::new();
         for pos in positions {
             let entities = by_section.remove(&pos).unwrap_or_default();
             let mobs = mobs_by_section.remove(&pos).unwrap_or_default();
             let record_holds_entities = self
-                .save
+                .side.save
                 .as_ref()
                 .is_some_and(|s| s.record_holds_entities(pos));
             if let Some(snap) =
@@ -126,13 +122,13 @@ impl World {
         // visited EVERY loaded section, so relit bookkeeping resets wholesale
         // (evicted stragglers included — they can't re-persist anyway).
         for pos in persisted {
-            if let Some(s) = self.section_mut(pos) {
+            if let Some(s) = self.data.section_mut(pos) {
                 s.modified = false;
             }
-            self.relit_since_persist.remove(&pos);
-            self.light_edited_since_persist.remove(&pos);
+            self.data.relit_since_persist.remove(&pos);
+            self.data.light_edited_since_persist.remove(&pos);
         }
-        if let Some(save) = self.save.as_mut() {
+        if let Some(save) = self.side.save.as_mut() {
             save.save_sections(&mut self.data.saved, snaps);
         }
         self.flush_pending_colgen_records();
@@ -142,11 +138,11 @@ impl World {
     /// (autosave / unload / a size trigger in `poll`) so one region-file
     /// rewrite absorbs many columns.
     pub(super) fn flush_pending_colgen_records(&mut self) {
-        if self.gen.pending_colgen_records.is_empty() {
+        if self.side.gen.pending_colgen_records.is_empty() {
             return;
         }
-        let recs = std::mem::take(&mut self.gen.pending_colgen_records);
-        if let Some(save) = self.save.as_mut() {
+        let recs = std::mem::take(&mut self.side.gen.pending_colgen_records);
+        if let Some(save) = self.side.save.as_mut() {
             save.save_column_gens(recs);
         }
     }
@@ -156,7 +152,7 @@ impl World {
     /// section reloads), returning `None` when the section needn't persist. The persist
     /// gate is shared with autosave (`snapshot_section_for_save`).
     pub(super) fn harvest_section_snapshot(&mut self, sp: SectionPos) -> Option<SectionSnapshot> {
-        if !self.sections.contains_key(&sp) {
+        if !self.data.sections.contains_key(&sp) {
             return None;
         }
         // The section's true content is still in flight (its saved record has not
@@ -164,13 +160,13 @@ impl World {
         // overwrite the player's on-disk record with pre-overlay state. Skip; the
         // record on disk stays authoritative. (Entities that wandered in are
         // dropped with the unload — losing a wanderer beats corrupting a build.)
-        if self.gen.awaited_overlays.contains(&sp) || self.gen.pending_overlays.contains_key(&sp) {
+        if self.side.gen.awaited_overlays.contains(&sp) || self.side.gen.pending_overlays.contains_key(&sp) {
             return None;
         }
-        let entities = self.dropped_items.take_items_in_section(sp);
-        let mobs = self.mobs.take_in_section(sp);
+        let entities = self.side.entities.dropped_items.take_items_in_section(sp);
+        let mobs = self.side.entities.mobs.take_in_section(sp);
         let record_holds_entities = self
-            .save
+            .side.save
             .as_ref()
             .is_some_and(|s| s.record_holds_entities(sp));
         self.snapshot_section_for_save(sp, entities, mobs, record_holds_entities)

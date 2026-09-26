@@ -1,14 +1,14 @@
 use super::*;
 
 pub(super) fn find(
-    world: &World,
+    world: &ServerWorld,
     kind: Mob,
     rule: &super::super::SpawnRule,
     x: i32,
     z: i32,
     [lo, hi]: [i32; 2],
 ) -> Option<petramond_math::world_pos::WorldPos> {
-    let biome = Biome::from_id(world.column_biome(x, z)?);
+    let biome = Biome::from_id(world.data().column_biome(x, z)?);
     let mut candidates = Vec::new();
     for y in lo..=hi {
         let ground = if rule.ground.is_empty() {
@@ -26,7 +26,7 @@ pub(super) fn find(
     let territories = if rule.underground.is_empty() {
         vec![0; candidates.len()]
     } else {
-        petramond_worldgen::underground_biomes_at(world.seed, &candidates)
+        petramond_worldgen::underground_biomes_at(world.data().seed, &candidates)
     };
     // A positional start avoids always preferring the highest cave floor.
     let offset = splitmix((x as i64 as u64) ^ (z as i64 as u64).rotate_left(32)) as usize;
@@ -51,7 +51,7 @@ pub(super) fn find(
 }
 
 pub(super) fn body_in_space(
-    world: &World,
+    world: &ServerWorld,
     kind: Mob,
     pos: petramond_math::world_pos::WorldPos,
     yaw: f32,

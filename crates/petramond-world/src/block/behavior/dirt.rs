@@ -35,9 +35,9 @@ impl BlockBehavior for Dirt {
     fn random_tick(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
         // Only green a cell where grass could actually live — an open, dry top
         // (not smothered, not flooded) — and only with grass within reach to spread.
-        if !grass::smothered(world, pos)
-            && !grass::submerged(world, pos)
-            && grass_within(world, pos, SPREAD_RADIUS)
+        if !grass::smothered(world.data(), pos)
+            && !grass::submerged(world.data(), pos)
+            && grass_within(world.data(), pos, SPREAD_RADIUS)
         {
             // Runs the usual block + light + mesh updates; the cell stays
             // random-tickable (grass ticks too), so the counter is unchanged.

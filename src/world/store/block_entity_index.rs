@@ -1,7 +1,7 @@
+use crate::world::{World, WorldSide};
 use petramond_world::block::Block;
 use petramond_world::chunk::SectionPos;
 
-use super::World;
 
 /// Whether a cell holding `block` puts its section in the block-entity index:
 /// the animated-block gather that draws OUTSIDE the chunk mesh walks that
@@ -12,7 +12,7 @@ pub(in crate::world) fn indexes_block_entity(block: Block) -> bool {
     block.animated_model().is_some() || block.directional_view()
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// [`refresh_block_entity_index`](Self::refresh_block_entity_index) for the
     /// section owning world cell `pos`.
     pub(in crate::world) fn note_block_entity_change(&mut self, pos: petramond_math::math::IVec3) {
@@ -25,7 +25,7 @@ impl World {
     /// `pos`'s content may have changed (section install, container/door/furnace
     /// insert or removal).
     pub(in crate::world) fn refresh_block_entity_index(&mut self, pos: SectionPos) {
-        let has = self.sections.get(&pos).is_some_and(|s| {
+        let has = self.data.sections.get(&pos).is_some_and(|s| {
             !s.containers().is_empty()
                 || !s.furnaces().is_empty()
                 || s.cell_states().keys().any(|&idx| {
@@ -34,9 +34,9 @@ impl World {
                 })
         });
         if has {
-            self.block_entity_sections.insert(pos);
+            self.data.block_entity_sections.insert(pos);
         } else {
-            self.block_entity_sections.remove(&pos);
+            self.data.block_entity_sections.remove(&pos);
         }
     }
 
@@ -44,13 +44,13 @@ impl World {
     /// `pos`'s block ids may have changed.
     pub(in crate::world) fn refresh_particle_emitter_index(&mut self, pos: SectionPos) {
         let has = self
-            .sections
+            .data.sections
             .get(&pos)
             .is_some_and(|s| s.has_particle_emitters());
         if has {
-            self.particle_emitter_sections.insert(pos);
+            self.data.particle_emitter_sections.insert(pos);
         } else {
-            self.particle_emitter_sections.remove(&pos);
+            self.data.particle_emitter_sections.remove(&pos);
         }
     }
 }

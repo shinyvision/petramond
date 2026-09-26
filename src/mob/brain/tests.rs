@@ -62,7 +62,7 @@ impl AiBehavior for Hold {
 
 #[test]
 fn a_hold_settles_its_channels_empty_and_leaves_the_others_open() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let holds = ChannelClaims::of(&[
         DecisionChannel::Goal,
@@ -88,7 +88,7 @@ fn a_hold_settles_its_channels_empty_and_leaves_the_others_open() {
 
 #[test]
 fn a_hold_below_a_filled_channel_changes_nothing() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut brain = Brain::new()
         .with_boxed(100, Box::new(Goal(IVec3::new(9, 0, 0))))
@@ -100,7 +100,7 @@ fn a_hold_below_a_filled_channel_changes_nothing() {
 
 #[test]
 fn higher_priority_goal_wins_but_fields_compose() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let look = HeadLook {
         yaw: 0.5,
@@ -128,7 +128,7 @@ fn higher_priority_goal_wins_but_fields_compose() {
 
 #[test]
 fn yielding_behaviors_leave_fields_none() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut brain = Brain::new().with_boxed(PRIORITY_WANDER, Box::new(Yield));
     let d = brain.decide(&mut ctx(&world, &mut rng));
@@ -137,7 +137,7 @@ fn yielding_behaviors_leave_fields_none() {
 
 #[test]
 fn lower_priority_fills_a_field_a_higher_one_left_unset() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     // The high-priority behavior only sets head_look; the low one supplies the goal.
     let mut brain = Brain::new()

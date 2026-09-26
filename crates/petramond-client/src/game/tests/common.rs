@@ -315,14 +315,14 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
 /// treat unloaded air as absent.
 /// Takes the `World` directly so tests driving a bare world can use it too.
 pub(super) fn flat_floor_loaded_air(
-    world: &mut petramond::world::World,
+    world: &mut petramond::world::ServerWorld,
     floor: petramond_world::block::Block,
 ) {
     install_flat_floor(world, floor, true);
 }
 
 fn install_flat_floor(
-    world: &mut petramond::world::World,
+    world: &mut petramond::world::ServerWorld,
     floor: petramond_world::block::Block,
     loaded_air: bool,
 ) {

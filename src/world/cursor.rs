@@ -9,22 +9,22 @@
 //! life, so the borrow checker — not a hand-maintained invalidation hook — is
 //! what proves the cached references still point at live sections.
 
+use crate::world::ServerWorld;
 use std::cell::Cell;
 
 use petramond_math::math::IVec3;
 use petramond_world::block::{Aabb, Block};
 use petramond_world::chunk::SectionPos;
 
-use super::store::World;
 
 pub struct SectionCursor<'w> {
-    world: &'w World,
+    world: &'w ServerWorld,
     cells: petramond_world::world::SectionCursor<'w>,
     /// The last `physics_cell_final_at` verdict, which is a per-SECTION fact.
     last_final: Cell<Option<(SectionPos, bool)>>,
 }
 
-impl World {
+impl ServerWorld {
     /// A read cursor over this world (see [`SectionCursor`]). Free to make;
     /// make one per probe-bound walk and share it between that walk's probes.
     #[inline]

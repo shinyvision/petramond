@@ -17,7 +17,7 @@ use petramond_world::inventory::{Hand, Inventory};
 
 use crate::player::BonePose;
 
-use crate::world::World;
+use crate::world::ReplicaWorld;
 
 use super::state::{ClientCommand, ClientImageData};
 use crate::modding::instance::ModInstance;
@@ -291,7 +291,7 @@ impl ClientModRuntime {
     /// capability-blocked on client instances anyway).
     pub fn predict_claim(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         actor: &PlayerSnapshot,
         inventory: &Inventory,
         payload: &EventPayload,
@@ -303,7 +303,7 @@ impl ClientModRuntime {
 
     fn predict_claim_inner(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         actor: &PlayerSnapshot,
         payload: &EventPayload,
     ) -> bool {
@@ -351,7 +351,7 @@ impl ClientModRuntime {
     /// for the pose calls it exists to drive.
     pub fn mod_event(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         actor: &PlayerSnapshot,
         inventory: &Inventory,
         key: &str,
@@ -360,7 +360,7 @@ impl ClientModRuntime {
         super::scope::enter_inventory(inventory, || self.mod_event_inner(world, actor, key, data))
     }
 
-    fn mod_event_inner(&mut self, world: &World, actor: &PlayerSnapshot, key: &str, data: &[u8]) {
+    fn mod_event_inner(&mut self, world: &ReplicaWorld, actor: &PlayerSnapshot, key: &str, data: &[u8]) {
         let Some(mod_index) = self.owner_index(key) else {
             return;
         };
@@ -405,7 +405,7 @@ impl ClientModRuntime {
     /// falls through to the ordinary ghost, the server's fall-through twin.
     pub fn placement_plan(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         actor: &PlayerSnapshot,
         shape_key: &str,
         shape_kind: u16,
@@ -437,7 +437,7 @@ impl ClientModRuntime {
     /// the same pure result when the delta dirties the cell.
     pub fn bake_placement_geometry(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         shape_key: &str,
         shape_kind: u16,
         input: mod_api::CellInput,
@@ -495,7 +495,7 @@ impl ClientModRuntime {
     /// custom shape would fall back to its (often empty) static boxes and desync.
     /// A missing owner / disabled mod / wrong reply leaves cells uncached
     /// (static fallback), the failure policy.
-    pub fn bake_custom_shapes(&mut self, world: &mut World) {
+    pub fn bake_custom_shapes(&mut self, world: &mut ReplicaWorld) {
         let cells = world.drain_custom_bake_dirty();
         if cells.is_empty() {
             return;
@@ -617,7 +617,7 @@ impl ClientModRuntime {
     /// down instead of a round trip later.
     pub fn frame(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         actor: &PlayerSnapshot,
         inventory: &Inventory,
         frame: ClientFrameData,
@@ -831,7 +831,7 @@ impl ClientModRuntime {
 
     /// Dispatch one bound-action edge to its owning mod, by the action's
     /// namespaced `full_id`. Returns whether a live mod owns the action.
-    pub fn action(&mut self, world: &World, full_id: &str, pressed: bool) -> bool {
+    pub fn action(&mut self, world: &ReplicaWorld, full_id: &str, pressed: bool) -> bool {
         let Some((index, action_id)) = self
             .actions
             .iter()
@@ -858,7 +858,7 @@ impl ClientModRuntime {
         true
     }
 
-    pub fn ui_event(&mut self, world: &World, kind_key: &str, event: ClientUiEvent) {
+    pub fn ui_event(&mut self, world: &ReplicaWorld, kind_key: &str, event: ClientUiEvent) {
         let call = GuestCall::ClientUi {
             kind_key: kind_key.to_owned(),
             event,
@@ -871,7 +871,7 @@ impl ClientModRuntime {
 
     pub fn canvas_event(
         &mut self,
-        world: &World,
+        world: &ReplicaWorld,
         canvas_key: &str,
         event: mod_api::ClientCanvasEvent,
     ) {
@@ -885,7 +885,7 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas event");
     }
 
-    pub fn canvas_scroll(&mut self, world: &World, canvas_key: &str, x: f32, y: f32, delta: f32) {
+    pub fn canvas_scroll(&mut self, world: &ReplicaWorld, canvas_key: &str, x: f32, y: f32, delta: f32) {
         let call = GuestCall::ClientCanvasScroll {
             canvas_key: canvas_key.to_owned(),
             x,
@@ -898,7 +898,7 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas scroll");
     }
 
-    pub fn release_all_keys(&mut self, world: &World) {
+    pub fn release_all_keys(&mut self, world: &ReplicaWorld) {
         let pressed: Vec<_> = self.pressed.drain().collect();
         for full_id in pressed {
             let Some((index, action_id)) = self
@@ -1124,7 +1124,7 @@ fn session_client_mods(
         .collect()
 }
 
-fn dispatch_unit(instance: &mut ModInstance, world: &World, call: &GuestCall, what: &str) {
+fn dispatch_unit(instance: &mut ModInstance, world: &ReplicaWorld, call: &GuestCall, what: &str) {
     match instance.call_guest_client(world, call) {
         None | Some(GuestRet::Unit) => {}
         Some(_) => instance.disable(&format!("returned a non-unit reply to {what}")),

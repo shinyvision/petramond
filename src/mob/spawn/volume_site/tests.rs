@@ -14,8 +14,8 @@ fn rule() -> SpawnRule {
     }
 }
 
-fn cave() -> World {
-    let mut world = World::new(0, 1);
+fn cave() -> ServerWorld {
+    let mut world = ServerWorld::new(0, 1);
     let mut chunk = Chunk::new(0, 0);
     for x in 0..16 {
         for z in 0..16 {

@@ -1,8 +1,10 @@
+use crate::world::ServerWorld;
+use crate::world::store::for_each_column_cy;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-use crate::world::store::{LoadTarget, World};
+use crate::world::store::LoadTarget;
 
-impl World {
+impl ServerWorld {
     /// Whether everything the FIRST light/mesh of `sp` could read has landed: each
     /// 3×3×3 neighbour is loaded, or is provably not coming under `target` — outside
     /// the wanted shape, deliberately skipped by its landed column (sky / outside the
@@ -17,17 +19,17 @@ impl World {
                         continue;
                     }
                     let n = SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz);
-                    if !SectionPos::cy_in_range(n.cy) || self.sections.contains_key(&n) {
+                    if !SectionPos::cy_in_range(n.cy) || self.data.sections.contains_key(&n) {
                         continue;
                     }
-                    if self.gen.pending_sections.contains(&n) {
+                    if self.side.gen.pending_sections.contains(&n) {
                         return false;
                     }
                     let cp = n.chunk_pos();
-                    if self.gen.column_gen.contains_key(&cp) {
+                    if self.side.gen.column_gen.contains_key(&cp) {
                         continue;
                     }
-                    if self.gen.pending.contains_key(&cp) || Self::column_wanted(target, cp) {
+                    if self.side.gen.pending.contains_key(&cp) || Self::column_wanted(target, cp) {
                         return false;
                     }
                 }
@@ -40,7 +42,7 @@ impl World {
         for dy in -1..=1 {
             for dz in -1..=1 {
                 for dx in -1..=1 {
-                    self.deferred_rechecks.insert(SectionPos::new(
+                    self.data.deferred_rechecks.insert(SectionPos::new(
                         pos.cx + dx,
                         pos.cy + dy,
                         pos.cz + dz,
@@ -57,8 +59,8 @@ impl World {
             for cx in pos.cx - 1..=pos.cx + 1 {
                 let cp = ChunkPos::new(cx, cz);
                 let bits = self.data.section_column_cys.get(&cp).copied().unwrap_or(0);
-                Self::for_each_column_cy(bits, |cy| {
-                    self.deferred_rechecks.insert(SectionPos::new(cx, cy, cz));
+                for_each_column_cy(bits, |cy| {
+                    self.data.deferred_rechecks.insert(SectionPos::new(cx, cy, cz));
                 });
             }
         }
@@ -70,14 +72,14 @@ impl World {
     /// saved overlay is still buffered stay parked so the bake reads the saved
     /// blocks, not the generated base it is about to replace.
     pub(super) fn flush_settled_deferred_if_needed(&mut self, target: LoadTarget) {
-        let check: Vec<SectionPos> = if self.deferred_recheck_needed {
-            self.deferred_recheck_needed = false;
-            self.deferred_rechecks.clear();
-            self.light_deferred.iter().copied().collect()
+        let check: Vec<SectionPos> = if self.data.deferred_recheck_needed {
+            self.data.deferred_recheck_needed = false;
+            self.data.deferred_rechecks.clear();
+            self.data.light_deferred.iter().copied().collect()
         } else {
-            std::mem::take(&mut self.deferred_rechecks)
+            std::mem::take(&mut self.data.deferred_rechecks)
                 .into_iter()
-                .filter(|sp| self.light_deferred.contains(sp))
+                .filter(|sp| self.data.light_deferred.contains(sp))
                 .collect()
         };
         if check.is_empty() {
@@ -88,7 +90,7 @@ impl World {
 
     #[cfg(test)]
     pub(super) fn flush_settled_deferred(&mut self, target: LoadTarget) {
-        let check = self.light_deferred.iter().copied().collect();
+        let check = self.data.light_deferred.iter().copied().collect();
         self.flush_settled_deferred_positions(target, check);
     }
 
@@ -96,14 +98,14 @@ impl World {
         let ready: Vec<SectionPos> = check
             .into_iter()
             .filter(|sp| {
-                !self.gen.pending_overlays.contains_key(sp)
+                !self.side.gen.pending_overlays.contains_key(sp)
                     && self.gen_neighborhood_settled(*sp, target)
             })
             .collect();
         let mut bakes: Vec<SectionPos> = Vec::new();
         for sp in ready {
-            let Some(section) = self.sections.get(&sp) else {
-                self.light_deferred.remove(&sp);
+            let Some(section) = self.data.sections.get(&sp) else {
+                self.data.light_deferred.remove(&sp);
                 continue;
             };
             let needs_bake = section.light_dirty && !section.all_opaque();
@@ -113,14 +115,13 @@ impl World {
             if needs_bake && self.section_sealed_by_loaded_neighbors(sp) {
                 continue;
             }
-            self.light_deferred.remove(&sp);
+            self.data.light_deferred.remove(&sp);
             // Clean light (persisted, loaded from disk) stands as-is.
             // Fully-opaque sections skip baking on both sides of the mesh pump's
             // light gate (their faces cull against solid cells and never sample light).
             if needs_bake {
                 bakes.push(sp);
             }
-            self.queue_dirty_mesh(sp);
         }
         // Streaming first-bakes coalesce into 2×2×2 batch bakes (one shared 64³
         // flood, ~2× less light worker CPU). Below three members the shared

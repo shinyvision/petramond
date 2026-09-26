@@ -4,14 +4,14 @@
 
 use crate::mob::brain::AiCtx;
 use crate::mob::MobRng;
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_math::world_pos::WorldPos;
 
 /// A neutral, idle, dry context: a small mob at the origin, the nearest
 /// player at the origin too, no perception input of any kind. Tests set only
 /// the fields they vary (the fields are `pub`).
-pub fn ctx<'a>(world: &'a World, rng: &'a mut MobRng) -> AiCtx<'a> {
+pub fn ctx<'a>(world: &'a ServerWorld, rng: &'a mut MobRng) -> AiCtx<'a> {
     AiCtx {
         reach: None,
         mob_id: 1,
@@ -52,7 +52,7 @@ pub fn empty_tags() -> &'static std::collections::BTreeMap<String, crate::mob::M
 }
 
 /// [`ctx`] positioned at `pos` (cell derived from the feet).
-pub fn ctx_at<'a>(world: &'a World, rng: &'a mut MobRng, pos: WorldPos) -> AiCtx<'a> {
+pub fn ctx_at<'a>(world: &'a ServerWorld, rng: &'a mut MobRng, pos: WorldPos) -> AiCtx<'a> {
     let mut c = ctx(world, rng);
     c.pos = pos;
     c.cell = pos.block();

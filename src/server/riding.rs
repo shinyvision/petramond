@@ -276,8 +276,8 @@ impl ServerGame {
         dismount_spot(
             player.pos,
             player.yaw,
-            |feet| player_body_free(&self.world, feet, obstacles),
-            |feet| dismount_footing_safe(&self.world, feet),
+            |feet| player_body_free(self.world.data(), feet, obstacles),
+            |feet| dismount_footing_safe(self.world.data(), feet),
         )
     }
 
@@ -297,7 +297,7 @@ impl ServerGame {
         let safe = |feet: petramond_math::world_pos::WorldPos| {
             let c = feet.block();
             self.world.physics_cell_final_at(c.x, c.y - 1, c.z)
-                && dismount_footing_safe(&self.world, feet)
+                && dismount_footing_safe(self.world.data(), feet)
         };
         if let Some(feet) = dismount_spot(player.pos, player.yaw, known_free, safe) {
             return Some(feet);

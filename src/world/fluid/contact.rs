@@ -1,13 +1,14 @@
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::fluid::FluidDef;
 
-use super::{block_at, fluid_of, World, CARDINALS, DOWN, UP};
+use super::{block_at, fluid_of, CARDINALS, DOWN, UP};
 
 /// Above/side quench contact around `pos`: the cell solidifies when its
 /// quencher sits above or beside it, and a quenching neighbour below or beside
 /// solidifies when this cell is its quencher. Downward pours wait for
 /// [`react_to_downward_flow`].
-pub(super) fn react(world: &mut World, pos: IVec3, fluid: &'static FluidDef) {
+pub(super) fn react(world: &mut ServerWorld, pos: IVec3, fluid: &'static FluidDef) {
     if let Some(q) = fluid.quench {
         if [UP]
             .into_iter()
@@ -41,7 +42,7 @@ pub(super) enum DownwardContact {
 }
 
 pub(super) fn react_to_downward_flow(
-    world: &mut World,
+    world: &mut ServerWorld,
     target: IVec3,
     fluid: &'static FluidDef,
 ) -> DownwardContact {

@@ -8,7 +8,7 @@
 //! key; neither the wire nor the GUI vocabulary knows a furnace exists.
 
 use super::ContainerMenu;
-use crate::world::World;
+use crate::world::ServerWorld;
 
 impl ContainerMenu {
     /// The named gauge readings the open container's block entity publishes
@@ -17,7 +17,7 @@ impl ContainerMenu {
     ///
     /// Engine machines answer here rather than earning a wire variant of
     /// their own; a pack machine writes the same keys through its GUI state.
-    pub fn open_gauges(&self, world: &World) -> Vec<(String, f32)> {
+    pub fn open_gauges(&self, world: &ServerWorld) -> Vec<(String, f32)> {
         let Some(pos) = self.target.anchor().and_then(|a| a.block()) else {
             return Vec::new();
         };

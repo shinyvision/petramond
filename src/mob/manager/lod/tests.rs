@@ -1,6 +1,6 @@
 use super::*;
 use crate::mob::{Mob, Mobs};
-use crate::world::World;
+use crate::world::ServerWorld;
 
 fn anchor_at(x: f64, z: f64) -> PlayerAnchor {
     PlayerAnchor {
@@ -91,7 +91,7 @@ fn a_nonsensical_policy_is_sanitized() {
 fn frozen_mobs_do_not_simulate_while_near_ones_do() {
     // No floor anywhere: a simulating owl falls, a frozen one hangs exactly
     // where it was, pose held for rendering.
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     mobs.set_sim_distance(SimDistance::default());
     let near_spot = WorldPos::new(8.0, 64.0, 8.0);
@@ -136,7 +136,7 @@ fn a_frozen_mob_is_still_distance_despawned() {
 fn a_coasting_mob_keeps_moving_on_its_last_decision() {
     // Reduced band with a long interval, so almost every tick coasts: the
     // body still integrates (falls through the floorless world) each tick.
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     mobs.set_sim_distance(SimDistance {
         full_chunks: 0,

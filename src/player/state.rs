@@ -1,5 +1,5 @@
 use crate::player::body_claims::BodyClaims;
-use crate::world::World;
+use crate::world::WorldData;
 use petramond_math::math::{IVec3, Vec3};
 
 /// The claimant an [`adopt_resolved_body`](Player::adopt_resolved_body) mirror
@@ -7,48 +7,13 @@ use petramond_math::math::{IVec3, Vec3};
 /// not resolving anybody's claim — it is repeating an answer.
 const MIRRORED_CLAIM: &str = "";
 
-/// One press of the interact button, from press to release — and who owns it.
-///
-/// Most interactions resolve inside a gesture and leave it FREE, which is what
-/// lets a held button keep placing blocks or flapping a door. A CONTINUOUS one
-/// — an eat, a raised guard — takes the gesture instead, and nothing else is
-/// offered the button until it comes up.
-///
-/// Transient body state: never saved, and both mirrors run the same rules over
-/// it from the same input.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum UseGesture {
-    /// Nothing owns the button; the next press or repeat is offered.
-    #[default]
-    Free,
-    /// Owned until release, by the named claimant
-    /// ([`ENGINE_CLAIMANT`](super::ENGINE_CLAIMANT) for the engine's own eat).
-    Held(Box<str>),
-    /// It WAS owned, the interaction finished, and the button has not come up
-    /// yet — so nothing else may take it until it does.
-    ///
-    /// This is the whole reason a held button does not eat a stack: finishing
-    /// is not the same as letting go, and the player has to say so.
-    Spent,
-}
+// The published per-tick session facts are world-owned (the world holds them
+// for the mod ABI); the player module keeps its historical names.
+pub use crate::world::session::{PlayerInputSnapshot, PlayerRosterSnapshot, UseGesture};
 
-impl UseGesture {
-    /// Whether `claimant` owns this gesture right now.
-    pub fn held_by(&self, claimant: &str) -> bool {
-        matches!(self, UseGesture::Held(o) if &**o == claimant)
-    }
-
-    /// Whether anything owns it — the gate that stops a fresh click or a
-    /// repeat being offered to the chain.
-    pub fn is_free(&self) -> bool {
-        *self == UseGesture::Free
-    }
-}
-
-/// Half the horizontal width (box is 0.6 wide on x and z).
-pub const HALF_W: f32 = 0.3;
-/// Full body height.
-pub const HEIGHT: f32 = 1.8;
+/// Half the horizontal width (box is 0.6 wide on x and z) and the full body
+/// height — world-level values, since the world tests roster bodies too.
+pub use crate::world::session::{PLAYER_HALF_W as HALF_W, PLAYER_HEIGHT as HEIGHT};
 /// Eye height above the feet (1.62).
 pub const EYE: f32 = 1.62;
 /// Largest physics sub-step; `app` splits a frame's `dt` into chunks this size
@@ -73,78 +38,6 @@ pub struct Input {
     /// horizontal move that would drop the feet farther than a step-down —
     /// see the edge guard in `Player::update`. Overrides `sprint`.
     pub sneak: bool,
-}
-
-/// One player's movement intent for the current tick, decomposed into the
-/// player's OWN yaw frame and published on the world (`World::player_inputs`)
-/// by the server before the tick stages run — the read model behind the
-/// `PlayerInput` HostCall, so mods (vehicles, mounts, machines a player
-/// stands on) can react to what a player is pressing without touching the
-/// world-space wish plumbing. Derived from the same session intent latches
-/// `tick_movement` integrates.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct PlayerInputSnapshot {
-    /// Session player id.
-    pub id: u8,
-    /// Forward(+)/back(−) component of the wish direction along the player's
-    /// facing, in `[-1, 1]`.
-    pub forward: f32,
-    /// Right(+)/left(−) strafe component, in `[-1, 1]`.
-    pub strafe: f32,
-    pub jump: bool,
-    pub sneak: bool,
-    /// The player's look, for mods that steer by it.
-    pub yaw: f32,
-    pub pitch: f32,
-}
-
-/// One connected player's per-tick state snapshot, published on the world
-/// beside the inputs — the read model behind the `Players` HostCall
-/// (multiplayer-aware spawn/ambience/weather policy).
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlayerRosterSnapshot {
-    /// Session player id.
-    pub id: u8,
-    /// Feet position.
-    pub pos: [f64; 3],
-    pub vel: [f32; 3],
-    pub yaw: f32,
-    pub pitch: f32,
-    /// Half-heart points.
-    pub health: i32,
-    pub on_ground: bool,
-    pub spectator: bool,
-    /// Sneak intent, gated on gameplay focus (the session's one sneak rule).
-    pub sneak: bool,
-    /// Use (interact) intent, gated on gameplay focus — published beside sneak
-    /// so continuous-use predicates read the snapshot every other actor
-    /// context lives on.
-    pub use_held: bool,
-    /// The selected hotbar stack's item, if any, with its count.
-    pub held: Option<petramond_world::item::ItemType>,
-    pub held_count: u8,
-    /// Who owns this body's interact press — the roster's copy of
-    /// [`Player::use_gesture`], so a reader answers "is this press mine"
-    /// for any session, not just the acting one.
-    pub use_gesture: UseGesture,
-    /// The off-hand slot's item, if any — the literal off slot (the roster is
-    /// outside any acting-hand dispatch), so a reader sees both hands.
-    pub off_held: Option<petramond_world::item::ItemType>,
-    /// The swing facts a hand-animating mod keys off (the mod ABI's
-    /// `PlayerSnapshot::swing`): the mining level as of this roster, plus
-    /// the one-shots the stages latched during the tick that just ran —
-    /// published on exactly one roster each, so a mod's tick system sees an
-    /// edge once, one tick after it fired (which the eased pose lane hides).
-    pub swing: mod_api::HandSwing,
-    /// Active body conditions, the ABI view.
-    pub conditions: Vec<mod_api::ConditionData>,
-    /// Whether the body is entombed (see [`Player::entombed`]).
-    pub entombed: bool,
-    /// The player's stable name (the save key), for state a mod keeps past
-    /// this session.
-    pub name: String,
-    /// Whether the player is a server operator.
-    pub operator: bool,
 }
 
 petramond_math::wire_enum::wire_enum! {
@@ -698,7 +591,7 @@ impl Player {
     /// through terrain that hasn't generated yet (spawn, or running past the
     /// load frontier). Column membership can't change within a frame, so this
     /// need not be re-checked per sub-step.
-    pub fn columns_loaded(&self, world: &World) -> bool {
+    pub fn columns_loaded(&self, world: &WorldData) -> bool {
         let hw = f64::from(HALF_W);
         let cx0 = (self.pos.x - hw).floor() as i32 >> 4;
         let cx1 = (self.pos.x + hw).floor() as i32 >> 4;

@@ -94,7 +94,7 @@ impl Game {
                 [back.x, back.y, back.z],
                 BOOM_DIST,
                 CAM_PAD,
-                |x, y, z| world.collision_boxes_at(x, y, z),
+                |x, y, z| world.data().collision_boxes_at(x, y, z),
             );
             cam.pos = target + back * dist;
             self.third_person.cam = Some(cam);
@@ -124,7 +124,7 @@ impl Game {
             [back.x, back.y, back.z],
             BOOM_DIST,
             CAM_PAD,
-            |x, y, z| world.collision_boxes_at(x, y, z),
+            |x, y, z| world.data().collision_boxes_at(x, y, z),
         );
         cam.pos += back * dist;
         self.third_person.cam = Some(cam);

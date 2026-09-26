@@ -16,7 +16,7 @@
 //! layers) — the `world::store` pattern. This file keeps the struct, spawn,
 //! and the per-tick orchestration.
 
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Tilt, Vec3};
 
 use super::anim::AnimKind;
@@ -670,7 +670,7 @@ impl Instance {
         named_anims: &[super::model_meta::NamedAnimMeta],
         skeleton: &Skeleton,
     ) -> Option<(bool, petramond_math::world_pos::WorldPos)> {
-        let world: &World = inputs.world;
+        let world: &ServerWorld = inputs.world;
         let player_pos = anchor.pos;
         self.prev_pos = self.pos;
         self.prev_yaw = self.yaw;
@@ -997,7 +997,7 @@ impl Instance {
                 inputs.players,
             )
         };
-        let immersion = world.body_fluid(self.pos, d.size.height, d.buoyancy);
+        let immersion = world.data().body_fluid(self.pos, d.size.height, d.buoyancy);
         // A mod's horizontal drive is that mod's own steering (a player-driven
         // vehicle crosses whatever its driver steers it over).
         let driven = self.drive.is_some_and(|drive| drive.horizontal.is_some());
@@ -1014,7 +1014,7 @@ impl Instance {
                 &cursor,
             )
         };
-        let current = world.body_current(self.pos, d.size.height, immersion);
+        let current = world.data().body_current(self.pos, d.size.height, immersion);
         let was_on_ground = self.on_ground;
         let motion_start = self.pos;
         let healed = self.integrate_locomotion(

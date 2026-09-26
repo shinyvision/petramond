@@ -25,7 +25,7 @@
 use mod_api::HostileSpawnCandidate;
 use rustc_hash::FxHashSet;
 
-use crate::world::{World, VERTICAL_LOAD_RADIUS};
+use crate::world::{ServerWorld, VERTICAL_LOAD_RADIUS};
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::biome::Biome;
@@ -114,7 +114,7 @@ pub struct HostileSpawnPlan {
 /// fit under a species' population caps (the manager supplies it from the live set).
 /// Returns the spawns to perform, or `None` if this tick's site/species didn't qualify.
 pub(super) fn attempt(
-    world: &World,
+    world: &ServerWorld,
     player_pos: WorldPos,
     rng: &mut MobRng,
     room_for: impl Fn(Mob) -> u32,
@@ -126,19 +126,19 @@ pub(super) fn attempt(
     if !mob_census_ready(world, player_pos) {
         return None;
     }
-    let (cx, cz, render_dist) = world.loaded_area()?;
+    let (cx, cz, render_dist) = world.data().loaded_area()?;
     // Inset by a chunk so the column (and the neighbours a footing/biome read may
     // touch) are loaded — unloaded reads would just fail the attempt anyway.
     let r = (render_dist - 1).clamp(0, HOSTILE_SPAWN_CHUNK_RADIUS);
 
     // Pick a species that still has room; the site is then judged for *that* species.
-    let kind = choose_kind(rng, &room_for, world.disabled_mods())?;
+    let kind = choose_kind(rng, &room_for, world.data().disabled_mods())?;
     let d = def(kind);
     let want = d.spawn_group.roll(rng).min(room_for(kind));
 
     let (wx, wz) = random_column(rng, cx, cz, r)?;
     let site =
-        |world: &World, kind: Mob, wx: i32, wz: i32| spawn_site(world, player_pos, kind, wx, wz);
+        |world: &ServerWorld, kind: Mob, wx: i32, wz: i32| spawn_site(world, player_pos, kind, wx, wz);
     let first = spawn_with(world, kind, wx, wz, rng, &site)?;
     // Climate rarity: the species' per-biome spawn chance gates the WHOLE
     // attempt with one roll — never per group member, so rarity thins spawn
@@ -161,12 +161,12 @@ pub(super) fn attempt(
 /// step for natural spawning and worldgen population, which differ only in the
 /// site rule (the player-distance band).
 pub(super) fn spawn_with(
-    world: &World,
+    world: &ServerWorld,
     kind: Mob,
     wx: i32,
     wz: i32,
     rng: &mut MobRng,
-    site: &impl Fn(&World, Mob, i32, i32) -> Option<WorldPos>,
+    site: &impl Fn(&ServerWorld, Mob, i32, i32) -> Option<WorldPos>,
 ) -> Option<Spawn> {
     let pos = site(world, kind, wx, wz)?;
     let yaw = rng.next_f32() * std::f32::consts::TAU;
@@ -182,7 +182,7 @@ pub(super) fn spawn_with(
 }
 
 fn spawn_site(
-    world: &World,
+    world: &ServerWorld,
     player_pos: WorldPos,
     kind: Mob,
     wx: i32,
@@ -201,12 +201,12 @@ fn spawn_site(
 
 /// The player-independent site judgment: surface footing, body clearance (dry),
 /// then the species' own [`SpawnRule`](super::SpawnRule) (biome + ground block).
-pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<WorldPos> {
+pub(super) fn site_for(world: &ServerWorld, kind: Mob, wx: i32, wz: i32) -> Option<WorldPos> {
     if let Some(band) = def(kind).spawn.y {
         return volume_site::find(world, kind, &def(kind).spawn, wx, wz, band);
     }
     // The surface to stand on, and the feet cell resting on top of it.
-    let ground_y = world.surface_collision_y(wx, wz)?;
+    let ground_y = world.data().surface_collision_y(wx, wz)?;
     let feet = IVec3::new(wx, ground_y + 1, wz);
     let feet_pos = WorldPos::block_min(feet) + Vec3::new(0.5, 0.0, 0.5);
 
@@ -217,8 +217,8 @@ pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<Wor
     }
 
     // --- Species rule: biome + the block it would stand on. ---
-    let biome = Biome::from_id(world.column_biome(wx, wz)?);
-    let ground = Block::from_id(world.chunk_block(wx, ground_y, wz));
+    let biome = Biome::from_id(world.data().column_biome(wx, wz)?);
+    let ground = Block::from_id(world.data().chunk_block(wx, ground_y, wz));
     if !def(kind).spawn.admits(biome, ground) {
         return None;
     }
@@ -234,13 +234,13 @@ mod volume_site;
 /// full-chance biome draws NOTHING, so rows without the field leave every
 /// existing RNG stream exactly as it was.
 pub(super) fn biome_chance_passes(
-    world: &World,
+    world: &ServerWorld,
     kind: Mob,
     wx: i32,
     wz: i32,
     rng: &mut MobRng,
 ) -> bool {
-    let Some(biome) = world.column_biome(wx, wz).map(Biome::from_id) else {
+    let Some(biome) = world.data().column_biome(wx, wz).map(Biome::from_id) else {
         return false;
     };
     chance_gate(def(kind).spawn.chance_in(biome), || rng.next_f32())
@@ -254,13 +254,13 @@ fn chance_gate(chance: f32, roll: impl FnOnce() -> f32) -> bool {
 
 /// Whether `kind` can physically stand with its feet in `feet`, dry and clear
 /// of every hazard its species does not tolerate.
-pub fn body_fits_at(world: &World, kind: Mob, feet: IVec3) -> bool {
+pub fn body_fits_at(world: &ServerWorld, kind: Mob, feet: IVec3) -> bool {
     let params = def(kind).path_params();
-    let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
+    let solid = |c: IVec3| world.data().blocks_movement_at(c.x, c.y, c.z);
     if !is_foothold(feet, params, &solid) {
         return false;
     }
-    let fluid = |c: IVec3| world.fluid_cell_at(c.x, c.y, c.z);
+    let fluid = |c: IVec3| world.data().fluid_cell_at(c.x, c.y, c.z);
     body_clear(feet, params, &fluid)
         && !super::nav::foothold_in_hazard(&world.cursor(), feet, params)
 }
@@ -284,7 +284,7 @@ pub struct HostileSpawnCache {
 }
 
 impl HostileSpawnCache {
-    fn refresh(&mut self, world: &World, player_positions: &[WorldPos]) {
+    fn refresh(&mut self, world: &ServerWorld, player_positions: &[WorldPos]) {
         let anchor_chunks: Vec<ChunkPos> =
             player_positions.iter().map(|&p| chunk_pos_at(p)).collect();
         let key = (anchor_chunks, world.terrain_revision());
@@ -303,13 +303,13 @@ impl HostileSpawnCache {
             .filter_map(|(chunk, &ready)| ready.then_some(chunk))
             .collect();
         self.spawnable_chunks =
-            hostile_spawnable_chunks(&chunks, |chunk| world.chunk_loaded(chunk.cx, chunk.cz));
+            hostile_spawnable_chunks(&chunks, |chunk| world.data().chunk_loaded(chunk.cx, chunk.cz));
         self.key = Some(key);
     }
 }
 
 pub fn hostile_spawn_plan(
-    world: &World,
+    world: &ServerWorld,
     cache: &mut HostileSpawnCache,
     player_positions: &[WorldPos],
 ) -> Option<HostileSpawnPlan> {
@@ -357,12 +357,12 @@ pub fn hostile_spawn_plan(
     })
 }
 
-pub(super) fn mob_census_ready(world: &World, player_pos: WorldPos) -> bool {
+pub(super) fn mob_census_ready(world: &ServerWorld, player_pos: WorldPos) -> bool {
     let center = chunk_pos_at(player_pos);
     world.mob_census_loaded_around(center, MOB_CENSUS_CHUNK_RADIUS)
 }
 
-pub fn hostile_kind_has_room(world: &World, plan: &HostileSpawnPlan, kind: Mob) -> bool {
+pub fn hostile_kind_has_room(world: &ServerWorld, plan: &HostileSpawnPlan, kind: Mob) -> bool {
     let d = def(kind);
     if d.category != MobCategory::Hostile || plan.hostile_count >= plan.hostile_cap {
         return false;
@@ -377,7 +377,7 @@ pub fn hostile_kind_has_room(world: &World, plan: &HostileSpawnPlan, kind: Mob) 
 }
 
 pub fn hostile_attempt_sites(
-    world: &World,
+    world: &ServerWorld,
     plan: &HostileSpawnPlan,
     attempt: u32,
 ) -> Vec<HostileSpawnSite> {
@@ -388,7 +388,7 @@ pub fn hostile_attempt_sites(
 }
 
 fn hostile_candidate_column(
-    world: &World,
+    world: &ServerWorld,
     plan: &HostileSpawnPlan,
     attempt: u32,
 ) -> Option<(i32, i32)> {
@@ -403,7 +403,7 @@ fn hostile_candidate_column(
 }
 
 fn hostile_candidate_chunk(
-    world: &World,
+    world: &ServerWorld,
     plan: &HostileSpawnPlan,
     attempt: u32,
 ) -> Option<ChunkPos> {
@@ -416,15 +416,15 @@ fn hostile_candidate_chunk(
     Some(chunks[i])
 }
 
-fn hostile_attempt_seed(world: &World, attempt: u32) -> u64 {
-    (world.seed as u64)
+fn hostile_attempt_seed(world: &ServerWorld, attempt: u32) -> u64 {
+    (world.data().seed as u64)
         ^ world.current_tick().wrapping_mul(0x9E37_79B9_7F4A_7C15)
         ^ (attempt as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)
         ^ HOSTILE_SPAWN_SALT
 }
 
 fn hostile_column_candidates(
-    world: &World,
+    world: &ServerWorld,
     plan: &HostileSpawnPlan,
     wx: i32,
     wz: i32,
@@ -472,7 +472,7 @@ fn hostile_anchor_scan_y_range(player_pos: WorldPos) -> Option<std::ops::RangeIn
 }
 
 fn hostile_candidate_at(
-    world: &World,
+    world: &ServerWorld,
     plan: &HostileSpawnPlan,
     wx: i32,
     y: i32,
@@ -487,9 +487,9 @@ fn hostile_candidate_at(
     // The species is not chosen yet, so every hazard refuses the site.
     if !body_cell_open(world, wx, y, wz)
         || !body_cell_open(world, wx, y + 1, wz)
-        || !world.block_is_full_spawn_support(wx, y - 1, wz)
+        || !world.data().block_is_full_spawn_support(wx, y - 1, wz)
         || world
-            .physics_block(wx, y - 1, wz)
+            .data().physics_block(wx, y - 1, wz)
             .has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
     {
         return None;
@@ -498,9 +498,9 @@ fn hostile_candidate_at(
         candidate: HostileSpawnCandidate {
             pos: pos.to_array(),
             cell: [wx, y, wz],
-            combined_light: world.combined_light6_at_world(wx, y, wz),
-            sky_light: world.skylight6_at_world(wx, y, wz),
-            block_light: world.blocklight6_at_world(wx, y, wz),
+            combined_light: world.data().combined_light6_at_world(wx, y, wz),
+            sky_light: world.data().skylight6_at_world(wx, y, wz),
+            block_light: world.data().blocklight6_at_world(wx, y, wz),
             nearest_player_dist: (nearest - pos).length(),
         },
         pos,
@@ -587,9 +587,9 @@ fn dist2(a: WorldPos, b: WorldPos) -> f64 {
     a.distance_squared(b)
 }
 
-fn body_cell_open(world: &World, wx: i32, y: i32, wz: i32) -> bool {
-    let block = world.physics_block(wx, y, wz);
-    world.placement_cell_open(IVec3::new(wx, y, wz))
+fn body_cell_open(world: &ServerWorld, wx: i32, y: i32, wz: i32) -> bool {
+    let block = world.data().physics_block(wx, y, wz);
+    world.data().placement_cell_open(IVec3::new(wx, y, wz))
         && block.fluid().is_none()
         && !block.has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
 }
@@ -608,12 +608,12 @@ pub(super) fn splitmix(mut z: u64) -> u64 {
 }
 
 pub(super) fn nearby_spawn(
-    world: &World,
+    world: &ServerWorld,
     kind: Mob,
     origin: IVec3,
     existing: &[Spawn],
     rng: &mut MobRng,
-    site: &impl Fn(&World, Mob, i32, i32) -> Option<WorldPos>,
+    site: &impl Fn(&ServerWorld, Mob, i32, i32) -> Option<WorldPos>,
 ) -> Option<Spawn> {
     let r2 = GROUP_RADIUS * GROUP_RADIUS;
     for _ in 0..GROUP_MEMBER_TRIES {
@@ -728,8 +728,8 @@ fn choose_kind(
 mod tests {
     use super::*;
 
-    fn flat_grass_spawn_world(extra: impl FnOnce(&mut petramond_world::chunk::Chunk)) -> World {
-        let mut world = World::new(0, 1);
+    fn flat_grass_spawn_world(extra: impl FnOnce(&mut petramond_world::chunk::Chunk)) -> ServerWorld {
+        let mut world = ServerWorld::new(0, 1);
         let mut chunk = petramond_world::chunk::Chunk::new(0, 0);
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn hostile_plan_ignores_only_players_whose_local_census_is_still_loading() {
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let ready = WorldPos::new(0.5, 64.0, 0.5);
         let loading = WorldPos::new(160.5, 64.0, 0.5);
         for (dx, dz) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
@@ -922,7 +922,7 @@ mod tests {
 
     #[test]
     fn hostile_column_scan_prefers_high_loaded_spawn_site() {
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let chunk = ChunkPos::new(0, 0);
         world.insert_empty_column_for_test(chunk);
         for y in [47, 63] {
@@ -946,7 +946,7 @@ mod tests {
 
     #[test]
     fn hostile_sampled_columns_come_from_eligible_chunks() {
-        let world = World::new(11, 1);
+        let world = ServerWorld::new(11, 1);
         let chunks = vec![
             ChunkPos::new(-8, 0),
             ChunkPos::new(0, 0),

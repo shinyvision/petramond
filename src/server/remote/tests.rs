@@ -243,7 +243,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     'pad: loop {
         let _ = remain();
         server.world.poll();
-        if !server.world.section_loaded_at(spawn.x, spawn.y, spawn.z) {
+        if !server.world.data().section_loaded_at(spawn.x, spawn.y, spawn.z) {
             std::thread::sleep(Duration::from_millis(1));
             continue;
         }
@@ -255,7 +255,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
                 let _ = server.world.set_block_world(x, spawn.y, z, Block::Stone);
                 let _ = server.world.set_block_world(x, spawn.y + 1, z, Block::Air);
                 let _ = server.world.set_block_world(x, spawn.y + 2, z, Block::Air);
-                if server.world.chunk_block(x, spawn.y, z) != Block::Stone.id() {
+                if server.world.data().chunk_block(x, spawn.y, z) != Block::Stone.id() {
                     ok = false;
                 }
             }

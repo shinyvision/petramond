@@ -1,5 +1,5 @@
 use crate::mob::{Mob, MobDamageFeedback, MobTagValue, SavedMob};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::body::Body;
 use petramond_world::chunk::SectionPos;
@@ -32,7 +32,7 @@ fn mobs_anchor_on_the_nearest_player() {
 
 #[test]
 fn a_frozen_tick_discards_its_drive_intent() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     assert!(mobs.set_mob_drive(0, Some([2.0, 0.0]), None, Some(1.0), false, false));
@@ -182,7 +182,7 @@ fn a_wounded_mob_saves_and_restores_wounded() {
 
 #[test]
 fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Sheep, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     let spec = crate::mob::def(Mob::Sheep)
@@ -275,7 +275,7 @@ fn overlapping_mobs_drift_apart_smoothly() {
     // just clear of each other (≈ their combined half-widths), not blow past. The
     // empty world has no floor, so they also fall; the gap checked is horizontal. No
     // player body this tick.
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.05, 64.0, 8.0), 0.0));
@@ -330,7 +330,7 @@ fn the_push_pass_records_touch_contacts_both_ways() {
     // The touch perception channel: overlapping bodies land in each
     // other's contact lists (and the player in the mob's), while a
     // distant mob records nothing.
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.1, 64.0, 8.0), 0.0)); // overlapping
@@ -397,7 +397,7 @@ fn a_bodiless_player_does_not_shove_mobs() {
     // A noclip spectator (no push body) overlapping a mob leaves it be — the tick's
     // player→mob shove is skipped when there's no body (the caller likewise skips the
     // per-frame mob→player push for a spectator).
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     let spot = WorldPos::new(8.0, 64.0, 8.0);
     assert!(mobs.spawn(Mob::Owl, spot, 0.0));
@@ -564,7 +564,7 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
 
     // 3×3 chunk grass field (48×48): big enough that open ground outgrows the
     // 24×24 confinement span, with a 5×5 fence pen at its centre.
-    let mut world = World::new(0, 1);
+    let mut world = ServerWorld::new(0, 1);
     for cx in 0..3 {
         for cz in 0..3 {
             let mut chunk = Chunk::new(cx, cz);
@@ -588,7 +588,7 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
         pos: WorldPos::new(24.5, 64.0, 30.5),
         ..Default::default()
     }];
-    let confined = |world: &World| {
+    let confined = |world: &ServerWorld| {
         let i = world.mobs().index_of_id(id).expect("alive");
         world.mobs().instances()[i].is_confined()
     };
@@ -706,7 +706,7 @@ fn index_of_id_tracks_every_live_set_mutation() {
     assert!(mobs
         .damage_mob(0, 1000.0, None, true, None, &lethal)
         .is_some());
-    let world = World::new(0, 1);
+    let world = ServerWorld::new(0, 1);
     let anchor = PlayerAnchor {
         pos: WorldPos::new(8.0, 64.0, 8.0),
         ..Default::default()

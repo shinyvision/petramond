@@ -9,7 +9,7 @@ use petramond::net::protocol::JoinData;
 use petramond::player::Player;
 use petramond::player::PlayerId;
 use petramond::worker::JobPool;
-use petramond::world::{World, WorldRole};
+use petramond::world::ReplicaWorld;
 use petramond_render::camera::Camera;
 use petramond_world::crafting::CraftingCatalog;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
@@ -22,7 +22,7 @@ use super::Game;
 /// payload whether the server is in-process ([`petramond::local_host`]) or
 /// remote (the TCP handshake's `JoinAccept`).
 pub struct ClientBootstrap {
-    replica: World,
+    replica: ReplicaWorld,
     jobs: Arc<JobPool>,
     client_player: Player,
     self_view: crate::game::replicated::SelfView,
@@ -50,12 +50,7 @@ impl ClientBootstrap {
         client_mods: petramond::modding::client::ClientModRuntime,
         remote: bool,
     ) -> Self {
-        let replica = World::new_with_pool(
-            join.seed,
-            render_dist,
-            WorldRole::ClientReplica,
-            jobs.clone(),
-        );
+        let replica = ReplicaWorld::with_pool(join.seed, render_dist, jobs.clone());
         let client_player = player_from_restore(&join.self_restore);
         ClientBootstrap {
             replica,

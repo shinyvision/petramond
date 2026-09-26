@@ -28,22 +28,9 @@ mod abilities;
 mod collision;
 mod creative;
 mod interaction;
-/// A connected player's session id: the small per-world slot byte that names a
-/// player on the wire, in mob aggro/hearing, and in per-player server state.
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub struct PlayerId(pub u8);
+// The session id is a world-level value (the world stores per-player facts
+// keyed by it); the player module keeps its historical name.
+pub use crate::world::session::PlayerId;
 
 pub mod animator;
 mod body_claims;

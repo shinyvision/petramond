@@ -5,6 +5,7 @@
 //! the renderer derives transient particles from that. This keeps visual particles
 //! out of simulation, saves, and the fixed tick.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use std::sync::LazyLock;
 
 use petramond_math::facing::Facing;
@@ -17,7 +18,7 @@ use petramond_world::light::BlockLight6;
 use petramond_world::particle_emitters::particle_size;
 use petramond_world::torch::{TorchPlacement, POLE_HEIGHT};
 
-use super::store::World;
+use super::store::WorldData;
 
 /// One placed particle emitter to draw this frame: where it sits, the row that
 /// describes it, its deterministic particle-schedule seed, and the light
@@ -129,7 +130,7 @@ fn max_emitter_reach() -> f32 {
 /// instead of a store lookup per cell.
 #[inline]
 fn neighbour_id(
-    world: &World,
+    world: &WorldData,
     section: &petramond_world::section::Section,
     sp: &SectionPos,
     q: IVec3,
@@ -147,7 +148,7 @@ fn neighbour_id(
     }
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Fill `out` with every loaded block cell whose row declares a particle
     /// emitter AND whose particles are inside `view`.
     ///
@@ -168,7 +169,7 @@ impl World {
         let biggest = max_emitter_particle();
         let span = Vec3::splat(SECTION_SIZE as f32);
         let sec = SECTION_SIZE as i32;
-        for sp in &self.particle_emitter_sections {
+        for sp in &self.data.particle_emitter_sections {
             // The section's box comes from its POSITION, so both rejects run
             // before the store is even looked up — at a render distance most
             // of this index is far away, and the distance compare is the
@@ -182,7 +183,7 @@ impl World {
             if !view.covers_a_pixel(lo, hi, biggest) || !view.aabb_visible(lo, hi) {
                 continue;
             }
-            let Some(section) = self.sections.get(sp) else {
+            let Some(section) = self.data.sections.get(sp) else {
                 continue;
             };
             if !section.has_particle_emitters() {
@@ -209,7 +210,7 @@ impl World {
                         // inside (embers never spark into the water over a
                         // pool). Fluids have no collision boxes at all.
                         let q = side.support_cell(cell);
-                        let over = Block::from_id(neighbour_id(self, section, sp, q));
+                        let over = Block::from_id(neighbour_id(&self.data, section, sp, q));
                         if over == block || over.blocks_movement() || over.fluid().is_some() {
                             continue;
                         }
@@ -237,7 +238,7 @@ impl World {
                     }
                     let sample = origin.block();
                     let (sky, block_light) =
-                        self.dynamic_light_at_world(sample.x, sample.y, sample.z);
+                        self.data.dynamic_light_at_world(sample.x, sample.y, sample.z);
                     let floor_y = if emitter.lands {
                         self.emitter_floor_y(origin, &emitter)
                     } else {
@@ -258,7 +259,7 @@ impl World {
     }
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// The surface a `lands` row's particles die on: the top of the first
     /// movement-blocking cell under `origin` within the row's whole vertical
     /// reach (drift plus fall), or `NEG_INFINITY`. The scan starts one cell
@@ -274,7 +275,7 @@ impl World {
         let top = origin.block();
         let bottom = top.y - reach.ceil() as i32 - 1;
         for y in (bottom..top.y).rev() {
-            if Block::from_id(self.chunk_block(top.x, y, top.z)).blocks_movement() {
+            if Block::from_id(self.data.chunk_block(top.x, y, top.z)).blocks_movement() {
                 return (y + 1) as f32;
             }
         }
@@ -377,7 +378,7 @@ mod tests {
     /// floor, and nothing in reach is no floor at all.
     #[test]
     fn a_landing_emitter_finds_the_first_floor_under_its_anchor() {
-        let mut w = World::new(1, 1);
+        let mut w = ServerWorld::new(1, 1);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let origin = WorldPos::new(4.5, 80.0, 4.5);
         let e = drip();

@@ -4,7 +4,7 @@ use crate::mob::brain::{AiMob, TickInputs};
 use crate::mob::model_meta::{self, IdleAnimMeta, Skeleton};
 use crate::mob::noise::{Noise, NoiseKind};
 use crate::mob::{def, defs, model, EntityRef, Instance, Mob};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::Vec3;
 use petramond_world::body::Body;
 
@@ -245,7 +245,7 @@ impl Mobs {
     pub fn tick(
         &mut self,
         dt: f32,
-        world: &World,
+        world: &ServerWorld,
         anchors: &[PlayerAnchor],
         freeze_unloaded: bool,
     ) -> MobTickEvents {
@@ -480,7 +480,7 @@ impl Mobs {
             }
             if let Some((was_on_ground, _)) = motion_finish[i] {
                 let d = super::super::def(mob.kind);
-                let immersion = world.body_fluid(mob.pos, d.size.height, d.buoyancy);
+                let immersion = world.data().body_fluid(mob.pos, d.size.height, d.buoyancy);
                 mob.finish_motion(was_on_ground, immersion);
             }
             // A walking mob is audible: record its footstep for next tick's batch.
@@ -537,9 +537,9 @@ impl Mobs {
                 );
             }
             let c = (mob.pos + Vec3::new(0.0, 0.3, 0.0)).block();
-            mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
+            mob.skylight = world.data().skylight6_at_world(c.x, c.y, c.z);
             mob.blocklight = petramond_world::light::BlockLight6::from_x2(
-                world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
             );
         }
         self.ticked_scratch = ticked;
@@ -731,7 +731,7 @@ impl Mobs {
 /// window while the sections above it are loaded, and a body simulated
 /// against that absent floor reads air and falls out of the world (the same
 /// rule as `world::entities::terrain_under_drop_is_final`).
-fn terrain_under_mob_is_final(world: &World, mob: &Instance) -> bool {
+fn terrain_under_mob_is_final(world: &ServerWorld, mob: &Instance) -> bool {
     let c = mob.pos.block();
     c.y >= petramond_world::chunk::WORLD_MIN_Y
         && world.physics_cell_final_at(c.x, c.y, c.z)

@@ -1,11 +1,11 @@
+use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
 use std::sync::Arc;
 
-use crate::net::protocol::{
+use crate::world::replication::{
     ColumnPayload, LightPayload, SectionBlocks, SectionBytes, SectionLight, SectionPayload,
     SectionStatesPayload,
 };
-use crate::world::store::World;
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_world::section::Section;
 
@@ -24,7 +24,7 @@ impl SectionPayloadExt for Section {
     fn to_payload(&self) -> SectionPayload {
         // Both levels are ordered maps (cells ascending, then keys), so
         // identical state encodes identically on the wire.
-        let cell_kv: Vec<crate::net::protocol::CellKvEntry> = self
+        let cell_kv: Vec<crate::world::replication::CellKvEntry> = self
             .cell_kv()
             .iter()
             .map(|(&cell, map)| {
@@ -52,13 +52,24 @@ impl SectionPayloadExt for Section {
     }
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
+    /// One loaded section's wire payload, or `None` when it isn't loaded —
+    /// what the server ships, and what a replica's copy of it re-encodes to
+    /// (the section cache compares the two).
+    pub fn section_payload(&self, pos: SectionPos) -> Option<SectionPayload> {
+        let mut payload = self.data.sections.get(&pos)?.to_payload();
+        payload.states.draws = self.section_block_draws(pos);
+        Some(payload)
+    }
+}
+
+impl ServerWorld {
     /// One column's client-relevant facts: biome skin, visible surface,
     /// direct-sky cover, and a per-cy `SectionSummary` for the whole world
     /// height range so replica physics can answer for absent sections. `None`
     /// for an unloaded column.
     pub fn column_payload(&self, pos: ChunkPos) -> Option<ColumnPayload> {
-        let col = self.columns.get(&pos)?;
+        let col = self.data.columns.get(&pos)?;
         let mut biomes = vec![0u8; SECTION_SIZE * SECTION_SIZE];
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
@@ -67,11 +78,11 @@ impl World {
         }
         let summaries = WorldData::column_section_range()
             .map(|cy| {
-                self.section_summary(SectionPos::new(pos.cx, cy, pos.cz))
+                self.data.section_summary(SectionPos::new(pos.cx, cy, pos.cz))
                     .to_u8()
             })
             .collect();
-        let (mesh_biomes, deep_band_lo) = self.gen.column_gen.get(&pos).map_or_else(
+        let (mesh_biomes, deep_band_lo) = self.side.gen.column_gen.get(&pos).map_or_else(
             || {
                 let mut halo = vec![0u8; 20 * 20];
                 for z in 0..20 {
@@ -103,17 +114,10 @@ impl World {
         })
     }
 
-    /// One loaded section's wire payload, or `None` when it isn't loaded.
-    pub fn section_payload(&self, pos: SectionPos) -> Option<SectionPayload> {
-        let mut payload = self.sections.get(&pos)?.to_payload();
-        payload.states.draws = self.section_block_draws(pos);
-        Some(payload)
-    }
-
     /// One section's CURRENT light cubes as a wire payload; `None` when the
     /// section is gone (an eviction race) or has never baked.
     pub fn light_payload(&self, pos: SectionPos) -> Option<LightPayload> {
-        let s = self.sections.get(&pos)?;
+        let s = self.data.sections.get(&pos)?;
         Some(LightPayload {
             pos,
             skylight: SectionBytes(s.skylight_arc()?),

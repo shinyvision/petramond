@@ -397,7 +397,7 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
         RuntimeSide::Client,
         Some(std::env::temp_dir().join("petramond-unused-client-surface-test")),
     );
-    let mut world = crate::world::World::new(0, 0);
+    let mut world = crate::world::ReplicaWorld::new(0, 0);
     let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
     world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
     assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
@@ -465,7 +465,7 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
         RuntimeSide::Client,
         Some(std::env::temp_dir().join("petramond-unused-client-blocks-test")),
     );
-    let mut world = crate::world::World::new(0, 0);
+    let mut world = crate::world::ReplicaWorld::new(0, 0);
     let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
     world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
     assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));

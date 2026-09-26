@@ -7,9 +7,9 @@
 //! be billed 4 KiB it does not own, or the census would flatter every fix that
 //! increases sharing.
 
+use crate::world::{World, WorldSide};
 use std::collections::HashSet;
 
-use super::World;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct MemoryCensus {
@@ -43,7 +43,7 @@ pub struct MemoryCensus {
     /// translucent v/i, model v/i, contact v.
     pub mesh_streams: [u64; 11],
     /// Worldgen memo entries held (shared memos) and the resident bytes of
-    /// every memo generation reads through (see `World::worldgen_cache_report`).
+    /// every memo generation reads through (see `ServerWorld::worldgen_cache_report`).
     pub worldgen_cache_entries: usize,
     pub worldgen_cache_bytes: u64,
 }
@@ -72,19 +72,21 @@ fn map_bytes<K, V>(len: usize) -> u64 {
     ((std::mem::size_of::<K>() + std::mem::size_of::<V>() + 1) as u64) * (len as u64) * 8 / 7
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Where this world's resident bytes are. See [`MemoryCensus`].
     pub fn memory_census(&self) -> MemoryCensus {
         let mut c = MemoryCensus::default();
-        for memo in self.worldgen_cache_report() {
-            c.worldgen_cache_entries += memo.entries;
-            c.worldgen_cache_bytes += memo.bytes;
+        if let Some(server) = self.side.server() {
+            for memo in server.gen.caches.report() {
+                c.worldgen_cache_entries += memo.entries;
+                c.worldgen_cache_bytes += memo.bytes;
+            }
         }
-        let mut seen: HashSet<usize> = HashSet::with_capacity(self.sections.len() * 2);
-        c.sections = self.sections.len();
+        let mut seen: HashSet<usize> = HashSet::with_capacity(self.data.sections.len() * 2);
+        c.sections = self.data.sections.len();
         c.section_structs =
             (std::mem::size_of::<petramond_world::section::Section>() as u64) * (c.sections as u64);
-        for s in self.sections.values() {
+        for s in self.data.sections.values() {
             let (ptr, bytes) = s.block_cube_heap();
             if seen.insert(ptr) {
                 c.block_cubes += 1;
@@ -114,59 +116,55 @@ impl World {
             c.entity_bytes += entities;
             c.emitter_cell_bytes += emitters;
         }
-        c.columns = self.columns.len();
-        c.column_bytes = (self.columns.len() as u64)
+        c.columns = self.data.columns.len();
+        c.column_bytes = (self.data.columns.len() as u64)
             * (std::mem::size_of::<petramond_world::column::Column>() as u64 + 2 * 1024 + 256);
-        c.column_gen = self.gen.column_gen.len();
-        for g in self.gen.column_gen.values() {
-            c.column_gen_bytes += g.memory_bytes();
-        }
-        for m in self.terrain.meshes.values() {
-            c.meshes += 1;
-            if m.is_released() {
-                c.meshes_released += 1;
-            }
-            let (used, cap) = m.memory_bytes();
-            c.mesh_bytes += used;
-            c.mesh_capacity_bytes += cap;
-            for (dst, src) in c.mesh_streams.iter_mut().zip(m.stream_bytes()) {
-                *dst += src;
+        if let Some(server) = self.side.server() {
+            c.column_gen = server.gen.column_gen.len();
+            for g in server.gen.column_gen.values() {
+                c.column_gen_bytes += g.memory_bytes();
             }
         }
         c.index_bytes = map_bytes::<
             petramond_world::chunk::SectionPos,
             std::sync::Arc<petramond_world::section::Section>,
-        >(self.sections.len())
+        >(self.data.sections.len())
             + map_bytes::<petramond_world::chunk::ChunkPos, petramond_world::column::Column>(
-                self.columns.len(),
-            )
-            + map_bytes::<petramond_world::chunk::SectionPos, petramond_mesh::ChunkMesh>(
-                self.terrain.meshes.len(),
+                self.data.columns.len(),
             )
             + map_bytes::<petramond_world::chunk::ChunkPos, u64>(
-                self.column_payload_revisions.len(),
-            )
-            + map_bytes::<petramond_world::chunk::ChunkPos, u32>(
-                self.terrain.mesh_column_cys.len(),
+                self.data.column_payload_revisions.len(),
             )
             + map_bytes::<petramond_world::chunk::ChunkPos, u32>(
                 self.data.section_column_cys.len(),
             )
-            + map_bytes::<petramond_world::chunk::ChunkPos, u64>(
-                self.terrain.mesh_upload_revisions.len(),
-            )
-            + map_bytes::<petramond_world::chunk::ChunkPos, ()>(self.terrain.mesh_columns.len())
-            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.deep_sections.len())
-            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.visible_deep.len())
-            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.hidden_parked.len())
-            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.sealed_parked.len())
-            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.light_deferred.len())
-            + map_bytes::<petramond_world::chunk::SectionPos, ()>(
-                self.terrain.light_blocked_meshes.len(),
-            )
-            + map_bytes::<petramond_world::chunk::ChunkPos, u64>(
-                self.terrain.mesh_release_after.len(),
-            );
+            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.data.light_deferred.len());
+        if let Some(replica) = self.side.replica() {
+            let t = &replica.terrain;
+            for m in t.meshes.values() {
+                c.meshes += 1;
+                if m.is_released() {
+                    c.meshes_released += 1;
+                }
+                let (used, cap) = m.memory_bytes();
+                c.mesh_bytes += used;
+                c.mesh_capacity_bytes += cap;
+                for (dst, src) in c.mesh_streams.iter_mut().zip(m.stream_bytes()) {
+                    *dst += src;
+                }
+            }
+            c.index_bytes += map_bytes::<petramond_world::chunk::SectionPos, petramond_mesh::ChunkMesh>(
+                t.meshes.len(),
+            ) + map_bytes::<petramond_world::chunk::ChunkPos, u32>(t.mesh_column_cys.len())
+                + map_bytes::<petramond_world::chunk::ChunkPos, u64>(t.mesh_upload_revisions.len())
+                + map_bytes::<petramond_world::chunk::ChunkPos, ()>(t.mesh_columns.len())
+                + map_bytes::<petramond_world::chunk::SectionPos, ()>(t.deep_sections.len())
+                + map_bytes::<petramond_world::chunk::SectionPos, ()>(t.visible_deep.len())
+                + map_bytes::<petramond_world::chunk::SectionPos, ()>(t.hidden_parked.len())
+                + map_bytes::<petramond_world::chunk::SectionPos, ()>(t.sealed_parked.len())
+                + map_bytes::<petramond_world::chunk::SectionPos, ()>(t.light_blocked_meshes.len())
+                + map_bytes::<petramond_world::chunk::ChunkPos, u64>(t.mesh_release_after.len());
+        }
         c
     }
 }

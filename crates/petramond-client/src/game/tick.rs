@@ -221,7 +221,7 @@ impl Game {
             if !barred && input.break_held && self.break_repeat.ready() {
                 if let Some(pos) = look {
                     let block = petramond_world::block::Block::from_id(
-                        self.replica.chunk_block(pos.x, pos.y, pos.z),
+                        self.replica.data().chunk_block(pos.x, pos.y, pos.z),
                     );
                     if block != petramond_world::block::Block::Air {
                         self.break_repeat.arm();
@@ -234,7 +234,7 @@ impl Game {
         }
         let event =
             self.local_mining
-                .update(dt, look, input.break_held, barred, &self.replica, tool);
+                .update(dt, look, input.break_held, barred, self.replica.data(), tool);
         // The own crack overlay is CLIENT-OWNED: the local timer is its only
         // source (the server never ships it back — SelfState carries no
         // `mining` echo).

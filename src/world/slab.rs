@@ -1,13 +1,13 @@
 //! Stackable slabs at the world level: position-aware state lookup, collision,
 //! and placement.
 
+use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::slab::SlabSlot;
 
-use super::store::World;
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Place one slab layer into `pos`, either creating a new slab cell or filling the
     /// empty matching half of an existing slab cell. The caller owns entity-overlap
     /// checks and inventory consumption.
@@ -15,11 +15,11 @@ impl World {
         if !self.materialize_section_at(pos) {
             return false;
         }
-        let Some(next) = self.slab_layer_target_state(pos, block, slot) else {
+        let Some(next) = self.data.slab_layer_target_state(pos, block, slot) else {
             return false;
         };
         let representative = petramond_world::slab::representative_block(next);
-        let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
+        let Some((section, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
         section.set_block(lx, ly, lz, representative);

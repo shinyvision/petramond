@@ -30,7 +30,7 @@ impl Game {
                     // Sampled against the REPLICA, which already applied this
                     // pump's deltas (the break landed before the events).
                     let (sky, blk) =
-                        petramond::rules::breaking::break_light(&self.replica, pos, normal);
+                        petramond::rules::breaking::break_light(self.replica.data(), pos, normal);
                     // A swing in progress on the broken block lapses on the
                     // next advance, which finds no animated block there.
                     self.burst(
@@ -58,7 +58,7 @@ impl Game {
                         continue;
                     };
                     let c = pos.block();
-                    let (sky, blk) = self.replica.dynamic_light_at_world(c.x, c.y, c.z);
+                    let (sky, blk) = self.replica.data().dynamic_light_at_world(c.x, c.y, c.z);
                     self.particles.spawn_burst(
                         spec,
                         crate::particle::BurstEvent {
@@ -150,7 +150,7 @@ impl Game {
                 .advance(dt);
             let centre = WorldPos::block_center(cell);
             if pulse.hit {
-                let block = Block::from_id(self.replica.chunk_block(cell.x, cell.y, cell.z));
+                let block = Block::from_id(self.replica.data().chunk_block(cell.x, cell.y, cell.z));
                 if let Some(sound) = block.sound(petramond_world::block::BlockSoundAction::Dig) {
                     sounds.push(petramond::events::tick::SoundEvent {
                         sound,
@@ -224,7 +224,7 @@ impl Game {
     /// and the torch channel keeps it lit at night.
     pub(super) fn held_item_light(&self) -> (u8, petramond_world::light::BlockLight6) {
         let c = self.cam.pos.block();
-        self.replica.dynamic_light_at_world(c.x, c.y, c.z)
+        self.replica.data().dynamic_light_at_world(c.x, c.y, c.z)
     }
 
     pub(super) fn tick_mesh_budget(&mut self) {

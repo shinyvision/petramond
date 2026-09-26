@@ -64,6 +64,15 @@ if server_refs=$(rg -n 'petramond::server' crates/petramond-client/src \
     failed=1
 fi
 
+# Layering: the world sits below the transport, the server, the event bus,
+# the player, the shared rules and the mod host — they depend on it, never
+# the other way round (value types they share live in `world` or lower,
+# e.g. `world::replication`, `world::session`).
+if world_refs=$(rg -n 'crate::(net|server|events|player|modding|rules)\b' src/world); then
+    printf 'world names a module layered above it:\n%s\n' "$world_refs" >&2
+    failed=1
+fi
+
 if (( failed )); then
     exit 1
 fi

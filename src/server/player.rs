@@ -451,7 +451,7 @@ pub struct SessionTransport {
     pub interest: crate::server::game::EntityInterest,
     /// This client's REQUESTED view distance in chunks (`Join` /
     /// `SetViewDistance`, clamped `4..=64`). Streaming uses
-    /// `min(this, world.render_dist)` — the server's own budget stays the
+    /// `min(this, world.data().render_dist)` — the server's own budget stays the
     /// ceiling, per-connection requests only shrink it.
     pub view_radius: i32,
 }

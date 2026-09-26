@@ -1,3 +1,4 @@
+use petramond_world::world::raycast;
 use super::*;
 use petramond_math::world_pos::WorldPos;
 
@@ -102,14 +103,14 @@ fn raycast_target_selection_cases() {
     for case in cases {
         let dir = case.dir.normalize();
         let result = if case.precise {
-            Player::raycast_blocks_core(case.eye, dir, REACH, &case.blocks, &|e, d, _, block| {
+            raycast::blocks_core(case.eye, dir, REACH, &case.blocks, &|e, d, _, block| {
                 if block != Block::DirtSlab {
                     return None;
                 }
-                interaction::ray_vs_aabb_hit(e, d, Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))
+                raycast::ray_vs_aabb_hit(e, d, Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))
             })
         } else {
-            Player::raycast_blocks_core(case.eye, dir, REACH, &case.blocks, &|_, _, _, _| None)
+            raycast::blocks_core(case.eye, dir, REACH, &case.blocks, &|_, _, _, _| None)
         };
         let got = result.map(|(hit, _)| (hit.block, hit.normal));
         assert_eq!(
@@ -142,11 +143,11 @@ fn raycast_targets_a_walk_through_cover_by_its_visible_box() {
     // the family's own visible box.
     let precise = |e, d, _: IVec3, block: Block| {
         let (mn, mx) = block.visual_aabb()?;
-        interaction::ray_vs_aabb_hit(e, d, Vec3::from(mn), Vec3::from(mx))
+        raycast::ray_vs_aabb_hit(e, d, Vec3::from(mn), Vec3::from(mx))
     };
 
     // Just above the floor, inside the 1/16 cover: a hit on the cover's cell.
-    let (hit, _) = Player::raycast_blocks_core(
+    let (hit, _) = raycast::blocks_core(
         WorldPos::new(0.5, 64.03, 0.5),
         Vec3::new(1.0, 0.0, 0.0),
         REACH,
@@ -158,7 +159,7 @@ fn raycast_targets_a_walk_through_cover_by_its_visible_box() {
 
     // Above the cover's box: the ray passes clean over it.
     assert!(
-        Player::raycast_blocks_core(
+        raycast::blocks_core(
             WorldPos::new(0.5, 64.5, 0.5),
             Vec3::new(1.0, 0.0, 0.0),
             REACH,
@@ -182,7 +183,7 @@ fn raycast_hits_a_plants_selection_box_without_pixel_precision() {
     // z = 0.5 crosses the cell centre where the sparse poppy art may well be
     // transparent — a BOX hitbox must select it anyway.
     let eye = WorldPos::new(0.5, 64.25, 0.5);
-    let (hit, _) = Player::raycast_blocks_core(
+    let (hit, _) = raycast::blocks_core(
         eye,
         Vec3::new(1.0, 0.0, 0.0),
         REACH,
@@ -253,7 +254,7 @@ fn a_multi_cell_model_block_outlines_its_whole_model_from_every_cell() {
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    let mut world = crate::world::World::new(1, 2);
+    let mut world = crate::world::ServerWorld::new(1, 2);
     for (cx, cz) in [(0, 0), (-1, 0), (0, -1), (-1, -1)] {
         world.insert_chunk_for_test(ChunkPos::new(cx, cz), Chunk::new(cx, cz));
     }
@@ -274,7 +275,7 @@ fn a_multi_cell_model_block_outlines_its_whole_model_from_every_cell() {
             cell.y as f64 + 0.5,
             cell.z as f64 + 0.5,
         );
-        let Some((hit, _)) = Player::raycast_with_dist(eye, Vec3::new(1.0, 0.0, 0.0), &world)
+        let Some((hit, _)) = raycast::with_dist(eye, Vec3::new(1.0, 0.0, 0.0), world.data())
         else {
             continue;
         };

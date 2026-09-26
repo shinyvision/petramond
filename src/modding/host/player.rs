@@ -24,7 +24,7 @@ use super::intern_mod_id;
 /// The pose anchor a player is pinned at, read LIVE from the riding registry
 /// (not the start-of-tick roster) so an occupancy check made right after a
 /// same-tick `PlayerPoseSet` already sees the seat taken.
-fn pose_anchor_of(world: &crate::world::World, id: u8) -> Option<[f64; 3]> {
+fn pose_anchor_of(world: &crate::world::ServerWorld, id: u8) -> Option<[f64; 3]> {
     match world.riding().mount_of(id)?.target {
         crate::mob::riding::MountTarget::Anchor(a) => Some(a.pos.to_array()),
         crate::mob::riding::MountTarget::Mob(_) => None,
@@ -707,7 +707,7 @@ mod tests {
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
-    use crate::world::World;
+    use crate::world::ServerWorld;
     use petramond_math::world_pos::WorldPos;
 
     /// The held-data write compares the VALUE it is replacing, not just the
@@ -734,7 +734,7 @@ mod tests {
         };
 
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let held = variant::intern(&stamp(2)).expect("the fixture map interns");
         let active = acting.inventory.active_slot() as usize;
@@ -801,7 +801,7 @@ mod tests {
         };
 
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let tinted = variant::intern(&stamp(2)).expect("the fixture map interns");
         *acting.inventory.slot_mut(0).expect("slot") = Some(ItemStack::new(ItemType::Stick, 2));
@@ -876,7 +876,7 @@ mod tests {
         crate::modding::install_recipes(std::sync::Arc::new(recipes));
 
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
@@ -964,7 +964,7 @@ mod tests {
 
         let mut alpha = ModStoreData::new("alpha", 1);
         let mut beta = ModStoreData::new("beta", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut acting = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
@@ -1071,7 +1071,7 @@ mod tests {
         use crate::player::PlayerId;
 
         let mut data = ModStoreData::new("alpha", 1);
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut first = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut second = Player::new(WorldPos::new(4.0, 80.0, 0.0));
         let mut first_gui = petramond_world::gui_state::empty_gui_state();

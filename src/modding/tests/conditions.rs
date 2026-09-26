@@ -128,7 +128,7 @@ fn doused_grant_inner() {
     let feet = WorldPos::new(8.5, FLOOR_Y as f64, 8.5);
     let mob = world.spawn_mob(crate::mob::Mob::Sheep, feet, 0.0).unwrap();
     let mut store = super::super::host::ModStoreData::new("condfix", 1);
-    let mut grant = |world: &mut World| {
+    let mut grant = |world: &mut ServerWorld| {
         let (mut feed, mut queue) = (TickEvents::default(), PostQueue::default());
         let mut nobody = RosterRefs::empty();
         let mut ctx = SimCtx {
@@ -152,7 +152,7 @@ fn doused_grant_inner() {
         });
         reply
     };
-    let held = |world: &World| {
+    let held = |world: &ServerWorld| {
         world.mobs().instances()[0]
             .exposure()
             .conditions()

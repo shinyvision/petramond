@@ -41,11 +41,15 @@ pub use leaves::LEAVES;
 // generated leaves can never sit outside the distance the decay rule enforces.
 pub use leaves::MAX_LOG_DISTANCE;
 
-/// The world surface a behaviour acts through. `Deref`s to [`WorldData`]
-/// (every read and data-half mutation), plus the few orchestrated mutations a
-/// behaviour may trigger. Implemented by the engine's `World`; behaviours act
-/// on the world through this PUBLIC api only.
-pub trait BehaviorWorld: std::ops::DerefMut<Target = WorldData> {
+/// The world surface a behaviour acts through: read-only [`WorldData`] for
+/// every query, plus the few orchestrated mutations a behaviour may trigger.
+/// Implemented by the engine's `World`; behaviours act on the world through
+/// this PUBLIC api only.
+pub trait BehaviorWorld {
+    /// The deterministic world half, for reads.
+    fn data(&self) -> &WorldData;
+    /// Queue a mod-behavior hook for post-tick dispatch.
+    fn queue_block_hook(&mut self, hook: BlockHook);
     /// Set a block through the full edit path (invalidation, replication).
     fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: Block) -> bool;
     /// Break a block as the simulation (break burst + natural drops).

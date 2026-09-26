@@ -15,7 +15,7 @@
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 
 use super::super::path::{NavSearch, PathParams, SearchPoll, SearchProbes};
@@ -141,7 +141,7 @@ impl Navigator {
         &mut self,
         goal: Option<IVec3>,
         start: IVec3,
-        world: &World,
+        world: &ServerWorld,
         can_repath: bool,
         inputs: &NavInputs,
     ) {
@@ -251,7 +251,7 @@ impl Navigator {
         &mut self,
         start: IVec3,
         goal: IVec3,
-        world: &World,
+        world: &ServerWorld,
         inputs: &NavInputs,
         goal_changed: bool,
     ) {
@@ -283,7 +283,7 @@ impl Navigator {
     }
 
     /// Continue the suspended search with this tick's budget.
-    fn continue_search(&mut self, start: IVec3, world: &World, inputs: &NavInputs) {
+    fn continue_search(&mut self, start: IVec3, world: &ServerWorld, inputs: &NavInputs) {
         let Some(PendingSearch {
             search,
             goal_changed,
@@ -303,7 +303,7 @@ impl Navigator {
         mut search: Box<NavSearch>,
         goal_changed: bool,
         start: IVec3,
-        world: &World,
+        world: &ServerWorld,
         inputs: &NavInputs,
         grant: usize,
         continuation: bool,
@@ -344,7 +344,7 @@ impl Navigator {
     /// `origin`, and hand them to `f`.
     fn with_probes<R>(
         &self,
-        world: &World,
+        world: &ServerWorld,
         inputs: &NavInputs,
         origin: IVec3,
         f: impl FnOnce(PathParams, &Probes<'_>) -> R,

@@ -1,6 +1,6 @@
+use crate::world::ServerWorld;
 use super::*;
 use crate::worker::JobPool;
-use crate::world::WorldRole;
 
 #[test]
 fn moving_an_anchor_admits_near_columns_even_with_a_full_generation_queue() {
@@ -10,14 +10,14 @@ fn moving_an_anchor_admits_near_columns_even_with_a_full_generation_queue() {
         pool.submit(i64::MIN, move || {
             let _ = wait.recv();
         });
-        let mut world = World::new_with_pool(0, 32, WorldRole::ServerHeadless, pool);
+        let mut world = ServerWorld::with_pool(0, 32, pool);
         for _ in 0..4 {
             world.update_load(0, 4, 0);
         }
         let was_full =
-            world.gen.pending.len() == super::super::requests::MAX_PENDING_COLUMN_GEN_JOBS;
+            world.side.gen.pending.len() == super::super::requests::MAX_PENDING_COLUMN_GEN_JOBS;
         let destination = ChunkPos::new(12, 0);
-        let was_missing = !world.gen.pending.contains_key(&destination);
+        let was_missing = !world.side.gen.pending.contains_key(&destination);
         if multiplayer {
             world.update_load_multi(&[
                 LoadAnchor {
@@ -36,16 +36,16 @@ fn moving_an_anchor_admits_near_columns_even_with_a_full_generation_queue() {
         } else {
             world.update_load(destination.cx, 4, destination.cz);
         }
-        let admitted = world.gen.pending.contains_key(&destination);
+        let admitted = world.side.gen.pending.contains_key(&destination);
         let bounded =
-            world.gen.pending.len() <= super::super::requests::MAX_PENDING_COLUMN_GEN_JOBS;
+            world.side.gen.pending.len() <= super::super::requests::MAX_PENDING_COLUMN_GEN_JOBS;
         let departed_released = if multiplayer {
             world.update_load(0, 4, 0);
-            !world.gen.pending.contains_key(&destination)
+            !world.side.gen.pending.contains_key(&destination)
         } else {
             true
         };
-        for job in world.gen.pending.values().flatten() {
+        for job in world.side.gen.pending.values().flatten() {
             job.cancel();
         }
         release.send(()).unwrap();

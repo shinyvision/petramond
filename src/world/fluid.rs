@@ -49,6 +49,7 @@
 //! notifications alone never advance this downward reaction, and neither
 //! fluid's metadata changes the outcome.
 
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_world::block::Block;
 use petramond_world::fluid::FluidDef;
 pub use petramond_world::fluid_math::{
@@ -58,7 +59,6 @@ pub use petramond_world::fluid_math::{
 
 use petramond_math::math::IVec3;
 
-use super::store::World;
 
 mod contact;
 mod sim;
@@ -77,7 +77,7 @@ pub(super) fn fluid_of(block: Block) -> Option<&'static FluidDef> {
 }
 
 impl crate::world::engine_behavior::EngineBlockBehavior for FluidBehavior {
-    fn neighbor_update(&self, world: &mut World, pos: IVec3) {
+    fn neighbor_update(&self, world: &mut ServerWorld, pos: IVec3) {
         if let Some(fluid) = fluid_of(block_at(world, pos)) {
             contact::react(world, pos, fluid);
             if block_at(world, pos) == fluid.block {
@@ -86,7 +86,7 @@ impl crate::world::engine_behavior::EngineBlockBehavior for FluidBehavior {
         }
     }
 
-    fn scheduled_tick(&self, world: &mut World, pos: IVec3) {
+    fn scheduled_tick(&self, world: &mut ServerWorld, pos: IVec3) {
         FluidSim.flow_check(world, pos);
     }
 }
@@ -123,12 +123,12 @@ fn opposite(d: IVec3) -> IVec3 {
 /// touches the world as a block/fluid read-write surface; these two helpers plus
 /// [`World::set_fluid_world`] are that whole surface.
 #[inline]
-fn block_at(world: &World, p: IVec3) -> Block {
-    world.physics_block(p.x, p.y, p.z)
+fn block_at<S: WorldSide>(world: &World<S>, p: IVec3) -> Block {
+    world.data.physics_block(p.x, p.y, p.z)
 }
 #[inline]
-fn meta_at(world: &World, p: IVec3) -> u8 {
-    world.fluid_meta_world(p.x, p.y, p.z)
+fn meta_at<S: WorldSide>(world: &World<S>, p: IVec3) -> u8 {
+    world.data.fluid_meta_world(p.x, p.y, p.z)
 }
 
 /// Fill `pos` with fluid of metadata `meta`, first washing away any fragile
@@ -138,7 +138,7 @@ fn meta_at(world: &World, p: IVec3) -> u8 {
 /// point for fluid ENTERING a cell that was not already fluid, so every flow
 /// path that displaces a fragile block breaks it. The caller has already
 /// checked [`fillable`], so the occupant is air or fragile.
-fn fill_with_fluid(world: &mut World, pos: IVec3, block: Block, meta: u8) {
+fn fill_with_fluid(world: &mut ServerWorld, pos: IVec3, block: Block, meta: u8) {
     let occupant = block_at(world, pos);
     if occupant.is_fragile() {
         world.note_block_destroyed(pos, occupant);

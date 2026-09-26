@@ -1,5 +1,5 @@
 use super::{ContainerMenu, ContainerTarget};
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_world::gui_state::MenuSlot;
 use petramond_world::gui_state::PointerButton;
 use petramond_world::inventory::Inventory;
@@ -18,7 +18,7 @@ impl ContainerMenu {
     /// crafting output keeps dedicated handling.
     pub fn click(
         &mut self,
-        world: &mut World,
+        world: &mut ServerWorld,
         inv: &mut Inventory,
         gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slot: MenuSlot,

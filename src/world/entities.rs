@@ -20,16 +20,16 @@
 //! drives them by temporarily moving the field out so the two borrows stay
 //! disjoint (see `World::tick_item_physics` and friends in this file).
 
+use crate::world::ServerWorld;
 use std::collections::HashMap;
 
 use crate::entity::{DroppedItem, Motion};
 use crate::mob::PlayerAnchor;
-use crate::player::PlayerId;
+use crate::world::session::PlayerId;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::chunk::SectionPos;
 use petramond_world::item::ItemStack;
 
-use super::store::World;
 
 mod influence;
 mod step;
@@ -189,7 +189,7 @@ impl DroppedItems {
     /// borrow of these `DroppedItems` through the same `World`.
     pub fn tick_physics(
         &mut self,
-        world: &World,
+        world: &ServerWorld,
         dt: f32,
         anchors: &[PlayerAnchor],
         changed: &[IVec3],
@@ -218,9 +218,9 @@ impl DroppedItems {
             }
             let after = it.pos.block();
             if before != after {
-                it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
+                it.skylight = world.data.skylight6_at_world(after.x, after.y, after.z);
                 it.blocklight = petramond_world::light::BlockLight6::from_x2(
-                    world.blocklight_rgb_at_world(after.x, after.y, after.z),
+                    world.data.blocklight_rgb_at_world(after.x, after.y, after.z),
                 );
             }
             // Fluid contact reads the real fluid volume at the item's center, so
@@ -229,7 +229,7 @@ impl DroppedItems {
             // gated: an in-flight section reads as "not there yet".
             let immersion = world
                 .block_if_stream_final(after.x, after.y, after.z)
-                .and_then(|_| world.fluid_at_point(it.pos));
+                .and_then(|_| world.data.fluid_at_point(it.pos));
             // Expiring the lifetime removes the item on this tick's lifetime
             // pass, right after physics — the lane a merge uses.
             if immersion.is_some_and(|i| i.fluid.contact.destroys_items) {
@@ -279,13 +279,13 @@ impl DroppedItems {
     /// set (a save is attached), an item over an unloaded chunk is paused (its
     /// timer does not advance) as a safety net for a drop that drifted to the
     /// streamed edge before unload could harvest it.
-    pub fn tick_lifetime(&mut self, world: &World, pause_unloaded: bool) {
+    pub fn tick_lifetime(&mut self, world: &ServerWorld, pause_unloaded: bool) {
         let mut i = self.items.len();
         while i > 0 {
             i -= 1;
             if pause_unloaded {
                 let (cx, cz) = chunk_xz(self.items[i].pos);
-                if !world.chunk_loaded(cx, cz) {
+                if !world.data.chunk_loaded(cx, cz) {
                     continue;
                 }
             }
@@ -579,26 +579,26 @@ impl DroppedItems {
     }
 }
 
-impl World {
+impl ServerWorld {
     /// Add a dropped item to the active set (it must lie in a loaded chunk).
     pub fn spawn_item(&mut self, item: DroppedItem) -> u64 {
-        self.dropped_items.spawn(item)
+        self.side.entities.dropped_items.spawn(item)
     }
 
     /// The active dropped items, for the renderer's per-frame instance mapping.
     pub fn item_entities(&self) -> &[DroppedItem] {
-        self.dropped_items.items()
+        self.side.entities.dropped_items.items()
     }
 
     /// Mutable access to the active item list, for tests that seed or trim it.
     #[cfg(any(test, feature = "test-support"))]
     pub fn item_entities_mut(&mut self) -> &mut Vec<DroppedItem> {
-        self.dropped_items.items_mut()
+        self.side.entities.dropped_items.items_mut()
     }
 
     /// The active dropped items, for reads addressed by stable id.
     pub fn dropped_items(&self) -> &DroppedItems {
-        &self.dropped_items
+        &self.side.entities.dropped_items
     }
 
     /// Mutable access to the active dropped items, so `Game` can borrow-split the
@@ -606,7 +606,7 @@ impl World {
     /// and absorb pickups without aliasing. The pickup-vs-inventory reconciliation
     /// itself stays in `Game`; `World` never sees the player inventory.
     pub fn dropped_items_mut(&mut self) -> &mut DroppedItems {
-        &mut self.dropped_items
+        &mut self.side.entities.dropped_items
     }
 
     /// Per-frame physics for active items (gravity, collision, spin, pickup
@@ -617,16 +617,16 @@ impl World {
     /// the rest of the world: the field is moved out so the
     /// `&mut DroppedItems` and `&World` borrows stay disjoint.
     pub fn tick_item_physics(&mut self, dt: f32, anchors: &[PlayerAnchor]) -> ItemStep {
-        if self.dropped_items.is_empty() {
-            self.dropped_items.change_seq = self.changes_end();
+        if self.side.entities.dropped_items.is_empty() {
+            self.side.entities.dropped_items.change_seq = self.changes_end();
             return ItemStep::default();
         }
-        let (next, changed, overflow) = self.changes_since(self.dropped_items.change_seq);
-        self.dropped_items.change_seq = next;
-        let freeze_unloaded = self.save.is_some();
-        let mut drops = std::mem::take(&mut self.dropped_items);
+        let (next, changed, overflow) = self.changes_since(self.side.entities.dropped_items.change_seq);
+        self.side.entities.dropped_items.change_seq = next;
+        let freeze_unloaded = self.side.save.is_some();
+        let mut drops = std::mem::take(&mut self.side.entities.dropped_items);
         let step = drops.tick_physics(self, dt, anchors, &changed, overflow, freeze_unloaded);
-        self.dropped_items = drops;
+        self.side.entities.dropped_items = drops;
         step
     }
 
@@ -634,13 +634,13 @@ impl World {
     /// past `ITEM_LIFETIME_TICKS`. With a save attached, an item over an unloaded
     /// chunk is paused. See `DroppedItems::tick_lifetime`.
     pub fn tick_item_lifetime(&mut self) {
-        if self.dropped_items.is_empty() {
+        if self.side.entities.dropped_items.is_empty() {
             return;
         }
-        let pause_unloaded = self.save.is_some();
-        let mut drops = std::mem::take(&mut self.dropped_items);
+        let pause_unloaded = self.side.save.is_some();
+        let mut drops = std::mem::take(&mut self.side.entities.dropped_items);
         drops.tick_lifetime(self, pause_unloaded);
-        self.dropped_items = drops;
+        self.side.entities.dropped_items = drops;
     }
 }
 
@@ -661,7 +661,7 @@ fn chunk_xz(pos: petramond_math::world_pos::WorldPos) -> (i32, i32) {
 /// drop simulated against that absent floor reads air, falls through it and
 /// is out of the world a second later — a corpse pile spilled where a player
 /// died on floor the server had not regenerated yet.
-fn terrain_under_drop_is_final(world: &World, pos: petramond_math::world_pos::WorldPos) -> bool {
+fn terrain_under_drop_is_final(world: &ServerWorld, pos: petramond_math::world_pos::WorldPos) -> bool {
     let c = pos.block();
     c.y >= petramond_world::chunk::WORLD_MIN_Y
         && world.physics_cell_final_at(c.x, c.y, c.z)

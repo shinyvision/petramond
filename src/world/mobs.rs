@@ -1,26 +1,26 @@
 //! Mob, riding, and population access on the world: spawn/restore funnels,
 //! per-tick advancement, and the persisted worldgen-herd bookkeeping.
 
+use crate::world::ServerWorld;
 use std::collections::BTreeSet;
 
 use crate::mob::{Mobs, SavedMob};
 use petramond_math::math::Vec3;
 use petramond_world::chunk::ChunkPos;
 
-use super::store::World;
 
-impl World {
+impl ServerWorld {
     /// The active mobs (read-only), for `Game` to forward to the render-side scene
     /// adapter and to ray-test for crosshair targeting.
     #[inline]
     pub fn mobs(&self) -> &Mobs {
-        &self.mobs
+        &self.side.entities.mobs
     }
 
     /// Mutable access to the active mobs.
     #[inline]
     pub fn mobs_mut(&mut self) -> &mut Mobs {
-        &mut self.mobs
+        &mut self.side.entities.mobs
     }
 
     /// Spawn a mob and initialize its cached render light immediately, so a mob
@@ -33,7 +33,7 @@ impl World {
         yaw: f32,
     ) -> Option<u64> {
         let (sky, block) = self.mob_render_light_at(pos);
-        self.mobs.spawn_lit(kind, pos, yaw, sky, block)
+        self.side.entities.mobs.spawn_lit(kind, pos, yaw, sky, block)
     }
 
     /// Atomically spawn a mob only when its complete collision body fits in
@@ -59,12 +59,12 @@ impl World {
         pos: petramond_math::world_pos::WorldPos,
         yaw: f32,
     ) -> bool {
-        let obstacles = self.mobs.solid_obstacles();
+        let obstacles = self.side.entities.mobs.solid_obstacles();
         crate::mob::body_pose_fits(
             pos,
             yaw,
             crate::mob::def(kind).size,
-            &|x, y, z| self.collision_boxes_at(x, y, z),
+            &|x, y, z| self.data.collision_boxes_at(x, y, z),
             &|x, y, z| self.section_stream_final_at(x, y, z),
             &obstacles,
         )
@@ -73,7 +73,7 @@ impl World {
     pub fn restore_mobs(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for mob in mobs {
             let (sky, block) = self.mob_render_light_at(mob.pos);
-            self.mobs.restore_saved_mob_lit(mob, sky, block);
+            self.side.entities.mobs.restore_saved_mob_lit(mob, sky, block);
         }
     }
 
@@ -82,9 +82,9 @@ impl World {
         pos: petramond_math::world_pos::WorldPos,
     ) -> (u8, petramond_world::light::BlockLight6) {
         let c = (pos + Vec3::new(0.0, 0.3, 0.0)).block();
-        let sky = self.skylight6_at_world(c.x, c.y, c.z);
+        let sky = self.data.skylight6_at_world(c.x, c.y, c.z);
         let block = petramond_world::light::BlockLight6::from_x2(
-            self.blocklight_rgb_at_world(c.x, c.y, c.z),
+            self.data.blocklight_rgb_at_world(c.x, c.y, c.z),
         );
         (sky, block)
     }
@@ -93,20 +93,20 @@ impl World {
     /// `mob::noise` for the timing contract). Emitters are the game's own
     /// funnels: player steps, block place/break.
     pub fn push_noise(&mut self, noise: crate::mob::Noise) {
-        self.mobs.push_noise(noise);
+        self.side.entities.mobs.push_noise(noise);
     }
 
     /// The riding registry (see `mob::riding`).
     #[inline]
     pub fn riding(&self) -> &crate::mob::riding::Riding {
-        &self.riding
+        &self.side.entities.riding
     }
 
     /// Mutable riding registry — the server's riding pass and the engine
     /// safety valves (death, leave) detach through this.
     #[inline]
     pub fn riding_mut(&mut self) -> &mut crate::mob::riding::Riding {
-        &mut self.riding
+        &mut self.side.entities.riding
     }
 
     /// Attach `player` to `seat` of the LIVE mob `mob_id`, validating what the
@@ -116,14 +116,14 @@ impl World {
     /// `MobMount` HostCall's engine seam; the riding pass slaves the player to
     /// the seat starting this same tick.
     pub fn try_mount_player(&mut self, player: u8, mob_id: u64, seat: u8) -> bool {
-        let Some(index) = self.mobs.index_of_id(mob_id) else {
+        let Some(index) = self.side.entities.mobs.index_of_id(mob_id) else {
             return false;
         };
-        let mob = &self.mobs.instances()[index];
+        let mob = &self.side.entities.mobs.instances()[index];
         if mob.is_dead() || seat as usize >= crate::mob::def(mob.kind).seats.len() {
             return false;
         }
-        self.riding
+        self.side.entities.riding
             .mount(player, crate::mob::riding::MountTarget::Mob(mob_id), seat)
     }
 
@@ -133,7 +133,7 @@ impl World {
     /// exist and who takes one is the calling mod's policy. Finite-value
     /// validation happens at the host boundary.
     pub fn try_mount_anchor(&mut self, player: u8, anchor: crate::mob::riding::PoseAnchor) -> bool {
-        self.riding
+        self.side.entities.riding
             .mount(player, crate::mob::riding::MountTarget::Anchor(anchor), 0)
     }
 
@@ -150,21 +150,21 @@ impl World {
         // BEFORE the mobs decide: a pen edit must never leave a mob acting on
         // a stale region.
         self.route_probe_budget().refill();
-        let (next, changed, lost) = self.nav_changes_since(self.mobs.change_seq());
-        self.mobs.invalidate_confined_regions(next, &changed, lost);
-        if self.mobs.is_empty() {
+        let (next, changed, lost) = self.nav_changes_since(self.side.entities.mobs.change_seq());
+        self.side.entities.mobs.invalidate_confined_regions(next, &changed, lost);
+        if self.side.entities.mobs.is_empty() {
             // Nobody is listening: drop the tick's noise batch, or a mob-free
             // world would accumulate the player's footsteps forever.
-            self.mobs.discard_noises();
+            self.side.entities.mobs.discard_noises();
             return crate::mob::MobTickEvents::default();
         }
         // One shared reachability-probe budget per tick, spent by whichever
         // mobs (and mod ABI calls) ask — see `mob::nav::REACH_PROBE_TICK_BUDGET`.
         self.reach_budget().refill();
-        let freeze_unloaded = self.save.is_some();
-        let mut mobs = std::mem::take(&mut self.mobs);
+        let freeze_unloaded = self.side.save.is_some();
+        let mut mobs = std::mem::take(&mut self.side.entities.mobs);
         let attacks = mobs.tick(dt, self, anchors, freeze_unloaded);
-        self.mobs = mobs;
+        self.side.entities.mobs = mobs;
         attacks
     }
 
@@ -175,9 +175,9 @@ impl World {
         &mut self,
         player_pos: petramond_math::world_pos::WorldPos,
     ) -> Vec<(u64, crate::mob::Mob, petramond_math::world_pos::WorldPos)> {
-        let mut mobs = std::mem::take(&mut self.mobs);
+        let mut mobs = std::mem::take(&mut self.side.entities.mobs);
         let spawned = mobs.spawn_tick(self, player_pos);
-        self.mobs = mobs;
+        self.side.entities.mobs = mobs;
         spawned
     }
 
@@ -189,27 +189,27 @@ impl World {
         &mut self,
         player_pos: petramond_math::world_pos::WorldPos,
     ) -> Vec<(u64, crate::mob::Mob, petramond_math::world_pos::WorldPos)> {
-        let mut mobs = std::mem::take(&mut self.mobs);
+        let mut mobs = std::mem::take(&mut self.side.entities.mobs);
         let (spawned, populated) = mobs.populate_tick(self, player_pos);
-        self.mobs = mobs;
-        self.gen.populated_columns.extend(populated);
+        self.side.entities.mobs = mobs;
+        self.side.gen.populated_columns.extend(populated);
         spawned
     }
 
     /// Whether `chunk`'s one-time worldgen herd already spawned (this session or
     /// any earlier one — the set is restored from `level.dat` at world open).
     pub fn column_populated(&self, chunk: ChunkPos) -> bool {
-        self.gen.populated_columns.contains(&chunk)
+        self.side.gen.populated_columns.contains(&chunk)
     }
 
     /// The persisted populated-chunk set, for the `level.dat` encoder.
     pub fn populated_columns(&self) -> &BTreeSet<ChunkPos> {
-        &self.gen.populated_columns
+        &self.side.gen.populated_columns
     }
 
     /// Restore the populated-chunk set at world open (before the first tick, so
     /// the first population pass already sees every historical herd).
     pub fn set_populated_columns(&mut self, set: BTreeSet<ChunkPos>) {
-        self.gen.populated_columns = set;
+        self.side.gen.populated_columns = set;
     }
 }

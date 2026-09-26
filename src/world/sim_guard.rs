@@ -31,12 +31,12 @@
 //! on-load fluid kick when that terrain streams in
 //! (`world::stream::queue_loaded_section_fluid_updates`).
 
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE};
 use petramond_world::section::SectionSummary;
 
-use super::store::World;
 
 /// Widest read reach of any gated behaviour, in cells: the fluid sideways slope
 /// search walks up to `1 + SLOPE_FIND_DIST` = 5 cells from the flowing cell;
@@ -67,7 +67,7 @@ enum StreamState {
     Unresolved,
 }
 
-impl World {
+impl<S: WorldSide> World<S> {
     /// Block read for the mod ABI (`GetBlock`/`GetBlocks`): `None` not only
     /// for unloaded sections but also while the section's streamed content is
     /// not final (in-flight gen job or saved overlay). During that window a
@@ -78,19 +78,21 @@ impl World {
     /// exactly right for both truly-unloaded and still-streaming sections.
     pub fn block_if_stream_final(&self, wx: i32, wy: i32, wz: i32) -> Option<Block> {
         let sp = SectionPos::from_world(wx, wy, wz)?;
-        if !self.stream_writable(sp) {
+        if !self.data.stream_writable(sp) {
             return None;
         }
-        self.block_if_loaded(wx, wy, wz)
+        self.data.block_if_loaded(wx, wy, wz)
     }
 
     /// `IsLoaded` for the mod ABI: loaded AND stream-final, matching
     /// [`Self::block_if_stream_final`].
     pub fn section_stream_final_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
         SectionPos::from_world(wx, wy, wz)
-            .is_some_and(|sp| self.sections.contains_key(&sp) && self.stream_writable(sp))
+            .is_some_and(|sp| self.data.sections.contains_key(&sp) && self.data.stream_writable(sp))
     }
+}
 
+impl ServerWorld {
     /// Whether `World::physics_block` is a truthful,
     /// final read at this cell. Unlike [`Self::section_stream_final_at`], this
     /// accepts absent sections whose generated summary proves their uniform
@@ -108,15 +110,15 @@ impl World {
         if !SectionPos::cy_in_range(sp.cy) {
             return StreamState::Final; // outside the world: reads air forever
         }
-        if !quiet && !self.stream_writable(sp) {
+        if !quiet && !self.data.stream_writable(sp) {
             return StreamState::InFlight;
         }
-        if self.sections.contains_key(&sp) {
+        if self.data.sections.contains_key(&sp) {
             return StreamState::Final;
         }
         let cp = sp.chunk_pos();
-        if let Some(col) = self.gen.column_gen.get(&cp) {
-            if self.saved_section_contains(sp) {
+        if let Some(col) = self.side.gen.column_gen.get(&cp) {
+            if self.data.saved_section_contains(sp) {
                 // A saved record will overlay this section when it streams in.
                 return StreamState::InFlight;
             }
@@ -127,12 +129,12 @@ impl World {
                 _ => StreamState::Unresolved,
             };
         }
-        if self.columns.contains_key(&cp) {
+        if self.data.columns.contains_key(&cp) {
             // A column without gen data (a test fixture, or one ensured by a
             // materialize-on-write): its absent sections are genuinely all-air.
             return StreamState::Final;
         }
-        if self.gen.pending.contains_key(&cp) {
+        if self.side.gen.pending.contains_key(&cp) {
             return StreamState::InFlight;
         }
         if self.column_wanted_by_any_target(cp) {
@@ -146,9 +148,9 @@ impl World {
     /// stream-final. `Drop` outranks `Wait`: terrain that is not coming can
     /// only be resolved by a future load event, never by waiting.
     pub(super) fn sim_readiness_at(&self, pos: IVec3) -> SimReadiness {
-        let quiet = self.gen.pending_sections.is_empty()
-            && self.gen.awaited_overlays.is_empty()
-            && self.gen.pending_overlays.is_empty();
+        let quiet = self.side.gen.pending_sections.is_empty()
+            && self.side.gen.awaited_overlays.is_empty()
+            && self.side.gen.pending_overlays.is_empty();
         let s = SECTION_SIZE as i32;
         let (x0, x1) = (
             (pos.x - SIM_READ_REACH).div_euclid(s),
@@ -184,15 +186,15 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use super::super::store::World;
+    use crate::world::ServerWorld;
     use crate::mob::Mob;
-    use crate::world::testutil::flat_world;
+    use crate::world::testutil::flat_server_world;
     use petramond_math::math::IVec3;
     use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE};
 
-    fn run_ticks(w: &mut World, n: u32) {
+    fn run_ticks(w: &mut ServerWorld, n: u32) {
         let recipes = petramond_world::crafting::Recipes::default();
         for _ in 0..n {
             w.game_tick(&recipes);
@@ -201,7 +203,7 @@ mod tests {
 
     #[test]
     fn water_waits_for_an_in_flight_neighbor_section_then_flows() {
-        let mut w = flat_world();
+        let mut w = flat_server_world();
         // The receiving section (chunk (1,0), y 64..79) has an in-flight gen
         // job: flow at the seam must hold.
         let in_flight = SectionPos::new(1, 4, 0);
@@ -210,7 +212,7 @@ mod tests {
         w.set_block_world(15, 65, 8, Block::Water);
         run_ticks(&mut w, 60);
         assert_eq!(
-            w.chunk_block(16, 65, 8),
+            w.data.chunk_block(16, 65, 8),
             Block::Air.id(),
             "water crossed a seam into an in-flight section"
         );
@@ -219,7 +221,7 @@ mod tests {
         w.remove_pending_section(in_flight);
         run_ticks(&mut w, 60);
         assert_eq!(
-            w.chunk_block(16, 65, 8),
+            w.data.chunk_block(16, 65, 8),
             Block::Water.id(),
             "flow never resumed after the in-flight section resolved"
         );
@@ -227,39 +229,39 @@ mod tests {
 
     #[test]
     fn writes_into_an_in_flight_section_are_refused() {
-        let mut w = flat_world();
+        let mut w = flat_server_world();
 
         // Loaded section with an in-flight gen result: both write paths refuse.
         let loaded = SectionPos::new(1, 4, 0);
         w.insert_pending_section(loaded);
         assert!(!w.set_block_world(20, 70, 8, Block::Stone));
         assert!(!w.set_fluid_world(IVec3::new(20, 70, 8), Block::Water, 0));
-        assert_eq!(w.chunk_block(20, 70, 8), Block::Air.id());
+        assert_eq!(w.data.chunk_block(20, 70, 8), Block::Air.id());
 
         // Absent section with an in-flight job: the write must not materialize it.
         let absent = SectionPos::new(1, 6, 0);
         w.insert_pending_section(absent);
         assert!(!w.set_block_world(20, 100, 8, Block::Stone));
         assert!(
-            !w.sections.contains_key(&absent),
+            !w.data.sections.contains_key(&absent),
             "write materialized an in-flight section"
         );
 
         // An awaited saved overlay blocks writes the same way, and unblocks.
         let awaited = SectionPos::new(0, 4, 0);
-        w.gen.awaited_overlays.insert(awaited);
+        w.side.gen.awaited_overlays.insert(awaited);
         w.note_stream_nonfinal(awaited);
         assert!(!w.set_block_world(8, 70, 8, Block::Stone));
-        w.gen.awaited_overlays.remove(&awaited);
+        w.side.gen.awaited_overlays.remove(&awaited);
         w.settle_stream_nonfinal(awaited);
         assert!(w.set_block_world(8, 70, 8, Block::Stone));
     }
 
     #[test]
     fn checked_mob_spawn_requires_loaded_stream_final_body_cells() {
-        let mut w = World::new(0, 0);
+        let mut w = ServerWorld::new(0, 0);
         let column = ChunkPos::new(0, 0);
-        w.ensure_column(column);
+        w.data.ensure_column(column);
         let pos = WorldPos::new(8.5, 64.0, 8.5);
 
         assert!(w.physics_cell_final_at(8, 64, 8));
@@ -271,30 +273,30 @@ mod tests {
 
         w.insert_empty_column_for_test(column);
         let section = SectionPos::new(0, 4, 0);
-        w.gen.awaited_overlays.insert(section);
+        w.side.gen.awaited_overlays.insert(section);
         w.note_stream_nonfinal(section);
         assert!(
             w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_none(),
             "a loaded base with an in-flight save overlay is not final"
         );
-        w.gen.awaited_overlays.remove(&section);
+        w.side.gen.awaited_overlays.remove(&section);
         w.settle_stream_nonfinal(section);
         assert!(w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_some());
     }
 
     #[test]
     fn harvest_skips_a_section_whose_overlay_is_in_flight() {
-        let mut w = flat_world();
+        let mut w = flat_server_world();
         let sp = SectionPos::new(0, 4, 0);
         assert!(w.set_block_world(1, 70, 1, Block::Stone)); // marks it modified
 
-        w.gen.awaited_overlays.insert(sp);
+        w.side.gen.awaited_overlays.insert(sp);
         w.note_stream_nonfinal(sp);
         assert!(
             w.harvest_section_snapshot(sp).is_none(),
             "persisting a base whose overlay is in flight would shadow the on-disk record"
         );
-        w.gen.awaited_overlays.remove(&sp);
+        w.side.gen.awaited_overlays.remove(&sp);
         w.settle_stream_nonfinal(sp);
         assert!(w.harvest_section_snapshot(sp).is_some());
     }
@@ -306,13 +308,13 @@ mod tests {
         // block) is still landing from disk. A mod read there must say
         // "unloaded" (state frozen), never show the generated base — the oven
         // pruned itself from its world-KV list off exactly that lie.
-        let mut w = flat_world();
+        let mut w = flat_server_world();
         let sp = SectionPos::new(0, 4, 0);
 
         assert_eq!(w.block_if_stream_final(8, 64, 8), Some(Block::Stone));
         assert!(w.section_stream_final_at(8, 64, 8));
 
-        w.gen.awaited_overlays.insert(sp);
+        w.side.gen.awaited_overlays.insert(sp);
         w.note_stream_nonfinal(sp);
         assert_eq!(
             w.block_if_stream_final(8, 64, 8),
@@ -325,7 +327,7 @@ mod tests {
             "a cell-KV write raced the in-flight overlay"
         );
 
-        w.gen.awaited_overlays.remove(&sp);
+        w.side.gen.awaited_overlays.remove(&sp);
         w.settle_stream_nonfinal(sp);
         assert_eq!(w.block_if_stream_final(8, 64, 8), Some(Block::Stone));
         assert!(w.cell_kv_set(8, 64, 8, "kitchen:state".into(), vec![1]));
@@ -339,7 +341,7 @@ mod tests {
         // exactly on the section seam, which the per-section interior scan can
         // never see from either side.
         let build = || {
-            let mut w = World::new(0, 1);
+            let mut w = ServerWorld::new(0, 1);
             let mut a = Chunk::new(0, 0);
             let mut b = Chunk::new(1, 0);
             for z in 0..CHUNK_SZ {
@@ -371,7 +373,7 @@ mod tests {
         w.queue_loaded_section_fluid_updates(&[SectionPos::new(1, 4, 0)]);
         run_ticks(&mut w, 30);
         assert_eq!(
-            w.chunk_block(16, 65, 8),
+            w.data.chunk_block(16, 65, 8),
             Block::Water.id(),
             "air-side kick missed cross-seam water"
         );
@@ -381,7 +383,7 @@ mod tests {
         w.queue_loaded_section_fluid_updates(&[SectionPos::new(0, 4, 0)]);
         run_ticks(&mut w, 30);
         assert_eq!(
-            w.chunk_block(16, 65, 8),
+            w.data.chunk_block(16, 65, 8),
             Block::Water.id(),
             "water-side kick missed cross-seam air"
         );
@@ -394,7 +396,7 @@ mod tests {
         // air-adjacency kick could not see this water (air above never starts
         // flow) — the sheet froze at flowing levels forever. The kick must
         // re-arm from the flow METADATA so draining resumes.
-        let mut w = World::new(0, 1);
+        let mut w = ServerWorld::new(0, 1);
         let mut c = Chunk::new(0, 0);
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
@@ -415,7 +417,7 @@ mod tests {
         w.queue_loaded_section_fluid_updates(&[SectionPos::new(0, 4, 0)]);
         run_ticks(&mut w, 200);
         assert_eq!(
-            w.chunk_block(7, 65, 7),
+            w.data.chunk_block(7, 65, 7),
             Block::Air.id(),
             "reloaded sourceless flow in a walled basin must drain, not freeze"
         );
@@ -427,7 +429,7 @@ mod tests {
         // an absent section — including checks 2..=5 cells inside a section
         // that never unloaded. When the absent section lands, the kick must
         // re-arm the kept side that deep; the 1-cell inflow plane cannot.
-        let mut w = World::new(0, 1);
+        let mut w = ServerWorld::new(0, 1);
         let mut kept = petramond_world::section::Section::new(0, 4, 0);
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
@@ -449,7 +451,7 @@ mod tests {
         );
         run_ticks(&mut w, 30);
         assert_eq!(
-            w.chunk_block(12, 65, 8),
+            w.data.chunk_block(12, 65, 8),
             Block::Air.id(),
             "re-armed sourceless flow dries"
         );

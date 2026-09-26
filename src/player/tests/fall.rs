@@ -55,11 +55,11 @@ fn a_fluid_cancels_the_fall() {
             }
         }
     }
-    let mut world = crate::world::World::new(0, 1);
+    let mut world = crate::world::ServerWorld::new(0, 1);
     world.insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), chunk);
     let mut pl = p(WorldPos::new(8.5, 70.0, 8.5));
     for _ in 0..1200 {
-        pl.update(1.0 / 60.0, &world, Input::default());
+        pl.update(1.0 / 60.0, world.data(), Input::default());
     }
     let dist = pl.take_fall_distance();
     assert!(
