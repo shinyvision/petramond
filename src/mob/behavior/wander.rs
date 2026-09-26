@@ -410,7 +410,7 @@ fn body_occupied(ctx: &AiCtx, dest: IVec3) -> bool {
     };
     let reach = ctx.half_width + ctx.mobs.max_half_extent();
     ctx.mobs.near(center, reach).any(|(i, m)| {
-        if i == ctx.mob_index {
+        if Some(i) == ctx.mob_index {
             return false;
         }
         let s = super::super::def(m.kind).size;
@@ -444,7 +444,7 @@ fn companion_within(ctx: &AiCtx, rule: WanderCohesion, pos: WorldPos, radius: i3
     let r = radius.max(0) as f32;
     let r2 = r * r;
     ctx.mobs.near(pos, r).any(|(i, mob)| {
-        if i == ctx.mob_index || mob.kind != rule.companion || mob.confined() {
+        if Some(i) == ctx.mob_index || mob.kind != rule.companion || mob.confined() {
             return false;
         }
         let d = mob.pos - pos;
@@ -587,7 +587,7 @@ mod tests {
         c.head_height = 1.0;
         c.half_width = 0.45;
         c.head = 2;
-        c.mob_index = mob_index;
+        c.mob_index = Some(mob_index);
         c.mobs = mobs;
         c
     }

@@ -253,7 +253,7 @@ impl ServerGame {
         {
             return false;
         }
-        let Some(idx) =
+        let Some(mob_id) =
             super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], target)
         else {
             return false;
@@ -264,7 +264,7 @@ impl ServerGame {
             pos,
             skylight,
             blocklight,
-        }) = self.world.mobs_mut().shear_mob(idx)
+        }) = self.world.mobs_mut().shear_mob(mob_id)
         else {
             return false;
         };

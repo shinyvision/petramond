@@ -476,13 +476,10 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     game.commit_replication_window_for_test();
     assert!(game.entities.mobs().iter().any(|e| e.curr.id == id));
 
-    let index = game
-        .server
-        .world()
-        .mobs()
-        .index_of_id(id)
-        .expect("still alive server-side");
-    assert!(game.server.world_mut().mobs_mut().remove(index));
+    assert!(
+        game.server.world_mut().mobs_mut().remove(id),
+        "still alive server-side"
+    );
     let batch = pump_one_tick(&mut game);
     game.apply_tick_update(batch);
     game.commit_replication_window_for_test();

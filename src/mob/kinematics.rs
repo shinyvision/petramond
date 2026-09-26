@@ -100,10 +100,10 @@ impl Instance {
     /// Latch a mod's pose for this tick (see [`KinematicPose`] and the
     /// consumption in `Instance::tick`). Refused on a dead mob.
     pub(super) fn set_kinematic(&mut self, pose: KinematicPose) -> bool {
-        if self.death.is_dead() {
+        if self.combat.death.is_dead() {
             return false;
         }
-        self.kinematic = Some(pose);
+        self.motion.kinematic = Some(pose);
         true
     }
 
@@ -117,18 +117,18 @@ impl Instance {
     /// here. Knockback is discarded — a shove on a constrained body is the
     /// constraining mod's rule to apply (it sees the hit's origin).
     pub(super) fn place_kinematic(&mut self, dt: f32, pose: KinematicPose) {
-        self.vel = (pose.pos - self.pos) / dt.max(1e-6);
+        self.motion.vel = (pose.pos - self.pos) / dt.max(1e-6);
         self.pos = pose.pos;
         self.yaw = pose.yaw;
         self.tilt = pose.tilt;
-        self.on_ground = false;
-        self.fall_peak_y = pose.pos.y;
+        self.motion.on_ground = false;
+        self.motion.fall_peak_y = pose.pos.y;
         self.moving = false;
-        self.air_walk = false;
-        self.walk_launch = false;
-        self.knockback = Vec3::ZERO;
-        self.stagger_timer = 0.0;
-        self.push = Vec3::ZERO;
+        self.motion.air_walk = false;
+        self.motion.walk_launch = false;
+        self.motion.knockback = Vec3::ZERO;
+        self.combat.stagger_timer = 0.0;
+        self.motion.push = Vec3::ZERO;
     }
 
     /// A body the engine moves itself is level; one released from a
@@ -138,12 +138,12 @@ impl Instance {
     }
 
     pub(super) fn take_fall_distance(&mut self) -> Option<f32> {
-        let distance = std::mem::replace(&mut self.fall_distance, 0.0);
+        let distance = std::mem::replace(&mut self.motion.fall_distance, 0.0);
         (distance > 0.0).then_some(distance)
     }
 
     pub(super) fn take_splash_drop(&mut self) -> Option<f32> {
-        let drop = std::mem::replace(&mut self.splash_drop, 0.0);
+        let drop = std::mem::replace(&mut self.motion.splash_drop, 0.0);
         (drop > 0.0).then_some(drop)
     }
 
@@ -151,10 +151,10 @@ impl Instance {
     /// the consumption in [`integrate_locomotion`](Self::integrate_locomotion)).
     /// Refused on a dead mob.
     pub(super) fn set_drive(&mut self, intent: DriveIntent) -> bool {
-        if self.death.is_dead() {
+        if self.combat.death.is_dead() {
             return false;
         }
-        self.drive = Some(intent);
+        self.motion.drive = Some(intent);
         true
     }
 
@@ -163,27 +163,27 @@ impl Instance {
     /// locomotion step that normally consumes them.
     #[inline]
     pub(super) fn clear_drive(&mut self) {
-        self.drive = None;
-        self.kinematic = None;
+        self.motion.drive = None;
+        self.motion.kinematic = None;
     }
 
     /// Whether a mod is steering or posing this body this tick (a pending
     /// drive or kinematic pose) — such a body keeps the full tick whatever
     /// its simulation distance.
     pub(super) fn externally_driven(&self) -> bool {
-        self.drive.is_some() || self.kinematic.is_some()
+        self.motion.drive.is_some() || self.motion.kinematic.is_some()
     }
 
     #[cfg(test)]
     pub(super) fn drive_pending(&self) -> bool {
-        self.drive.is_some()
+        self.motion.drive.is_some()
     }
 
     /// Current velocity (m/s) — read-only; mods steer through
     /// `set_drive`, never by writing velocity directly.
     #[inline]
     pub fn vel(&self) -> Vec3 {
-        self.vel
+        self.motion.vel
     }
 
     /// Commit the collision-free prefix selected for a solid body's proposed
@@ -197,14 +197,14 @@ impl Instance {
         let proposed_delta = motion.end_pos - motion.start_pos;
         (self.pos, self.yaw) = motion.pose_at(fraction);
         if proposed_delta.x.abs() > 1e-6 {
-            self.vel.x = 0.0;
+            self.motion.vel.x = 0.0;
         }
         if proposed_delta.z.abs() > 1e-6 {
-            self.vel.z = 0.0;
+            self.motion.vel.z = 0.0;
         }
         if proposed_delta.y.abs() > 1e-6 {
-            self.vel.y = 0.0;
-            self.on_ground = false;
+            self.motion.vel.y = 0.0;
+            self.motion.on_ground = false;
         }
     }
 
@@ -212,8 +212,8 @@ impl Instance {
     /// committed. The final-pose support query lives in the manager, where all
     /// peer transforms are available simultaneously.
     pub(super) fn land_on_solid_peer(&mut self) {
-        self.vel.y = 0.0;
-        self.on_ground = true;
+        self.motion.vel.y = 0.0;
+        self.motion.on_ground = true;
     }
 
     /// Set this tick's soft entity-push velocity (the sum of the pushes from every
@@ -221,7 +221,7 @@ impl Instance {
     /// [`integrate`](Self::integrate), on top of locomotion, moving through the normal
     /// collision-resolved step so it can't push the mob through terrain.
     pub(super) fn set_push(&mut self, push: Vec3) {
-        self.push = push;
+        self.motion.push = push;
     }
 
     /// Update fall bookkeeping after a tick's movement has resolved `on_ground` and
@@ -231,21 +231,21 @@ impl Instance {
             // The un-latched drop at the first wet tick is the fall INTO the
             // fluid; while swimming the per-tick re-anchor keeps it near zero
             // (the splash threshold filters the bobbing).
-            let drop = (self.fall_peak_y - self.pos.y) as f32;
+            let drop = (self.motion.fall_peak_y - self.pos.y) as f32;
             if sample.fluid.splash.is_some() && drop > 0.0 {
-                self.splash_drop = self.splash_drop.max(drop);
+                self.motion.splash_drop = self.motion.splash_drop.max(drop);
             }
-            self.fall_peak_y = self.pos.y;
-        } else if self.on_ground {
+            self.motion.fall_peak_y = self.pos.y;
+        } else if self.motion.on_ground {
             if !was_on_ground {
-                let dist = (self.fall_peak_y - self.pos.y) as f32;
-                if dist > self.fall_distance {
-                    self.fall_distance = dist;
+                let dist = (self.motion.fall_peak_y - self.pos.y) as f32;
+                if dist > self.motion.fall_distance {
+                    self.motion.fall_distance = dist;
                 }
             }
-            self.fall_peak_y = self.pos.y;
+            self.motion.fall_peak_y = self.pos.y;
         } else {
-            self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
+            self.motion.fall_peak_y = self.motion.fall_peak_y.max(self.pos.y);
         }
     }
 
@@ -264,16 +264,16 @@ impl Instance {
         loco: Locomotion,
         env: &Surroundings<'_>,
     ) -> [f32; 3] {
-        let was_grounded = self.on_ground;
-        let incoming = self.vel;
-        let nav_jumped = loco.jump && self.on_ground && env.immersion.is_none();
+        let was_grounded = self.motion.on_ground;
+        let incoming = self.motion.vel;
+        let nav_jumped = loco.jump && self.motion.on_ground && env.immersion.is_none();
         if nav_jumped {
-            self.vel.y = d.jump_speed;
-            self.on_ground = false;
+            self.motion.vel.y = d.jump_speed;
+            self.motion.on_ground = false;
         }
         // The drive is consumed even when stagger owns the tick — like the
         // wish, it is a this-tick intent, never a queue.
-        let drive = self.drive.take();
+        let drive = self.motion.drive.take();
         let requested_yaw = self.steer_horizontal(dt, d, loco, drive, nav_jumped);
         // The intent's premise: a `while_walking` drive was decided from
         // LAST tick's state on the promise the mob is walking — if the walk
@@ -282,15 +282,15 @@ impl Instance {
         // exactly where the mob came to rest (the "one hop too often"
         // playtest report).
         let premise_holds = drive.is_none_or(|dr| !dr.while_walking || self.moving);
-        let drive_steers = premise_holds && loco.can_steer && self.stagger_timer <= 0.0;
+        let drive_steers = premise_holds && loco.can_steer && self.combat.stagger_timer <= 0.0;
         if !nav_jumped && drive_steers {
             self.drive_vertical(drive);
         }
         // An upward launch that starts from a walking gait re-phases the walk
         // clip forward onto a cycle boundary (see `apply_expression`), so an
         // authored takeoff clip stays locked to the physical arc.
-        if self.moving && !self.on_ground && self.vel.y > 0.0 && was_grounded {
-            self.walk_launch = true;
+        if self.moving && !self.motion.on_ground && self.motion.vel.y > 0.0 && was_grounded {
+            self.motion.walk_launch = true;
         }
         // A drive's absolute yaw obeys the same gates as its velocities: no
         // steering while unsupported, the knockback stagger owns its tick,
@@ -307,13 +307,13 @@ impl Instance {
                 self.id,
             );
         }
-        if d.edge_guard && self.on_ground && !nav_jumped && env.immersion.is_none() {
+        if d.edge_guard && self.motion.on_ground && !nav_jumped && env.immersion.is_none() {
             self.guard_edge(dt, d, env);
         }
-        let carried = (self.stagger_timer <= 0.0 && !loco.can_steer && env.immersion.is_none())
-            .then_some([self.vel.x, self.vel.z]);
+        let carried = (self.combat.stagger_timer <= 0.0 && !loco.can_steer && env.immersion.is_none())
+            .then_some([self.motion.vel.x, self.motion.vel.z]);
         // The shore climb follows where locomotion (a walk or a drive) heads.
-        let heading = Vec3::new(self.vel.x, 0.0, self.vel.z);
+        let heading = Vec3::new(self.motion.vel.x, 0.0, self.motion.vel.z);
         self.resist_and_push(dt, incoming, env);
         let shore = self.vertical_velocity(dt, d, loco.can_steer, heading, env);
         self.resolve_motion(dt, d, shore, carried, env)
@@ -340,7 +340,7 @@ impl Instance {
             self.pos.y + f64::from(d.size.height),
             self.pos.z + h,
         ];
-        let (dx, dz) = (self.vel.x * dt, self.vel.z * dt);
+        let (dx, dz) = (self.motion.vel.x * dt, self.motion.vel.z * dt);
         let (cx, cz) = collision::clamp_to_supported_dyn(
             min,
             max,
@@ -352,10 +352,10 @@ impl Instance {
             self.id,
         );
         if cx != dx {
-            self.vel.x = cx / dt;
+            self.motion.vel.x = cx / dt;
         }
         if cz != dz {
-            self.vel.z = cz / dt;
+            self.motion.vel.z = cz / dt;
         }
     }
 
@@ -371,11 +371,11 @@ impl Instance {
         drive: Option<DriveIntent>,
         nav_jumped: bool,
     ) -> Option<f32> {
-        self.stepping = false;
-        if self.stagger_timer > 0.0 {
-            self.vel.x = self.knockback.x;
-            self.vel.z = self.knockback.z;
-            self.knockback *= KNOCKBACK_DAMP;
+        self.motion.stepping = false;
+        if self.combat.stagger_timer > 0.0 {
+            self.motion.vel.x = self.motion.knockback.x;
+            self.motion.vel.z = self.motion.knockback.z;
+            self.motion.knockback *= KNOCKBACK_DAMP;
             self.moving = false;
         } else if let Some([vx, vz]) = drive.and_then(|dr| dr.horizontal) {
             // A horizontally-driven mob is deliberately not `moving`: the
@@ -386,21 +386,21 @@ impl Instance {
             // Long-body yaw is clamped by the same segmented geometry that
             // resolves its translation.
             if loco.can_steer {
-                self.vel.x = vx;
-                self.vel.z = vz;
+                self.motion.vel.x = vx;
+                self.motion.vel.z = vz;
             }
             let speed = vx.hypot(vz);
             self.moving =
                 drive.is_some_and(|dr| dr.gait) && loco.can_steer && speed > GAIT_MIN_SPEED;
-            self.stepping = self.moving;
+            self.motion.stepping = self.moving;
             if self.moving {
-                self.gait_pace = (speed / d.walk_speed.max(1e-3)).clamp(GAIT_MIN_PACE, 1.0);
+                self.motion.gait_pace = (speed / d.walk_speed.max(1e-3)).clamp(GAIT_MIN_PACE, 1.0);
             }
         } else if loco.can_steer {
             let wish = loco.wish;
             self.moving = wish.length_squared() > 1e-6;
-            self.gait_pace = 1.0;
-            let mut speed = d.walk_speed * self.walk_speed_scale;
+            self.motion.gait_pace = 1.0;
+            let mut speed = d.walk_speed * self.motion.walk_speed_scale;
             let mut requested_yaw = None;
             if self.moving {
                 let target = heading_yaw(wish);
@@ -416,8 +416,8 @@ impl Instance {
                     speed *= facing_speed_factor(wrap_angle(target - turned));
                 }
             }
-            self.vel.x = wish.x * speed;
-            self.vel.z = wish.z * speed;
+            self.motion.vel.x = wish.x * speed;
+            self.motion.vel.z = wish.z * speed;
             return requested_yaw;
         } else {
             // Unsteered mid-air (a fall's descent) a mob whose airborne arc
@@ -426,9 +426,9 @@ impl Instance {
             // ballistic arc instead of snapping to the rest pose at the
             // apex (a mod-authored hop, a navigation jump, a walked-off
             // ledge alike).
-            self.moving = self.air_walk
-                && !self.on_ground
-                && self.vel.x * self.vel.x + self.vel.z * self.vel.z > 1e-6;
+            self.moving = self.motion.air_walk
+                && !self.motion.on_ground
+                && self.motion.vel.x * self.motion.vel.x + self.motion.vel.z * self.motion.vel.z > 1e-6;
         }
         None
     }
@@ -440,9 +440,9 @@ impl Instance {
     /// the one-block ledge the route depends on.
     fn drive_vertical(&mut self, drive: Option<DriveIntent>) {
         if let Some(vy) = drive.and_then(|dr| dr.vertical) {
-            self.vel.y = vy;
-            if vy > 0.0 && self.on_ground {
-                self.on_ground = false;
+            self.motion.vel.y = vy;
+            if vy > 0.0 && self.motion.on_ground {
+                self.motion.on_ground = false;
             }
         }
     }
@@ -451,9 +451,9 @@ impl Instance {
     /// fluid current.
     fn resist_and_push(&mut self, dt: f32, incoming: Vec3, env: &Surroundings<'_>) {
         if let Some(sample) = env.immersion {
-            let desired = self.vel;
-            let incoming = Vec3::new(incoming.x, self.vel.y, incoming.z);
-            self.vel = sample
+            let desired = self.motion.vel;
+            let incoming = Vec3::new(incoming.x, self.motion.vel.y, incoming.z);
+            self.motion.vel = sample
                 .fluid
                 .motion
                 .horizontal_velocity(incoming, desired, dt);
@@ -462,10 +462,10 @@ impl Instance {
         // layered on top of locomotion (or knockback) so a crowded mob drifts apart
         // smoothly. Consumed each tick — the push pass re-derives it from the live
         // overlap — and left out of `moving`, so being shoved doesn't read as walking.
-        self.vel.x += self.push.x;
-        self.vel.z += self.push.z;
-        self.push = Vec3::ZERO;
-        self.vel = env.current.apply(self.vel, dt);
+        self.motion.vel.x += self.motion.push.x;
+        self.motion.vel.z += self.motion.push.z;
+        self.motion.push = Vec3::ZERO;
+        self.motion.vel = env.current.apply(self.motion.vel, dt);
     }
 
     /// Buoyancy or gravity, and the shore climb that overrides buoyancy.
@@ -480,14 +480,14 @@ impl Instance {
         env: &Surroundings<'_>,
     ) -> Option<ShoreClimb> {
         let Some(sample) = env.immersion else {
-            self.vel.y += GRAVITY * d.gravity_scale * dt;
+            self.motion.vel.y += GRAVITY * d.gravity_scale * dt;
             return None;
         };
-        let shore = (d.buoyancy == Buoyancy::Swim && can_steer && self.stagger_timer <= 0.0)
+        let shore = (d.buoyancy == Buoyancy::Swim && can_steer && self.combat.stagger_timer <= 0.0)
             .then(|| {
                 Swimmer {
                     pos: self.pos,
-                    vel_y: self.vel.y,
+                    vel_y: self.motion.vel.y,
                     half_width: d.size.half_width,
                     height: d.size.height,
                     gravity: -GRAVITY * d.gravity_scale,
@@ -497,10 +497,10 @@ impl Instance {
             })
             .flatten();
         if let Some(ShoreClimb::Launch(speed)) = shore {
-            self.vel.y = self.vel.y.max(speed);
+            self.motion.vel.y = self.motion.vel.y.max(speed);
         } else {
-            self.vel.y =
-                sample.vertical_velocity(self.vel.y, self.pos.y as f32, d.buoyancy, true, dt);
+            self.motion.vel.y =
+                sample.vertical_velocity(self.motion.vel.y, self.pos.y as f32, d.buoyancy, true, dt);
         }
         shore
     }
@@ -530,11 +530,11 @@ impl Instance {
             self.pos,
             self.yaw,
             d.size,
-            self.vel.to_array(),
+            self.motion.vel.to_array(),
             dt,
             step,
             matches!(shore, Some(ShoreClimb::Step(_))),
-            &mut self.escape,
+            &mut self.motion.escape,
             &env.boxes,
             env.obstacles,
             env.escape_obstacles,
@@ -542,33 +542,33 @@ impl Instance {
         );
         self.pos += Vec3::from(moved);
         if hit[0] {
-            self.vel.x = 0.0;
+            self.motion.vel.x = 0.0;
         }
         if hit[1] {
-            self.vel.y = 0.0;
+            self.motion.vel.y = 0.0;
         }
         if hit[2] {
-            self.vel.z = 0.0;
+            self.motion.vel.z = 0.0;
         }
         if let Some([x, z]) = carried {
             if !hit[0] {
-                self.vel.x = x;
+                self.motion.vel.x = x;
             }
             if !hit[2] {
-                self.vel.z = z;
+                self.motion.vel.z = z;
             }
         }
-        self.on_ground = grounded;
-        if grounded && self.vel.y < 0.0 {
-            self.vel.y = 0.0;
+        self.motion.on_ground = grounded;
+        if grounded && self.motion.vel.y < 0.0 {
+            self.motion.vel.y = 0.0;
         }
         // The air-walk latch: an airborne phase counts as a WALK while it
         // began from (or continues) walking locomotion and horizontal motion
         // carries — read by the unsteered branch of `steer_horizontal` so the
         // gait expression survives the whole ballistic arc. Landing clears it.
-        self.air_walk = !grounded
+        self.motion.air_walk = !grounded
             && (self.moving
-                || (self.air_walk && self.vel.x * self.vel.x + self.vel.z * self.vel.z > 1e-6));
+                || (self.motion.air_walk && self.motion.vel.x * self.motion.vel.x + self.motion.vel.z * self.motion.vel.z > 1e-6));
         healed
     }
 
@@ -595,7 +595,7 @@ impl Instance {
     /// engine's own locomotion gates jumps on, exposed to the ABI snapshot
     /// so a mod gait policy can decide a vertical-drive launch.
     pub fn on_ground(&self) -> bool {
-        self.on_ground
+        self.motion.on_ground
     }
 
     /// Whether the body is ENTOMBED: inside collision geometry with nowhere
@@ -603,7 +603,7 @@ impl Instance {
     /// it and holds the body still; what happens to a buried mob is a mod's
     /// decision.
     pub fn entombed(&self) -> bool {
-        self.escape.entombed()
+        self.motion.escape.entombed()
     }
 }
 

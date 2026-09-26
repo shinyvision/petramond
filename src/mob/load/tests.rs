@@ -304,6 +304,41 @@ fn empty_damage_feedback_row_resolves_to_default_components() {
 }
 
 #[test]
+fn step_noise_defaults_on_and_a_row_can_silence_it() {
+    let row = |name: &str, extra: &str| {
+        format!(
+            r#"{{
+            "mob": "{name}", "key": "{name}", "model": "models/owl.bbmodel",
+            "scale": 0.25, "size": {{"half_width": 0.3, "height": 1.0}}, "tags": {{"petramond:health": 4.0}},
+            "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
+            "category": "passive", "cap": 8,
+            "spawn": {{"biomes": [], "ground": []}},
+            "spawn_group": {{"min": 1, "max": 1}},
+            "wander": {{"chance_per_tick": 0.0125, "radius": 8}},
+            "habitat": {{"avoid": [], "prefer": []}},
+            "avoid_fluids": false,{extra}
+            "brain": []
+        }}"#
+        )
+    };
+    let layer = format!(
+        r#"{{"mobs": [{}, {}]}}"#,
+        row("mymod:walker", ""),
+        row("mymod:cart", r#" "step_noise": false,"#)
+    );
+    let defs = parse_layers(&[&base(), &layer]).expect("rows load").defs;
+    let noisy = |name: &str| defs.iter().find(|d| d.name == name).unwrap().step_noise;
+    assert!(noisy("mymod:walker"), "an unspecified row is heard walking");
+    assert!(!noisy("mymod:cart"), "a silenced row never makes step noise");
+    assert!(
+        defs.iter()
+            .filter(|d| (d.mob.0 as usize) < ENGINE_MOB_NAMES.len())
+            .all(|d| d.step_noise),
+        "the engine species keep their audible footsteps"
+    );
+}
+
+#[test]
 fn damage_feedback_components_parse_from_json_objects() {
     let layer = r#"{"mobs": [{
             "mob": "mymod:dummy", "key": "mymod:dummy", "model": "models/owl.bbmodel",

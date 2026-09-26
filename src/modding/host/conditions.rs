@@ -18,8 +18,8 @@ fn with_exposure<R>(
             })
             .flatten(),
         EntityRef::Mob(id) => {
-            let index = live_mob(ctx, id)?;
-            Some(f(ctx.world.mobs_mut().exposure_mut(index)?))
+            live_mob(ctx, id)?;
+            Some(f(ctx.world.mobs_mut().exposure_mut(id)?))
         }
     }
 }

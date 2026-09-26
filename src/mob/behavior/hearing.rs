@@ -24,7 +24,7 @@
 use serde::Deserialize;
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
-use super::super::{EntityRef, Mob, MobDef};
+use super::super::{EntityRef, Mob, MobDef, Noise};
 use super::chase::goal_cell_near;
 
 /// `chase_sound` params as written in a `mobs.json` brain row.
@@ -107,22 +107,16 @@ impl ChaseSoundAi {
     /// Try to acquire a lock from this tick's audible noises. Player noises
     /// win outright (nearest first); mob noises need the whitelist AND the
     /// per-tick chance roll (drawn once, only when an eligible one was heard).
+    /// Only the noises within hearing are visited (see `NoiseField::near`);
+    /// equally distant noises break ties on batch order.
     fn acquire(&mut self, ctx: &mut AiCtx) {
-        let r2 = self.radius * self.radius;
-        let audible =
-            |pos: petramond_math::world_pos::WorldPos| (pos - ctx.pos).length_squared() <= r2;
-
-        let nearest_player = ctx
-            .noises
-            .iter()
-            .filter(|n| matches!(n.source, EntityRef::Player(_)) && audible(n.pos))
-            .min_by(|a, b| {
-                let da = (a.pos - ctx.pos).length_squared();
-                let db = (b.pos - ctx.pos).length_squared();
-                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        if let Some(noise) = nearest_player {
-            self.target = Some(noise.source);
+        let nearest_player = nearest(
+            ctx,
+            self.radius,
+            |n: &Noise| matches!(n.source, EntityRef::Player(_)),
+        );
+        if let Some(source) = nearest_player {
+            self.target = Some(source);
             self.silent_ticks = 0;
             return;
         }
@@ -130,8 +124,8 @@ impl ChaseSoundAi {
         if self.mob_chance <= 0.0 || self.mob_targets.is_empty() {
             return;
         }
-        let eligible_mob = |source: EntityRef| {
-            let EntityRef::Mob(id) = source else {
+        let nearest_mob = nearest(ctx, self.radius, |n: &Noise| {
+            let EntityRef::Mob(id) = n.source else {
                 return false;
             };
             // Never its own footsteps, and only whitelisted, still-live species.
@@ -139,25 +133,27 @@ impl ChaseSoundAi {
                 && ctx
                     .live_mob(id)
                     .is_some_and(|m| self.mob_targets.contains(&m.kind))
-        };
-        let nearest_mob = ctx
-            .noises
-            .iter()
-            .filter(|n| audible(n.pos) && eligible_mob(n.source))
-            .min_by(|a, b| {
-                let da = (a.pos - ctx.pos).length_squared();
-                let db = (b.pos - ctx.pos).length_squared();
-                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-            });
+        });
         // The roll draws only when something eligible was actually heard, so
         // the RNG stream is untouched on quiet ticks (like the despawn roll).
-        if let Some(noise) = nearest_mob {
+        if let Some(source) = nearest_mob {
             if ctx.rng.next_f32() < self.mob_chance {
-                self.target = Some(noise.source);
+                self.target = Some(source);
                 self.silent_ticks = 0;
             }
         }
     }
+}
+
+/// The source of the nearest noise within `radius` that `eligible` accepts —
+/// ties on distance go to the noise pushed first.
+fn nearest(ctx: &AiCtx, radius: f32, eligible: impl Fn(&Noise) -> bool) -> Option<EntityRef> {
+    ctx.noises
+        .near(ctx.pos, radius)
+        .filter(|(_, n)| eligible(n))
+        .map(|(i, n)| ((n.pos - ctx.pos).length_squared(), i, n.source))
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .map(|(_, _, source)| source)
 }
 
 impl AiBehavior for ChaseSoundAi {
@@ -169,11 +165,10 @@ impl AiBehavior for ChaseSoundAi {
         // The silence countdown: any qualifying noise FROM THE LOCKED TARGET
         // within hearing resets it; memory_ticks of silence drops the lock.
         if let Some(locked) = self.target {
-            let r2 = self.radius * self.radius;
             let heard = ctx
                 .noises
-                .iter()
-                .any(|n| n.source == locked && (n.pos - ctx.pos).length_squared() <= r2);
+                .near(ctx.pos, self.radius)
+                .any(|(_, n)| n.source == locked);
             if heard {
                 self.silent_ticks = 0;
             } else {
@@ -202,7 +197,7 @@ impl AiBehavior for ChaseSoundAi {
 mod tests {
     use super::*;
     use crate::mob::spatial::MobSnapshot;
-    use crate::mob::{brain::AiMob, MobRng, Noise, NoiseKind, PlayerAnchor};
+    use crate::mob::{brain::AiMob, MobRng, NoiseField, NoiseKind, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::ServerWorld;
     use petramond_math::world_pos::WorldPos;
@@ -242,7 +237,7 @@ mod tests {
         rng: &'a mut MobRng,
         pos: WorldPos,
         players: &'a [PlayerAnchor],
-        noises: &'a [Noise],
+        noises: &'a NoiseField,
         mobs: &'a MobSnapshot,
     ) -> AiCtx<'a> {
         let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
@@ -270,7 +265,7 @@ mod tests {
             assert!(world.set_block_world(5, y, 2, Block::Stone));
         }
 
-        let noises = [step(player, EntityRef::Player(PlayerId(3)))];
+        let noises = NoiseField::from_noises([step(player, EntityRef::Player(PlayerId(3)))]);
         let out = ai.tick(&mut ctx(
             &world,
             &mut rng,
@@ -290,7 +285,7 @@ mod tests {
                 &mut rng,
                 mob,
                 &players,
-                &[],
+                NoiseField::empty(),
                 MobSnapshot::empty(),
             ));
             assert!(out.goal.is_some(), "still locked at silent tick {t}");
@@ -300,7 +295,7 @@ mod tests {
             &mut rng,
             mob,
             &players,
-            &[],
+            NoiseField::empty(),
             MobSnapshot::empty(),
         ));
         assert_eq!(out.goal, None, "40 silent ticks drop the lock");
@@ -315,7 +310,7 @@ mod tests {
         let mob = WorldPos::new(2.5, 64.0, 2.5);
         let player = WorldPos::new(9.5, 64.9, 2.5);
         let players = [anchor(3, player)];
-        let noise = [step(player, EntityRef::Player(PlayerId(3)))];
+        let noise = NoiseField::from_noises([step(player, EntityRef::Player(PlayerId(3)))]);
 
         assert!(ai
             .tick(&mut ctx(
@@ -336,7 +331,7 @@ mod tests {
                     &mut rng,
                     mob,
                     &players,
-                    &[],
+                    NoiseField::empty(),
                     MobSnapshot::empty()
                 ))
                 .goal
@@ -360,7 +355,7 @@ mod tests {
                     &mut rng,
                     mob,
                     &players,
-                    &[],
+                    NoiseField::empty(),
                     MobSnapshot::empty()
                 ))
                 .goal
@@ -374,7 +369,7 @@ mod tests {
                 &mut rng,
                 mob,
                 &players,
-                &[],
+                NoiseField::empty(),
                 MobSnapshot::empty()
             ))
             .goal
@@ -389,7 +384,7 @@ mod tests {
         let mob = WorldPos::new(2.5, 64.0, 2.5);
         let far = WorldPos::new(20.5, 64.9, 2.5); // 18 blocks: out of hearing
         let players = [anchor(3, far)];
-        let noises = [step(far, EntityRef::Player(PlayerId(3)))];
+        let noises = NoiseField::from_noises([step(far, EntityRef::Player(PlayerId(3)))]);
 
         assert_eq!(
             ai.tick(&mut ctx(
@@ -410,7 +405,7 @@ mod tests {
         // though they keep stomping.
         let near = WorldPos::new(9.5, 64.9, 2.5);
         let near_players = [anchor(3, near)];
-        let near_noise = [step(near, EntityRef::Player(PlayerId(3)))];
+        let near_noise = NoiseField::from_noises([step(near, EntityRef::Player(PlayerId(3)))]);
         assert!(ai
             .tick(&mut ctx(
                 &world,
@@ -457,7 +452,7 @@ mod tests {
         let b = WorldPos::new(4.5, 64.9, 2.5); // B is NEARER than A
         let players = [anchor(3, a), anchor(4, b)];
 
-        let only_a = [step(a, EntityRef::Player(PlayerId(3)))];
+        let only_a = NoiseField::from_noises([step(a, EntityRef::Player(PlayerId(3)))]);
         let out = ai.tick(&mut ctx(
             &world,
             &mut rng,
@@ -469,10 +464,10 @@ mod tests {
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
 
         // B stomps closer while A stays audible: the lock holds on A.
-        let both = [
+        let both = NoiseField::from_noises([
             step(b, EntityRef::Player(PlayerId(4))),
             step(a, EntityRef::Player(PlayerId(3))),
-        ];
+        ]);
         let out = ai.tick(&mut ctx(
             &world,
             &mut rng,
@@ -513,10 +508,10 @@ mod tests {
 
         // Chance 1.0 with the sheep whitelisted: the first heard tick locks it.
         let mut ai = ChaseSoundAi::new(12.0, 40, 1.0, vec![Mob::Sheep]);
-        let noises = [
+        let noises = NoiseField::from_noises([
             step(mob, EntityRef::Mob(1)), // its own footsteps: never a target
             step(prey_pos, EntityRef::Mob(9)),
-        ];
+        ]);
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &noises, &mobs));
         assert_eq!(out.target, Some(EntityRef::Mob(9)));
         assert!(out.goal.is_some(), "locked prey is chased");
@@ -547,10 +542,10 @@ mod tests {
             active: true,
             tags: Default::default(),
         }]);
-        let noises = [
+        let noises = NoiseField::from_noises([
             step(prey_pos, EntityRef::Mob(9)),
             step(player, EntityRef::Player(PlayerId(3))),
-        ];
+        ]);
         let mut ai = ChaseSoundAi::new(12.0, 40, 1.0, vec![Mob::Sheep]);
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &noises, &mobs));
         assert_eq!(
@@ -580,7 +575,7 @@ mod tests {
             active: false,
             tags: Default::default(),
         }]);
-        let noises = [step(prey_pos, EntityRef::Mob(9))];
+        let noises = NoiseField::from_noises([step(prey_pos, EntityRef::Mob(9))]);
         let mut ai = ChaseSoundAi::new(12.0, 40, 1.0, vec![Mob::Sheep]);
         assert!(ai
             .tick(&mut ctx(&world, &mut rng, mob, &[], &noises, &alive))

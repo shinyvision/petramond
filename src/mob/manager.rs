@@ -14,12 +14,12 @@ use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
 use petramond_world::chunk::ChunkPos;
 
-use super::noise::Noise;
+use super::noise::{Noise, NoiseField};
 use super::spatial::MobSnapshot;
 use super::{
     append_body_supports, body_has_peer_support, body_separation, body_separation_from_body, def,
     instance, solid_boxes, terrain_safe_motion_prefix, BodyMotion, EntityRef, Instance,
-    MobCollision, MobRng, MobSize,
+    MobCollision, MobId, MobRng, MobSize,
 };
 
 mod control;
@@ -32,7 +32,10 @@ mod tests;
 
 pub use drops::{DeathDrop, MobSpill, ShearDrop};
 pub use lod::SimDistance;
-use simulation::PushBody;
+mod push;
+mod solids;
+use push::PushScratch;
+use solids::SolidScratch;
 pub use simulation::{MobAttack, MobExposureDamage, MobFall, MobTickEvents, PlayerAnchor};
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
@@ -58,15 +61,19 @@ fn nearest_anchor(
 /// from the spawn counter), so the two don't march in lockstep on a given world.
 const SPAWN_RNG_SALT: u64 = 0x5EED_5EED_5EED_5EED;
 
+/// The live mob set. Its public API is addressed by [`MobId`] — every method
+/// resolves the handle to a storage slot itself and answers `None`/`false`
+/// for a mob that is gone, so a caller can never act on a slot a removal has
+/// since renumbered. Slots are private to the manager and its tick.
 pub struct Mobs {
     /// The live set. Mutated ONLY through [`push_instance`](Self::push_instance),
     /// [`swap_remove_instance`](Self::swap_remove_instance) and
-    /// [`retain_instances`](Self::retain_instances), which keep `index_by_id`
+    /// [`retain_instances`](Self::retain_instances), which keep `slot_by_id`
     /// in step.
     list: Vec<Instance>,
-    /// Stable id → current index in `list` — the O(1) resolver behind
-    /// [`index_of_id`](Self::index_of_id).
-    index_by_id: FxHashMap<u64, usize>,
+    /// Stable id → current slot in `list` — the O(1) resolver behind every
+    /// id-addressed method ([`slot`](Self::slot)).
+    slot_by_id: FxHashMap<MobId, usize>,
     /// Monotonic counter seeding each mob's deterministic AI.
     spawn_counter: u64,
     /// Deterministic RNG driving the per-tick natural-spawn picker.
@@ -77,40 +84,16 @@ pub struct Mobs {
     sim_distance: SimDistance,
     /// Per-mob schedule for this tick (index-aligned with `list`).
     step_scratch: Vec<lod::SimStep>,
+    turns: Vec<simulation::Turn>,
+    push: PushScratch,
+    solid: SolidScratch,
+    scripted_requests: Vec<crate::modding::ai::AiNodeRequest>,
     /// The tick's shared route-search budget, refilled at the start of
     /// every [`tick`](Self::tick) (see `nav::PATH_TICK_BUDGET`).
     path_budget: super::nav::PathBudget,
     /// Reused per-tick AI snapshot (one entry per live mob), spatially
     /// indexed for the tick's neighbour queries.
     ai_snapshot: MobSnapshot,
-    /// Reused per-tick body snapshot buffer (index-aligned with `list`).
-    push_scratch: Vec<Option<PushBody>>,
-    /// Index-aligned soft-push sums, reused across ticks.
-    push_velocity_scratch: Vec<Vec3>,
-    /// Push participants in stable-id order.
-    push_order_scratch: Vec<usize>,
-    /// Broadphase scratch for [`super::simulation`]'s push pass: the
-    /// x-sorted sweep list and the candidate pairs it yields.
-    push_sweep_scratch: Vec<(f64, u32)>,
-    push_pair_scratch: Vec<(u32, u32)>,
-    /// Whether an instance actually ran this tick (frozen instances do not).
-    ticked_scratch: Vec<bool>,
-    /// Pre-integration ground state and post-healing peer-motion start for
-    /// instances whose live body moved.
-    motion_finish_scratch: Vec<Option<(bool, petramond_math::world_pos::WorldPos)>>,
-    /// Terrain-resolved solid-body proposals, stable-id sorted before the
-    /// pair solver runs.
-    solid_motion_scratch: Vec<super::BodyMotion>,
-    solid_index_scratch: Vec<usize>,
-    solid_limit_scratch: Vec<f32>,
-    solid_checked_scratch: Vec<f32>,
-    solid_support_scratch: Vec<petramond_world::collision::DynBox>,
-    solid_motion_solver: super::SolidMotionSolver,
-    /// Reused per-tick stable-id snapshot (index-aligned with `list`), so the
-    /// push pass can name contacts while mutating instances.
-    id_scratch: Vec<u64>,
-    /// Index-aligned touch contacts, reused across ticks.
-    contact_scratch: Vec<Vec<super::EntityRef>>,
     /// Reused buffers for every mob's exposure tick.
     exposure_scratch: crate::exposure::ExposureScratch,
     /// Gameplay noises accumulated since the last mob tick (player/block noises
@@ -119,8 +102,9 @@ pub struct Mobs {
     /// of [`tick`](Self::tick).
     pending_noises: Vec<Noise>,
     /// The batch every mob's AI hears THIS tick — snapshotted before any mob
-    /// moves, so hearing is independent of iteration order.
-    heard: Vec<Noise>,
+    /// moves, so hearing is independent of iteration order, and bucketed by
+    /// column so each listener visits only the noises around it.
+    heard: NoiseField,
     /// Chunks whose one-time population roll already completed THIS SESSION
     /// (see [`populate`]) — a memo so the per-tick scan doesn't re-roll them.
     /// The cross-session "this chunk spawned its herd" fact lives on the
@@ -153,31 +137,20 @@ impl Mobs {
     pub fn new(seed: u64) -> Self {
         Mobs {
             list: Vec::new(),
-            index_by_id: FxHashMap::default(),
+            slot_by_id: FxHashMap::default(),
             spawn_counter: 0,
             rng: MobRng::new(seed ^ SPAWN_RNG_SALT),
             sim_distance: SimDistance::UNLIMITED,
             step_scratch: Vec::new(),
+            turns: Vec::new(),
+            push: PushScratch::default(),
+            solid: SolidScratch::default(),
+            scripted_requests: Vec::new(),
             path_budget: super::nav::PathBudget::default(),
             ai_snapshot: MobSnapshot::default(),
-            push_scratch: Vec::new(),
-            push_velocity_scratch: Vec::new(),
-            push_order_scratch: Vec::new(),
-            push_sweep_scratch: Vec::new(),
-            push_pair_scratch: Vec::new(),
-            ticked_scratch: Vec::new(),
-            motion_finish_scratch: Vec::new(),
-            solid_motion_scratch: Vec::new(),
-            solid_index_scratch: Vec::new(),
-            solid_limit_scratch: Vec::new(),
-            solid_checked_scratch: Vec::new(),
-            solid_support_scratch: Vec::new(),
-            solid_motion_solver: super::SolidMotionSolver::default(),
-            id_scratch: Vec::new(),
-            contact_scratch: Vec::new(),
             exposure_scratch: Default::default(),
             pending_noises: Vec::new(),
-            heard: Vec::new(),
+            heard: NoiseField::default(),
             populate_checked: FxHashSet::default(),
             confined_regions: super::confined::RegionCache::default(),
             change_seq: 0,
@@ -191,8 +164,8 @@ impl Mobs {
         std::mem::take(&mut self.spills)
     }
 
-    fn spill_container(&mut self, index: usize) {
-        let Some(mob) = self.list.get_mut(index) else {
+    fn spill_container(&mut self, slot: usize) {
+        let Some(mob) = self.list.get_mut(slot) else {
             return;
         };
         let stacks = mob.take_container_items();
@@ -262,84 +235,116 @@ impl Mobs {
         self.list.is_empty()
     }
 
-    /// The live mob at `index` — the shared guard behind every by-index
-    /// setter, so `list` stays private and `Game` never holds a
-    /// `&mut Instance`.
-    fn mob_mut(&mut self, index: usize) -> Option<&mut Instance> {
-        self.list.get_mut(index)
+    /// The storage slot of the mob `id`, or `None` when it is gone. Slots
+    /// are valid only until the next removal and never leave the manager.
+    #[inline]
+    fn slot(&self, id: MobId) -> Option<usize> {
+        self.slot_by_id.get(&id).copied()
     }
 
-    /// One tick of the dig the mob at `index` is driven through (see
+    /// The live mob `id` — the shared guard behind every id-addressed
+    /// setter, so `list` stays private and `Game` never holds a
+    /// `&mut Instance`.
+    fn mob_mut(&mut self, id: MobId) -> Option<&mut Instance> {
+        let slot = self.slot(id)?;
+        self.list.get_mut(slot)
+    }
+
+    /// The mob `id` (dead corpses included), or `None` when it has left the
+    /// live set.
+    #[inline]
+    pub fn get(&self, id: MobId) -> Option<&Instance> {
+        self.list.get(self.slot(id)?)
+    }
+
+    /// Whether the mob `id` is still in the live set (a ragdolling corpse
+    /// counts until it is removed).
+    #[inline]
+    pub fn contains(&self, id: MobId) -> bool {
+        self.slot_by_id.contains_key(&id)
+    }
+
+    /// The mob `id` when it is alive — `None` for a gone mob and for a corpse
+    /// alike, the one dead-mob policy of id-addressed gameplay actions.
+    #[inline]
+    pub fn live(&self, id: MobId) -> Option<&Instance> {
+        self.get(id).filter(|m| !m.is_dead())
+    }
+
+    /// Where the mob `id` sits in [`instances`](Self::instances) right now —
+    /// a read-only ORDERING key (the mod ABI's intra-tick join key), never an
+    /// address: no method takes one back, and a removal reorders it.
+    #[inline]
+    pub fn position_of(&self, id: MobId) -> Option<usize> {
+        self.slot(id)
+    }
+
+    /// One tick of the dig the mob `id` is driven through (see
     /// [`Instance::advance_dig`](super::Instance::advance_dig)).
     pub fn advance_dig(
         &mut self,
-        index: usize,
+        id: MobId,
         now: u64,
         pos: IVec3,
         block: petramond_world::block::Block,
         tool: Option<petramond_world::item::Tool>,
     ) -> Option<super::DigStep> {
-        Some(self.list.get_mut(index)?.advance_dig(now, pos, block, tool))
+        Some(self.mob_mut(id)?.advance_dig(now, pos, block, tool))
     }
 
-    /// Turn the mob at `index` to look along a world yaw and pitch at once.
+    /// Turn the mob `id` to look along a world yaw and pitch at once.
     #[cfg(test)]
-    pub fn set_gaze_for_test(&mut self, index: usize, yaw: f32, pitch: f32) {
-        if let Some(mob) = self.list.get_mut(index) {
+    pub fn set_gaze_for_test(&mut self, id: MobId, yaw: f32, pitch: f32) {
+        if let Some(mob) = self.mob_mut(id) {
             mob.yaw = yaw;
             mob.head_yaw = 0.0;
             mob.head_pitch = pitch;
         }
     }
 
-    /// Replace the draw set the mob at `index` wears.
-    pub fn set_draw(&mut self, index: usize, draw: crate::world::draw::BodyDraw) {
-        if let Some(mob) = self.list.get_mut(index) {
+    /// Replace the draw set the mob `id` wears.
+    pub fn set_draw(&mut self, id: MobId, draw: crate::world::draw::BodyDraw) {
+        if let Some(mob) = self.mob_mut(id) {
             mob.set_draw(draw);
         }
     }
 
-    /// Claim what the mob at `index` draws in its hands.
-    pub fn set_held(&mut self, index: usize, held: [Option<petramond_world::item::ItemType>; 2]) {
-        if let Some(mob) = self.list.get_mut(index) {
+    /// Claim what the mob `id` draws in its hands.
+    pub fn set_held(&mut self, id: MobId, held: [Option<petramond_world::item::ItemType>; 2]) {
+        if let Some(mob) = self.mob_mut(id) {
             mob.set_held(held);
         }
     }
 
-    /// The carried slots of the mob at `index`.
+    /// The carried slots of the mob `id`.
     pub fn container_mut(
         &mut self,
-        index: usize,
+        id: MobId,
     ) -> Option<&mut petramond_world::container::Container> {
-        self.list.get_mut(index).map(Instance::container_mut)
+        self.mob_mut(id).map(Instance::container_mut)
     }
 
-    /// The live mobs, for the render-side scene adapter to bake (read-only).
+    /// The live mobs, for the render-side scene adapter to bake and for
+    /// read-only scans (read-only; the order is storage order, which a
+    /// removal changes — address a mob by its [`id`](Instance::id)).
     #[inline]
     pub fn instances(&self) -> &[Instance] {
         &self.list
     }
 
-    /// Resolve a STABLE mob id to its current list index, or `None` when the
-    /// mob is gone. Actions arriving over the wire carry ids (indices shift
-    /// under despawns between the click and the consuming tick).
-    pub fn index_of_id(&self, id: u64) -> Option<usize> {
-        self.index_by_id.get(&id).copied()
-    }
-
     /// Append `mob` to the live set.
     fn push_instance(&mut self, mob: Instance) {
-        self.index_by_id.insert(mob.id(), self.list.len());
+        self.slot_by_id.insert(mob.id(), self.list.len());
         self.list.push(mob);
     }
 
-    /// Remove the mob at `index` by `swap_remove`, renumbering the last mob
+    /// Remove the mob in `slot` by `swap_remove`, renumbering the last mob
     /// into the hole.
-    fn swap_remove_instance(&mut self, index: usize) -> Instance {
-        let mob = self.list.swap_remove(index);
-        self.index_by_id.remove(&mob.id());
-        if let Some(moved) = self.list.get(index) {
-            self.index_by_id.insert(moved.id(), index);
+    fn swap_remove_instance(&mut self, slot: usize) -> Instance {
+        let mob = self.list.swap_remove(slot);
+        self.slot_by_id.remove(&mob.id());
+        if let Some(moved) = self.list.get(slot) {
+            self.slot_by_id.insert(moved.id(), slot);
         }
         mob
     }
@@ -349,8 +354,8 @@ impl Mobs {
         let before = self.list.len();
         self.list.retain(keep);
         if self.list.len() != before {
-            self.index_by_id.clear();
-            self.index_by_id
+            self.slot_by_id.clear();
+            self.slot_by_id
                 .extend(self.list.iter().enumerate().map(|(i, m)| (m.id(), i)));
         }
     }

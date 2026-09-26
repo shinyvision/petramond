@@ -1,6 +1,9 @@
 
 use crate::mob::brain::{AiMob, TickInputs};
-use crate::mob::model_meta::{self, IdleAnimMeta, Skeleton};
+use crate::mob::model_meta;
+use crate::mob::instance::{Begun, Footing, MobTickCtx, MotionStart, SpeciesMeta};
+use crate::mob::brain::ScriptedReplies;
+use crate::mob::anim::Expression;
 use crate::mob::noise::{Noise, NoiseKind};
 use crate::mob::{def, defs, model, EntityRef, Instance, Mob};
 use crate::world::ServerWorld;
@@ -44,16 +47,6 @@ impl Default for PlayerAnchor {
     }
 }
 
-#[derive(Copy, Clone)]
-pub(super) struct PushBody {
-    pos: petramond_math::world_pos::WorldPos,
-    yaw: f32,
-    size: super::MobSize,
-    /// Horizontal radius past which this body provably cannot overlap another
-    /// (mirrors `body_geometry`'s compound bound), for the sweep broadphase.
-    reach: f32,
-}
-
 /// A melee strike a mob landed this tick. Drained from [`Mobs::tick`] by
 /// `Game`, which applies it through the target's damage pipeline: a player
 /// target runs `player_damage_pre` (a cancelled strike drops its knockback
@@ -61,9 +54,6 @@ pub(super) struct PushBody {
 /// feedback, loot, ragdoll).
 #[derive(Copy, Clone, Debug)]
 pub struct MobAttack {
-    /// Index into the live mob set — valid this tick only (mirrors
-    /// `MobDamagePre::mob`).
-    pub mob_index: usize,
     pub mob: Mob,
     /// The attacker's STABLE id — carried into the mob damage pipeline so the
     /// struck mob's retaliation memory can name the biter across ticks.
@@ -82,9 +72,8 @@ pub struct MobAttack {
     pub knockback: f32,
 }
 
-/// A fall landing measured by a mob during its deterministic tick. The stable id is
-/// resolved back to a live index by `ServerGame` before applying damage through the
-/// mob damage pipeline.
+/// A fall landing measured by a mob during its deterministic tick, addressed by the
+/// mob's stable id for `ServerGame` to apply through the mob damage pipeline.
 #[derive(Copy, Clone, Debug)]
 pub struct MobFall {
     pub mob_id: u64,
@@ -115,18 +104,32 @@ pub struct MobTickEvents {
     pub exposure: Vec<MobExposureDamage>,
 }
 
-/// Per-species, model-derived metadata the sim reads.
-struct MobMeta {
-    /// This species' `idle_*` animations (name-sorted; length + loop mode).
-    idle_anims: Vec<IdleAnimMeta>,
-    /// EVERY named animation (name-sorted; length + loop mode) — how a
-    /// mod-activated one-shot layer knows when it has played through and
-    /// retires itself.
-    named_anims: Vec<model_meta::NamedAnimMeta>,
-    /// Bone hierarchy (pivots + parents) for the death ragdoll, matching the renderer's
-    /// bone order so a sim-computed pose drops into the render bake.
-    skeleton: Skeleton,
+/// Work retained for one mob between the manager's population phases.
+pub(super) struct Turn {
+    begun: Option<Begun>,
+    footing: Option<Footing>,
+    requests: std::ops::Range<usize>,
+    pub(super) start: MotionStart,
 }
+
+impl Default for Turn {
+    fn default() -> Self {
+        Self {
+            begun: None,
+            footing: None,
+            requests: 0..0,
+            start: None,
+        }
+    }
+}
+
+impl Turn {
+    pub(super) fn simulated(&self) -> bool {
+        self.begun.is_some()
+    }
+}
+
+type MobMeta = SpeciesMeta;
 
 /// Every species' [`MobMeta`], derived once per content registry from the precached
 /// [`Model`](petramond_world::bbmodel::Model)s (see [`model`](super::model)) and indexed by `Mob as
@@ -139,86 +142,12 @@ static MOB_META: petramond_world::content::Slot<Vec<MobMeta>> =
 fn derive_meta(_: &petramond_world::content::ContentRegistry) -> Result<Vec<MobMeta>, String> {
     Ok(defs()
         .iter()
-        .map(|d| MobMeta {
+        .map(|d| SpeciesMeta {
             idle_anims: model_meta::idle_anims(model(d.mob)),
             named_anims: model_meta::named_anims(model(d.mob)),
             skeleton: model_meta::skeleton(model(d.mob)),
         })
         .collect())
-}
-
-/// The horizontal radius `body_geometry`'s compound push bound uses. Kept
-/// identical to it: the sweep is only sound while it is an upper bound on the
-/// narrow phase's own reach.
-fn push_reach(size: super::MobSize) -> f32 {
-    size.half_length
-        .unwrap_or(size.half_width)
-        .hypot(size.half_width)
-}
-
-#[cfg(test)]
-impl PushBody {
-    pub(super) fn pos(self) -> petramond_math::world_pos::WorldPos {
-        self.pos
-    }
-    pub(super) fn yaw(self) -> f32 {
-        self.yaw
-    }
-    pub(super) fn size(self) -> super::MobSize {
-        self.size
-    }
-}
-
-/// Build a push body from raw geometry — the broadphase test's fixture.
-#[cfg(test)]
-pub(super) fn push_body_for_test(
-    pos: petramond_math::world_pos::WorldPos,
-    yaw: f32,
-    size: super::MobSize,
-) -> PushBody {
-    PushBody {
-        pos,
-        yaw,
-        size,
-        reach: push_reach(size),
-    }
-}
-
-/// Every pair of participating bodies (as ranks into `order`) whose push
-/// bounds could overlap, in the same order the exhaustive nested scan visits
-/// them: `(rank_a, rank_b)` ascending, `rank_a < rank_b`.
-///
-/// The sweep is one axis: sorted by x, a pair is only possible while the x gap
-/// is under the two bodies' combined horizontal reach, and the widest body in
-/// the set bounds the partner's half. That bound is exactly the one
-/// `body_geometry`'s compound test applies, so no overlapping pair can be
-/// missed — the narrow phase still runs on every candidate and decides.
-pub(super) fn overlap_pairs(
-    bodies: &[Option<PushBody>],
-    order: &[usize],
-    sweep: &mut Vec<(f64, u32)>,
-    pairs: &mut Vec<(u32, u32)>,
-) {
-    sweep.clear();
-    pairs.clear();
-    let mut max_reach = 0.0f32;
-    for (rank, &i) in order.iter().enumerate() {
-        let body = bodies[i].expect("order holds participating bodies only");
-        max_reach = max_reach.max(body.reach);
-        sweep.push((body.pos.x, rank as u32));
-    }
-    sweep.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-    for p in 0..sweep.len() {
-        let (x, ra) = sweep[p];
-        let span = bodies[order[ra as usize]].expect("participating").reach + max_reach;
-        for &(qx, rb) in &sweep[p + 1..] {
-            if qx - x >= f64::from(span) {
-                break;
-            }
-            pairs.push((ra.min(rb), ra.max(rb)));
-        }
-    }
-    pairs.sort_unstable();
 }
 
 impl Mobs {
@@ -270,17 +199,11 @@ impl Mobs {
         // last mob tick, snapshotted BEFORE any mob moves so hearing doesn't
         // depend on iteration order. Mob footsteps recorded below land in
         // `pending_noises` for the next tick.
-        std::mem::swap(&mut self.pending_noises, &mut self.heard);
-        self.pending_noises.clear();
+        self.heard.take_batch(&mut self.pending_noises);
         let mut pending_noises = std::mem::take(&mut self.pending_noises);
-        let mut ticked = std::mem::take(&mut self.ticked_scratch);
-        ticked.clear();
-        ticked.resize(self.list.len(), false);
-        let mut motion_finish = std::mem::take(&mut self.motion_finish_scratch);
-        motion_finish.clear();
-        motion_finish.resize(self.list.len(), None);
-        let mut supporting_solid = std::mem::take(&mut self.solid_support_scratch);
-        supporting_solid.clear();
+        let mut turns = std::mem::take(&mut self.turns);
+        turns.clear();
+        turns.resize_with(self.list.len(), Turn::default);
         // Moved out so instances can look up / fill shared confined regions
         // while `self.list` is mutably borrowed. The clock feed also expires
         // regions past their maximum age (see `confined::REGION_MAX_AGE_TICKS`).
@@ -308,39 +231,42 @@ impl Mobs {
                 .count(),
         );
 
-        // Phase 1: every instance proposes its terrain-resolved transform from
-        // the same start-of-tick state. Soft bodies see rigid peers as fixed
-        // obstacles. A rigid body sees only an exact support during ordinary
-        // Y-first integration; all other peer motion is resolved together.
+        // Begin every body before any brain reads this tick's population.
         for (i, mob) in self.list.iter_mut().enumerate() {
             if freeze_unloaded && !terrain_under_mob_is_final(world, mob) {
-                // Drive is a this-tick intent. A frozen mob never reaches the
-                // integration site that normally consumes it, so discard it
-                // here rather than letting it wake up on a stale command.
                 mob.clear_drive();
                 continue;
             }
             let d = def(mob.kind);
-            // Every player-facing decision (chase target, head look, despawn
-            // distance, strike geometry) anchors on the NEAREST player.
             let anchor = *nearest_anchor(anchors, mob.pos);
             if steps[i] == lod::SimStep::Frozen {
                 mob.tick_frozen(anchor.pos, d.despawn_radius);
                 continue;
             }
-            ticked[i] = true;
+            let begun = mob.begin(dt, anchor.pos, d.despawn_radius);
+            turns[i].begun = Some(begun);
+            if begun == Begun::Corpse {
+                let meta = &MOB_META.current()[mob.kind.0 as usize];
+                mob.tick_ragdoll(dt, world, d, &meta.skeleton);
+            } else if begun == Begun::Placed {
+                let meta = &MOB_META.current()[mob.kind.0 as usize];
+                mob.apply_expression(dt, d, &meta.named_anims, &Expression::default());
+            }
+        }
+
+        // Shared confinement fills and route budgets retain storage order.
+        let mut supports = std::mem::take(&mut self.solid.supports);
+        for (i, mob) in self.list.iter_mut().enumerate() {
+            if turns[i].begun != Some(Begun::Live) {
+                continue;
+            }
+            let d = def(mob.kind);
             let meta = &MOB_META.current()[mob.kind.0 as usize];
+            let anchor = *nearest_anchor(anchors, mob.pos);
             let peer_obstacles = if d.collision == super::MobCollision::Solid {
-                supporting_solid.clear();
-                super::append_body_supports(
-                    mob.pos,
-                    mob.yaw,
-                    d.size,
-                    &solid,
-                    mob.id(),
-                    &mut supporting_solid,
-                );
-                supporting_solid.as_slice()
+                supports.clear();
+                super::append_body_supports(mob.pos, mob.yaw, d.size, &solid, mob.id(), &mut supports);
+                supports.as_slice()
             } else {
                 solid.as_slice()
             };
@@ -353,141 +279,80 @@ impl Mobs {
                 solid: peer_obstacles,
                 solid_escape: &solid,
             };
-            motion_finish[i] = mob.tick(
-                dt,
-                &inputs,
-                &mut confined_regions,
-                steps[i] == lod::SimStep::Think,
-                &anchor,
-                i,
-                d.despawn_radius,
-                &meta.idle_anims,
-                &meta.named_anims,
-                &meta.skeleton,
-            );
+            let ctx = MobTickCtx { dt, inputs: &inputs, anchor: &anchor, def: d, meta };
+            turns[i].footing = Some(mob.perceive(&ctx, &mut confined_regions, steps[i] == lod::SimStep::Think));
         }
 
+        // Gather in storage order, dispatch each scripted key once, then feed
+        // each reply back to the mob and node that made the request.
+        let mut requests = std::mem::take(&mut self.scripted_requests);
+        requests.clear();
+        for (i, mob) in self.list.iter_mut().enumerate() {
+            let Some(footing) = turns[i].footing else { continue };
+            if steps[i] != lod::SimStep::Think { continue; }
+            let d = def(mob.kind);
+            let meta = &MOB_META.current()[mob.kind.0 as usize];
+            let anchor = *nearest_anchor(anchors, mob.pos);
+            let inputs = TickInputs {
+                world, players: anchors, noises: &self.heard, mobs: &ai_mobs,
+                path_budget: Some(&self.path_budget), solid: &solid, solid_escape: &solid,
+            };
+            let ctx = MobTickCtx { dt, inputs: &inputs, anchor: &anchor, def: d, meta };
+            let start = requests.len();
+            mob.scripted_requests(&ctx, footing, &mut requests);
+            turns[i].requests = start..requests.len();
+        }
+        let mut replies = crate::modding::ai::dispatch_batch(now, &requests);
+        requests.clear();
+        self.scripted_requests = requests;
+
+        for (i, mob) in self.list.iter_mut().enumerate() {
+            let Some(footing) = turns[i].footing else { continue };
+            let d = def(mob.kind);
+            let meta = &MOB_META.current()[mob.kind.0 as usize];
+            let anchor = *nearest_anchor(anchors, mob.pos);
+            let peer_obstacles = if d.collision == super::MobCollision::Solid {
+                supports.clear();
+                super::append_body_supports(mob.pos, mob.yaw, d.size, &solid, mob.id(), &mut supports);
+                supports.as_slice()
+            } else {
+                solid.as_slice()
+            };
+            let inputs = TickInputs {
+                world, players: anchors, noises: &self.heard, mobs: &ai_mobs,
+                path_budget: Some(&self.path_budget), solid: peer_obstacles, solid_escape: &solid,
+            };
+            let ctx = MobTickCtx { dt, inputs: &inputs, anchor: &anchor, def: d, meta };
+            let think = steps[i] == lod::SimStep::Think;
+            let range = turns[i].requests.clone();
+            let decision = mob.think(&ctx, footing, think, ScriptedReplies::new(&mut replies[range]));
+            turns[i].start = mob.act(&ctx, footing, &decision, think);
+            mob.apply_expression(dt, d, &meta.named_anims, &decision.into());
+        }
+        self.solid.supports = supports;
         self.confined_regions = confined_regions;
         self.step_scratch = steps;
-
-        // Phase 2: solve solid peers from their complete proposals, then
-        // commit every selected prefix together. Stable-id sorting keeps the
-        // broadphase and tie paths independent of storage order.
-        let mut solid_motions = std::mem::take(&mut self.solid_motion_scratch);
-        solid_motions.clear();
-        let mut solid_indices = std::mem::take(&mut self.solid_index_scratch);
-        solid_indices.clear();
-        solid_indices.extend(self.list.iter().enumerate().filter_map(|(i, mob)| {
-            (!mob.is_dead() && def(mob.kind).collision == super::MobCollision::Solid).then_some(i)
-        }));
-        solid_indices.sort_by_key(|&i| self.list[i].id());
-        solid_motions.extend(solid_indices.iter().map(|&i| {
-            let mob = &self.list[i];
-            let motion_start = motion_finish[i].map(|(_, start)| start);
-            super::BodyMotion {
-                id: mob.id(),
-                start_pos: motion_start.unwrap_or(mob.pos),
-                start_yaw: if motion_start.is_some() {
-                    mob.prev_yaw
-                } else {
-                    mob.yaw
-                },
-                end_pos: mob.pos,
-                end_yaw: mob.yaw,
-                size: def(mob.kind).size,
-            }
-        }));
-        let mut solid_limits = std::mem::take(&mut self.solid_limit_scratch);
-        solid_limits.clear();
-        solid_limits.resize(solid_motions.len(), 1.0);
-        let mut terrain_checked = std::mem::take(&mut self.solid_checked_scratch);
-        terrain_checked.clear();
-        terrain_checked.resize(solid_motions.len(), 0.0);
-        let mut solid_solver = std::mem::take(&mut self.solid_motion_solver);
-        let cells = world.cursor();
-        let terrain_boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
-        let mut settled = false;
-        for _ in 0..=solid_motions.len() {
-            solid_solver.resolve_with_limits(&solid_motions, &solid_limits);
-            let mut limits_changed = false;
-            for (i, motion) in solid_motions.iter().copied().enumerate() {
-                let fraction = solid_solver.fractions()[i];
-                if fraction >= 1.0 - 1e-6 || fraction <= terrain_checked[i] + 1e-6 {
-                    continue;
-                }
-                let safe = super::terrain_safe_motion_prefix(motion, fraction, &terrain_boxes);
-                if safe + 1e-6 < fraction {
-                    solid_limits[i] = solid_limits[i].min(safe);
-                    terrain_checked[i] = safe;
-                    limits_changed = true;
-                } else {
-                    terrain_checked[i] = fraction;
-                }
-            }
-            if !limits_changed {
-                settled = true;
-                break;
-            }
-        }
-        debug_assert!(settled, "each terrain limit can tighten at most once");
-        let fractions = solid_solver.fractions();
-        for ((motion, &fraction), &i) in solid_motions.iter().zip(fractions).zip(&solid_indices) {
-            self.list[i].commit_solid_motion(*motion, fraction);
-        }
-
-        // Final top-face support is queried only after every solid has committed,
-        // so landing does not depend on storage order. Supplying the same exact
-        // supports to the next proposal lets gravity land first and horizontal
-        // drive/AI motion continue, just like the terrain resolver's Y-then-XZ
-        // ordering.
-        let mut committed_solid = solid;
-        committed_solid.clear();
-        for mob in &self.list {
-            let d = def(mob.kind);
-            if !mob.is_dead() && d.collision == super::MobCollision::Solid {
-                super::solid_boxes(mob.id(), mob.pos, mob.yaw, d.size, &mut committed_solid);
-            }
-        }
-        for ((motion, &i), moved) in solid_motions
-            .iter()
-            .zip(&solid_indices)
-            .zip(solid_indices.iter().map(|&i| motion_finish[i].is_some()))
-        {
-            if moved
-                && motion.moves_down()
-                && super::body_has_peer_support(
-                    self.list[i].pos,
-                    self.list[i].yaw,
-                    motion.size,
-                    &committed_solid,
-                    motion.id,
-                )
-            {
-                self.list[i].land_on_solid_peer();
-            }
-        }
-        self.solid_motion_solver = solid_solver;
-        self.solid_motion_scratch = solid_motions;
-        self.solid_index_scratch = solid_indices;
-        self.solid_limit_scratch = solid_limits;
-        self.solid_checked_scratch = terrain_checked;
-        self.solid_support_scratch = supporting_solid;
+        self.turns = turns;
+        self.solve_solids(world, solid);
+        let mut turns = std::mem::take(&mut self.turns);
 
         // Post-motion bookkeeping observes committed poses, never an
         // overlapping proposal that the pair solver subsequently shortened.
         let mut out = MobTickEvents::default();
         let mut exposure = std::mem::take(&mut self.exposure_scratch);
         for (i, mob) in self.list.iter_mut().enumerate() {
-            if !ticked[i] {
+            if !turns[i].simulated() {
                 continue;
             }
-            if let Some((was_on_ground, _)) = motion_finish[i] {
+            if let Some((was_on_ground, _)) = turns[i].start {
                 let d = super::super::def(mob.kind);
                 let immersion = world.data().body_fluid(mob.pos, d.size.height, d.buoyancy);
                 mob.finish_motion(was_on_ground, immersion);
             }
-            // A walking mob is audible: record its footstep for next tick's batch.
-            if mob.moving {
+            // A walking mob of a noisy species is audible: record its
+            // footstep for next tick's batch. Silent bodies (`"step_noise":
+            // false` — a boat, a cart) never enter the batch.
+            if mob.moving && def(mob.kind).step_noise {
                 pending_noises.push(Noise {
                     pos: mob.pos,
                     kind: NoiseKind::Step,
@@ -507,7 +372,6 @@ impl Mobs {
                     let mut away = target_pos - mob.pos;
                     away.y = 0.0;
                     out.attacks.push(MobAttack {
-                        mob_index: i,
                         mob: mob.kind,
                         mob_id: mob.id(),
                         origin: mob.pos,
@@ -545,9 +409,9 @@ impl Mobs {
                 world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
             );
         }
-        self.ticked_scratch = ticked;
+        self.turns = turns;
         self.exposure_scratch = exposure;
-        self.motion_finish_scratch = motion_finish;
+
         self.pending_noises = pending_noises;
         self.ai_snapshot = ai_mobs;
         self.resolve_pushes(anchors);
@@ -560,169 +424,7 @@ impl Mobs {
         out
     }
 
-    /// Soft-push pass: for every overlapping pair of bodies — mob↔mob, and mob←player when
-    /// `player` is present — set each mob's push *velocity* away from the others, to be
-    /// applied (through the mob's own collision) on its next integrate. This shoves only
-    /// *mobs* (which simulate on the tick); the player's own pushback is computed
-    /// per-frame in [`push_on_player`](Self::push_on_player), not here.
-    ///
-    /// Computed from a single up-front snapshot of every compound body. Each mob pair is
-    /// visited once and its deepest segment overlap yields one equal-and-opposite
-    /// separation, so segment count and list order cannot multiply the shove. A mob that
-    /// isn't pushable this tick (dead, or frozen over an unloaded chunk or by simulation
-    /// distance) neither pushes nor is pushed.
-    /// The same overlap tests double as the TOUCH perception channel: every
-    /// overlapping entity is recorded on the mob as a contact (`EntityRef`),
-    /// which next tick's AI reads as `AiCtx::contacts` (the `chase_contact`
-    /// node's input). A mob that doesn't participate this tick gets its
-    /// contacts cleared, so nothing stales through death or a freeze.
-    fn resolve_pushes(&mut self, anchors: &[PlayerAnchor]) {
-        // `None` marks a mob that doesn't participate this tick; index aligns with `list`.
-        let mut bodies = std::mem::take(&mut self.push_scratch);
-        bodies.clear();
-        // A mob pushes only while alive (a corpse ragdolls in place — its
-        // `pos` is the ragdoll origin, so shoving it would warp the corpse)
-        // and actually simulating this tick (not frozen over unloaded
-        // terrain or by simulation distance).
-        let ticked = &self.ticked_scratch;
-        bodies.extend(self.list.iter().enumerate().map(|(i, m)| {
-            (!m.is_dead() && ticked[i]).then(|| {
-                let size = def(m.kind).size;
-                PushBody {
-                    pos: m.pos,
-                    yaw: m.yaw,
-                    size,
-                    reach: push_reach(size),
-                }
-            })
-        }));
-        let mut ids = std::mem::take(&mut self.id_scratch);
-        ids.clear();
-        ids.extend(self.list.iter().map(Instance::id));
-        let mut contacts = std::mem::take(&mut self.contact_scratch);
-        contacts.resize_with(self.list.len(), Vec::new);
-        contacts.iter_mut().for_each(Vec::clear);
-        let mut pushes = std::mem::take(&mut self.push_velocity_scratch);
-        pushes.clear();
-        pushes.resize(self.list.len(), Vec3::ZERO);
-        let mut order = std::mem::take(&mut self.push_order_scratch);
-        order.clear();
-        order.extend((0..self.list.len()).filter(|&i| bodies[i].is_some()));
-        order.sort_by_key(|&i| ids[i]);
 
-        // Resolve each mob pair once. A compound body contributes its deepest
-        // segment contact only, then the pair's one separation is applied
-        // equally and oppositely to whichever members are soft.
-        //
-        // The candidate pairs come from a one-axis sweep, not the full N²
-        // scan: bodies are spread over the loaded world and the overlapping
-        // pairs are a vanishing fraction of them, while the N² form doubles
-        // its cost every time the population does. The pairs are re-sorted
-        // into the same (rank, rank) order the nested scan visited, so the
-        // accumulated push sums and the contact lists are unchanged.
-        let mut sweep = std::mem::take(&mut self.push_sweep_scratch);
-        let mut pairs = std::mem::take(&mut self.push_pair_scratch);
-        overlap_pairs(&bodies, &order, &mut sweep, &mut pairs);
-        for &(ra, rb) in &pairs {
-            let (i, j) = (order[ra as usize], order[rb as usize]);
-            let (a, b) = (bodies[i].unwrap(), bodies[j].unwrap());
-            let Some(push_a) = super::body_separation(a.pos, a.yaw, a.size, b.pos, b.yaw, b.size)
-            else {
-                continue;
-            };
-            if def(self.list[i].kind).collision != super::MobCollision::Solid {
-                pushes[i] += push_a;
-            }
-            if def(self.list[j].kind).collision != super::MobCollision::Solid {
-                pushes[j] -= push_a;
-            }
-            contacts[i].push(super::EntityRef::Mob(ids[j]));
-            contacts[j].push(super::EntityRef::Mob(ids[i]));
-        }
-        self.push_sweep_scratch = sweep;
-        self.push_pair_scratch = pairs;
-
-        // Players are ordinary one-box bodies. Solid mobs still record touch
-        // but receive no soft push, and the reverse player reaction remains a
-        // per-frame query below.
-        for (i, body) in bodies.iter().copied().enumerate() {
-            let Some(body) = body else {
-                continue;
-            };
-            let rigid = def(self.list[i].kind).collision == super::MobCollision::Solid;
-            for anchor in anchors {
-                let Some(player) = anchor.body else {
-                    continue;
-                };
-                if let Some(push) =
-                    super::body_separation_from_body(body.pos, body.yaw, body.size, player)
-                {
-                    if !rigid {
-                        pushes[i] += push;
-                    }
-                    contacts[i].push(super::EntityRef::Player(anchor.id));
-                }
-            }
-        }
-
-        for i in 0..self.list.len() {
-            self.list[i].set_push(pushes[i]);
-            self.list[i].set_contacts(contacts[i].drain(..));
-        }
-        self.push_scratch = bodies;
-        self.push_velocity_scratch = pushes;
-        self.push_order_scratch = order;
-        self.id_scratch = ids;
-        self.contact_scratch = contacts;
-    }
-
-    /// The net horizontal push *velocity* the live mobs impart on the player right now,
-    /// from the player's current body — read-only, mutating no mob. The caller applies it
-    /// to the player **per-frame** (not on the tick) so the player drifts out of an
-    /// overlap perfectly smoothly: player movement is integrated every frame, and a 20 Hz
-    /// shove would pulse. A dead mob (a ragdolling corpse) doesn't push; a frozen mob over
-    /// an unloaded chunk is far from the player and never overlaps, so it's moot here.
-    pub fn push_on_player(&self, player: Body) -> Vec3 {
-        let mut push = Vec3::ZERO;
-        for m in &self.list {
-            // A SOLID body never soft-pushes the player: it is a rigid
-            // obstacle in the player's own resolver — a push would fight the
-            // contact (skating a stander off the deck).
-            if m.is_dead() || def(m.kind).collision == super::MobCollision::Solid {
-                continue;
-            }
-            let d = def(m.kind);
-            if let Some(mob_push) = super::body_separation_from_body(m.pos, m.yaw, d.size, player) {
-                push -= mob_push;
-            }
-        }
-        push
-    }
-
-    /// Advance every mob's global damage-immunity window once. The server
-    /// calls this at the start of the fixed tick, before any damage source or
-    /// queued mod action can run.
-    pub fn tick_damage_immunity(&mut self) {
-        for mob in &mut self.list {
-            mob.tick_damage_immunity();
-        }
-    }
-
-    /// The dynamic collision boxes of every LIVE solid-collision body
-    /// (`mobs.json` `"collision": "solid"`) — what players and mobs resolve
-    /// their movement against, beside the world's cell boxes. A dead body
-    /// stops blocking (a wreck is not a wall). Long bodies emit a run of
-    /// boxes along their facing (see [`super::solid_boxes`]).
-    pub fn solid_obstacles(&self) -> Vec<petramond_world::collision::DynBox> {
-        let mut out = Vec::new();
-        for m in &self.list {
-            let d = def(m.kind);
-            if !m.is_dead() && d.collision == super::MobCollision::Solid {
-                super::solid_boxes(m.id(), m.pos, m.yaw, d.size, &mut out);
-            }
-        }
-        out
-    }
 }
 
 /// Whether the terrain `mob` stands on has ARRIVED — the freeze gate shared

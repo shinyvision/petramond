@@ -47,9 +47,9 @@ fn zero_gravity_preserves_vertical_drive_but_still_collides() {
     let table = crate::mob::load::parse_layers(&[&text]).unwrap();
     let d = table.defs.iter().find(|d| d.mob == Mob::Owl).unwrap();
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 5.0, 0.5), 0.0, 1);
-    owl.vel.y = -1.0;
+    owl.motion.vel.y = -1.0;
     owl.integrate(0.05, d, Vec3::ZERO, false, &floor_at_zero);
-    assert!((owl.vel.y + 1.0).abs() < 1e-6);
+    assert!((owl.motion.vel.y + 1.0).abs() < 1e-6);
     assert!((owl.pos.y - 4.95).abs() < 1e-5);
     let mut touched_floor = false;
     for _ in 0..120 {
@@ -58,7 +58,7 @@ fn zero_gravity_preserves_vertical_drive_but_still_collides() {
     }
     assert!(touched_floor);
     assert!(owl.pos.y.abs() < 0.01);
-    assert_eq!(owl.vel.y, 0.0);
+    assert_eq!(owl.motion.vel.y, 0.0);
 }
 
 #[test]
@@ -196,8 +196,8 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
 
     let mut left_ground = false;
     for _ in 0..80 {
-        let can_steer = route_steering_supported(sheep.on_ground, false, sheep.vel.y);
-        let jump = sheep.on_ground && sheep.pos.y < 1.5;
+        let can_steer = route_steering_supported(sheep.motion.on_ground, false, sheep.motion.vel.y);
+        let jump = sheep.motion.on_ground && sheep.pos.y < 1.5;
         sheep.integrate_locomotion(
             0.05,
             sheep_def(),
@@ -262,7 +262,7 @@ fn airborne_sheep_carries_velocity_without_walk_steering() {
     let empty_boxes =
         |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
     let mut sheep = Instance::new(Mob::Sheep, WorldPos::new(0.5, 5.0, 0.5), 0.0, 1);
-    sheep.vel.x = 1.0;
+    sheep.motion.vel.x = 1.0;
 
     sheep.integrate_locomotion(
         1.0 / 60.0,
@@ -281,9 +281,9 @@ fn airborne_sheep_carries_velocity_without_walk_steering() {
         sheep.pos.x
     );
     assert!(
-        sheep.vel.x > 0.0,
+        sheep.motion.vel.x > 0.0,
         "airborne walk wish must not overwrite carried velocity: vx {}",
-        sheep.vel.x
+        sheep.motion.vel.x
     );
     assert!(
         !sheep.moving,
@@ -296,7 +296,7 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
     let empty_boxes =
         |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 5.0, 0.5), 0.25, 1);
-    owl.vel.x = 1.0;
+    owl.motion.vel.x = 1.0;
     assert!(owl.set_drive(DriveIntent {
         horizontal: Some([-5.0, 0.0]),
         vertical: None,
@@ -318,7 +318,7 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
 
     assert!(owl.pos.x > 0.5, "airborne carry wins over driven -X");
     assert_eq!(owl.yaw, 0.25, "airborne drive yaw is ignored too");
-    assert!(owl.drive.is_none(), "the rejected intent still expires");
+    assert!(owl.motion.drive.is_none(), "the rejected intent still expires");
 }
 
 #[test]
@@ -397,9 +397,9 @@ fn a_driven_step_walks_and_a_carried_body_does_not() {
         "a body stepping sideways under its own power walks"
     );
     assert!(
-        walked.gait_pace < 1.0,
+        walked.motion.gait_pace < 1.0,
         "and its gait keeps pace with the slow step: {}",
-        walked.gait_pace
+        walked.motion.gait_pace
     );
     assert!(!step(false).moving, "a body carried along does not");
 }
@@ -425,7 +425,7 @@ fn knockback_stagger_overrides_a_drive_intent() {
         owl.pos.x
     );
     assert_eq!(owl.yaw, 0.0, "stagger rejects the drive yaw as well");
-    assert!(owl.drive.is_none(), "the rejected intent still expires");
+    assert!(owl.motion.drive.is_none(), "the rejected intent still expires");
 }
 
 #[test]
@@ -514,7 +514,7 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
             &Surroundings::dry(&boxes_of(&solid)),
         );
         let launched = was_grounded && !mob.on_ground() && mob.vel().y > 0.0;
-        mob.apply_expression(dt, d, &named, &crate::mob::brain::BehaviorOutput::default());
+        mob.apply_expression(dt, d, &named, &crate::mob::anim::Expression::default());
         if launched {
             launches += 1;
             let phase = (mob.anim_time - d.walk_anim_rate * dt).rem_euclid(0.5);
@@ -646,7 +646,7 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         owl.on_ground() && owl.vel().y <= 0.0,
         "the stale gated intent is dropped: no parting bounce"
     );
-    assert!(owl.drive.is_none(), "the dropped intent still expires");
+    assert!(owl.motion.drive.is_none(), "the dropped intent still expires");
 
     // Premise holds: same intent on a walking tick launches.
     assert!(owl.set_drive(DriveIntent {
@@ -701,14 +701,14 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
         yaw: 1.0,
         tilt: Tilt::new(0.4, -0.5),
     }));
-    let pose = cart.kinematic.take().expect("latched");
+    let pose = cart.motion.kinematic.take().expect("latched");
     cart.place_kinematic(dt, pose);
     assert_eq!(cart.pos, WorldPos::new(0.9, 0.0, 0.5));
     assert_eq!((cart.yaw, cart.tilt), (1.0, Tilt::new(0.4, -0.5)));
     assert!(
-        (cart.vel.x - 0.4 / dt).abs() < 1e-3,
+        (cart.motion.vel.x - 0.4 / dt).abs() < 1e-3,
         "implied velocity: {}",
-        cart.vel
+        cart.motion.vel
     );
     assert!(!cart.moving, "authored motion is not a walk");
     assert!(
@@ -720,7 +720,7 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
     // the tick gates it, off the airborne flag the placement left — carries
     // the implied velocity instead of parking the body like a standing one.
     let x = cart.pos.x;
-    let can_steer = route_steering_supported(cart.on_ground, false, cart.vel.y);
+    let can_steer = route_steering_supported(cart.motion.on_ground, false, cart.motion.vel.y);
     assert!(!can_steer, "a placed body is left airborne");
     cart.integrate_locomotion(
         dt,
@@ -734,7 +734,7 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
     );
     assert!(cart.pos.x > x + 0.3, "the body flew on: {}", cart.pos.x);
     assert!(
-        cart.kinematic.is_none(),
+        cart.motion.kinematic.is_none(),
         "a pose is consumed by the tick it was issued for"
     );
     // Back in the engine's hands the body settles level over a few ticks —
@@ -762,7 +762,7 @@ fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
         tilt: Tilt::LEVEL
     }));
     owl.clear_drive();
-    assert!(owl.kinematic.is_none(), "a frozen tick discards the pose");
+    assert!(owl.motion.kinematic.is_none(), "a frozen tick discards the pose");
     owl.damage(100.0, None, true, None, &default_feedback());
     assert!(!owl.set_kinematic(KinematicPose {
         pos: WorldPos::ZERO,
@@ -775,10 +775,10 @@ fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
 fn brain_speed_scale_changes_horizontal_travel_and_gait_together() {
     let mut normal = Instance::new(Mob::Sheep, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     let mut hurried = Instance::new(Mob::Sheep, normal.pos, 0.0, 1);
-    normal.on_ground = true;
-    hurried.on_ground = true;
+    normal.motion.on_ground = true;
+    hurried.motion.on_ground = true;
     let ratio = 1.75;
-    hurried.walk_speed_scale = ratio;
+    hurried.motion.walk_speed_scale = ratio;
     for mob in [&mut normal, &mut hurried] {
         mob.integrate(
             0.05,
@@ -791,12 +791,12 @@ fn brain_speed_scale_changes_horizontal_travel_and_gait_together() {
             0.05,
             sheep_def(),
             &[],
-            &crate::mob::brain::BehaviorOutput::default(),
+            &crate::mob::anim::Expression::default(),
         );
     }
-    assert!((hurried.vel.z - normal.vel.z * ratio).abs() < 1e-5);
+    assert!((hurried.motion.vel.z - normal.motion.vel.z * ratio).abs() < 1e-5);
     assert!((hurried.anim_time - normal.anim_time * ratio).abs() < 1e-5);
-    assert_eq!(hurried.vel.y, normal.vel.y);
+    assert_eq!(hurried.motion.vel.y, normal.motion.vel.y);
 }
 
 #[test]

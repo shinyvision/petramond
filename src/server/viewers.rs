@@ -72,7 +72,7 @@ impl ContainerViewers {
             .holds
             .get(&pos)
             .is_some_and(|ids| ids.contains(&mob_id));
-        if open && !held && world.mobs().index_of_id(mob_id).is_some() {
+        if open && !held && world.mobs().contains(mob_id) {
             self.holds.entry(pos).or_default().push(mob_id);
             let chest = world
                 .block_if_stream_final(pos.x, pos.y, pos.z)
@@ -100,7 +100,7 @@ impl ContainerViewers {
             .holds
             .iter()
             .flat_map(|(pos, ids)| ids.iter().map(move |id| (*pos, *id)))
-            .filter(|(_, id)| mobs.index_of_id(*id).is_none())
+            .filter(|(_, id)| !mobs.contains(*id))
             .collect();
         for (pos, id) in gone {
             self.release(pos, id);

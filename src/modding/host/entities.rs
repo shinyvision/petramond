@@ -44,12 +44,13 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
     }
 }
 
-/// The ABI snapshot of the live mob at list `index` — the one construction
-/// shared by `MobsInRadius` and `MobsWithTag`.
-pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapshot {
+/// The ABI snapshot of a live mob at `position` in this tick's listing (its
+/// intra-tick join key — see [`Mobs::position_of`](crate::mob::Mobs::position_of))
+/// — the one construction shared by `MobInfo`, `MobsInRadius` and `MobsWithTag`.
+pub(super) fn mob_snapshot(position: usize, m: &crate::mob::Instance) -> MobSnapshot {
     let size = crate::mob::def(m.kind).size;
     MobSnapshot {
-        index: index as u32,
+        index: position as u32,
         kind: mod_api::MobId(m.kind.0),
         pos: m.pos.to_array(),
         health: m.health(),
@@ -92,10 +93,7 @@ pub(super) fn attack_source(
             DamageSource::PlayerAttack(crate::player::PlayerId(id.0))
         }
         Some(mod_api::EntityRef::Mob(id)) => match live_mob(ctx, id) {
-            Some(index) => DamageSource::MobAttack {
-                kind: ctx.world.mobs().instances()[index].kind,
-                id,
-            },
+            Some(mob) => DamageSource::MobAttack { kind: mob.kind, id },
             None => DamageSource::Mod(mod_id),
         },
     })
@@ -152,15 +150,18 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
             }),
         },
         EntityCall::MobInfo { mob_id } => sim_query(|ctx| {
+            let position = ctx.world.mobs().position_of(mob_id);
             HostRet::Mob(
-                live_mob(ctx, mob_id).map(|i| mob_snapshot(i, &ctx.world.mobs().instances()[i])),
+                live_mob(ctx, mob_id)
+                    .zip(position)
+                    .map(|(mob, position)| mob_snapshot(position, mob)),
             )
         }),
         EntityCall::MobCanReach { mob_id, cell } => sim_query(|ctx| {
-            HostRet::Bool(live_mob(ctx, mob_id).is_some_and(|i| {
+            HostRet::Bool(live_mob(ctx, mob_id).is_some_and(|mob| {
                 crate::mob::mob_can_reach(
                     ctx.world,
-                    &ctx.world.mobs().instances()[i],
+                    mob,
                     petramond_math::math::IVec3::new(cell[0], cell[1], cell[2]),
                 )
             }))
@@ -243,10 +244,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 return HostRet::Bool(false);
             };
             sim_query(|ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::Bool(false);
-                };
-                ctx.world.mobs_mut().set_held(index, [main, off]);
+                }
+                ctx.world.mobs_mut().set_held(mob_id, [main, off]);
                 HostRet::Bool(true)
             })
         }
@@ -259,11 +260,11 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 return err;
             }
             sim_query(|ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::Bool(false);
-                };
+                }
                 ctx.world.mobs_mut().set_draw(
-                    index,
+                    mob_id,
                     crate::world::draw::BodyDraw {
                         prims: prims.into(),
                         turns: frame == mod_api::DrawFrame::Body,
@@ -331,10 +332,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
             }
         },
         EntityCall::DespawnMob { mob_id } => sim_query(|ctx| {
-            let Some(index) = live_mob(ctx, mob_id) else {
+            if live_mob(ctx, mob_id).is_none() {
                 return HostRet::Bool(false);
-            };
-            HostRet::Bool(ctx.world.mobs_mut().remove(index))
+            }
+            HostRet::Bool(ctx.world.mobs_mut().remove(mob_id))
         }),
         // Presentation-only mob state (no bus funnel), so unlike DamageMob it
         // applies immediately instead of queueing a DeferredAction.
@@ -343,10 +344,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
             key,
             active,
         } => sim_query(|ctx| {
-            let Some(index) = live_mob(ctx, mob_id) else {
+            if live_mob(ctx, mob_id).is_none() {
                 return HostRet::Bool(false);
-            };
-            HostRet::Bool(ctx.world.mobs_mut().set_mob_emitter(index, &key, active))
+            }
+            HostRet::Bool(ctx.world.mobs_mut().set_mob_emitter(mob_id, &key, active))
         }),
         // The animation sibling of MobEmitterSet.
         EntityCall::MobAnimSet {
@@ -356,10 +357,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
         } => match anim_name_guard("MobAnimSet", &anim) {
             Err(e) => e,
             Ok(()) => sim_query(|ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::Bool(false);
-                };
-                HostRet::Bool(ctx.world.mobs_mut().set_mob_anim(index, &anim, active))
+                }
+                HostRet::Bool(ctx.world.mobs_mut().set_mob_anim(mob_id, &anim, active))
             }),
         },
         EntityCall::MobAnimRate { mob_id, anim, rate } => {
@@ -372,10 +373,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 return e;
             }
             sim_query(move |ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::Bool(false);
-                };
-                HostRet::Bool(ctx.world.mobs_mut().set_mob_anim_rate(index, &anim, rate))
+                }
+                HostRet::Bool(ctx.world.mobs_mut().set_mob_anim_rate(mob_id, &anim, rate))
             })
         }
         EntityCall::MobAnimSeek {
@@ -398,13 +399,13 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 return e;
             }
             sim_query(move |ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::Bool(false);
-                };
+                }
                 HostRet::Bool(
                     ctx.world
                         .mobs_mut()
-                        .set_mob_anim_seek(index, &anim, phase, rate),
+                        .set_mob_anim_seek(mob_id, &anim, phase, rate),
                 )
             })
         }
@@ -442,11 +443,11 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 ));
             }
             sim_query(move |ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::Bool(false);
-                };
+                }
                 HostRet::Bool(ctx.world.mobs_mut().set_mob_drive(
-                    index,
+                    mob_id,
                     horizontal,
                     vertical,
                     yaw,
@@ -475,14 +476,14 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 return HostRet::invalid("MobKinematic: roll outside ±π".into());
             }
             sim_query(move |ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::Bool(false);
-                };
+                }
                 let pos = petramond_math::world_pos::WorldPos::from_array(pos);
                 match ctx
                     .world
                     .mobs_mut()
-                    .set_mob_kinematic(index, pos, yaw, tilt)
+                    .set_mob_kinematic(mob_id, pos, yaw, tilt)
                 {
                     Ok(placed) => HostRet::Bool(placed),
                     Err(distance) => HostRet::invalid(format!(
@@ -530,10 +531,9 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
             HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some())
         }),
         EntityCall::MobRiders { mob_id } => sim_query(|ctx| {
-            let Some(index) = live_mob(ctx, mob_id) else {
+            let Some(mob) = live_mob(ctx, mob_id) else {
                 return HostRet::Riders(None);
             };
-            let mob = &ctx.world.mobs().instances()[index];
             let capacity = crate::mob::def(mob.kind).seats.len() as u8;
             let riders = ctx
                 .world
@@ -613,10 +613,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 return e;
             }
             sim_query(move |ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                if live_mob(ctx, mob_id).is_none() {
                     return HostRet::MobAnimState(None);
-                };
-                HostRet::MobAnimState(ctx.world.mobs().mob_anim_state(index, &anim).map(|state| {
+                }
+                HostRet::MobAnimState(ctx.world.mobs().mob_anim_state(mob_id, &anim).map(|state| {
                     MobAnimStateData {
                         phase: state.phase,
                         rate: state.rate,
@@ -1129,7 +1129,7 @@ mod tests {
         assert!(world
             .mobs_mut()
             .damage_mob(
-                0,
+                mob_id,
                 1000.0,
                 None,
                 true,

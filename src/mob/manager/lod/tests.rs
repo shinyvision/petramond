@@ -64,7 +64,8 @@ fn a_mod_driven_body_keeps_the_full_tick_anywhere() {
     let mut mobs = Mobs::new(0);
     mobs.set_sim_distance(SimDistance::default());
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0 + 16.0 * 30.0, 64.0, 8.0), 0.0));
-    assert!(mobs.set_mob_drive(0, Some([2.0, 0.0]), None, Some(1.0), false, false));
+    let id = mobs.instances()[0].id();
+    assert!(mobs.set_mob_drive(id, Some([2.0, 0.0]), None, Some(1.0), false, false));
     let anchors = [anchor_at(8.0, 8.0)];
     assert_eq!(
         mobs.sim_distance().step(&mobs.instances()[0], &anchors, 0),
@@ -107,7 +108,7 @@ fn frozen_mobs_do_not_simulate_while_near_ones_do() {
     assert!(near.pos.y < near_spot.y, "the near owl simulates (falls)");
     assert_eq!(far.pos, far_spot, "the frozen owl does not move");
     assert_eq!(
-        far.prev_pos, far.pos,
+        far.interp.pos, far.pos,
         "its pose is held, not re-interpolated"
     );
 

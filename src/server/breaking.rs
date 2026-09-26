@@ -543,16 +543,15 @@ impl ServerGame {
         light: (u8, petramond_world::light::BlockLight6),
     ) {
         let mut rest = Some(stack);
-        if let Some(index) = collector.and_then(|id| self.world.mobs().index_of_id(id)) {
-            if let Some(container) = self.world.mobs_mut().container_mut(index) {
-                let len = container.slots.len();
-                petramond_world::container::route_into(
-                    &mut rest,
-                    &mut container.slots,
-                    &vec![petramond_world::container::SlotSpec::default(); len],
-                    None,
-                );
-            }
+        let mobs = self.world.mobs_mut();
+        if let Some(container) = collector.and_then(|id| mobs.container_mut(id)) {
+            let len = container.slots.len();
+            petramond_world::container::route_into(
+                &mut rest,
+                &mut container.slots,
+                &vec![petramond_world::container::SlotSpec::default(); len],
+                None,
+            );
         }
         if let Some(stack) = rest {
             self.spawn_item_stack(pos, stack, light);

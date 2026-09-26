@@ -638,7 +638,7 @@ mod tests {
         server.close_menus_on_absent_anchors(&mut events);
         assert_ne!(server.sessions[0].sim.menu.target(), ContainerTarget::None);
 
-        server.world.mobs_mut().remove(0);
+        server.world.mobs_mut().remove(mob);
         server.close_menus_on_absent_anchors(&mut events);
         assert_eq!(server.sessions[0].sim.menu.target(), ContainerTarget::None);
         assert!(server.sessions[0].replication.request_close_gui);

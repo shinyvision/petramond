@@ -147,11 +147,12 @@ fn cancelled_damage_does_not_cancel_a_condition_or_change_its_cadence() {
 }
 
 fn mob_tick(server: &mut ServerGame) {
+    let id = server.world.mobs().instances()[0].id();
     server
         .world
         .mobs_mut()
         .set_mob_kinematic(
-            0,
+            id,
             WorldPos::new(8.5, 65.0, 8.5),
             0.0,
             petramond_math::math::Tilt::LEVEL,

@@ -26,7 +26,7 @@ pub fn ctx<'a>(world: &'a ServerWorld, rng: &'a mut MobRng) -> AiCtx<'a> {
         player_sneaking: false,
         player_held: None,
         players: &[],
-        noises: &[],
+        noises: crate::mob::NoiseField::empty(),
         contacts: &[],
         target: None,
         attacker: None,
@@ -35,19 +35,22 @@ pub fn ctx<'a>(world: &'a ServerWorld, rng: &'a mut MobRng) -> AiCtx<'a> {
         head: 1,
         tolerated: &[],
         idle_anims: &[],
-        mob_index: 0,
+        mob_index: None,
         mobs: crate::mob::spatial::MobSnapshot::empty(),
         tags: empty_tags(),
         confined_region: None,
+        scripted: Default::default(),
         rng,
     }
 }
 
 /// The shared empty tag map for neutral contexts (a `&'static` so the ctx
 /// builder needs no owner).
-pub fn empty_tags() -> &'static std::collections::BTreeMap<String, crate::mob::MobTagValue> {
-    static EMPTY: std::sync::LazyLock<std::collections::BTreeMap<String, crate::mob::MobTagValue>> =
-        std::sync::LazyLock::new(std::collections::BTreeMap::new);
+pub fn empty_tags(
+) -> &'static std::sync::Arc<std::collections::BTreeMap<String, crate::mob::MobTagValue>> {
+    static EMPTY: std::sync::LazyLock<
+        std::sync::Arc<std::collections::BTreeMap<String, crate::mob::MobTagValue>>,
+    > = std::sync::LazyLock::new(Default::default);
     &EMPTY
 }
 

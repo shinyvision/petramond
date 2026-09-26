@@ -183,11 +183,11 @@ impl ServerGame {
         self.world
             .carry_into_cell(&paid, carried, writes.anchor, writes.anchor_part());
         if pay {
-            let index = self.world.actor(mob_id)?.index;
+            let actor = self.world.actor(mob_id)?;
             let paid = self
                 .world
                 .mobs_mut()
-                .container_mut(index)
+                .container_mut(actor.id)
                 .is_some_and(|c| c.take_all(std::slice::from_ref(&paid)));
             debug_assert!(paid, "the carried cost was proven just before the commit");
         }

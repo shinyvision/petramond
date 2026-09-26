@@ -54,7 +54,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
                 return HostRet::Bool(false);
             };
             let stores = access::slots(ctx, access::Target::Block(pos)).is_some();
-            if !stores || ctx.world.mobs().index_of_id(mob_id).is_none() {
+            if !stores || !ctx.world.mobs().contains(mob_id) {
                 return HostRet::Bool(false);
             }
             ctx.queue

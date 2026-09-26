@@ -116,11 +116,10 @@ impl ServerWorld {
     /// `MobMount` HostCall's engine seam; the riding pass slaves the player to
     /// the seat starting this same tick.
     pub fn try_mount_player(&mut self, player: u8, mob_id: u64, seat: u8) -> bool {
-        let Some(index) = self.side.entities.mobs.index_of_id(mob_id) else {
+        let Some(mob) = self.side.entities.mobs.live(mob_id) else {
             return false;
         };
-        let mob = &self.side.entities.mobs.instances()[index];
-        if mob.is_dead() || seat as usize >= crate::mob::def(mob.kind).seats.len() {
+        if seat as usize >= crate::mob::def(mob.kind).seats.len() {
             return false;
         }
         self.side.entities.riding

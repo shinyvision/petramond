@@ -2,12 +2,16 @@
 //! `node` key resolves to.
 //!
 //! Unlike the block-behavior hooks (fire-and-forget after the world tick), a
-//! node's decision feeds the brain's priority arbitration NOW, so the
-//! dispatch is synchronous: `tick` snapshots the [`AiCtx`] into the ABI's
-//! `AiNodeCtx` and calls the owning mod through the main-thread registry
-//! (`modding::ai`), detached — no sim scope, decision-only (see
-//! `GuestCall::AiNode`). No registration (mod disabled, key unclaimed) means
-//! no opinion, exactly like an engine node returning defaults.
+//! node's decision feeds the brain's priority arbitration the SAME tick, so
+//! it is dispatched before the brains decide: the mob manager asks every
+//! claimed [`ScriptedNode`] for its [`AiNodeRequest`] (the mob's `AiCtx`
+//! snapshotted into ABI vocabulary, its tag map by shared handle), hands the
+//! whole population's requests to `modding::ai::dispatch_batch` — one guest
+//! call per node key — and each mob's replies ride its `AiCtx::scripted`
+//! into [`WasmNodeAi::tick`], which converts them like any engine node's
+//! output. Detached — no sim scope, decision-only (see `GuestCall::AiNode`).
+//! No registration (mod disabled, key unclaimed) means no opinion, exactly
+//! like an engine node returning defaults, and no request is built.
 //!
 //! Perception FACTS beyond the always-present baseline are PULL-model: the
 //! brain row DECLARES the facts its node reads (`"inputs": ["player_held"]`
@@ -16,7 +20,7 @@
 //! a compute arm here, and an `AiNodeCtx` field — undeclaring mobs never pay
 //! for it, and an unclaimed key computes nothing at all.
 
-use mod_api::AiNodeCtx;
+use crate::modding::ai::AiNodeRequest;
 
 use super::super::brain::{AiBehavior, AiCtx, AttackIntent, BehaviorOutput, HeadLook};
 use super::super::EntityRef;
@@ -24,31 +28,31 @@ pub use petramond_world::ai_vocab::ScriptedInputs;
 
 use petramond_math::math::IVec3;
 
-pub struct WasmNodeAi {
+/// A scripted node's identity: the registry key its brain row names and the
+/// facts the row declared.
+pub struct ScriptedNode {
     key: &'static str,
     inputs: ScriptedInputs,
 }
 
-impl WasmNodeAi {
-    pub(super) fn new(key: &'static str, inputs: ScriptedInputs) -> Self {
-        WasmNodeAi { key, inputs }
+impl ScriptedNode {
+    /// Whether a mod claims this node's key on this thread.
+    fn claimed(&self) -> bool {
+        crate::modding::ai::is_claimed(self.key)
     }
-}
 
-impl AiBehavior for WasmNodeAi {
-    fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
-        // Unclaimed key (mod disabled / never registered) = no opinion, and
-        // no snapshot either — the declared facts are computed only for a
-        // dispatch that will actually happen.
-        if !crate::modding::ai::is_claimed(self.key) {
-            return BehaviorOutput::default();
+    /// This node's request for the mob `ctx` describes, or `None` when no mod
+    /// claims the key — then nothing is computed and the node has no opinion.
+    pub fn request(&self, ctx: &AiCtx) -> Option<AiNodeRequest> {
+        if !self.claimed() {
+            return None;
         }
-        let snapshot = AiNodeCtx {
+        Some(AiNodeRequest {
+            key: self.key,
             mob_id: ctx.mob_id,
             pos: ctx.pos.to_array(),
             cell: ctx.cell.to_array(),
             yaw: ctx.yaw,
-            tick: ctx.world.current_tick(),
             player_id: mod_api::PlayerId(ctx.player_id.0),
             player_pos: ctx.player_pos.to_array(),
             nav_idle: ctx.nav_idle,
@@ -74,14 +78,37 @@ impl AiBehavior for WasmNodeAi {
             .map(|c| c.to_array()),
             // The mob's own tag map — baseline own-state, so a node persists
             // per-mob state through decision tag writes instead of keying a
-            // guest-side map off mob_id.
-            tags: ctx
-                .tags
-                .iter()
-                .map(|(k, v)| (k.clone(), mod_api::MobTagValue::from(v)))
-                .collect(),
-        };
-        let Some(d) = crate::modding::ai::dispatch(self.key, snapshot) else {
+            // guest-side map off mob_id. Shared, not copied.
+            tags: std::sync::Arc::clone(ctx.tags),
+        })
+    }
+}
+
+pub struct WasmNodeAi {
+    node: ScriptedNode,
+}
+
+impl WasmNodeAi {
+    pub(super) fn new(key: &'static str, inputs: ScriptedInputs) -> Self {
+        WasmNodeAi {
+            node: ScriptedNode { key, inputs },
+        }
+    }
+}
+
+impl AiBehavior for WasmNodeAi {
+    fn scripted(&self) -> Option<&ScriptedNode> {
+        Some(&self.node)
+    }
+
+    fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
+        // An unclaimed key had no request gathered, so it owns no reply slot:
+        // the claimed set cannot change between the gather and this decide
+        // (both run on the sim thread within one tick).
+        if !self.node.claimed() {
+            return BehaviorOutput::default();
+        }
+        let Some(d) = ctx.scripted.take_next() else {
             return BehaviorOutput::default();
         };
         // Every channel an engine node fills, converted 1:1. A scripted strike
@@ -106,7 +133,7 @@ impl AiBehavior for WasmNodeAi {
                 if !ok {
                     log::warn!(
                         "AI node '{}' decision animation {name:?} is empty or over {} bytes — dropped",
-                        self.key,
+                        self.node.key,
                         mod_api::MAX_MOB_ANIM_NAME_BYTES
                     );
                 }
@@ -146,7 +173,7 @@ impl WasmNodeAi {
         if writes.is_empty() {
             return Vec::new();
         }
-        let own = petramond_world::registry::namespace(self.key).unwrap_or("");
+        let own = petramond_world::registry::namespace(self.node.key).unwrap_or("");
         writes
             .into_iter()
             .filter(|w| {
@@ -155,7 +182,7 @@ impl WasmNodeAi {
                 if !ok {
                     log::warn!(
                         "AI node '{}' decision tag write '{}' outside its own namespace — dropped",
-                        self.key,
+                        self.node.key,
                         w.key
                     );
                 }

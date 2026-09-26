@@ -59,7 +59,7 @@ impl Instance {
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
     ) -> bool {
-        if self.death.is_dead() || (self.damage_immunity.is_active() && feedback.has_immunity()) {
+        if self.combat.death.is_dead() || (self.combat.damage_immunity.is_active() && feedback.has_immunity()) {
             return false;
         }
         let decreases_health = feedback
@@ -71,7 +71,7 @@ impl Instance {
             self.set_health(health);
             for component in &feedback.components {
                 if let MobDamageFeedbackComponent::Immunity { ticks } = component {
-                    self.damage_immunity.grant_for(*ticks);
+                    self.combat.damage_immunity.grant_for(*ticks);
                 }
             }
             health <= 0.0
@@ -80,8 +80,8 @@ impl Instance {
         };
         if decreases_health && amount > 0.0 {
             if let Some(who) = attacker {
-                self.attacker = Some(who);
-                self.attacker_ticks = 0;
+                self.combat.attacker = Some(who);
+                self.combat.attacker_ticks = 0;
             }
         }
         if lethal {
@@ -94,23 +94,23 @@ impl Instance {
                 MobDamageFeedbackComponent::Immunity { .. } => {}
                 MobDamageFeedbackComponent::DecreaseHealth => {}
                 MobDamageFeedbackComponent::Flash { duration } => {
-                    self.hurt_timer = self.hurt_timer.max(duration.max(0.0));
+                    self.combat.hurt_timer = self.combat.hurt_timer.max(duration.max(0.0));
                 }
                 MobDamageFeedbackComponent::Knockback { scale, duration } => {
                     if !lethal && attack && scale > 0.0 {
                         if let Some(from) = origin {
                             let mut away = self.pos - from;
                             away.y = 0.0;
-                            self.knockback = away.normalize_or_zero() * KNOCKBACK_SPEED * scale;
-                            self.vel.y = KNOCKBACK_UP * scale;
-                            self.stagger_timer = self.stagger_timer.max(duration.max(0.0));
-                            self.on_ground = false;
+                            self.motion.knockback = away.normalize_or_zero() * KNOCKBACK_SPEED * scale;
+                            self.motion.vel.y = KNOCKBACK_UP * scale;
+                            self.combat.stagger_timer = self.combat.stagger_timer.max(duration.max(0.0));
+                            self.motion.on_ground = false;
                         }
                     }
                 }
                 MobDamageFeedbackComponent::Sound { .. } => {}
                 MobDamageFeedbackComponent::Ragdoll => {
-                    if lethal && matches!(self.death, DeathState::Alive) {
+                    if lethal && matches!(self.combat.death, DeathState::Alive) {
                         // The killing blow flings the corpse in the punched direction
                         // (away from the attacker, horizontally); the ragdoll launches
                         // + somersaults along it.
@@ -122,7 +122,7 @@ impl Instance {
                         // Ragdoll is initialised on the next tick (which has world
                         // access to find the floor). Seed it from this mob's RNG
                         // stream for a distinct fling.
-                        self.death =
+                        self.combat.death =
                             DeathState::Ragdoll(Ragdoll::pending(self.rng.next_u64(), launch));
                     }
                 }
@@ -130,11 +130,11 @@ impl Instance {
         }
 
         if lethal {
-            if matches!(self.death, DeathState::Alive) {
-                self.death = DeathState::NoPresentation;
+            if matches!(self.combat.death, DeathState::Alive) {
+                self.combat.death = DeathState::NoPresentation;
             }
-            self.knockback = Vec3::ZERO;
-            self.stagger_timer = 0.0;
+            self.motion.knockback = Vec3::ZERO;
+            self.combat.stagger_timer = 0.0;
             self.clear_drive();
             self.moving = false;
             self.idle_anim = None;
@@ -146,14 +146,14 @@ impl Instance {
     /// Is the mob dead (ragdolling or done)? A dead mob can't be targeted or hurt.
     #[inline]
     pub fn is_dead(&self) -> bool {
-        self.death.is_dead()
+        self.combat.death.is_dead()
     }
 
     /// Is the mob still reeling from a knockback — the stagger a
     /// `petramond:knockback` component started has not run out?
     #[inline]
     pub fn staggered(&self) -> bool {
-        self.stagger_timer > 0.0
+        self.combat.stagger_timer > 0.0
     }
 
     /// Current health (`0` = dead) — the `petramond:health` tag, seeded at
@@ -179,18 +179,18 @@ impl Instance {
 
     #[inline]
     pub fn is_damage_immune(&self) -> bool {
-        self.damage_immunity.is_active()
+        self.combat.damage_immunity.is_active()
     }
 
     #[inline]
     pub(super) fn tick_damage_immunity(&mut self) {
-        self.damage_immunity.tick();
+        self.combat.damage_immunity.tick();
     }
 
     /// Has the death ragdoll finished, so the corpse should be removed from the world?
     #[inline]
     pub fn is_despawned(&self) -> bool {
-        self.death.is_despawned()
+        self.combat.death.is_despawned()
     }
 
     /// Has this mob moved beyond its row-level despawn radius and should be culled at
@@ -206,7 +206,7 @@ impl Instance {
     /// red tint by this. Applies while dying too (the flash from the killing blow), so a
     /// kill reads like any other hit; it decays to 0 over the start of the ragdoll.
     pub fn hurt_flash(&self, alpha: f32) -> f32 {
-        hurt_flash01(self.prev_hurt, self.hurt_timer, alpha)
+        hurt_flash01(self.interp.hurt, self.combat.hurt_timer, alpha)
     }
 
     /// The remaining hurt stagger/flash timer (seconds) — the SOURCE state the
@@ -214,14 +214,14 @@ impl Instance {
     /// from consecutive values via [`hurt_flash01`].
     #[inline]
     pub fn hurt_timer(&self) -> f32 {
-        self.hurt_timer
+        self.combat.hurt_timer
     }
 
     /// The interpolated per-bone ragdoll pose (pivot position + orientation) at `alpha`,
     /// or `None` if the mob isn't ragdolling yet. The renderer builds each bone's pose
     /// as `T(pos)·R(rot)·T(-pivot)`.
     pub fn ragdoll_pose(&self, alpha: f32) -> Option<Vec<(Vec3, glam::Quat)>> {
-        let DeathState::Ragdoll(rag) = &self.death else {
+        let DeathState::Ragdoll(rag) = &self.combat.death else {
             return None;
         };
         if !rag.is_initialized() {
@@ -235,10 +235,10 @@ impl Instance {
     /// corpse can't pass through terrain and falls off edges). The mob's `pos`/`yaw` stay
     /// frozen — they're the ragdoll's model→world `global` transform.
     pub(super) fn tick_ragdoll(&mut self, dt: f32, world: &ServerWorld, d: &MobDef, skeleton: &Skeleton) {
-        let vel = self.vel;
+        let vel = self.motion.vel;
         let yaw = self.yaw;
         let pos = self.pos;
-        let DeathState::Ragdoll(rag) = &mut self.death else {
+        let DeathState::Ragdoll(rag) = &mut self.combat.death else {
             return;
         };
         if rag.is_initialized() {

@@ -36,7 +36,7 @@ impl MenuAnchor {
     pub fn present(self, world: &ServerWorld) -> bool {
         match self {
             MenuAnchor::Block(_) => true,
-            MenuAnchor::Mob(id) => live_mob(world, id).is_some(),
+            MenuAnchor::Mob(id) => world.mobs().live(id).is_some(),
         }
     }
 
@@ -44,9 +44,7 @@ impl MenuAnchor {
     pub fn container(self, world: &ServerWorld) -> Option<&Container> {
         match self {
             MenuAnchor::Block(pos) => world.container_at(pos),
-            MenuAnchor::Mob(id) => {
-                live_mob(world, id).map(|i| world.mobs().instances()[i].container())
-            }
+            MenuAnchor::Mob(id) => world.mobs().live(id).map(|m| m.container()),
         }
     }
 
@@ -65,16 +63,11 @@ impl MenuAnchor {
                 out
             }
             MenuAnchor::Mob(id) => {
-                let index = live_mob(world, id)?;
-                world.mobs_mut().container_mut(index).map(edit)
+                world.mobs().live(id)?;
+                world.mobs_mut().container_mut(id).map(edit)
             }
         }
     }
-}
-
-fn live_mob(world: &ServerWorld, id: u64) -> Option<usize> {
-    let index = world.mobs().index_of_id(id)?;
-    (!world.mobs().instances()[index].is_dead()).then_some(index)
 }
 
 /// What the open GUI is acting on — named for the thing being edited, not for the

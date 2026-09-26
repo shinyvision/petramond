@@ -25,7 +25,8 @@ fn step(
     world: &ServerWorld,
     drive: [f32; 2],
 ) -> super::super::simulation::MobTickEvents {
-    assert!(mobs.set_mob_drive(0, Some(drive), None, None, false, false));
+    let id = mobs.instances()[0].id();
+    assert!(mobs.set_mob_drive(id, Some(drive), None, None, false, false));
     mobs.tick(
         0.05,
         world,

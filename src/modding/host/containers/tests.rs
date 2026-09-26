@@ -346,7 +346,7 @@ fn a_mobs_carried_slots_are_a_container_and_spill_when_it_leaves() {
             "writes stay with the species' own pack"
         );
     });
-    assert!(world.mobs_mut().remove(0));
+    assert!(world.mobs_mut().remove(mob));
     let spills = world.mobs_mut().take_spills();
     let spilled: Vec<_> = spills
         .iter()

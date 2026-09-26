@@ -200,7 +200,7 @@ fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
     common::aim_server_at_mob(&mut game, 1);
 
     // Click the second owl, then despawn the FIRST before the tick —
-    // swap_remove renumbers the second owl into index 0.
+    // swap_remove renumbers the second owl into storage slot 0.
     game.server.apply_message(
         0,
         ClientToServer::Action(PlayerAction::AttackClick {
@@ -208,11 +208,12 @@ fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
             player: None,
         }),
     );
-    assert!(game.server.world_mut().mobs_mut().remove(0));
+    let first_id = game.server.world().mobs().instances()[0].id();
+    assert!(game.server.world_mut().mobs_mut().remove(first_id));
     assert_eq!(
-        game.server.world().mobs().index_of_id(second_id),
+        game.server.world().mobs().position_of(second_id),
         Some(0),
-        "the despawn shifted the clicked owl's index"
+        "the despawn shifted the clicked owl's storage position"
     );
 
     let mut ev = TickEvents::default();

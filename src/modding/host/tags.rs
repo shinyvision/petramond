@@ -22,10 +22,10 @@ pub(in crate::modding) fn to_api(v: &MobTagValue) -> ApiMobTagValue {
 pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
     match call {
         TagCall::MobTagGet { mob_id, key } => sim_read(|ctx| {
-            let Some(index) = live_mob(ctx, mob_id) else {
+            let Some(mob) = live_mob(ctx, mob_id) else {
                 return HostRet::MobTag(MobTagLookup::MissingMob);
             };
-            let lookup = match ctx.world.mobs().mob_tag(index, &key) {
+            let lookup = match mob.tags().get(&key) {
                 Some(v) => MobTagLookup::Value(to_api(v)),
                 None => MobTagLookup::Absent,
             };
@@ -40,20 +40,19 @@ pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
             match kv_write_guard(mod_id, &key, value_len) {
                 Some(err) => err,
                 None => sim_query(|ctx| {
-                    let Some(index) = live_mob(ctx, mob_id) else {
+                    let Some(mob) = live_mob(ctx, mob_id) else {
                         return HostRet::Bool(false);
                     };
                     // Presence transition = the mob_tag_added post event
                     // (value overwrites are silent — else the hot deadline
                     // rewrites would spam the queue).
-                    let fresh = ctx.world.mobs().mob_tag(index, &key).is_none();
+                    let (kind, fresh) = (mob.kind, !mob.tags().contains_key(&key));
                     let value = from_api(value);
                     let set = ctx
                         .world
                         .mobs_mut()
-                        .set_mob_tag(index, key.clone(), value.clone());
+                        .set_mob_tag(mob_id, key.clone(), value.clone());
                     if set && fresh {
-                        let kind = ctx.world.mobs().instances()[index].kind;
                         ctx.queue.emit(crate::events::PostEvent::MobTagAdded {
                             id: mob_id,
                             kind,
@@ -68,13 +67,12 @@ pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
         TagCall::MobTagDelete { mob_id, key } => match kv_write_guard(mod_id, &key, 0) {
             Some(err) => err,
             None => sim_query(|ctx| {
-                let Some(index) = live_mob(ctx, mob_id) else {
+                let Some(mob) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
-                let old = ctx.world.mobs().mob_tag(index, &key).cloned();
-                let removed = ctx.world.mobs_mut().remove_mob_tag(index, &key);
+                let (kind, old) = (mob.kind, mob.tags().get(&key).cloned());
+                let removed = ctx.world.mobs_mut().remove_mob_tag(mob_id, &key);
                 if let (true, Some(value)) = (removed, old) {
-                    let kind = ctx.world.mobs().instances()[index].kind;
                     ctx.queue.emit(crate::events::PostEvent::MobTagRemoved {
                         id: mob_id,
                         kind,
@@ -86,23 +84,22 @@ pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
             }),
         },
         TagCall::MobTagsGet { mob_id } => sim_read(|ctx| {
-            let Some(index) = live_mob(ctx, mob_id) else {
+            let Some(mob) = live_mob(ctx, mob_id) else {
                 return HostRet::MobTags(None);
             };
-            HostRet::MobTags(
-                ctx.world
-                    .mobs()
-                    .mob_tags(index)
-                    .map(|tags| tags.iter().map(|(k, v)| (k.clone(), to_api(v))).collect()),
-            )
+            HostRet::MobTags(Some(
+                mob.tags()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), to_api(v)))
+                    .collect(),
+            ))
         }),
         TagCall::MobsWithTag { key, value } => sim_read(|ctx| {
             let want = value.map(from_api);
             let mobs = ctx.world.mobs();
             HostRet::Mobs(
-                mobs.indices_with_tag(&key, want.as_ref())
-                    .into_iter()
-                    .map(|i| mob_snapshot(i, &mobs.instances()[i]))
+                mobs.with_tag(&key, want.as_ref())
+                    .map(|(position, m)| mob_snapshot(position, m))
                     .collect(),
             )
         }),

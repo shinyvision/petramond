@@ -36,13 +36,12 @@ impl ServerGame {
         events: &mut TickEvents,
     ) {
         for hit in hits {
-            let Some(index) = self.world.mobs().index_of_id(hit.mob_id) else {
+            let Some(mob) = self.world.mobs().get(hit.mob_id) else {
                 continue;
             };
-            let species =
-                &crate::mob::def(self.world.mobs().instances()[index].kind).damage_feedback;
+            let species = &crate::mob::def(mob.kind).damage_feedback;
             self.damage_mob_through_pipeline(
-                index,
+                hit.mob_id,
                 hit.damage.amount as f32,
                 source(hit.damage),
                 None,

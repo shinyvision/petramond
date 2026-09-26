@@ -59,7 +59,9 @@ impl fmt::Display for AbiVersion {
 /// `HostRet::Error` with the typed [`HostRet::Err`](crate::HostRet::Err),
 /// added event-subscription filters to `RegisterEventHandler`, and stopped
 /// echoing payloads the engine never reads back.
-pub const ABI_VERSION: AbiVersion = AbiVersion { major: 2, minor: 0 };
+///
+/// 2.1 appends batched scripted AI node calls and replies.
+pub const ABI_VERSION: AbiVersion = AbiVersion { major: 2, minor: 1 };
 
 /// A set of optional host feature domains. A guest declares the ones it cannot
 /// run without (`Mod::REQUIRES` in the SDK); the host refuses a guest whose

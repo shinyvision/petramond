@@ -12,7 +12,6 @@ use petramond_world::block::Block;
 fn strike() -> MobAttack {
     MobAttack {
         target: petramond::mob::EntityRef::Player(Default::default()),
-        mob_index: 0,
         mob: Mob::Owl,
         mob_id: 1,
         origin: WorldPos::new(7.0, 64.0, 8.0),
@@ -71,11 +70,12 @@ fn immunity_is_a_composable_pipeline_component() {
     let mut ev = TickEvents::default();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world_mut().mobs_mut().spawn(Mob::Sheep, pos, 0.0));
+    let mob = game.server.world().mobs().instances()[0].id();
     let health = game.server.world().mobs().instances()[0].health();
 
     // A default-pipeline hit opens the window…
     assert!(game.server.damage_mob_through_pipeline(
-        0,
+        mob,
         1.0,
         DamageSource::PlayerAttack(game.server.sessions()[0].id()),
         Some(pos + Vec3::X),
@@ -85,7 +85,7 @@ fn immunity_is_a_composable_pipeline_component() {
     // …which blocks a second default hit, but NOT the DoT pipeline: it
     // applies inside the window and grants nothing.
     assert!(!game.server.damage_mob_through_pipeline(
-        0,
+        mob,
         1.0,
         DamageSource::Mod("test"),
         None,
@@ -94,7 +94,7 @@ fn immunity_is_a_composable_pipeline_component() {
     ));
     for _ in 0..3 {
         assert!(game.server.damage_mob_through_pipeline(
-            0,
+            mob,
             1.0,
             DamageSource::Mod("test"),
             None,
@@ -114,7 +114,7 @@ fn immunity_is_a_composable_pipeline_component() {
     }
     game.server.game_tick_step(&mut ev);
     assert!(game.server.damage_mob_through_pipeline(
-        0,
+        mob,
         1.0,
         DamageSource::Fall,
         None,
@@ -131,6 +131,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
     let mut ev = TickEvents::default();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world_mut().mobs_mut().spawn(Mob::Sheep, pos, 0.0));
+    let mob = game.server.world().mobs().instances()[0].id();
     let player_health = game.server.sessions()[0].player().health();
     let mob_health = game.server.world().mobs().instances()[0].health();
 
@@ -138,7 +139,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         .server
         .damage_player(0, 2, DamageSource::Fall, None, &mut ev));
     assert!(game.server.damage_mob_through_pipeline(
-        0,
+        mob,
         1.0,
         DamageSource::PlayerAttack(game.server.sessions()[0].id()),
         Some(pos + Vec3::X),
@@ -159,7 +160,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         "an immune player receives no attack knockback"
     );
     assert!(!game.server.damage_mob_through_pipeline(
-        0,
+        mob,
         1.0,
         DamageSource::Fall,
         None,
@@ -178,7 +179,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         .server
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
     assert!(!game.server.damage_mob_through_pipeline(
-        0,
+        mob,
         1.0,
         DamageSource::Mod("test"),
         None,
@@ -191,7 +192,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         .server
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
     assert!(game.server.damage_mob_through_pipeline(
-        0,
+        mob,
         1.0,
         DamageSource::Fall,
         None,
@@ -445,7 +446,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         .world_mut()
         .mobs_mut()
         .damage_mob(
-            0,
+            id,
             100.0,
             Some(cam_pos),
             true,
@@ -576,6 +577,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
     let mut game = game();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
+    let id = game.server.world().mobs().instances()[0].id();
     assert_eq!(petramond_world::item::attack_damage(None), (1.0, 1.0));
     let from = pos + Vec3::X;
     for i in 0..3 {
@@ -584,7 +586,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
                 .world_mut()
                 .mobs_mut()
                 .damage_mob(
-                    0,
+                    id,
                     1.0,
                     Some(from),
                     true,
@@ -603,7 +605,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
             .world_mut()
             .mobs_mut()
             .damage_mob(
-                0,
+                id,
                 1.0,
                 Some(from),
                 true,
@@ -988,12 +990,13 @@ fn a_killed_mob_ragdolls_then_despawns() {
     let mut game = game_on_empty_chunk();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
     assert!(game.server.world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
+    let id = game.server.world().mobs().instances()[0].id();
     assert!(game
         .server
         .world_mut()
         .mobs_mut()
         .damage_mob(
-            0,
+            id,
             100.0,
             Some(pos + Vec3::X),
             true,
@@ -1080,10 +1083,14 @@ fn killing_owls_drops_loot_into_the_world() {
     // something — this proves the death→loot path is wired, without pinning the
     // (freely-editable) table contents.
     for _ in 0..40 {
-        assert!(game.server.world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
-        let idx = game.server.world().mobs().len() - 1;
+        let id = game
+            .server
+            .world_mut()
+            .mobs_mut()
+            .spawn_lit(Mob::Owl, pos, 0.0, 63, petramond_world::light::BlockLight6::DARK)
+            .expect("spawned");
         if let Some(death) = game.server.world_mut().mobs_mut().damage_mob(
-            idx,
+            id,
             100.0,
             Some(pos + Vec3::X),
             true,

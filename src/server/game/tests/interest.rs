@@ -61,12 +61,11 @@ fn spawn_sheep(server: &mut ServerGame, x: f64) -> u64 {
 }
 
 fn move_mob(server: &mut ServerGame, id: u64, x: f64) {
-    let index = server.world.mobs().index_of_id(id).expect("live mob");
     server
         .world
         .mobs_mut()
         .set_mob_kinematic(
-            index,
+            id,
             WorldPos::new(x, 65.0, 0.5),
             0.0,
             petramond_math::math::Tilt::LEVEL,
@@ -137,8 +136,7 @@ fn mobs_spawn_on_entry_hold_through_the_band_and_despawn_on_exit_or_removal() {
         1,
         "re-entry spawns"
     );
-    let index = server.world.mobs().index_of_id(id).unwrap();
-    assert!(server.world.mobs_mut().remove(index));
+    assert!(server.world.mobs_mut().remove(id));
     assert_eq!(
         window(&mut server)[0].mobs.despawned,
         [id],

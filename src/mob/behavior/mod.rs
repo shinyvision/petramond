@@ -34,7 +34,7 @@ pub use melee::MeleeAttackAi;
 pub use panic::PanicAi;
 pub use retaliate::RetaliateAi;
 pub use wander::WanderAi;
-pub use wasm::ScriptedInputs;
+pub use wasm::{ScriptedInputs, ScriptedNode};
 
 use super::brain::{
     AiBehavior, PRIORITY_ATTACK, PRIORITY_CHASE, PRIORITY_CONTACT, PRIORITY_DAMAGE_RESPONSE,

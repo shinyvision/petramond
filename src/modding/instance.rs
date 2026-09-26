@@ -232,6 +232,20 @@ impl ModInstance {
     /// are rejected, everything else (deadline, disable-on-trap, protocol)
     /// behaves identically.
     pub(super) fn call_guest_detached(&mut self, call: &GuestCall) -> Option<GuestRet> {
+        self.call_guest_encoded(call, std::mem::discriminant(call), call)
+    }
+
+    /// [`call_guest_detached`](Self::call_guest_detached) for any encoding of
+    /// a guest call: the owned [`GuestCall`], or a borrowed view serializing
+    /// to exactly its bytes (the batched AI dispatch ships each mob's tag map
+    /// straight from the mob that way). `kind` is the variant those bytes
+    /// decode as and `describe` what diagnostics print for the call.
+    pub(super) fn call_guest_encoded<C: serde::Serialize>(
+        &mut self,
+        call: &C,
+        kind: std::mem::Discriminant<GuestCall>,
+        describe: &dyn std::fmt::Debug,
+    ) -> Option<GuestRet> {
         if self.disabled() {
             return None;
         }
@@ -258,28 +272,38 @@ impl ModInstance {
         let fuel_note = self.settle_fuel();
         match result {
             Ok(GuestRet::Unsupported) => {
-                self.note_declined(call);
+                self.note_declined(kind, describe);
                 None
             }
             Ok(ret) => {
                 self.dispatches += 1;
                 if let Some(started) = started {
-                    self.log_slow_dispatch(call, started.elapsed());
+                    self.log_slow_dispatch(describe, started.elapsed());
                 }
                 Some(ret)
             }
             Err(e) => {
-                let context = self.dispatch_context(Some(call));
+                let context = self.dispatch_context(Some(describe));
                 self.disable(&format!("{e}{fuel_note}{context}"));
                 None
             }
         }
     }
 
+    /// Whether this guest has declined calls of `kind` as unsupported — a
+    /// caller with an older equivalent (the per-mob AI dispatch) goes
+    /// straight to it instead of asking again every tick.
+    pub(super) fn declines(&self, kind: std::mem::Discriminant<GuestCall>) -> bool {
+        self.declined.contains(&kind)
+    }
+
     /// The guest answered [`GuestRet::Unsupported`]: it was built against an
     /// older ABI minor that predates this call. Say so once per call kind.
-    fn note_declined(&mut self, call: &GuestCall) {
-        let kind = std::mem::discriminant(call);
+    fn note_declined(
+        &mut self,
+        kind: std::mem::Discriminant<GuestCall>,
+        describe: &dyn std::fmt::Debug,
+    ) {
         if self.declined.contains(&kind) {
             return;
         }
@@ -288,7 +312,7 @@ impl ModInstance {
             "mod '{}' does not support {} (built against an older mod ABI than {}); \
              the engine carries on without it",
             self.id,
-            host::short_debug(call, 48),
+            host::short_debug(describe, 48),
             mod_api::ABI_VERSION,
         );
     }
@@ -297,7 +321,7 @@ impl ModInstance {
     /// wall split under the `petramond::modding::perf` target, so frame
     /// stutter attributes to the mod, the call, and the side of the ABI it
     /// spent its time on.
-    fn log_slow_dispatch(&self, call: &GuestCall, total: std::time::Duration) {
+    fn log_slow_dispatch(&self, call: &dyn std::fmt::Debug, total: std::time::Duration) {
         const SLOW_DISPATCH: std::time::Duration = std::time::Duration::from_millis(2);
         if total < SLOW_DISPATCH {
             return;
@@ -362,7 +386,7 @@ impl ModInstance {
     /// Diagnostic suffix for disable messages: the guest call that was in
     /// flight and the dispatch's most recent host call — a failure names what
     /// was actually happening instead of just the trap kind.
-    fn dispatch_context(&self, call: Option<&GuestCall>) -> String {
+    fn dispatch_context(&self, call: Option<&dyn std::fmt::Debug>) -> String {
         let mut out = String::new();
         if let Some(call) = call {
             out.push_str(&format!(

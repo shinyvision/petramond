@@ -93,8 +93,7 @@ impl ServerGame {
         // BEFORE any consumer (mods included) can observe them: a forged,
         // vanished, dead, occluded or out-of-reach claim is no target at all.
         let mob =
-            super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], click.mob)
-                .map(|idx| self.world.mobs().instances()[idx].id());
+            super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], click.mob);
         let target = click
             .player
             .and_then(|t| self.authoritative_player_target(s, t))
@@ -176,13 +175,13 @@ impl ServerGame {
             }
             Claim::Swung
         } else if let Some(mob_id) = attempt.mob {
-            if let Some(idx) = self.world.mobs().index_of_id(mob_id) {
+            if self.world.mobs().contains(mob_id) {
                 let damage = self.roll_attack_damage(s);
                 let from = self.sessions[s].player.body_center();
                 // The pipeline may cancel the damage; the swing still happened
                 // and still arms the cooldown.
                 self.damage_mob_through_pipeline(
-                    idx,
+                    mob_id,
                     damage,
                     DamageSource::PlayerAttack(self.sessions[s].id),
                     Some(from),

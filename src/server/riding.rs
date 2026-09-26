@@ -139,11 +139,7 @@ impl ServerGame {
             .filter_map(|p| {
                 let m = self.world.riding().mount_of(p)?;
                 let mount_live = match m.target {
-                    MountTarget::Mob(mob_id) => self
-                        .world
-                        .mobs()
-                        .index_of_id(mob_id)
-                        .is_some_and(|idx| !self.world.mobs().instances()[idx].is_dead()),
+                    MountTarget::Mob(mob_id) => self.world.mobs().live(mob_id).is_some(),
                     MountTarget::Anchor(_) => true,
                 };
                 let has_session = self.sessions.iter().any(|sess| sess.id.0 == p);
@@ -229,10 +225,9 @@ impl ServerGame {
     fn slave_rider_to_seat(&mut self, s: usize, m: Mount) {
         let pos = match m.target {
             MountTarget::Mob(mob_id) => {
-                let Some(idx) = self.world.mobs().index_of_id(mob_id) else {
+                let Some(mob) = self.world.mobs().get(mob_id) else {
                     return; // vanished this tick; the next pass detaches
                 };
-                let mob = &self.world.mobs().instances()[idx];
                 let d = crate::mob::def(mob.kind);
                 let Some(&seat) = d.seats.get(m.seat as usize) else {
                     return;

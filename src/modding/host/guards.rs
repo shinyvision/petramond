@@ -173,17 +173,16 @@ pub(super) fn sim_read(f: impl FnOnce(&SimCtx<'_>) -> HostRet) -> HostRet {
     scope::with_active_ref(f).unwrap_or_else(no_context)
 }
 
-/// Resolve a stable mob id to its live-list index — the ONE dead-mob policy
-/// for every id-addressed mob call arm: a dead (ragdolling) mob is GONE to
-/// the ABI, exactly as `MobsInRadius` never lists it, so `None` covers
-/// missing and dead alike. Readers then answer `None`/`false`, writers
-/// refuse — a corpse is neither readable nor writable. (`MobMount` reaches
-/// the same rule through `World::try_mount_player`, its engine seam;
-/// `DamageMob` re-resolves at its action drain, where the pipeline rejects
-/// the dead.) The returned index is valid only within the current handler.
-pub(super) fn live_mob(ctx: &SimCtx<'_>, mob_id: u64) -> Option<usize> {
-    let index = ctx.world.mobs().index_of_id(mob_id)?;
-    (!ctx.world.mobs().instances()[index].is_dead()).then_some(index)
+/// The live mob `mob_id` — the ONE dead-mob policy for every id-addressed
+/// mob call arm: a dead (ragdolling) mob is GONE to the ABI, exactly as
+/// `MobsInRadius` never lists it, so `None` covers missing and dead alike.
+/// Readers then answer `None`/`false`, writers refuse — a corpse is neither
+/// readable nor writable. (`MobMount` reaches the same rule through
+/// `World::try_mount_player`, its engine seam; `DamageMob` re-resolves at its
+/// action drain, where the pipeline rejects the dead.) Writers pass the same
+/// stable id on to the manager.
+pub(super) fn live_mob<'a>(ctx: &'a SimCtx<'_>, mob_id: u64) -> Option<&'a crate::mob::Instance> {
+    ctx.world.mobs().live(mob_id)
 }
 
 /// Stream-final gate for WRITE-through-a-cell arms (`SwapBlock`,

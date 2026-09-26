@@ -35,7 +35,7 @@ impl ServerGame {
     /// one, and actor-less otherwise (a mob's bite, a fall, a mod's damage).
     pub fn damage_mob_through_pipeline(
         &mut self,
-        idx: usize,
+        mob_id: crate::mob::MobId,
         amount: f32,
         source: DamageSource,
         origin: Option<petramond_math::world_pos::WorldPos>,
@@ -45,13 +45,12 @@ impl ServerGame {
         let Some(snapshot) = self
             .world
             .mobs()
-            .instances()
-            .get(idx)
-            .map(|m| (m.kind, m.id(), m.pos, m.is_dead(), m.is_damage_immune()))
+            .get(mob_id)
+            .map(|m| (m.kind, m.pos, m.is_dead(), m.is_damage_immune()))
         else {
             return false;
         };
-        let (kind, mob_id, pos, was_dead, damage_immune) = snapshot;
+        let (kind, pos, was_dead, damage_immune) = snapshot;
         let mut feedback = feedback.unwrap_or_else(|| mob_def(kind).damage_feedback.clone());
         // The WEAPON scales the victim's authored shove, before any handler
         // sees the pipeline — so `mob_damage_pre` reads the knockback that
@@ -98,7 +97,7 @@ impl ServerGame {
         }
         let soundable_hit = pre.feedback.plays_sound(MobDamageSound::Hurt) && pre.amount > 0.0;
         let death = self.world.mobs_mut().damage_mob(
-            idx,
+            mob_id,
             pre.amount,
             pre.origin,
             pre.source.is_attack(),
@@ -171,13 +170,10 @@ impl ServerGame {
                     }
                 }
                 crate::mob::EntityRef::Mob(target_id) => {
-                    // Resolve the STABLE id only now: earlier strikes this tick
-                    // may have killed mobs and shifted indices.
-                    let Some(idx) = self.world.mobs().index_of_id(target_id) else {
-                        continue;
-                    };
+                    // Addressed by the STABLE id: an earlier strike this tick
+                    // that killed or removed the target makes this one fizzle.
                     self.damage_mob_through_pipeline(
-                        idx,
+                        target_id,
                         a.damage.max(0.0),
                         DamageSource::MobAttack {
                             kind: a.mob,
@@ -201,10 +197,14 @@ impl ServerGame {
             if amount <= 0.0 {
                 continue;
             }
-            let Some(idx) = self.world.mobs().index_of_id(fall.mob_id) else {
-                continue;
-            };
-            self.damage_mob_through_pipeline(idx, amount, DamageSource::Fall, None, None, events);
+            self.damage_mob_through_pipeline(
+                fall.mob_id,
+                amount,
+                DamageSource::Fall,
+                None,
+                None,
+                events,
+            );
         }
     }
 

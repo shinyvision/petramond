@@ -47,18 +47,15 @@ impl ServerGame {
                     origin,
                     feedback,
                 } => {
-                    // Resolve the STABLE id only now: earlier actions in this
-                    // drain may have removed mobs and shifted indices. A mob
-                    // gone by drain time is a silent no-op (the pipeline also
+                    // Addressed by the STABLE id: a mob an earlier action in
+                    // this drain removed is a silent no-op (the pipeline also
                     // rejects the dead).
-                    let Some(index) = self.world.mobs().index_of_id(mob_id) else {
-                        continue;
-                    };
+                    //
                     // The pipeline acts for the attacker the source names (a
                     // `mob_damage_pre` handler then reads the same actor the
                     // engine's own hit shows it).
                     self.damage_mob_through_pipeline(
-                        index, amount, source, origin, feedback, events,
+                        mob_id, amount, source, origin, feedback, events,
                     );
                 }
                 // GUI opens share the ordered menu boundary with player

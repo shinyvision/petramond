@@ -313,6 +313,13 @@ fn dispatch_call<T: crate::Mod>(mod_: &mut T, call: GuestCall) -> GuestRet {
         GuestCall::AiNode { callback_id, ctx } => {
             GuestRet::AiDecision(mod_.ai_node(callback_id, &ctx))
         }
+        // The batch is transport only: every context still reaches the mod's
+        // one per-mob `ai_node`, in order.
+        GuestCall::AiNodeBatch { callback_id, ctxs } => GuestRet::AiDecisions(
+            ctxs.iter()
+                .map(|ctx| mod_.ai_node(callback_id, ctx))
+                .collect(),
+        ),
         GuestCall::ClientFrame { frame } => {
             mod_.client_frame(&frame);
             GuestRet::Unit

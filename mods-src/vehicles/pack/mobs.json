@@ -36,6 +36,7 @@
         "prefer": []
       },
       "avoid_fluids": false,
+      "step_noise": false,
       "buoyancy": "surface",
       "collision": "solid",
       "damage_feedback": [
@@ -101,6 +102,7 @@
         "prefer": []
       },
       "avoid_fluids": false,
+      "step_noise": false,
       "buoyancy": "surface",
       "collision": "solid",
       "damage_feedback": [

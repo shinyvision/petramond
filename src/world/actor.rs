@@ -24,7 +24,6 @@ use super::construction::CellStatus;
 /// A live mob resolved for one action.
 #[derive(Clone, Copy, Debug)]
 pub struct Actor {
-    pub index: usize,
     pub id: u64,
     pub eye: WorldPos,
     pub eye_height: f32,
@@ -88,17 +87,9 @@ pub enum PlaceCheck {
 impl ServerWorld {
     /// Resolve `mob_id` as an actor: a live mob.
     pub fn actor(&self, mob_id: u64) -> Result<Actor, ActionRefusal> {
-        let index = self
-            .mobs()
-            .index_of_id(mob_id)
-            .ok_or(ActionRefusal::NoActor)?;
-        let mob = &self.mobs().instances()[index];
-        if mob.is_dead() {
-            return Err(ActionRefusal::NoActor);
-        }
+        let mob = self.mobs().live(mob_id).ok_or(ActionRefusal::NoActor)?;
         let def = crate::mob::def(mob.kind);
         Ok(Actor {
-            index,
             id: mob_id,
             eye: mob.pos + Vec3::new(0.0, def.eye_height, 0.0),
             eye_height: def.eye_height,
@@ -377,7 +368,9 @@ impl ServerWorld {
         let tool = match tool_slot {
             None => None,
             Some(slot) => Some(
-                self.mobs().instances()[actor.index]
+                self.mobs()
+                    .get(actor.id)
+                    .ok_or(ActionRefusal::NoActor)?
                     .container()
                     .slots
                     .get(slot as usize)
@@ -475,9 +468,10 @@ impl ServerWorld {
             Err(refusal) => return PlaceCheck::Refused(refusal),
         };
         if pay
-            && !self.mobs().instances()[actor.index]
-                .container()
-                .holds_all(std::slice::from_ref(&placement.paid))
+            && self.mobs().get(actor.id).is_none_or(|mob| {
+                !mob.container()
+                    .holds_all(std::slice::from_ref(&placement.paid))
+            })
         {
             return PlaceCheck::Refused(ActionRefusal::MissingItems);
         }

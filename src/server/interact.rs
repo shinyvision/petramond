@@ -216,8 +216,7 @@ impl ServerGame {
         // The claimed mob resolves through the authoritative view-ray
         // validator BEFORE any consumer (mods included) can observe it: a
         // forged, vanished, dead, or occluded claim is no mob at all.
-        let mob = super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], mob)
-            .map(|idx| self.world.mobs().instances()[idx].id());
+        let mob = super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], mob);
         let attempt = InteractAttempt {
             block: target.map(|t| t.block),
             face: target.map(|t| t.normal),

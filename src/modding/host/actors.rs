@@ -173,7 +173,7 @@ fn dig(
     let step = ctx
         .world
         .mobs_mut()
-        .advance_dig(actor.index, now, pos, target.block, tool)
+        .advance_dig(actor.id, now, pos, target.block, tool)
         .ok_or(ActionRefusal::NoActor)?;
     Ok(match step {
         crate::mob::DigStep::Digging(progress) => DigProgress::Digging { progress },

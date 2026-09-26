@@ -366,6 +366,7 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
         GuestRet::GenBiomes(_) => "GenBiomes",
         GuestRet::HostileSpawn(_) => "HostileSpawn",
         GuestRet::AiDecision(_) => "AiDecision",
+        GuestRet::AiDecisions(_) => "AiDecisions",
         GuestRet::BakedSim(_) => "BakedSim",
         GuestRet::BakedRender(_) => "BakedRender",
         GuestRet::BakedItem(_) => "BakedItem",

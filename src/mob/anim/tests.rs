@@ -30,7 +30,7 @@ fn ambient_clocks_are_individual_and_action_starts_at_zero() {
     let mut b = Instance::new(Mob::Owl, WorldPos::ZERO, 0.0, 2);
     a.id = 1;
     b.id = 2;
-    let decision = BehaviorOutput {
+    let decision = Expression {
         animation: Some("swipe".into()),
         ..Default::default()
     };
@@ -40,7 +40,7 @@ fn ambient_clocks_are_individual_and_action_starts_at_zero() {
     let before = a.anim_state(clips::AMBIENT).unwrap().phase;
     assert_ne!(before, b.anim_state(clips::AMBIENT).unwrap().phase);
     a.moving = true;
-    a.apply_expression(0.05, owl_def(), &named, &BehaviorOutput::default());
+    a.apply_expression(0.05, owl_def(), &named, &Expression::default());
     assert!((a.anim_state(clips::AMBIENT).unwrap().phase - before - 0.05).abs() < 1e-5);
     assert!((a.anim_state("swipe").unwrap().phase - 0.05).abs() < 1e-5);
 }
@@ -57,7 +57,7 @@ fn expression_advances_walk_and_eases_the_head() {
         false,
         &floor_at_zero,
     );
-    owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
+    owl.apply_expression(1.0 / 60.0, owl_def(), &[], &Expression::default());
     let a1 = owl.anim_time;
     owl.integrate(
         1.0 / 60.0,
@@ -66,7 +66,7 @@ fn expression_advances_walk_and_eases_the_head() {
         false,
         &floor_at_zero,
     );
-    owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
+    owl.apply_expression(1.0 / 60.0, owl_def(), &[], &Expression::default());
     assert!(
         owl.anim_time > a1,
         "walk cycle keeps advancing: {a1} -> {}",
@@ -74,7 +74,7 @@ fn expression_advances_walk_and_eases_the_head() {
     );
 
     // Head eases toward a look target, then recentres when there's none.
-    let look = BehaviorOutput {
+    let look = Expression {
         head_look: Some(HeadLook {
             yaw: 1.0,
             pitch: 0.3,
@@ -96,7 +96,7 @@ fn expression_advances_walk_and_eases_the_head() {
         owl.head_pitch
     );
     for _ in 0..120 {
-        owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
+        owl.apply_expression(1.0 / 60.0, owl_def(), &[], &Expression::default());
     }
     assert!(
         owl.head_yaw.abs() < 0.05,
@@ -213,7 +213,7 @@ fn named_anim_controls_are_bounded_and_phase_stepping_stays_finite() {
     assert!(!owl.set_anim_rate("a", mod_api::MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0));
     assert!(!owl.set_anim_seek("a", mod_api::MAX_MOB_ANIM_PHASE_MAGNITUDE * 2.0, 1.0));
 
-    let layer = &mut owl.active_anims[0];
+    let layer = &mut owl.presentation.active_anims[0];
     layer.phase = f32::INFINITY;
     layer.rate = 1.0;
     layer.seek = Some(2.0);
@@ -254,7 +254,7 @@ fn a_finished_one_shot_layer_retires_itself() {
     assert!(owl.set_anim_active("hum", true));
     assert!(owl.set_anim_active("mystery", true));
     for _ in 0..30 {
-        owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
+        owl.apply_expression(1.0 / 60.0, owl_def(), &named, &Expression::default());
     }
     let names: Vec<&str> = owl.active_anims().iter().map(|l| l.name.as_str()).collect();
     assert!(
@@ -275,12 +275,12 @@ fn a_finished_one_shot_layer_retires_itself() {
     assert!(owl.set_anim_active("bite", true));
     assert!(owl.set_anim_rate("bite", 0.0));
     for _ in 0..30 {
-        owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
+        owl.apply_expression(1.0 / 60.0, owl_def(), &named, &Expression::default());
     }
     assert!(owl.anim_state("bite").is_some(), "a frozen one-shot holds");
     assert!(owl.set_anim_rate("bite", 1.0));
     for _ in 0..30 {
-        owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
+        owl.apply_expression(1.0 / 60.0, owl_def(), &named, &Expression::default());
     }
     assert!(
         owl.anim_state("bite").is_none(),
@@ -291,7 +291,7 @@ fn a_finished_one_shot_layer_retires_itself() {
 #[test]
 fn the_head_gathers_speed_settles_without_overshoot_and_lands_on_its_target() {
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
-    let look = BehaviorOutput {
+    let look = Expression {
         head_look: Some(crate::mob::brain::HeadLook {
             yaw: 1.2,
             pitch: -0.8,

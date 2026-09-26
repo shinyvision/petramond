@@ -95,9 +95,8 @@ fn look(server: &mut ServerGame, mob: u64, pos: IVec3, record: Option<mod_api::B
     let at = aim(server, mob, pos, record).expect("the work is seen from here");
     let eye = server.world().actor(mob).unwrap().eye;
     let to = WorldPos::new(at[0], at[1], at[2]) - eye;
-    let index = server.world().mobs().index_of_id(mob).unwrap();
     server.world_mut().mobs_mut().set_gaze_for_test(
-        index,
+        mob,
         (-to.x).atan2(-to.z),
         to.y.atan2((to.x * to.x + to.z * to.z).sqrt()),
     );
@@ -258,8 +257,7 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
         place(&mut server, second),
         HostRet::Place(PlaceRequest::Queued)
     );
-    let index = server.world().mobs().index_of_id(mob).unwrap();
-    server.world_mut().mobs_mut().container_mut(index).unwrap().slots[0] = None;
+    server.world_mut().mobs_mut().container_mut(mob).unwrap().slots[0] = None;
     assert_eq!(
         drain(&mut server),
         vec![(ActorAction::Place, Some(ActionRefusal::MissingItems))]

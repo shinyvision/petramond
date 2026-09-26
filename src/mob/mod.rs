@@ -60,7 +60,7 @@ pub use nav::{
     footholds, route_probe, walk_region, FloodAsk, KeptBoxes, ROUTE_PROBE_MAX_NODES,
     ROUTE_PROBE_TICK_BUDGET,
 };
-pub use noise::{player_steps_are_audible, Noise, NoiseKind};
+pub use noise::{player_steps_are_audible, Noise, NoiseField, NoiseKind};
 pub use petramond_world::ai_vocab::validate_brain_extensions;
 pub use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_kind_has_room,
@@ -102,9 +102,16 @@ impl Mob {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EntityRef {
     Player(crate::player::PlayerId),
-    Mob(u64),
+    Mob(MobId),
 }
 
+/// A live mob's STABLE session handle — the spawn-counter identity it keeps
+/// for its whole life in the live set. Every public [`Mobs`] method addresses
+/// a mob by it (the manager resolves it to its storage slot through a map it
+/// maintains on every insert and removal), and it is the same value the wire,
+/// the mod ABI, noise sources and attacker memory speak. Storage slots never
+/// leave the manager: a removal renumbers slots, never handles.
+pub type MobId = u64;
 impl EntityRef {
     /// The player this names, if it names one — the actor a dispatch on its
     /// behalf acts for (a mob's action is actor-less).
@@ -801,6 +808,11 @@ pub struct MobDef {
     /// Whether its walking is heard: a footstep per stride from the block
     /// underfoot, paced like a player's (`"footsteps"` row).
     pub footsteps: bool,
+    /// Whether its walking makes gameplay NOISE that hearing AI can lock onto
+    /// (`"step_noise"` row; omitted = it does). Independent of `footsteps`,
+    /// which is presentation: a creature may step silently for the player
+    /// yet still be heard by a hunter, while a boat or a cart makes neither.
+    pub step_noise: bool,
     /// Strength of the model's self ambient occlusion, 0 (none) to 1
     /// (`"self_ao"` row): where its parts meet, they shade each other.
     pub self_ao: f32,

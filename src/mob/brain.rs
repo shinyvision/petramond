@@ -17,11 +17,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::world::ServerWorld;
-pub use mod_api::{ChannelClaims, DecisionChannel};
+pub use mod_api::{AiNodeDecision, ChannelClaims, DecisionChannel};
 use petramond_math::math::{IVec3, Vec3};
 
+use super::behavior::ScriptedNode;
 use super::model_meta::IdleAnimMeta;
-use super::noise::Noise;
+use super::noise::NoiseField;
 use super::{EntityRef, Mob, MobRng, PlayerAnchor};
 
 /// Priority of wander — the lowest, so any deliberate locomotion overrides it.
@@ -109,7 +110,7 @@ pub struct TickInputs<'a> {
     /// Every connected player's anchor.
     pub players: &'a [PlayerAnchor],
     /// The gameplay noises audible this tick.
-    pub noises: &'a [Noise],
+    pub noises: &'a NoiseField,
     /// Snapshot of live mobs at the start of this tick, spatially indexed.
     pub mobs: &'a super::spatial::MobSnapshot,
     /// Rigid movement obstacles for this mob. Soft bodies receive the complete
@@ -166,7 +167,7 @@ pub struct AiCtx<'a> {
     /// The gameplay noises audible this tick (see [`super::noise`]) — the
     /// perception input for hearing-based behaviors. Radius/memory policy
     /// lives on the listening node.
-    pub noises: &'a [Noise],
+    pub noises: &'a NoiseField,
     /// The entities whose bodies overlapped THIS mob on the previous tick —
     /// the TOUCH perception channel, recorded by the manager's push pass
     /// (which already finds every overlapping pair). Sneaking silences
@@ -192,26 +193,51 @@ pub struct AiCtx<'a> {
     /// This species' `idle_*` animations (length + loop mode), so the idle-animation
     /// behavior only picks valid ones and plays a one-shot for its actual length.
     pub idle_anims: &'a [IdleAnimMeta],
-    /// Index of this mob in [`mobs`](Self::mobs), so companion-aware behaviors can
-    /// ignore the mob making the decision.
-    pub mob_index: usize,
+    /// Index of this mob in [`mobs`](Self::mobs) (a snapshot position, not a
+    /// storage slot; `None` when the snapshot doesn't hold it), so
+    /// companion-aware behaviors can ignore the mob making the decision.
+    pub mob_index: Option<usize>,
     /// Snapshot of live mobs at the start of this tick. Neighbour queries go
     /// through its spatial index ([`MobSnapshot::near`](super::spatial::MobSnapshot::near))
     /// and entity lookups through its id map — it offers no whole-population
     /// scan, so a behavior's cost stays proportional to what is around it.
     pub mobs: &'a super::spatial::MobSnapshot,
-    /// The deciding mob's OWN tag map (start-of-tick view) — the read side of
-    /// per-mob tag state. The scripted node ships it across the ABI as
-    /// `AiNodeCtx::tags`; writes ride [`BehaviorOutput::tag_writes`] and land
-    /// after the whole brain has decided.
-    pub tags: &'a std::collections::BTreeMap<String, super::MobTagValue>,
+    /// The deciding mob's OWN tag map (start-of-tick view) behind its shared
+    /// handle — the read side of per-mob tag state. The scripted node ships
+    /// it across the ABI as `AiNodeCtx::tags` by handle, never by copy;
+    /// writes ride [`BehaviorOutput::tag_writes`] and land after the whole
+    /// brain has decided.
+    pub tags: &'a Arc<BTreeMap<String, super::MobTagValue>>,
     /// The closed-off area this mob is captive in, when confinement detection
     /// found one (`petramond:confined` set) — every foothold the mob can
     /// reach. Wander picks destinations straight from it instead of sampling
     /// (and pathing toward) spots beyond the walls.
     pub confined_region: Option<&'a super::confined::ConfinedRegion>,
+    /// This mob's scripted-node decisions for the tick, dispatched in one
+    /// batch per node key before any brain decided (see `behavior::wasm`).
+    pub scripted: ScriptedReplies<'a>,
     /// Deterministic per-mob RNG (no `rand` crate; reproducible).
     pub rng: &'a mut MobRng,
+}
+
+/// One mob's prefetched scripted-node decisions, in brain order. The manager
+/// gathers every claimed scripted node's request across the population and
+/// dispatches them per node key before the brains decide; as the brain then
+/// visits its nodes high→low, each claimed scripted node takes the next
+/// reply — the same order the gather walked them in.
+#[derive(Default)]
+pub struct ScriptedReplies<'a>(std::slice::IterMut<'a, Option<AiNodeDecision>>);
+
+impl<'a> ScriptedReplies<'a> {
+    pub fn new(replies: &'a mut [Option<AiNodeDecision>]) -> Self {
+        ScriptedReplies(replies.iter_mut())
+    }
+
+    /// The next claimed scripted node's decision (`None` = no opinion: the
+    /// mod is disabled or answered nothing for this mob).
+    pub fn take_next(&mut self) -> Option<AiNodeDecision> {
+        self.0.next().and_then(Option::take)
+    }
 }
 
 impl AiCtx<'_> {
@@ -358,6 +384,13 @@ impl BehaviorOutput {
 /// (WASM) node holds only its registry key.
 pub trait AiBehavior: Send {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput;
+
+    /// The scripted (WASM) node this behavior is, if it is one — how the
+    /// manager finds the nodes whose requests it batches before the brains
+    /// decide. Engine nodes are not.
+    fn scripted(&self) -> Option<&ScriptedNode> {
+        None
+    }
 }
 
 /// A priority entry in a [`Brain`].
@@ -377,6 +410,17 @@ impl Brain {
         Brain {
             entries: Vec::new(),
         }
+    }
+
+    /// The scripted nodes of this brain, in the order [`decide`](Self::decide)
+    /// visits them.
+    pub fn scripted_nodes(&self) -> impl Iterator<Item = &ScriptedNode> + '_ {
+        self.entries.iter().filter_map(|e| e.behavior.scripted())
+    }
+
+    /// Whether any node of this brain is scripted.
+    pub fn has_scripted(&self) -> bool {
+        self.scripted_nodes().next().is_some()
     }
 
     /// Add a (boxed — the AI-node factories return trait objects) behavior at

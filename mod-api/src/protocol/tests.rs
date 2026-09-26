@@ -567,6 +567,11 @@ fn abi_roundtrip_host_and_guest_calls() {
         }),
     });
     roundtrip(GuestCall::TickSystem { id: 3 });
+    roundtrip(GuestCall::AiNodeBatch {
+        callback_id: 4,
+        ctxs: Vec::new(),
+    });
+    roundtrip(GuestRet::AiDecisions(vec![None, Some(AiNodeDecision::default())]));
     roundtrip(GuestCall::HandleEvent {
         id: 1,
         payload: EventPayload::MobDamagePre {

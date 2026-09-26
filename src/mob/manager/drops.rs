@@ -1,4 +1,4 @@
-use crate::mob::{EntityRef, Mob, MobDamageFeedback};
+use crate::mob::{EntityRef, Mob, MobDamageFeedback, MobId};
 
 use super::Mobs;
 
@@ -35,20 +35,21 @@ pub struct ShearDrop {
 }
 
 impl Mobs {
-    /// Apply `amount` damage to the mob at `index`. `attacker` (when the damage
+    /// Apply `amount` damage to the mob `id`. `attacker` (when the damage
     /// source names one) lands in the mob's retaliation memory.
     /// Returns the loot drop the mob leaves if the hit killed it, else `None`. Keeps
     /// `list` private — `Game` never holds a `&mut Instance`.
     pub fn damage_mob(
         &mut self,
-        index: usize,
+        id: MobId,
         amount: f32,
         origin: Option<petramond_math::world_pos::WorldPos>,
         attack: bool,
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
     ) -> Option<DeathDrop> {
-        let mob = self.mob_mut(index)?;
+        let slot = self.slot(id)?;
+        let mob = &mut self.list[slot];
         if !mob.damage(amount, origin, attack, attacker, feedback) {
             return None;
         }
@@ -58,15 +59,15 @@ impl Mobs {
             skylight: mob.skylight,
             blocklight: mob.blocklight,
         };
-        self.spill_container(index);
+        self.spill_container(slot);
         Some(drop)
     }
 
-    /// Shear the mob at `index`: `Some` drop when it is a coated shearable species
+    /// Shear the mob `id`: `Some` drop when it is a coated shearable species
     /// (its coat is hidden and the regrow countdown starts), else `None`. Keeps
     /// `list` private, like [`damage_mob`](Self::damage_mob).
-    pub fn shear_mob(&mut self, index: usize) -> Option<ShearDrop> {
-        let mob = self.mob_mut(index)?;
+    pub fn shear_mob(&mut self, id: MobId) -> Option<ShearDrop> {
+        let mob = self.mob_mut(id)?;
         let spec = super::def(mob.kind).shear?;
         let count = mob.shear()?;
         Some(ShearDrop {

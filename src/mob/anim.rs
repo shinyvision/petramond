@@ -5,7 +5,7 @@
 use mod_api::{MAX_MOB_ANIM_NAME_BYTES, MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE};
 use petramond_world::bbmodel::clips;
 
-use super::brain::BehaviorOutput;
+use super::brain::{BehaviorOutput, HeadLook};
 use super::instance::Instance;
 use super::kinematics::turn_toward;
 use super::MobDef;
@@ -36,6 +36,26 @@ fn smooth_step(to: f32, vel: &mut f32, smooth_time: f32, max_speed: f32, dt: f32
         return to;
     }
     moved
+}
+
+/// The expressive channels of a settled decision — what
+/// [`apply_expression`](Instance::apply_expression) plays: an `idle_*` clip,
+/// a named clip to start, and where the head looks.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Expression {
+    pub idle_anim: Option<u8>,
+    pub animation: Option<String>,
+    pub head_look: Option<HeadLook>,
+}
+
+impl From<BehaviorOutput> for Expression {
+    fn from(decision: BehaviorOutput) -> Self {
+        Expression {
+            idle_anim: decision.idle_anim,
+            animation: decision.animation,
+            head_look: decision.head_look,
+        }
+    }
 }
 
 /// Which animation a mob is playing — drives `anim_time` advance rate + reset.
@@ -122,7 +142,7 @@ impl Instance {
     /// The active named model animations, sorted by name.
     #[inline]
     pub fn active_anims(&self) -> &[AnimLayer] {
-        &self.active_anims
+        &self.presentation.active_anims
     }
 
     /// Toggle one named model animation — the animation sibling of
@@ -139,14 +159,14 @@ impl Instance {
         match (self.anim_search(name), active) {
             (Ok(_), true) | (Err(_), false) => true,
             (Ok(at), false) => {
-                self.active_anims.remove(at);
+                self.presentation.active_anims.remove(at);
                 true
             }
             (Err(at), true) => {
-                if self.active_anims.len() >= super::MAX_ACTIVE_MOB_ANIMS {
+                if self.presentation.active_anims.len() >= super::MAX_ACTIVE_MOB_ANIMS {
                     return false;
                 }
-                self.active_anims.insert(
+                self.presentation.active_anims.insert(
                     at,
                     AnimLayer {
                         name: name.to_owned(),
@@ -202,20 +222,20 @@ impl Instance {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES {
             return None;
         }
-        self.anim_search(name).ok().map(|at| &self.active_anims[at])
+        self.anim_search(name).ok().map(|at| &self.presentation.active_anims[at])
     }
 
     /// Position of one named layer in the sorted `active_anims` (`Ok` =
     /// active at that index, `Err` = the insertion point).
     fn anim_search(&self, name: &str) -> Result<usize, usize> {
-        self.active_anims
+        self.presentation.active_anims
             .binary_search_by(|a| a.name.as_str().cmp(name))
     }
 
     /// The active layer named `name`, if any.
     fn active_anim_mut(&mut self, name: &str) -> Option<&mut AnimLayer> {
         let at = self.anim_search(name).ok()?;
-        Some(&mut self.active_anims[at])
+        Some(&mut self.presentation.active_anims[at])
     }
 
     /// Apply the tick's expressive decision: choose + advance the active animation
@@ -227,7 +247,7 @@ impl Instance {
         dt: f32,
         d: &MobDef,
         named_anims: &[super::model_meta::NamedAnimMeta],
-        decision: &BehaviorOutput,
+        decision: &Expression,
     ) {
         // Model-owned ambient details keep their own clock through gait changes.
         if let Ok(at) = named_anims.binary_search_by(|m| m.name.as_str().cmp(clips::AMBIENT)) {
@@ -260,10 +280,10 @@ impl Instance {
         } else {
             AnimKind::Rest
         };
-        if kind != self.anim_kind {
-            self.anim_kind = kind;
+        if kind != self.presentation.anim_kind {
+            self.presentation.anim_kind = kind;
             self.anim_time = 0.0;
-            self.prev_anim_time = 0.0;
+            self.interp.anim_time = 0.0;
         }
         // An upward launch from a walking gait re-phases the walk clip
         // FORWARD to the next cycle boundary. A repeating launch's period
@@ -275,7 +295,7 @@ impl Instance {
         // reverse on clients for a frame at every launch. A walk leg's first
         // launch starts at phase 0 already (the kind change above just
         // reset the clock).
-        if std::mem::take(&mut self.walk_launch) && kind == AnimKind::Walk {
+        if std::mem::take(&mut self.motion.walk_launch) && kind == AnimKind::Walk {
             let walk_len = named_anims
                 .binary_search_by(|m| m.name.as_str().cmp(clips::WALK))
                 .ok()
@@ -295,12 +315,12 @@ impl Instance {
         // mid-stroke while another plays.
         match kind {
             AnimKind::Walk => {
-                self.anim_time += d.walk_anim_rate * self.walk_speed_scale * self.gait_pace * dt
+                self.anim_time += d.walk_anim_rate * self.motion.walk_speed_scale * self.motion.gait_pace * dt
             }
             AnimKind::Idle(_) => self.anim_time += dt,
             AnimKind::Rest => {}
         }
-        for layer in &mut self.active_anims {
+        for layer in &mut self.presentation.active_anims {
             step_anim_layer(layer, dt);
         }
         // A ONE-SHOT layer that has played through retires itself: activation
@@ -310,7 +330,7 @@ impl Instance {
         // (the boat oar freeze) is a deliberate pose and never expires, and a
         // looping clip plays until deactivated. A name the model doesn't
         // carry has no meta and stays (it draws nothing; the mod's business).
-        self.active_anims.retain(|layer| {
+        self.presentation.active_anims.retain(|layer| {
             let finished = layer.seek.is_none()
                 && layer.rate > 0.0
                 && named_anims
@@ -332,14 +352,14 @@ impl Instance {
         let yaw_left = turn_toward(self.head_yaw, target_yaw, std::f32::consts::PI) - self.head_yaw;
         self.head_yaw += smooth_step(
             yaw_left,
-            &mut self.head_vel[0],
+            &mut self.presentation.head_vel[0],
             HEAD_SMOOTH_TIME,
             HEAD_TURN_RATE,
             dt,
         );
         self.head_pitch += smooth_step(
             target_pitch - self.head_pitch,
-            &mut self.head_vel[1],
+            &mut self.presentation.head_vel[1],
             HEAD_SMOOTH_TIME,
             HEAD_TURN_RATE,
             dt,

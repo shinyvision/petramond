@@ -103,6 +103,10 @@ struct RawMobDef {
     /// Whether its walking is heard; omitted = silent.
     #[serde(default)]
     footsteps: bool,
+    /// Whether its walking is gameplay noise hearing AI reacts to; omitted =
+    /// it is.
+    #[serde(default = "noisy")]
+    step_noise: bool,
     /// How strongly the body's own parts shade each other; omitted = fully.
     #[serde(default = "full")]
     self_ao: f32,
@@ -151,6 +155,10 @@ struct RawMobDef {
 
 fn full() -> f32 {
     1.0
+}
+
+fn noisy() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -511,6 +519,7 @@ fn convert(
         },
         avoid_fluids: r.avoid_fluids,
         footsteps: r.footsteps,
+        step_noise: r.step_noise,
         self_ao: r.self_ao.clamp(0.0, 1.0),
         edge_guard: r.edge_guard,
         nav: r.nav,

@@ -39,7 +39,7 @@ fn a_walking_mob_detours_around_a_hazard_and_stops_when_it_cuts_off_the_route() 
     }
     let goal = IVec3::new(13, 64, 8);
     let mut mob = Instance::new(swimmer(), WorldPos::new(2.5, 64.0, 8.5), 0.0, 1);
-    mob.brain = Brain::new().with_boxed(0, Box::new(Goal(goal)));
+    mob.mind.brain = Brain::new().with_boxed(0, Box::new(Goal(goal)));
     let anchors = [PlayerAnchor {
         pos: WorldPos::new(8.5, 66.0, 8.5),
         ..Default::default()
@@ -64,7 +64,7 @@ fn a_walking_mob_detours_around_a_hazard_and_stops_when_it_cuts_off_the_route() 
         mob.pos
     );
 
-    mob.brain = Brain::new().with_boxed(0, Box::new(Goal(IVec3::new(2, 64, 8))));
+    mob.mind.brain = Brain::new().with_boxed(0, Box::new(Goal(IVec3::new(2, 64, 8))));
     tick(&mut mob, &world, &anchors, &mut regions);
     for z in 0..16 {
         world.set_block_world(11, 63, z, syrup);
@@ -89,7 +89,7 @@ fn a_mob_in_a_hazard_keeps_swimming_until_it_reaches_the_shore() {
         }
     }
     let mut mob = Instance::new(swimmer(), WorldPos::new(6.5, 63.4, 8.5), 0.0, 1);
-    mob.brain = Brain::new().with_boxed(0, Box::new(Goal(IVec3::new(13, 64, 8))));
+    mob.mind.brain = Brain::new().with_boxed(0, Box::new(Goal(IVec3::new(13, 64, 8))));
     let anchors = [PlayerAnchor {
         pos: WorldPos::new(8.5, 66.0, 8.5),
         ..Default::default()
@@ -97,7 +97,7 @@ fn a_mob_in_a_hazard_keeps_swimming_until_it_reaches_the_shore() {
     let mut regions = confined::RegionCache::default();
     for _ in 0..600 {
         tick(&mut mob, &world, &anchors, &mut regions);
-        if mob.pos.x > 11.0 && mob.on_ground {
+        if mob.pos.x > 11.0 && mob.motion.on_ground {
             assert!(
                 crate::exposure::touched_fluids(&world, [mob.aabb()]).is_some_and(|f| f.is_empty())
             );
@@ -128,7 +128,7 @@ fn shore_climb_inner() {
 
             let goal = IVec3::new(13, TOP + rise + 1, 8);
             let mut mob = Instance::new(dweller, start, 0.0, 1);
-            mob.brain = Brain::new().with_boxed(0, Box::new(Goal(goal)));
+            mob.mind.brain = Brain::new().with_boxed(0, Box::new(Goal(goal)));
             let anchors = [PlayerAnchor {
                 pos: WorldPos::new(8.5, f64::from(stand_y), 8.5),
                 ..Default::default()
@@ -137,7 +137,7 @@ fn shore_climb_inner() {
             let mut mob_ashore = false;
             for _ in 0..400 {
                 tick(&mut mob, &world, &anchors, &mut regions);
-                mob_ashore |= ashore(mob.pos, mob.on_ground);
+                mob_ashore |= ashore(mob.pos, mob.motion.on_ground);
             }
             assert_eq!(
                 mob_ashore, climbable,
@@ -184,26 +184,24 @@ fn tick(
     anchors: &[PlayerAnchor],
     regions: &mut confined::RegionCache,
 ) {
-    mob.tick(
-        0.05,
-        &TickInputs {
-            world,
-            players: anchors,
-            noises: &[],
-            mobs: crate::mob::spatial::MobSnapshot::empty(),
-            path_budget: None,
-            solid: &[],
-            solid_escape: &[],
-        },
-        regions,
-        true,
-        &anchors[0],
-        0,
-        None,
-        &[],
-        &[],
-        &Skeleton::default(),
-    );
+    let inputs = TickInputs {
+        world,
+        players: anchors,
+        noises: crate::mob::NoiseField::empty(),
+        mobs: crate::mob::spatial::MobSnapshot::empty(),
+        path_budget: None,
+        solid: &[],
+        solid_escape: &[],
+    };
+    let meta = SpeciesMeta::default();
+    let ctx = MobTickCtx {
+        dt: 0.05,
+        inputs: &inputs,
+        anchor: &anchors[0],
+        def: crate::mob::def(mob.kind),
+        meta: &meta,
+    };
+    mob.tick_alone(&ctx, regions, true);
 }
 
 #[test]
@@ -230,7 +228,7 @@ fn a_body_walking_down_a_flight_of_ledges_lands_on_every_one() {
         }
     }
     let mut mob = Instance::new(Mob::Owl, WorldPos::new(2.5, 68.0, 8.5), 0.0, 1);
-    mob.brain = Brain::new().with_boxed(0, Box::new(Hurry(goal)));
+    mob.mind.brain = Brain::new().with_boxed(0, Box::new(Hurry(goal)));
     let anchors = [PlayerAnchor {
         pos: WorldPos::new(8.5, 70.0, 8.5),
         ..Default::default()
@@ -239,12 +237,12 @@ fn a_body_walking_down_a_flight_of_ledges_lands_on_every_one() {
     let mut left_at = mob.pos.y;
     let mut landings = 0;
     for _ in 0..400 {
-        let was_grounded = mob.on_ground;
+        let was_grounded = mob.motion.on_ground;
         tick(&mut mob, &world, &anchors, &mut regions);
-        if was_grounded && !mob.on_ground {
+        if was_grounded && !mob.motion.on_ground {
             left_at = mob.pos.y;
         }
-        if !was_grounded && mob.on_ground {
+        if !was_grounded && mob.motion.on_ground {
             landings += 1;
             assert!(
                 left_at - mob.pos.y < 1.2,

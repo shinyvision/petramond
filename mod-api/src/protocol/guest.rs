@@ -180,7 +180,9 @@ pub enum GuestCall {
     /// tick without a host call. Return desires in
     /// [`GuestRet::AiDecision`]; the engine's brain arbitration merges them
     /// by the brain row's priority.
-    /// → [`GuestRet::AiDecision`].
+    /// → [`GuestRet::AiDecision`]. The engine sends [`GuestCall::AiNodeBatch`]
+    /// instead to a guest that knows it (ABI 2.1+); this per-mob form is its
+    /// fallback for older guests.
     AiNode {
         callback_id: u32,
         ctx: AiNodeCtx,
@@ -251,6 +253,21 @@ pub enum GuestCall {
         block_id: BlockId,
         inputs: PlaceInputsView,
     },
+
+    // --- Batched scripted AI nodes (ABI 2.1) ------------------------------
+    /// [`GuestCall::AiNode`] for EVERY mob whose brain runs the node this
+    /// tick, in one crossing: the engine gathers each registered node's
+    /// contexts across the live population (in live-set order) and dispatches
+    /// them per node key before the brains settle. The same decision-only
+    /// contract as `AiNode` applies to each context. → [`GuestRet::AiDecisions`]
+    /// with exactly one entry per context, in order; any other length is a
+    /// protocol break that disables the mod. A guest built against an older ABI
+    /// answers `Unsupported`, and the engine falls back to one `AiNode` per
+    /// context.
+    AiNodeBatch {
+        callback_id: u32,
+        ctxs: Vec<AiNodeCtx>,
+    },
 }
 
 /// Guest → host reply for a [`GuestCall`].
@@ -307,4 +324,7 @@ pub enum GuestRet {
     /// the dispatch as unanswered — the same fallback as a disabled mod — and
     /// keeps the mod running.
     Unsupported,
+    /// Reply to [`GuestCall::AiNodeBatch`]: one decision per context, in the
+    /// call's order (`None` = no opinion for that mob).
+    AiDecisions(Vec<Option<AiNodeDecision>>),
 }

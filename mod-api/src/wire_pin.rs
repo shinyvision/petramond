@@ -1079,6 +1079,27 @@ fn samples() -> Samples {
     s.pin("HostRet::ActingPlayer", &HostRet::ActingPlayer(Some(PlayerId(2))));
     s.pin("HostRet::PlayerOf", &HostRet::PlayerOf(None));
     s.pin("HostRet::EffectsOf", &HostRet::EffectsOf(Some(vec![EffectStateData { key: "m:e".into(), remaining: 40 }])));
+    s.pin("GuestCall::AiNodeBatch", &GuestCall::AiNodeBatch {
+        callback_id: 1,
+        ctxs: vec![AiNodeCtx {
+            mob_id: 1, pos: [1.0, 2.0, 3.0], cell: [1, 2, 3], yaw: 0.5,
+            tick: 9, player_id: PlayerId(2),
+            player_pos: [4.0, 5.0, 6.0], nav_idle: true, in_fluid: Some(BlockId(3)),
+            target: Some(EntityRef::Mob(8)), attacker: Some((EntityRef::Player(PlayerId(2)), 3)),
+            player_held: Some(ItemId(7)), player_foothold: Some([4, 5, 6]),
+            tags: vec![("m:k".into(), MobTagValue::I64(-3))],
+        }],
+    });
+    s.pin("GuestRet::AiDecisions", &GuestRet::AiDecisions(vec![
+        Some(AiNodeDecision {
+            goal: Some([1, 2, 3]), head_look: Some([0.5, 0.25]), facing: Some(1.0),
+            speed_scale: Some(2.0), idle_anim: Some(1), attack: Some([2.0, 3.0]),
+            animation: Some("m".into()), target: Some(EntityRef::Mob(4)),
+            claims: ChannelClaims::of(&[DecisionChannel::Attack, DecisionChannel::Target]),
+            tags: vec![MobTagWrite { key: "m:k".into(), value: Some(MobTagValue::Bool(true)) }],
+        }),
+        None,
+    ]));
     s.pin("HostCall::LightAtMany", &HostCall::from(calls::LightAtMany { positions: vec![[1, 2, 3]] }));
     s.pin("HostCall::MobTagsGetMany", &HostCall::from(calls::MobTagsGetMany { mob_ids: vec![7] }));
     s.pin("HostCall::MobTagsWrite", &HostCall::from(calls::MobTagsWrite { writes: vec![MobTagOp::Delete { mob_id: 7, key: "m:k".into() }] }));
@@ -1496,6 +1517,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::ActingPlayer", "4e0102"),
     ("HostRet::PlayerOf", "4f00"),
     ("HostRet::EffectsOf", "500101036d3a6528"),
+    ("GuestCall::AiNodeBatch", "11010101000000000000f03f000000000000004000000000000008400204060000003f090200000000000010400000000000001440000000000000184001010301010801000203010701080a0c01036d3a6b0105"),
+    ("GuestRet::AiDecisions", "0c020101020406010000003f0000803e010000803f0100000040010101000000400000404001016d010104a001036d3a6b01000100"),
 ];
 
 #[test]

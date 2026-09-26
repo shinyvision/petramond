@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::mob::{populate, spawn, Instance, Mob, SavedMob};
+use crate::mob::{populate, spawn, Instance, Mob, MobId, SavedMob};
 use crate::world::ServerWorld;
 use petramond_math::math::Vec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
@@ -27,7 +27,7 @@ impl Mobs {
         yaw: f32,
         skylight: u8,
         blocklight: petramond_world::light::BlockLight6,
-    ) -> Option<u64> {
+    ) -> Option<MobId> {
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         let mut mob = Instance::new(kind, pos, yaw, self.spawn_counter);
         mob.skylight = skylight;
@@ -174,28 +174,23 @@ impl Mobs {
         skylight: u8,
         blocklight: petramond_world::light::BlockLight6,
     ) {
-        if self
-            .spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight)
-            .is_some()
-        {
-            if let Some(inst) = self.list.last_mut() {
-                inst.overlay_tags(m.tags);
-                inst.restore_container(m.container);
-            }
+        let id = self.spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight);
+        if let Some(inst) = id.and_then(|id| self.mob_mut(id)) {
+            inst.overlay_tags(m.tags);
+            inst.restore_container(m.container);
         }
     }
 
-    /// Remove the mob at `index` from the live set immediately — the mod
+    /// Remove the mob `id` from the live set immediately — the mod
     /// `DespawnMob` HostCall (no death, no loot table, not saved; carried stacks
-    /// still scatter). `swap_remove`, so
-    /// it renumbers the last mob into the hole; callers must re-query indices.
-    pub fn remove(&mut self, index: usize) -> bool {
-        if index < self.list.len() {
-            self.spill_container(index);
-            self.swap_remove_instance(index);
-            true
-        } else {
-            false
-        }
+    /// still scatter). `false` when it is already gone. Every other mob keeps
+    /// its handle.
+    pub fn remove(&mut self, id: MobId) -> bool {
+        let Some(slot) = self.slot(id) else {
+            return false;
+        };
+        self.spill_container(slot);
+        self.swap_remove_instance(slot);
+        true
     }
 }

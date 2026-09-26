@@ -1,10 +1,16 @@
-use crate::mob::{Mob, MobDamageFeedback, MobTagValue, SavedMob};
+use crate::mob::{Mob, MobDamageFeedback, MobId, MobTagValue, SavedMob};
 use crate::world::ServerWorld;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::body::Body;
 use petramond_world::chunk::SectionPos;
 
 mod fluid;
+
+/// The stable handle of the mob in storage position `i` — fixtures address
+/// mobs by handle, like every caller of the manager.
+fn id_at(mobs: &Mobs, i: usize) -> MobId {
+    mobs.instances()[i].id()
+}
 
 #[test]
 fn mobs_anchor_on_the_nearest_player() {
@@ -35,7 +41,7 @@ fn a_frozen_tick_discards_its_drive_intent() {
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
-    assert!(mobs.set_mob_drive(0, Some([2.0, 0.0]), None, Some(1.0), false, false));
+    assert!(mobs.set_mob_drive(id_at(&mobs, 0), Some([2.0, 0.0]), None, Some(1.0), false, false));
     assert!(mobs.instances()[0].drive_pending());
 
     mobs.tick(
@@ -129,7 +135,7 @@ fn mob_tags_survive_section_unload_and_reload() {
     // restored instance (the on-disk byte layer is covered by `save::mobs`).
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.5));
-    assert!(mobs.set_mob_tag(0, "zombies:anger".into(), MobTagValue::Int(31)));
+    assert!(mobs.set_mob_tag(id_at(&mobs, 0), "zombies:anger".into(), MobTagValue::Int(31)));
 
     let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
     assert_eq!(taken.len(), 1);
@@ -141,14 +147,14 @@ fn mob_tags_survive_section_unload_and_reload() {
 
     mobs.restore(taken);
     assert_eq!(
-        mobs.mob_tag(0, "zombies:anger"),
+        mobs.mob_tag(id_at(&mobs, 0), "zombies:anger"),
         Some(&MobTagValue::Int(31)),
         "the tag is back on the restored mob"
     );
-    // Removal reports presence honestly; out-of-range indices are inert.
-    assert!(mobs.remove_mob_tag(0, "zombies:anger"));
-    assert!(!mobs.remove_mob_tag(0, "zombies:anger"));
-    assert!(!mobs.set_mob_tag(9, "zombies:anger".into(), MobTagValue::Int(1)));
+    // Removal reports presence honestly; an unknown handle is inert.
+    assert!(mobs.remove_mob_tag(id_at(&mobs, 0), "zombies:anger"));
+    assert!(!mobs.remove_mob_tag(id_at(&mobs, 0), "zombies:anger"));
+    assert!(!mobs.set_mob_tag(999, "zombies:anger".into(), MobTagValue::Int(1)));
 }
 
 #[test]
@@ -160,7 +166,7 @@ fn a_wounded_mob_saves_and_restores_wounded() {
     let spawn_health = crate::mob::def(Mob::Sheep).spawn_health();
     assert_eq!(mobs.instances()[0].health(), spawn_health);
     let drop = mobs.damage_mob(
-        0,
+        id_at(&mobs, 0),
         spawn_health - 1.0,
         None,
         true,
@@ -189,7 +195,7 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
         .shear
         .expect("sheep are shearable");
 
-    let drop = mobs.shear_mob(0).expect("a coated sheep shears");
+    let drop = mobs.shear_mob(id_at(&mobs, 0)).expect("a coated sheep shears");
     assert_eq!(drop.item, spec.drop);
     assert!(
         (spec.min..=spec.max).contains(&drop.count),
@@ -197,7 +203,7 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
         drop.count
     );
     assert!(mobs.instances()[0].is_shorn());
-    assert!(mobs.shear_mob(0).is_none(), "no double-shear while shorn");
+    assert!(mobs.shear_mob(id_at(&mobs, 0)).is_none(), "no double-shear while shorn");
 
     // The coat regrows on the tick, within the spec's rolled range.
     let mut ticks: u32 = 0;
@@ -222,7 +228,7 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
         "the coat can't regrow before the min duration: {ticks}"
     );
     assert!(
-        mobs.shear_mob(0).is_some(),
+        mobs.shear_mob(id_at(&mobs, 0)).is_some(),
         "a regrown sheep can be shorn again"
     );
 }
@@ -231,7 +237,7 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
 fn a_species_without_a_shear_spec_cannot_be_shorn() {
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
-    assert!(mobs.shear_mob(0).is_none());
+    assert!(mobs.shear_mob(id_at(&mobs, 0)).is_none());
     assert!(!mobs.instances()[0].is_shorn());
 }
 
@@ -241,7 +247,7 @@ fn a_corpse_cannot_be_shorn() {
     assert!(mobs.spawn(Mob::Sheep, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     assert!(mobs
         .damage_mob(
-            0,
+            id_at(&mobs, 0),
             100.0,
             Some(WorldPos::new(5.0, 64.0, 8.5)),
             true,
@@ -250,7 +256,7 @@ fn a_corpse_cannot_be_shorn() {
         )
         .is_some());
     assert!(
-        mobs.shear_mob(0).is_none(),
+        mobs.shear_mob(id_at(&mobs, 0)).is_none(),
         "a ragdolling corpse keeps its coat"
     );
 }
@@ -427,7 +433,7 @@ fn a_harvested_corpse_is_dropped_not_saved() {
     // persist it (its loot already fell when it died).
     assert!(mobs
         .damage_mob(
-            0,
+            id_at(&mobs, 0),
             100.0,
             Some(WorldPos::new(5.0, 64.0, 2.5)),
             true,
@@ -466,7 +472,7 @@ fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
     // A ragdolling corpse doesn't block placement (it's about to vanish).
     assert!(mobs
         .damage_mob(
-            0,
+            id_at(&mobs, 0),
             100.0,
             Some(WorldPos::new(9.0, 64.0, 8.5)),
             true,
@@ -490,59 +496,68 @@ fn the_tag_cap_refuses_new_keys_but_never_replacements() {
     assert!(spawn_tags >= 1, "spawn tags include petramond:health");
     for i in 0..crate::mob::MAX_MOB_TAGS - spawn_tags {
         assert!(
-            mobs.set_mob_tag(0, format!("farm:k{i}"), MobTagValue::Int(i as i64)),
+            mobs.set_mob_tag(id_at(&mobs, 0), format!("farm:k{i}"), MobTagValue::Int(i as i64)),
             "key {i} fits under the cap"
         );
     }
     assert!(
-        !mobs.set_mob_tag(0, "farm:one_too_many".into(), MobTagValue::Int(0)),
+        !mobs.set_mob_tag(id_at(&mobs, 0), "farm:one_too_many".into(), MobTagValue::Int(0)),
         "a NEW key past the cap is refused"
     );
     assert!(
-        mobs.set_mob_tag(0, "farm:k0".into(), MobTagValue::Int(-1)),
+        mobs.set_mob_tag(id_at(&mobs, 0), "farm:k0".into(), MobTagValue::Int(-1)),
         "replacing an existing key is always allowed"
     );
-    assert_eq!(mobs.mob_tag(0, "farm:k0"), Some(&MobTagValue::Int(-1)));
-    assert!(mobs.remove_mob_tag(0, "farm:k1"));
+    assert_eq!(mobs.mob_tag(id_at(&mobs, 0), "farm:k0"), Some(&MobTagValue::Int(-1)));
+    assert!(mobs.remove_mob_tag(id_at(&mobs, 0), "farm:k1"));
     assert!(
-        mobs.set_mob_tag(0, "farm:back_under".into(), MobTagValue::Int(0)),
+        mobs.set_mob_tag(id_at(&mobs, 0), "farm:back_under".into(), MobTagValue::Int(0)),
         "a deletion frees a slot again"
     );
 }
 
 #[test]
-fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
+fn with_tag_filters_by_presence_and_value_and_skips_the_dead() {
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Sheep, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     assert!(mobs.spawn(Mob::Sheep, WorldPos::new(9.5, 64.0, 8.5), 0.0));
     assert!(mobs.spawn(Mob::Sheep, WorldPos::new(10.5, 64.0, 8.5), 0.0));
-    assert!(mobs.set_mob_tag(0, "farm:quality".into(), MobTagValue::Int(1)));
-    assert!(mobs.set_mob_tag(1, "farm:quality".into(), MobTagValue::Int(2)));
+    let (a, b) = (id_at(&mobs, 0), id_at(&mobs, 1));
+    assert!(mobs.set_mob_tag(a, "farm:quality".into(), MobTagValue::Int(1)));
+    assert!(mobs.set_mob_tag(b, "farm:quality".into(), MobTagValue::Int(2)));
+    let carriers = |mobs: &Mobs, want: Option<&MobTagValue>, key: &str| -> Vec<MobId> {
+        mobs.with_tag(key, want).map(|(_, m)| m.id()).collect()
+    };
 
     assert_eq!(
-        mobs.indices_with_tag("farm:quality", None),
-        vec![0, 1],
+        carriers(&mobs, None, "farm:quality"),
+        vec![a, b],
         "presence matches every carrier"
     );
     assert_eq!(
-        mobs.indices_with_tag("farm:quality", Some(&MobTagValue::Int(2))),
-        vec![1],
+        carriers(&mobs, Some(&MobTagValue::Int(2)), "farm:quality"),
+        vec![b],
         "a value filter matches only equal values"
     );
     assert_eq!(
-        mobs.indices_with_tag("farm:quality", Some(&MobTagValue::Int(1))),
-        vec![0],
+        carriers(&mobs, Some(&MobTagValue::Int(1)), "farm:quality"),
+        vec![a],
         "and the other stored value"
     );
     assert_eq!(
-        mobs.indices_with_tag("farm:missing", None),
-        Vec::<usize>::new(),
+        carriers(&mobs, None, "farm:missing"),
+        Vec::<MobId>::new(),
         "an uncarried key matches nothing"
+    );
+    assert!(
+        mobs.with_tag("farm:quality", None)
+            .all(|(position, m)| mobs.position_of(m.id()) == Some(position)),
+        "each carrier comes with its position in the listing"
     );
 
     assert!(mobs
         .damage_mob(
-            0,
+            a,
             100.0,
             Some(WorldPos::new(5.0, 64.0, 8.5)),
             true,
@@ -551,8 +566,8 @@ fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
         )
         .is_some());
     assert_eq!(
-        mobs.indices_with_tag("farm:quality", None),
-        vec![1],
+        carriers(&mobs, None, "farm:quality"),
+        vec![b],
         "a ragdolling corpse is gone to the query, exactly like MobsInRadius"
     );
 }
@@ -588,10 +603,7 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
         pos: WorldPos::new(24.5, 64.0, 30.5),
         ..Default::default()
     }];
-    let confined = |world: &ServerWorld| {
-        let i = world.mobs().index_of_id(id).expect("alive");
-        world.mobs().instances()[i].is_confined()
-    };
+    let confined = |world: &ServerWorld| world.mobs().get(id).expect("alive").is_confined();
 
     for _ in 0..=super::super::confined::CHECK_INTERVAL as usize {
         world.tick_mobs(0.05, &anchors);
@@ -623,7 +635,7 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
         (rng >> 11) as f32 / (1u64 << 53) as f32
     };
     // A dense cluster (overlaps guaranteed) plus a scattered field.
-    let bodies: Vec<Option<super::simulation::PushBody>> = (0..160)
+    let bodies: Vec<Option<super::push::PushBody>> = (0..160)
         .map(|i| {
             let kind = kinds[i % kinds.len()];
             let size = def(kind).size;
@@ -633,7 +645,7 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
                 f64::from((next() - 0.5) * 4.0),
                 f64::from((next() - 0.5) * spread),
             );
-            Some(super::simulation::push_body_for_test(
+            Some(super::push::push_body_for_test(
                 pos,
                 next() * std::f32::consts::TAU,
                 size,
@@ -642,7 +654,7 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
         .collect();
     let order: Vec<usize> = (0..bodies.len()).collect();
     let (mut sweep, mut pairs) = (Vec::new(), Vec::new());
-    super::simulation::overlap_pairs(&bodies, &order, &mut sweep, &mut pairs);
+    super::push::overlap_pairs(&bodies, &order, &mut sweep, &mut pairs);
 
     assert!(pairs.windows(2).all(|w| w[0] < w[1]), "sorted and deduped");
     let mut kept = 0usize;
@@ -669,25 +681,46 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
     );
 }
 
-/// The id → index map must track every way the live set changes: spawns,
-/// `swap_remove` despawns, section harvests and the end-of-tick cull.
+/// The handle → slot map must track every way the live set changes: spawns,
+/// `swap_remove` despawns, section harvests and the end-of-tick cull — and a
+/// handle must keep naming the SAME mob across every removal of another.
 #[test]
-fn index_of_id_tracks_every_live_set_mutation() {
+fn handles_stay_stable_across_every_live_set_mutation() {
     let assert_consistent = |mobs: &Mobs| {
         for (i, m) in mobs.instances().iter().enumerate() {
-            assert_eq!(mobs.index_of_id(m.id()), Some(i), "mob {} at {i}", m.id());
+            assert_eq!(mobs.slot(m.id()), Some(i), "mob {} at {i}", m.id());
+            assert_eq!(mobs.get(m.id()).map(|g| g.id()), Some(m.id()));
         }
     };
     let mut mobs = Mobs::new(0);
+    let mut spawned = Vec::new();
     for x in 0..6 {
         let pos = WorldPos::new(f64::from(x) * 20.0 + 8.0, 64.0, 8.0);
-        assert!(mobs.spawn(Mob::Owl, pos, 0.0));
+        let light = petramond_world::light::BlockLight6::DARK;
+        spawned.push((mobs.spawn_lit(Mob::Owl, pos, 0.0, 63, light).unwrap(), pos));
     }
     assert_consistent(&mobs);
-    let removed = mobs.instances()[1].id();
-    assert!(mobs.remove(1));
-    assert_eq!(mobs.index_of_id(removed), None);
+    // Tag every mob with its spawn position so identity is checkable by
+    // content after storage is shuffled.
+    for &(id, pos) in &spawned {
+        assert!(mobs.set_mob_tag(id, "test:x".into(), MobTagValue::Float(pos.x)));
+    }
+    let names_itself = |mobs: &Mobs, id: MobId, x: f64| {
+        mobs.mob_tag(id, "test:x") == Some(&MobTagValue::Float(x))
+    };
+
+    // Removing a middle mob swap-removes the LAST one into its slot; the
+    // moved mob's handle still names it, and the removed handle is dead.
+    let removed = spawned[1].0;
+    assert!(mobs.remove(removed));
+    assert!(!mobs.remove(removed), "a second removal finds nothing");
+    assert!(!mobs.contains(removed));
+    assert!(mobs.get(removed).is_none());
+    assert!(!mobs.set_mob_tag(removed, "test:y".into(), MobTagValue::Int(0)));
     assert_consistent(&mobs);
+    for &(id, pos) in spawned.iter().filter(|(id, _)| *id != removed) {
+        assert!(names_itself(&mobs, id, pos.x), "handle {id} still names its mob");
+    }
 
     let harvested = mobs.take_in_section(SectionPos::new(0, 4, 0));
     assert_eq!(
@@ -695,24 +728,30 @@ fn index_of_id_tracks_every_live_set_mutation() {
         1,
         "only the first owl sits in section (0, 4, 0)"
     );
+    assert!(!mobs.contains(spawned[0].0));
     assert_consistent(&mobs);
 
     // A death with no ragdoll presentation leaves the live set at the end of
     // the next tick.
-    let victim = mobs.instances()[0].id();
+    let victim = spawned[2].0;
     let lethal = MobDamageFeedback {
         components: vec![crate::mob::MobDamageFeedbackComponent::DecreaseHealth],
     };
     assert!(mobs
-        .damage_mob(0, 1000.0, None, true, None, &lethal)
+        .damage_mob(victim, 1000.0, None, true, None, &lethal)
         .is_some());
+    assert!(mobs.contains(victim), "a corpse stays until the cull");
+    assert!(mobs.live(victim).is_none(), "but it is not live");
     let world = ServerWorld::new(0, 1);
     let anchor = PlayerAnchor {
         pos: WorldPos::new(8.0, 64.0, 8.0),
         ..Default::default()
     };
     mobs.tick(0.05, &world, &[anchor], false);
-    assert_eq!(mobs.index_of_id(victim), None, "the cull drops the id");
+    assert!(!mobs.contains(victim), "the cull drops the handle");
     assert_eq!(mobs.len(), 3);
     assert_consistent(&mobs);
+    for &(id, pos) in &spawned[3..] {
+        assert!(names_itself(&mobs, id, pos.x), "survivor {id} keeps its handle");
+    }
 }

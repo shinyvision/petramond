@@ -8,7 +8,8 @@
 //! the order mobs tick in. Two structures ride on it:
 //! - an id → index map, so resolving an [`EntityRef`](super::EntityRef) is
 //!   O(1) instead of a linear `find`;
-//! - a uniform horizontal grid of [`CELL_SIZE`]-metre columns (one chunk wide)
+//! - a uniform horizontal grid of [`CELL_SIZE`]-metre columns (one chunk wide,
+//!   a [`ColumnIndex`] — the same bucketing the tick's noise batch uses)
 //!   holding the ACTIVE mobs, so a radius query touches only the columns its
 //!   square overlaps.
 //!
@@ -36,6 +37,61 @@ fn cell_of(x: f64, z: f64) -> CellKey {
     )
 }
 
+/// A uniform horizontal grid over indexed points: each [`CELL_SIZE`]-metre
+/// column lists the indices of the points inside it. The shared bucketing
+/// behind [`MobSnapshot`] and the tick's noise batch
+/// ([`NoiseField`](super::noise::NoiseField)); rebuilt once per tick, every
+/// buffer reused.
+#[derive(Default)]
+pub(super) struct ColumnIndex {
+    /// Grid column → `order[start..start + len]`.
+    cells: FxHashMap<CellKey, (u32, u32)>,
+    /// Point indices grouped by column, ascending within a column.
+    order: Vec<u32>,
+    /// Reused sort buffer for [`rebuild`](Self::rebuild).
+    keyed: Vec<(CellKey, u32)>,
+}
+
+impl ColumnIndex {
+    /// Re-bucket exactly `points` (a position and the caller's index for it).
+    pub(super) fn rebuild(&mut self, points: impl IntoIterator<Item = (WorldPos, u32)>) {
+        self.cells.clear();
+        self.order.clear();
+        self.keyed.clear();
+        self.keyed
+            .extend(points.into_iter().map(|(p, i)| (cell_of(p.x, p.z), i)));
+        self.keyed.sort_unstable();
+        let mut start = 0usize;
+        while start < self.keyed.len() {
+            let key = self.keyed[start].0;
+            let end = start
+                + self.keyed[start..]
+                    .iter()
+                    .take_while(|(k, _)| *k == key)
+                    .count();
+            self.cells.insert(key, (start as u32, (end - start) as u32));
+            self.order
+                .extend(self.keyed[start..end].iter().map(|&(_, i)| i));
+            start = end;
+        }
+    }
+
+    /// The indices bucketed in every column the horizontal square of
+    /// half-size `reach` around `pos` overlaps — a superset of the points in
+    /// that square, for the caller's exact test to narrow. Columns are visited
+    /// in a fixed order and indices ascend within one, so the sequence is
+    /// deterministic for a given build.
+    pub(super) fn candidates(&self, pos: WorldPos, reach: f64) -> impl Iterator<Item = u32> + '_ {
+        let (x0, z0) = cell_of(pos.x - reach, pos.z - reach);
+        let (x1, z1) = cell_of(pos.x + reach, pos.z + reach);
+        (x0..=x1)
+            .flat_map(move |cx| (z0..=z1).map(move |cz| (cx, cz)))
+            .filter_map(|key| self.cells.get(&key))
+            .flat_map(|&(start, len)| &self.order[start as usize..(start + len) as usize])
+            .copied()
+    }
+}
+
 /// Read-only start-of-tick view of every live mob, indexed by stable id and
 /// by position. Built by the manager once per tick; handed to every mob's AI
 /// and navigator by shared reference.
@@ -43,13 +99,8 @@ fn cell_of(x: f64, z: f64) -> CellKey {
 pub struct MobSnapshot {
     mobs: Vec<AiMob>,
     by_id: FxHashMap<u64, u32>,
-    /// Grid column → `order[start..start + len]`.
-    cells: FxHashMap<CellKey, (u32, u32)>,
-    /// Snapshot indices of the ACTIVE mobs grouped by column, ascending index
-    /// within a column.
-    order: Vec<u32>,
-    /// Reused sort buffer for [`reindex`](Self::reindex).
-    keyed: Vec<(CellKey, u32)>,
+    /// The ACTIVE mobs, bucketed by column.
+    grid: ColumnIndex,
     /// Widest horizontal half-extent of any active body — the pad a query for
     /// overlapping BODIES (rather than feet positions) adds to its reach.
     max_half_extent: f32,
@@ -81,31 +132,20 @@ impl MobSnapshot {
 
     fn reindex(&mut self) {
         self.by_id.clear();
-        self.cells.clear();
-        self.order.clear();
-        self.keyed.clear();
         self.max_half_extent = 0.0;
         for (i, m) in self.mobs.iter().enumerate() {
             self.by_id.insert(m.id, i as u32);
             if m.active {
-                self.keyed.push((cell_of(m.pos.x, m.pos.z), i as u32));
                 self.max_half_extent = self.max_half_extent.max(half_extent(m));
             }
         }
-        self.keyed.sort_unstable();
-        let mut start = 0usize;
-        while start < self.keyed.len() {
-            let key = self.keyed[start].0;
-            let end = start
-                + self.keyed[start..]
-                    .iter()
-                    .take_while(|(k, _)| *k == key)
-                    .count();
-            self.cells.insert(key, (start as u32, (end - start) as u32));
-            self.order
-                .extend(self.keyed[start..end].iter().map(|&(_, i)| i));
-            start = end;
-        }
+        self.grid.rebuild(
+            self.mobs
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.active)
+                .map(|(i, m)| (m.pos, i as u32)),
+        );
     }
 
     /// The mob with stable id `id` and its snapshot index, active or not.
@@ -134,13 +174,9 @@ impl MobSnapshot {
     /// the sequence is deterministic for a given snapshot.
     pub fn near(&self, pos: WorldPos, reach: f32) -> impl Iterator<Item = (usize, &AiMob)> + '_ {
         let reach = f64::from(reach.max(0.0));
-        let (x0, z0) = cell_of(pos.x - reach, pos.z - reach);
-        let (x1, z1) = cell_of(pos.x + reach, pos.z + reach);
-        (x0..=x1)
-            .flat_map(move |cx| (z0..=z1).map(move |cz| (cx, cz)))
-            .filter_map(|key| self.cells.get(&key))
-            .flat_map(|&(start, len)| &self.order[start as usize..(start + len) as usize])
-            .map(|&i| (i as usize, &self.mobs[i as usize]))
+        self.grid
+            .candidates(pos, reach)
+            .map(|i| (i as usize, &self.mobs[i as usize]))
             .filter(move |(_, m)| {
                 (m.pos.x - pos.x).abs() <= reach && (m.pos.z - pos.z).abs() <= reach
             })

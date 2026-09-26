@@ -340,7 +340,7 @@ fn a_mob_holding_a_chest_open_lifts_its_lid_until_it_lets_go_or_leaves() {
         .containers
         .set_mob_hold(&server.world, mob, chest, true, &mut events);
 
-    server.world.mobs_mut().remove(0);
+    server.world.mobs_mut().remove(mob);
     server
         .containers
         .release_absent_holders(server.world.mobs(), &mut events);
