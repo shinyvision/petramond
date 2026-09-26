@@ -3,20 +3,38 @@
 //! world never pays a wasm compile for an unchanged module. A cold compile is
 //! ~300 ms per bundled mod; a warm artifact deserializes in ~1 ms.
 //!
-//! Cache key = (wasm path, wasm content + length, engine compatibility hash,
-//! host mod-ABI version): rebuilding a mod, upgrading wasmtime/config, or an
-//! engine speaking another mod ABI misses and recompiles — so every artifact
-//! was produced by, and passed through the load handshake of, an engine of
-//! the current ABI — and a stale artifact for the same path is
-//! garbage-collected on the next store.
-//! Deserialization failures (however they happen) fall back to compiling.
+//! # Integrity
+//!
+//! Deserializing an artifact runs the native code inside it, so the cache
+//! never trusts a file for its name alone. Every artifact has a sidecar
+//! manifest ([`Manifest`]) binding it to:
+//!
+//! - the blake3 of the wasm it was compiled from,
+//! - the engine's precompile-compatibility fingerprint and the host mod-ABI
+//!   version (so every artifact was produced by — and passed the load
+//!   handshake of — an engine of the current build and ABI),
+//! - a blake3 hash of the artifact bytes KEYED by a per-install secret
+//!   (`modcache/cache.key`), plus their length.
+//!
+//! [`load_module`] reads the artifact into memory, checks it against the
+//! manifest and deserializes exactly the verified bytes; any mismatch (a
+//! torn write after a crash, disk corruption, a file dropped in by another
+//! tool, a stale build) recompiles from the wasm and rewrites both files.
+//! Writes go through a temp file that is fsynced before the rename, artifact
+//! first and manifest last, so a crash can at worst leave an artifact without
+//! a valid manifest — which is recompiled, never loaded.
+//!
+//! A stale artifact of the same source path is garbage-collected on the next
+//! store, and deserialization failures (however they happen) fall back to
+//! compiling.
 //!
 //! Concurrency: each path owns a `OnceLock` slot, so [`prewarm`] can compile
 //! many modules on background threads while a session load blocks only on the
 //! module it actually needs.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
@@ -28,6 +46,9 @@ use super::engine;
 type Slot = Arc<OnceLock<Result<Module, String>>>;
 
 static CACHE: LazyLock<Mutex<HashMap<PathBuf, Slot>>> = LazyLock::new(Default::default);
+
+/// Manifest format tag; bumping it orphans (and so recompiles) every artifact.
+const MANIFEST_MAGIC: &str = "petramond-modcache 1";
 
 /// Compile (or fetch the cached compilation of) the module at `path`.
 /// Successes are cached per path for the process lifetime; a failure is
@@ -72,30 +93,39 @@ pub fn prewarm(paths: impl IntoIterator<Item = PathBuf>) {
     }
 }
 
+/// Where a loaded module came from — what the cache tests observe.
+#[derive(Debug, PartialEq, Eq)]
+enum Origin {
+    /// A verified disk artifact.
+    Cache,
+    /// A fresh cranelift compile (cold, stale or rejected artifact).
+    Compiled,
+}
+
 fn load_module(path: &Path) -> Result<Module, String> {
+    load_module_traced(path).map(|(module, _)| module)
+}
+
+fn load_module_traced(path: &Path) -> Result<(Module, Origin), String> {
     let t = Instant::now();
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let artifact = artifact_path(path, &bytes);
-    if let Some(artifact) = &artifact {
-        if artifact.exists() {
-            // SAFETY: the artifact was serialized by us into the user's own
-            // data dir — the same trust domain as the game binary and saves —
-            // and wasmtime rejects artifacts from an incompatible build.
-            match unsafe { Module::deserialize_file(engine(), artifact) } {
-                Ok(module) => {
-                    log::debug!(
-                        target: "petramond::modding::perf",
-                        "loaded precompiled {} in {:.1} ms",
-                        path.display(),
-                        t.elapsed().as_secs_f64() * 1e3
-                    );
-                    return Ok(module);
-                }
-                Err(e) => log::debug!(
-                    "discarding stale precompiled artifact for {}: {e:#}",
-                    path.display()
-                ),
+    let entry = CacheEntry::for_source(path, &bytes);
+    if let Some(entry) = &entry {
+        match entry.load_verified() {
+            Ok(module) => {
+                log::debug!(
+                    target: "petramond::modding::perf",
+                    "loaded precompiled {} in {:.1} ms",
+                    path.display(),
+                    t.elapsed().as_secs_f64() * 1e3
+                );
+                return Ok((module, Origin::Cache));
             }
+            Err(Rejection::Absent) => {}
+            Err(Rejection::Invalid(why)) => log::debug!(
+                "discarding precompiled artifact for {}: {why}",
+                path.display()
+            ),
         }
     }
     let module =
@@ -107,114 +137,275 @@ fn load_module(path: &Path) -> Result<Module, String> {
         bytes.len() / 1024,
         t.elapsed().as_secs_f64() * 1e3
     );
-    if let Some(artifact) = &artifact {
-        store_artifact(&module, artifact);
+    if let Some(entry) = &entry {
+        entry.store(&module);
     }
-    Ok(module)
+    Ok((module, Origin::Compiled))
 }
 
-/// The disk-cache file for this (source path, content, engine config), or
-/// `None` when the disk cache is unusable. Unit tests skip the disk cache
-/// unless they isolate the data dir — fixture guests must not litter (or
-/// read) the developer's real `modcache/`.
-fn artifact_path(path: &Path, bytes: &[u8]) -> Option<PathBuf> {
-    if cfg!(test) && std::env::var_os("PETRAMOND_DATA_DIR").is_none() {
-        return None;
-    }
-    let dir = petramond_util::paths::base_data_dir().join("modcache");
-    std::fs::create_dir_all(&dir).ok()?;
-    let mut compat = std::hash::DefaultHasher::new();
-    engine().precompile_compatibility_hash().hash(&mut compat);
-    mod_api::ABI_VERSION.pack().hash(&mut compat);
-    Some(dir.join(format!(
-        "{:016x}-{:016x}-{:x}-{:016x}.cwasm",
-        fnv1a64(path.to_string_lossy().as_bytes()),
-        fnv1a64(bytes),
-        bytes.len(),
-        compat.finish()
-    )))
+/// Why a disk artifact was not used.
+enum Rejection {
+    /// Nothing cached for this key yet.
+    Absent,
+    /// Something is there but fails verification (or deserialization).
+    Invalid(String),
 }
 
-/// Serialize `module` to its cache file (atomically, via a temp file), then
-/// drop other artifacts of the same source path — a rebuilt mod must not
-/// accumulate one orphan per build. Failures are ignored: the cache is an
-/// accelerator, never a correctness dependency.
-fn store_artifact(module: &Module, artifact: &Path) {
-    let Ok(bytes) = module.serialize() else {
-        return;
-    };
-    let tmp = artifact.with_extension(format!("tmp{}", std::process::id()));
-    if std::fs::write(&tmp, bytes).is_err() || std::fs::rename(&tmp, artifact).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return;
+/// The disk-cache files and expected manifest for one (source path, wasm
+/// content) under the current engine.
+struct CacheEntry {
+    artifact: PathBuf,
+    manifest_path: PathBuf,
+    expected: Manifest,
+    key: [u8; 32],
+}
+
+impl CacheEntry {
+    /// `None` when the disk cache is unusable. Unit tests skip the disk cache
+    /// unless they isolate the data dir — fixture guests must not litter (or
+    /// read) the developer's real `modcache/`.
+    fn for_source(path: &Path, wasm: &[u8]) -> Option<Self> {
+        if cfg!(test) && std::env::var_os("PETRAMOND_DATA_DIR").is_none() {
+            return None;
+        }
+        let dir = petramond_util::paths::base_data_dir().join("modcache");
+        std::fs::create_dir_all(&dir).ok()?;
+        let key = install_key(&dir)?;
+        let wasm_hash = blake3::hash(wasm);
+        // The path prefix groups every artifact of one source for stale GC.
+        let path_hash = blake3::hash(path.to_string_lossy().as_bytes());
+        let stem = format!(
+            "{}-{}",
+            &path_hash.to_hex()[..16],
+            &wasm_hash.to_hex()[..32]
+        );
+        Some(Self {
+            artifact: dir.join(format!("{stem}.cwasm")),
+            manifest_path: dir.join(format!("{stem}.manifest")),
+            expected: Manifest {
+                wasm: *wasm_hash.as_bytes(),
+                engine: engine_fingerprint(),
+                abi: mod_api::ABI_VERSION.pack(),
+                artifact: [0; 32],
+                len: 0,
+            },
+            key,
+        })
     }
-    let (Some(dir), Some(name)) = (artifact.parent(), artifact.file_name()) else {
-        return;
-    };
-    let Some(path_prefix) = name.to_str().and_then(|n| n.split('-').next()) else {
-        return;
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let stale = entry.file_name() != name
-            && entry.file_name().to_str().is_some_and(|n| {
-                n.starts_with(path_prefix) && n[path_prefix.len()..].starts_with('-')
-            });
-        if stale {
-            let _ = std::fs::remove_file(entry.path());
+
+    /// Read, verify and deserialize the cached artifact.
+    fn load_verified(&self) -> Result<Module, Rejection> {
+        let Ok(text) = std::fs::read_to_string(&self.manifest_path) else {
+            return Err(Rejection::Absent);
+        };
+        let manifest = Manifest::parse(&text)
+            .ok_or_else(|| Rejection::Invalid("unreadable manifest".into()))?;
+        if !manifest.binds_same_source(&self.expected) {
+            return Err(Rejection::Invalid(
+                "manifest is for another wasm, engine build or mod ABI".into(),
+            ));
+        }
+        let bytes = std::fs::read(&self.artifact)
+            .map_err(|e| Rejection::Invalid(format!("read artifact: {e}")))?;
+        if bytes.len() as u64 != manifest.len
+            || *blake3::keyed_hash(&self.key, &bytes).as_bytes() != manifest.artifact
+        {
+            return Err(Rejection::Invalid(
+                "artifact bytes do not match their manifest hash".into(),
+            ));
+        }
+        // SAFETY: `bytes` are exactly what this install serialized: their
+        // length and keyed blake3 (under the per-install secret) match the
+        // manifest, which also binds them to this wasm, this engine build's
+        // compatibility fingerprint and this mod ABI. They are deserialized
+        // from memory, so the verified bytes are the ones that run.
+        unsafe { Module::deserialize(engine(), &bytes) }
+            .map_err(|e| Rejection::Invalid(format!("deserialize: {e:#}")))
+    }
+
+    /// Serialize `module` to its artifact and manifest (each durably, via an
+    /// fsynced temp file), then drop other artifacts of the same source path —
+    /// a rebuilt mod must not accumulate one orphan per build. Failures are
+    /// ignored: the cache is an accelerator, never a correctness dependency.
+    fn store(&self, module: &Module) {
+        let Ok(bytes) = module.serialize() else {
+            return;
+        };
+        let manifest = Manifest {
+            artifact: *blake3::keyed_hash(&self.key, &bytes).as_bytes(),
+            len: bytes.len() as u64,
+            ..self.expected
+        };
+        // Artifact first, manifest last: a crash in between leaves an
+        // artifact no manifest vouches for, which is recompiled.
+        if write_durably(&self.artifact, &bytes).is_err()
+            || write_durably(&self.manifest_path, manifest.render().as_bytes()).is_err()
+        {
+            return;
+        }
+        self.collect_stale();
+    }
+
+    fn collect_stale(&self) {
+        let (Some(dir), Some(stem)) = (
+            self.artifact.parent(),
+            self.artifact.file_stem().and_then(|s| s.to_str()),
+        ) else {
+            return;
+        };
+        let Some(path_prefix) = stem.split('-').next() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let same_source = name
+                .strip_prefix(path_prefix)
+                .is_some_and(|rest| rest.starts_with('-'));
+            let current = Path::new(name).file_stem().and_then(|s| s.to_str()) == Some(stem);
+            if same_source && !current {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
     }
 }
 
-/// FNV-1a — frozen; artifact names must be stable across builds. (A changed
-/// hash would only orphan cache entries, but there is no reason to churn.)
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for &b in bytes {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+/// The sidecar that vouches for one artifact (see the module docs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Manifest {
+    wasm: [u8; 32],
+    engine: [u8; 32],
+    abi: u32,
+    /// Keyed blake3 of the artifact bytes.
+    artifact: [u8; 32],
+    len: u64,
+}
+
+impl Manifest {
+    fn render(&self) -> String {
+        format!(
+            "{MANIFEST_MAGIC}\nwasm {}\nengine {}\nabi {}\nartifact {}\nlen {}\n",
+            hex(&self.wasm),
+            hex(&self.engine),
+            self.abi,
+            hex(&self.artifact),
+            self.len
+        )
     }
-    hash
+
+    fn parse(text: &str) -> Option<Self> {
+        let mut lines = text.lines();
+        if lines.next()? != MANIFEST_MAGIC {
+            return None;
+        }
+        let wasm = unhex(manifest_field(&mut lines, "wasm")?)?;
+        let engine = unhex(manifest_field(&mut lines, "engine")?)?;
+        let abi = manifest_field(&mut lines, "abi")?.parse().ok()?;
+        let artifact = unhex(manifest_field(&mut lines, "artifact")?)?;
+        let len = manifest_field(&mut lines, "len")?.parse().ok()?;
+        Some(Self {
+            wasm,
+            engine,
+            abi,
+            artifact,
+            len,
+        })
+    }
+
+    /// Whether this manifest was written for the same wasm under the same
+    /// engine build and mod ABI as `expected`.
+    fn binds_same_source(&self, expected: &Manifest) -> bool {
+        self.wasm == expected.wasm && self.engine == expected.engine && self.abi == expected.abi
+    }
+}
+
+/// The value of the next manifest line, which must read `name value`.
+fn manifest_field<'a>(lines: &mut std::str::Lines<'a>, name: &str) -> Option<&'a str> {
+    lines.next()?.strip_prefix(name)?.strip_prefix(' ')
+}
+
+fn hex(bytes: &[u8; 32]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 || !text.is_ascii() {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
+/// The engine's precompile-compatibility fingerprint as stable bytes: the
+/// value wasmtime exposes only as `impl Hash`, fed straight into blake3 (a
+/// std `DefaultHasher` is explicitly unstable across Rust releases).
+fn engine_fingerprint() -> [u8; 32] {
+    struct Blake3Hasher(blake3::Hasher);
+    impl std::hash::Hasher for Blake3Hasher {
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.update(bytes);
+        }
+        fn finish(&self) -> u64 {
+            let hash = self.0.finalize();
+            u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("8 bytes"))
+        }
+    }
+    let mut hasher = Blake3Hasher(blake3::Hasher::new());
+    engine().precompile_compatibility_hash().hash(&mut hasher);
+    *hasher.0.finalize().as_bytes()
+}
+
+/// This install's artifact key, created on first use in `dir/cache.key`.
+/// Loaded once per (process, cache dir); `None` when it can be neither read
+/// nor created (the disk cache is then skipped).
+fn install_key(dir: &Path) -> Option<[u8; 32]> {
+    static KEY: Mutex<Option<(PathBuf, [u8; 32])>> = Mutex::new(None);
+    let mut cached = KEY.lock().unwrap();
+    if let Some((cached_dir, key)) = cached.as_ref() {
+        if cached_dir == dir {
+            return Some(*key);
+        }
+    }
+    let path = dir.join("cache.key");
+    let read = |path: &Path| -> Option<[u8; 32]> { std::fs::read(path).ok()?.try_into().ok() };
+    let key = match read(&path) {
+        Some(key) => key,
+        None => {
+            let mut fresh = [0u8; 32];
+            getrandom::getrandom(&mut fresh).ok()?;
+            write_durably(&path, &fresh).ok()?;
+            // Another process may have raced us to the rename: adopt whichever
+            // key landed, so both agree from here on.
+            read(&path)?
+        }
+    };
+    *cached = Some((dir.to_path_buf(), key));
+    Some(key)
+}
+
+/// Write `bytes` to `path` through a temp file that is fsynced before the
+/// rename, so a crash never leaves a torn file under the final name.
+fn write_durably(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    let written = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The disk artifact round-trips: a second process-cache miss for the same
-    /// bytes loads the precompiled artifact instead of recompiling, and a
-    /// content change misses to a fresh compile while GC drops the stale
-    /// artifact of the same path.
-    #[test]
-    fn artifact_roundtrip_and_stale_gc() {
-        // The per-process test data root the app tests also use — set, never
-        // removed, identical value from every setter, so parallel tests can't
-        // race each other onto the real user dir.
-        let data = std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id()));
-        std::env::set_var("PETRAMOND_DATA_DIR", &data);
-        std::fs::create_dir_all(&data).unwrap();
-
-        // WAT text compiles like binary wasm through the dev-build's `wat`
-        // feature; two different bodies = two content hashes.
-        let wasm_a = b"(module (memory (export \"memory\") 1))".to_vec();
-        let wasm_b = b"(module (memory (export \"memory\") 2) (func (export \"f\")))".to_vec();
-        let source = data.join("module-cache-guest.wasm");
-
-        std::fs::write(&source, &wasm_a).unwrap();
-        let first = artifact_path(&source, &wasm_a).expect("disk cache enabled");
-        let _ = std::fs::remove_file(&first); // stale from an earlier run
-        load_module(&source).unwrap();
-        assert!(first.exists(), "compile stores the artifact");
-        load_module(&source).unwrap(); // exercises the deserialize path
-        assert!(first.exists());
-
-        std::fs::write(&source, &wasm_b).unwrap();
-        let second = artifact_path(&source, &wasm_b).unwrap();
-        assert_ne!(first, second, "content change changes the key");
-        load_module(&source).unwrap();
-        assert!(second.exists(), "recompile stores the new artifact");
-        assert!(!first.exists(), "stale artifact of the same path is GC'd");
-    }
-}
+mod tests;

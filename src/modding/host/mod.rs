@@ -409,8 +409,10 @@ pub(in crate::modding) fn short_debug(value: &dyn std::fmt::Debug, cap: usize) -
 
 /// THE host-call switchboard: routes every ABI variant to its category
 /// handler below (exhaustive, so a new variant must pick a home here). Calls
-/// that need the live simulation reach it through [`scope::with_active`];
-/// everything else lives on the store.
+/// that need the live simulation reach it through the [`guards`] wrappers
+/// (`sim_read` shared, `sim_query`/`sim_call`/`sim_mutate` exclusive);
+/// everything else lives on the store. A read-only dispatch admits only the
+/// calls [`guards::read_only_permits`] lists.
 pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
     data.stats.host_calls += 1;
     #[cfg(test)]
@@ -418,6 +420,12 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         if *id == data.mod_id {
             hook();
         }
+    }
+    if super::scope::read_only_active() && !guards::read_only_permits(&call) {
+        return HostRet::Error(format!(
+            "{} is not allowed during a read-only dispatch (e.g. a shape placement plan)",
+            short_debug(&call, 48)
+        ));
     }
     if data.side == RuntimeSide::Client && !super::client::client_capability(&call) {
         return HostRet::Error(

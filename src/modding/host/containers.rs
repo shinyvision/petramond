@@ -6,10 +6,7 @@ use mod_api::{HostCall, HostRet};
 
 use crate::events::SimCtx;
 
-use super::guards::{
-    batch_guard, item_by_name, item_stack_data, key_owned_by_namespace, sim_mutating_query,
-    sim_query,
-};
+use super::guards::{batch_guard, item_by_name, item_stack_data, key_owned_by_namespace, sim_query};
 
 mod access;
 
@@ -39,7 +36,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 Ok(v) => v,
                 Err(e) => return e,
             };
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 let mut remainder = (stack.count > 0).then(|| {
                     petramond_world::item::ItemStack::with_variant(item, stack.count, variant)
                 });
@@ -47,7 +44,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::ItemStack(remainder.map(item_stack_data))
             })
         }
-        HostCall::ContainerHold { at, actor, open } => sim_mutating_query(|ctx| {
+        HostCall::ContainerHold { at, actor, open } => sim_query(|ctx| {
             let mod_api::EntityRef::Mob(mob_id) = actor else {
                 return HostRet::Bool(false);
             };
@@ -64,7 +61,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 .push_action(crate::events::DeferredAction::ContainerHold { mob_id, pos, open });
             HostRet::Bool(true)
         }),
-        HostCall::ContainerTake { at, slot, count } => sim_mutating_query(|ctx| {
+        HostCall::ContainerTake { at, slot, count } => sim_query(|ctx| {
             HostRet::ItemStack(take(ctx, at, slot, count).map(item_stack_data))
         }),
         HostCall::ContainerTransfer {
@@ -72,7 +69,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
             slot,
             to,
             count,
-        } => sim_mutating_query(|ctx| {
+        } => sim_query(|ctx| {
             // Both ends must be writable before anything leaves the source,
             // so a refused destination costs nothing.
             if access::resolve_write(ctx, to).is_none() {
@@ -151,7 +148,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 writes.push((i, stack));
             }
             let mod_id = mod_id.to_owned();
-            sim_mutating_query(move |ctx| {
+            sim_query(move |ctx| {
                 let Some(target) = access::resolve_write(ctx, at) else {
                     return HostRet::Bool(false);
                 };

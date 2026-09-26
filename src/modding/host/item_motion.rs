@@ -1,7 +1,7 @@
 use mod_api::{HostCall, HostRet};
 
 use super::entities::item_entity_data;
-use super::guards::{batch_guard, finite3, sim_mutating_query, sim_query};
+use super::guards::{batch_guard, finite3, sim_query, sim_read};
 
 #[cfg(test)]
 mod tests;
@@ -19,7 +19,7 @@ pub(super) fn handle(call: HostCall) -> HostRet {
             if let Some(error) = batch_guard("ItemEntitiesInRadius.limit", limit as usize) {
                 return error;
             }
-            sim_query(|ctx| {
+            sim_read(|ctx| {
                 HostRet::ItemEntities(
                     ctx.world
                         .nearest_item_entities(pos, radius, limit as usize)
@@ -39,7 +39,7 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                 .collect();
             match deltas {
                 Err(error) => error,
-                Ok(deltas) => sim_mutating_query(|ctx| {
+                Ok(deltas) => sim_query(|ctx| {
                     HostRet::Bools(ctx.world.impulse_item_entities(&deltas))
                 }),
             }

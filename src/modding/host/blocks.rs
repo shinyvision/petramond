@@ -9,7 +9,7 @@ use petramond_math::math::IVec3;
 
 use super::guards::{
     batch_guard, checked_block, finite3, key_owned_by_namespace, sim_call, sim_query,
-    stream_final_cell,
+    sim_read, stream_final_cell,
 };
 
 /// The three presentation WRITES below all ask the same question first: does
@@ -183,7 +183,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             if let Some(err) = batch_guard("BlockLocalToWorld point", points.len()) {
                 return err;
             }
-            sim_query(move |ctx| {
+            sim_read(move |ctx| {
                 let p = IVec3::from(pos);
                 // Gated like every other mod read: mid-stream the cell shows
                 // the generated base where a saved overlay is about to land,
@@ -233,13 +233,13 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // never change them), so a loaded-column read cannot lie: no
         // stream-final gate needed.
         HostCall::BiomeAt { pos } => {
-            sim_query(move |ctx| HostRet::MaybeByte(ctx.world.data().biome_at_world(pos[0], pos[1])))
+            sim_read(move |ctx| HostRet::MaybeByte(ctx.world.data().biome_at_world(pos[0], pos[1])))
         }
         // The SURFACE can lie mid-stream (the generated base shows where a
         // saved overlay is about to land), so the found footing must be
         // stream-final like every block read — else a mod builds on terrain
         // the player's save is about to replace.
-        HostCall::SurfaceYAt { pos } => sim_query(move |ctx| {
+        HostCall::SurfaceYAt { pos } => sim_read(move |ctx| {
             let y = ctx
                 .world
                 .data().surface_collision_y(pos[0], pos[1])
@@ -249,7 +249,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // Mod reads report None ("unloaded") while a section's streamed
         // content is not final — a half-streamed read would show the
         // generated base where the player's saved record is about to land.
-        HostCall::GetBlock { pos } => sim_query(|ctx| {
+        HostCall::GetBlock { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Block(
                 ctx.world
@@ -261,7 +261,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             if let Some(err) = batch_guard("GetBlocks position", positions.len()) {
                 return err;
             }
-            sim_query(|ctx| {
+            sim_read(|ctx| {
                 HostRet::Blocks(
                     positions
                         .iter()
@@ -275,7 +275,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::BlockChangesSince { since } => sim_query(|ctx| {
+        HostCall::BlockChangesSince { since } => sim_read(|ctx| {
             let (next, cells, lost) = match since {
                 Some(seq) => ctx.world.changes_since(seq),
                 None => (ctx.world.changes_since(u64::MAX).0, Vec::new(), false),
@@ -311,7 +311,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 mod_api::RayFilter::Selectable => crate::player::RayFilter::Selectable,
                 mod_api::RayFilter::Collidable => crate::player::RayFilter::Collidable,
             };
-            sim_query(move |ctx| {
+            sim_read(move |ctx| {
                 HostRet::Raycast(
                     raycast::filtered(from, dir, max, filter, ctx.world.data()).map(
                         |(hit, distance)| mod_api::RaycastHitData {
@@ -348,7 +348,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                     Err(e) => return e,
                 }
             }
-            sim_query(move |ctx| {
+            sim_read(move |ctx| {
                 let mut found = Vec::new();
                 // Cells outside the world's vertical range are definitionally
                 // empty — they can never match, and treating them as
@@ -404,7 +404,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::ScheduleTick { pos, delay } => {
             sim_call(|ctx| ctx.world.schedule_tick(pos.into(), delay))
         }
-        HostCall::IsLoaded { pos } => sim_query(|ctx| {
+        HostCall::IsLoaded { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Bool(ctx.world.section_stream_final_at(p.x, p.y, p.z))
         }),
@@ -413,7 +413,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // sections (the mesh-border fallback), which for a MOD read is a
         // fabricated value light-driven policy would act on — gate on
         // stream finality and answer `None` instead.
-        HostCall::LightAt { pos } => sim_query(|ctx| {
+        HostCall::LightAt { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Light(ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
                 mod_api::LightData {
@@ -424,7 +424,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             }))
         }),
-        HostCall::CollisionShapeAt { pos } => sim_query(|ctx| {
+        HostCall::CollisionShapeAt { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::CollisionShape(ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
                 match ctx.world.data().collision_shape_class(p.x, p.y, p.z) {

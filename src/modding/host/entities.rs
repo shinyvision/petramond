@@ -13,8 +13,7 @@ use petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE;
 use petramond_world::item::{ItemStack, ItemType};
 
 use super::guards::{
-    batch_guard, finite3, finite_pos, item_by_name, live_mob, sim_mutate, sim_mutating_query,
-    sim_query,
+    batch_guard, finite3, finite_pos, item_by_name, live_mob, sim_mutate, sim_query,
 };
 use super::intern_mod_id;
 
@@ -134,7 +133,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         } => match finite_pos(pos, "SpawnMob.pos") {
             Err(e) => e,
             Ok(_) if !yaw.is_finite() => HostRet::Error("SpawnMob.yaw must be finite".into()),
-            Ok(pos) => sim_mutating_query(|ctx| {
+            Ok(pos) => sim_query(|ctx| {
                 let Some(kind) = crate::mob::by_key(&key) else {
                     log::warn!("[mod {mod_id}] SpawnMob: unknown species '{key}'");
                     return HostRet::SpawnedMob(None);
@@ -241,7 +240,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             let (Ok(main), Ok(off)) = (resolve(&main), resolve(&off)) else {
                 return HostRet::Bool(false);
             };
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -257,7 +256,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             if let Some(err) = super::blocks::check_draw_set("SetMobDraw", &prims) {
                 return err;
             }
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -329,7 +328,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
-        HostCall::DespawnMob { mob_id } => sim_mutating_query(|ctx| {
+        HostCall::DespawnMob { mob_id } => sim_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Bool(false);
             };
@@ -341,7 +340,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             mob_id,
             key,
             active,
-        } => sim_mutating_query(|ctx| {
+        } => sim_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Bool(false);
             };
@@ -354,7 +353,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             active,
         } => match anim_name_guard("MobAnimSet", &anim) {
             Err(e) => e,
-            Ok(()) => sim_mutating_query(|ctx| {
+            Ok(()) => sim_query(|ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -370,7 +369,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             {
                 return e;
             }
-            sim_mutating_query(move |ctx| {
+            sim_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -396,7 +395,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             {
                 return e;
             }
-            sim_mutating_query(move |ctx| {
+            sim_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -440,7 +439,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     "MobDrive: vertical speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
                 ));
             }
-            sim_mutating_query(move |ctx| {
+            sim_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -473,7 +472,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             if roll.abs() > std::f32::consts::PI {
                 return HostRet::Error("MobKinematic: roll outside ±π".into());
             }
-            sim_mutating_query(move |ctx| {
+            sim_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
@@ -495,7 +494,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             mob_id,
             player_id,
             seat,
-        } => sim_mutating_query(|ctx| {
+        } => sim_query(|ctx| {
             HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))
         }),
         HostCall::PlayerPoseSet {
@@ -514,7 +513,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             if pose == 0 {
                 return HostRet::Bool(false); // reserved "no pose" value
             }
-            sim_mutating_query(move |ctx| {
+            sim_query(move |ctx| {
                 HostRet::Bool(ctx.world.try_mount_anchor(
                     player_id.0,
                     crate::mob::riding::PoseAnchor {
@@ -525,7 +524,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
-        HostCall::MobDismount { player_id } => sim_mutating_query(|ctx| {
+        HostCall::MobDismount { player_id } => sim_query(|ctx| {
             HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some())
         }),
         HostCall::MobRiders { mob_id } => sim_query(|ctx| {
@@ -589,7 +588,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     Ok(v) => v,
                     Err(e) => return e,
                 };
-                sim_mutating_query(|ctx| {
+                sim_query(|ctx| {
                     let Some(item) = item_by_name(&item) else {
                         log::warn!("[mod {mod_id}] SpawnItem: unknown item '{item}'");
                         return HostRet::Bool(false);
@@ -618,7 +617,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     Ok(v) => v,
                     Err(e) => return e,
                 };
-                sim_mutating_query(|ctx| {
+                sim_query(|ctx| {
                     let Some(item) = item_by_name(&item) else {
                         log::warn!("[mod {mod_id}] LaunchItem: unknown item '{item}'");
                         return HostRet::U64(0);

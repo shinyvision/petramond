@@ -9,9 +9,7 @@ use petramond_math::math::IVec3;
 use petramond_world::construction::Record;
 
 use super::construction::record_in;
-use super::guards::{
-    batch_guard, finite_pos, key_owned_by_namespace, sim_mutating_query, sim_query,
-};
+use super::guards::{batch_guard, finite_pos, key_owned_by_namespace, sim_query};
 use crate::events::{DeferredAction, SimCtx};
 use crate::world::actor::PlaceCheck;
 
@@ -22,7 +20,7 @@ pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
             pos,
             tool_slot,
             collect,
-        } => sim_mutating_query(|ctx| {
+        } => sim_query(|ctx| {
             HostRet::Dig(
                 match dig(ctx, actor, IVec3::from_array(pos), tool_slot, collect) {
                     Ok(progress) => progress,
@@ -40,11 +38,11 @@ pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
                 Ok(record) => record,
                 Err(refusal) => return HostRet::Place(PlaceRequest::Refused(refusal)),
             };
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 HostRet::Place(place(ctx, actor, IVec3::from_array(pos), record, pay))
             })
         }
-        HostCall::ActorInteract { actor, pos } => sim_mutating_query(|ctx| {
+        HostCall::ActorInteract { actor, pos } => sim_query(|ctx| {
             let EntityRef::Mob(mob_id) = actor else {
                 return HostRet::Bool(false);
             };

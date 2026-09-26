@@ -4,7 +4,7 @@ use mod_api::{EntityRef, HostCall, HostRet};
 use petramond_world::condition::ConditionDef;
 use petramond_world::exposure::BodyExposure;
 
-use super::guards::{live_mob, sim_mutating_query};
+use super::guards::{live_mob, sim_query};
 
 fn with_exposure<R>(
     ctx: &mut crate::events::SimCtx<'_>,
@@ -48,7 +48,7 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                     def.name
                 ));
             }
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 HostRet::Bool(
                     with_exposure(ctx, entity, |e| e.apply(def, stage, ticks)).unwrap_or(false),
                 )
@@ -63,7 +63,7 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                 Ok(def) => def,
                 Err(err) => return err,
             };
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 HostRet::Bool(with_exposure(ctx, entity, |e| e.cool(def.id, ticks)).is_some())
             })
         }

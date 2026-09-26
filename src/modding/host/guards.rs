@@ -1,7 +1,7 @@
 //! Guards and lookups shared by every call handler: namespace/size write
 //! guards, the sim-scope gate, and registry validation helpers.
 
-use mod_api::HostRet;
+use mod_api::{HostCall, HostRet};
 
 use crate::events::SimCtx;
 use crate::modding::scope;
@@ -91,60 +91,138 @@ pub(super) fn actor_for(
     })
 }
 
+/// The reply every exclusive-access wrapper gives inside a read-only
+/// dispatch.
+fn read_only_refusal() -> HostRet {
+    HostRet::Error(
+        "this host call needs write access to the world, which a read-only dispatch \
+         (e.g. a shape placement plan) does not grant"
+            .into(),
+    )
+}
+
+/// The reply when no guest dispatch published a simulation context.
+fn no_context() -> HostRet {
+    HostRet::Error("no simulation context is active".into())
+}
+
+/// Whether `call` is legal inside a READ-ONLY dispatch (the shape
+/// placement-plan dispatch, whose ABI promises the guest cannot edit the
+/// world it validates against). The switchboard refuses everything else
+/// before routing, so this is the one place the read-only promise is
+/// written down — an allow-list, so a call added to the ABI stays refused
+/// until someone decides it is a pure read.
+///
+/// Behind it, a read-only scope lends the [`SimCtx`] SHARED only
+/// ([`scope::with_active_ref`]): every allowed call that reads the world
+/// goes through [`sim_read`], and the exclusive wrappers below refuse, so a
+/// call listed here by mistake still cannot mutate. When the ABI grows a
+/// per-call legality table, this function becomes a lookup into it.
+pub(in crate::modding) fn read_only_permits(call: &HostCall) -> bool {
+    matches!(
+        call,
+        // Store-local and scope-free.
+        HostCall::Log { .. }
+            | HostCall::RuntimeSide
+            | HostCall::CurrentTick
+            | HostCall::RngU64 { .. }
+            // World reads (through `sim_read`).
+            | HostCall::GetBlock { .. }
+            | HostCall::GetBlocks { .. }
+            | HostCall::BlockChangesSince { .. }
+            | HostCall::IsLoaded { .. }
+            | HostCall::LightAt { .. }
+            | HostCall::CollisionShapeAt { .. }
+            | HostCall::BiomeAt { .. }
+            | HostCall::SurfaceYAt { .. }
+            | HostCall::FindBlocks { .. }
+            | HostCall::BlockLocalToWorld { .. }
+            | HostCall::Raycast { .. }
+            | HostCall::ItemEntitiesInRadius { .. }
+            | HostCall::WorldKvGet { .. }
+            | HostCall::SectionKvGet { .. }
+            | HostCall::SectionKvFind { .. }
+            | HostCall::SectionKvGetMany { .. }
+            | HostCall::MobTagGet { .. }
+            | HostCall::MobTagsGet { .. }
+            | HostCall::MobsWithTag { .. }
+            | HostCall::BlockRecordsAt { .. }
+            | HostCall::BlockRecordStatuses { .. }
+            | HostCall::ActingPlayer
+            | HostCall::PlayerIdentity { .. }
+            // Catalog lookups: pure functions of the loaded registries.
+            | HostCall::BlockRecordPlans { .. }
+            | HostCall::StructureInfo { .. }
+            | HostCall::LootRoll { .. }
+            | HostCall::MobDataGet { .. }
+            | HostCall::MobsWithData { .. }
+            | HostCall::ResolveBlock { .. }
+            | HostCall::ResolveItem { .. }
+            | HostCall::ResolveMob { .. }
+            | HostCall::BlockNames { .. }
+            | HostCall::ItemNames { .. }
+            | HostCall::MobNames { .. }
+            | HostCall::ResolveCondition { .. }
+            | HostCall::ConditionNames { .. }
+            | HostCall::BlocksByTag { .. }
+            | HostCall::ItemsByTag { .. }
+            | HostCall::ItemInfo { .. }
+            | HostCall::ResolveShape { .. }
+            | HostCall::ItemDataGet { .. }
+            | HostCall::ItemsWithData { .. }
+            | HostCall::BlockDataGet { .. }
+            | HostCall::BlocksWithData { .. }
+            | HostCall::BlockInfo { .. }
+            | HostCall::BlockInfos { .. }
+            // Pure positional worldgen queries and memo reads.
+            | HostCall::ResolveUndergroundBiome { .. }
+            | HostCall::UndergroundBiomeAt { .. }
+            | HostCall::UndergroundBiomesInBox { .. }
+            | HostCall::TerrainBlocksAt { .. }
+            | HostCall::TerrainSectionAt { .. }
+            | HostCall::TerrainHeightsAt { .. }
+            | HostCall::TerrainSolidAt { .. }
+            | HostCall::TerrainSpaceAt { .. }
+            | HostCall::SurfaceBiomeAt { .. }
+            | HostCall::MemoGet { .. }
+            | HostCall::MemoGetMany { .. }
+    )
+}
+
 /// Run a call that mutates the live simulation, or reject it when no guest
 /// dispatch scope is active (the same gate `CurrentTick` uses), or when the
-/// active dispatch is READ-ONLY (the shape placement-plan dispatch, whose ABI
-/// promises the guest cannot edit the world it validates against).
+/// active dispatch is READ-ONLY (which lends no exclusive access at all).
 pub(super) fn sim_call(f: impl FnOnce(&mut SimCtx<'_>)) -> HostRet {
-    if scope::read_only_active() {
-        return HostRet::Error(
-            "this host call mutates the world, which is not allowed during a read-only dispatch \
-             (e.g. a shape placement plan)"
-                .into(),
-        );
-    }
-    match scope::with_active(f) {
-        Some(()) => HostRet::Unit,
-        None => HostRet::Error("no simulation context is active".into()),
-    }
+    sim_query(|ctx| {
+        f(ctx);
+        HostRet::Unit
+    })
 }
 
 /// [`sim_call`] for a mutation that first RESOLVES something off the live
 /// context and may refuse (an attacker to validate, an owner to check): the
 /// closure's `Err` is the reply, `Ok` is [`HostRet::Unit`].
 pub(super) fn sim_mutate(f: impl FnOnce(&mut SimCtx<'_>) -> Result<(), HostRet>) -> HostRet {
-    if scope::read_only_active() {
-        return HostRet::Error(
-            "this host call mutates the world, which is not allowed during a read-only dispatch \
-             (e.g. a shape placement plan)"
-                .into(),
-        );
-    }
-    match scope::with_active(f) {
-        Some(Ok(())) => HostRet::Unit,
-        Some(Err(e)) => e,
-        None => HostRet::Error("no simulation context is active".into()),
-    }
+    sim_query(|ctx| f(ctx).err().unwrap_or(HostRet::Unit))
 }
 
-/// [`sim_call`] for calls that compute their own reply.
+/// [`sim_call`] for calls that compute their own reply (a spawn answering an
+/// id, a spend answering the taken stack, a read that has to borrow a player
+/// through the roster's lending API): EXCLUSIVE access to the live context,
+/// so it is refused in a read-only dispatch like every other writer. A call
+/// that only reads the world uses [`sim_read`] instead.
 pub(super) fn sim_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
-    scope::with_active(f)
-        .unwrap_or_else(|| HostRet::Error("no simulation context is active".into()))
+    if scope::read_only_active() {
+        return read_only_refusal();
+    }
+    scope::with_active(f).unwrap_or_else(no_context)
 }
 
-/// [`sim_query`] for a MUTATION that computes its own reply (a spawn
-/// answering an id, a spend answering the taken stack): the same read-only
-/// dispatch gate as [`sim_call`], the reply shape of [`sim_query`].
-pub(super) fn sim_mutating_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
-    if scope::read_only_active() {
-        return HostRet::Error(
-            "this host call mutates the world, which is not allowed during a read-only dispatch \
-             (e.g. a shape placement plan)"
-                .into(),
-        );
-    }
-    sim_query(f)
+/// A world READ: SHARED access to the live context, so the closure cannot
+/// mutate it (that fails to compile). The only wrapper a read-only dispatch
+/// answers.
+pub(super) fn sim_read(f: impl FnOnce(&SimCtx<'_>) -> HostRet) -> HostRet {
+    scope::with_active_ref(f).unwrap_or_else(no_context)
 }
 
 /// Resolve a stable mob id to its live-list index — the ONE dead-mob policy
@@ -288,3 +366,6 @@ pub(super) fn abi_data_map(
     }
     Ok(map)
 }
+
+#[cfg(test)]
+mod tests;

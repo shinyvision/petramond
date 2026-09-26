@@ -17,7 +17,7 @@ use petramond_world::item::{ItemStack, ItemType};
 
 use super::entities::give_item_to;
 use super::guards::{
-    actor_for, batch_guard, finite3, item_by_name, sim_mutate, sim_mutating_query, sim_query,
+    actor_for, batch_guard, finite3, item_by_name, sim_mutate, sim_query, sim_read,
 };
 use super::intern_mod_id;
 
@@ -148,7 +148,7 @@ fn replace_held_one(
 /// movement primitives).
 pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
-        HostCall::ActingPlayer => sim_query(|ctx| {
+        HostCall::ActingPlayer => sim_read(|ctx| {
             HostRet::ActingPlayer(ctx.actor.map(|id| mod_api::PlayerId(id.0)))
         }),
         HostCall::PlayerState => sim_query(|ctx| {
@@ -164,7 +164,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::PlayerStateOf { player } => sim_query(|ctx| {
             HostRet::PlayerOf(player_snapshot(ctx, PlayerId(player.0), mod_id).map(Box::new))
         }),
-        HostCall::PlayerIdentity { player } => sim_query(|ctx| {
+        HostCall::PlayerIdentity { player } => sim_read(|ctx| {
             HostRet::Identity(
                 ctx.world
                     .player_roster()
@@ -225,7 +225,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::ApplyKnockbackTo { player, impulse } => {
             match finite3(impulse, "ApplyKnockbackTo.impulse") {
                 Err(e) => e,
-                Ok(impulse) => sim_mutating_query(|ctx| {
+                Ok(impulse) => sim_query(|ctx| {
                     let hit = ctx.with_player(PlayerId(player.0), |p| p.apply_knockback(impulse));
                     HostRet::Bool(hit.is_some())
                 }),
@@ -348,7 +348,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // Atomic: only an acting-hand stack holding at least `count` of `item`
         // consumes. During the ladder's off-hand pass this spends the
         // off-hand.
-        HostCall::ConsumeHeld { item, count } => sim_mutating_query(|ctx| {
+        HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {
             match actor_for(ctx, "ConsumeHeld", "ConsumeHeldBy") {
                 Ok(id) => HostRet::Bool(consume_held(ctx, id, item, count)),
                 Err(e) => e,
@@ -358,10 +358,10 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             player,
             item,
             count,
-        } => sim_mutating_query(|ctx| {
+        } => sim_query(|ctx| {
             HostRet::Bool(consume_held(ctx, PlayerId(player.0), item, count))
         }),
-        HostCall::ReplaceHeldOne { item, replacement } => sim_mutating_query(|ctx| {
+        HostCall::ReplaceHeldOne { item, replacement } => sim_query(|ctx| {
             match actor_for(ctx, "ReplaceHeldOne", "ReplaceHeldOneBy") {
                 Ok(id) => HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement)),
                 Err(e) => e,
@@ -371,7 +371,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             player,
             item,
             replacement,
-        } => sim_mutating_query(|ctx| {
+        } => sim_query(|ctx| {
             let id = PlayerId(player.0);
             HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement))
         }),
@@ -392,7 +392,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             ctx.with_player(id, |p| p.set_health(value));
             Ok(())
         }),
-        HostCall::SetHealthOf { player, value } => sim_mutating_query(|ctx| {
+        HostCall::SetHealthOf { player, value } => sim_query(|ctx| {
             let hit = ctx.with_player(PlayerId(player.0), |p| p.set_health(value));
             HostRet::Bool(hit.is_some())
         }),
@@ -407,7 +407,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::TeleportPlayer { player, pos } => {
             match super::guards::finite_pos(pos, "TeleportPlayer.pos") {
                 Err(e) => e,
-                Ok(pos) => sim_mutating_query(|ctx| {
+                Ok(pos) => sim_query(|ctx| {
                     let hit = ctx.with_player(PlayerId(player.0), |p| p.teleport(pos));
                     HostRet::Bool(hit.is_some())
                 }),
@@ -581,7 +581,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     Err(e) => return e,
                 },
             };
-            sim_mutating_query(move |ctx| {
+            sim_query(move |ctx| {
                 let Some(item_ty) = item_by_name(&item) else {
                     log::warn!("[mod {mod_id}] TakeItem: unknown item '{item}'");
                     return HostRet::ItemStack(None);

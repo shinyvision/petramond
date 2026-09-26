@@ -6,7 +6,7 @@ use mod_api::{BlockRecord, HostCall, HostRet, RecordPlan, RecordStatus};
 use petramond_math::math::IVec3;
 use petramond_world::construction::{Plan, Record};
 
-use super::guards::{batch_guard, item_stack_data, sim_query};
+use super::guards::{batch_guard, item_stack_data, sim_read};
 use crate::schematic::CellData;
 use crate::world::construction::CellStatus;
 
@@ -16,7 +16,7 @@ pub(super) fn handle_construction_call(call: HostCall) -> HostRet {
             if let Some(err) = batch_guard("BlockRecordsAt position", positions.len()) {
                 return err;
             }
-            sim_query(|ctx| {
+            sim_read(|ctx| {
                 HostRet::BlockRecords(
                     positions
                         .iter()
@@ -33,7 +33,7 @@ pub(super) fn handle_construction_call(call: HostCall) -> HostRet {
             if let Some(err) = batch_guard("BlockRecordStatuses cell", cells.len()) {
                 return err;
             }
-            sim_query(|ctx| {
+            sim_read(|ctx| {
                 HostRet::RecordStatuses(
                     cells
                         .iter()

@@ -6,7 +6,7 @@ use mod_api::{HostCall, HostRet};
 
 use petramond_math::math::IVec3;
 
-use super::guards::{batch_guard, kv_write_guard, sim_call, sim_query, CELL_KV_MAX_KEYS};
+use super::guards::{batch_guard, kv_write_guard, sim_call, sim_query, sim_read, CELL_KV_MAX_KEYS};
 
 /// Run one KV write behind [`kv_write_guard`], handing the key back to the
 /// operation when the guard passes (deletes guard with `value_len` 0).
@@ -26,7 +26,7 @@ fn guarded_write(
 /// [`kv_write_guard`]).
 pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
-        HostCall::SectionKvFind { section, key } => sim_query(|ctx| {
+        HostCall::SectionKvFind { section, key } => sim_read(|ctx| {
             use petramond_world::chunk::SectionPos;
             let Some(origin) = section
                 .into_iter()
@@ -67,7 +67,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             ))
         }),
         HostCall::WorldKvGet { key } => {
-            sim_query(|ctx| HostRet::Bytes(ctx.world.data().world_kv_get(&key).map(<[u8]>::to_vec)))
+            sim_read(|ctx| HostRet::Bytes(ctx.world.data().world_kv_get(&key).map(<[u8]>::to_vec)))
         }
         HostCall::WorldKvSet { key, value } => guarded_write(mod_id, key, value.len(), |key| {
             sim_call(|ctx| ctx.world.world_kv_set(key, value))
@@ -75,7 +75,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::WorldKvDelete { key } => guarded_write(mod_id, key, 0, |key| {
             sim_query(|ctx| HostRet::Bool(ctx.world.world_kv_remove(&key)))
         }),
-        HostCall::SectionKvGet { pos, key } => sim_query(|ctx| {
+        HostCall::SectionKvGet { pos, key } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Bytes(
                 ctx.world
@@ -114,7 +114,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             if let Some(err) = batch_guard("SectionKvGetMany position", positions.len()) {
                 return err;
             }
-            sim_query(move |ctx| {
+            sim_read(move |ctx| {
                 HostRet::BytesMany(
                     positions
                         .into_iter()

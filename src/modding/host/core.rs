@@ -23,7 +23,7 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
             HostRet::Unit
         }
         HostCall::RuntimeSide => HostRet::RuntimeSide(data.side),
-        HostCall::CurrentTick => match scope::with_active(|ctx| ctx.world.current_tick())
+        HostCall::CurrentTick => match scope::with_active_ref(|ctx| ctx.world.current_tick())
             .or_else(crate::modding::ai::detached_tick)
         {
             Some(tick) => HostRet::U64(tick),

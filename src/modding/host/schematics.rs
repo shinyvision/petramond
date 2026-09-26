@@ -6,7 +6,7 @@ use mod_api::{
 };
 use petramond_math::math::IVec3;
 
-use super::guards::{key_owned_by_namespace, sim_mutating_query, sim_query};
+use super::guards::{key_owned_by_namespace, sim_query};
 use crate::events::DeferredAction;
 use crate::schematic::store::Lookup;
 
@@ -55,7 +55,7 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
             if !key_owned_by_namespace(mod_id, &tag) {
                 return namespace_error("SchematicChoose tag", mod_id, &tag);
             }
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 let player = crate::player::PlayerId(player.0);
                 if ctx.session_index(player).is_none() {
                     return HostRet::Bool(false);
@@ -75,7 +75,7 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
             if !key_owned_by_namespace(mod_id, &tag) {
                 return namespace_error("SchematicPosition tag", mod_id, &tag);
             }
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 let player = crate::player::PlayerId(player.0);
                 if ctx.session_index(player).is_none()
                     || !ctx.world.schematics().store.contains(&asset)
@@ -96,7 +96,7 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
             if !key_owned_by_namespace(mod_id, &key) {
                 return namespace_error("SchematicGhostSet key", mod_id, &key);
             }
-            sim_mutating_query(|ctx| {
+            sim_query(|ctx| {
                 let ghosts = &mut ctx.world.schematics_mut().ghosts;
                 match ghost {
                     None => {

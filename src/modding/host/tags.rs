@@ -9,7 +9,7 @@ use mod_api::{HostCall, HostRet, MobTagLookup, MobTagValue as ApiMobTagValue};
 use crate::mob::MobTagValue;
 
 use super::entities::mob_snapshot;
-use super::guards::{kv_write_guard, live_mob, sim_query};
+use super::guards::{kv_write_guard, live_mob, sim_query, sim_read};
 
 fn from_api(v: ApiMobTagValue) -> MobTagValue {
     MobTagValue::from(v)
@@ -21,7 +21,7 @@ pub(in crate::modding) fn to_api(v: &MobTagValue) -> ApiMobTagValue {
 
 pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
-        HostCall::MobTagGet { mob_id, key } => sim_query(|ctx| {
+        HostCall::MobTagGet { mob_id, key } => sim_read(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::MobTag(MobTagLookup::MissingMob);
             };
@@ -85,7 +85,7 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(removed)
             }),
         },
-        HostCall::MobTagsGet { mob_id } => sim_query(|ctx| {
+        HostCall::MobTagsGet { mob_id } => sim_read(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::MobTags(None);
             };
@@ -96,7 +96,7 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(|tags| tags.iter().map(|(k, v)| (k.clone(), to_api(v))).collect()),
             )
         }),
-        HostCall::MobsWithTag { key, value } => sim_query(|ctx| {
+        HostCall::MobsWithTag { key, value } => sim_read(|ctx| {
             let want = value.map(from_api);
             let mobs = ctx.world.mobs();
             HostRet::Mobs(

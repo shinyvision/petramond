@@ -53,9 +53,11 @@ pub(super) fn enter<R>(ctx: &mut SimCtx<'_>, f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// [`enter`] for a READ-ONLY dispatch: the context is queryable but mutating
-/// host calls ([`crate::modding::host::guards::sim_call`]) are rejected. Used by
-/// the shape placement-plan dispatch.
+/// [`enter`] for a READ-ONLY dispatch: the context is lent out SHARED only.
+/// [`with_active`] refuses for the whole dispatch, so no host handler can
+/// obtain a `&mut SimCtx` — mutation is unreachable by construction, not by
+/// each handler remembering a check. Only [`with_active_ref`] readers answer.
+/// Used by the shape placement-plan dispatch.
 pub(super) fn enter_read_only<R>(ctx: &mut SimCtx<'_>, f: impl FnOnce() -> R) -> R {
     let prev = ACTIVE_CTX.with(|c| c.replace(ctx as *mut SimCtx<'_> as *mut ()));
     let prev_ro = READ_ONLY.with(|c| c.replace(true));
@@ -70,21 +72,38 @@ pub(super) fn read_only_active() -> bool {
     READ_ONLY.with(|c| c.get())
 }
 
-/// Run `f` with the active [`SimCtx`], or return `None` when no guest dispatch
-/// is in flight on this thread (a host call outside any [`enter`] scope).
-pub(super) fn with_active<R>(f: impl FnOnce(&mut SimCtx<'_>) -> R) -> Option<R> {
-    // Take the pointer so a nested `with_active` (or a host call the closure
-    // itself triggers) sees "no context" instead of aliasing this `&mut`.
+/// Take the published context pointer for one accessor call, restoring it
+/// when the returned guard drops. Taking it means a nested accessor (or a
+/// host call the closure itself triggers) sees "no context" instead of
+/// aliasing the reference lent out.
+fn take_active() -> Option<(*mut SimCtx<'static>, Restore)> {
     let ptr = ACTIVE_CTX.with(|c| c.replace(std::ptr::null_mut()));
-    if ptr.is_null() {
+    (!ptr.is_null()).then(|| (ptr as *mut SimCtx<'static>, Restore(ptr)))
+}
+
+/// Run `f` with EXCLUSIVE access to the active [`SimCtx`], or return `None`
+/// when no guest dispatch is in flight on this thread (a host call outside
+/// any [`enter`] scope) or the active dispatch is read-only.
+pub(super) fn with_active<R>(f: impl FnOnce(&mut SimCtx<'_>) -> R) -> Option<R> {
+    if read_only_active() {
         return None;
     }
-    let _restore = Restore(ptr);
+    let (ptr, _restore) = take_active()?;
     // SAFETY: `ptr` was published by `enter` from a live `&mut SimCtx` whose
     // guard is still on this thread's stack (we are inside its dynamic
-    // extent), and taking it above made this the only path to it. The
-    // reference handed to `f` cannot outlive `f`.
-    let ctx = unsafe { &mut *(ptr as *mut SimCtx<'_>) };
+    // extent), and taking it made this the only path to it. The reference
+    // handed to `f` cannot outlive `f`.
+    let ctx = unsafe { &mut *ptr };
+    Some(f(ctx))
+}
+
+/// Run `f` with SHARED access to the active [`SimCtx`] — the one accessor a
+/// read-only dispatch answers. `None` when no guest dispatch is in flight.
+pub(super) fn with_active_ref<R>(f: impl FnOnce(&SimCtx<'_>) -> R) -> Option<R> {
+    let (ptr, _restore) = take_active()?;
+    // SAFETY: as in `with_active`; the context is only read through the
+    // shared reference, which cannot outlive `f`.
+    let ctx = unsafe { &*ptr };
     Some(f(ctx))
 }
 
@@ -120,5 +139,34 @@ mod tests {
             assert!(with_active(|_| ()).is_some(), "restored after use");
         });
         assert!(with_active(|_| ()).is_none(), "cleared after the guard");
+    }
+
+    #[test]
+    fn a_read_only_scope_lends_shared_access_only() {
+        let mut world = World::new(1, 1);
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut nobody = RosterRefs::empty();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            actor: None,
+            players: &mut nobody,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        enter_read_only(&mut ctx, || {
+            assert!(read_only_active());
+            assert!(with_active(|_| ()).is_none(), "no exclusive access at all");
+            let tick = with_active_ref(|ctx| {
+                assert!(with_active_ref(|_| ()).is_none(), "taken while in use");
+                ctx.world.current_tick()
+            });
+            assert_eq!(tick, Some(0));
+        });
+        assert!(!read_only_active(), "the flag is restored after the guard");
+        enter(&mut ctx, || {
+            assert!(with_active(|_| ()).is_some(), "exclusive again outside");
+            assert!(with_active_ref(|_| ()).is_some());
+        });
     }
 }
