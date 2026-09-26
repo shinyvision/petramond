@@ -49,7 +49,8 @@ fn creative_notice_visual_check() {
         screen.0,
         screen.1,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-    ));
+    ))
+    .expect("offscreen renderer");
     let dir = std::path::PathBuf::from(
         std::env::var_os("PETRAMOND_CREATIVE_QA").expect("capture directory"),
     );

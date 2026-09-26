@@ -21,19 +21,8 @@
 //! policy already carried, and it doubles as that headroom (a column that
 //! remeshes slightly larger stays inside its class and writes in place).
 
-/// One block of arena storage. A block whose last live allocation goes away is
-/// RELEASED (slot left empty, reused by the next new block): travelling across
-/// a world retires whole neighbourhoods at once, and without this the arena
-/// would settle at the peak of every size class it ever saw rather than at what
-/// is loaded.
-struct Block {
-    buf: wgpu::Buffer,
-    /// Bytes handed out from the front; the tail is virgin space.
-    bump: u64,
-    size: u64,
-    /// Allocations handed out and not yet recycled.
-    live: u32,
-}
+mod book;
+use book::Book;
 
 /// A live suballocation. Neither `Copy` nor `Clone`: it returns its space to
 /// the arena on DROP, which is what makes the arena leak-proof. A packed column
@@ -92,12 +81,11 @@ pub(super) fn class_size(len: u64) -> u64 {
 }
 
 pub struct GeometryArena {
-    /// Slots, not a dense list: a released block leaves a hole so live
-    /// [`LayerAlloc`] block indices stay valid.
-    blocks: Vec<Option<Block>>,
-    /// Freed allocations by class size. Same-class allocations are
-    /// interchangeable, so this needs no search.
-    free: std::collections::HashMap<u64, Vec<(u32, u64)>>,
+    /// The allocation policy's bookkeeping (see [`book`]).
+    book: Book,
+    /// One buffer per live block slot of the book; a released slot is `None`
+    /// so live [`LayerAlloc`] block indices stay valid.
+    buffers: Vec<Option<wgpu::Buffer>>,
     recycle: Recycle,
     usage: wgpu::BufferUsages,
     copy_scratch: Option<wgpu::Buffer>,
@@ -112,8 +100,8 @@ impl Default for GeometryArena {
 impl GeometryArena {
     pub fn new() -> Self {
         Self {
-            blocks: Vec::new(),
-            free: std::collections::HashMap::new(),
+            book: Book::default(),
+            buffers: Vec::new(),
             recycle: Recycle::default(),
             copy_scratch: None,
             usage: wgpu::BufferUsages::VERTEX
@@ -125,25 +113,23 @@ impl GeometryArena {
 
     /// Total bytes of GPU buffer the arena holds.
     pub fn reserved_bytes(&self) -> u64 {
-        self.blocks.iter().flatten().map(|b| b.size).sum::<u64>()
-            + self.copy_scratch.as_ref().map_or(0, |b| b.size())
+        self.book.reserved_bytes() + self.copy_scratch.as_ref().map_or(0, |b| b.size())
     }
 
     pub fn block_count(&self) -> usize {
-        self.blocks.iter().flatten().count()
+        self.book.block_count()
     }
 
     #[inline]
-    fn block(&self, index: u32) -> &Block {
-        self.blocks[index as usize]
+    fn block(&self, index: u32) -> &wgpu::Buffer {
+        self.buffers[index as usize]
             .as_ref()
             .expect("live allocation in a released arena block")
     }
 
     /// The bound range for a live allocation, `len` bytes from its start.
     pub fn slice(&self, alloc: &LayerAlloc, len: u64) -> wgpu::BufferSlice<'_> {
-        let b = self.block(alloc.block);
-        b.buf.slice(alloc.offset..alloc.offset + len)
+        self.block(alloc.block).slice(alloc.offset..alloc.offset + len)
     }
 
     #[cfg(test)]
@@ -161,7 +147,7 @@ impl GeometryArena {
             mapped_at_creation: false,
         });
         let mut encoder = device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(&self.block(alloc.block).buf, alloc.offset, &dst, 0, len);
+        encoder.copy_buffer_to_buffer(self.block(alloc.block), alloc.offset, &dst, 0, len);
         queue.submit([encoder.finish()]);
         dst.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
         device
@@ -188,8 +174,7 @@ impl GeometryArena {
         if offset + bytes.len() as u64 > alloc.capacity {
             return false;
         }
-        let b = self.block(alloc.block);
-        queue.write_buffer(&b.buf, alloc.offset + offset, bytes);
+        queue.write_buffer(self.block(alloc.block), alloc.offset + offset, bytes);
         true
     }
 
@@ -217,7 +202,7 @@ impl GeometryArena {
             }
             let scratch = self.copy_scratch.as_ref().unwrap();
             encoder.copy_buffer_to_buffer(
-                &self.block(src.block).buf,
+                self.block(src.block),
                 src.offset + src_offset,
                 scratch,
                 0,
@@ -226,15 +211,15 @@ impl GeometryArena {
             encoder.copy_buffer_to_buffer(
                 scratch,
                 0,
-                &self.block(dst.block).buf,
+                self.block(dst.block),
                 dst.offset + dst_offset,
                 len,
             );
         } else {
             encoder.copy_buffer_to_buffer(
-                &self.block(src.block).buf,
+                self.block(src.block),
                 src.offset + src_offset,
-                &self.block(dst.block).buf,
+                self.block(dst.block),
                 dst.offset + dst_offset,
                 len,
             );
@@ -245,116 +230,43 @@ impl GeometryArena {
     /// block of its own.
     pub fn alloc(&mut self, device: &wgpu::Device, len: u64) -> LayerAlloc {
         self.reclaim();
-        let capacity = class_size(len);
-        if let Some(list) = self.free.get_mut(&capacity) {
-            if let Some((block, offset)) = list.pop() {
-                self.blocks[block as usize]
-                    .as_mut()
-                    .expect("free entry in a released arena block")
-                    .live += 1;
-                return LayerAlloc {
-                    block,
-                    offset,
-                    capacity,
-                    recycle: std::sync::Arc::clone(&self.recycle),
-                };
+        let placed = self.book.place(len);
+        if let Some(size) = placed.new_block {
+            let slot = placed.block as usize;
+            if self.buffers.len() <= slot {
+                self.buffers.resize_with(slot + 1, || None);
             }
+            self.buffers[slot] = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("terrain geometry arena"),
+                size,
+                usage: self.usage,
+                mapped_at_creation: false,
+            }));
         }
-        for (i, b) in self.blocks.iter_mut().enumerate() {
-            let Some(b) = b.as_mut() else { continue };
-            if b.size - b.bump >= capacity {
-                let offset = b.bump;
-                b.bump += capacity;
-                b.live += 1;
-                return LayerAlloc {
-                    block: i as u32,
-                    offset,
-                    capacity,
-                    recycle: std::sync::Arc::clone(&self.recycle),
-                };
-            }
-        }
-        let size = capacity.max(BLOCK_BYTES);
-        let buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("terrain geometry arena"),
-            size,
-            usage: self.usage,
-            mapped_at_creation: false,
-        });
-        let block = Block {
-            buf,
-            bump: capacity,
-            size,
-            live: 1,
-        };
-        let index = match self.blocks.iter().position(|b| b.is_none()) {
-            Some(i) => {
-                self.blocks[i] = Some(block);
-                i
-            }
-            None => {
-                self.blocks.push(Some(block));
-                self.blocks.len() - 1
-            }
-        };
         LayerAlloc {
-            block: index as u32,
-            offset: 0,
-            capacity,
+            block: placed.block,
+            offset: placed.offset,
+            capacity: placed.capacity,
             recycle: std::sync::Arc::clone(&self.recycle),
         }
     }
 
-    /// Fold dropped allocations into the free lists, releasing any block they
-    /// emptied.
+    /// Fold dropped allocations into the free lists, dropping the buffer of
+    /// every block they emptied past the spare.
     fn reclaim(&mut self) {
-        let Ok(mut r) = self.recycle.lock() else {
-            return;
+        let recycled = match self.recycle.lock() {
+            Ok(mut r) if !r.is_empty() => std::mem::take(&mut *r),
+            _ => return,
         };
-        if r.is_empty() {
-            return;
+        for block in self.book.reclaim(recycled) {
+            self.buffers[block as usize] = None;
         }
-        let mut emptied = false;
-        for (capacity, block, offset) in r.drain(..) {
-            self.free.entry(capacity).or_default().push((block, offset));
-            if let Some(b) = self.blocks[block as usize].as_mut() {
-                b.live -= 1;
-                emptied |= b.live == 0;
-            }
-        }
-        drop(r);
-        if !emptied {
-            return;
-        }
-        // Keep ONE empty block as a spare: the streaming frontier empties and
-        // refills the tail of the arena continuously, and releasing on the
-        // first zero would trade a GPU allocation for every wobble.
-        let mut spare = false;
-        for slot in &mut self.blocks {
-            if slot.as_ref().is_some_and(|b| b.live == 0) {
-                if !spare {
-                    spare = true;
-                    continue;
-                }
-                *slot = None;
-            }
-        }
-        // A released block's free entries would hand out memory that no longer
-        // exists.
-        self.free.retain(|_, list| {
-            list.retain(|(block, _)| self.blocks[*block as usize].is_some());
-            !list.is_empty()
-        });
     }
 
     /// Bytes currently sitting in the free lists (including drop-recycled ones)
     /// — arena space that is reserved but not handed to any column.
     pub fn free_bytes(&self) -> u64 {
-        let listed: u64 = self
-            .free
-            .iter()
-            .map(|(size, list)| size * list.len() as u64)
-            .sum();
+        let listed = self.book.free_bytes();
         let pending: u64 = self
             .recycle
             .lock()

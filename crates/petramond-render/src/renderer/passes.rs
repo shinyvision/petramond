@@ -1,743 +1,343 @@
-//! GPU render-pass encoding for [`Renderer`].
+//! The frame's passes as graph nodes, and their encoding.
 //!
-//! `encode_passes` records the world passes in order over the plan
-//! `draw_plan` built, then hands off to the environment chain, the hand pass
-//! and the screen tail (resolve, post-process, chrome) in the sibling
-//! modules. `render` stays the thin orchestrator (one encoder, one submit,
-//! one present). The shared pass helper `color_depth_pass` lives here.
+//! [`frame_graph`] declares every node the frame can record — its phase, its
+//! attachments, what its shaders sample — and [`Renderer::encode_passes`]
+//! walks the plan the graph derives from those declarations: one wgpu render
+//! pass per merged group, each node recorded by the pass struct that owns its
+//! resources (`terrain`, `entities`, `environment`, `hand`, `screen`). Adding
+//! a pass is a [`Node`] variant, one declaration row, a gate in
+//! [`Renderer::node_active`] and an arm in [`Renderer::record_node`]; where it
+//! runs and how its attachments load and store follow from the row.
 
+use super::graph::{
+    ColorTarget, DepthTarget, FrameGraph, FramePlan, GraphError, LoadOp, PassGroup, PassNode,
+    Phase, Sampled,
+};
 use super::post_process::SceneRoute;
 use super::*;
 
+mod entities;
 mod environment;
 mod hand;
 mod screen;
+mod terrain;
+#[cfg(test)]
+mod tests;
 
-/// Begin one render pass with a single color attachment over `view` and an
-/// optional depth attachment over `depth`. Collapses the near-identical
-/// `begin_render_pass` boilerplate every pass used to spell out — only the parts
-/// that actually vary are parameters: the debug `label`, the color load-op
-/// (`Clear` for the sky, `Load` everywhere after), and `depth_load`:
-/// - `Some(load_op)` → attach `depth` with that depth load-op (always store),
-///   no stencil — the world / overlay / hand passes.
-/// - `None` → no depth attachment — the sky, crosshair, and UI passes.
-///
-/// The store-ops, `depth_slice`, `resolve_target`, `timestamp_writes`, and
-/// `occlusion_query_set` are the same for every pass, so they live here.
-pub(super) fn color_depth_pass<'a>(
-    encoder: &'a mut wgpu::CommandEncoder,
-    view: &'a wgpu::TextureView,
-    depth: &'a wgpu::TextureView,
-    label: &'static str,
-    color_load: wgpu::LoadOp<wgpu::Color>,
-    depth_load: Option<wgpu::LoadOp<f32>>,
-    timer: Option<&'a gpu_timer::GpuTimer>,
-) -> wgpu::RenderPass<'a> {
-    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: color_load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: depth_load.map(|load| wgpu::RenderPassDepthStencilAttachment {
-            view: depth,
-            depth_ops: Some(wgpu::Operations {
-                load,
-                store: wgpu::StoreOp::Store,
-            }),
-            stencil_ops: None,
-        }),
-        timestamp_writes: timer.and_then(|t| t.pass(label)),
-        occlusion_query_set: None,
-    })
+/// Every pass the frame can record.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Node {
+    Opaque,
+    ContactShadow,
+    EntityShadow,
+    Sky,
+    TerrainModels,
+    ItemModels,
+    ItemEntities,
+    BlockEntities,
+    Actors,
+    TranslucentBlocks,
+    ModelBlend,
+    ModelBreak,
+    BreakOverlay,
+    Particles,
+    Fluid,
+    EnvDownsample,
+    Environment,
+    EnvComposite,
+    EmitterParticles,
+    Outline,
+    Ghosts,
+    Hand,
+    Grade,
+    Crosshair,
+    Ui,
+    UiOverlay,
+}
+
+/// The frame's pass table. Each row is a node's whole contract with the
+/// rest of the frame; the phases carry the ordering rules (see [`Phase`]).
+pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
+    use ColorTarget::{EnvColor, Swapchain, World};
+    use DepthTarget::{Depth, EnvDepth};
+    use LoadOp::{Clear, Load};
+    // Most nodes draw into the world colour over the frame depth, loading both.
+    let world = |id: Node, label: &'static str, phase: Phase| {
+        PassNode::new(id, label, phase)
+            .color(World, Load)
+            .depth(Depth, Load)
+    };
+    let screen = |id: Node, label: &'static str| {
+        PassNode::new(id, label, Phase::Screen).color(Swapchain, Load)
+    };
+    FrameGraph::new(vec![
+        PassNode::new(Node::Opaque, "opaque pass", Phase::Opaque)
+            .color(World, Clear)
+            .depth(Depth, Clear),
+        world(Node::ContactShadow, "contact shadow pass", Phase::GroundDecal),
+        world(Node::EntityShadow, "entity shadow pass", Phase::GroundDecal),
+        world(Node::Sky, "sky pass", Phase::Sky),
+        world(Node::TerrainModels, "model pass", Phase::Solid),
+        world(Node::ItemModels, "item model pass", Phase::Solid),
+        world(Node::ItemEntities, "item entity pass", Phase::Solid),
+        world(Node::BlockEntities, "block entity pass", Phase::Solid),
+        world(Node::Actors, "mob pass", Phase::Solid),
+        world(Node::TranslucentBlocks, "translucent block pass", Phase::Translucent),
+        world(Node::ModelBlend, "model blend pass", Phase::Translucent),
+        world(Node::ModelBreak, "model break pass", Phase::BreakDecal),
+        world(Node::BreakOverlay, "break overlay pass", Phase::BreakDecal),
+        world(Node::Particles, "particle pass", Phase::Cutout),
+        world(Node::Fluid, "transparent pass", Phase::Fluid),
+        PassNode::new(Node::EnvDownsample, "env depth downsample", Phase::Environment)
+            .depth(EnvDepth, Clear)
+            .sampling(&[Sampled::Depth]),
+        PassNode::new(Node::Environment, "environment pass", Phase::Environment)
+            .color(EnvColor, Clear)
+            .sampling(&[Sampled::EnvDepth]),
+        // No depth attachment: the composite SAMPLES the frame depth.
+        PassNode::new(Node::EnvComposite, "env composite pass", Phase::Environment)
+            .color(World, Load)
+            .sampling(&[Sampled::EnvColor, Sampled::EnvDepth, Sampled::Depth]),
+        world(Node::EmitterParticles, "emitter particle pass", Phase::Emitter),
+        world(Node::Outline, "outline pass", Phase::Highlight),
+        world(Node::Ghosts, "ghosts and selection", Phase::Highlight),
+        // Clearing depth gives the hand its own depth space: it stays on top
+        // of the world while its held geometry still self-sorts.
+        PassNode::new(Node::Hand, "hand pass", Phase::Hand)
+            .color(World, Load)
+            .depth(Depth, Clear),
+        PassNode::new(Node::Grade, "grade pass", Phase::PostProcess)
+            .color(Swapchain, Clear)
+            .sampling(&[Sampled::World]),
+        screen(Node::Crosshair, "crosshair pass"),
+        screen(Node::Ui, "ui pass"),
+        screen(Node::UiOverlay, "ui overlay / drag pass"),
+    ])
+}
+
+/// What every node's recording shares.
+pub(super) struct PassCtx<'a> {
+    /// The world's sample count, which picks each pipeline's variant.
+    pub(super) samples: u32,
+    pub(super) binds: &'a SharedBinds,
+    /// group(0) of the terrain-family pipelines: the frame uniforms, or
+    /// their selection-highlight twin while a region selection is shown.
+    pub(super) world_bind: &'a wgpu::BindGroup,
 }
 
 impl Renderer {
-    /// Encode every GPU render pass for this frame, in order, with byte-for-byte
-    /// identical load/store ops. Reads the baked per-frame buffers off `self`;
+    /// Whether `node` has anything to draw this frame. A node that does not
+    /// is left out of the plan entirely — it opens no pass and costs nothing.
+    pub(super) fn node_active(&self, node: Node, route: SceneRoute) -> bool {
+        let plan = &self.terrain.plan;
+        match node {
+            Node::Opaque | Node::Sky => true,
+            Node::ContactShadow => !plan.contact_columns.is_empty(),
+            Node::EntityShadow => self.shadow.active(),
+            Node::TerrainModels | Node::ModelBlend => plan.any_model,
+            Node::ItemModels => self.item_entity.models_active(),
+            Node::ItemEntities => self.item_entity.items_active(),
+            Node::BlockEntities => self.block_entity.active(),
+            Node::Actors => self.actor.active(),
+            Node::TranslucentBlocks | Node::Fluid => plan.any_transparent,
+            Node::ModelBreak => self.model_break.active(),
+            Node::BreakOverlay => self.hand.break_overlay_active(),
+            Node::Particles => self.particle.cutout_active(),
+            Node::EnvDownsample | Node::Environment | Node::EnvComposite => {
+                self.sky.environment_active()
+            }
+            Node::EmitterParticles => self.particle.emitters_active(),
+            Node::Outline => self.chrome.outline_active(),
+            Node::Ghosts => !(self.ghosts.is_empty() && self.selection.is_empty()),
+            Node::Hand => self.hand.active(),
+            Node::Grade => route == SceneRoute::PostProcess,
+            Node::Crosshair => self.chrome.crosshair_active(),
+            Node::Ui => self.ui.base_active(),
+            Node::UiOverlay => self.ui.overlay_active(),
+        }
+    }
+
+    /// Record `node`'s draws into the open render pass. Every node sets its
+    /// own pipeline and binds: it may share the pass with any other node.
+    fn record_node(
+        &self,
+        node: Node,
+        pass: &mut wgpu::RenderPass<'_>,
+        ctx: &PassCtx<'_>,
+        stats: &mut RenderStats,
+    ) {
+        match node {
+            Node::Opaque => self.terrain.record_opaque(pass, ctx, stats),
+            Node::ContactShadow => self.terrain.record_contact(pass, ctx),
+            Node::EntityShadow => self.shadow.record(pass, ctx),
+            Node::Sky => self.sky.record_sky(pass, ctx),
+            Node::TerrainModels => self.terrain.record_models(pass, ctx),
+            Node::ItemModels => self.item_entity.record_models(pass, ctx),
+            Node::ItemEntities => self.item_entity.record_items(pass, ctx),
+            Node::BlockEntities => self.block_entity.record(pass, ctx),
+            Node::Actors => self.actor.record(pass, ctx),
+            Node::TranslucentBlocks => self.terrain.record_translucent(pass, ctx, stats),
+            Node::ModelBlend => self.terrain.record_model_blend(pass, ctx),
+            Node::ModelBreak => self.terrain.record_model_break(pass, ctx, &self.model_break),
+            Node::BreakOverlay => self.hand.record_break_overlay(pass, ctx),
+            Node::Particles => self.particle.record_cutout(pass, ctx),
+            Node::Fluid => self.terrain.record_fluid(pass, ctx, stats),
+            Node::EnvDownsample => self.sky.record_env_downsample(pass, ctx),
+            Node::Environment => self.sky.record_environment(pass),
+            Node::EnvComposite => self.sky.record_env_composite(pass, ctx),
+            Node::EmitterParticles => self.particle.record_emitters(pass, ctx),
+            Node::Outline => self.chrome.record_outline(pass, ctx),
+            Node::Ghosts => {
+                self.ghosts.draw(pass, ctx.samples);
+                self.selection.draw(pass, ctx.samples);
+            }
+            Node::Hand => self.hand.record(pass, ctx, &self.actor.player_gpu.bind),
+            Node::Grade => self.targets.record_grade(pass),
+            Node::Crosshair => self.chrome.record_crosshair(pass),
+            Node::Ui => self.ui.record_base(pass),
+            Node::UiOverlay => self.ui.record_overlay(pass),
+        }
+    }
+
+    /// Encode this frame's plan: one render pass per group, each node inside
+    /// its own debug group. Reads the baked per-frame buffers off `self`;
     /// mutates only the passed `stats`.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn encode_passes(
         &self,
         enc: &mut wgpu::CommandEncoder,
         swapchain: &wgpu::TextureView,
-        order: &[VisibleSection],
-        opaque_columns: &[OpaqueColumnDraw],
-        model_columns: &[(f32, ChunkPos, ColumnSlot)],
-        contact_columns: &[(f32, ChunkPos, ColumnSlot)],
+        plan: &FramePlan<Node>,
+        route: SceneRoute,
         stats: &mut RenderStats,
-        any_model_visible: bool,
-        any_transparent_visible: bool,
     ) {
-        // The world (opaque → sky → … → hand) renders into the offscreen scene
-        // target; the post-process pass then reads it and writes the swapchain,
-        // and screen chrome (crosshair, UI) draws over the graded image so its
-        // colours stay exact. See [`SceneRoute`] for the two cases that skip
-        // the round-trip.
-        let samples = self.targets.anti_aliasing.sample_count();
-        let route = self.scene_route();
-        let view = if route == SceneRoute::Direct {
-            swapchain
-        } else {
-            self.targets
+        let ctx = PassCtx {
+            samples: self.targets.anti_aliasing.sample_count(),
+            binds: &self.binds,
+            world_bind: self.selected_blocks_bind(),
+        };
+        for group in &plan.groups {
+            let mut pass = self.begin_group(enc, group, swapchain, route);
+            for &(node, label) in &plan.nodes[group.nodes.clone()] {
+                pass.push_debug_group(label);
+                self.record_node(node, &mut pass, &ctx, stats);
+                pass.pop_debug_group();
+            }
+        }
+    }
+
+    /// Open the render pass for `group`, with the load, store and resolve
+    /// the graph derived for it.
+    fn begin_group<'e>(
+        &self,
+        enc: &'e mut wgpu::CommandEncoder,
+        group: &PassGroup,
+        swapchain: &wgpu::TextureView,
+        route: SceneRoute,
+    ) -> wgpu::RenderPass<'e> {
+        let store = |keep: bool| {
+            if keep {
+                wgpu::StoreOp::Store
+            } else {
+                wgpu::StoreOp::Discard
+            }
+        };
+        let color = group.color.map(|c| wgpu::RenderPassColorAttachment {
+            view: self.color_view(c.target, swapchain, route),
+            depth_slice: None,
+            resolve_target: group.resolve.then(|| self.resolve_view(swapchain, route)),
+            ops: wgpu::Operations {
+                load: if c.clear {
+                    wgpu::LoadOp::Clear(self.clear_color(c.target))
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: store(c.store),
+            },
+        });
+        let depth = group.depth.map(|d| wgpu::RenderPassDepthStencilAttachment {
+            view: self.depth_view(d.target),
+            depth_ops: Some(wgpu::Operations {
+                load: if d.clear {
+                    wgpu::LoadOp::Clear(1.0)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: store(d.store),
+            }),
+            stencil_ops: None,
+        });
+        let colors = [color];
+        let color_attachments: &[Option<wgpu::RenderPassColorAttachment<'_>>] =
+            if colors[0].is_some() { &colors } else { &[] };
+        enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(group.label),
+            color_attachments,
+            depth_stencil_attachment: depth,
+            timestamp_writes: self.gpu_timer.as_ref().and_then(|t| t.pass(group.label)),
+            occlusion_query_set: None,
+        })
+    }
+
+    /// The texture behind a colour target this frame. The world draws into
+    /// the swapchain when nothing post-processes it, else into the
+    /// multisampled colour or the scene texture.
+    fn color_view<'a>(
+        &'a self,
+        target: ColorTarget,
+        swapchain: &'a wgpu::TextureView,
+        route: SceneRoute,
+    ) -> &'a wgpu::TextureView {
+        match target {
+            ColorTarget::World if route == SceneRoute::Direct => swapchain,
+            ColorTarget::World => self
+                .targets
                 .multisample_color
                 .as_ref()
-                .unwrap_or(&self.targets.scene_color)
-        };
-        let cc = self.sky.clear_color;
-        // OPAQUE PASS: the visible chunk terrain, near→far for early-Z. The first
-        // pass of the frame: CLEARS color (to the fog colour) and depth.
-        {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "opaque pass",
-                wgpu::LoadOp::Clear(wgpu::Color {
-                    r: cc[0] as f64,
-                    g: cc[1] as f64,
-                    b: cc[2] as f64,
+                .unwrap_or(&self.targets.scene_color),
+            ColorTarget::EnvColor => &self.sky.env_color,
+            ColorTarget::Swapchain => swapchain,
+        }
+    }
+
+    fn depth_view(&self, target: DepthTarget) -> &wgpu::TextureView {
+        match target {
+            DepthTarget::Depth => &self.targets.depth,
+            DepthTarget::EnvDepth => &self.sky.env_depth,
+        }
+    }
+
+    /// Where the multisampled world resolves: straight to the swapchain when
+    /// nothing post-processes it, else into the scene texture the post pass
+    /// reads.
+    fn resolve_view<'a>(
+        &'a self,
+        swapchain: &'a wgpu::TextureView,
+        route: SceneRoute,
+    ) -> &'a wgpu::TextureView {
+        if route == SceneRoute::ResolveToSwapchain {
+            swapchain
+        } else {
+            &self.targets.scene_color
+        }
+    }
+
+    /// A colour target's clear value: the world clears to the fog colour
+    /// (so the horizon matches the fog terrain fades into), the volumetric
+    /// target to transparent black (premultiplied compositing over a clear is
+    /// the same as compositing over the scene), the swapchain to black.
+    fn clear_color(&self, target: ColorTarget) -> wgpu::Color {
+        match target {
+            ColorTarget::World => {
+                let [r, g, b] = self.sky.clear_color;
+                wgpu::Color {
+                    r: r as f64,
+                    g: g as f64,
+                    b: b as f64,
                     a: 1.0,
-                }),
-                Some(wgpu::LoadOp::Clear(1.0)),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
-            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            pass.set_pipeline(self.opaque_pipe.get(samples));
-            // Two binds for the whole pass: every column draw picks its origin
-            // row with `first_instance`, and every draw's triangulation comes
-            // from the shared quad index buffer with the section's first vertex
-            // as `base_vertex`.
-            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
-            for &(_, _, slot, far) in opaque_columns {
-                let col = self.terrain.columns.at(slot);
-                // Far LOD draws the column's leading far region; detailed
-                // draws the whole stream. Both are one contiguous range.
-                let quads = if far {
-                    col.opaque_far_quads
-                } else {
-                    col.opaque_quads
-                };
-                if quads == 0 {
-                    continue;
-                }
-                if let Some(vb) = &col.opaque_vbuf {
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    stats.opaque_draws += 1;
-                    stats.opaque_indices += quads as u64 * 6;
-                    let slot = col.origin_slot.index();
-                    pass.draw_indexed(0..quads * 6, 0, slot..slot + 1);
                 }
             }
-            for item in order.iter() {
-                if item.opaque_batched {
-                    continue;
-                }
-                let col = self.terrain.columns.at(item.column_slot);
-                // near -> far (early-Z)
-                // The section's far region always draws; its leaf tail joins
-                // only at detailed LOD. The tail is empty for every section
-                // without leaves, so this is one draw in the common case.
-                let Some(vb) = &col.opaque_vbuf else {
-                    continue;
-                };
-                let mut ranges = [
-                    (item.opaque_vertex_start, item.opaque_quads),
-                    (item.opaque_tail_start, item.opaque_tail_quads),
-                ];
-                if item.use_far_leaf_lod {
-                    ranges[1].1 = 0;
-                }
-                let mut bound = false;
-                for (vertex_start, quads) in ranges {
-                    if quads == 0 {
-                        continue;
-                    }
-                    if !bound {
-                        pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                        bound = true;
-                    }
-                    stats.opaque_draws += 1;
-                    stats.opaque_indices += quads as u64 * 6;
-                    let slot = col.origin_slot.index();
-                    pass.draw_indexed(0..quads * 6, vertex_start as i32, slot..slot + 1);
-                }
-            }
+            ColorTarget::EnvColor => wgpu::Color::TRANSPARENT,
+            ColorTarget::Swapchain => wgpu::Color::BLACK,
         }
-        // CONTACT-SHADOW PASS: the models' soft floor stamps, multiplied over the
-        // opaque terrain just drawn. Depth read-only (LessEqual + its own
-        // coplanar bias against the supporting top face). Drawing BEFORE the sky
-        // is a safety contract: the stamp writes no depth, so if its supporting
-        // terrain section was culled while an adjacent model section stayed
-        // visible, the sky's far-plane LessEqual draw replaces the orphaned
-        // darkening with sky instead of smudging the background. One whole-buffer
-        // draw per visible contact-bearing column — the stream is sparse and
-        // needs no per-section ranges.
-        if !contact_columns.is_empty() {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "contact shadow pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_pipeline(self.contact_pipe.get(samples));
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            for &(_, _, slot) in contact_columns {
-                let col = self.terrain.columns.at(slot);
-                if col.contact_vertex_count == 0 {
-                    continue;
-                }
-                if let Some(vb) = &col.contact_vbuf {
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    let slot = col.origin_slot.index();
-                    pass.draw(0..col.contact_vertex_count, slot..slot + 1);
-                }
-            }
-        }
-        // ENTITY SHADOW PASS: the blob-shadow decals under mobs / dropped items
-        // / bodies — same contract as the contact stamps above (MULTIPLY over
-        // opaque terrain, depth read-only with the coplanar bias, drawn before
-        // the sky so a culled support section can't leave smudges on the
-        // background). One whole-batch draw; the gather already culled the
-        // rows against this frame's view volume.
-        if self.shadow.draw.vertex_count > 0 {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "entity shadow pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_pipeline(self.shadow.draw.pipeline.get(samples));
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_vertex_buffer(0, self.shadow.draw.vbuf.slice(..));
-            pass.set_index_buffer(self.shadow.draw.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            let quads = self.shadow.draw.vertex_count as usize
-                / crate::entity_shadow::VERTS_PER_SHADOW as usize;
-            pass.draw_indexed(
-                0..crate::entity_shadow::quad_index_count(quads) as u32,
-                0,
-                0..1,
-            );
-        }
-        // SKY PASS: full-screen background triangle at exactly the far plane,
-        // AFTER opaque so its LessEqual depth test shades only the pixels no
-        // terrain covered (the sky fs is the priciest full-screen shader). The
-        // sky shader owns celestials and any day/night colour.
-        {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "sky pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_pipeline(self.sky.pipe.get(samples));
-            pass.set_bind_group(0, &self.sky.bind, &[]);
-            pass.set_bind_group(1, &self.sky.texture_bind, &[]);
-            pass.draw(0..3, 0..1);
-        }
-        // MODEL PASS: bbmodel-block geometry (explicit-UV, sampling the model atlas),
-        // drawn per visible chunk with the mob pipeline (own texture + the same
-        // underwater/fog the world uses) over depth from the opaque pass — so a placed
-        // model occludes and is occluded by terrain like any block. Most chunks have no
-        // model geometry, so this is usually a no-op loop.
-        if any_model_visible || self.item_entity.model_draw.index_count > 0 {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "model pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
-            pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-            // Chunk model geometry draws with the world-model pipeline: its
-            // vertices carry (sky, block) light so the shader applies the
-            // day/night sky scale (meshes don't rebake at sunset).
-            pass.set_pipeline(self.world_model_pipe.get(samples));
-            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            for &(_, _, slot) in model_columns {
-                let col = self.terrain.columns.at(slot);
-                if col.model_idx_count == 0 {
-                    continue;
-                }
-                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    let slot = col.origin_slot.index();
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    pass.set_index_buffer(
-                        self.terrain.geometry.slice(&ib.alloc, ib.len),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(0..col.model_idx_count, 0, slot..slot + 1);
-                }
-            }
-            for item in order.iter() {
-                if item.model_batched || item.model_idx_count == 0 {
-                    continue;
-                }
-                let col = self.terrain.columns.at(item.column_slot);
-                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    let slot = col.origin_slot.index();
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    pass.set_index_buffer(
-                        self.terrain.geometry.slice(&ib.alloc, ib.len),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(
-                        item.model_index_start..item.model_index_start + item.model_idx_count,
-                        0,
-                        slot..slot + 1,
-                    );
-                }
-            }
-            // Dropped bbmodel items (world-space, same model atlas; ItemVertex
-            // with per-frame CPU-baked light, so they stay on the mob-layout
-            // pipeline).
-            pass.set_pipeline(self.model_pipe.get(samples));
-            self.item_entity.model_draw.draw(&mut pass, samples);
-        }
-        // ITEM-ENTITY PASS (§8 2b): dropped items as spinning cubes (the EXISTING
-        // opaque pipeline, terrain atlas array) plus extruded sprite slabs (the
-        // mob-layout pipeline over the 2D block atlas — their per-texel wall UVs
-        // need explicit UVs). Load color + depth, depth test + write so items
-        // occlude and are occluded by terrain.
-        if self.item_entity.draw.index_count > 0 || self.item_entity.sprite_draw.index_count > 0 {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "item entity pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            self.item_entity.draw.draw(&mut pass, samples);
-            if self.item_entity.sprite_draw.index_count > 0 {
-                pass.set_bind_group(1, &self.atlas_bind, &[]);
-                self.item_entity.sprite_draw.draw(&mut pass, samples);
-            }
-        }
-        // BLOCK-ENTITY PASS: every placed animated block (chest lids, door and
-        // trapdoor swings, a pack's own) drawn as full opaque geometry by the
-        // EXISTING opaque pipeline with the same uniform + atlas binds, loading
-        // color + depth so they occlude and are occluded by terrain — exactly
-        // like the item-entity pass above.
-        if self.block_entity.draw.index_count > 0 {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "block entity pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
-            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            self.block_entity.draw.draw(&mut pass, samples);
-        }
-        // MOB PASS: animated entity models, one instanced draw per visible species.
-        // Loads color + depth (test + WRITE) so mobs occlude and are occluded by
-        // terrain — like the item-entity / chest passes — but binds each species' OWN
-        // texture at group(1) (not the block atlas); the skinned pipeline skins each
-        // species' static explicit-UV mesh by the frame's bone palette, so a model's
-        // arbitrary sub-rect UVs sample its own sheet.
-        if self.actor.mob_gpu.iter().any(|g| !g.drawn.is_empty())
-            || !self.actor.player_gpu.drawn.is_empty()
-            || self.actor.item_draw.index_count > 0
-            || self.actor.model_item_draw.index_count > 0
-            || self.actor.block_item_draw.index_count > 0
-        {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "mob pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            for g in &self.actor.mob_gpu {
-                if g.drawn.is_empty() {
-                    continue;
-                }
-                pass.set_bind_group(1, &g.bind, &[]);
-                self.actor
-                    .skin
-                    .draw(&mut pass, samples, &g.mesh, g.drawn.clone());
-            }
-            // Player bodies — the local third-person body and every remote
-            // player, one instanced draw (shared skin texture and mesh)…
-            let bodies = &self.actor.player_gpu;
-            if !bodies.drawn.is_empty() {
-                pass.set_bind_group(1, &bodies.bind, &[]);
-                self.actor
-                    .skin
-                    .draw(&mut pass, samples, &bodies.mesh, bodies.drawn.clone());
-            }
-            // …their extruded-sprite held items (2D atlas)…
-            if self.actor.item_draw.index_count > 0 {
-                pass.set_bind_group(1, &self.atlas_bind, &[]);
-                self.actor.item_draw.draw(&mut pass, samples);
-            }
-            // …their bbmodel held items (model atlas)…
-            if self.actor.model_item_draw.index_count > 0 {
-                pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-                self.actor.model_item_draw.draw(&mut pass, samples);
-            }
-            // …and their held block mini-cubes (opaque pipeline + terrain
-            // atlas array).
-            if self.actor.block_item_draw.index_count > 0 {
-                pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-                self.actor.block_item_draw.draw(&mut pass, samples);
-            }
-        }
-        // TRANSLUCENT-BLOCK PASS: ice — alpha-blended but depth-WRITING, so a
-        // sheet of translucent cubes resolves its own face order through the
-        // depth buffer. Encoded BEFORE the break overlay so a crack decal on a
-        // mined ice block draws ON TOP of the ice (the decal's biased
-        // LessEqual wins on the depth the ice just wrote) instead of being
-        // washed out by the ice blending over it.
-        if any_transparent_visible {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "translucent block pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
-            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            pass.set_pipeline(self.translucent_pipe.get(samples));
-            // One bind for the whole pass: every column draw picks its
-            // origin row with `first_instance`.
-            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
-            for item in order.iter() {
-                if item.translucent_quads == 0 {
-                    continue;
-                }
-                let col = self.terrain.columns.at(item.column_slot);
-                // near -> far: depth-writing, so early-Z applies like opaque.
-                if let Some(vb) = &col.translucent_vbuf {
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    stats.transparent_draws += 1;
-                    stats.transparent_indices += item.translucent_quads as u64 * 6;
-                    let slot = col.origin_slot.index();
-                    pass.draw_indexed(
-                        0..item.translucent_quads * 6,
-                        item.translucent_vertex_start as i32,
-                        slot..slot + 1,
-                    );
-                }
-            }
-        }
-        // MODEL-BLEND PASS: the chunk's semi-transparent bbmodel faces (the
-        // `model_blend_idx` ranges of the same model vertex/index buffers) —
-        // alpha-blended but depth-WRITING, the ice precedent: overlapping
-        // blended faces of one model resolve their order through the depth
-        // buffer. Same ordering contract with the break overlay as ice (the
-        // crack decal draws on top of a mined model's glass). Drawn over the
-        // model pass's opaque depth, so blended glass correctly occludes and
-        // is occluded by the model's own solid parts.
-        if any_model_visible {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "model blend pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
-            pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-            pass.set_pipeline(self.world_model_blend_pipe.get(samples));
-            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            for &(_, _, slot) in model_columns {
-                let col = self.terrain.columns.at(slot);
-                if col.model_blend_idx_count == 0 {
-                    continue;
-                }
-                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    let slot = col.origin_slot.index();
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    pass.set_index_buffer(
-                        self.terrain.geometry.slice(&ib.alloc, ib.len),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(
-                        col.model_idx_count..col.model_idx_count + col.model_blend_idx_count,
-                        0,
-                        slot..slot + 1,
-                    );
-                }
-            }
-            for item in order.iter() {
-                if item.model_batched || item.model_blend_idx_count == 0 {
-                    continue;
-                }
-                let col = self.terrain.columns.at(item.column_slot);
-                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    let slot = col.origin_slot.index();
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    pass.set_index_buffer(
-                        self.terrain.geometry.slice(&ib.alloc, ib.len),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(
-                        item.model_blend_index_start
-                            ..item.model_blend_index_start + item.model_blend_idx_count,
-                        0,
-                        slot..slot + 1,
-                    );
-                }
-            }
-        }
-        // MODEL-BREAK PASS: the destroy crack over a mined bbmodel block, drawn
-        // as a decal over the model's OWN triangles — the same column model
-        // stream the model pass drew, re-rasterized with the crack pipeline and
-        // masked in the shader to the cracked model's outline box. Nothing
-        // re-derives the model's form, so the decal is depth-coincident and
-        // hugs every cube, however small or rotated. Immediately before the
-        // cell-shaped blocks' crack pass, which it shares its ordering
-        // constraints with (after translucent blocks, before water).
-        if self.model_break.active() {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "model break pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-            pass.set_bind_group(2, &self.model_break.bind, &[]);
-            pass.set_pipeline(self.model_break.pipe.get(samples));
-            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            for pos in &self.model_break.columns {
-                let Some(col) = self.terrain.columns.get(pos) else {
-                    continue;
-                };
-                // The whole column's model stream, opaque range and blend range
-                // together: the mask discards every fragment outside the cracked
-                // model, so the pass never needs to know which section holds it.
-                let total = col.model_idx_count + col.model_blend_idx_count;
-                if total == 0 {
-                    continue;
-                }
-                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    let slot = col.origin_slot.index();
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    pass.set_index_buffer(
-                        self.terrain.geometry.slice(&ib.alloc, ib.len),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(0..total, 0, slot..slot + 1);
-                }
-            }
-        }
-        // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
-        // AFTER translucent blocks (the crack must sit on mined ice) but BEFORE
-        // the transparent water pass — it is a decal on the block, so water must
-        // be able to blend in front of it (a crack on a submerged block shows
-        // THROUGH the water, not over it). MULTIPLY blend; depth LessEqual /
-        // no-write over a cube built COINCIDENT with the block faces (no inflation,
-        // so the decal never misaligns), with a small polygon offset toward the
-        // camera (BREAK_DEPTH_BIAS) so it wins the depth tie cleanly. Reuses
-        // uniform_bind (view_proj + uv_rects) + atlas_bind.
-        if self.hand.break_draw.index_count > 0 {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "break overlay pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
-            self.hand.break_draw.draw(&mut pass, samples);
-        }
-        // PARTICLE PASS (§8 3b): tiny 3D terrain particle cubes. Drawn BEFORE the
-        // transparent water pass (but after the break overlay, so they sit in front
-        // of the crack): they are alpha-CUTOUT solids that DEPTH-TEST + DEPTH-WRITE,
-        // so water blends over the ones behind it (underwater dust reads as
-        // submerged) while ones in front of the water still occlude it. Reuses
-        // uniform_bind + atlas_bind. One instance per particle (cube or oriented quad).
-        if self.particle.draw.instance_count > 0 {
-            // Instance boundaries: block flecks occupy [0..block), model flecks the rest.
-            let total = self.particle.draw.instance_count;
-            let block = self.particle.block_count;
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "particle pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            // Block-atlas flecks: the leading instances.
-            if block > 0 {
-                pass.set_bind_group(1, &self.atlas_bind, &[]);
-                self.particle.draw.draw(&mut pass, samples, 0..block);
-            }
-            // Model-atlas flecks (bbmodel blocks): the trailing instances of the
-            // same rows, with the model atlas bound.
-            if total > block {
-                pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-                self.particle.draw.draw(&mut pass, samples, block..total);
-            }
-        }
-        // TRANSPARENT (TRANSLUCENT FLUID) PASS: far→near back-to-front, depth
-        // test only (a see-through fluid must never occlude terrain behind
-        // it; an opaque fluid drew with the opaque terrain). Translucent
-        // BLOCKS drew earlier (their own depth-writing pass, before the break
-        // overlay), so fluid behind ice depth-fails against the ice's written
-        // depth instead of double-blending over it.
-        if any_transparent_visible {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "transparent pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, self.selected_blocks_bind(), &[]);
-            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            // One bind for the whole pass: every column draw picks its
-            // origin row with `first_instance`.
-            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
-            pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
-            // Fluid side faces cull their backs, fluid TOPS do not (they must
-            // stay visible from underneath). Sections almost never carry both,
-            // so tracking the bound pipeline keeps this at one switch per pass
-            // in practice. `None` until the first draw binds one: a render pass
-            // starts with NO pipeline, so seeding this with a side is a draw
-            // without a pipeline whenever that side happens to come first.
-            let mut two_sided_bound: Option<bool> = None;
-            for item in order.iter().rev() {
-                if item.transparent_quads == 0 && item.transparent_ts_quads == 0 {
-                    continue;
-                }
-                let col = self.terrain.columns.at(item.column_slot);
-                let slot = col.origin_slot.index();
-                // far -> near (alpha order)
-                for (vbuf, start, quads, two_sided) in [
-                    (
-                        &col.transparent_vbuf,
-                        item.transparent_vertex_start,
-                        item.transparent_quads,
-                        false,
-                    ),
-                    (
-                        &col.transparent_ts_vbuf,
-                        item.transparent_ts_vertex_start,
-                        item.transparent_ts_quads,
-                        true,
-                    ),
-                ] {
-                    if quads == 0 {
-                        continue;
-                    }
-                    let Some(vb) = vbuf else { continue };
-                    if two_sided_bound != Some(two_sided) {
-                        pass.set_pipeline(if two_sided {
-                            self.transparent_two_sided_pipe.get(samples)
-                        } else {
-                            self.transparent_pipe.get(samples)
-                        });
-                        two_sided_bound = Some(two_sided);
-                    }
-                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
-                    stats.transparent_draws += 1;
-                    stats.transparent_indices += quads as u64 * 6;
-                    pass.draw_indexed(0..quads * 6, start as i32, slot..slot + 1);
-                }
-            }
-        }
-        self.encode_environment(enc, view, samples);
-        // TRANSLUCENT BLOCK-EMITTER PARTICLES: solid-color cube particles from block
-        // rows (torch flame cubes and mod emitters). They draw after water with alpha
-        // blending, depth test but no write, and back-face culling in the pipeline so
-        // transparency never exposes the whole cube shell.
-        let cubes = self.particle.emitter_draw.instance_count;
-        if cubes > 0 {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "emitter particle pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_bind_group(0, &self.uniform_bind, &[]);
-            pass.set_bind_group(1, &self.atlas_bind, &[]);
-            self.particle.emitter_draw.draw(&mut pass, samples, 0..cubes);
-        }
-        // Selection outline, after particles: load color + depth, depth-test (no
-        // write) so it draws over terrain/water at the targeted block but stays
-        // occluded behind nearer geometry.
-        if self.chrome.selection.is_some() && self.chrome.outline_vertex_count > 0 {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "outline pass",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            pass.set_pipeline(self.chrome.outline_pipe.get(samples));
-            pass.set_bind_group(0, &self.chrome.outline_bind, &[]);
-            pass.set_vertex_buffer(0, self.chrome.outline_vbuf.slice(..));
-            pass.draw(0..self.chrome.outline_vertex_count, 0..1);
-        }
-        if !(self.ghosts.is_empty() && self.selection.is_empty()) {
-            let mut pass = color_depth_pass(
-                enc,
-                view,
-                &self.targets.depth,
-                "ghosts and selection",
-                wgpu::LoadOp::Load,
-                Some(wgpu::LoadOp::Load),
-                self.gpu_timer.as_ref(),
-            );
-            self.ghosts.draw(&mut pass, samples);
-            self.selection.draw(&mut pass, samples);
-        }
-        self.encode_hand(enc, view, samples);
-        self.encode_screen(enc, view, swapchain, samples, route);
     }
 }

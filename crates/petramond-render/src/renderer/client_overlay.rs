@@ -212,19 +212,21 @@ impl Renderer {
         ));
         self.ui.client_overlays.binds.len() - 1
     }
+}
 
+impl UiPass {
     pub(super) fn draw_client_overlays(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let Some(vbuf) = &self.ui.client_overlays.vbuf else {
+        let Some(vbuf) = &self.client_overlays.vbuf else {
             return;
         };
         pass.set_vertex_buffer(0, vbuf.slice(..));
-        for batch in &self.ui.client_overlays.batches {
+        for batch in &self.client_overlays.batches {
             let bind = match batch.bind_index {
-                Some(index) => match self.ui.client_overlays.binds.get(index) {
+                Some(index) => match self.client_overlays.binds.get(index) {
                     Some((_, image)) => &image.bind,
                     None => continue,
                 },
-                None => &self.ui.icon_atlas.bind,
+                None => &self.icon_atlas.bind,
             };
             pass.set_bind_group(0, bind, &[]);
             pass.draw(batch.start..batch.start + batch.count, 0..1);

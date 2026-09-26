@@ -98,8 +98,8 @@ impl Gpu {
         Self {
             highlight: crate::selection_highlight::Highlight::new(
                 &r.device,
-                r.opaque_pipe.get(1).get_bind_group_layout(0),
-                r.uniform_buf.clone(),
+                r.terrain.pipes.opaque.get(1).get_bind_group_layout(0),
+                r.binds.uniform_buf.clone(),
             ),
             outline: Layer::new(r, true, [0.2, 1.0, 0.7, 0.85]),
             region: Layer::new(r, true, [1.0, 0.7, 0.1, 1.0]),
@@ -155,7 +155,7 @@ impl Renderer {
             .shown()
             .filter(|gpu| gpu.outline.count > 0)
             .map(|gpu| &gpu.highlight.bind)
-            .unwrap_or(&self.uniform_bind)
+            .unwrap_or(&self.binds.uniform)
     }
 
     /// Show `selection` with its pending two-corner box and active face;

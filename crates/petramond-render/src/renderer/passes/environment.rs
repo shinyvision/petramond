@@ -1,105 +1,61 @@
-//! The pack environment (volumetric) passes and their half-res chain.
+//! The sky and the pack environment (volumetric) nodes with their half-res
+//! chain.
+//!
+//! Volumetrics are pack-supplied full-screen shaders (clouds, auroras, fog
+//! volumes) composed in pack load order. Each occludes itself per-fragment
+//! against the frame depth, which it SAMPLES — which is why the chain draws
+//! after all depth-writing world geometry and attaches no frame depth. The
+//! reverse case — a lake in FRONT of a cloudy horizon — needs no paint-order
+//! help: the march clamps at the sampled depth, and the lakebed behind a
+//! see-through surface is always nearer than any cloud behind the lake.
+//!
+//! HALF-RES: the passes march into `env_color` (half the scene dims) against
+//! `env_depth` — a max-of-2x2 downsample of the frame depth — and a
+//! depth-aware composite lifts the premultiplied result onto the scene
+//! (crisp at silhouette edges, bilinear elsewhere). A volumetric is soft, so
+//! this quarters its fragment cost invisibly; see `pipeline::EnvScaler` and
+//! the two `env_*.wgsl` builtins.
 
 use super::*;
 
-impl Renderer {
-    /// Downsample the frame depth, march every live environment pass into the
-    /// half-res target, and composite the result onto the scene.
-    pub(super) fn encode_environment(
-        &self,
-        enc: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        samples: u32,
-    ) {
-        // ENVIRONMENT (VOLUMETRIC) PASSES: pack-supplied full-screen shaders
-        // (clouds, auroras, fog volumes), composed in pack load order. Drawn
-        // after ALL depth-writing world geometry so each shader can occlude
-        // itself per-fragment against the frame depth, which it SAMPLES
-        // (group 0 binding 2) — the pass attaches no depth, which is what
-        // makes sampling it legal. Drawn AFTER the fluid pass: a fluid
-        // SURFACE writes no depth, so paint order is the only thing keeping a
-        // cloud in front of a lake (camera on a peak inside the deck, lake
-        // below punched a hole through the cloud when water drew last). The
-        // reverse case — a lake in FRONT of a cloudy horizon — needs no
-        // paint-order help: the march clamps at the sampled depth, and the
-        // lakeBED behind a see-through surface is always nearer than any cloud
-        // behind the lake (an opaque fluid writes its own depth with the
-        // terrain). Drawn BEFORE the
-        // emitter particles so rain/snow volumes (no depth write) still streak
-        // over the deck.
-        //
-        // HALF-RES: the passes march into `env_color` (half the scene dims)
-        // against `env_depth` — a max-of-2x2 downsample of the frame depth —
-        // and a depth-aware composite lifts the premultiplied result onto
-        // the scene (crisp at silhouette edges, bilinear elsewhere). A
-        // volumetric is soft, so this quarters its fragment cost invisibly;
-        // see pipeline::EnvScaler and the two env_*.wgsl builtins.
-        if self.sky.env_passes.iter().any(|env| !env.dormant) {
-            {
-                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("env depth downsample"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.sky.env_depth,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: self
-                        .gpu_timer
-                        .as_ref()
-                        .and_then(|t| t.pass("env depth downsample")),
-                    ..Default::default()
-                });
-                pass.set_pipeline(&self.sky.env_scaler.get(samples).down_pipe);
-                pass.set_bind_group(0, &self.sky.env_down_bind, &[]);
-                pass.draw(0..3, 0..1);
-            }
-            {
-                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("environment pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.sky.env_color,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            // Transparent black: premultiplied compositing is
-                            // associative, so (passes over clear) over scene
-                            // equals the old passes-over-scene directly.
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: self
-                        .gpu_timer
-                        .as_ref()
-                        .and_then(|t| t.pass("environment pass")),
-                    ..Default::default()
-                });
-                for env in self.sky.env_passes.iter().filter(|env| !env.dormant) {
-                    pass.set_pipeline(&env.res.pipe);
-                    pass.set_bind_group(0, &env.bind, &[]);
-                    pass.set_bind_group(1, &env.res.texture_bind, &[]);
-                    pass.draw(0..3, 0..1);
-                }
-            }
-            {
-                let mut pass = color_depth_pass(
-                    enc,
-                    view,
-                    &self.targets.depth,
-                    "env composite pass",
-                    wgpu::LoadOp::Load,
-                    None,
-                    self.gpu_timer.as_ref(),
-                );
-                pass.set_pipeline(self.sky.env_scaler.get(samples).comp_pipe.get(samples));
-                pass.set_bind_group(0, &self.sky.env_comp_bind, &[]);
-                pass.draw(0..3, 0..1);
-            }
+impl SkyPass {
+    /// SKY: the full-screen background triangle at exactly the far plane.
+    /// The sky shader owns celestials and any day/night colour.
+    pub(super) fn record_sky(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
+        pass.set_pipeline(self.pipe.get(ctx.samples));
+        pass.set_bind_group(0, &self.bind, &[]);
+        pass.set_bind_group(1, &self.texture_bind, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// Whether any environment pass has inputs this frame. A dormant pass
+    /// costs nothing; with every pass dormant, neither does the chain.
+    pub(super) fn environment_active(&self) -> bool {
+        self.env_passes.iter().any(|env| !env.dormant)
+    }
+
+    /// The max-of-2x2 downsample of the frame depth into `env_depth`.
+    pub(super) fn record_env_downsample(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
+        pass.set_pipeline(&self.env_scaler.get(ctx.samples).down_pipe);
+        pass.set_bind_group(0, &self.env_down_bind, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// Every live environment pass, marched into the cleared half-res colour.
+    pub(super) fn record_environment(&self, pass: &mut wgpu::RenderPass<'_>) {
+        for env in self.env_passes.iter().filter(|env| !env.dormant) {
+            pass.set_pipeline(&env.res.pipe);
+            pass.set_bind_group(0, &env.bind, &[]);
+            pass.set_bind_group(1, &env.res.texture_bind, &[]);
+            pass.draw(0..3, 0..1);
         }
+    }
+
+    /// The depth-aware composite of the half-res result onto the world.
+    pub(super) fn record_env_composite(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
+        let scaler = self.env_scaler.get(ctx.samples);
+        pass.set_pipeline(scaler.comp_pipe.get(ctx.samples));
+        pass.set_bind_group(0, &self.env_comp_bind, &[]);
+        pass.draw(0..3, 0..1);
     }
 }

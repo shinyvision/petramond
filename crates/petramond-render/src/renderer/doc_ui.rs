@@ -265,53 +265,52 @@ impl Renderer {
         });
         (texture, bind)
     }
+}
 
+impl UiPass {
     /// Draw the base tier of the uploaded document UI (everything under the
     /// host's own item icons).
     pub(super) fn draw_doc_ui(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let end = self.ui.doc_ui.overlay_start;
-        self.draw_doc_batches(pass, &self.ui.doc_ui.batches[..end]);
+        let end = self.doc_ui.overlay_start;
+        self.draw_doc_batches(pass, &self.doc_ui.batches[..end]);
     }
 
     /// Draw the overlay tier: floating tooltip chrome, which has to cover the
     /// host content the base tier drew under.
     pub(super) fn draw_doc_ui_overlay(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let start = self.ui.doc_ui.overlay_start;
-        self.draw_doc_batches(pass, &self.ui.doc_ui.batches[start..]);
+        let start = self.doc_ui.overlay_start;
+        self.draw_doc_batches(pass, &self.doc_ui.batches[start..]);
     }
 
     pub(super) fn has_doc_overlay(&self) -> bool {
-        self.ui.doc_ui.overlay_start < self.ui.doc_ui.batches.len()
+        self.doc_ui.overlay_start < self.doc_ui.batches.len()
     }
 
     /// Draw a batch range inside the UI pass. The pipeline is already set;
     /// each batch binds its texture and scissors its clip.
     fn draw_doc_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[DocBatch]) {
-        let (Some(vbuf), Some(binds)) = (&self.ui.doc_ui.vbuf, &self.ui.doc_ui.theme_binds) else {
+        let (Some(vbuf), Some(binds)) = (&self.doc_ui.vbuf, &self.doc_ui.theme_binds) else {
             return;
         };
         if batches.is_empty() {
             return;
         }
-        let screen = self.ui.prepared_viewport.size;
+        let screen = self.prepared_viewport.size;
         pass.set_vertex_buffer(0, vbuf.slice(..));
         for batch in batches {
             let bind = match batch.tex {
-                petramond_ui::TexId::Solid => &self.ui.icon_atlas.bind,
+                petramond_ui::TexId::Solid => &self.icon_atlas.bind,
                 petramond_ui::TexId::ThemeAtlas => &binds.atlas,
                 petramond_ui::TexId::Font => &binds.font,
                 petramond_ui::TexId::DocImage(i) => {
-                    match self.ui.doc_ui.frame_images.get(i as usize).and_then(
+                    match self.doc_ui.frame_images.get(i as usize).and_then(
                         |source| match source {
                             petramond::gui::DocImageSource::Path(path) => {
-                                self.ui.doc_ui.image_binds.get(path)
+                                self.doc_ui.image_binds.get(path)
                             }
-                            petramond::gui::DocImageSource::Dynamic { key, .. } => self
-                                .ui
-                                .doc_ui
-                                .dynamic_binds
-                                .get(key)
-                                .map(|entry| &entry.bind),
+                            petramond::gui::DocImageSource::Dynamic { key, .. } => {
+                                self.doc_ui.dynamic_binds.get(key).map(|entry| &entry.bind)
+                            }
                         },
                     ) {
                         Some(bind) => bind,

@@ -158,3 +158,19 @@ fn shipped_table_loads() {
     let table = LocomotionTable::parse_layers(&texts).expect("shipped table");
     assert!(!table.layers.is_empty());
 }
+
+/// The fallback for a missing or malformed table poses nothing, whatever
+/// the body is doing — a rest pose, never a crash.
+#[test]
+fn the_empty_fallback_table_poses_nothing() {
+    let table = LocomotionTable::empty();
+    let inputs = Inputs {
+        walking: 1.0,
+        run: 1.0,
+        swim: 1.0,
+        landing: 1.0,
+        ..Default::default()
+    };
+    assert!(weights_of(&table, &inputs, all).is_empty());
+    assert_eq!(table.slots(), Inputs::NAMES.len());
+}

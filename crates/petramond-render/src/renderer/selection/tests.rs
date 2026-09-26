@@ -23,7 +23,8 @@ fn selection_highlight_visual_check() {
         1280,
         960,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-    ));
+    ))
+    .expect("offscreen renderer");
     renderer.set_hand_visible(false);
     renderer.set_crosshair_visible(false);
     let save = |name: &str, frame: &crate::renderer::RenderedFrame| {

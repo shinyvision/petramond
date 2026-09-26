@@ -84,7 +84,8 @@ fn schematic_thumbnail_smoke() {
         960,
         640,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-    ));
+    ))
+    .expect("offscreen renderer");
     let path = std::env::var_os("PETRAMOND_SCHEMATIC_CAPTURE")
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("petramond-schematic-preview.png"));

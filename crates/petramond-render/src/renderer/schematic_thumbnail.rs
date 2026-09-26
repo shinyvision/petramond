@@ -24,9 +24,9 @@ impl SchematicThumbnailer {
             device: r.device.clone(),
             queue: r.queue.clone(),
             blocks: r.block_entity.draw.pipeline.clone(),
-            models: r.world_model_pipe.clone(),
-            block_atlas: r.atlas_array_bind.clone(),
-            model_atlas: r.model_atlas_bind.clone(),
+            models: r.terrain.pipes.world_model.clone(),
+            block_atlas: r.binds.atlas_array.clone(),
+            model_atlas: r.binds.model_atlas.clone(),
             format: r.config.format,
         }
     }

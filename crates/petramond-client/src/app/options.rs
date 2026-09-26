@@ -362,4 +362,15 @@ impl App {
             self.options.persist();
         }
     }
+
+    /// The host replaced a renderer whose GPU device was lost. The new one
+    /// knows no settings and holds no terrain: hand it the graphics settings
+    /// and queue every meshed column of the world for upload again.
+    pub(crate) fn renderer_recreated(&mut self, renderer: &mut petramond_render::Renderer) {
+        self.renderer_options_dirty = true;
+        self.apply_graphics(renderer);
+        if let Some(game) = self.game.as_mut() {
+            game.terrain_render_handoff().request_full_reupload();
+        }
+    }
 }

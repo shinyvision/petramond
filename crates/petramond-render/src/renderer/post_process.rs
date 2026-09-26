@@ -181,7 +181,8 @@ impl Renderer {
     }
 
     /// (Re)build the world-pass targets at the current `render_scale` (and the
-    /// grade bind that reads them). Called on resize and scale changes.
+    /// grade bind that reads them), then the volumetric targets over the new
+    /// depth. Called on resize and scale changes.
     pub(super) fn recreate_scene_targets(&mut self) {
         self.targets.anti_aliasing = super::post_process::supported_mode(
             self.targets.anti_aliasing,
@@ -189,49 +190,87 @@ impl Renderer {
             self.targets.max_samples,
         );
         self.upload_post_process();
-        let (w, h) = self.scene_dims();
-        let samples = self.targets.anti_aliasing.sample_count();
-        self.targets.depth = crate::resources::create_depth_sampled(&self.device, w, h, samples);
-        self.targets.multisample_color =
-            create_multisample_color(&self.device, w, h, self.config.format, samples);
-        self.targets.scene_color = create_scene_color(&self.device, w, h, self.config.format);
-        self.targets.grade_bind = super::super::pipeline::create_grade_bind(
+        let scene = self.scene_dims();
+        self.targets.recreate_views(&self.device, self.config.format, scene);
+        self.sky.recreate_env_targets(
             &self.device,
-            &self.targets.grade_bgl,
-            &self.targets.scene_color,
-            &self.targets.post_process_buf,
-        );
-        // Environment half-res targets and every bind that references the
-        // recreated views.
-        let (env_w, env_h) = (w.div_ceil(2), h.div_ceil(2));
-        self.sky.env_color = create_scene_color(&self.device, env_w, env_h, self.config.format);
-        self.sky.env_depth = super::super::resources::create_depth(&self.device, env_w, env_h);
-        self.sky.env_down_bind = super::super::pipeline::create_env_down_bind(
-            &self.device,
-            &self.sky.env_scaler.get(samples).down_bgl,
+            &self.binds.uniform_buf,
             &self.targets.depth,
+            scene,
+            self.config.format,
+            self.targets.anti_aliasing.sample_count(),
         );
-        self.sky.env_comp_bind = super::super::pipeline::create_env_comp_bind(
-            &self.device,
-            &self.sky.env_scaler.get(samples).comp_bgl,
-            &self.sky.env_color,
-            &self.sky.env_scaler.get(samples).samp,
-            &self.sky.env_depth,
-            &self.targets.depth,
-        );
-        for pass in &mut self.sky.env_passes {
-            pass.bind = super::super::pipeline::create_environment_bind(
-                &self.device,
-                &pass.res.bgl,
-                &self.uniform_buf,
-                &pass.res.params_buf,
-                &self.sky.env_depth,
-            );
-        }
     }
 }
 
-pub(super) fn create_multisample_color(
+impl SceneTargets {
+    /// The scene targets at `scene` dims for `anti_aliasing`, with the
+    /// post-process controls and the grade bind that reads them.
+    pub(super) fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        (w, h): (u32, u32),
+        anti_aliasing: AntiAliasing,
+        max_samples: u32,
+        grade_pipe: wgpu::RenderPipeline,
+        grade_bgl: wgpu::BindGroupLayout,
+    ) -> Self {
+        let samples = anti_aliasing.sample_count();
+        let scene_color = create_scene_color(device, w, h, format);
+        let post_process_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("post-process controls"),
+            contents: bytemuck::cast_slice(&[
+                0.0_f32,
+                0.0,
+                anti_aliasing.resolution_multiplier() as f32,
+                1.0,
+            ]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let grade_bind = super::super::pipeline::create_grade_bind(
+            device,
+            &grade_bgl,
+            &scene_color,
+            &post_process_buf,
+        );
+        Self {
+            scene_color,
+            multisample_color: create_multisample_color(device, w, h, format, samples),
+            max_samples,
+            depth: crate::resources::create_depth_sampled(device, w, h, samples),
+            render_scale: 1.0,
+            grade_enabled: true,
+            anti_aliasing,
+            grade_pipe,
+            grade_bgl,
+            grade_bind,
+            post_process_buf,
+            mood: [0.0, 0.0],
+        }
+    }
+
+    /// Rebuild the views at `scene` dims for the current sample count, and
+    /// the grade bind over the new scene colour.
+    fn recreate_views(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        (w, h): (u32, u32),
+    ) {
+        let samples = self.anti_aliasing.sample_count();
+        self.depth = crate::resources::create_depth_sampled(device, w, h, samples);
+        self.multisample_color = create_multisample_color(device, w, h, format, samples);
+        self.scene_color = create_scene_color(device, w, h, format);
+        self.grade_bind = super::super::pipeline::create_grade_bind(
+            device,
+            &self.grade_bgl,
+            &self.scene_color,
+            &self.post_process_buf,
+        );
+    }
+}
+
+fn create_multisample_color(
     device: &wgpu::Device,
     w: u32,
     h: u32,

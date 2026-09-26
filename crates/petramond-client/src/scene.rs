@@ -64,14 +64,20 @@ pub struct SceneCapture {
 
 impl SceneCapture {
     /// A fresh world at `seed` and a surfaceless renderer drawing
-    /// `width` × `height`. `render_distance` is in chunks and drives both
-    /// streaming and the fog band, exactly as it does in game.
-    pub fn new(seed: u32, render_distance: i32, width: u32, height: u32) -> Self {
+    /// `width` × `height`, or why no renderer could be built (no adapter,
+    /// no device). `render_distance` is in chunks and drives both streaming
+    /// and the fog band, exactly as it does in game.
+    pub fn new(
+        seed: u32,
+        render_distance: i32,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, petramond_render::RenderInitError> {
         let mut renderer = pollster::block_on(petramond_render::new_offscreen_renderer(
             width,
             height,
             CAPTURE_FORMAT,
-        ));
+        ))?;
         // A capture is a client with default graphics at this streaming
         // radius: the same single entry the options screen uses.
         let mut graphics = petramond::save::client::ClientSettings::default().graphics();
@@ -102,7 +108,7 @@ impl SceneCapture {
         // a believable image of the wrong time of day. Start at noon so a caller
         // who never sets a time still gets a truthful one.
         this.set_time_of_day(NOON, 0.0);
-        this
+        Ok(this)
     }
 
     /// Stream and mesh the world around `pos` (world coordinates), pumping the

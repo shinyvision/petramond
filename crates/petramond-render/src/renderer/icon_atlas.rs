@@ -142,269 +142,16 @@ pub(super) fn bake(
     // stack's `petramond:tint`. Model (bbmodel) icons have no dye-base half
     // in the model atlas, so their twin is a plain copy (the multiply alone).
     let rows = (2 * count).div_ceil(COLS);
-    let aw = COLS * CELL;
-    let ah = rows * CELL;
-
-    // --- Atlas color texture (surface sRGB format) + Nearest sampler + UI bind. ---
-    let texture = crate::gpu_mem::create_texture(
-        device,
-        &wgpu::TextureDescriptor {
-            label: Some("icon atlas"),
-            size: wgpu::Extent3d {
-                width: aw,
-                height: ah,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: if std::env::var_os("PETRAMOND_DUMP_ICON_ATLAS").is_some() {
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC
-            } else {
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-            },
-            view_formats: &[],
-        },
-    );
+    let size = (COLS * CELL, rows * CELL);
+    let texture = create_atlas_texture(device, format, size);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("icon atlas sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Nearest,
-        min_filter: wgpu::FilterMode::Nearest,
-        mipmap_filter: wgpu::FilterMode::Nearest,
-        ..Default::default()
-    });
-    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("icon atlas bg"),
-        layout: atlas_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
-    });
-
+    let bind = create_atlas_bind(device, atlas_bgl, &view);
     // Full-atlas depth buffer for Pass B (the model icons' z resolves their draw
     // order). Pass A is depthless and never touches it.
-    let depth = crate::gpu_mem::create_texture(
-        device,
-        &wgpu::TextureDescriptor {
-            label: Some("icon atlas depth"),
-            size: wgpu::Extent3d {
-                width: aw,
-                height: ah,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        },
-    );
-    let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_view = create_atlas_depth(device, size);
 
-    // The square 64×64 cell every icon's MVP is auto-framed to (undistorted).
-    let screen = (CELL, CELL);
-    let cell_rect = SlotRect {
-        x: 0.0,
-        y: 0.0,
-        w: CELL as f32,
-        h: CELL as f32,
-    };
-
-    // --- Build all icon geometry CPU-side, grouped by render kind. ---
-    // Cube/sprite icons (block atlas, model3d pipe): one shared vbuf/ibuf with GLOBAL
-    // indices (push_block_item_cube/push_billboard_quad base each quad at verts.len()), so
-    // every icon draws with base_vertex 0 and its own index sub-range. Each also gets
-    // its own MVP slot (Pass A holds them all live at once).
-    let mut cube_verts: Vec<Vertex> = Vec::new();
-    let mut cube_indices: Vec<u32> = Vec::new();
-    let mut cube_icons: Vec<CubeIcon> = Vec::new();
-    // Packed 256-aligned mat4 slots.
-    let mut cube_mvps: Vec<u8> = Vec::new();
-    // Model icons (model atlas, model_icon pipe): one shared vbuf/ibuf, MVP baked in.
-    let mut model_verts: Vec<ItemVertex> = Vec::new();
-    let mut model_indices: Vec<u32> = Vec::new();
-    let mut model_icons: Vec<ModelIcon> = Vec::new();
-
-    for &item in ItemType::all() {
-        // Air never appears in a slot; skip its cell entirely (left transparent).
-        if item == ItemType::Air {
-            continue;
-        }
-        let i = item.id() as u32;
-        let (col, row) = (i % COLS, i / COLS);
-        let di = count + i;
-        let (dcol, drow) = (di % COLS, di / COLS);
-        match item.render_kind() {
-            ItemRenderKind::BlockCube(block) => {
-                let index_start = cube_indices.len() as u32;
-                push_block_item_cube(
-                    &mut cube_verts,
-                    &mut cube_indices,
-                    block,
-                    Vec3::splat(-0.5),
-                    1.0,
-                );
-                let mvp_offset = cube_mvps.len() as u32;
-                let mvp = iso_icon_mvp(screen, cell_rect);
-                cube_mvps.extend_from_slice(mvp_slot_bytes(&mvp).as_slice());
-                cube_icons.push(CubeIcon {
-                    col,
-                    row,
-                    index_start,
-                    index_count: cube_indices.len() as u32 - index_start,
-                    mvp_offset,
-                });
-                // Dyed twin: same geometry re-pushed with the dyed flag, so
-                // model3d samples the dye-base tiles into the twin cell.
-                let dyed_start = cube_indices.len() as u32;
-                let vert_start = cube_verts.len();
-                push_block_item_cube(
-                    &mut cube_verts,
-                    &mut cube_indices,
-                    block,
-                    Vec3::splat(-0.5),
-                    1.0,
-                );
-                for v in cube_verts[vert_start..].iter_mut() {
-                    v.packed2 |= petramond_mesh::DYED_FLAG2;
-                }
-                cube_icons.push(CubeIcon {
-                    col: dcol,
-                    row: drow,
-                    index_start: dyed_start,
-                    index_count: cube_indices.len() as u32 - dyed_start,
-                    mvp_offset,
-                });
-            }
-            ItemRenderKind::Sprite(tile) => {
-                let index_start = cube_indices.len() as u32;
-                push_billboard_quad(&mut cube_verts, &mut cube_indices, tile, Vec3::ZERO, 1.0);
-                let mvp_offset = cube_mvps.len() as u32;
-                let mvp = flat_icon_mvp(screen, cell_rect);
-                cube_mvps.extend_from_slice(mvp_slot_bytes(&mvp).as_slice());
-                cube_icons.push(CubeIcon {
-                    col,
-                    row,
-                    index_start,
-                    index_count: cube_indices.len() as u32 - index_start,
-                    mvp_offset,
-                });
-                // Dyed twin (see the BlockCube arm).
-                let dyed_start = cube_indices.len() as u32;
-                let vert_start = cube_verts.len();
-                push_billboard_quad(&mut cube_verts, &mut cube_indices, tile, Vec3::ZERO, 1.0);
-                for v in cube_verts[vert_start..].iter_mut() {
-                    v.packed2 |= petramond_mesh::DYED_FLAG2;
-                }
-                cube_icons.push(CubeIcon {
-                    col: dcol,
-                    row: drow,
-                    index_start: dyed_start,
-                    index_count: cube_indices.len() as u32 - dyed_start,
-                    mvp_offset,
-                });
-            }
-            ItemRenderKind::Model(kind) => {
-                let index_start = model_indices.len() as u32;
-                let mvp = model_icon_mvp(screen, cell_rect, kind);
-                build_block_model_icon(kind, mvp, &mut model_verts, &mut model_indices);
-                let index_count = model_indices.len() as u32 - index_start;
-                model_icons.push(ModelIcon {
-                    col,
-                    row,
-                    index_start,
-                    index_count,
-                });
-                // Dyed twin = plain copy (no dye-base half in the model
-                // atlas); the UI's tint multiply still applies.
-                model_icons.push(ModelIcon {
-                    col: dcol,
-                    row: drow,
-                    index_start,
-                    index_count,
-                });
-            }
-        }
-    }
-
-    // --- Upload the bake geometry + the dedicated Pass-A MVP buffer/bind. ---
-    let cube_vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("icon bake cube vbuf"),
-        contents: cast_or_empty(&cube_verts),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let cube_ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("icon bake cube ibuf"),
-        contents: cast_or_empty(&cube_indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-    // One 256-aligned MVP slot per cube/sprite icon, all live simultaneously through
-    // the single submit (so Pass A can't reuse one slot across draws). Built against
-    // `model3d_mvp_bgl` (binding 0 = dynamic MVP, binding 1 = the shared uv_rects).
-    // Always at least one 256-byte slot so the 64-byte mvp binding is valid even if
-    // there were no cube/sprite icons at all (then the bind is simply never drawn).
-    if cube_mvps.is_empty() {
-        cube_mvps.resize(MVP_SLOT_SIZE as usize, 0);
-    }
-    let mvp_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("icon bake mvp"),
-        contents: &cube_mvps,
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let mvp_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("icon bake mvp bg"),
-        layout: model3d_mvp_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                // A 64-byte mat4 window; the per-draw 256-aligned offset selects the slot.
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &mvp_buf,
-                    offset: 0,
-                    size: std::num::NonZeroU64::new(64),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uv_rects_buf.as_entire_binding(),
-            },
-            // The frame Uniforms (model3d reads only the sky-scale lane,
-            // fog_color.w). At init its value is the identity 1.0, so baked
-            // icons are full-bright regardless of any later in-game scale.
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: uniform_buf.as_entire_binding(),
-            },
-        ],
-    });
-
-    let model_vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("icon bake model vbuf"),
-        contents: cast_or_empty(&model_verts),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let model_ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("icon bake model ibuf"),
-        contents: cast_or_empty(&model_indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
-    // --- Record + submit the two bake passes. ---
+    let geometry = IconGeometry::build(count);
+    let buffers = geometry.upload(device, model3d_mvp_bgl, uv_rects_buf, uniform_buf);
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("icon atlas bake"),
     });
@@ -426,14 +173,14 @@ pub(super) fn bake(
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        if !cube_icons.is_empty() {
+        if !geometry.cube_icons.is_empty() {
             pass.set_pipeline(model3d_pipe);
             pass.set_bind_group(1, block_atlas_bind, &[]);
-            pass.set_vertex_buffer(0, cube_vbuf.slice(..));
-            pass.set_index_buffer(cube_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            for icon in &cube_icons {
+            pass.set_vertex_buffer(0, buffers.cube_vbuf.slice(..));
+            pass.set_index_buffer(buffers.cube_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            for icon in &geometry.cube_icons {
                 set_cell(&mut pass, icon.col, icon.row);
-                pass.set_bind_group(0, &mvp_bind, &[icon.mvp_offset]);
+                pass.set_bind_group(0, &buffers.mvp_bind, &[icon.mvp_offset]);
                 pass.draw_indexed(
                     icon.index_start..icon.index_start + icon.index_count,
                     0,
@@ -460,19 +207,19 @@ pub(super) fn bake(
                 view: &depth_view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
+                    store: wgpu::StoreOp::Discard,
                 }),
                 stencil_ops: None,
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        if !model_icons.is_empty() {
+        if !geometry.model_icons.is_empty() {
             pass.set_pipeline(model_icon_pipe);
             pass.set_bind_group(0, model_atlas_bind, &[]);
-            pass.set_vertex_buffer(0, model_vbuf.slice(..));
-            pass.set_index_buffer(model_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            for icon in &model_icons {
+            pass.set_vertex_buffer(0, buffers.model_vbuf.slice(..));
+            pass.set_index_buffer(buffers.model_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            for icon in &geometry.model_icons {
                 set_cell(&mut pass, icon.col, icon.row);
                 pass.draw_indexed(
                     icon.index_start..icon.index_start + icon.index_count,
@@ -487,14 +234,309 @@ pub(super) fn bake(
     // Debug aid: PETRAMOND_DUMP_ICON_ATLAS=<path.png> writes the atlas exactly
     // as baked, for checking icon fidelity without clicking through the game.
     if let Ok(path) = std::env::var("PETRAMOND_DUMP_ICON_ATLAS") {
-        dump_atlas(device, queue, &texture, aw, ah, format, &path);
+        dump_atlas(device, queue, &texture, size.0, size.1, format, &path);
     }
 
     IconAtlas {
         bind,
-        width: aw as f32,
-        height: ah as f32,
+        width: size.0 as f32,
+        height: size.1 as f32,
         item_cells: count,
+    }
+}
+
+/// The atlas colour texture, in the surface format so sampling and store
+/// cancel like the gui atlas (no double gamma). Readable back only when the
+/// debug dump asks for it.
+fn create_atlas_texture(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    (width, height): (u32, u32),
+) -> wgpu::Texture {
+    let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+    if std::env::var_os("PETRAMOND_DUMP_ICON_ATLAS").is_some() {
+        usage |= wgpu::TextureUsages::COPY_SRC;
+    }
+    crate::gpu_mem::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("icon atlas"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        },
+    )
+}
+
+/// The UI node's bind over the atlas: a Nearest sampler, so a quad never
+/// blends a neighbour cell in.
+fn create_atlas_bind(
+    device: &wgpu::Device,
+    atlas_bgl: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("icon atlas sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("icon atlas bg"),
+        layout: atlas_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    })
+}
+
+fn create_atlas_depth(device: &wgpu::Device, (width, height): (u32, u32)) -> wgpu::TextureView {
+    crate::gpu_mem::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("icon atlas depth"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        },
+    )
+    .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// `(col, row)` of atlas cell `index`.
+fn cell_of(index: u32) -> (u32, u32) {
+    (index % COLS, index / COLS)
+}
+
+/// Every icon's geometry, built CPU-side and grouped by render kind.
+#[derive(Default)]
+struct IconGeometry {
+    /// Cube/sprite icons (block atlas, model3d pipe): one shared vbuf/ibuf with
+    /// GLOBAL indices (`push_block_item_cube`/`push_billboard_quad` base each quad
+    /// at `verts.len()`), so every icon draws with base_vertex 0 and its own index
+    /// sub-range. Each also gets its own MVP slot (Pass A holds them all live at
+    /// once).
+    cube_verts: Vec<Vertex>,
+    cube_indices: Vec<u32>,
+    cube_icons: Vec<CubeIcon>,
+    /// Packed 256-aligned mat4 slots.
+    cube_mvps: Vec<u8>,
+    /// Model icons (model atlas, model_icon pipe): one shared vbuf/ibuf, MVP
+    /// baked into the vertices.
+    model_verts: Vec<ItemVertex>,
+    model_indices: Vec<u32>,
+    model_icons: Vec<ModelIcon>,
+}
+
+/// The bake's GPU copies of an [`IconGeometry`], plus the dedicated Pass-A
+/// MVP bind.
+struct IconBuffers {
+    cube_vbuf: wgpu::Buffer,
+    cube_ibuf: wgpu::Buffer,
+    mvp_bind: wgpu::BindGroup,
+    model_vbuf: wgpu::Buffer,
+    model_ibuf: wgpu::Buffer,
+}
+
+impl IconGeometry {
+    /// Every non-`Air` item's icon and its dyed twin (at `count + id`).
+    fn build(count: u32) -> Self {
+        // The square 64×64 cell every icon's MVP is auto-framed to (undistorted).
+        let screen = (CELL, CELL);
+        let cell_rect = SlotRect {
+            x: 0.0,
+            y: 0.0,
+            w: CELL as f32,
+            h: CELL as f32,
+        };
+        let mut geometry = Self::default();
+        for &item in ItemType::all() {
+            // Air never appears in a slot; skip its cell entirely (left transparent).
+            if item == ItemType::Air {
+                continue;
+            }
+            let i = item.id() as u32;
+            let (cell, twin) = (cell_of(i), cell_of(count + i));
+            match item.render_kind() {
+                ItemRenderKind::BlockCube(block) => {
+                    geometry.push_cube_icon(cell, twin, iso_icon_mvp(screen, cell_rect), |v, ix| {
+                        push_block_item_cube(v, ix, block, Vec3::splat(-0.5), 1.0)
+                    })
+                }
+                ItemRenderKind::Sprite(tile) => {
+                    geometry.push_cube_icon(cell, twin, flat_icon_mvp(screen, cell_rect), |v, ix| {
+                        push_billboard_quad(v, ix, tile, Vec3::ZERO, 1.0)
+                    })
+                }
+                ItemRenderKind::Model(kind) => {
+                    let mvp = model_icon_mvp(screen, cell_rect, kind);
+                    geometry.push_model_icon(cell, twin, |v, ix| {
+                        build_block_model_icon(kind, mvp, v, ix)
+                    })
+                }
+            }
+        }
+        geometry
+    }
+
+    /// A cube or sprite icon in `cell` and its dyed twin in `twin`: the same
+    /// geometry pushed twice, the second copy flagged dyed so model3d samples
+    /// the dye-base tiles. Both draw through one MVP slot.
+    fn push_cube_icon(
+        &mut self,
+        cell: (u32, u32),
+        twin: (u32, u32),
+        mvp: glam::Mat4,
+        push: impl Fn(&mut Vec<Vertex>, &mut Vec<u32>),
+    ) {
+        let mvp_offset = self.cube_mvps.len() as u32;
+        self.cube_mvps.extend_from_slice(&mvp_slot_bytes(&mvp));
+        for ((col, row), dyed) in [(cell, false), (twin, true)] {
+            let index_start = self.cube_indices.len() as u32;
+            let vert_start = self.cube_verts.len();
+            push(&mut self.cube_verts, &mut self.cube_indices);
+            if dyed {
+                for v in &mut self.cube_verts[vert_start..] {
+                    v.packed2 |= petramond_mesh::DYED_FLAG2;
+                }
+            }
+            self.cube_icons.push(CubeIcon {
+                col,
+                row,
+                index_start,
+                index_count: self.cube_indices.len() as u32 - index_start,
+                mvp_offset,
+            });
+        }
+    }
+
+    /// A bbmodel icon in `cell` and its twin in `twin`: a plain copy of the
+    /// same index range (no dye-base half in the model atlas; the UI's tint
+    /// multiply still applies).
+    fn push_model_icon(
+        &mut self,
+        cell: (u32, u32),
+        twin: (u32, u32),
+        push: impl FnOnce(&mut Vec<ItemVertex>, &mut Vec<u32>),
+    ) {
+        let index_start = self.model_indices.len() as u32;
+        push(&mut self.model_verts, &mut self.model_indices);
+        let index_count = self.model_indices.len() as u32 - index_start;
+        for (col, row) in [cell, twin] {
+            self.model_icons.push(ModelIcon {
+                col,
+                row,
+                index_start,
+                index_count,
+            });
+        }
+    }
+
+    /// Upload the geometry and build the dedicated Pass-A MVP buffer + bind.
+    fn upload(
+        &self,
+        device: &wgpu::Device,
+        model3d_mvp_bgl: &wgpu::BindGroupLayout,
+        uv_rects_buf: &wgpu::Buffer,
+        uniform_buf: &wgpu::Buffer,
+    ) -> IconBuffers {
+        let buffer = |label: &str, contents: &[u8], usage: wgpu::BufferUsages| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents,
+                usage,
+            })
+        };
+        // One 256-aligned MVP slot per cube/sprite icon, all live simultaneously
+        // through the single submit (so Pass A can't reuse one slot across draws).
+        // Always at least one slot so the 64-byte mvp binding is valid even with
+        // no cube/sprite icons at all (the bind is then simply never drawn).
+        let empty_slot = [0u8; MVP_SLOT_SIZE as usize];
+        let mvps = if self.cube_mvps.is_empty() {
+            &empty_slot[..]
+        } else {
+            &self.cube_mvps[..]
+        };
+        let mvp_buf = buffer("icon bake mvp", mvps, wgpu::BufferUsages::UNIFORM);
+        // Built against `model3d_mvp_bgl` (binding 0 = dynamic MVP, binding 1 =
+        // the shared uv_rects, binding 2 = the frame uniforms).
+        let mvp_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("icon bake mvp bg"),
+            layout: model3d_mvp_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    // A 64-byte mat4 window; the per-draw 256-aligned offset
+                    // selects the slot.
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &mvp_buf,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uv_rects_buf.as_entire_binding(),
+                },
+                // The frame Uniforms (model3d reads only the sky-scale lane,
+                // fog_color.w). At init its value is the identity 1.0, so baked
+                // icons are full-bright regardless of any later in-game scale.
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+        IconBuffers {
+            cube_vbuf: buffer(
+                "icon bake cube vbuf",
+                cast_or_empty(&self.cube_verts),
+                wgpu::BufferUsages::VERTEX,
+            ),
+            cube_ibuf: buffer(
+                "icon bake cube ibuf",
+                cast_or_empty(&self.cube_indices),
+                wgpu::BufferUsages::INDEX,
+            ),
+            mvp_bind,
+            model_vbuf: buffer(
+                "icon bake model vbuf",
+                cast_or_empty(&self.model_verts),
+                wgpu::BufferUsages::VERTEX,
+            ),
+            model_ibuf: buffer(
+                "icon bake model ibuf",
+                cast_or_empty(&self.model_indices),
+                wgpu::BufferUsages::INDEX,
+            ),
+        }
     }
 }
 
@@ -579,5 +621,46 @@ fn cast_or_empty<T: bytemuck::Pod>(v: &[T]) -> &[u8] {
         &[0u8; 4]
     } else {
         bytemuck::cast_slice(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every slot-visible item bakes into its own cell and a dyed twin at
+    /// `count + id`, no two icons share a cell, and a cube twin reuses its
+    /// original's MVP slot and geometry size.
+    #[test]
+    fn every_item_gets_its_cell_and_a_dyed_twin() {
+        let count = ItemType::all().len() as u32;
+        let geometry = IconGeometry::build(count);
+        let cells: Vec<(u32, u32)> = geometry
+            .cube_icons
+            .iter()
+            .map(|icon| (icon.col, icon.row))
+            .chain(geometry.model_icons.iter().map(|icon| (icon.col, icon.row)))
+            .collect();
+        let items: Vec<ItemType> = ItemType::all()
+            .iter()
+            .copied()
+            .filter(|&item| item != ItemType::Air)
+            .collect();
+        assert_eq!(cells.len(), 2 * items.len());
+        let unique: std::collections::HashSet<_> = cells.iter().copied().collect();
+        assert_eq!(unique.len(), cells.len(), "two icons share a cell");
+        for item in items {
+            let id = item.id() as u32;
+            assert!(unique.contains(&cell_of(id)), "item {id} has no icon");
+            assert!(unique.contains(&cell_of(count + id)), "item {id} has no dyed twin");
+        }
+        for pair in geometry.cube_icons.chunks_exact(2) {
+            assert_eq!(pair[0].mvp_offset, pair[1].mvp_offset);
+            assert_eq!(pair[0].index_count, pair[1].index_count);
+        }
+        assert_eq!(
+            geometry.cube_mvps.len(),
+            geometry.cube_icons.len() / 2 * MVP_SLOT_SIZE as usize
+        );
     }
 }

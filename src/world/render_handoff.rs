@@ -92,6 +92,17 @@ impl TerrainRenderHandoff<'_> {
         waiting
     }
 
+    /// A new renderer holds no GPU terrain (its device was lost and it was
+    /// rebuilt): queue every meshed column for upload again. Columns whose
+    /// CPU geometry was released recover through
+    /// [`needs_repack_remeshes`](Self::needs_repack_remeshes).
+    pub fn request_full_reupload(&mut self) {
+        let terrain = &mut self.world.terrain;
+        terrain
+            .mesh_upload_dirty_columns
+            .extend(terrain.mesh_columns.iter().copied());
+    }
+
     pub fn mark_column_uploaded(&mut self, pos: ChunkPos) {
         if let Some(&bits) = self.world.terrain.mesh_column_cys.get(&pos) {
             World::for_each_mesh_cy(bits, |cy| {
@@ -175,5 +186,36 @@ mod tests {
             !world.terrain_render_handoff().needs_repack_remeshes(column),
             "a fresh mesh clears the repack gate"
         );
+    }
+
+    /// A renderer rebuilt after device loss starts empty: every meshed
+    /// column must come back as upload work, uploaded or not.
+    #[test]
+    fn a_full_reupload_requeues_every_meshed_column() {
+        let mut world = World::new(0, 0);
+        let pos = SectionPos::new(0, 0, 0);
+        let column = pos.chunk_pos();
+        let mut section = Section::new(pos.cx, pos.cy, pos.cz);
+        section.blocks_mut().fill(Block::Stone.id());
+        section.recompute_opaque_count();
+        world.insert_section_for_test(pos, section);
+        world.mesh_section_blocking_for_test(pos);
+        world.terrain_render_handoff().mark_column_uploaded(column);
+        assert!(!world.terrain.mesh_upload_dirty_columns.contains(&column));
+
+        world.terrain_render_handoff().request_full_reupload();
+        assert!(world.terrain.mesh_upload_dirty_columns.contains(&column));
+        let mut dirty = Vec::new();
+        world
+            .terrain_render_handoff()
+            .for_dirty_columns(&mut |c, _| dirty.push(c));
+        assert_eq!(dirty, [column]);
+    }
+
+    #[test]
+    fn a_full_reupload_of_an_empty_world_queues_nothing() {
+        let mut world = World::new(0, 0);
+        world.terrain_render_handoff().request_full_reupload();
+        assert!(world.terrain.mesh_upload_dirty_columns.is_empty());
     }
 }

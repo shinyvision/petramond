@@ -7,7 +7,7 @@ use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
 use crate::keymap::{key_code, mouse_button, text_key_from_named};
 use petramond_input::controls::Modifiers;
 use petramond_render::camera::Camera;
-use petramond_render::{new_renderer_from_target, Renderer};
+use petramond_render::{new_renderer_from_target, RenderFailure, Renderer};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -106,6 +106,33 @@ impl NativeHost {
             modifiers: Modifiers::default(),
         }
     }
+
+    /// React to a failure the renderer reported. A lost device gets a new
+    /// renderer — the app re-applies its graphics settings and re-queues the
+    /// world's terrain for upload; running out of GPU memory, or failing to
+    /// build the replacement, ends the game with the error.
+    fn recover_renderer(&mut self, event_loop: &ActiveEventLoop, failure: RenderFailure) {
+        let RenderFailure::DeviceLost(reason) = &failure else {
+            fatal_render_error(event_loop, &failure);
+            return;
+        };
+        log::warn!("GPU device lost ({reason}); rebuilding the renderer");
+        let (Some(window), Some(app)) = (self.window.clone(), self.app.as_mut()) else {
+            return;
+        };
+        // The dead renderer's surface must release the window before a new
+        // surface is created on it.
+        self.renderer = None;
+        let size = window.inner_size();
+        match pollster::block_on(new_renderer_from_target(window, size.width, size.height)) {
+            Ok(mut renderer) => {
+                app.renderer_recreated(&mut renderer);
+                self.renderer = Some(renderer);
+                self.next_update = Instant::now();
+            }
+            Err(e) => fatal_render_error(event_loop, &e),
+        }
+    }
 }
 
 fn modifiers_after_key_event(
@@ -173,9 +200,17 @@ impl ApplicationHandler for NativeHost {
             .with_inner_size(PhysicalSize::new(1280, 720));
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         let size = window.inner_size();
-        let mut renderer = pollster::block_on(async {
-            new_renderer_from_target(window.clone(), size.width, size.height).await
-        });
+        let mut renderer = match pollster::block_on(new_renderer_from_target(
+            window.clone(),
+            size.width,
+            size.height,
+        )) {
+            Ok(renderer) => renderer,
+            Err(e) => {
+                fatal_render_error(event_loop, &e);
+                return;
+            }
+        };
         let cam = Camera::new(
             petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
             size.width as f32 / size.height.max(1) as f32,
@@ -332,11 +367,15 @@ impl ApplicationHandler for NativeHost {
                 if !app.render(renderer) {
                     self.next_update = Instant::now();
                 }
+                let failure = renderer.failure();
                 if self.perf_log {
                     let dt = render_start.elapsed();
                     self.perf_render_total += dt;
                     self.perf_render_max = self.perf_render_max.max(dt);
                     self.perf_renders += 1;
+                }
+                if let Some(failure) = failure {
+                    self.recover_renderer(event_loop, failure);
                 }
             }
             _ => {}
@@ -447,6 +486,13 @@ impl ApplicationHandler for NativeHost {
         self.renderer = None;
         self.window = None;
     }
+}
+
+/// Report a renderer failure the game cannot continue past, and quit.
+fn fatal_render_error(event_loop: &ActiveEventLoop, error: &dyn std::error::Error) {
+    log::error!("renderer: {error}");
+    eprintln!("Petramond cannot continue: {error}");
+    event_loop.exit();
 }
 
 /// A scroll event as a count of wheel notches (`1.0` == one detent). winit

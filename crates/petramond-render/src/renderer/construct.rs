@@ -1,30 +1,37 @@
 //! Renderer construction + surface lifecycle.
 //!
-//! Owns wgpu instance/adapter/device/surface bring-up, per-species + model
-//! atlas resources, the icon-atlas bake, the big `Renderer { .. }` initializer,
-//! and `screen_size` / `resize`. Split out of the renderer god-file; behavior is
-//! byte-for-byte identical. The `new_renderer_from_target` / `instance_descriptor`
-//! external paths are preserved via re-exports in the parent module.
+//! Owns wgpu instance/adapter/device/surface bring-up — every failure a
+//! typed [`RenderInitError`], never a panic — the shared frame resources
+//! (uniforms, atlases, the icon-atlas bake), and the assembly of the
+//! `Renderer` from its passes, each of which builds itself from the pipeline
+//! resources it owns (`construct/passes.rs`, with the per-species actor
+//! resources in `construct/actors.rs` and the HUD layers in
+//! `construct/hud.rs`).
 
 use super::*;
 
 mod actors;
 mod hud;
-use actors::{build_mob_gpu, build_player_gpu};
-use hud::build_hud_layers;
+mod passes;
+use passes::{HandParts, SkyParts};
 
+/// A renderer presenting to `target` at `width` × `height`, or why the
+/// platform cannot give it one: no surface, no adapter, no device, or an
+/// adapter that cannot present to the surface.
 pub async fn new_renderer_from_target(
     target: impl Into<wgpu::SurfaceTarget<'static>>,
     width: u32,
     height: u32,
-) -> Renderer {
+) -> Result<Renderer, RenderInitError> {
     let instance = wgpu::Instance::new(&instance_descriptor());
-    let surface = instance.create_surface(target).expect("create surface");
-    let adapter = request_adapter(&instance, Some(&surface)).await;
-    let (device, queue) = request_device(&adapter).await;
+    let surface = instance
+        .create_surface(target)
+        .map_err(RenderInitError::CreateSurface)?;
+    let adapter = request_adapter(&instance, Some(&surface)).await?;
+    let (device, queue) = request_device(&adapter).await?;
     let config = surface
         .get_default_config(&adapter, width, height)
-        .expect("surface config");
+        .ok_or(RenderInitError::SurfaceUnsupported)?;
     surface.configure(&device, &config);
     let samples = max_scene_samples(&adapter, config.format);
     new_renderer_inner(Some(surface), device, queue, config, samples)
@@ -51,12 +58,13 @@ pub(crate) fn instance_descriptor() -> wgpu::InstanceDescriptor {
 }
 
 /// Adapter pick shared by every renderer bring-up: a high-performance adapter
-/// first, then the forced fallback (software) one rather than panicking.
-/// `surface` is `None` for a surfaceless renderer, which constrains nothing.
+/// first, then the forced fallback (software) one, and an error only when
+/// neither exists. `surface` is `None` for a surfaceless renderer, which
+/// constrains nothing.
 pub(super) async fn request_adapter(
     instance: &wgpu::Instance,
     surface: Option<&wgpu::Surface<'static>>,
-) -> wgpu::Adapter {
+) -> Result<wgpu::Adapter, RenderInitError> {
     match instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -65,9 +73,9 @@ pub(super) async fn request_adapter(
         })
         .await
     {
-        Ok(a) => a,
-        Err(_) => {
-            eprintln!("wgpu: primary adapter unavailable; trying fallback");
+        Ok(adapter) => Ok(adapter),
+        Err(e) => {
+            log::warn!("wgpu: primary adapter unavailable ({e}); trying the fallback adapter");
             instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::LowPower,
@@ -75,7 +83,7 @@ pub(super) async fn request_adapter(
                     force_fallback_adapter: true,
                 })
                 .await
-                .expect("no compatible wgpu adapter available")
+                .map_err(RenderInitError::NoAdapter)
         }
     }
 }
@@ -85,7 +93,9 @@ pub(super) async fn request_adapter(
 /// 256-layer limit — request what the tile array actually needs, capped to what
 /// the adapter offers, so an adapter that can't fit it fails `create_texture`
 /// with a clear count instead of silently truncating.
-pub(super) async fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
+pub(super) async fn request_device(
+    adapter: &wgpu::Adapter,
+) -> Result<(wgpu::Device, wgpu::Queue), RenderInitError> {
     let mut required_limits = wgpu::Limits::default().using_alignment(adapter.limits());
     required_limits.max_texture_array_layers = (2 * petramond_world::tile::Tile::count() as u32)
         .max(required_limits.max_texture_array_layers)
@@ -94,7 +104,7 @@ pub(super) async fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wg
     // remain opt-in for the GPU-timing instrument.
     let mut required_features =
         adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
-    if super::super::gpu_timer::GpuTimer::wanted() {
+    if gpu_timer::GpuTimer::wanted() {
         required_features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
     }
     adapter
@@ -107,10 +117,10 @@ pub(super) async fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wg
             trace: wgpu::Trace::Off,
         })
         .await
-        .expect("device")
+        .map_err(RenderInitError::RequestDevice)
 }
 
-/// Build every pipeline/atlas/model resource and assemble the `Renderer`.
+/// Build every pipeline, atlas and pass and assemble the `Renderer`.
 /// `config` carries the frame geometry + colour format; `surface` is `None`
 /// for a surfaceless renderer, which changes nothing else.
 pub(super) fn new_renderer_inner(
@@ -119,7 +129,11 @@ pub(super) fn new_renderer_inner(
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     max_samples: u32,
-) -> Renderer {
+) -> Result<Renderer, RenderInitError> {
+    // First, so the rest of the bring-up already reports through it.
+    let health = DeviceHealth::watch(&device);
+    let graph =
+        super::passes::frame_graph().map_err(|e| RenderInitError::PassGraph(e.to_string()))?;
     let (width, height) = (config.width, config.height);
     let anti_aliasing = super::post_process::supported_mode(
         petramond::save::client::AntiAliasing::default(),
@@ -130,7 +144,7 @@ pub(super) fn new_renderer_inner(
         max_samples,
     );
     let sample_axis = anti_aliasing.resolution_multiplier();
-    let (scene_w, scene_h) = (width * sample_axis, height * sample_axis);
+    let scene = (width * sample_axis, height * sample_axis);
     let format = config.format;
 
     let (_atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
@@ -139,29 +153,11 @@ pub(super) fn new_renderer_inner(
     // Overridden by `set_render_distance` at host wiring; the default keeps the
     // icon-atlas bake (which reads this buffer) fog-free at any distance.
     let default_fog = crate::uniforms::fog_range(petramond::world::RENDER_DIST);
-    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("uniforms"),
-        contents: bytemuck::cast_slice(&[Uniforms {
-            view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            cam_pos: [0.0; 4],
-            fog: [default_fog.0, default_fog.1, 0.0, 0.0],
-            fog_color: [0.60, 0.82, 1.00, 1.0],
-            inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            render_origin: [0; 4],
-            atlas_layout: crate::atlas::atlas_layout_uniform(),
-            // White sky colour at init = identity; the icon-atlas bake reads
-            // this buffer, so baked UI icons stay untinted.
-            sky_color: [1.0, 1.0, 1.0, 0.0],
-            // Late-morning sun at full daylight until the sim writes petramond:time.
-            sun_dir: super::frame_state::sun_uniform(None),
-            volume_tint: [1.0, 1.0, 1.0, 0.0],
-        }]),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
+    let uniform_buf = create_uniform_buffer(&device, default_fog);
     let shader_params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("shader params"),
-        contents: bytemuck::cast_slice(&[super::super::uniforms::ShaderParams {
-            values: [[0.0; 4]; super::super::uniforms::SHADER_PARAM_SLOTS],
+        contents: bytemuck::cast_slice(&[crate::uniforms::ShaderParams {
+            values: [[0.0; 4]; crate::uniforms::SHADER_PARAM_SLOTS],
         }]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
@@ -177,125 +173,7 @@ pub(super) fn new_renderer_inner(
         &atlas_array_view,
         &atlas_array_sampler,
     );
-    let depth = crate::resources::create_depth_sampled(
-        &device,
-        scene_w,
-        scene_h,
-        anti_aliasing.sample_count(),
-    );
-    let multisample_color = super::post_process::create_multisample_color(
-        &device,
-        scene_w,
-        scene_h,
-        format,
-        anti_aliasing.sample_count(),
-    );
-    let scene_color = create_scene_color(&device, scene_w, scene_h, format);
-    let post_process_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("post-process controls"),
-        contents: bytemuck::cast_slice(&[0.0_f32, 0.0, sample_axis as f32, 1.0]),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
-    let grade_bind = super::super::pipeline::create_grade_bind(
-        &device,
-        &pipelines.grade_bgl,
-        &scene_color,
-        &post_process_buf,
-    );
-    // Half-res environment targets: env passes march at half the scene dims
-    // against a downsampled depth; the composite lifts the result back (see
-    // pipeline::EnvScaler).
-    let (env_w, env_h) = (scene_w.div_ceil(2), scene_h.div_ceil(2));
-    let env_color = create_scene_color(&device, env_w, env_h, format);
-    let env_depth = super::super::resources::create_depth(&device, env_w, env_h);
-    let env_down_bind = super::super::pipeline::create_env_down_bind(
-        &device,
-        &pipelines
-            .env_scaler
-            .get(anti_aliasing.sample_count())
-            .down_bgl,
-        &depth,
-    );
-    let env_comp_bind = super::super::pipeline::create_env_comp_bind(
-        &device,
-        &pipelines
-            .env_scaler
-            .get(anti_aliasing.sample_count())
-            .comp_bgl,
-        &env_color,
-        &pipelines.env_scaler.get(anti_aliasing.sample_count()).samp,
-        &env_depth,
-        &depth,
-    );
-    let env_passes = pipelines
-        .env_passes
-        .into_iter()
-        .map(|res| {
-            let bind = super::super::pipeline::create_environment_bind(
-                &device,
-                &res.bgl,
-                &uniform_buf,
-                &res.params_buf,
-                &env_depth,
-            );
-            super::EnvPass {
-                res,
-                bind,
-                dormant: false,
-            }
-        })
-        .collect();
-
-    // Item entities + animated blocks draw through the EXISTING opaque pipeline; clone its
-    // (Arc-backed) handle so each `DynamicDraw` issues a byte-identical draw while
-    // Terrain `opaque_pipe` is quantized; dynamic bakes need absolute Vertex.
-    let item_entity_pipe = pipelines.dynamic_opaque_pipe.clone();
-    let block_entity_pipe = pipelines.dynamic_opaque_pipe.clone();
-
-    let mob_gpu = build_mob_gpu(&device, &queue, &pipelines.atlas_bgl);
-    let player_gpu = build_player_gpu(&device, &queue, &pipelines.atlas_bgl);
-    let skin = SkinFrame::new(
-        &device,
-        pipelines.skinned_pipe.clone(),
-        pipelines.bone_palette_bgl.clone(),
-    );
-    let player_item_draw = DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player item");
-    let player_model_item_draw =
-        DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player model item");
-    let player_block_item_draw = DynamicDraw::new(
-        &device,
-        pipelines.dynamic_opaque_pipe.clone(),
-        "player block item",
-    );
-
-    // bbmodel-block ("model") render resources: the combined model atlas (all kinds'
-    // textures packed into one sheet — see `block_model::atlas`) uploaded as its own GPU
-    // texture, bound at group(1) over the same atlas layout the mob pass uses, and the
-    // mob pipeline reused for the model pass (the chunk's `ModelVertex` stream shares the
-    // mob `ItemVertex` layout). The mesher bakes geometry into each chunk's model stream;
-    // this pass just draws it with full-block lighting already baked in.
-    let model_atlas = petramond_world::block_model::atlas();
-    let (matlas_rgba, matlas_w, matlas_h) = model_atlas.texture();
-    let (_model_atlas_texture, model_atlas_view, model_atlas_sampler) =
-        create_model_texture(&device, &queue, matlas_rgba, matlas_w, matlas_h);
-    let model_atlas_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("model atlas bg"),
-        layout: &pipelines.atlas_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&model_atlas_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&model_atlas_sampler),
-            },
-        ],
-    });
-    let model_pipe = pipelines.mob_pipe.clone();
-    let world_model_pipe = pipelines.world_model_pipe.clone();
-    let world_model_blend_pipe = pipelines.world_model_blend_pipe.clone();
-    let contact_pipe = pipelines.contact_pipe.clone();
+    let model_atlas_bind = create_model_atlas_bind(&device, &queue, &pipelines.atlas_bgl);
     // The bbmodel break crack draws the same model stream a second time; its own
     // group(2) holds the frame's crack masks and the BLOCK atlas (the destroy
     // tiles live there, not in the model atlas).
@@ -310,13 +188,12 @@ pub(super) fn new_renderer_inner(
     // not a plank cube), which comes from the pack's WASM — bake all installed
     // custom item shapes into the item cache NOW, before the icon atlas reads it.
     petramond::modding::client::bake_installed_custom_item_geometry();
-
     // Bake every item's inventory icon into the icon atlas ONCE, here at init: the
     // cube/sprite icons through the depthless `model3d_pipe` and the bbmodel-block
     // icons through the depth-tested `model_icon_pipe` (these two pipelines are used
-    // only by this bake now — see `icon_atlas`). The atlas color format MUST match
-    // the surface (sRGB) so sampling/store cancel like the gui atlas (no double
-    // gamma). The per-slot UI pass then draws a textured quad sampling this.
+    // only by this bake — see `icon_atlas`). The atlas color format MUST match the
+    // surface (sRGB) so sampling/store cancel like the gui atlas (no double gamma).
+    // The per-slot UI node then draws a textured quad sampling this.
     let icon_atlas = icon_atlas::bake(
         &device,
         &queue,
@@ -330,121 +207,49 @@ pub(super) fn new_renderer_inner(
         &pipelines.uv_rects_buf,
         &uniform_buf,
     );
-    // Reusable dynamic vbuf for the per-frame icon quads (6 UiVertex per filled
-    // slot), grown to fit.
-    let icon_quad_vbuf =
-        super::dynamic_draw::new_buffer(&device, wgpu::BufferUsages::VERTEX, "icon quad vbuf");
 
-    let hud_layers = build_hud_layers(&device, &queue, &pipelines.atlas_bgl);
-
-    let gpu_timer = super::super::gpu_timer::GpuTimer::new(&device, &queue);
-    let column_origins = super::super::resources::ColumnOrigins::new(&device);
-    let quad_index = super::super::resources::QuadIndexBuffer::new(&device, &queue);
-
-    // Every dynamic draw owns growing buffers; built here, before the
-    // renderer takes the device.
-    let item_entity_draw = DynamicDraw::new(&device, item_entity_pipe, "item entity");
-    let item_model_entity_draw = DynamicDraw::new(&device, model_pipe.clone(), "item model entity");
-    let item_sprite_entity_draw =
-        DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "item sprite entity");
-    let block_entity_draw = DynamicDraw::new(&device, block_entity_pipe, "block entity");
-    let break_draw = DynamicDraw::new(&device, pipelines.break_pipe, "break overlay");
-    let emitter_particle_draw = DynamicInstanceDraw::new(
+    let targets = SceneTargets::new(
         &device,
-        pipelines.emitter_particle_pipe,
-        "emitter particle",
-        &crate::particles::CUBE_INDEX_PATTERN,
+        format,
+        scene,
+        anti_aliasing,
+        max_samples,
+        pipelines.grade_pipe,
+        pipelines.grade_bgl,
     );
-    let particle_draw = DynamicInstanceDraw::new(
+    let sky = SkyPass::new(
         &device,
-        pipelines.particle_pipe,
-        "particle",
-        &crate::particles::CUBE_INDEX_PATTERN,
+        SkyParts {
+            pipe: pipelines.sky_pipe,
+            bind: pipelines.sky_bind,
+            texture_bind: pipelines.sky_texture_bind,
+            shader_param_keys: pipelines.sky_shader_param_keys,
+            light_param_key: pipelines.sky_light_param_key,
+            env_passes: pipelines.env_passes,
+            env_scaler: pipelines.env_scaler,
+        },
+        &uniform_buf,
+        &targets,
+        scene,
+        format,
+        default_fog,
     );
-    let entity_shadow_draw = DynamicVertexDraw::new(
+    let terrain = TerrainPass::new(
         &device,
-        pipelines.entity_shadow_pipe,
-        "entity shadow",
-        crate::entity_shadow::VERTS_PER_SHADOW,
-        &crate::entity_shadow::QUAD_INDEX_PATTERN,
+        &queue,
+        TerrainPipes {
+            opaque: pipelines.opaque_pipe,
+            translucent: pipelines.translucent_pipe,
+            transparent: pipelines.transparent_pipe,
+            transparent_two_sided: pipelines.transparent_two_sided_pipe,
+            world_model: pipelines.world_model_pipe,
+            world_model_blend: pipelines.world_model_blend_pipe,
+            contact: pipelines.contact_pipe,
+        },
     );
-
-    Renderer {
-        ghosts: Default::default(),
-        selection: Default::default(),
-        surface,
-        device,
-        queue,
-        config,
-        gpu_timer,
-        offscreen_target: None,
-        suboptimal_retried: false,
-        opaque_pipe: pipelines.opaque_pipe,
-        translucent_pipe: pipelines.translucent_pipe,
-        transparent_pipe: pipelines.transparent_pipe,
-        transparent_two_sided_pipe: pipelines.transparent_two_sided_pipe,
-        uniform_buf,
-        shader_params_buf,
-        uniform_bind: pipelines.uniform_bind,
-        atlas_bind: pipelines.atlas_bind,
-        atlas_array_bind: pipelines.atlas_array_bind,
-        model_pipe,
-        world_model_pipe,
-        world_model_blend_pipe,
-        contact_pipe,
-        model_break,
-        model_atlas_bind,
-        item_entity: ItemEntityPass {
-            block_draws: Vec::new(),
-            block_draws_visible: Vec::new(),
-            draw: item_entity_draw,
-            // Dropped bbmodel items ride the model pipeline (world-space
-            // ItemVertex, model atlas) in their own stream.
-            model_draw: item_model_entity_draw,
-            model_verts: Vec::new(),
-            model_indices: Vec::new(),
-            // Dropped SPRITE items extruded into pixel-perfect 3D slabs ride
-            // the same mob-layout pipeline over the 2D BLOCK atlas (their side
-            // walls sample single boundary texels) in their own stream.
-            sprite_draw: item_sprite_entity_draw,
-            sprite_verts: Vec::new(),
-            sprite_indices: Vec::new(),
-            sprite_scratch: Vec::new(),
-            instances: Vec::new(),
-            verts: Vec::new(),
-            indices: Vec::new(),
-            visible: Vec::new(),
-        },
-        actor: ActorPass {
-            mob_gpu,
-            skin,
-            player_gpu,
-            item_draw: player_item_draw,
-            model_item_draw: player_model_item_draw,
-            block_item_draw: player_block_item_draw,
-            player_view: None,
-            remote_players: Vec::new(),
-            bone_offsets: Vec::new(),
-            animator_params: Vec::new(),
-            animator_plays: Vec::new(),
-            animator_events: Vec::new(),
-            player_visible: Vec::new(),
-            body_animators: crate::player_model::BodyAnimators::shipped(),
-            item_verts: Vec::new(),
-            item_indices: Vec::new(),
-            sprite_verts: Vec::new(),
-            model_item_verts: Vec::new(),
-            model_item_indices: Vec::new(),
-            mobs: Vec::new(),
-        },
-        block_entity: BlockEntityPass {
-            draw: block_entity_draw,
-            instances: Vec::new(),
-            visible: Vec::new(),
-            baked: Vec::new(),
-            baked_origin: glam::IVec3::MIN,
-        },
-        hand: HandPass {
+    let hand = HandPass::new(
+        &device,
+        HandParts {
             model3d_pipe: pipelines.model3d_hand_pipe,
             model3d_mvp_buf: pipelines.model3d_mvp_buf,
             model3d_mvp_bind: pipelines.model3d_mvp_bind,
@@ -453,161 +258,136 @@ pub(super) fn new_renderer_inner(
             item3d_pipe: pipelines.item3d_pipe,
             item3d_mvp_bind: pipelines.item3d_mvp_bind,
             item3d_vbuf: pipelines.item3d_vbuf,
-            item3d_verts: Vec::new(),
-            item3d_vertex_count: 0,
-            held_is_model: false,
-            index_count: 0,
-            verts: Vec::new(),
-            indices: Vec::new(),
-            model_scratch_verts: Vec::new(),
-            model_scratch_indices: Vec::new(),
-            off_item3d_scratch: Vec::new(),
-            break_draw,
-            break_overlays: Vec::new(),
-            held_item: HeldItemView::default(),
-            held_ease: Default::default(),
-            visible: false,
-            shake: [0.0, 0.0],
-            screen_shake: true,
-            held_item_skylight: crate::lighting::FULL_SKYLIGHT,
-            held_item_blocklight: petramond_world::light::BlockLight6::DARK,
-            vertex_count: 0,
-            off_item: HeldItemView::default(),
-            off_item3d_start: 0,
-            off_item3d_count: 0,
-            off_is_model: false,
-            first_person: crate::first_person::FirstPersonHand::shipped(),
-            frames: None,
-            frame_dt: 0.0,
-            local_params: Vec::new(),
-            local_plays: Vec::new(),
-            local_events: Vec::new(),
-            names: Default::default(),
-            arm_start: 0,
-            arm_count: 0,
         },
-        ui: UiPass {
-            viewport_generation: 1,
-            prepared_viewport: UiViewport::default(),
-            pipe: pipelines.ui_pipe,
-            texture_bgl: pipelines.atlas_bgl.clone(),
-            doc_ui: super::doc_ui::DocUi::default(),
-            client_overlays: super::client_overlay::ClientOverlays::default(),
-            solid_vbuf: pipelines.ui_vbuf,
-            solid_verts: Vec::new(),
-            count_vertex_count: 0,
-            overlay_count_vertex_count: 0,
-            drag_count_vertex_count: 0,
-            hud_layers,
-            icon_atlas,
-            icon_quad_vbuf,
-            icon_quad_verts: Vec::new(),
-            icon_quad_vertex_count: 0,
-            overlay_icon_quad_vertex_count: 0,
-            drag_icon_quad_vertex_count: 0,
-            build: UiBuild::default(),
-        },
-        sky: SkyPass {
-            pipe: pipelines.sky_pipe,
-            bind: pipelines.sky_bind,
-            texture_bind: pipelines.sky_texture_bind,
-            shader_param_keys: pipelines.sky_shader_param_keys,
-            env_passes,
-            env_scaler: pipelines.env_scaler,
-            env_color,
-            env_depth,
-            env_down_bind,
-            env_comp_bind,
-            light_param_key: pipelines.sky_light_param_key,
-            fog_start: default_fog.0,
-            fog_end: default_fog.1,
-            scale: 1.0,
-            color: [1.0, 1.0, 1.0],
-            clear_color: [0.60, 0.82, 1.00],
-        },
-        chrome: ChromePass {
-            outline_pipe: pipelines.outline_pipe,
-            outline_bind: pipelines.outline_bind,
-            outline_vbuf: pipelines.outline_vbuf,
-            outline_vertex_count: 0,
-            crosshair_pipe: pipelines.crosshair_pipe,
-            crosshair_vbuf: pipelines.crosshair_vbuf,
-            crosshair_vertex_count: 0,
-            crosshair_drawn_size: (0, 0),
-            crosshair_visible: false,
-            selection: None,
-            selection_drawn: None,
-        },
-        targets: SceneTargets {
-            render_scale: 1.0,
-            grade_enabled: true,
-            anti_aliasing,
-            scene_color,
-            multisample_color,
-            max_samples,
-            grade_pipe: pipelines.grade_pipe,
-            grade_bgl: pipelines.grade_bgl,
-            grade_bind,
-            post_process_buf,
-            mood: [0.0, 0.0],
-            depth,
-        },
-        view: ViewState {
-            frustum: Frustum::permissive(),
-            cam_pos: petramond_math::world_pos::WorldPos::ZERO,
-            render_origin: glam::IVec3::ZERO,
-            visual_time: 0.0,
-            proj_y_scale: 1.0,
-        },
-        terrain: TerrainPass {
-            columns: ColumnStore::default(),
-            column_origins,
-            geometry: super::super::geometry_arena::GeometryArena::new(),
-            quad_index,
-            upload_pending: HashMap::new(),
-            upload_heap: BinaryHeap::new(),
-            upload_frame: 0,
-            upload_scratch: ColumnUploadScratch::default(),
-            draw_order: Vec::new(),
-            opaque_column_order: Vec::new(),
-            model_column_order: Vec::new(),
-            contact_column_order: Vec::new(),
-            gpu_revision: 0,
-            planned_gpu_revision: u64::MAX,
-            view_key: TerrainViewKey {
-                view_proj: [0; 16],
-                cam: [0; 3],
-                fog: 0,
-            },
-            planned_view_key: None,
-            plan_any_model: false,
-            plan_any_transparent: false,
-            sort_scratch: Vec::new(),
-            sorted_scratch: Vec::new(),
-            cull_index: Vec::new(),
-            cull_regions: Vec::new(),
-            cull_index_revision: u64::MAX,
-        },
-        particle: ParticlePass {
-            emitter_draw: emitter_particle_draw,
-            draw: particle_draw,
-            instances: Vec::new(),
-            model_instances: Vec::new(),
-            solid_instances: Vec::new(),
-            emitters: Vec::new(),
-            density: 1.0,
-            block_count: 0,
-            rows: Vec::new(),
-            emitter_rows: Vec::new(),
-            emitter_scratch: Vec::new(),
-        },
-        shadow: ShadowPass {
-            draw: entity_shadow_draw,
-            verts: Vec::new(),
-            instances: Vec::new(),
-        },
+        pipelines.break_pipe,
+    );
+    let ui = UiPass::new(
+        &device,
+        &queue,
+        pipelines.ui_pipe,
+        &pipelines.atlas_bgl,
+        pipelines.ui_vbuf,
+        icon_atlas,
+    );
+    let chrome = ChromePass::new(
+        pipelines.outline_pipe,
+        pipelines.outline_bind,
+        pipelines.outline_vbuf,
+        pipelines.crosshair_pipe,
+        pipelines.crosshair_vbuf,
+    );
+    let actor = ActorPass::new(
+        &device,
+        &queue,
+        &pipelines.atlas_bgl,
+        pipelines.skinned_pipe,
+        pipelines.bone_palette_bgl,
+        &pipelines.mob_pipe,
+        &pipelines.dynamic_opaque_pipe,
+    );
+    let item_entity =
+        ItemEntityPass::new(&device, &pipelines.dynamic_opaque_pipe, &pipelines.mob_pipe);
+    let block_entity = BlockEntityPass::new(&device, pipelines.dynamic_opaque_pipe);
+    let particle = ParticlePass::new(
+        &device,
+        pipelines.particle_pipe,
+        pipelines.emitter_particle_pipe,
+    );
+    let shadow = ShadowPass::new(&device, pipelines.entity_shadow_pipe);
+    let binds = SharedBinds {
+        uniform_buf,
+        shader_params_buf,
+        uniform: pipelines.uniform_bind,
+        atlas: pipelines.atlas_bind,
+        atlas_array: pipelines.atlas_array_bind,
+        model_atlas: model_atlas_bind,
+    };
+
+    Ok(Renderer {
+        ghosts: Default::default(),
+        selection: Default::default(),
+        gpu_timer: gpu_timer::GpuTimer::new(&device, &queue),
+        surface,
+        device,
+        queue,
+        config,
+        offscreen_target: None,
+        suboptimal_retried: false,
+        health,
+        graph,
+        frame_plan: FramePlan::default(),
+        binds,
+        model_break,
+        terrain,
+        view: ViewState::initial(),
+        targets,
+        chrome,
+        sky,
+        ui,
+        hand,
+        particle,
+        item_entity,
+        actor,
+        shadow,
+        block_entity,
         last_stats: RenderStats::default(),
-    }
+    })
+}
+
+/// The frame uniforms before the first `update_uniforms`: identity view, the
+/// default fog band, white sky, late-morning sun. The icon-atlas bake reads
+/// this buffer, so these are also what the baked icons see.
+fn create_uniform_buffer(
+    device: &wgpu::Device,
+    (fog_start, fog_end): (f32, f32),
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("uniforms"),
+        contents: bytemuck::cast_slice(&[Uniforms {
+            view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            cam_pos: [0.0; 4],
+            fog: [fog_start, fog_end, 0.0, 0.0],
+            fog_color: [0.60, 0.82, 1.00, 1.0],
+            inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            render_origin: [0; 4],
+            atlas_layout: crate::atlas::atlas_layout_uniform(),
+            // White sky colour at init = identity, so baked UI icons stay
+            // untinted.
+            sky_color: [1.0, 1.0, 1.0, 0.0],
+            // Late-morning sun at full daylight until the sim writes petramond:time.
+            sun_dir: super::frame_state::sun_uniform(None),
+            volume_tint: [1.0, 1.0, 1.0, 0.0],
+        }]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
+/// The combined bbmodel-block atlas (every kind's textures packed into one
+/// sheet — see `block_model::atlas`) as its own GPU texture, bound over the
+/// same atlas layout the mob pipeline uses. The mesher bakes model geometry
+/// into each chunk's model stream; the model nodes just draw it over this.
+fn create_model_atlas_bind(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    atlas_bgl: &wgpu::BindGroupLayout,
+) -> wgpu::BindGroup {
+    let atlas = petramond_world::block_model::atlas();
+    let (rgba, w, h) = atlas.texture();
+    let (_texture, view, sampler) = create_model_texture(device, queue, rgba, w, h);
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("model atlas bg"),
+        layout: atlas_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    })
 }
 
 impl Renderer {

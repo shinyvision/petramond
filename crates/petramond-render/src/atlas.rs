@@ -4,9 +4,11 @@
 //!
 //! Identity (names, ids, tints, frame counts) lives in [`petramond_world::tile`] and
 //! never touches a texel; this module is the client half that actually decodes
-//! the PNGs. Like the block/item tables, the composed atlas is load-bearing
-//! (meshing, render, and icon drawing all resolve through it), so composition
-//! validates fully and panics with a precise message rather than misrendering.
+//! the PNGs. The composed atlas is load-bearing (meshing, render, and icon
+//! drawing all resolve through it), so one bad pack texture must not take the
+//! game down: a source that is missing or fails to decode is logged with a
+//! precise message and its cells draw the missing-texture tile. The shipped
+//! set is pinned by a test that every source resolves.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -39,7 +41,10 @@ struct AtlasData {
 }
 
 static ATLAS: LazyLock<AtlasData> = LazyLock::new(|| {
-    let data = compose().unwrap_or_else(|e| panic!("textures/atlas.json: {e}"));
+    let Composed { data, missing } = compose();
+    for problem in &missing {
+        log::error!("textures/atlas.json: {problem}; drawing the missing-texture tile instead");
+    }
     // Publish the pixel-derived cartography colours through the identity
     // registry, where headless-safe consumers (minimap surface tint) read them.
     petramond_world::tile::install_map_colors(data.map_rgb.clone());
@@ -87,10 +92,31 @@ fn load_source(file: &str) -> Result<image::RgbaImage, String> {
         .to_rgba8())
 }
 
+/// The magenta/black checker a cell draws when its source cannot be loaded —
+/// loud on screen, so a broken texture is noticed rather than mistaken for
+/// intended art.
+fn missing_texture() -> image::RgbaImage {
+    let half = TILE / 2;
+    image::RgbaImage::from_fn(TILE, TILE, |x, y| {
+        if (x / half + y / half) % 2 == 0 {
+            image::Rgba([255, 0, 255, 255])
+        } else {
+            image::Rgba([0, 0, 0, 255])
+        }
+    })
+}
+
+/// A composed atlas and the sources that fell back to [`missing_texture`].
+struct Composed {
+    data: AtlasData,
+    /// One message per source that was missing or failed to decode.
+    missing: Vec<String>,
+}
+
 /// Compose the atlas pixels for the identity registry's cell list: each cell's
 /// source frame resampled to `TILE × TILE`, placed at its id's grid slot, with
 /// its dye-base twin one grid-half below.
-fn compose() -> Result<AtlasData, String> {
+fn compose() -> Composed {
     let cells = petramond_world::tile::cells();
     let count = cells.len();
 
@@ -104,13 +130,17 @@ fn compose() -> Result<AtlasData, String> {
     let mut rgba = vec![0u8; (atlas_w * atlas_h * 4) as usize];
 
     let mut sources: HashMap<&str, image::RgbaImage> = HashMap::new();
+    let mut missing = Vec::new();
     let mut map_rgb = Vec::with_capacity(count);
     let mut min_alpha = Vec::with_capacity(count);
     for (i, cell) in cells.iter().enumerate() {
         let src = match sources.get(cell.file.as_str()) {
             Some(img) => img,
             None => {
-                let img = load_source(&cell.file)?;
+                let img = load_source(&cell.file).unwrap_or_else(|e| {
+                    missing.push(e);
+                    missing_texture()
+                });
                 sources.entry(cell.file.as_str()).or_insert(img)
             }
         };
@@ -146,14 +176,17 @@ fn compose() -> Result<AtlasData, String> {
         map_rgb.push(cell_map_rgb(&pixels));
     }
 
-    Ok(AtlasData {
-        count,
-        cols,
-        rows,
-        map_rgb,
-        min_alpha,
-        rgba,
-    })
+    Composed {
+        data: AtlasData {
+            count,
+            cols,
+            rows,
+            map_rgb,
+            min_alpha,
+            rgba,
+        },
+        missing,
+    }
 }
 
 /// The dye-base transform: desaturate to luminance, then scale so the
@@ -423,9 +456,29 @@ mod tests {
         }
     }
 
+    /// The runtime falls back to the missing-texture tile rather than
+    /// crashing; the shipped texture set itself must never need it.
+    #[test]
+    fn every_shipped_atlas_source_resolves() {
+        let composed = compose();
+        assert!(
+            composed.missing.is_empty(),
+            "atlas sources failed to load: {:?}",
+            composed.missing
+        );
+    }
+
+    #[test]
+    fn the_missing_texture_tile_is_opaque_and_loud() {
+        let tile = missing_texture();
+        assert_eq!((tile.width(), tile.height()), (TILE, TILE));
+        assert!(tile.pixels().all(|p| p.0[3] == 255), "passes the opaque cutout");
+        assert_eq!(tile.get_pixel(0, 0).0, [255, 0, 255, 255]);
+        assert_eq!(tile.get_pixel(TILE - 1, 0).0, [0, 0, 0, 255]);
+    }
+
     #[test]
     fn composed_atlas_matches_the_identity_registry() {
-        // Forces the LazyLock: a bad texture set panics right here.
         let d = data();
         assert_eq!(d.count, Tile::count());
         assert_eq!(

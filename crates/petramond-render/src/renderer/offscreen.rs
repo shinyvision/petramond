@@ -1,7 +1,7 @@
 //! Windowless rendering: a [`Renderer`] with no swapchain, plus one-frame
 //! capture straight to CPU pixels.
 //!
-//! A capture draws through the SAME `plan_draw_order` + `encode_passes` the
+//! A capture draws through the SAME `plan_draw_order` + frame graph the
 //! windowed game draws through — only the colour target differs — so the image
 //! is what the window would have shown. That makes it usable for looking at
 //! generated content without launching the game, and for visual regression
@@ -31,21 +31,21 @@ const CAPTURE_FORMATS: [wgpu::TextureFormat; 4] = [
 const TEXEL_BYTES: u32 = 4;
 
 /// Build a renderer with no surface at `width` × `height`, rendering in
-/// `format` (one of `CAPTURE_FORMATS`). Prefer an sRGB format: every pipeline
-/// (and the pre-baked icon atlas) is built for the colour format handed in
-/// here, and the windowed game runs on an sRGB swapchain.
+/// `format` (one of `CAPTURE_FORMATS`), or why it cannot be built. Prefer an
+/// sRGB format: every pipeline (and the pre-baked icon atlas) is built for the
+/// colour format handed in here, and the windowed game runs on an sRGB
+/// swapchain.
 pub async fn new_offscreen_renderer(
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
-) -> Renderer {
-    assert!(
-        CAPTURE_FORMATS.contains(&format),
-        "offscreen colour format {format:?} is not readable as 8-bit RGBA"
-    );
+) -> Result<Renderer, RenderInitError> {
+    if !CAPTURE_FORMATS.contains(&format) {
+        return Err(RenderInitError::UnreadableFormat(format));
+    }
     let instance = wgpu::Instance::new(&super::construct::instance_descriptor());
-    let adapter = super::construct::request_adapter(&instance, None).await;
-    let (device, queue) = super::construct::request_device(&adapter).await;
+    let adapter = super::construct::request_adapter(&instance, None).await?;
+    let (device, queue) = super::construct::request_device(&adapter).await?;
     // Present-only fields (`present_mode`, `alpha_mode`) are inert without a
     // swapchain; `config` is the renderer's frame geometry + format either way.
     let config = wgpu::SurfaceConfiguration {

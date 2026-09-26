@@ -46,7 +46,9 @@ pub use renderer::new_offscreen_renderer;
 pub use renderer::new_renderer_from_target;
 #[allow(unused_imports)]
 pub use renderer::TerrainMemory;
-pub use renderer::{GhostPiece, RenderedFrame, Renderer, SchematicThumbnailer};
+pub use renderer::{
+    GhostPiece, RenderFailure, RenderInitError, RenderedFrame, Renderer, SchematicThumbnailer,
+};
 pub use views::BreakOverlayView;
 pub use views::EntityShadow;
 

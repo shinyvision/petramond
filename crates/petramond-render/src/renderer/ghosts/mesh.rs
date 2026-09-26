@@ -28,7 +28,7 @@ impl GhostPipelines {
                 r.targets.max_samples,
                 &uniform_layout,
                 &if model {
-                    r.world_model_pipe.get(1)
+                    r.terrain.pipes.world_model.get(1)
                 } else {
                     r.block_entity.draw.pipeline.get(1)
                 }
@@ -37,8 +37,8 @@ impl GhostPipelines {
             )
         };
         Self {
-            blocks: (pipeline(false), r.atlas_array_bind.clone()),
-            models: (pipeline(true), r.model_atlas_bind.clone()),
+            blocks: (pipeline(false), r.binds.atlas_array.clone()),
+            models: (pipeline(true), r.binds.model_atlas.clone()),
             uniform_layout,
         }
     }

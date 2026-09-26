@@ -2,25 +2,15 @@
 //!
 //! Cheap mutators the app calls each frame to hand the renderer the camera
 //! uniforms, selection/break overlay, held item, world instance lists, UI
-//! snapshot, and the terrain mesh sync. Split out of the
-//! renderer god-file; behavior is byte-for-byte identical.
+//! snapshot, and the terrain mesh sync (scheduled by [`UploadQueue`]).
 
+use super::upload_queue::{FrameDrain, UploadPriority};
 use super::*;
 
-/// Max terrain columns uploaded to the GPU per frame. CPU meshes stay section-owned, but
-/// render-side buffers are packed per XZ column, so one upload can refresh many vertical
-/// section ranges. Excess stays dirty and rolls onto later frames.
-///
-/// The TIME budget below is the real frame guard; this count is a backstop against a
-/// burst of individually-cheap uploads. The old cap of 6 (~360 columns/s) admission-
-/// limited fresh-terrain visibility during RD32 flight (~200 fresh columns/s plus 2–3
-/// re-uploads each while filling) with most of the time budget unspent.
-const MESH_COLUMN_UPLOADS_PER_FRAME: usize = 24;
 /// Soft render-thread budget for packing/writing terrain columns. One upload is always
 /// allowed so terrain keeps making progress; after that, leave time for the actual frame.
+/// (The upload queue's count cap is the backstop behind it.)
 const MESH_COLUMN_UPLOAD_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_750);
-const MESH_UPLOAD_QUIET_FRAMES: u64 = 1;
-const MESH_UPLOAD_MAX_WAIT_FRAMES: u64 = 4;
 const RENDER_ORIGIN_GRID: i32 = 16;
 
 /// Tilt of the sun/moon arc out of the east–west vertical plane. Mirror of
@@ -175,7 +165,7 @@ impl Renderer {
         self.ghosts.camera(&self.queue, &u);
         self.selection.camera(&self.queue, &u);
         self.queue
-            .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[u]));
+            .write_buffer(&self.binds.uniform_buf, 0, bytemuck::cast_slice(&[u]));
     }
 
     fn update_shader_params(
@@ -183,7 +173,7 @@ impl Renderer {
         shader_params: Option<&petramond::world::environment::ShaderParamMap>,
     ) {
         self.queue.write_buffer(
-            &self.shader_params_buf,
+            &self.binds.shader_params_buf,
             0,
             bytemuck::cast_slice(&[fill_shader_params(
                 &self.sky.shader_param_keys,
@@ -439,13 +429,14 @@ impl Renderer {
     /// COMPLETE terrain in one shot pumps [`Renderer::sync_meshes`] until this
     /// clears.
     pub fn terrain_uploads_pending(&self) -> bool {
-        !self.terrain.upload_pending.is_empty()
+        !self.terrain.uploads.is_empty()
     }
 
-    /// Synchronize GPU meshes with the terrain CPU meshes.
+    /// Synchronize GPU meshes with the terrain CPU meshes: drop columns whose
+    /// meshes are gone, queue the dirty ones, and upload what the upload
+    /// queue releases this frame within the time budget.
     pub fn sync_meshes(&mut self, terrain: &mut TerrainRenderHandoff<'_>) {
-        self.terrain.upload_frame = self.terrain.upload_frame.wrapping_add(1);
-        let upload_frame = self.terrain.upload_frame;
+        self.terrain.uploads.begin_frame();
         // Drop packed GPU columns whose CPU meshes are gone.
         let before_columns = self.terrain.columns.len();
         self.terrain.columns.retain(|p| terrain.has_column_mesh(p));
@@ -458,7 +449,8 @@ impl Renderer {
         // Render-local, like the frustum.
         let cam = self.view.cam_pos.relative_to(render_origin);
         let fog = self.terrain_cull_dist();
-        let priority = |column: ChunkPos| {
+        // Columns about to be in view first, then nearest first.
+        let priority = |column: ChunkPos| -> UploadPriority {
             let (lo_y, hi_y) = (
                 petramond_world::chunk::WORLD_MIN_Y,
                 petramond_world::chunk::WORLD_MAX_Y,
@@ -472,97 +464,46 @@ impl Renderer {
             (
                 u8::from(!visible_soon),
                 (cam - center).length_squared().to_bits(),
-                column.cx,
-                column.cz,
             )
         };
+        let uploads = &mut self.terrain.uploads;
         terrain.for_dirty_columns(&mut |column, revision| {
-            let mut enqueue = false;
-            if let Some(pending) = self.terrain.upload_pending.get_mut(&column) {
-                if pending.revision != revision {
-                    pending.revision = revision;
-                    pending.quiet_after = upload_frame + MESH_UPLOAD_QUIET_FRAMES;
-                    enqueue = true;
-                }
-            } else {
-                self.terrain.upload_pending.insert(
-                    column,
-                    PendingTerrainUpload {
-                        revision,
-                        quiet_after: upload_frame + MESH_UPLOAD_QUIET_FRAMES,
-                        deadline: upload_frame + MESH_UPLOAD_MAX_WAIT_FRAMES,
-                    },
-                );
-                enqueue = true;
-            }
-            if enqueue {
-                let (hidden, distance, cx, cz) = priority(column);
-                self.terrain
-                    .upload_heap
-                    .push(Reverse((hidden, distance, cx, cz, revision)));
-            }
+            uploads.mark_dirty(column, revision, || priority(column));
         });
         // Columns a synchronous click presentation installed into skip the
-        // quiet gate: the player is pointing at them, and one more frame of
-        // coalescing is visible latency on the thing they just did.
+        // quiet gate: the player is pointing at them.
         for column in terrain.take_urgent_columns() {
-            if let Some(pending) = self.terrain.upload_pending.get_mut(&column) {
-                pending.quiet_after = upload_frame;
-                pending.deadline = pending.deadline.min(upload_frame);
-                let (hidden, distance, cx, cz) = priority(column);
-                self.terrain.upload_heap.push(Reverse((
-                    hidden,
-                    distance,
-                    cx,
-                    cz,
-                    pending.revision,
-                )));
-            }
+            uploads.mark_urgent(column, || priority(column));
         }
 
         let device = &self.device;
         let queue = &self.queue;
-        let columns = &mut self.terrain.columns;
-        let upload_scratch = &mut self.terrain.upload_scratch;
-        let origins = &mut self.terrain.column_origins;
-        let arena = &mut self.terrain.geometry;
-        let quad_index = &mut self.terrain.quad_index;
+        let TerrainPass {
+            columns,
+            upload_scratch,
+            column_origins: origins,
+            geometry: arena,
+            quad_index,
+            uploads,
+            gpu_revision,
+            ..
+        } = &mut self.terrain;
         let start = std::time::Instant::now();
         let mut upload_batch = crate::resources::TerrainUploadBatch::default();
-        let mut uploaded_columns = 0usize;
-        let mut attempts = 0usize;
-        let mut heap_pops = 0usize;
-        let mut deferred = Vec::new();
-        while attempts < 64 && heap_pops < 128 && uploaded_columns < MESH_COLUMN_UPLOADS_PER_FRAME {
-            if uploaded_columns > 0 && start.elapsed() >= MESH_COLUMN_UPLOAD_TIME_BUDGET {
+        let mut drain = FrameDrain::default();
+        loop {
+            if drain.uploads() > 0 && start.elapsed() >= MESH_COLUMN_UPLOAD_TIME_BUDGET {
                 break;
             }
-            let Some(Reverse((_, _, cx, cz, revision))) = self.terrain.upload_heap.pop() else {
+            let Some((column, revision)) = uploads.next_ready(&mut drain) else {
                 break;
             };
-            heap_pops += 1;
-            let column = ChunkPos::new(cx, cz);
-            let Some(pending) = self.terrain.upload_pending.get(&column) else {
-                continue;
-            };
-            if pending.revision != revision {
-                continue;
-            }
-            attempts += 1;
-            if upload_frame < pending.quiet_after && upload_frame < pending.deadline {
-                deferred.push((column, revision));
-                continue;
-            }
-            let mut pending = self
-                .terrain
-                .upload_pending
-                .remove(&column)
-                .expect("pending upload checked above");
+            uploads.take(column);
             if !terrain.has_column_mesh(column) {
                 let removed = columns.remove(&column).is_some();
                 terrain.mark_column_uploaded(column);
                 if removed {
-                    self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
+                    *gpu_revision = gpu_revision.wrapping_add(1);
                 }
                 continue;
             }
@@ -574,57 +515,38 @@ impl Renderer {
                 })
             });
             if !reusable && terrain.needs_repack_remeshes(column) {
-                pending.quiet_after = upload_frame + MESH_UPLOAD_QUIET_FRAMES;
-                pending.deadline = upload_frame + MESH_UPLOAD_MAX_WAIT_FRAMES;
-                self.terrain.upload_pending.insert(column, pending);
-                deferred.push((column, revision));
+                uploads.restart(column, revision, &mut drain);
                 continue;
             }
-            let uploaded = {
-                let meshes = terrain.column_meshes(column);
-                if meshes.is_empty() {
-                    let removed = columns.remove(&column).is_some();
-                    terrain.mark_column_uploaded(column);
-                    if removed {
-                        self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
-                    }
-                    false
-                } else {
-                    let prev = columns.remove(&column);
-                    let gpu = upload_column_mesh(
-                        device,
-                        queue,
-                        &meshes,
-                        prev,
-                        upload_scratch,
-                        origins,
-                        arena,
-                        quad_index,
-                        &mut upload_batch,
-                    );
-                    columns.insert(column, gpu);
-                    true
-                }
-            };
-            if uploaded {
+            let meshes = terrain.column_meshes(column);
+            if meshes.is_empty() {
+                let removed = columns.remove(&column).is_some();
                 terrain.mark_column_uploaded(column);
-                uploaded_columns += 1;
-                self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
+                if removed {
+                    *gpu_revision = gpu_revision.wrapping_add(1);
+                }
+                continue;
             }
+            let prev = columns.remove(&column);
+            let gpu = upload_column_mesh(
+                device,
+                queue,
+                &meshes,
+                prev,
+                upload_scratch,
+                origins,
+                arena,
+                quad_index,
+                &mut upload_batch,
+            );
+            columns.insert(column, gpu);
+            drop(meshes);
+            terrain.mark_column_uploaded(column);
+            drain.record_upload();
+            *gpu_revision = gpu_revision.wrapping_add(1);
         }
         upload_batch.submit(queue);
-        for (column, revision) in deferred {
-            if self
-                .terrain
-                .upload_pending
-                .get(&column)
-                .is_some_and(|pending| pending.revision == revision)
-            {
-                let (hidden, distance, cx, cz) = priority(column);
-                self.terrain
-                    .upload_heap
-                    .push(Reverse((hidden, distance, cx, cz, revision)));
-            }
-        }
+        uploads.finish(drain, priority);
     }
 }
+

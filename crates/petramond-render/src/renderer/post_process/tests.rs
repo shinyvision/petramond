@@ -56,7 +56,8 @@ fn scene_resolves_after_mode_switches_resizes_and_grade_changes() {
         65,
         37,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-    ));
+    ))
+    .expect("offscreen renderer");
     for mode in [
         AntiAliasing::Off,
         AntiAliasing::Msaa4x,

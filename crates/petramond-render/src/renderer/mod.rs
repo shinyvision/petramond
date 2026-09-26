@@ -4,8 +4,7 @@ use petramond::world::TerrainRenderHandoff;
 use petramond_math::math::SelectionShape;
 use petramond_world::chunk::ChunkPos;
 
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 mod actor_pass;
@@ -15,7 +14,12 @@ mod client_overlay;
 mod column_store;
 use column_store::{ColumnSlot, ColumnStore};
 mod construct;
+mod error;
+pub use error::{RenderFailure, RenderInitError};
+use error::DeviceHealth;
 mod ghosts;
+mod graph;
+use graph::{FrameGraph, FramePlan};
 pub use ghosts::GhostPiece;
 mod schematic_thumbnail;
 pub use schematic_thumbnail::SchematicThumbnailer;
@@ -34,8 +38,11 @@ mod icon_atlas;
 mod lod;
 mod offscreen;
 mod passes;
+use passes::Node;
 mod post_process;
 mod ui_frame;
+mod upload_queue;
+use upload_queue::UploadQueue;
 
 #[cfg(test)]
 pub(crate) use construct::instance_descriptor;
@@ -77,12 +84,6 @@ struct TerrainViewKey {
     view_proj: [u32; 16],
     cam: [u64; 3],
     fog: u32,
-}
-
-struct PendingTerrainUpload {
-    revision: u64,
-    quiet_after: u64,
-    deadline: u64,
 }
 
 pub use crate::camera::aabb_distance_sq;
@@ -309,15 +310,67 @@ impl BlockEntityPass {
     }
 }
 
-/// The terrain pass: the packed per-column GPU geometry, the persistent upload
-/// queue that fills it, and the per-frame draw plan (visible sections and the
-/// column runs each pass can draw in one call).
-/// A terrain upload's heap ordering key: priority band, then the frame it was
-/// queued on, then the column, then a tiebreak sequence — so equal-priority
-/// columns retire in the order they arrived.
-type UploadKey = (u8, u32, i32, i32, u64);
+/// The terrain pipelines: every draw of packed column geometry, one pipeline
+/// per stream the terrain nodes record.
+struct TerrainPipes {
+    /// Opaque terrain (quantized `TerrainVertex` + column origin instance).
+    opaque: crate::pipeline::SampledPipeline,
+    /// Translucent BLOCKS (ice): alpha-blended, depth-writing.
+    translucent: crate::pipeline::SampledPipeline,
+    /// See-through fluid side faces (back faces culled).
+    transparent: crate::pipeline::SampledPipeline,
+    /// Fluid TOP faces: the transparent pipeline with culling off.
+    transparent_two_sided: crate::pipeline::SampledPipeline,
+    /// The chunk `ModelVertex` stream (day/night-aware lighting) over the
+    /// model atlas.
+    world_model: crate::pipeline::SampledPipeline,
+    /// The alpha-BLEND twin of `world_model` for the chunk's semi-transparent
+    /// bbmodel faces.
+    world_model_blend: crate::pipeline::SampledPipeline,
+    /// Model→terrain contact shadows (multiplicative, depth read-only, own
+    /// coplanar bias).
+    contact: crate::pipeline::SampledPipeline,
+}
 
+/// This frame's terrain draw plan: what `plan_draw_order` decided, read by
+/// the terrain nodes without re-deciding any of it. The vectors are reused
+/// frame to frame (capacity retained).
+#[derive(Default)]
+struct TerrainPlan {
+    /// Visible sections still drawing for themselves, sorted near → far.
+    /// Transparent terrain stays section-granular; sections wholly covered by
+    /// whole-column draws are dropped.
+    sections: Vec<VisibleSection>,
+    /// Packed columns that draw their whole opaque stream (or its far
+    /// region) in one call, near → far.
+    opaque_columns: Vec<OpaqueColumnDraw>,
+    /// Packed columns that draw their whole model index stream in one call,
+    /// near → far.
+    model_columns: Vec<(f32, ChunkPos, ColumnSlot)>,
+    /// Packed columns with a VISIBLE contact-shadow stream, near → far.
+    contact_columns: Vec<(f32, ChunkPos, ColumnSlot)>,
+    /// Some visible section carries model faces (the model nodes' gate).
+    any_model: bool,
+    /// Some visible section carries translucent or fluid faces.
+    any_transparent: bool,
+}
+
+impl TerrainPlan {
+    fn clear(&mut self) {
+        self.sections.clear();
+        self.opaque_columns.clear();
+        self.model_columns.clear();
+        self.contact_columns.clear();
+        self.any_model = false;
+        self.any_transparent = false;
+    }
+}
+
+/// The terrain pass: the packed per-column GPU geometry, the upload queue
+/// that fills it, the pipelines that draw it, and the per-frame draw plan
+/// (visible sections and the column runs each node can draw in one call).
 struct TerrainPass {
+    pipes: TerrainPipes,
     columns: ColumnStore,
     /// Shared instance-step table of per-column world XZ origins, bound once
     /// per terrain pass; each column draw selects its row via `first_instance`.
@@ -326,36 +379,19 @@ struct TerrainPass {
     geometry: super::geometry_arena::GeometryArena,
     /// Shared index buffer for the implied-triangulation terrain streams.
     quad_index: super::resources::QuadIndexBuffer,
-    /// Persistent upload work. World dirtiness is level-triggered, so the set
-    /// deduplicates columns while the heap preserves their first useful priority.
-    upload_pending: HashMap<ChunkPos, PendingTerrainUpload>,
-    upload_heap: BinaryHeap<Reverse<UploadKey>>,
-    upload_frame: u64,
+    /// Which dirty columns upload when (see [`UploadQueue`]).
+    uploads: UploadQueue,
     /// Reusable CPU staging for packing section meshes into a GPU column upload.
     upload_scratch: ColumnUploadScratch,
-    /// Reusable per-frame section draw order, sorted near→far. Transparent terrain
-    /// stays section-granular; opaque/model passes can mark sections covered by a single
-    /// packed column draw.
-    draw_order: Vec<VisibleSection>,
+    plan: TerrainPlan,
     /// Reusable `(distance, column, index)` keys for the section depth sort,
     /// and the gather buffer the sorted records land in.
     sort_scratch: Vec<(f32, ChunkPos, u32)>,
     sorted_scratch: Vec<VisibleSection>,
-    /// Reusable near→far list of packed columns that can draw their whole opaque index
-    /// stream in one call this frame.
-    opaque_column_order: Vec<OpaqueColumnDraw>,
-    /// Reusable near→far list of packed columns that can draw their whole model index
-    /// stream in one call this frame.
-    model_column_order: Vec<(f32, ChunkPos, ColumnSlot)>,
-    /// Reusable near→far list of packed columns with a VISIBLE contact-shadow
-    /// stream this frame.
-    contact_column_order: Vec<(f32, ChunkPos, ColumnSlot)>,
     gpu_revision: u64,
     planned_gpu_revision: u64,
     view_key: TerrainViewKey,
     planned_view_key: Option<TerrainViewKey>,
-    plan_any_model: bool,
-    plan_any_transparent: bool,
     /// Dense mirror of the column set for the per-frame cull: just the AABB
     /// inputs, in one contiguous array. The planner rejects the great majority
     /// of columns and the rejection must not walk a hash map of
@@ -407,17 +443,13 @@ impl TerrainPass {
     /// invalidates any plan a later frame might otherwise reuse.
     fn clear_world(&mut self) {
         self.columns.clear();
-        self.upload_pending.clear();
-        self.upload_heap.clear();
+        self.uploads.clear();
         self.gpu_revision = self.gpu_revision.wrapping_add(1);
         self.planned_view_key = None;
         self.cull_index.clear();
         self.cull_regions.clear();
         self.cull_index_revision = u64::MAX;
-        self.draw_order.clear();
-        self.opaque_column_order.clear();
-        self.model_column_order.clear();
-        self.contact_column_order.clear();
+        self.plan.clear();
     }
 }
 
@@ -580,6 +612,24 @@ struct SceneTargets {
     mood: [f32; 2],
 }
 
+/// The frame uniforms and the textures many passes bind: one owner, handed
+/// to every node's recording through its pass context.
+struct SharedBinds {
+    /// The frame [`Uniforms`], rewritten by `update_uniforms`.
+    uniform_buf: wgpu::Buffer,
+    /// The sky shader's pack parameter block.
+    shader_params_buf: wgpu::Buffer,
+    /// group(0) of the world pipelines: the uniforms + the uv-rect table.
+    uniform: wgpu::BindGroup,
+    /// The 2D block atlas (sprites, cracks, particles).
+    atlas: wgpu::BindGroup,
+    /// The terrain tile-ARRAY (group 1 of the block pipelines), parallel to
+    /// `atlas`: block terrain binds this, everything else the 2D atlas.
+    atlas_array: wgpu::BindGroup,
+    /// The combined bbmodel-block atlas.
+    model_atlas: wgpu::BindGroup,
+}
+
 /// The camera-derived view state refreshed once per frame in
 /// `update_uniforms` and read by every cull and sort.
 struct ViewState {
@@ -622,38 +672,18 @@ pub struct Renderer {
     /// recreate the swapchain at frame rate). Cleared by a good acquire or a
     /// real resize, so genuine size/scale mismatches always get one rebuild.
     suboptimal_retried: bool,
-    opaque_pipe: crate::pipeline::SampledPipeline,
-    translucent_pipe: crate::pipeline::SampledPipeline,
-    /// Fluid TOP faces: the transparent pipeline with culling off.
-    transparent_two_sided_pipe: crate::pipeline::SampledPipeline,
-    transparent_pipe: crate::pipeline::SampledPipeline,
-    uniform_buf: wgpu::Buffer,
-    shader_params_buf: wgpu::Buffer,
-    uniform_bind: wgpu::BindGroup,
-    atlas_bind: wgpu::BindGroup,
-    /// Terrain tile-ARRAY bind (group 1 for the opaque/transparent block pipelines),
-    /// parallel to `atlas_bind`; the block terrain draws bind this, everything else the 2D atlas.
-    atlas_array_bind: wgpu::BindGroup,
-    /// bbmodel-block ("model") render resources: the mob pipeline reused for the model
-    /// pass plus the combined model atlas bound at group(1). The geometry itself lives
-    /// in packed terrain columns as per-section model ranges, so there's no per-frame
-    /// model bake — the model pass just draws the visible sections' model streams.
-    model_pipe: crate::pipeline::SampledPipeline,
-    /// Pipeline for the chunk `ModelVertex` stream (day/night-aware lighting);
-    /// `model_pipe` (mob layout) keeps drawing dropped bbmodel item entities.
-    world_model_pipe: crate::pipeline::SampledPipeline,
-    /// The alpha-BLEND twin of `world_model_pipe` for the chunk's
-    /// semi-transparent bbmodel faces; draws in the model-blend pass after the
-    /// translucent-block pass.
-    world_model_blend_pipe: crate::pipeline::SampledPipeline,
-    /// Model→terrain contact-shadow pipeline (multiplicative, depth read-only,
-    /// own coplanar bias); draws the packed columns' contact streams between
-    /// the opaque and sky passes.
-    contact_pipe: crate::pipeline::SampledPipeline,
+    /// Device loss and uncaptured GPU errors, as reported by the device's
+    /// callbacks (see [`Renderer::failure`]).
+    health: DeviceHealth,
+    /// Every pass the frame can record, and the reusable plan the graph
+    /// derives from them each frame (see `passes`).
+    graph: FrameGraph<Node>,
+    frame_plan: FramePlan<Node>,
+    /// The frame uniforms and the texture binds several passes share.
+    binds: SharedBinds,
     /// The bbmodel-block break crack: pipeline + per-frame mask uniform + the
     /// columns whose model streams the decal pass re-draws.
     model_break: crate::model_break::ModelBreak,
-    model_atlas_bind: wgpu::BindGroup,
     terrain: TerrainPass,
     view: ViewState,
     targets: SceneTargets,

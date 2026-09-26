@@ -13,7 +13,10 @@ pub(super) fn build_hud_layers(
 ) -> Vec<HudLayer> {
     let load_gui_bind = |rel: &str| -> Option<wgpu::BindGroup> {
         let (bytes, _path) = petramond_world::assets::read_bytes(rel)?;
-        let (_tex, view, sampler) = create_gui_panel(device, queue, &bytes);
+        let Some((_tex, view, sampler)) = create_gui_panel(device, queue, &bytes) else {
+            log::warn!("{rel} is not a decodable PNG; its HUD layer draws nothing");
+            return None;
+        };
         Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gui texture bind"),
             layout: atlas_bgl,

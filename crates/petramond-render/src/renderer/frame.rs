@@ -1,6 +1,9 @@
 //! The renderer's frame orchestration and public knobs: fog coupling, the
 //! census/profile readouts, and `render` → acquire, bake, plan, encode, submit.
 
+use std::time::Instant;
+
+use super::graph::FrameShape;
 use super::*;
 
 impl Renderer {
@@ -131,7 +134,18 @@ impl Renderer {
         }
     }
 
+    /// The failure that stopped this renderer, if any: the device was lost
+    /// or the GPU ran out of memory. A renderer that reports one draws
+    /// nothing more; the host rebuilds it (device loss) or reports the error
+    /// (out of memory). Check after every [`render`](Self::render).
+    pub fn failure(&self) -> Option<RenderFailure> {
+        self.health.failure()
+    }
+
     pub fn render(&mut self) {
+        if self.health.failure().is_some() {
+            return;
+        }
         let Some(frame) = self.acquire_swapchain_frame() else {
             return;
         };
@@ -143,8 +157,9 @@ impl Renderer {
     }
 
     /// The swapchain image to draw into, or `None` when this frame draws
-    /// nothing: a surfaceless renderer, or a swapchain that needed rebuilding
-    /// first.
+    /// nothing: a surfaceless renderer, a swapchain that needed rebuilding
+    /// first, an acquire that timed out or failed, or no memory left for a
+    /// frame (recorded as this renderer's [`failure`](Self::failure)).
     fn acquire_swapchain_frame(&mut self) -> Option<wgpu::SurfaceTexture> {
         let surface = self.surface.as_ref()?;
         match surface.get_current_texture() {
@@ -170,80 +185,82 @@ impl Renderer {
                 surface.configure(&self.device, &self.config);
                 None
             }
-            Err(_) => None,
+            // The compositor did not hand an image back in time (a hidden or
+            // minimized window, a stalled present queue): skip this frame.
+            Err(wgpu::SurfaceError::Timeout) => {
+                log::warn!("swapchain acquire timed out; skipping a frame");
+                None
+            }
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                self.health.record(RenderFailure::OutOfMemory(
+                    "no memory left to acquire a swapchain image".into(),
+                ));
+                None
+            }
+            // The device's error callback has the details.
+            Err(wgpu::SurfaceError::Other) => {
+                log::warn!("swapchain acquire failed; skipping a frame");
+                None
+            }
         }
     }
 
     /// Everything between "here is the colour target" and "the GPU has this
-    /// frame": the per-frame CPU bakes, draw planning, pass encoding, submit.
-    /// Target-agnostic, so the windowed swapchain and an offscreen capture
-    /// share one frame graph.
+    /// frame": the per-frame CPU bakes, draw planning, the frame graph's
+    /// plan, pass encoding, submit. Target-agnostic, so the windowed
+    /// swapchain and an offscreen capture share one frame graph.
     pub(super) fn encode_frame(&mut self, view: &wgpu::TextureView) {
-        let mark = std::time::Instant::now;
-        let t = mark();
+        let t = Instant::now();
         self.refresh_overlay_buffers();
         self.prepare_held_item();
         self.bake_world_instances();
-        if let Some(g) = &self.gpu_timer {
-            g.cpu_stage("cpu: bake world instances", t.elapsed().as_nanos() as f64);
-        }
+        self.cpu_stage("cpu: bake world instances", t);
 
+        let t = Instant::now();
+        self.plan_draw_order();
+        self.cpu_stage("cpu: plan draw order", t);
+
+        let t = Instant::now();
+        let route = self.scene_route();
+        let shape = FrameShape {
+            route,
+            msaa: self.targets.anti_aliasing.sample_count() > 1,
+        };
+        // The reusable plan is taken out while `self` is read to fill it,
+        // then put back (capacity retained next frame).
+        let mut plan = std::mem::take(&mut self.frame_plan);
+        self.graph.plan(shape, |node| self.node_active(node, route), &mut plan);
+        debug_assert_eq!(plan.validate(shape), Ok(()), "unrunnable frame plan");
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
-        // Reusable draw orders taken out so `plan_draw_order` can fill them while
-        // `self` is read; restored after encoding (capacity retained next frame).
-        let mut order = std::mem::take(&mut self.terrain.draw_order);
-        let mut opaque_columns = std::mem::take(&mut self.terrain.opaque_column_order);
-        let mut model_columns = std::mem::take(&mut self.terrain.model_column_order);
-        let mut contact_columns = std::mem::take(&mut self.terrain.contact_column_order);
-        let t = mark();
-        let (mut stats, any_model_visible, any_transparent_visible) = self.plan_draw_order(
-            &mut order,
-            &mut opaque_columns,
-            &mut model_columns,
-            &mut contact_columns,
-        );
-        if let Some(g) = &self.gpu_timer {
-            g.cpu_stage("cpu: plan draw order", t.elapsed().as_nanos() as f64);
+        let mut stats = RenderStats::default();
+        self.encode_passes(&mut enc, view, &plan, route, &mut stats);
+        self.frame_plan = plan;
+        self.cpu_stage("cpu: encode passes", t);
+
+        if let Some(timer) = &self.gpu_timer {
+            timer.finish_frame(&mut enc);
         }
-        let t = mark();
-        self.encode_passes(
-            &mut enc,
-            view,
-            &order,
-            &opaque_columns,
-            &model_columns,
-            &contact_columns,
-            &mut stats,
-            any_model_visible,
-            any_transparent_visible,
-        );
-        if let Some(g) = &self.gpu_timer {
-            g.cpu_stage("cpu: encode passes", t.elapsed().as_nanos() as f64);
-        }
-        self.terrain.draw_order = order;
-        self.terrain.opaque_column_order = opaque_columns;
-        self.terrain.model_column_order = model_columns;
-        self.terrain.contact_column_order = contact_columns;
-        if let Some(t) = &self.gpu_timer {
-            t.finish_frame(&mut enc);
-        }
-        let t = mark();
+        let t = Instant::now();
         let cb = enc.finish();
-        if let Some(g) = &self.gpu_timer {
-            g.cpu_stage("cpu: encoder finish", t.elapsed().as_nanos() as f64);
-        }
-        let t = mark();
+        self.cpu_stage("cpu: encoder finish", t);
+        let t = Instant::now();
         self.queue.submit(std::iter::once(cb));
-        if let Some(g) = &self.gpu_timer {
-            g.cpu_stage("cpu: queue submit", t.elapsed().as_nanos() as f64);
-        }
-        if let Some(t) = &self.gpu_timer {
-            t.after_submit(&self.device);
+        self.cpu_stage("cpu: queue submit", t);
+        if let Some(timer) = &self.gpu_timer {
+            timer.after_submit(&self.device);
         }
         self.last_stats = stats;
+    }
+
+    /// Fold the CPU time since `since` into the profile under `label` (a
+    /// no-op unless GPU timing is on).
+    fn cpu_stage(&self, label: &'static str, since: Instant) {
+        if let Some(timer) = &self.gpu_timer {
+            timer.cpu_stage(label, since.elapsed().as_nanos() as f64);
+        }
     }
 }

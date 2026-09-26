@@ -5,17 +5,16 @@ use crate::atlas::decode_atlas_mips;
 use petramond_util::texture_mips::build_cutout_mips;
 
 /// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
-/// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size —
-/// each PNG is its own image, not a fixed atlas slot.
+/// texture + nearest sampler (sRGB, like the gui atlas), or `None` when the
+/// bytes do not decode. Arbitrary size — each PNG is its own image, not a
+/// fixed atlas slot.
 pub(crate) fn create_gui_panel(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     png: &[u8],
-) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
-    let img = image::load_from_memory(png)
-        .expect("decode gui panel png")
-        .to_rgba8();
-    create_rgba_nearest(device, queue, &img, "gui panel")
+) -> Option<(wgpu::Texture, wgpu::TextureView, wgpu::Sampler)> {
+    let img = image::load_from_memory(png).ok()?.to_rgba8();
+    Some(create_rgba_nearest(device, queue, &img, "gui panel"))
 }
 
 /// Upload one pack sky texture for a shader texture slot.
