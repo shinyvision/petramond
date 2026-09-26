@@ -24,6 +24,12 @@ mod_sdk::pack_keys! {
     /// pack may patch it onto its own. Hits from unpaced hands (bare fists,
     /// another pack's weapon) keep the engine window.
     pub PACED_COMBO_DATA: Data = "combat:paced_combo";
+    /// Item-row data declaring the swing family of that row's own tool
+    /// `kind`: `{"attacks": [{"fp", "body"}...], "work": {"fp", "body"},
+    /// "pace": {"window_attack": [s...], "window_mine": s}, "profile":
+    /// {"reach", "sweet", "arc_yaw", "arc_pitch", "peak", "floor",
+    /// "cleave"}}` (see `families`).
+    pub FAMILY_DATA: Data = "combat:family";
 }
 
 #[cfg(test)]

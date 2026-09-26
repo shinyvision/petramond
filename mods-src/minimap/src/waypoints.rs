@@ -4,7 +4,11 @@
 use crate::keys::{CREATE_WAYPOINT_GUI, EDIT_WAYPOINT_GUI, WAYPOINT_NAME};
 use crate::*;
 
-const WAYPOINTS_KEY: &str = "minimap:waypoints";
+/// The versioned waypoint list ([`WaypointList`]).
+const WAYPOINTS_KEY: &str = "minimap:waypoint_list";
+/// Where earlier builds stored the same list unversioned — read (as version
+/// 0) only while the versioned key has never been written.
+const LEGACY_WAYPOINTS_KEY: &str = "minimap:waypoints";
 
 #[derive(Clone)]
 pub(crate) struct Waypoint {
@@ -23,13 +27,12 @@ pub(crate) enum Editor {
 
 impl Minimap {
     pub(crate) fn load_waypoints(&mut self) {
-        if let Some(bytes) = client_storage_get_many(vec![WAYPOINTS_KEY.into()])
-            .into_iter()
-            .next()
-            .flatten()
-        {
-            self.waypoints = decode_waypoints(&bytes);
-        }
+        let mut stored =
+            client_storage_get_many(vec![WAYPOINTS_KEY.into(), LEGACY_WAYPOINTS_KEY.into()])
+                .into_iter();
+        let current = stored.next().flatten();
+        let legacy = stored.next().flatten();
+        self.waypoints = load_list(current.as_deref(), legacy.as_deref());
     }
 
     pub(crate) fn select_waypoint_at(&mut self, x: f32, y: f32) {
@@ -142,8 +145,48 @@ impl Minimap {
     fn persist_waypoints(&self) {
         client_storage_set_many(vec![(
             WAYPOINTS_KEY.into(),
-            encode_waypoints(&self.waypoints),
+            encode_versioned(&WaypointList(self.waypoints.clone())),
         )]);
+    }
+}
+
+/// The persisted list: a count, then per waypoint its position, color and
+/// name. Version 0 is the same layout stored without the version byte (under
+/// [`LEGACY_WAYPOINTS_KEY`]).
+#[derive(Clone)]
+struct WaypointList(Vec<Waypoint>);
+
+impl KvRecord for WaypointList {
+    const VERSION: u8 = 1;
+    const OLDEST_VERSION: u8 = 0;
+
+    fn encode(&self) -> Vec<u8> {
+        encode_waypoints(&self.0)
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        Some(Self(decode_waypoints(bytes)))
+    }
+
+    fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
+        (from == 0).then(|| bytes.to_vec())
+    }
+}
+
+/// The list from what storage holds: the versioned value when there is one,
+/// else the legacy unversioned one. An unreadable value (a newer build's)
+/// starts an empty list rather than misreading it.
+fn load_list(current: Option<&[u8]>, legacy: Option<&[u8]>) -> Vec<Waypoint> {
+    match (current, legacy) {
+        (Some(bytes), _) => match decode_versioned::<WaypointList>(bytes) {
+            Ok(list) => list.0,
+            Err(error) => {
+                log(&format!("minimap: stored waypoints are unreadable ({error})"));
+                Vec::new()
+            }
+        },
+        (None, Some(bytes)) => decode_waypoints(bytes),
+        (None, None) => Vec::new(),
     }
 }
 
@@ -178,4 +221,52 @@ fn decode_waypoints(bytes: &[u8]) -> Vec<Waypoint> {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Vec<Waypoint> {
+        vec![
+            Waypoint {
+                name: "Home".into(),
+                pos: [10, 64, -3],
+                color: [200, 40, 40],
+            },
+            Waypoint {
+                name: "Mine".into(),
+                pos: [-500, 12, 9000],
+                color: [1, 2, 3],
+            },
+        ]
+    }
+
+    fn names(list: &[Waypoint]) -> Vec<(&str, [i32; 3], [u8; 3])> {
+        list.iter()
+            .map(|w| (w.name.as_str(), w.pos, w.color))
+            .collect()
+    }
+
+    #[test]
+    fn the_versioned_list_round_trips() {
+        let bytes = encode_versioned(&WaypointList(sample()));
+        assert_eq!(bytes[0], WaypointList::VERSION);
+        assert_eq!(names(&load_list(Some(&bytes), None)), names(&sample()));
+    }
+
+    #[test]
+    fn a_legacy_list_is_read_until_the_versioned_one_exists() {
+        let legacy = encode_waypoints(&sample());
+        assert_eq!(names(&load_list(None, Some(&legacy))), names(&sample()));
+        let current = encode_versioned(&WaypointList(sample()[..1].to_vec()));
+        assert_eq!(load_list(Some(&current), Some(&legacy)).len(), 1);
+    }
+
+    #[test]
+    fn a_newer_builds_list_is_not_misread() {
+        let mut bytes = encode_versioned(&WaypointList(sample()));
+        bytes[0] = WaypointList::VERSION + 1;
+        assert!(load_list(Some(&bytes), None).is_empty());
+    }
 }

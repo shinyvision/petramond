@@ -9,38 +9,39 @@ use mod_sdk::*;
 
 use crate::keys;
 
-/// The static per-crop row everything else derives from. Adding a crop is
-/// ONE row here (+ its ids in [`crate::keys`] and the pack JSON): stages,
-/// items, RNG keys, and the harvest emitter all resolve from it in
-/// [`Content::resolve`] — never a new match arm anywhere.
+/// The per-crop data on each mature block's `farming:crop` row.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CropSpec {
     /// Singular stem: derives the RNG stream keys (`harvest_<name>`,
     /// `fertile_<name>`).
-    name: &'static str,
+    name: String,
     /// The stage rows, seedling (0) to mature (3).
-    stages: [&'static str; 4],
+    stages: [String; 4],
     /// The burst a harvest plays, if the pack ships one for this crop.
-    harvest_emitter: Option<&'static str>,
+    harvest_emitter: Option<String>,
     /// The item that replants this crop — what a broken support returns.
-    planting_stock: &'static str,
+    planting_stock: String,
     /// Primary produce item + its per-harvest yield range (balance data).
-    produce: &'static str,
+    produce: String,
     yield_range: (u64, u64),
     /// An optional secondary drop per harvest.
     extra_drop: Option<ExtraDrop>,
     /// The species a PLANTED stand of this crop draws out of the wild
     /// (`mobs.json` row key), if any — see [`crate::attract`]. Only cultivated
     /// rows attract: the wild stands are already where the animal lives.
-    attracts: Option<&'static str>,
+    attracts: Option<String>,
 }
 
 /// A crop's secondary harvest drop — the seeds a tended plant throws off
 /// beside its produce.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExtraDrop {
     /// RNG stream key for the COUNT. A frozen literal: streams are stateful
     /// per key, so an existing one must never be renamed.
-    count_key: &'static str,
-    item: &'static str,
+    count_key: String,
+    item: String,
     /// Percent of harvests that yield it at all. `100` means every harvest,
     /// and draws no chance roll — so a crop that always rolls keeps its
     /// historic stream exactly as it was before chances existed.
@@ -52,81 +53,15 @@ struct ExtraDrop {
 mod husbandry;
 pub use husbandry::{Eaten, HusbandryDef};
 
-const CROPS: &[CropSpec] = &[
-    CropSpec {
-        name: "wheat",
-        stages: [keys::WHEAT_0, keys::WHEAT_1, keys::WHEAT_2, keys::WHEAT_3],
-        harvest_emitter: Some(keys::WHEAT_HARVEST),
-        planting_stock: keys::WHEAT_SEEDS,
-        produce: keys::WHEAT,
-        yield_range: (1, 2),
-        attracts: None,
-        extra_drop: Some(ExtraDrop {
-            count_key: "harvest_wheat_seeds",
-            item: keys::WHEAT_SEEDS,
-            chance_percent: 100,
-            count: (0, 2),
-        }),
-    },
-    CropSpec {
-        name: "carrot",
-        stages: [
-            keys::CARROTS_0,
-            keys::CARROTS_1,
-            keys::CARROTS_2,
-            keys::CARROTS_3,
-        ],
-        harvest_emitter: Some(keys::CARROT_HARVEST),
-        planting_stock: keys::CARROT,
-        produce: keys::CARROT,
-        yield_range: (2, 3),
-        extra_drop: None,
-        // A planted carrot patch is what brings rabbits in from the wild.
-        attracts: Some(keys::RABBIT),
-    },
-    CropSpec {
-        name: "potato",
-        stages: [
-            keys::POTATOES_0,
-            keys::POTATOES_1,
-            keys::POTATOES_2,
-            keys::POTATOES_3,
-        ],
-        harvest_emitter: Some(keys::POTATO_HARVEST),
-        planting_stock: keys::POTATO,
-        produce: keys::POTATO,
-        yield_range: (2, 3),
-        extra_drop: None,
-        attracts: None,
-    },
-    // Hemp is the one crop whose stock and produce are ENGINE items: the wild
-    // stands and the rope they lash the first stone tools with are core
-    // progression, so cultivating it is this pack making a core material
-    // renewable, not owning it. The pack ships no hemp harvest burst.
-    CropSpec {
-        name: "hemp",
-        stages: [keys::HEMP_0, keys::HEMP_1, keys::HEMP_2, keys::HEMP_3],
-        harvest_emitter: None,
-        planting_stock: keys::HEMP_SEEDS,
-        produce: keys::HEMP,
-        yield_range: (1, 1),
-        attracts: None,
-        extra_drop: Some(ExtraDrop {
-            count_key: "harvest_hemp_seeds",
-            item: keys::HEMP_SEEDS,
-            chance_percent: 60,
-            count: (1, 2),
-        }),
-    },
-];
+const CROP_KEY: &str = keys::CROP_DATA;
 
 /// A resolved [`ExtraDrop`]: the spec's frozen count stream plus the derived
 /// chance stream, so the two rolls never share state.
 pub struct ExtraDropDef {
-    pub item: &'static str,
+    pub item: String,
     pub chance_percent: u64,
     pub count: (u64, u64),
-    pub count_key: &'static str,
+    pub count_key: String,
     pub chance_key: String,
 }
 
@@ -135,18 +70,18 @@ pub struct ExtraDropDef {
 pub struct CropDef {
     /// Growth stages 0..=3 (seedling..mature). Stage identity IS the block.
     pub stages: [BlockId; 4],
-    pub planting_stock: &'static str,
-    pub produce: &'static str,
+    pub planting_stock: String,
+    pub produce: String,
     pub yield_range: (u64, u64),
     pub extra_drop: Option<ExtraDropDef>,
     /// The species a planted stand draws in, key and resolved id (see
     /// [`crate::attract`]).
-    pub attracts: Option<(&'static str, MobId)>,
+    pub attracts: Option<(String, MobId)>,
     /// RNG stream keys (derived once from the spec name — streams are
     /// stateful per key, so these must never vary per call site).
     pub harvest_key: String,
     pub fertile_key: String,
-    pub harvest_emitter: Option<&'static str>,
+    pub harvest_emitter: Option<String>,
     /// The attraction roll's own RNG stream key — never shared with the
     /// harvest streams, which are stateful per key.
     pub attract_key: String,
@@ -163,7 +98,9 @@ pub struct Content {
     pub wild_wheat: BlockId,
     pub wild_carrots: BlockId,
     pub wild_potatoes: BlockId,
-    /// The cultivated crops, one [`CropDef`] per [`CROPS`] row.
+    /// Ordered wild patch rules read from the wild block rows.
+    pub(crate) wild_patches: Vec<crate::worldgen::WildCropSpec>,
+    /// Cultivated crops read from mature block rows carrying `farming:crop`.
     pub crops: Vec<CropDef>,
     /// Compost barrel fill stages 0..=3 (empty..full).
     pub compost: [BlockId; 4],
@@ -237,18 +174,30 @@ impl Content {
             sapling_finals.push((last, last));
         }
         let husbandry = husbandry::resolve();
-        let mut crops = Vec::with_capacity(CROPS.len());
-        for spec in CROPS {
+        let mut crops = Vec::new();
+        for (mature, spec) in blocks_with_data_as::<CropSpec>(CROP_KEY) {
             let mut stages = [BlockId::AIR; 4];
-            for (stage, name) in stages.iter_mut().zip(spec.stages) {
+            for (stage, name) in stages.iter_mut().zip(&spec.stages) {
                 *stage = block(name)?;
+            }
+            if stages[3] != mature
+                || spec.yield_range.0 > spec.yield_range.1
+                || spec.yield_range.1 >= u64::from(u8::MAX)
+                || spec.extra_drop.as_ref().is_some_and(|extra| {
+                    extra.count.0 > extra.count.1
+                        || extra.count.1 > u64::from(u8::MAX)
+                        || extra.chance_percent > 100
+                })
+            {
+                log(&format!("farming: invalid {CROP_KEY} row for {mature:?}"));
+                return None;
             }
             crops.push(CropDef {
                 stages,
                 planting_stock: spec.planting_stock,
                 produce: spec.produce,
                 yield_range: spec.yield_range,
-                extra_drop: spec.extra_drop.as_ref().map(|e| ExtraDropDef {
+                extra_drop: spec.extra_drop.map(|e| ExtraDropDef {
                     item: e.item,
                     chance_percent: e.chance_percent,
                     count: e.count,
@@ -257,7 +206,7 @@ impl Content {
                 }),
                 attracts: match spec.attracts {
                     None => None,
-                    Some(key) => match resolve_mob(key) {
+                    Some(key) => match resolve_mob(&key) {
                         Some(kind) => Some((key, kind)),
                         None => {
                             log(&format!("farming: unknown attracted species '{key}'"));
@@ -286,6 +235,7 @@ impl Content {
             wild_wheat: block(keys::WILD_WHEAT)?,
             wild_carrots: block(keys::WILD_CARROTS)?,
             wild_potatoes: block(keys::WILD_POTATOES)?,
+            wild_patches: crate::worldgen::resolve_specs(),
             crops,
             compost: [
                 block(keys::COMPOST_0)?,
@@ -375,5 +325,25 @@ impl Content {
             .iter()
             .find(|(from, _)| *from == b)
             .map(|&(_, last)| last)
+    }
+}
+
+#[cfg(test)]
+mod crop_rows_tests {
+    use super::*;
+
+    #[test]
+    fn shipped_crop_rows_have_valid_stages_and_yields() {
+        let rows = pack_rows_with_data(include_str!("../pack/blocks.json"), "blocks", CROP_KEY);
+        assert_eq!(rows.len(), 4);
+        for (mature, raw) in rows {
+            let spec: CropSpec = parse_row_data(&raw).unwrap_or_else(|e| panic!("{mature}: {e}"));
+            assert_eq!(spec.stages[3], mature);
+            assert!(spec.yield_range.0 <= spec.yield_range.1);
+            if let Some(extra) = spec.extra_drop {
+                assert!(extra.count.0 <= extra.count.1, "{mature}");
+                assert!(extra.chance_percent <= 100, "{mature}");
+            }
+        }
     }
 }

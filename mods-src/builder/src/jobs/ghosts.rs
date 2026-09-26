@@ -27,12 +27,16 @@ pub struct Ghosts {
 }
 
 impl Ghosts {
+    /// Refresh the full ghost view on load and once per blueprint check.
+    pub fn due(&self, now: u64) -> bool {
+        !self.restored || BLUEPRINT_CHECK.due(now, 0)
+    }
+
     pub fn sync(
         &mut self,
         content: &Content,
         projects: &mut Projects,
         live: &[ProjectId],
-        now: u64,
     ) {
         // Whose blueprint is in a player's hand, asked once however many
         // drafts want to know.
@@ -47,10 +51,8 @@ impl Ghosts {
             }
             // A ghost is a plan: with the table broken, or a draft's blueprint
             // lying on the ground or put away, nothing is planned there.
-            if BLUEPRINT_CHECK.due(now, id) || !self.planned.contains_key(&id) {
-                if let Some(planned) = planned(content, projects, &project, &mut in_hand) {
-                    self.planned.insert(id, planned);
-                }
+            if let Some(planned) = planned(content, projects, &project, &mut in_hand) {
+                self.planned.insert(id, planned);
             }
             if self.planned.get(&id) != Some(&true) {
                 continue;

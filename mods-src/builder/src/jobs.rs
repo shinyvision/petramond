@@ -139,16 +139,22 @@ impl Builder {
         let now = current_tick();
         let changes = self.changes.advance();
         self.supplies.changed(&changes.cells, changes.lost);
-        let live: Vec<ProjectId> = self.projects.live().collect();
-        self.cancel_tableless(&live, now);
+        let table_due = self.projects.table_check_due(now).to_vec();
+        self.cancel_tableless(&table_due, now);
+        let refresh_ghosts = self.ghosts.due(now);
+        let live: Vec<ProjectId> = if refresh_ghosts {
+            self.projects.live().collect()
+        } else {
+            Vec::new()
+        };
         let viewers = gui_viewers();
         let watched = crate::table::watched_projects(self, &viewers);
         let asked = crate::golem::asked(&viewers);
         let mut attended: Vec<(ProjectId, bool)> = watched.iter().map(|id| (*id, true)).collect();
         attended.extend(
-            live.iter()
+            self.projects.active()
                 .filter(|id| !watched.contains(id))
-                .map(|id| (*id, false)),
+                .map(|id| (id, false)),
         );
         // The tick's budgets are one for every golem: whoever goes first may
         // spend them, so the first turn goes round.
@@ -196,8 +202,10 @@ impl Builder {
             }
         }
         self.jobs.forget_idle(now);
-        self.ghosts
-            .sync(&self.content, &mut self.projects, &live, now);
+        if refresh_ghosts {
+            self.ghosts
+                .sync(&self.content, &mut self.projects, &live);
+        }
         if ROUTE_SWEEP.due(now, 0) {
             self.routes.retain(|_, (_, at)| now < *at + ROUTE_TICKS);
         }

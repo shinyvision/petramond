@@ -3,8 +3,9 @@
 //!
 //! Split from the machine that drives it because it changes for its own
 //! reason — a field added, removed or reordered — and that change has its own
-//! discipline (bump [`STATE_VERSION`], extend BOTH halves) which has nothing
-//! to do with how the furnace melts or pours.
+//! discipline (bump [`KvRecord::VERSION`], extend BOTH halves, teach
+//! `upgrade` the old layout) which has nothing to do with how the furnace
+//! melts or pours.
 
 use machine_core::Burner;
 use mod_sdk::*;
@@ -62,23 +63,21 @@ pub(super) struct State {
     pub(super) liquid: Liquid,
 }
 
-/// Bumped whenever a field is added, removed or reordered. The blob is
-/// POSITIONAL, so a mismatched layout does not fail to parse — it shifts every
-/// field after the change and hands the machine someone else's numbers, which
-/// surfaces as a furnace full of metal it never melted or a pour that never
-/// ends. An unrecognised version resets the machine instead.
-const STATE_VERSION: u32 = 4;
+/// The version byte is bumped whenever a field is added, removed or
+/// reordered. The blob is POSITIONAL, so a mismatched layout does not fail to
+/// parse — it shifts every field after the change and hands the machine
+/// someone else's numbers, which surfaces as a furnace full of metal it never
+/// melted or a pour that never ends. A version this build cannot read resets
+/// the machine instead.
+impl KvRecord for State {
+    /// Version 5 is version 4's fields behind the SDK's one-byte version
+    /// instead of the u32 prefix earlier builds wrote.
+    const VERSION: u8 = 5;
+    const OLDEST_VERSION: u8 = 4;
 
-impl State {
-    pub(super) fn decode(bytes: &[u8]) -> State {
+    fn decode(bytes: &[u8]) -> Option<Self> {
         let mut r = ByteReader::new(bytes);
-        if bytes.is_empty() {
-            return State::default();
-        }
-        if r.u32() != Some(STATE_VERSION) {
-            return State::default();
-        }
-        State {
+        Some(State {
             fire: Burner::decode(&mut r),
             melt_progress: r.u32().unwrap_or(0),
             idle_ticks: r.u32().unwrap_or(0),
@@ -91,12 +90,11 @@ impl State {
             pour_mould: read_str(&mut r),
             metal: read_str(&mut r),
             liquid: Liquid::decode(&mut r),
-        }
+        })
     }
 
-    pub(super) fn encode(&self) -> Vec<u8> {
+    fn encode(&self) -> Vec<u8> {
         let mut w = ByteWriter::with_capacity(52);
-        w.u32(STATE_VERSION);
         self.fire.encode(&mut w);
         w.u32(self.melt_progress);
         w.u32(self.idle_ticks);
@@ -110,6 +108,30 @@ impl State {
         write_str(&mut w, &self.metal);
         self.liquid.encode(&mut w);
         w.finish()
+    }
+
+    /// Version 4 led with a u32 version: its low byte is the SDK version
+    /// byte, and the other three (zero) are all that remains to strip.
+    fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
+        match (from, bytes) {
+            (4, [0, 0, 0, rest @ ..]) => Some(rest.to_vec()),
+            _ => None,
+        }
+    }
+}
+
+impl State {
+    /// The stored state; an unwritten furnace — or one this build cannot
+    /// read — is a cold, empty machine.
+    pub(super) fn load(bytes: &[u8]) -> State {
+        if bytes.is_empty() {
+            return State::default();
+        }
+        decode_versioned(bytes).unwrap_or_default()
+    }
+
+    pub(super) fn to_bytes(&self) -> Vec<u8> {
+        encode_versioned(self)
     }
 
     /// The state-only half of "may the lever be pulled": metal in the
@@ -165,15 +187,29 @@ mod tests {
         };
         state.liquid.step(true, 0.05);
 
-        let back = State::decode(&state.encode());
+        let back = State::load(&state.to_bytes());
         assert!(back == state, "every field, not just the ones a test names");
+    }
+
+    /// Earlier builds framed the same fields behind a u32 version 4; such a
+    /// furnace reloads with its metal, not reset.
+    #[test]
+    fn a_version_4_blob_migrates() {
+        let state = State {
+            units: 3,
+            metal: "forge:raw_copper".into(),
+            ..State::default()
+        };
+        let mut old = 4u32.to_le_bytes().to_vec();
+        old.extend(KvRecord::encode(&state));
+        assert!(State::load(&old) == state);
     }
 
     /// An empty blob is what a freshly placed furnace reads, so the decode has
     /// to answer with a cold, empty machine rather than a partly-filled one.
     #[test]
     fn an_unwritten_furnace_decodes_cold() {
-        let fresh = State::decode(&[]);
+        let fresh = State::load(&[]);
         assert!(fresh == State::default());
     }
 
@@ -182,10 +218,10 @@ mod tests {
     #[test]
     fn a_foreign_state_blob_resets_rather_than_misreads() {
         let mut w = ByteWriter::new();
-        w.u32(STATE_VERSION.wrapping_sub(1));
+        w.u32(3);
         w.u32(999);
         assert!(
-            State::decode(&w.finish()) == State::default(),
+            State::load(&w.finish()) == State::default(),
             "an unrecognised version is a reset"
         );
     }

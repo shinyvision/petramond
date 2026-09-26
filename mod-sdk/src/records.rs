@@ -142,6 +142,25 @@ pub fn decode_versioned<T: KvRecord>(bytes: &[u8]) -> Result<T, RecordError> {
     unversioned(bytes)
 }
 
+/// [`decode_versioned`] for a value earlier builds stored UNVERSIONED at a
+/// fixed length: a value of exactly `legacy_len` bytes is read as version 0,
+/// so `T::OLDEST_VERSION` must be 0 and [`KvRecord::upgrade`] lifts that
+/// layout. Every versioned encoding of `T` must therefore differ from
+/// `legacy_len` bytes (a version byte in front of the same fields already
+/// does).
+pub fn decode_versioned_or_legacy<T: KvRecord>(
+    bytes: &[u8],
+    legacy_len: usize,
+) -> Result<T, RecordError> {
+    if bytes.len() == legacy_len {
+        let mut framed = Vec::with_capacity(legacy_len + 1);
+        framed.push(0);
+        framed.extend_from_slice(bytes);
+        return unversioned(&framed);
+    }
+    unversioned(bytes)
+}
+
 /// Read one versioned world-KV value: `Ok(None)` when the key is absent, an
 /// error when it holds bytes this build cannot read.
 pub fn world_kv_load<T: KvRecord>(key: &str) -> Result<Option<T>, RecordError> {

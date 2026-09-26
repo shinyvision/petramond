@@ -59,7 +59,7 @@ pub fn on_random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3], block
     let Some((def, _)) = content.crop_stage(block) else {
         return;
     };
-    let Some((species, kind)) = def.attracts else {
+    let Some((species, kind)) = def.attracts.as_ref() else {
         return;
     };
     if !rng_u64(&def.attract_key).is_multiple_of(ATTRACT_CHANCE_IN) {
@@ -81,7 +81,7 @@ pub fn on_random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3], block
     }
     if mobs_in_radius(field, NEAR_RADIUS)
         .iter()
-        .filter(|m| m.kind == kind)
+        .filter(|m| m.kind == *kind)
         .count()
         >= NEAR_MAX
     {

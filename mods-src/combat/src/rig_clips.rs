@@ -7,7 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::families::{Families, FAMILIES_JSON};
+use crate::families::FamilySpec;
+use crate::keys::FAMILY_DATA;
 use crate::{bow, guard};
 use mod_sdk::*;
 
@@ -64,14 +65,18 @@ fn rig_clips(rig: &str) -> Vec<String> {
 
 #[test]
 fn every_clip_the_pack_plays_is_on_its_rig() {
-    let (families, refused) = Families::parse(FAMILIES_JSON);
-    assert!(refused.is_empty(), "refused family rows: {refused:?}");
+    let rows = pack_rows_with_data(
+        include_str!("../pack/items.json"),
+        "items",
+        FAMILY_DATA,
+    );
+    assert!(!rows.is_empty(), "the pack declares its families");
     let mut played: Vec<(&str, String)> = Vec::new();
-    for style in families.styles() {
-        let family = families.get(style);
-        for motion in family.attacks.iter().chain([&family.work]) {
-            played.push((rig::PLAYER_FIRST_PERSON, motion.first_person.clone()));
-            played.push((rig::PLAYER_BODY, motion.body.clone()));
+    for (row, entry) in &rows {
+        let spec: FamilySpec = parse_row_data(entry).unwrap_or_else(|e| panic!("{row}: {e}"));
+        for (first_person, body) in spec.clips() {
+            played.push((rig::PLAYER_FIRST_PERSON, first_person.to_owned()));
+            played.push((rig::PLAYER_BODY, body.to_owned()));
         }
     }
     for &(rig, clip) in guard::CLIPS.iter().chain(&bow::CLIPS) {

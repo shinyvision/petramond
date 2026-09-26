@@ -17,6 +17,11 @@
             "result": {
                 "item": "forge:pottery_table",
                 "count": 1
+            },
+            "data": {
+                "petramond:unlock_on": {
+                    "items": ["petramond:clay", "forge:forging_furnace"]
+                }
             }
         },
         {
@@ -40,6 +45,11 @@
             "result": {
                 "item": "forge:forging_furnace",
                 "count": 1
+            },
+            "data": {
+                "petramond:unlock_on": {
+                    "tags": ["petramond:raw_ore"]
+                }
             }
         },
         {
@@ -494,6 +504,11 @@
             "result": {
                 "item": "forge:anvil",
                 "count": 1
+            },
+            "data": {
+                "petramond:unlock_on": {
+                    "items": ["petramond:diamond"]
+                }
             }
         },
         {

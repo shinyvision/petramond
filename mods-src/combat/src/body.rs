@@ -19,11 +19,20 @@
 
 use crate::bow;
 use crate::claims::{self, Claims, Rule};
-use crate::families::{Families, Family, Style, FAMILIES_JSON};
+use crate::families::{Families, Family, FamilySpec, Style};
 use crate::guard;
+use crate::keys::FAMILY_DATA;
 use crate::strike::Profile;
 use crate::swing;
 use mod_sdk::*;
+use serde::Deserialize;
+
+/// The engine validates the full `petramond:tool` schema during registry
+/// load; this consumer only needs its kind to join tools to swing families.
+#[derive(Deserialize)]
+struct ToolKindRow {
+    kind: String,
+}
 
 /// One tool this pack animates: a registry row whose tool `kind` named one
 /// of the families.
@@ -67,18 +76,33 @@ pub struct Tools {
 }
 
 impl Tools {
-    /// Build the table off the registry's tool rows: every item whose tool
-    /// data names a `kind` this pack's families cover joins that family,
-    /// whichever pack registered it and whatever its tier — the family is
-    /// a fact of the row, never a list kept here. Registry-only, legal on
+    /// Build the table off the registry's tool rows: each family is the
+    /// [`FAMILY_DATA`] entry some tool row declares for its own `kind`, and
+    /// every item whose tool data names a covered `kind` joins that family,
+    /// whichever pack registered it and whatever its tier — the family is a
+    /// fact of the rows, never a list kept here. Registry-only, legal on
     /// every instance. (The row's tool data and the per-stack override
     /// share the engine's one tool key; this reads the row side.)
     pub fn resolve() -> Tools {
-        let (mut families, refused) = Families::parse(FAMILIES_JSON);
-        for kind in refused {
-            log(&format!(
-                "[combat] the `{kind}` family row is incomplete — it is refused"
-            ));
+        let mut kinds: Vec<(ItemId, String)> = Vec::new();
+        for (id, row) in items_with_data_as::<ToolKindRow>(TOOL_OVERRIDE_KEY) {
+            kinds.push((id, row.kind));
+        }
+        let specs = items_with_data_as::<FamilySpec>(FAMILY_DATA)
+            .into_iter()
+            .filter_map(|(id, spec)| {
+                let kind = kinds.iter().find(|(tool, _)| *tool == id).map(|(_, k)| k.clone());
+                if kind.is_none() {
+                    log(&format!(
+                        "[combat] a '{FAMILY_DATA}' entry sits on a row with no tool kind — it is ignored"
+                    ));
+                }
+                Some((kind?, spec))
+            })
+            .collect::<Vec<_>>();
+        let (mut families, refused) = Families::from_specs(specs);
+        for (kind, reason) in refused {
+            log(&format!("[combat] the `{kind}` family is refused: {reason}"));
         }
         for kind in families.resolve_impacts(animation_clip) {
             log(&format!(
@@ -86,15 +110,7 @@ impl Tools {
             ));
         }
         let mut tools = Vec::new();
-        for (id, text) in items_with_data(TOOL_OVERRIDE_KEY) {
-            let kind = json::Value::parse(&text)
-                .and_then(|row| row.get("kind")?.as_str().map(str::to_owned));
-            let Some(kind) = kind else {
-                log(&format!(
-                    "[combat] a tool row's data names no kind — its swings stay vanilla: {text}"
-                ));
-                continue;
-            };
+        for (id, kind) in kinds {
             // Shovels and shears are tools too; they are simply not this
             // pack's to swing.
             let Some(style) = families.of_kind(&kind) else {

@@ -26,6 +26,7 @@ version = "0.1.0"
 dependencies = [
  "mod-sdk",
  "pack-check",
+ "serde",
 ]
 
 [[package]]
@@ -47,7 +48,6 @@ dependencies = [
  "mod-sdk",
  "pack-check",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -56,6 +56,7 @@ version = "0.1.0"
 dependencies = [
  "mod-sdk",
  "pack-check",
+ "serde",
  "weather-core",
 ]
 
@@ -66,6 +67,7 @@ dependencies = [
  "machine-core",
  "mod-sdk",
  "pack-check",
+ "serde",
 ]
 
 [[package]]
@@ -74,6 +76,7 @@ version = "0.1.0"
 dependencies = [
  "mod-sdk",
  "pack-check",
+ "serde",
 ]
 
 [[package]]
@@ -89,6 +92,7 @@ dependencies = [
  "machine-core",
  "mod-sdk",
  "pack-check",
+ "serde",
 ]
 
 [[package]]
@@ -126,6 +130,8 @@ name = "mod-sdk"
 version = "0.1.0"
 dependencies = [
  "mod-api",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

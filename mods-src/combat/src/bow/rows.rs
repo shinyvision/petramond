@@ -3,8 +3,32 @@
 //! an iron arrow is one more row carrying the key — never a code change.
 
 use mod_sdk::*;
+use serde::Deserialize;
 
 use crate::keys::{ARROW_KEY, BOW_KEY};
+
+/// The [`BOW_KEY`] entry, as a pack writes it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BowSpec {
+    draw_ticks: u32,
+    strain_ticks: u32,
+    draw_speed_scale: f32,
+    launch_speed: [f32; 2],
+    /// The pull frames' item names, weakest first; none = no frames.
+    #[serde(default)]
+    pull: Vec<String>,
+}
+
+/// The [`ARROW_KEY`] entry, as a pack writes it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArrowSpec {
+    damage_weak: [f32; 2],
+    damage_full: [f32; 2],
+    speed_weak: f32,
+    speed_full: f32,
+}
 
 /// One bow's authored draw.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,16 +46,17 @@ pub struct Draw {
 }
 
 impl Draw {
-    /// Read a bow row's data; `None` for any missing or malformed field —
-    /// a bow with half its numbers is refused whole.
-    pub fn parse(v: &json::Value) -> Option<Draw> {
-        let full_ticks = ticks(v, "draw_ticks")?;
-        (full_ticks >= 1).then_some(())?;
-        Some(Draw {
-            full_ticks,
-            strain_ticks: ticks(v, "strain_ticks")?,
-            speed_scale: num(v, "draw_speed_scale")?,
-            launch_speed: pair(v, "launch_speed")?,
+    /// A bow row's draw. A spec missing a field never parses (a bow with
+    /// half its numbers is refused whole); a zero-tick draw is no draw.
+    pub fn from_spec(spec: &BowSpec) -> Result<Draw, String> {
+        if spec.draw_ticks < 1 {
+            return Err("a zero-tick draw is no draw".into());
+        }
+        Ok(Draw {
+            full_ticks: spec.draw_ticks,
+            strain_ticks: spec.strain_ticks,
+            speed_scale: spec.draw_speed_scale,
+            launch_speed: spec.launch_speed,
         })
     }
 
@@ -73,18 +98,18 @@ pub struct ArrowRow {
 }
 
 impl ArrowRow {
-    /// Read an arrow row's data; `None` refuses the row whole.
-    pub fn parse(id: ItemId, name: String, v: &json::Value) -> Option<ArrowRow> {
-        let speed_weak = num(v, "speed_weak")?;
-        let speed_full = num(v, "speed_full")?;
-        (speed_full > speed_weak).then_some(())?;
-        Some(ArrowRow {
+    /// An arrow row from its spec; the full speed must exceed the weak one.
+    pub fn from_spec(id: ItemId, name: String, spec: &ArrowSpec) -> Result<ArrowRow, String> {
+        if spec.speed_full <= spec.speed_weak {
+            return Err("speed_full must exceed speed_weak".into());
+        }
+        Ok(ArrowRow {
             id,
             name,
-            damage_weak: pair(v, "damage_weak")?,
-            damage_full: pair(v, "damage_full")?,
-            speed_weak,
-            speed_full,
+            damage_weak: spec.damage_weak,
+            damage_full: spec.damage_full,
+            speed_weak: spec.speed_weak,
+            speed_full: spec.speed_full,
         })
     }
 
@@ -114,37 +139,32 @@ impl Rows {
     /// empty: a build with no bow, or no arrow to loose, leaves the whole
     /// law inert.
     pub fn load() -> Option<Rows> {
-        let bows: Vec<BowRow> = items_with_data(BOW_KEY)
+        let bows: Vec<BowRow> = items_with_data_as::<BowSpec>(BOW_KEY)
             .into_iter()
-            .filter_map(|(id, text)| {
-                let row = json::Value::parse(&text).and_then(|v| {
-                    let draw = Draw::parse(&v)?;
-                    let pull = pull_frames(&v)?;
-                    Some(BowRow { id, draw, pull })
-                });
-                if row.is_none() {
-                    log(&format!(
-                        "[combat] a '{BOW_KEY}' row's data is incomplete — that bow is skipped: {text}"
-                    ));
+            .filter_map(|(id, spec)| match Draw::from_spec(&spec) {
+                Ok(draw) => Some(BowRow {
+                    id,
+                    draw,
+                    pull: pull_frames(&spec.pull),
+                }),
+                Err(reason) => {
+                    let row = item_names(vec![id]).pop().flatten();
+                    let row = row.unwrap_or_else(|| format!("{id:?}"));
+                    log(&row_error(BOW_KEY, &row, &reason));
+                    None
                 }
-                row
             })
             .collect();
-        let arrow_rows = items_with_data(ARROW_KEY);
+        let arrow_rows = items_with_data_as::<ArrowSpec>(ARROW_KEY);
         let names = item_names(arrow_rows.iter().map(|(id, _)| *id).collect());
         let arrows: Vec<ArrowRow> = arrow_rows
             .into_iter()
             .zip(names)
-            .filter_map(|((id, text), name)| {
-                let row = name.and_then(|name| {
-                    json::Value::parse(&text).and_then(|v| ArrowRow::parse(id, name, &v))
-                });
-                if row.is_none() {
-                    log(&format!(
-                        "[combat] an '{ARROW_KEY}' row's data is incomplete — that arrow is skipped: {text}"
-                    ));
-                }
-                row
+            .filter_map(|((id, spec), name)| {
+                let name = name?;
+                ArrowRow::from_spec(id, name.clone(), &spec)
+                    .map_err(|reason| log(&row_error(ARROW_KEY, &name, &reason)))
+                    .ok()
             })
             .collect();
         if bows.is_empty() {
@@ -176,39 +196,18 @@ impl Rows {
 
 /// The row's `pull` list, each frame resolved against the registry: a
 /// frame the registry lacks is logged and left `None` (the previous one
-/// holds), never a dead bow. No list = no frames.
-fn pull_frames(v: &json::Value) -> Option<Vec<Option<String>>> {
-    let Some(list) = v.get("pull") else {
-        return Some(Vec::new());
-    };
-    list.as_array()?
+/// holds), never a dead bow.
+fn pull_frames(names: &[String]) -> Vec<Option<String>> {
+    names
         .iter()
-        .map(|entry| {
-            let name = entry.as_str()?;
+        .map(|name| {
             let present = resolve_item(name).is_some();
             if !present {
                 log(&format!(
                     "[combat] '{name}' did not resolve — that pull frame is skipped"
                 ));
             }
-            Some(present.then(|| name.to_owned()))
+            present.then(|| name.clone())
         })
         .collect()
-}
-
-fn num(v: &json::Value, key: &str) -> Option<f32> {
-    v.get(key)?.as_f64().map(|n| n as f32)
-}
-
-fn ticks(v: &json::Value, key: &str) -> Option<u32> {
-    let n = v.get(key)?.as_f64()?;
-    (n.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&n)).then_some(n as u32)
-}
-
-fn pair(v: &json::Value, key: &str) -> Option<[f32; 2]> {
-    let list = v.get(key)?.as_array()?;
-    match list {
-        [a, b] => Some([a.as_f64()? as f32, b.as_f64()? as f32]),
-        _ => None,
-    }
 }

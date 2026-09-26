@@ -161,7 +161,7 @@ impl MachineSpec for ForgingFurnaceSpec {
     ///   forge built on that cell wakes up with the old one's crucible — full
     ///   of metal, or half-way through a pour it never started.
     fn forget(&mut self, pos: [i32; 3]) {
-        let state = State::decode(&section_kv_get(pos, STATE_KEY).unwrap_or_default());
+        let state = State::load(&section_kv_get(pos, STATE_KEY).unwrap_or_default());
         if state.units > 0 && !state.metal.is_empty() {
             spawn_item(&state.metal, state.units, at(pos));
         }
@@ -183,7 +183,7 @@ impl MachineSpec for ForgingFurnaceSpec {
         };
         let mut slots = slots.unwrap_or_default();
         slots.resize(SLOTS, None);
-        let mut state = State::decode(stored);
+        let mut state = State::load(stored);
         let before = state.clone();
         let before_slots = slots.clone();
         let bits = fittings::record(&ctx.aux[0]);
@@ -251,7 +251,7 @@ impl MachineSpec for ForgingFurnaceSpec {
 
         write_changed_slots(ctx.pos, &before_slots, &slots);
         if state != before {
-            *stored = state.encode();
+            *stored = state.to_bytes();
         }
 
         // The row (lit or not) and the parts mask are both compared against
@@ -601,14 +601,14 @@ impl ForgingFurnaceSpec {
     /// where a control can say what it is and refuse when it cannot be used.
     pub fn pull_lever(&self, anchor: [i32; 3], caches: &mut Caches) {
         let stored = section_kv_get(anchor, STATE_KEY).unwrap_or_default();
-        let mut state = State::decode(&stored);
+        let mut state = State::load(&stored);
         let mould = mould_in(anchor);
         if !self.pourable(&state, caches, mould.as_deref()) {
             return;
         }
         state.phase = Phase::Pouring;
         state.phase_ticks = 0;
-        section_kv_set(anchor, STATE_KEY, state.encode());
+        section_kv_set(anchor, STATE_KEY, state.to_bytes());
 
         // AFTER the gate, never before it: the lever is the one control on the
         // machine, and a click that made the noise but not the pour would be

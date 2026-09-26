@@ -52,22 +52,31 @@ const fn radians(degrees: f32) -> f32 {
     degrees * (std::f32::consts::PI / 180.0)
 }
 
+/// A family's `profile` as the data writes it: the half-angles in DEGREES.
+/// Every field is required — a window with half its numbers does not parse.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileSpec {
+    reach: f32,
+    sweet: f32,
+    arc_yaw: f32,
+    arc_pitch: f32,
+    peak: f32,
+    floor: f32,
+    cleave: bool,
+}
+
 impl Profile {
-    /// Read a family row's `profile`: `reach`, `sweet`, `arc_yaw` and
-    /// `arc_pitch` (half-angles in DEGREES), `peak`, `floor`, `cleave`.
-    /// `None` for anything missing or malformed — a window with half its
-    /// numbers is refused whole.
-    pub fn parse(v: &json::Value) -> Option<Profile> {
-        let num = |key| crate::families::num(v, key);
-        Some(Profile {
-            reach: num("reach")?,
-            sweet: num("sweet")?,
-            arc_yaw: radians(num("arc_yaw")?),
-            arc_pitch: radians(num("arc_pitch")?),
-            peak: num("peak")?,
-            floor: num("floor")?,
-            cleave: v.get("cleave")?.as_bool()?,
-        })
+    pub fn from_spec(spec: &ProfileSpec) -> Profile {
+        Profile {
+            reach: spec.reach,
+            sweet: spec.sweet,
+            arc_yaw: radians(spec.arc_yaw),
+            arc_pitch: radians(spec.arc_pitch),
+            peak: spec.peak,
+            floor: spec.floor,
+            cleave: spec.cleave,
+        }
     }
 }
 

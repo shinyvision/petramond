@@ -140,6 +140,7 @@
       },
       "sprite": "kitchen:rabbit_stew",
       "tags": [],
+      "data": { "kitchen:vessel": { "returns": "kitchen:wooden_bowl" } },
       "food": {
         "eat_ticks": 40,
         "effects": [

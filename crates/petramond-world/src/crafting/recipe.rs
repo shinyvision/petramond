@@ -88,6 +88,18 @@ pub struct CraftingRecipe {
     /// carry one of these keys must AGREE on its value or the recipe does not
     /// match (see `plan`).
     inherit: Vec<String>,
+    /// Optional early discovery triggers. The ordinary ingredient gate still
+    /// applies; any item in this set can also reveal the recipe.
+    unlock_on: crate::item::ItemSet,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnlockOnData {
+    #[serde(default)]
+    items: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 impl CraftingRecipe {
@@ -105,6 +117,7 @@ impl CraftingRecipe {
             result,
             data: Vec::new(),
             inherit: Vec::new(),
+            unlock_on: crate::item::ItemSet::EMPTY,
         }
     }
 
@@ -191,6 +204,7 @@ impl CraftingRecipe {
             result,
             data: Vec::new(),
             inherit: Vec::new(),
+            unlock_on: crate::item::ItemSet::EMPTY,
         })
     }
 
@@ -224,6 +238,11 @@ impl CraftingRecipe {
         &self.inherit
     }
 
+    /// Items that reveal this recipe before every ingredient has been held.
+    pub fn unlock_on(&self) -> &crate::item::ItemSet {
+        &self.unlock_on
+    }
+
     /// Whether the row joins the catalog — the engine's `petramond:enabled`
     /// vocabulary ([`crate::registry::row_enabled`]). This is how a pack
     /// RETIRES a recipe it does not own: it cannot restate
@@ -235,8 +254,7 @@ impl CraftingRecipe {
     }
 
     /// Attach the row's compiled data entries, parsing the engine's
-    /// `petramond:inherit` vocabulary strictly (a malformed entry fails the
-    /// row, like fuel/tool on items).
+    /// `petramond:inherit` and `petramond:unlock_on` vocabularies strictly.
     pub fn set_data(&mut self, data: Vec<(String, String)>) -> Result<(), String> {
         let inherit = match data.iter().find(|(k, _)| k == "petramond:inherit") {
             None => Vec::new(),
@@ -247,8 +265,39 @@ impl CraftingRecipe {
                 keys
             }
         };
+        let mut unlock_on = crate::item::ItemSet::EMPTY;
+        if let Some((_, text)) = data.iter().find(|(k, _)| k == "petramond:unlock_on") {
+            let triggers: UnlockOnData = serde_json::from_str(text)
+                .map_err(|e| format!("malformed 'petramond:unlock_on' data: {e}"))?;
+            if triggers.items.is_empty() && triggers.tags.is_empty() {
+                return Err("'petramond:unlock_on' must name an item or tag".into());
+            }
+            for key in triggers.items {
+                let item = item_by_key(&key)
+                    .filter(|item| *item != ItemType::Air)
+                    .ok_or_else(|| format!("unknown unlock item '{key}'"))?;
+                unlock_on.insert(item);
+            }
+            for key in triggers.tags {
+                let tag = ItemTag::lookup(&key)
+                    .ok_or_else(|| format!("unknown unlock tag '{key}'"))?;
+                let members = ItemType::all()
+                    .iter()
+                    .copied()
+                    .filter(|item| item.has_tag(tag));
+                let mut found = false;
+                for item in members {
+                    unlock_on.insert(item);
+                    found = true;
+                }
+                if !found {
+                    return Err(format!("unlock tag '{key}' has no items"));
+                }
+            }
+        }
         self.data = data;
         self.inherit = inherit;
+        self.unlock_on = unlock_on;
         Ok(())
     }
 

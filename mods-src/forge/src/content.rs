@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use mod_sdk::*;
 
 use crate::keys;
+use crate::schema::{read_rows, MetalSpec, MouldSpec};
 
 /// Melt time for a metal with no `forge:metal` entry.
 const MELT_TICKS_DEFAULT: u32 = 240;
@@ -111,27 +112,16 @@ fn resolve_metals(raw: HashMap<String, RawMetal>) -> HashMap<String, Metal> {
 
 impl Casting {
     pub fn resolve() -> Casting {
-        let moulds = read_rows(keys::MOULD_DATA, |value| {
-            value.get("class")?.as_str().map(str::to_owned)
-        });
-        let metals = resolve_metals(read_rows(keys::METAL_DATA, |value| {
-            Some(RawMetal {
-                melt_ticks: value
-                    .get("melt_ticks")
-                    .and_then(|t| t.as_f64())
-                    .map(|t| t.max(1.0) as u32),
-                molten: rgb(value.get("molten")),
-                solid: rgb(value.get("solid")),
-                name: value
-                    .get("name")
-                    .and_then(|t| t.as_str())
-                    .map(str::to_owned),
-                melts_to: value
-                    .get("melts_to")
-                    .and_then(|t| t.as_str())
-                    .map(str::to_owned),
-            })
-        }));
+        let moulds = read_rows::<MouldSpec>(keys::MOULD_DATA)
+            .into_iter()
+            .map(|(item, mould)| (item, mould.class))
+            .collect();
+        let metals = resolve_metals(
+            read_rows::<MetalSpec>(keys::METAL_DATA)
+                .into_iter()
+                .map(|(item, spec)| (item, RawMetal::from(spec)))
+                .collect(),
+        );
         // The member counts are the only cheap signal that the pack's data keys
         // and this module's constants are the same strings — a typo on either
         // side is silent everywhere else.
@@ -202,37 +192,16 @@ impl Casting {
     }
 }
 
-fn rgb(value: Option<&json::Value>) -> Option<[u8; 3]> {
-    let a = value?.as_array()?;
-    if a.len() != 3 {
-        return None;
-    }
-    Some([a[0].as_u8()?, a[1].as_u8()?, a[2].as_u8()?])
-}
-
-/// Enumerate every item carrying `key` and parse its value, resolving the ids
-/// back to registry names in ONE batched call.
-pub fn read_rows<T>(key: &str, parse: impl Fn(&json::Value) -> Option<T>) -> HashMap<String, T> {
-    let rows = items_with_data(key);
-    if rows.is_empty() {
-        return HashMap::new();
-    }
-    let ids: Vec<ItemId> = rows.iter().map(|(id, _)| *id).collect();
-    let names = item_names(ids);
-    let mut out = HashMap::with_capacity(rows.len());
-    for ((_, text), name) in rows.iter().zip(names) {
-        let (Some(name), Some(value)) = (name, json::Value::parse(text)) else {
-            continue;
-        };
-        if let Some(parsed) = parse(&value) {
-            out.insert(name, parsed);
-        } else {
-            log(&format!(
-                "forge: item '{name}' has a malformed '{key}' entry"
-            ));
+impl From<MetalSpec> for RawMetal {
+    fn from(spec: MetalSpec) -> RawMetal {
+        RawMetal {
+            melt_ticks: spec.melt_ticks.map(|t| t.max(1.0) as u32),
+            molten: spec.molten,
+            solid: spec.solid,
+            name: spec.name,
+            melts_to: spec.melts_to,
         }
     }
-    out
 }
 
 #[cfg(test)]

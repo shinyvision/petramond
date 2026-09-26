@@ -26,7 +26,7 @@ mod seats;
 use cauldron::{resolve_cauldron, Cauldron};
 use chains::{resolve_chains, Chains};
 use lanterns::{resolve_lanterns, Lanterns};
-use seats::{release_broken_piece_sitters, ResolvedPiece, PIECES};
+use seats::{release_broken_piece_sitters, ResolvedPiece};
 
 /// A box is a STRUT when it is slender in TWO of its three axes — a chain
 /// link's bar, the wall bracket's beam. Slender in one axis is a PLATE, which
@@ -213,13 +213,7 @@ struct Furniture {
 
 impl Mod for Furniture {
     fn init(&mut self) {
-        self.pieces = PIECES
-            .iter()
-            .filter_map(|piece| {
-                let block = resolve_block(piece.block)?;
-                Some(ResolvedPiece { block, piece })
-            })
-            .collect();
+        self.pieces = seats::load_pieces();
         self.client = runtime_side() == RuntimeSide::Client;
         self.chains = resolve_chains();
         self.lanterns = resolve_lanterns();
@@ -257,7 +251,7 @@ impl Mod for Furniture {
             }
             (ON_BLOCK_BROKEN, EventPayload::BlockBroken { pos, block, .. }) => {
                 if let Some(resolved) = self.pieces.iter().find(|p| p.block == *block) {
-                    release_broken_piece_sitters(resolved.block, resolved.piece, *pos);
+                    release_broken_piece_sitters(resolved.block, &resolved.piece, *pos);
                 }
                 Outcome::Continue
             }

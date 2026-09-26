@@ -192,31 +192,20 @@ const PIGMENT_KEY: &str = keys::PIGMENT;
 
 /// Load every declared pigment off the item-data surface.
 pub(super) fn load_pigments() -> Vec<(ItemId, [u8; 3], bool)> {
-    items_with_data(PIGMENT_KEY)
+    items_with_data_as::<PigmentSpec>(PIGMENT_KEY)
         .into_iter()
-        .filter_map(|(item, text)| {
-            let Some((color, dilute)) = parse_pigment(&text) else {
-                log(&format!("ignoring malformed {PIGMENT_KEY} data: {text}"));
-                return None;
-            };
-            Some((item, color, dilute))
-        })
+        .map(|(item, spec)| (item, spec.color, spec.dilute))
         .collect()
 }
 
 /// Parse one `furniture:pigment` value: `{"color": [r, g, b]}` with an
 /// optional `"dilute": bool` (default stain).
-fn parse_pigment(text: &str) -> Option<([u8; 3], bool)> {
-    let v = json::Value::parse(text)?;
-    let [r, g, b] = v.get("color")?.as_array()? else {
-        return None;
-    };
-    let color = [r.as_u8()?, g.as_u8()?, b.as_u8()?];
-    let dilute = match v.get("dilute") {
-        Some(d) => d.as_bool()?,
-        None => false,
-    };
-    Some((color, dilute))
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PigmentSpec {
+    color: [u8; 3],
+    #[serde(default)]
+    dilute: bool,
 }
 
 /// One flower stirred in, per channel on transmittance `t = value/255`:

@@ -11,8 +11,7 @@
 //! - the pottery table — no code at all. A block row whose interaction opens
 //!   `forge:pottery_table` plus recipe rows naming that station is a whole
 //!   crafting bench; the engine runs the ordinary crafting session.
-//! - `unlocks.rs` — when each station becomes visible, which the pack states
-//!   itself rather than inheriting the engine's hold-every-ingredient default.
+//! - recipe `petramond:unlock_on` rows — when each station becomes visible.
 //! - `furnace.rs` — the forging furnace: a machine you OPERATE. Mould in by
 //!   hand, lever to pour, and the cast pops out of the basin as an item.
 //!
@@ -33,7 +32,7 @@ mod gold;
 mod keys;
 mod liquid;
 mod ore;
-mod unlocks;
+mod schema;
 
 use machine_core::Caches;
 use mod_sdk::*;
@@ -44,7 +43,6 @@ const TICK_SYSTEM: u32 = 1;
 const ANVIL_TICK_SYSTEM: u32 = 2;
 const ON_BLOCK_PLACED: u32 = 1;
 const ON_CONTAINER_OPENED: u32 = 2;
-const ON_ITEM_OBTAINED: u32 = 3;
 const ON_BLOCK_BREAK: u32 = 4;
 const ON_MOB_DAMAGED: u32 = 5;
 const GEN_CLAY: u32 = 1;
@@ -57,7 +55,6 @@ struct Forge {
     caches: Caches,
     clay: clay::Deposits,
     ore: ore::Ore,
-    unlocks: unlocks::Unlocks,
     gold: gold::Gold,
 }
 
@@ -78,11 +75,6 @@ impl Mod for Forge {
         if runtime_side() != RuntimeSide::Server {
             return;
         }
-        // Independent of the casting machinery: the ladder must still reveal
-        // itself even if the furnace rows are broken.
-        self.unlocks = unlocks::Unlocks::resolve();
-        register_event_handler(EventKind::ItemObtained, 0, ON_ITEM_OBTAINED);
-
         // Gold's nondestructive mining: pure break-drops policy, independent
         // of the machines.
         self.gold = gold::Gold::resolve();
@@ -156,9 +148,6 @@ impl Mod for Forge {
             (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, at }) => {
                 self.furnace.on_container_opened(kind, *at);
                 self.anvil.on_container_opened(kind, *at);
-            }
-            (ON_ITEM_OBTAINED, EventPayload::ItemObtained { player, item }) => {
-                self.unlocks.on_item_obtained(*player, *item);
             }
             _ => {}
         }

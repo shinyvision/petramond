@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 use mod_sdk::*;
 
 use crate::anvil::{BASE_SOCKETS, SOCKETS};
-use crate::content::read_rows;
 use crate::keys;
+use crate::schema::{read_rows, FitSpec, GentleSpec, SlotsSpec, WearOnSpec};
 
 /// One fit out of an augment material's `forge:augment` list.
 #[derive(Clone)]
@@ -103,56 +103,35 @@ pub(super) struct ToolStats {
 
 /// Every augment MATERIAL and the fits its row lists.
 pub(super) fn augment_fits() -> HashMap<String, Vec<Fit>> {
-    read_rows(keys::AUGMENT_DATA, |value| {
-        let fits: Vec<Fit> = value
-            .as_array()?
-            .iter()
-            .filter_map(|f| {
-                Some(Fit {
-                    tool: f.get("tool")?.as_str()?.to_owned(),
-                    tier: f.get("tier").and_then(|t| t.as_u8()).unwrap_or(0),
-                    speed_mult: f.get("speed_mult").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
-                    damage_mult: f.get("damage_mult").and_then(|v| v.as_f64()).unwrap_or(1.0)
-                        as f32,
-                    knockback_mult: f
-                        .get("knockback_mult")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(1.0) as f32,
-                    cost: f.get("cost").and_then(|v| v.as_u8()).unwrap_or(1).max(1),
-                    overlay: f.get("overlay")?.as_str()?.to_owned(),
-                    overlays: f
-                        .get("overlays")
-                        .and_then(|o| o.as_object())
-                        .map(|kv| {
-                            kv.iter()
-                                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    gentle: f.get("gentle").map(|g| {
-                        g.get("chance")
-                            .and_then(|c| c.as_u8())
-                            .unwrap_or(100)
-                            .clamp(1, 100)
-                    }),
-                    wear: f.get("wear").and_then(|w| {
-                        let on = match w.get("on")?.as_str()? {
-                            "break" => WearOn::Break,
-                            "hit" => WearOn::Hit,
-                            "proc" => WearOn::Proc,
-                            _ => return None,
-                        };
-                        let max = w.get("max")?.as_f64()? as u32;
-                        Some(Wear {
-                            on,
-                            max: max.max(100),
-                        })
-                    }),
-                })
-            })
-            .collect();
-        (!fits.is_empty()).then_some(fits)
-    })
+    read_rows::<Vec<FitSpec>>(keys::AUGMENT_DATA)
+        .into_iter()
+        .filter(|(_, fits)| !fits.is_empty())
+        .map(|(material, fits)| (material, fits.into_iter().map(Fit::from).collect()))
+        .collect()
+}
+
+impl From<FitSpec> for Fit {
+    fn from(f: FitSpec) -> Fit {
+        Fit {
+            tool: f.tool,
+            tier: f.tier,
+            speed_mult: f.speed_mult.unwrap_or(1.0),
+            damage_mult: f.damage_mult.unwrap_or(1.0),
+            knockback_mult: f.knockback_mult.unwrap_or(1.0),
+            cost: f.cost.unwrap_or(1).max(1),
+            overlay: f.overlay,
+            overlays: f.overlays.into_iter().collect(),
+            gentle: f.gentle.as_ref().map(GentleSpec::chance),
+            wear: f.wear.map(|w| Wear {
+                on: match w.on {
+                    WearOnSpec::Break => WearOn::Break,
+                    WearOnSpec::Hit => WearOn::Hit,
+                    WearOnSpec::Proc => WearOn::Proc,
+                },
+                max: (w.max as u32).max(100),
+            }),
+        }
+    }
 }
 
 /// The reverse index a tool's RECORD is read through: installed IDENTITY →
@@ -204,23 +183,14 @@ pub(super) fn display_names(by_identity: &HashMap<String, Vec<Fit>>) -> HashMap<
 /// Every augmentable tool: its socket row + family, and the engine's own
 /// resolved stats, so the mod never restates the tier ladder.
 pub(super) fn augmentable_tools() -> HashMap<String, (ToolSlots, ToolStats)> {
-    let slotted = read_rows(keys::AUGMENT_SLOTS_DATA, |value| {
-        Some(ToolSlots {
-            family: value
-                .get("family")
-                .and_then(|f| f.as_str())
-                .unwrap_or("default")
-                .to_owned(),
-            lockable: value
-                .get("lockable")
-                .and_then(|l| l.as_u8())
-                .unwrap_or(0)
-                .min(SOCKETS as u8 - BASE_SOCKETS),
-        })
-    });
+    let slotted = read_rows::<SlotsSpec>(keys::AUGMENT_SLOTS_DATA);
     slotted
         .into_iter()
-        .filter_map(|(name, slots)| {
+        .filter_map(|(name, spec)| {
+            let slots = ToolSlots {
+                family: spec.family.unwrap_or_else(|| "default".to_owned()),
+                lockable: spec.lockable.unwrap_or(0).min(SOCKETS as u8 - BASE_SOCKETS),
+            };
             let info = item_info(&name)?;
             let tool = info.tool?;
             Some((
@@ -243,5 +213,5 @@ pub(super) fn augmentable_tools() -> HashMap<String, (ToolSlots, ToolStats)> {
 /// The items carrying `key` at all — membership is the whole vocabulary for
 /// the socket gem and the innately gentle tools.
 pub(super) fn items_with(key: &str) -> HashSet<String> {
-    read_rows(key, |_| Some(())).into_keys().collect()
+    read_rows::<serde::de::IgnoredAny>(key).into_keys().collect()
 }

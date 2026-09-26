@@ -1,6 +1,6 @@
 //! Sitting: PURE MOD POLICY over the engine's actor-pose primitive
-//! (`player_pose_set`). This module owns the seat layout (the [`PIECES`]
-//! table — offsets in unrotated footprint space, like model geometry),
+//! (`player_pose_set`). Block row data owns the seat layout (offsets in
+//! unrotated footprint space, like model geometry),
 //! computes each seat's world anchor from the placed group's base + facing
 //! (`block_model_group` + `footprint_local_to_world`), and derives occupancy
 //! from the engine roster (`pose_anchor`) — never from mirrored mod state, so
@@ -24,42 +24,44 @@ use mod_sdk::*;
 
 use super::{keys, Furniture};
 
-/// One sit-able furniture piece: its block, the model footprint (mirror of
+/// One sit-able furniture piece: the model footprint (mirror of
 /// the pack's `models.json` `cells`), and its seats in unrotated footprint
 /// space. A bench or sofa is one more row with more seats.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Piece {
-    pub(super) block: &'static str,
     pub(super) footprint: [u8; 3],
-    pub(super) seats: &'static [[f32; 3]],
+    pub(super) seats: Vec<[f32; 3]>,
 }
 
-pub(super) const PIECES: &[Piece] = &[
-    Piece {
-        block: keys::CHAIR,
-        footprint: [1, 2, 1],
-        seats: &[[0.5, -0.1, 0.25]],
-    },
-    Piece {
-        block: keys::BENCH,
-        footprint: [2, 2, 1],
-        seats: &[[0.5, -0.1, 0.25], [1.5, -0.1, 0.25]],
-    },
-];
+pub(super) fn load_pieces() -> Vec<ResolvedPiece> {
+    blocks_with_data_as::<Piece>(keys::SEATS)
+        .into_iter()
+        .filter_map(|(block, piece)| {
+            if piece.footprint.contains(&0) || piece.seats.is_empty() {
+                log(&format!("furniture: seat row for {block:?} has no footprint or seats"));
+                None
+            } else {
+                Some(ResolvedPiece { block, piece })
+            }
+        })
+        .collect()
+}
 
 const FACINGS: [Facing; 4] = [Facing::North, Facing::South, Facing::West, Facing::East];
 
 /// A [`Piece`] with its block name resolved to the session id.
 pub(super) struct ResolvedPiece {
     pub(super) block: BlockId,
-    pub(super) piece: &'static Piece,
+    pub(super) piece: Piece,
 }
 
 impl Furniture {
-    pub(super) fn piece_for(&self, block: BlockId) -> Option<&'static Piece> {
+    pub(super) fn piece_for(&self, block: BlockId) -> Option<&Piece> {
         self.pieces
             .iter()
             .find(|p| p.block == block)
-            .map(|p| p.piece)
+            .map(|p| &p.piece)
     }
 
     /// Furniture consumer: seat the clicker in the free seat nearest the
@@ -159,6 +161,23 @@ pub(super) fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+
+    #[test]
+    fn shipped_seat_rows_have_usable_footprints() {
+        let rows = pack_rows_with_data(include_str!("../pack/blocks.json"), "blocks", keys::SEATS);
+        assert_eq!(rows.len(), 2);
+        for (block, raw) in rows {
+            let piece: Piece = parse_row_data(&raw).unwrap_or_else(|e| panic!("{block}: {e}"));
+            assert!(piece.footprint.iter().all(|side| *side > 0), "{block}");
+            assert!(!piece.seats.is_empty(), "{block}");
+            assert!(piece.seats.iter().flatten().all(|v| v.is_finite()), "{block}");
         }
     }
 }

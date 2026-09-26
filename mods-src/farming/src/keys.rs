@@ -97,6 +97,8 @@ mod_sdk::pack_keys! {
     pub ROOTS_IN_SOIL_TAG: Tag = "petramond:roots_in_soil";
     /// The species-row data a breedable animal carries.
     pub HUSBANDRY_DATA: Data = "farming:husbandry";
+    pub CROP_DATA: Data = "farming:crop";
+    pub WILD_PATCH_DATA: Data = "farming:wild_patch";
     pub CROP_HOOK: Behavior = "farming:crop";
     pub FARMLAND_HOOK: Behavior = "farming:farmland";
     pub SPREAD_HOOK: Behavior = "farming:grass_fertilized";

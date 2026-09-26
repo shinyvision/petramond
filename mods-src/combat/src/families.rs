@@ -1,17 +1,65 @@
-//! The tool FAMILIES this pack animates — one data row per tool `kind` in
-//! `families.json`, read once at init: the clips each combo step and the
-//! work loop play on each rig, the pacing, and the strike profile. A row is
-//! the whole of a family; adding a weapon family is adding a row.
+//! The tool FAMILIES this pack animates — one family per tool `kind`: the
+//! clips each combo step and the work loop play on each rig, the pacing, and
+//! the strike profile. A family is ROW DATA: the [`FAMILY_DATA`](crate::keys::FAMILY_DATA) entry on an
+//! item row declares the family of that row's own tool kind (this pack
+//! patches its three onto a stone pickaxe, a stone axe and its iron sword),
+//! so another pack adds a weapon family by carrying the entry on one of its
+//! own tool rows — no code change, no rebuild of this mod.
 //!
-//! What the file cannot state is read off the rigs after parsing
+//! What the data cannot state is read off the rigs after parsing
 //! ([`Families::resolve_impacts`]): where each attack clip marks its
 //! `impact`, on the body rig (the instant the hit lands) and on the
 //! first-person rig (the frame the wielder sees it land).
 
-use crate::strike::Profile;
+use serde::Deserialize;
+
+use crate::strike::{Profile, ProfileSpec};
 use mod_sdk::*;
 
-pub const FAMILIES_JSON: &str = include_str!("../families.json");
+/// The [`FAMILY_DATA`](crate::keys::FAMILY_DATA) entry, as a pack writes it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FamilySpec {
+    /// The attack combo in chain order; never empty.
+    attacks: Vec<MotionSpec>,
+    work: MotionSpec,
+    pace: PaceSpec,
+    profile: ProfileSpec,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MotionSpec {
+    fp: String,
+    body: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PaceSpec {
+    window_attack: Vec<f32>,
+    window_mine: f32,
+}
+
+impl MotionSpec {
+    fn motion(self) -> Motion {
+        Motion {
+            first_person: self.fp,
+            body: self.body,
+        }
+    }
+}
+
+impl FamilySpec {
+    /// Every clip the family plays, as (first-person, body) pairs.
+    #[cfg(test)]
+    pub fn clips(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.attacks
+            .iter()
+            .chain([&self.work])
+            .map(|m| (m.fp.as_str(), m.body.as_str()))
+    }
+}
 
 /// A family, as its index in the table.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
@@ -71,27 +119,31 @@ impl Family {
     }
 }
 
-/// The table, in file order.
+/// The table, in declaration order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Families {
     rows: Vec<Family>,
 }
 
 impl Families {
-    /// Parse the document. A row missing anything is refused whole — its
-    /// kind then swings vanilla, never half a family — and answered beside
-    /// the table for the caller to log.
-    pub fn parse(text: &str) -> (Families, Vec<String>) {
-        let Some(doc) = json::Value::parse(text).and_then(|v| v.as_object().map(<[_]>::to_vec))
-        else {
-            return (Families::default(), vec!["<document>".to_string()]);
-        };
-        let mut rows = Vec::new();
+    /// Build the table from each kind's declared family, in the order given.
+    /// A family whose data breaks a rule serde cannot state (an empty combo,
+    /// a non-positive window) or that repeats a kind already declared is
+    /// refused whole — its kind then swings vanilla, never half a family —
+    /// and answered, with the reason, beside the table for the caller to log.
+    pub fn from_specs(
+        specs: impl IntoIterator<Item = (String, FamilySpec)>,
+    ) -> (Families, Vec<(String, String)>) {
+        let mut rows: Vec<Family> = Vec::new();
         let mut refused = Vec::new();
-        for (kind, row) in &doc {
-            match parse_family(kind, row) {
-                Some(family) => rows.push(family),
-                None => refused.push(kind.clone()),
+        for (kind, spec) in specs {
+            if rows.iter().any(|f| f.kind == kind) {
+                refused.push((kind, "the kind already has a family".to_owned()));
+                continue;
+            }
+            match Family::from_spec(&kind, spec) {
+                Ok(family) => rows.push(family),
+                Err(reason) => refused.push((kind, reason)),
             }
         }
         (Families { rows }, refused)
@@ -145,50 +197,31 @@ impl Families {
     }
 }
 
-fn parse_family(kind: &str, row: &json::Value) -> Option<Family> {
-    let attacks: Vec<Motion> = row
-        .get("attacks")?
-        .as_array()?
-        .iter()
-        .map(motion)
-        .collect::<Option<_>>()?;
-    if attacks.is_empty() {
-        return None;
+impl Family {
+    fn from_spec(kind: &str, spec: FamilySpec) -> Result<Family, String> {
+        if spec.attacks.is_empty() {
+            return Err("the attack combo is empty".into());
+        }
+        let PaceSpec {
+            window_attack: attack,
+            window_mine: mine,
+        } = spec.pace;
+        if attack.is_empty() || attack.iter().any(|w| *w <= 0.0) {
+            return Err("every attack window must be positive".into());
+        }
+        if mine <= 0.0 {
+            return Err("the mining window must be positive".into());
+        }
+        Ok(Family {
+            kind: kind.to_owned(),
+            attacks: spec.attacks.into_iter().map(MotionSpec::motion).collect(),
+            work: spec.work.motion(),
+            pace: Pace { attack, mine },
+            profile: Profile::from_spec(&spec.profile),
+            impacts: Vec::new(),
+            fp_impacts: Vec::new(),
+        })
     }
-    let pace = row.get("pace")?;
-    let attack: Vec<f32> = pace
-        .get("window_attack")?
-        .as_array()?
-        .iter()
-        .map(|v| v.as_f64().map(|n| n as f32))
-        .collect::<Option<_>>()?;
-    if attack.is_empty() || attack.iter().any(|w| *w <= 0.0) {
-        return None;
-    }
-    let mine = num(pace, "window_mine")?;
-    if mine <= 0.0 {
-        return None;
-    }
-    Some(Family {
-        kind: kind.to_owned(),
-        attacks,
-        work: motion(row.get("work")?)?,
-        pace: Pace { attack, mine },
-        profile: Profile::parse(row.get("profile")?)?,
-        impacts: Vec::new(),
-        fp_impacts: Vec::new(),
-    })
-}
-
-fn motion(v: &json::Value) -> Option<Motion> {
-    Some(Motion {
-        first_person: v.get("fp")?.as_str()?.to_owned(),
-        body: v.get("body")?.as_str()?.to_owned(),
-    })
-}
-
-pub(crate) fn num(v: &json::Value, key: &str) -> Option<f32> {
-    v.get(key)?.as_f64().map(|n| n as f32)
 }
 
 #[cfg(test)]
@@ -213,33 +246,35 @@ mod tests {
         }
     }
 
-    /// A row is a family only WHOLE: the table keys `of_kind` in file
-    /// order, a row missing a field or with an empty combo is refused
-    /// alone, and the impacts are read off the rigs per step — the body's
-    /// all or nothing, the viewmodel's positional.
+    fn spec(text: &str) -> FamilySpec {
+        parse_row_data(text).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// A family only WHOLE: data missing a field does not parse at all, one
+    /// that breaks a rule or repeats a kind is refused alone, the table keys
+    /// `of_kind` in declaration order, and the impacts are read off the rigs
+    /// per step — the body's all or nothing, the viewmodel's positional.
     #[test]
-    fn rows_parse_whole_and_impacts_come_off_the_rigs() {
-        let doc = format!(
-            r#"{{"hammer": {ROW}, "broken": {}, "bare": {}}}"#,
-            ROW.replace(r#""work": {"fp": "m:fp_work", "body": "m:body_work"},"#, ""),
-            ROW.replace(
-                r#"[{"fp": "m:fp_a", "body": "m:body_a"}, {"fp": "m:fp_b", "body": "m:body_b"}]"#,
-                "[]"
-            ),
+    fn families_are_whole_and_impacts_come_off_the_rigs() {
+        let no_work = ROW.replace(r#""work": {"fp": "m:fp_work", "body": "m:body_work"},"#, "");
+        assert!(parse_row_data::<FamilySpec>(&no_work).is_err());
+        let bare = ROW.replace(
+            r#"[{"fp": "m:fp_a", "body": "m:body_a"}, {"fp": "m:fp_b", "body": "m:body_b"}]"#,
+            "[]",
         );
-        let (mut families, refused) = Families::parse(&doc);
-        assert_eq!(
-            families.styles().count(),
-            1,
-            "the broken rows are refused alone"
-        );
-        assert_eq!(refused, ["broken", "bare"]);
+        let (mut families, refused) = Families::from_specs([
+            ("hammer".to_owned(), spec(ROW)),
+            ("bare".to_owned(), spec(&bare)),
+            ("hammer".to_owned(), spec(ROW)),
+        ]);
+        assert_eq!(families.styles().count(), 1, "the broken ones are refused alone");
+        let refused: Vec<&str> = refused.iter().map(|(kind, _)| kind.as_str()).collect();
+        assert_eq!(refused, ["bare", "hammer"]);
         let hammer = families
             .of_kind("hammer")
             .expect("the whole row is a family");
-        assert_eq!(families.of_kind("broken"), None);
         assert_eq!(families.of_kind("bare"), None);
-        assert_eq!(Families::parse("[]").0.styles().count(), 0);
+        assert_eq!(Families::from_specs([]).0.styles().count(), 0);
 
         let family = families.get(hammer);
         assert_eq!(

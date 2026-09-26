@@ -138,6 +138,11 @@
       "result": {
         "item": "farming:farmers_workbench",
         "count": 1
+      },
+      "data": {
+        "petramond:unlock_on": {
+          "items": ["farming:wheat"]
+        }
       }
     }
   ]

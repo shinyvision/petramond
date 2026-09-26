@@ -121,3 +121,33 @@ fn a_standalone_blob_carries_the_record_framing() {
     assert_eq!(decode_versioned::<Widened>(&[2, 44, 1]), Ok(Widened(300)));
     assert_eq!(decode_versioned::<Widened>(&[]), Err(RecordError::Empty));
 }
+
+/// Two little-endian bytes, stored bare (no version byte) by earlier builds.
+#[derive(Debug, PartialEq)]
+struct Legacy(u16);
+
+impl KvRecord for Legacy {
+    const VERSION: u8 = 1;
+    const OLDEST_VERSION: u8 = 0;
+    fn encode(&self) -> Vec<u8> {
+        self.0.to_le_bytes().to_vec()
+    }
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        Some(Self(u16::from_le_bytes(bytes.try_into().ok()?)))
+    }
+    fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
+        (from == 0).then(|| bytes.to_vec())
+    }
+}
+
+#[test]
+fn a_bare_legacy_value_reads_as_version_zero() {
+    assert_eq!(decode_versioned_or_legacy::<Legacy>(&[5, 1], 2), Ok(Legacy(261)));
+    let current = encode_versioned(&Legacy(261));
+    assert_eq!(current.len(), 3);
+    assert_eq!(decode_versioned_or_legacy::<Legacy>(&current, 2), Ok(Legacy(261)));
+    assert_eq!(
+        decode_versioned_or_legacy::<Legacy>(&[9, 5, 1], 2),
+        Err(RecordError::Newer { found: 9, newest: 1 })
+    );
+}

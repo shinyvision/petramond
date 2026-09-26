@@ -3,6 +3,8 @@
 //! scaffold list is joined to it on load and stored beside it (see
 //! [`super::scaffolds`]).
 
+use std::collections::BTreeSet;
+
 use crate::host::prelude::*;
 
 use crate::content::PROJECT_DATA;
@@ -15,6 +17,7 @@ const INDEX_PREFIX: &str = "builder:live";
 /// Per table, the newest project that finished there: the table's report,
 /// found again after the record has left memory.
 const REPORT_PREFIX: &str = "builder:report";
+const TABLE_CHECK_TICKS: usize = 40;
 
 fn report_key(table: [i32; 3]) -> String {
     format!("{REPORT_PREFIX}/{}/{}/{}", table[0], table[1], table[2])
@@ -31,6 +34,8 @@ pub struct Projects {
     /// Per loaded project, its scaffold list as last stored: what an edit is
     /// compared against, and the mark that the list was joined to the record.
     stored_scaffolds: HashMap<ProjectId, Vec<[i32; 3]>>,
+    active: BTreeSet<ProjectId>,
+    table_check: Vec<Vec<ProjectId>>,
 }
 
 impl Projects {
@@ -42,17 +47,52 @@ impl Projects {
                 world_kv_set(NONCE_KEY, nonce.to_le_bytes().to_vec());
                 nonce
             });
-        Self {
+        let mut projects = Self {
             nonce,
             records: RecordStore::new(RECORD_PREFIX),
             live: IdShards::load(INDEX_PREFIX),
             stored_scaffolds: HashMap::default(),
+            active: BTreeSet::new(),
+            table_check: vec![Vec::new(); TABLE_CHECK_TICKS],
+        };
+        // Rebuild the in-memory work index once per session. The persisted
+        // live shards remain authoritative, without a per-tick scan.
+        for id in projects.live.iter() {
+            projects.table_check[(id % TABLE_CHECK_TICKS as u64) as usize].push(id);
+            if projects.records.get(id).ok().flatten().is_some_and(|p| p.phase().active()) {
+                projects.active.insert(id);
+            }
         }
+        projects
     }
 
     /// Every project before Complete/Cancelled, oldest first.
     pub fn live(&self) -> impl Iterator<Item = ProjectId> + '_ {
         self.live.iter()
+    }
+
+    /// Working projects in stable id order.
+    pub fn active(&self) -> impl Iterator<Item = ProjectId> + '_ {
+        self.active.iter().copied()
+    }
+
+    /// Only live projects whose table check is due this tick.
+    pub fn table_check_due(&self, now: u64) -> &[ProjectId] {
+        &self.table_check[(now % TABLE_CHECK_TICKS as u64) as usize]
+    }
+
+    fn index_live(&mut self, id: ProjectId, live: bool) {
+        let bucket = &mut self.table_check[(id % TABLE_CHECK_TICKS as u64) as usize];
+        if live {
+            if let Err(at) = bucket.binary_search(&id) {
+                bucket.insert(at, id);
+            }
+        } else {
+            if let Ok(at) = bucket.binary_search(&id) {
+                bucket.remove(at);
+            }
+            self.active.remove(&id);
+        }
     }
 
     pub fn get(&mut self, id: ProjectId) -> Option<&Project> {
@@ -61,6 +101,7 @@ impl Projects {
             // A listed project with no record is no project.
             Ok(None) => {
                 self.live.set(id, false);
+                self.index_live(id, false);
                 return None;
             }
             // An unreadable record (say, from a newer build) stays listed:
@@ -112,12 +153,18 @@ impl Projects {
             return None;
         }
         self.join_scaffolds(id);
-        let ((out, finished, table), changed) = self.records.update(id, |p| {
+        let ((out, finished, active, table), changed) = self.records.update(id, |p| {
             let out = f(p);
-            (out, p.phase().finished(), p.table)
+            (out, p.phase().finished(), p.phase().active(), p.table)
         })?;
         if changed {
             self.live.set(id, !finished);
+            self.index_live(id, !finished);
+            if active {
+                self.active.insert(id);
+            } else {
+                self.active.remove(&id);
+            }
             if finished {
                 file_report(table, id);
             }
@@ -134,21 +181,22 @@ impl Projects {
         self.records.insert(id, Project::new(id, owner, table));
         self.stored_scaffolds.insert(id, Vec::new());
         self.live.set(id, true);
+        self.index_live(id, true);
         id
     }
 
     /// The newest project at `table` with a golem out. Found by position,
-    /// not slot: a golem carries its blueprint away. Only live projects can
-    /// be active, and the tick reads every live record, so the live index
-    /// over the session's records is the whole answer.
+    /// not slot: a golem carries its blueprint away. The active index is
+    /// rebuilt on load and updated with every project transition.
     pub fn active_at(&self, table: [i32; 3]) -> Option<ProjectId> {
-        self.live
+        self.active
             .iter()
             .filter(|id| {
                 self.records
-                    .peek(*id)
+                    .peek(**id)
                     .is_some_and(|p| p.table == table && p.phase().active())
             })
+            .copied()
             .max()
     }
 

@@ -1,5 +1,5 @@
 use super::launch::{nock, ray_box};
-use super::rows::{ArrowRow, Draw};
+use super::rows::{ArrowRow, ArrowSpec, BowSpec, Draw};
 use super::*;
 use crate::strike::Aim;
 
@@ -284,35 +284,32 @@ fn damage_runs_between_the_arrows_rungs_by_speed_and_speed_by_draw() {
 /// draw would draw under defaults nobody authored.
 #[test]
 fn an_incomplete_row_is_refused_whole() {
-    let full = json::Value::parse(
+    let bow = |text: &str| parse_row_data::<BowSpec>(text);
+    let full = bow(
         r#"{"draw_ticks": 12, "strain_ticks": 8, "draw_speed_scale": 0.7, "launch_speed": [5, 45]}"#,
     )
     .unwrap();
-    assert_eq!(Draw::parse(&full), Some(draw()));
-    let short = json::Value::parse(r#"{"draw_ticks": 12, "strain_ticks": 8}"#).unwrap();
-    assert_eq!(Draw::parse(&short), None);
-    let no_draw = json::Value::parse(
+    assert_eq!(Draw::from_spec(&full), Ok(draw()));
+    assert!(bow(r#"{"draw_ticks": 12, "strain_ticks": 8}"#).is_err());
+    let no_draw = bow(
         r#"{"draw_ticks": 0, "strain_ticks": 8, "draw_speed_scale": 0.7, "launch_speed": [5, 45]}"#,
     )
     .unwrap();
-    assert_eq!(Draw::parse(&no_draw), None, "a zero-tick draw is no draw");
+    assert!(Draw::from_spec(&no_draw).is_err(), "a zero-tick draw is no draw");
+    assert!(
+        bow(r#"{"draw_ticks": 12, "strain_ticks": 8, "draw_speed_scale": 0.7, "launch_speed": [5, 45], "pul": []}"#)
+            .is_err(),
+        "a misspelt field is an error, not a default"
+    );
 
-    let arrow = json::Value::parse(
-        r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 5, "speed_full": 45}"#,
-    )
-    .unwrap();
+    let arrow = |text: &str| parse_row_data::<ArrowSpec>(text).unwrap();
+    let good = arrow(r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 5, "speed_full": 45}"#);
     assert_eq!(
-        ArrowRow::parse(ItemId(13), "m:arrow".into(), &arrow),
-        Some(rows().arrows[0].clone())
+        ArrowRow::from_spec(ItemId(13), "m:arrow".into(), &good),
+        Ok(rows().arrows[0].clone())
     );
-    let inverted = json::Value::parse(
-        r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 45, "speed_full": 5}"#,
-    )
-    .unwrap();
-    assert_eq!(
-        ArrowRow::parse(ItemId(13), "m:arrow".into(), &inverted),
-        None
-    );
+    let inverted = arrow(r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 45, "speed_full": 5}"#);
+    assert!(ArrowRow::from_spec(ItemId(13), "m:arrow".into(), &inverted).is_err());
 }
 
 /// The nock sits beside the eye (the player's right; getting the yaw
@@ -368,4 +365,21 @@ fn a_ray_enters_a_box_at_its_near_face_and_misses_beside_it() {
         None,
         "behind"
     );
+}
+
+/// Every bow and arrow entry this pack ships matches its schema.
+#[test]
+fn every_shipped_bow_and_arrow_parses() {
+    let items = include_str!("../../pack/items.json");
+    let bows = pack_rows_with_data(items, "items", crate::keys::BOW_KEY);
+    for (row, entry) in &bows {
+        let spec: BowSpec = parse_row_data(entry).unwrap_or_else(|e| panic!("{row}: {e}"));
+        Draw::from_spec(&spec).unwrap_or_else(|e| panic!("{row}: {e}"));
+    }
+    let arrows = pack_rows_with_data(items, "items", crate::keys::ARROW_KEY);
+    for (row, entry) in &arrows {
+        let spec: ArrowSpec = parse_row_data(entry).unwrap_or_else(|e| panic!("{row}: {e}"));
+        ArrowRow::from_spec(ItemId(0), row.clone(), &spec).unwrap_or_else(|e| panic!("{row}: {e}"));
+    }
+    assert!(!bows.is_empty() && !arrows.is_empty());
 }

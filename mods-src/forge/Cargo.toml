@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 [dependencies]
 mod-sdk = { workspace = true }
 machine-core = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 pack-check = { workspace = true }

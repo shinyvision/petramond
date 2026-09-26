@@ -2,9 +2,10 @@
 //! shipped JSON by the test below (see [`mod_sdk::pack_keys!`]).
 
 mod_sdk::pack_keys! {
-    /// Sit-able pieces (`seats::PIECES`).
+    /// Sit-able pieces and their block-row seat data.
     pub(crate) CHAIR: Block = "furniture:chair";
     pub(crate) BENCH: Block = "furniture:bench";
+    pub(crate) SEATS: Data = "furniture:seats";
 
     /// The chain family: one custom shape over three axis rows.
     pub(crate) CHAIN_SHAPE: Shape = "furniture:chain";

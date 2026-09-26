@@ -46,8 +46,8 @@ use std::collections::{HashMap, HashSet};
 use mod_sdk::*;
 
 use crate::augments::{Record, AUGMENTS_KEY};
-use crate::content::read_rows;
 use crate::keys;
+use crate::schema::{read_rows, FitSpec, NondestructiveSpec};
 
 /// Seeded RNG stream for the augmented slip roll.
 const SLIP_STREAM: &str = "gold_slip";
@@ -80,34 +80,20 @@ impl Gold {
     /// logged — the only cheap signal the data keys and this module's
     /// constants are the same strings (the tag-typo trap).
     pub fn resolve() -> Gold {
-        let tools = read_rows(keys::NONDESTRUCTIVE_DATA, |value| {
-            Some(tag_blocks(value.get("blocks")))
-        });
+        let tools = read_rows::<NondestructiveSpec>(keys::NONDESTRUCTIVE_DATA)
+            .into_iter()
+            .map(|(item, spec)| (item, tag_blocks(spec.tags())))
+            .collect::<HashMap<_, _>>();
         let mut granted: HashMap<String, Vec<Grant>> = HashMap::new();
-        let grant_rows = read_rows(keys::AUGMENT_DATA, |value| {
-            let grants: Vec<(String, Grant)> = value
-                .as_array()?
-                .iter()
-                .filter_map(|f| {
-                    let gentle = f.get("gentle")?;
-                    Some((
-                        f.get("overlay")?.as_str()?.to_owned(),
-                        Grant {
-                            kind: f.get("tool")?.as_str()?.to_owned(),
-                            chance: gentle
-                                .get("chance")
-                                .and_then(|c| c.as_u8())
-                                .unwrap_or(100)
-                                .clamp(1, 100),
-                            extra: tag_blocks(gentle.get("blocks")),
-                        },
-                    ))
-                })
-                .collect();
-            Some(grants)
-        });
-        for (identity, grant) in grant_rows.into_values().flatten() {
-            granted.entry(identity).or_default().push(grant);
+        for fit in read_rows::<Vec<FitSpec>>(keys::AUGMENT_DATA).into_values().flatten() {
+            let Some(gentle) = &fit.gentle else {
+                continue;
+            };
+            granted.entry(fit.overlay.clone()).or_default().push(Grant {
+                kind: fit.tool.clone(),
+                chance: gentle.chance(),
+                extra: tag_blocks(&gentle.blocks),
+            });
         }
         log(&format!(
             "forge: {} nondestructive tools, {} gentle-granting augments",
@@ -193,16 +179,8 @@ impl Gold {
 /// Resolve a JSON list of block-TAG names into the blocks carrying them
 /// (`blocks_by_tag` never interns, so a typo is an empty set — which is why
 /// `resolve` logs member counts).
-fn tag_blocks(value: Option<&json::Value>) -> HashSet<BlockId> {
-    value
-        .and_then(|b| b.as_array())
-        .map(|tags| {
-            tags.iter()
-                .filter_map(|t| t.as_str())
-                .flat_map(blocks_by_tag)
-                .collect()
-        })
-        .unwrap_or_default()
+fn tag_blocks(tags: &[String]) -> HashSet<BlockId> {
+    tags.iter().flat_map(|tag| blocks_by_tag(tag)).collect()
 }
 
 /// The pure gate: the block's own placing item, when the held tool's kind is

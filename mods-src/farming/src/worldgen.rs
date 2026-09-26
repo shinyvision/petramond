@@ -10,7 +10,7 @@
 //! cell) are then validated PER PLANT COLUMN with the section's own data,
 //! clipping patches naturally at biome edges and obstacles.
 //!
-//! Crops are ONE ordered spec list ([`specs`]): a column takes the FIRST
+//! Crops are ONE ordered row-data list: a column takes the FIRST
 //! spec whose biome gate and patch membership hit, so a later crop never
 //! lands on an earlier one's cell BY CONSTRUCTION where their biomes overlap
 //! (wheat ∩ carrots on Plains, carrots ∩ potatoes in Forests). Patch
@@ -24,33 +24,6 @@ use mod_sdk::*;
 
 use crate::content::Content;
 
-const WHEAT_SALT: u64 = 0x00FA_57EA_7000_0001;
-const CARROT_SALT: u64 = 0x00FA_57EA_7000_0002;
-const POTATO_SALT: u64 = 0x00FA_57EA_7000_0003;
-
-/// Patch anchor probability per eligible column. Balance data: tuned (map
-/// inspection over several seeds) so purposeful exploration of an eligible
-/// biome reveals a patch within roughly three to five minutes while patches
-/// still feel found, not ubiquitous — about one patch per ~150x150 blocks of
-/// eligible terrain.
-const WHEAT_ANCHOR_CHANCE: f32 = 1.0 / 22000.0;
-/// Carrots and potatoes run noticeably denser than wheat (bumped
-/// 2026-07-17, per Rachel: too rare at wheat-like odds).
-const CARROT_ANCHOR_CHANCE: f32 = 1.0 / 18000.0;
-/// Potatoes: ordinary forests carry them at carrot-like density; redwood
-/// forests — rare, and the potato's signature biome — roll denser so a
-/// purposeful redwood walk never comes up empty. One salt, two thresholds:
-/// the denser set is a superset of the sparser one (same positional draw,
-/// higher cutoff), so a patch straddling the biome border clips cleanly.
-const POTATO_ANCHOR_CHANCE: f32 = 1.0 / 18000.0;
-const POTATO_REDWOOD_ANCHOR_CHANCE: f32 = 1.0 / 12000.0;
-
-/// Patch sizes (random-walk step counts — revisits make real patches
-/// slightly smaller and irregular, which is the intent).
-const WHEAT_PATCH: (i32, i32) = (4, 8);
-const CARROT_PATCH: (i32, i32) = (3, 6);
-const POTATO_PATCH: (i32, i32) = (3, 6);
-
 /// Max |offset| of a patch cell from its anchor; also the anchor scan reach.
 const PATCH_REACH: i32 = 2;
 
@@ -60,7 +33,7 @@ pub(crate) const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::surface_band(1
 
 /// One wild crop's placement row. The slice ORDER is the priority order —
 /// the first spec that hits a column owns it.
-struct WildCropSpec {
+pub(crate) struct WildCropSpec {
     /// Positional-RNG salt for the crop's anchor/walk streams. Frozen:
     /// worldgen determinism depends on these exact literals.
     salt: u64,
@@ -69,41 +42,62 @@ struct WildCropSpec {
     /// The wild block the column plants.
     block: BlockId,
     /// Biome gate: the anchor chance for a column's biome, `None` outside
-    /// the crop's biomes. Chances are balance data (see the consts above).
-    chance: fn(u8) -> Option<f32>,
+    /// the crop's biomes. Chances are balance data from the block row.
+    chances: Vec<(u8, f32)>,
 }
 
-/// The ordered wild-crop table: wheat before carrots before potatoes.
-/// Adding a crop is one row here (salt + patch consts + a chance fn).
-fn specs(content: &Content) -> [WildCropSpec; 3] {
-    [
-        WildCropSpec {
-            salt: WHEAT_SALT,
-            patch: WHEAT_PATCH,
-            block: content.wild_wheat,
-            chance: |b| (b == biome::PLAINS || b == biome::SAVANNA).then_some(WHEAT_ANCHOR_CHANCE),
-        },
-        WildCropSpec {
-            salt: CARROT_SALT,
-            patch: CARROT_PATCH,
-            block: content.wild_carrots,
-            chance: |b| (b == biome::PLAINS || b == biome::FOREST).then_some(CARROT_ANCHOR_CHANCE),
-        },
-        WildCropSpec {
-            salt: POTATO_SALT,
-            patch: POTATO_PATCH,
-            block: content.wild_potatoes,
-            chance: |b| match b {
-                _ if b == biome::REDWOOD_FOREST => Some(POTATO_REDWOOD_ANCHOR_CHANCE),
-                _ if b == biome::FOREST => Some(POTATO_ANCHOR_CHANCE),
-                _ => None,
-            },
-        },
-    ]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WildPatchRow {
+    priority: u16,
+    /// Hex text keeps the frozen positional RNG stream visible to authors.
+    salt: String,
+    patch: (i32, i32),
+    biomes: Vec<BiomeChance>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BiomeChance {
+    biome: String,
+    chance_denominator: u32,
+}
+
+/// Load the ordered patch rules once for each runtime instance. Biome names
+/// resolve against the SDK's stable engine-biome vocabulary.
+pub(crate) fn resolve_specs() -> Vec<WildCropSpec> {
+    let mut rows = blocks_with_data_as::<WildPatchRow>(crate::keys::WILD_PATCH_DATA)
+        .into_iter()
+        .filter_map(|(block, row)| {
+            let Some(salt) = u64::from_str_radix(row.salt.trim_start_matches("0x"), 16).ok() else {
+                log(&format!("farming: invalid wild-patch salt '{}' for {block:?}", row.salt));
+                return None;
+            };
+            if row.patch.0 < 1 || row.patch.0 > row.patch.1 {
+                log(&format!("farming: invalid wild patch size for {block:?}"));
+                return None;
+            }
+            let mut chances = Vec::new();
+            for entry in row.biomes {
+                let Some(biome) = biome::by_name(&entry.biome) else {
+                    log(&format!("farming: unknown wild-patch biome '{}'", entry.biome));
+                    return None;
+                };
+                if entry.chance_denominator == 0 {
+                    log(&format!("farming: zero wild-patch chance for {block:?}"));
+                    return None;
+                }
+                chances.push((biome, 1.0 / entry.chance_denominator as f32));
+            }
+            Some((row.priority, WildCropSpec { salt, patch: row.patch, block, chances }))
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|(priority, _)| *priority);
+    rows.into_iter().map(|(_, spec)| spec).collect()
 }
 
 pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
-    let specs = specs(content);
+    let specs = &content.wild_patches;
     let mut writes = Vec::new();
     let oy = ctx.origin_world()[1];
     ctx.for_each_origin(0, |wx, wz| {
@@ -127,7 +121,7 @@ pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
         };
         // First spec whose biome gate + patch membership hit owns the cell.
         let Some(spec) = specs.iter().find(|spec| {
-            (spec.chance)(biome)
+            spec.chances.iter().find(|(id, _)| *id == biome).map(|(_, chance)| *chance)
                 .is_some_and(|chance| in_patch(ctx.seed(), spec.salt, chance, spec.patch, wx, wz))
         }) else {
             return;
@@ -184,4 +178,30 @@ fn in_patch(seed: u32, salt: u64, chance: f32, (min, max): (i32, i32), wx: i32, 
         }
     }
     false
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+
+    #[test]
+    fn shipped_wild_patch_rows_preserve_priority_and_biome_gates() {
+        let rows = pack_rows_with_data(
+            include_str!("../pack/blocks.json"),
+            "blocks",
+            crate::keys::WILD_PATCH_DATA,
+        );
+        assert_eq!(rows.len(), 3);
+        for (priority, (name, raw)) in rows.into_iter().enumerate() {
+            let row: WildPatchRow = parse_row_data(&raw).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(usize::from(row.priority), priority);
+            assert!(row.patch.0 >= 1 && row.patch.0 <= row.patch.1);
+            assert!(u64::from_str_radix(row.salt.trim_start_matches("0x"), 16).is_ok());
+            assert!(!row.biomes.is_empty());
+            for entry in row.biomes {
+                assert!(biome::by_name(&entry.biome).is_some(), "{name}: {}", entry.biome);
+                assert!(entry.chance_denominator > 0);
+            }
+        }
+    }
 }

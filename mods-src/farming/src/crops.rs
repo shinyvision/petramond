@@ -174,7 +174,7 @@ pub fn on_interact(
     // The plant is RETAINED here (reset, not removed), so no replant is owed.
     spawn_all(mature_yield(def, fertile, Taking::Retained), center);
     emit_sound(keys::HARVEST_SOUND, Some(center));
-    if let Some(emitter) = def.harvest_emitter {
+    if let Some(emitter) = &def.harvest_emitter {
         emitter_burst(emitter, center, 1.0);
     }
     set_block(pos, def.stages[0]);
@@ -208,11 +208,11 @@ enum Taking {
 ///
 /// Every crop inherits this from its `CropSpec` row. Adding crop #N changes
 /// nothing here.
-fn mature_yield(def: &CropDef, fertile: bool, taking: Taking) -> Vec<(&'static str, u8)> {
+fn mature_yield(def: &CropDef, fertile: bool, taking: Taking) -> Vec<(&str, u8)> {
     let roll =
         |key: &str, (lo, hi): (u64, u64)| -> u8 { (lo + rng_u64(key) % (hi - lo + 1)) as u8 };
     let mut out = vec![(
-        def.produce,
+        def.produce.as_str(),
         roll(&def.harvest_key, def.yield_range)
             + (fertile && rng_u64(&def.fertile_key).is_multiple_of(FERTILE_BONUS_IN)) as u8,
     )];
@@ -222,24 +222,24 @@ fn mature_yield(def: &CropDef, fertile: bool, taking: Taking) -> Vec<(&'static s
         let yields =
             extra.chance_percent >= 100 || rng_u64(&extra.chance_key) % 100 < extra.chance_percent;
         if yields {
-            out.push((extra.item, roll(extra.count_key, extra.count)));
+            out.push((extra.item.as_str(), roll(&extra.count_key, extra.count)));
         }
     }
     if taking == Taking::Removed {
         let stock: u32 = out
             .iter()
-            .filter(|(item, _)| *item == def.planting_stock)
+            .filter(|(item, _)| *item == def.planting_stock.as_str())
             .map(|(_, n)| *n as u32)
             .sum();
         if stock == 0 {
-            out.push((def.planting_stock, 1));
+            out.push((def.planting_stock.as_str(), 1));
         }
     }
     out
 }
 
 /// Drop a yield list at `center`, skipping the empty entries a roll can produce.
-fn spawn_all(items: Vec<(&'static str, u8)>, center: [f64; 3]) {
+fn spawn_all(items: Vec<(&str, u8)>, center: [f64; 3]) {
     for (item, count) in items {
         if count > 0 {
             spawn_item(item, count, center);
@@ -271,7 +271,7 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, harvest
     ];
     if stage < 3 {
         // An unripe plant is worth exactly what was put into it.
-        spawn_item(def.planting_stock, 1, center);
+        spawn_item(&def.planting_stock, 1, center);
         return;
     }
     spawn_all(
@@ -395,7 +395,7 @@ fn support_check(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
 fn pop_planting_stock(growth: &mut Growth, def: &CropDef, pos: [i32; 3]) {
     set_block(pos, BlockId::AIR);
     spawn_item(
-        def.planting_stock,
+        &def.planting_stock,
         1,
         [
             pos[0] as f64 + 0.5,

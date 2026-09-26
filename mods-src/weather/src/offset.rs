@@ -8,12 +8,16 @@ use weather_core::advance_offset;
 const KV_OFF: &str = "weather:off";
 
 /// The persisted offset: two f64, versioned. A bare 16-byte value is the
-/// unversioned layout earlier builds wrote, read as the same two f64.
+/// unversioned layout earlier builds wrote: version 0, the same two f64.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Stored([f64; 2]);
 
+/// The unversioned layout's length.
+const LEGACY_LEN: usize = 16;
+
 impl KvRecord for Stored {
     const VERSION: u8 = 1;
+    const OLDEST_VERSION: u8 = 0;
 
     fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(16);
@@ -29,14 +33,15 @@ impl KvRecord for Stored {
             f64::from_le_bytes(bytes[8..].try_into().unwrap()),
         ]))
     }
+
+    fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
+        (from == 0).then(|| bytes.to_vec())
+    }
 }
 
 /// Read a stored offset value (see [`Stored`]); `None` when it cannot be read.
 fn parse(bytes: &[u8]) -> Option<[f64; 2]> {
-    if bytes.len() == 16 {
-        return Stored::decode(bytes).map(|s| s.0);
-    }
-    match decode_versioned::<Stored>(bytes) {
+    match decode_versioned_or_legacy::<Stored>(bytes, LEGACY_LEN) {
         Ok(stored) => Some(stored.0),
         Err(error) => {
             log(&format!("weather: {KV_OFF} is unreadable ({error}); the deck starts at rest"));

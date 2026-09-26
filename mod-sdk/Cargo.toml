@@ -16,3 +16,7 @@ workspace = true
 
 [dependencies]
 mod-api = { workspace = true }
+# Typed consumer-data rows (`data_rows`): a consumer's row schema is a
+# Deserialize type, parsed from the host's raw JSON values.
+serde = { workspace = true }
+serde_json = { workspace = true }

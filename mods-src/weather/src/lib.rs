@@ -69,6 +69,24 @@ fn is_snowy_biome(biome: u8) -> bool {
     SNOWY_BIOMES.contains(&biome)
 }
 
+fn snow_onset(intensity: f32, cell_gate: f32, tick_gate: f32) -> bool {
+    intensity > 0.0 && cell_gate <= intensity && tick_gate <= 0.35
+}
+
+fn snow_support(
+    support: BlockId,
+    leaves: &[BlockId],
+    water: Option<BlockId>,
+    ice: Option<BlockId>,
+    packed_ice: Option<BlockId>,
+    shape: Option<CollisionShape>,
+) -> bool {
+    Some(support) != water
+        && Some(support) != ice
+        && Some(support) != packed_ice
+        && (leaves.contains(&support) || shape == Some(CollisionShape::Full))
+}
+
 #[derive(Default)]
 struct Weather {
     side_is_client: bool,
@@ -172,12 +190,6 @@ impl Weather {
     /// query: exactly one full unit collision cube, not water, not leaves
     /// (canopy is accepted separately at the call site). An unresolved shape
     /// (`None` — unloaded / not stream-final) is never footing.
-    fn full_solid_support(&self, block: BlockId, pos: [i32; 3]) -> bool {
-        collision_shape_at(pos) == Some(CollisionShape::Full)
-            && Some(block) != self.water
-            && !self.leaves.contains(&block)
-    }
-
     fn accumulate_snow(&mut self, params: &FieldParams) {
         let Some(snow_layer) = self.snow_layer else {
             return;
@@ -214,7 +226,7 @@ impl Weather {
             let cell_gate = splitmix64_mix(((x as u64) << 32) ^ (z as u64 & 0xFFFF_FFFF)) as f32
                 / u64::MAX as f32;
             let tick_gate = (roll >> 32) as f32 / u32::MAX as f32;
-            if cell_gate > intensity || tick_gate > 0.35 {
+            if !snow_onset(intensity, cell_gate, tick_gate) {
                 continue;
             }
             let Some(surface_y) = surface_y_at([x, z]) else {
@@ -227,12 +239,19 @@ impl Weather {
             // already lands on the treetop — leaves block movement), but
             // never on frozen water: worldgen keeps sea/pond ice bare and
             // its parity tests pin it.
-            if !self.leaves.contains(&support)
-                && !self.full_solid_support(support, [x, surface_y, z])
-            {
-                continue;
-            }
-            if Some(support) == self.ice || Some(support) == self.packed_ice {
+            let shape = if self.leaves.contains(&support) {
+                None
+            } else {
+                collision_shape_at([x, surface_y, z])
+            };
+            if !snow_support(
+                support,
+                &self.leaves,
+                self.water,
+                self.ice,
+                self.packed_ice,
+                shape,
+            ) {
                 continue;
             }
             let above = [x, surface_y + 1, z];
@@ -412,3 +431,36 @@ impl Mod for Weather {
 }
 
 register_mod!(Weather);
+
+#[cfg(test)]
+mod snow_tests {
+    use super::*;
+
+    #[test]
+    fn local_snow_onset_is_gradual_and_respects_biome() {
+        assert!(is_snowy_biome(biome::SNOWY_PLAINS));
+        assert!(!is_snowy_biome(biome::PLAINS));
+        assert!(!snow_onset(0.0, 0.0, 0.0));
+        assert!(!snow_onset(0.4, 0.5, 0.0));
+        assert!(!snow_onset(0.8, 0.5, 0.36));
+        assert!(snow_onset(0.8, 0.5, 0.35));
+    }
+
+    #[test]
+    fn snow_rests_on_solid_ground_and_canopy_but_spares_water_and_ice() {
+        let leaves = BlockId(1);
+        let rock = BlockId(2);
+        let water = BlockId(3);
+        let ice = BlockId(4);
+        let packed_ice = BlockId(5);
+        let allowed = |block, shape| {
+            snow_support(block, &[leaves], Some(water), Some(ice), Some(packed_ice), shape)
+        };
+        assert!(allowed(leaves, None));
+        assert!(allowed(rock, Some(CollisionShape::Full)));
+        assert!(!allowed(rock, Some(CollisionShape::Empty)));
+        assert!(!allowed(water, Some(CollisionShape::Full)));
+        assert!(!allowed(ice, Some(CollisionShape::Full)));
+        assert!(!allowed(packed_ice, Some(CollisionShape::Full)));
+    }
+}

@@ -12,32 +12,16 @@
 //! tick space before any float conversion, so their error stays bounded (a
 //! few ticks of quantization near a lane period's end) at any world age.
 
-/// Field period in blocks. Power of two; all octave lattices tile at it.
-pub const WRAP: f32 = 65536.0;
-/// Base octave feature size in blocks. Power of two dividing [`WRAP`].
-pub const FEATURE_SIZE: f32 = 512.0;
-/// Sheet B (the second cloud population): larger, independently seeded
-/// features advected at an INTEGER multiple of the wind, so the two sheets
-/// visibly slide over each other and rain organizes where they overlap.
-/// Feature size must stay a power of two dividing [`WRAP`]; the advection
-/// multiple must stay an integer (anything else breaks wrap-exactness when
-/// the published offset reduces modulo the period).
-pub const SHEET_B_FEATURE: f32 = 1024.0;
-pub const SHEET_B_ADVECT: f32 = 2.0;
-/// Seed salt separating sheet B's hash stream from sheet A's octave salts.
-const SHEET_B_SALT: u32 = 0x517C_C1B7;
+mod field_constants;
+pub use field_constants::{FEATURE_SIZE, RAIN_RAMP, SHEET_B_ADVECT, SHEET_B_FEATURE, WRAP};
+use field_constants::SHEET_B_SALT;
 /// Coverage at or above this starts to rain. Tuned against the TWO-SHEET
 /// sum distribution (rebalance 2026-07-17, offline stats harness): at a
 /// fixed point it rains ~15% of the time in ~3-min showers grouped into
 /// ~20-min rainy spells, and never blankets outside a storm peak. (The
 /// single-sheet era used 0.45; the saturating sum sits higher.)
 pub const RAIN_START: f32 = 0.55;
-/// Fraction of the remaining coverage range over which rain ramps to a full
-/// downpour: intensity 1 at `RAIN_START + RAIN_RAMP * (1 - RAIN_START)`,
-/// because coverage itself almost never reaches 1. clouds.wgsl's
-/// `menace_at` ends its white→slate ramp at the same point (its `0.6` is
-/// this constant's twin) — keep them in sync.
-pub const RAIN_RAMP: f32 = 0.6;
+// Rain reaches full intensity at `RAIN_START + RAIN_RAMP * (1 - RAIN_START)`.
 
 /// Wind heading turns over roughly this many seconds.
 const WIND_TURN_PERIOD_S: f32 = 1200.0;
@@ -317,13 +301,18 @@ pub struct FieldRow {
 }
 
 impl FieldRow {
-    pub const ENCODED_LEN: usize = 40;
+    /// The row layout's version, its first byte. Producer and consumers are
+    /// separately built mods: a consumer built against another layout must
+    /// hear "no weather", never misread lanes. Bump on any layout change.
+    pub const VERSION: u8 = 1;
+    pub const ENCODED_LEN: usize = 41;
 
-    /// LE layout: clock u64, off_x f32, off_z f32, storm f32, seed u32,
-    /// epoch u32, epoch_frac f32, wind_x f32, wind_z f32.
+    /// Layout: [`Self::VERSION`], then LE clock u64, off_x f32, off_z f32,
+    /// storm f32, seed u32, epoch u32, epoch_frac f32, wind_x f32, wind_z f32.
     pub fn encode(&self) -> [u8; Self::ENCODED_LEN] {
         let mut out = [0u8; Self::ENCODED_LEN];
-        out[0..8].copy_from_slice(&self.clock.to_le_bytes());
+        out[0] = Self::VERSION;
+        out[1..9].copy_from_slice(&self.clock.to_le_bytes());
         let lanes: [u32; 8] = [
             self.params.off[0].to_bits(),
             self.params.off[1].to_bits(),
@@ -335,19 +324,20 @@ impl FieldRow {
             self.wind[1].to_bits(),
         ];
         for (i, lane) in lanes.into_iter().enumerate() {
-            out[8 + i * 4..12 + i * 4].copy_from_slice(&lane.to_le_bytes());
+            out[9 + i * 4..13 + i * 4].copy_from_slice(&lane.to_le_bytes());
         }
         out
     }
 
-    /// `None` on a wrong-length row or non-finite floats (a corrupt or
-    /// foreign value must read as "no weather", never as NaN rain).
+    /// `None` on another layout version, a wrong-length row or non-finite
+    /// floats (a corrupt or foreign value must read as "no weather", never as
+    /// NaN rain).
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != Self::ENCODED_LEN {
+        if bytes.len() != Self::ENCODED_LEN || bytes[0] != Self::VERSION {
             return None;
         }
-        let clock = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
-        let lane = |i: usize| u32::from_le_bytes(bytes[8 + i * 4..12 + i * 4].try_into().unwrap());
+        let clock = u64::from_le_bytes(bytes[1..9].try_into().unwrap());
+        let lane = |i: usize| u32::from_le_bytes(bytes[9 + i * 4..13 + i * 4].try_into().unwrap());
         let f = |i: usize| f32::from_bits(lane(i));
         let row = FieldRow {
             params: FieldParams {
@@ -391,6 +381,9 @@ impl FieldRow {
 
 #[cfg(feature = "sdk")]
 pub mod feed;
+
+#[cfg(test)]
+mod shader_parity;
 
 #[cfg(test)]
 mod tests {
@@ -563,8 +556,11 @@ mod tests {
         let bytes = row.encode();
         assert_eq!(bytes.len(), FieldRow::ENCODED_LEN);
         assert_eq!(FieldRow::decode(&bytes), Some(row), "exact roundtrip");
-        assert_eq!(FieldRow::decode(&bytes[..39]), None, "wrong length");
+        assert_eq!(FieldRow::decode(&bytes[..40]), None, "wrong length");
         assert_eq!(FieldRow::decode(&[]), None, "empty");
+        let mut other = bytes;
+        other[0] = FieldRow::VERSION + 1;
+        assert_eq!(FieldRow::decode(&other), None, "another layout version");
         let mut nan = row;
         nan.params.storm = f32::NAN;
         assert_eq!(

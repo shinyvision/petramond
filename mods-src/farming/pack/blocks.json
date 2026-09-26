@@ -80,6 +80,7 @@
     },
     {
       "block": "farming:wild_wheat",
+      "data": { "farming:wild_patch": { "priority": 0, "salt": "0x00FA57EA70000001", "patch": [4, 8], "biomes": [{ "biome": "plains", "chance_denominator": 22000 }, { "biome": "savanna", "chance_denominator": 22000 }] } },
       "shape": "crop",
       "flags": [
         "transparent"
@@ -115,6 +116,7 @@
     },
     {
       "block": "farming:wild_carrots",
+      "data": { "farming:wild_patch": { "priority": 1, "salt": "0x00FA57EA70000002", "patch": [3, 6], "biomes": [{ "biome": "plains", "chance_denominator": 18000 }, { "biome": "forest", "chance_denominator": 18000 }] } },
       "shape": "crop",
       "flags": [
         "transparent"
@@ -210,6 +212,7 @@
     },
     {
       "block": "farming:wheat_3",
+      "data": { "farming:crop": { "name": "wheat", "stages": ["farming:wheat_0", "farming:wheat_1", "farming:wheat_2", "farming:wheat_3"], "harvest_emitter": "farming:wheat_harvest", "planting_stock": "farming:wheat_seeds", "produce": "farming:wheat", "yield_range": [1, 2], "extra_drop": { "count_key": "harvest_wheat_seeds", "item": "farming:wheat_seeds", "chance_percent": 100, "count": [0, 2] }, "attracts": null } },
       "shape": "crop",
       "flags": [
         "transparent"
@@ -298,6 +301,7 @@
     },
     {
       "block": "farming:carrots_3",
+      "data": { "farming:crop": { "name": "carrot", "stages": ["farming:carrots_0", "farming:carrots_1", "farming:carrots_2", "farming:carrots_3"], "harvest_emitter": "farming:carrot_harvest", "planting_stock": "farming:carrot", "produce": "farming:carrot", "yield_range": [2, 3], "extra_drop": null, "attracts": "farming:rabbit" } },
       "shape": "crop",
       "flags": [
         "transparent"
@@ -398,6 +402,7 @@
     },
     {
       "block": "farming:wild_potatoes",
+      "data": { "farming:wild_patch": { "priority": 2, "salt": "0x00FA57EA70000003", "patch": [3, 6], "biomes": [{ "biome": "forest", "chance_denominator": 18000 }, { "biome": "redwood_forest", "chance_denominator": 12000 }] } },
       "shape": "crop",
       "flags": [
         "transparent"
@@ -493,6 +498,7 @@
     },
     {
       "block": "farming:potatoes_3",
+      "data": { "farming:crop": { "name": "potato", "stages": ["farming:potatoes_0", "farming:potatoes_1", "farming:potatoes_2", "farming:potatoes_3"], "harvest_emitter": "farming:potato_harvest", "planting_stock": "farming:potato", "produce": "farming:potato", "yield_range": [2, 3], "extra_drop": null, "attracts": null } },
       "shape": "crop",
       "flags": [
         "transparent"
@@ -872,6 +878,7 @@
     },
     {
       "block": "farming:hemp_3",
+      "data": { "farming:crop": { "name": "hemp", "stages": ["farming:hemp_0", "farming:hemp_1", "farming:hemp_2", "farming:hemp_3"], "harvest_emitter": null, "planting_stock": "farming:hemp_seeds", "produce": "petramond:hemp", "yield_range": [1, 1], "extra_drop": { "count_key": "harvest_hemp_seeds", "item": "farming:hemp_seeds", "chance_percent": 60, "count": [1, 2] }, "attracts": null } },
       "shape": "cross",
       "flags": [
         "transparent"

@@ -22,28 +22,52 @@ const COOK_TICKS: u32 = 600;
 const COOK_REGRESS: u32 = 2;
 
 /// Per-oven cook state and fire, persisted in section cell KV at the anchor
-/// (3×u32 LE: cook progress, then the [`Burner`]) so a lit oven reloads
-/// mid-bake exactly like the engine furnace.
-#[derive(Clone, Copy, Default, PartialEq)]
+/// (a version byte, then 3×u32 LE: cook progress and the [`Burner`]) so a lit
+/// oven reloads mid-bake exactly like the engine furnace.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct OvenState {
     cook_progress: u32,
     fire: Burner,
 }
 
-impl OvenState {
-    fn decode(bytes: &[u8]) -> OvenState {
-        let mut r = ByteReader::new(bytes);
-        OvenState {
-            cook_progress: r.u32().unwrap_or(0),
-            fire: Burner::decode(&mut r),
-        }
-    }
+/// Earlier builds stored the same three u32 with no version byte.
+const LEGACY_STATE_LEN: usize = 12;
 
-    fn encode(self) -> Vec<u8> {
-        let mut w = ByteWriter::with_capacity(12);
+impl KvRecord for OvenState {
+    const VERSION: u8 = 1;
+    const OLDEST_VERSION: u8 = 0;
+
+    fn encode(&self) -> Vec<u8> {
+        let mut w = ByteWriter::with_capacity(LEGACY_STATE_LEN);
         w.u32(self.cook_progress);
         self.fire.encode(&mut w);
         w.finish()
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != LEGACY_STATE_LEN {
+            return None;
+        }
+        let mut r = ByteReader::new(bytes);
+        Some(OvenState {
+            cook_progress: r.u32()?,
+            fire: Burner::decode(&mut r),
+        })
+    }
+
+    fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
+        (from == 0).then(|| bytes.to_vec())
+    }
+}
+
+impl OvenState {
+    /// The stored state; an oven with no record — or one this build cannot
+    /// read — starts cold and empty.
+    fn load(bytes: &[u8]) -> OvenState {
+        if bytes.is_empty() {
+            return OvenState::default();
+        }
+        decode_versioned_or_legacy(bytes, LEGACY_STATE_LEN).unwrap_or_default()
     }
 }
 
@@ -79,7 +103,7 @@ impl MachineSpec for OvenSpec {
             return;
         };
         slots.resize(3, None);
-        let mut state = OvenState::decode(stored);
+        let mut state = OvenState::load(stored);
         let before_state = state;
         let before_slots = slots.clone();
 
@@ -117,7 +141,7 @@ impl MachineSpec for OvenSpec {
         // and an idle machine must not put a record on its cell every tick
         // (or, first time round, at all).
         if state != before_state {
-            *stored = state.encode();
+            *stored = encode_versioned(&state);
         }
         // Flip the placed block between the unlit/lit rows on burn transitions
         // only (the swap is engine-idempotent, but there is no reason to cross

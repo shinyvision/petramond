@@ -2,7 +2,8 @@
 //!
 //! Unlocking itself is EVENT DRIVEN — something happens, a handler decides a
 //! recipe is earned, and `Progression::unlock` records it. This module owns
-//! only the engine's DEFAULT rule and the lookup that makes it cheap:
+//! the engine's DEFAULT rule, optional row-data early triggers, and the lookup
+//! that makes both cheap:
 //!
 //! > A recipe unlocks once the player has held at least one item satisfying
 //! > EVERY one of its ingredients.
@@ -12,7 +13,8 @@
 //! fences/doors, an iron ingot opens shears, wool opens wool blocks and the
 //! bed, planks open the boat. A pack that ships recipes and no unlock policy
 //! inherits it, so no recipe can be invisible forever — which is the failure
-//! mode of per-recipe authored triggers.
+//! mode of trigger-only policy. A recipe's `petramond:unlock_on` data may name
+//! items or tags that reveal it earlier; the default rule remains in force.
 //!
 //! Each ingredient compiles to an [`ItemSet`] of everything that satisfies it
 //! (one item, or a tag's whole membership), so the test is an AND per
@@ -24,10 +26,11 @@ use crate::item::{ItemSet, ItemType};
 
 use super::recipe::{CraftingCatalog, IngredientSelector};
 
-/// One recipe's gate: it opens when every mask intersects the obtained set.
+/// One recipe's gate: an early trigger, or every ingredient, opens it.
 struct Gate {
     key: String,
     ingredients: Vec<ItemSet>,
+    early: ItemSet,
 }
 
 /// Catalog-derived reverse index from an obtained item to the recipes it can
@@ -55,7 +58,11 @@ impl UnlockIndex {
                 continue;
             }
             let gate = index.gates.len() as u32;
-            for item in ingredients.iter().flat_map(ItemSet::iter) {
+            for item in ingredients
+                .iter()
+                .flat_map(ItemSet::iter)
+                .chain(recipe.unlock_on().iter())
+            {
                 let list = index.by_item.entry(item.id()).or_default();
                 if list.last() != Some(&gate) {
                     list.push(gate);
@@ -64,6 +71,7 @@ impl UnlockIndex {
             index.gates.push(Gate {
                 key: recipe.key().to_owned(),
                 ingredients,
+                early: *recipe.unlock_on(),
             });
         }
         index
@@ -100,9 +108,11 @@ impl UnlockIndex {
 impl Gate {
     #[inline]
     fn satisfied_by(&self, obtained: &ItemSet) -> bool {
-        self.ingredients
-            .iter()
-            .all(|mask| mask.intersects(obtained))
+        self.early.intersects(obtained)
+            || self
+                .ingredients
+                .iter()
+                .all(|mask| mask.intersects(obtained))
     }
 }
 
@@ -225,5 +235,45 @@ mod tests {
         let mut all: Vec<&str> = index.opened_by_all(&obtained).collect();
         all.sort_unstable();
         assert_eq!(all, vec!["test:planks", "test:shears"]);
+    }
+
+    #[test]
+    fn an_early_item_or_tag_opens_a_recipe_without_disabling_the_default_gate() {
+        let mut row = recipe(
+            "test:station",
+            vec![exact(ItemType::OakLog), exact(ItemType::Stick)],
+            ItemType::CraftingTable,
+        );
+        row.set_data(vec![(
+            "petramond:unlock_on".into(),
+            r#"{"items":["petramond:diamond"],"tags":["petramond:raw_ore"]}"#.into(),
+        )])
+        .unwrap();
+        let index = UnlockIndex::build(&CraftingCatalog::new(vec![row]));
+
+        for early in [ItemType::Diamond, ItemType::RawIron] {
+            let obtained = [early].into_iter().collect();
+            assert_eq!(index.opened_by(early, &obtained), vec!["test:station"]);
+            assert_eq!(index.opened_by_all(&obtained).collect::<Vec<_>>(), vec!["test:station"]);
+        }
+
+        let obtained: ItemSet = [ItemType::OakLog, ItemType::Stick].into_iter().collect();
+        assert_eq!(index.opened_by(ItemType::Stick, &obtained), vec!["test:station"]);
+    }
+
+    #[test]
+    fn invalid_early_unlock_policy_rejects_the_recipe_row() {
+        let mut row = recipe("test:station", vec![exact(ItemType::OakLog)], ItemType::OakPlanks);
+        let data = |value: &str| vec![("petramond:unlock_on".into(), value.into())];
+        assert!(row.set_data(data("{}")).is_err());
+        assert!(row
+            .set_data(data(r#"{"items":["petramond:missing"]}"#))
+            .is_err());
+        assert!(row
+            .set_data(data(r#"{"tags":["petramond:missing"]}"#))
+            .is_err());
+        assert!(row
+            .set_data(data(r#"{"items":["petramond:diamond"],"typo":1}"#))
+            .is_err());
     }
 }

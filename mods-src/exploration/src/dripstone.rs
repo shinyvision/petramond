@@ -92,12 +92,7 @@ pub struct Dripstone {
 impl Dripstone {
     pub fn resolve(fluids: crate::fluids::Fluids) -> Option<Dripstone> {
         let mut vessels = Vec::new();
-        for (vessel, raw) in blocks_with_data(keys::DRIP_VESSEL) {
-            let Ok(spec) = serde_json::from_str::<VesselSpec>(&raw) else {
-                let key = keys::DRIP_VESSEL;
-                log(&format!("exploration: malformed {key} entry: {raw}"));
-                continue;
-            };
+        for (vessel, spec) in blocks_with_data_as::<VesselSpec>(keys::DRIP_VESSEL) {
             if let Some(filled) = resolve_block_logged(&spec.filled) {
                 vessels.push((vessel, filled));
             }
@@ -165,6 +160,7 @@ impl Dripstone {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VesselSpec {
     filled: String,
 }

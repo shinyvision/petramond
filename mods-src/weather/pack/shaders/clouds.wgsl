@@ -47,7 +47,13 @@ const CLOUD_FAR: f32 = 2400.0;   // march cap; beyond, the deck fades to haze
 // back.
 const MIN_STEPS: i32 = 28;
 const MAX_STEP_LENGTH: f32 = 12.0;
+// BEGIN GENERATED WEATHER FIELD CONSTANTS
 const WRAP: f32 = 65536.0;
+const SHEET_B_FEATURE: f32 = 1024.0;
+const SHEET_B_ADVECT: f32 = 2.0;
+const SHEET_B_SALT: u32 = 0x517CC1B7u;
+const RAIN_RAMP: f32 = 0.6;
+// END GENERATED WEATHER FIELD CONSTANTS
 const SIGMA_T: f32 = 0.11;       // extinction at density 1 — thick cores go
                                  // optically deep fast (that contrast IS the
                                  // volume read)
@@ -131,9 +137,6 @@ fn fbm_epoch(q: vec2<f32>, o: vec2<f32>, base: u32, seed: u32) -> f32 {
 // Sheet B: weather-core's SHEET_B_* twins. Larger features advected at 2x
 // the wind (INTEGER multiple — wrap-exactness); feature size a power of two
 // dividing WRAP.
-const SHEET_B_FEATURE: f32 = 1024.0;
-const SHEET_B_ADVECT: f32 = 2.0;
-const SHEET_B_SALT: u32 = 0x517CC1B7u;
 
 // One cloud sheet — weather-core's `sheet` twin: epoch-morphed fbm (shapes
 // REFORM while they drift; a rigid translation read as unnaturally uniform,
@@ -175,7 +178,7 @@ fn menace_at(cov: f32) -> f32 {
     // and gray is reserved for cells genuinely about to rain (0.6 was too
     // eager — with visible cloud from cov ~0.2, near-everything grayed).
     let rain_start = params.values[1].y;
-    let full = rain_start + (1.0 - rain_start) * 0.6;
+    let full = rain_start + (1.0 - rain_start) * RAIN_RAMP;
     return smoothstep(rain_start * 0.85, full, cov);
 }
 

@@ -2,6 +2,7 @@ use machine_core::StepCtx;
 use mod_sdk::*;
 
 use crate::keys;
+use crate::schema::UpgradeSpec;
 
 pub const KEY: &str = "forge:fittings";
 pub const INFO_KEY: &str = "petramond:info";
@@ -35,15 +36,26 @@ pub fn record(bytes: &[u8]) -> u8 {
 
 impl Fittings {
     pub fn resolve() -> Self {
-        let rows = resolve_block(keys::FORGING_FURNACE)
+        let specs = resolve_block(keys::FORGING_FURNACE)
             .and_then(|b| block_data(b, keys::UPGRADES_DATA))
             .and_then(|b| String::from_utf8(b).ok())
-            .and_then(|s| json::Value::parse(&s))
-            .and_then(|v| {
-                v.as_array()
-                    .map(|rows| rows.iter().filter_map(Upgrade::parse).collect())
+            .map(|text| parse_row_data::<Vec<UpgradeSpec>>(&text))
+            .unwrap_or_else(|| Ok(Vec::new()));
+        let specs = specs.unwrap_or_else(|reason| {
+            log(&row_error(keys::UPGRADES_DATA, keys::FORGING_FURNACE, &reason));
+            Vec::new()
+        });
+        let rows = specs
+            .into_iter()
+            .filter_map(|spec| {
+                let upgrade = Upgrade::from_spec(&spec);
+                if upgrade.is_none() {
+                    let reason = format!("unknown fitting kind '{}'", spec.kind);
+                    log(&row_error(keys::UPGRADES_DATA, keys::FORGING_FURNACE, &reason));
+                }
+                upgrade
             })
-            .unwrap_or_default();
+            .collect();
         Self { rows }
     }
 
@@ -164,39 +176,24 @@ impl Fittings {
 }
 
 impl Upgrade {
-    fn parse(v: &json::Value) -> Option<Self> {
-        let text = |key| v.get(key)?.as_str().map(str::to_owned);
-        let number = |key, fallback| {
-            v.get(key)
-                .and_then(|v| v.as_f64())
-                .unwrap_or(fallback as f64)
-                .max(1.0) as u32
-        };
-        let index = KINDS
-            .iter()
-            .position(|k| Some(*k) == v.get("kind").and_then(|v| v.as_str()))?;
-        let cost: Option<Vec<_>> = v
-            .get("cost")?
-            .as_array()?
-            .iter()
-            .map(|c| {
-                Some((
-                    c.get("item")?.as_str()?.to_owned(),
-                    c.get("count")?.as_u8()?.max(1),
-                ))
-            })
-            .collect();
-        let cost = cost?;
+    /// A row from its spec; `None` when its `kind` is not one of [`KINDS`].
+    fn from_spec(spec: &UpgradeSpec) -> Option<Self> {
+        let number =
+            |value: Option<f64>, fallback: u32| value.unwrap_or(f64::from(fallback)).max(1.0) as u32;
         Some(Self {
-            index,
-            name: text("name")?,
-            info: text("info")?,
-            icon: text("icon")?,
-            cost,
-            set_ticks: number("set_ticks", super::SET_TICKS),
-            dwell_ticks: number("dwell_ticks", 20),
-            feed_every: number("feed_every", 20),
-            feed_keep: number("feed_keep", 8).min(64) as u8,
+            index: KINDS.iter().position(|k| *k == spec.kind)?,
+            name: spec.name.clone(),
+            info: spec.info.clone(),
+            icon: spec.icon.clone(),
+            cost: spec
+                .cost
+                .iter()
+                .map(|c| (c.item.clone(), c.count.max(1)))
+                .collect(),
+            set_ticks: number(spec.set_ticks, super::SET_TICKS),
+            dwell_ticks: number(spec.dwell_ticks, 20),
+            feed_every: number(spec.feed_every, 20),
+            feed_keep: number(spec.feed_keep, 8).min(64) as u8,
         })
     }
 }
