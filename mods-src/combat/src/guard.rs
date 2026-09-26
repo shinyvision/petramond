@@ -13,13 +13,8 @@
 
 use crate::body::BodyClocks;
 use crate::claims::{Body, Claims, Cover, Rule};
+use crate::keys;
 use mod_sdk::*;
-
-/// The shield's registry name (`items.json` row).
-pub const SHIELD_ITEM: &str = "combat:shield";
-
-/// The one-shot played when the guard absorbs a hit (`sounds.json` row).
-pub const BLOCK_SOUND: &str = "combat:shield_block";
 
 /// Land-speed multiplier while the shield is up.
 const GUARD_SPEED_SCALE: f32 = 0.5;
@@ -230,7 +225,7 @@ impl ShieldRule {
     /// Resolve the shield row; `None` (a build without it) leaves the guard
     /// out of the list.
     pub fn resolve() -> Option<ShieldRule> {
-        let shield = resolve_item(SHIELD_ITEM);
+        let shield = resolve_item(keys::SHIELD_ITEM);
         if shield.is_none() {
             log("[combat] 'combat:shield' did not resolve — the guard stays inert");
         }

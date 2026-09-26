@@ -6,9 +6,10 @@
 //! |dz| ≤ 4). Source, flowing, and falling water all count — the block query
 //! deliberately cannot distinguish them, which makes routed channels and
 //! diverted streams work as irrigation. RAIN is water too: an open-sky
-//! farmland cell under an active rain band (the `weather:field` interop row,
-//! soft-read like the monsters burn douse) counts as hydrated while the rain
-//! lasts — no weather mod, stale row, or covered soil simply means no rain.
+//! farmland cell under an active rain band (the weather field heard on its
+//! `weather:field` channel, like the monsters burn douse) counts as hydrated
+//! while the rain lasts — no weather mod or covered soil simply means no
+//! rain.
 //!
 //! The wet/dry BLOCK is only an appearance and reconciles on this block's own
 //! RANDOM TICKS — bounded, local, and deliberately unhurried (per Rachel:
@@ -17,6 +18,7 @@
 //! never grow or pause a crop; only the look catches up lazily.
 
 use mod_sdk::*;
+use weather_core::FieldParams;
 
 use crate::content::Content;
 use crate::kv_counter::kv_counter_bump;
@@ -34,8 +36,9 @@ pub enum Hydration {
 }
 
 /// Probe the hydration rule around a farmland cell: one batched read of the
-/// same-Y square, bounded and local (never a whole-world scan).
-pub fn probe(content: &Content, pos: [i32; 3]) -> Hydration {
+/// same-Y square, bounded and local (never a whole-world scan). `sky` is the
+/// weather field heard this tick (`None` = clear sky).
+pub fn probe(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) -> Hydration {
     let mut cells = Vec::with_capacity((HYDRATION_RADIUS as usize * 2 + 1).pow(2) - 1);
     for dz in -HYDRATION_RADIUS..=HYDRATION_RADIUS {
         for dx in -HYDRATION_RADIUS..=HYDRATION_RADIUS {
@@ -53,7 +56,7 @@ pub fn probe(content: &Content, pos: [i32; 3]) -> Hydration {
             None => any_unknown = true,
         }
     }
-    if rained_on(pos) {
+    if rained_on(sky, pos) {
         return Hydration::Hydrated;
     }
     if any_unknown {
@@ -67,19 +70,15 @@ pub fn probe(content: &Content, pos: [i32; 3]) -> Hydration {
 /// rain band over the column AND direct sky above the crop cell
 /// (`weather_core::DIRECT_SKY_MIN` — the shared cross-mod threshold;
 /// day/night-independent, night rain wets too). Every failure mode (no
-/// weather mod, stale row, unloaded cell, cover) is just "no rain" — the
-/// water scan's verdict stands. Field first, sky second: with no weather
-/// mod installed the whole check is one KV miss, and under a clear sky it
-/// never touches the light query.
-fn rained_on(pos: [i32; 3]) -> bool {
-    let Some(row) = world_kv_get(weather_core::KV_FIELD) else {
+/// weather mod, unloaded cell, cover) is just "no rain" — the water scan's
+/// verdict stands. Field first, sky second: with no weather mod installed
+/// the check costs nothing, and under a clear sky it never touches the light
+/// query.
+fn rained_on(sky: Option<&FieldParams>, pos: [i32; 3]) -> bool {
+    let Some(params) = sky else {
         return false;
     };
-    let clock = world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
-    let Some(params) = weather_core::fresh_params(&row, clock) else {
-        return false;
-    };
-    if weather_core::rain(pos[0] as f64 + 0.5, pos[2] as f64 + 0.5, &params) <= 0.0 {
+    if weather_core::rain(pos[0] as f64 + 0.5, pos[2] as f64 + 0.5, params) <= 0.0 {
         return false;
     }
     let above = [pos[0], pos[1] + 1, pos[2]];
@@ -111,14 +110,14 @@ const IDLE_REVERT_TICKS: u8 = 3;
 /// Farmland block hooks: only random ticks do work — the idle-decay count
 /// and the wet/dry visual reconcile. Neighbor updates and scheduled ticks
 /// are deliberately unused.
-pub fn on_hook(content: &Content, kind: BlockHookKind, pos: [i32; 3]) {
+pub fn on_hook(content: &Content, sky: Option<&FieldParams>, kind: BlockHookKind, pos: [i32; 3]) {
     match kind {
-        BlockHookKind::RandomTick => random_tick(content, pos),
+        BlockHookKind::RandomTick => random_tick(content, sky, pos),
         BlockHookKind::NeighborUpdate | BlockHookKind::ScheduledTick => {}
     }
 }
 
-fn random_tick(content: &Content, pos: [i32; 3]) {
+fn random_tick(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) {
     let Some(current) = get_block(pos) else {
         return;
     };
@@ -150,7 +149,7 @@ fn random_tick(content: &Content, pos: [i32; 3]) {
     let (dry_skin, wet_skin) = content
         .farmland_skins(current)
         .unwrap_or((content.farmland_dry, content.farmland_wet));
-    let want = match probe(content, pos) {
+    let want = match probe(content, sky, pos) {
         Hydration::Hydrated => wet_skin,
         Hydration::Dry => dry_skin,
         Hydration::Unknown => current,

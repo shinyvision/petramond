@@ -24,10 +24,9 @@ use machine_core::{
     Presentation, StepCtx,
 };
 
-const STATE_KEY: &str = "kitchen:mill_state";
+use crate::keys;
 
-/// The miller's machine-processing recipe class (any pack may add rows).
-const MILLING_CLASS: &str = "kitchen:milling";
+const STATE_KEY: &str = "kitchen:mill_state";
 
 const SLOT_INPUT: usize = 0;
 const SLOT_OUTPUT: usize = 1;
@@ -41,11 +40,11 @@ pub type Miller = Machine<MillerSpec>;
 pub struct MillerSpec;
 
 impl MachineSpec for MillerSpec {
-    const KIND_KEY: &'static str = "kitchen:miller";
-    const BLOCK_KEY: &'static str = "kitchen:miller";
+    const KIND_KEY: &'static str = keys::MILLER_GUI;
+    const BLOCK_KEY: &'static str = keys::MILLER_BLOCK;
     /// The output-holding variant: same authored model with the `flour` cube
     /// visible (the empty row's `part_roles` hides it).
-    const VARIANT_KEYS: &'static [&'static str] = &["kitchen:miller_full"];
+    const VARIANT_KEYS: &'static [&'static str] = &[keys::MILLER_FULL_BLOCK];
     const ANCHORS_KEY: &'static str = "kitchen:millers";
     const STATE_KEY: &'static str = STATE_KEY;
 
@@ -72,7 +71,7 @@ impl MachineSpec for MillerSpec {
             .as_ref()
             .filter(|s| s.count > 0)
             .map(|s| s.item.clone())
-            .and_then(|k| caches.recipe_for(MILLING_CLASS, &k));
+            .and_then(|k| caches.recipe_for(keys::MILLING_CLASS, &k));
         let can_mill = result
             .as_ref()
             .is_some_and(|r| output_accepts(caches, &slots[SLOT_OUTPUT], r));
@@ -109,7 +108,7 @@ impl MachineSpec for MillerSpec {
         }
         if ctx.gui_open() {
             ctx.publish(
-                "kitchen:mill01",
+                keys::MILL01,
                 GuiValue::F32(progress as f32 / MILL_TICKS as f32),
             );
         }

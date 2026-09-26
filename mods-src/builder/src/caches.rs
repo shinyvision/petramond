@@ -55,7 +55,7 @@ mod tests {
     fn registry_answers_are_asked_once_a_session() {
         let session = Session::flat(1);
         let mut caches = Caches::default();
-        assert_eq!(caches.max_stack(crate::content::BLUEPRINT), 1);
+        assert_eq!(caches.max_stack(crate::keys::BLUEPRINT), 1);
         assert_eq!(caches.max_stack("petramond:stone"), 64);
         assert_eq!(caches.max_stack("nobody:nothing"), 64, "unknown: as most stack");
         assert_eq!(caches.display_name("petramond:oak_planks"), "Oak Planks");

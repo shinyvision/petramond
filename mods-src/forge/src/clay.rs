@@ -18,6 +18,8 @@
 
 use mod_sdk::*;
 
+use crate::keys;
+
 /// Frozen positional salt. Changing it reshuffles clay in every existing world.
 const SALT_FIELD: u64 = 0xF012_C1A7_0000_0001;
 const SALT_DEPTH: u64 = 0xF012_C1A7_0000_0002;
@@ -61,14 +63,14 @@ const BANK_MAX_RISE: i32 = 6;
 /// Ground a deposit may replace. Anything else — ore, wood, water, another
 /// pack's content — is left exactly where it is.
 const REPLACEABLE: [&str; 8] = [
-    "petramond:grass",
-    "petramond:dirt",
-    "petramond:coarse_dirt",
-    "petramond:podzol",
-    "petramond:sand",
-    "petramond:red_sand",
-    "petramond:gravel",
-    "petramond:stone",
+    keys::GRASS,
+    keys::DIRT,
+    keys::COARSE_DIRT,
+    keys::PODZOL,
+    keys::SAND,
+    keys::RED_SAND,
+    keys::GRAVEL,
+    keys::STONE,
 ];
 
 #[derive(Default)]
@@ -81,7 +83,7 @@ impl Deposits {
     /// Registry resolution only: this runs on the DETACHED per-thread worldgen
     /// instances too, where there is no simulation to call into.
     pub fn init(&mut self) {
-        self.clay = resolve_block_logged("petramond:clay");
+        self.clay = resolve_block_logged(keys::CLAY_BLOCK);
         // Logged like the clay row above: these are ENGINE names, so one that
         // stops resolving is a rename, and the only symptom without a line in
         // the log is clay quietly ceasing to generate in whole biome families.

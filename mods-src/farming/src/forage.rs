@@ -12,6 +12,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::keys;
 
 /// One-in-N chance per broken cover block (100 → 1%).
 const SEED_DROP_IN: u64 = 100;
@@ -27,7 +28,7 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, natural
         return;
     }
     spawn_item(
-        "farming:wheat_seeds",
+        keys::WHEAT_SEEDS,
         1,
         [
             pos[0] as f64 + 0.5,

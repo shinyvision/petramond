@@ -7,16 +7,20 @@
 
 use mod_sdk::*;
 
+use crate::keys;
+
 /// The static per-crop row everything else derives from. Adding a crop is
-/// ONE row here (+ the pack JSON): stages, items, RNG keys, and the harvest
-/// emitter all resolve from it in [`Content::resolve`] — never a new match
-/// arm anywhere.
+/// ONE row here (+ its ids in [`crate::keys`] and the pack JSON): stages,
+/// items, RNG keys, and the harvest emitter all resolve from it in
+/// [`Content::resolve`] — never a new match arm anywhere.
 struct CropSpec {
     /// Singular stem: derives the RNG stream keys (`harvest_<name>`,
-    /// `fertile_<name>`) and the harvest burst (`farming:<name>_harvest`).
+    /// `fertile_<name>`).
     name: &'static str,
-    /// Block-row stem: stages are `farming:<block_stem>_0..3`.
-    block_stem: &'static str,
+    /// The stage rows, seedling (0) to mature (3).
+    stages: [&'static str; 4],
+    /// The burst a harvest plays, if the pack ships one for this crop.
+    harvest_emitter: Option<&'static str>,
     /// The item that replants this crop — what a broken support returns.
     planting_stock: &'static str,
     /// Primary produce item + its per-harvest yield range (balance data).
@@ -51,33 +55,46 @@ pub use husbandry::{Eaten, HusbandryDef};
 const CROPS: &[CropSpec] = &[
     CropSpec {
         name: "wheat",
-        block_stem: "wheat",
-        planting_stock: "farming:wheat_seeds",
-        produce: "farming:wheat",
+        stages: [keys::WHEAT_0, keys::WHEAT_1, keys::WHEAT_2, keys::WHEAT_3],
+        harvest_emitter: Some(keys::WHEAT_HARVEST),
+        planting_stock: keys::WHEAT_SEEDS,
+        produce: keys::WHEAT,
         yield_range: (1, 2),
         attracts: None,
         extra_drop: Some(ExtraDrop {
             count_key: "harvest_wheat_seeds",
-            item: "farming:wheat_seeds",
+            item: keys::WHEAT_SEEDS,
             chance_percent: 100,
             count: (0, 2),
         }),
     },
     CropSpec {
         name: "carrot",
-        block_stem: "carrots",
-        planting_stock: "farming:carrot",
-        produce: "farming:carrot",
+        stages: [
+            keys::CARROTS_0,
+            keys::CARROTS_1,
+            keys::CARROTS_2,
+            keys::CARROTS_3,
+        ],
+        harvest_emitter: Some(keys::CARROT_HARVEST),
+        planting_stock: keys::CARROT,
+        produce: keys::CARROT,
         yield_range: (2, 3),
         extra_drop: None,
         // A planted carrot patch is what brings rabbits in from the wild.
-        attracts: Some("farming:rabbit"),
+        attracts: Some(keys::RABBIT),
     },
     CropSpec {
         name: "potato",
-        block_stem: "potatoes",
-        planting_stock: "farming:potato",
-        produce: "farming:potato",
+        stages: [
+            keys::POTATOES_0,
+            keys::POTATOES_1,
+            keys::POTATOES_2,
+            keys::POTATOES_3,
+        ],
+        harvest_emitter: Some(keys::POTATO_HARVEST),
+        planting_stock: keys::POTATO,
+        produce: keys::POTATO,
         yield_range: (2, 3),
         extra_drop: None,
         attracts: None,
@@ -85,17 +102,18 @@ const CROPS: &[CropSpec] = &[
     // Hemp is the one crop whose stock and produce are ENGINE items: the wild
     // stands and the rope they lash the first stone tools with are core
     // progression, so cultivating it is this pack making a core material
-    // renewable, not owning it.
+    // renewable, not owning it. The pack ships no hemp harvest burst.
     CropSpec {
         name: "hemp",
-        block_stem: "hemp",
-        planting_stock: "farming:hemp_seeds",
-        produce: "petramond:hemp",
+        stages: [keys::HEMP_0, keys::HEMP_1, keys::HEMP_2, keys::HEMP_3],
+        harvest_emitter: None,
+        planting_stock: keys::HEMP_SEEDS,
+        produce: keys::HEMP,
         yield_range: (1, 1),
         attracts: None,
         extra_drop: Some(ExtraDrop {
             count_key: "harvest_hemp_seeds",
-            item: "farming:hemp_seeds",
+            item: keys::HEMP_SEEDS,
             chance_percent: 60,
             count: (1, 2),
         }),
@@ -128,7 +146,7 @@ pub struct CropDef {
     /// stateful per key, so these must never vary per call site).
     pub harvest_key: String,
     pub fertile_key: String,
-    pub harvest_emitter: String,
+    pub harvest_emitter: Option<&'static str>,
     /// The attraction roll's own RNG stream key — never shared with the
     /// harvest streams, which are stateful per key.
     pub attract_key: String,
@@ -203,29 +221,29 @@ impl Content {
     pub fn resolve() -> Option<Content> {
         let block = resolve_block_logged;
         let item = resolve_item_logged;
-        let short_grass = block("petramond:short_grass")?;
-        let fern = block("petramond:fern")?;
-        let dead_bush = block("petramond:dead_bush")?;
+        let short_grass = block(keys::SHORT_GRASS)?;
+        let fern = block(keys::FERN)?;
+        let dead_bush = block(keys::DEAD_BUSH)?;
         // Saplings (every growth-stage row carries the engine `sapling` tag)
         // are excluded from vegetation spread — they get the growth boost.
-        let saplings = blocks_by_tag("petramond:sapling");
-        let spreadable: Vec<BlockId> = blocks_by_tag("petramond:roots_in_soil")
+        let saplings = blocks_by_tag(keys::SAPLING_TAG);
+        let spreadable: Vec<BlockId> = blocks_by_tag(keys::ROOTS_IN_SOIL_TAG)
             .into_iter()
             .filter(|b| !saplings.contains(b))
             .collect();
         let mut sapling_finals = Vec::new();
-        for species in ["oak", "spruce", "birch", "jungle", "acacia"] {
-            let last = block(&format!("petramond:{species}_sapling_2"))?;
-            sapling_finals.push((block(&format!("petramond:{species}_sapling"))?, last));
-            sapling_finals.push((block(&format!("petramond:{species}_sapling_1"))?, last));
+        for [seedling, middle, last] in keys::SAPLINGS {
+            let last = block(last)?;
+            sapling_finals.push((block(seedling)?, last));
+            sapling_finals.push((block(middle)?, last));
             sapling_finals.push((last, last));
         }
         let husbandry = husbandry::resolve();
         let mut crops = Vec::with_capacity(CROPS.len());
         for spec in CROPS {
             let mut stages = [BlockId::AIR; 4];
-            for (i, stage) in stages.iter_mut().enumerate() {
-                *stage = block(&format!("farming:{}_{i}", spec.block_stem))?;
+            for (stage, name) in stages.iter_mut().zip(spec.stages) {
+                *stage = block(name)?;
             }
             crops.push(CropDef {
                 stages,
@@ -251,61 +269,52 @@ impl Content {
                 },
                 harvest_key: format!("harvest_{}", spec.name),
                 fertile_key: format!("fertile_{}", spec.name),
-                harvest_emitter: format!("farming:{}_harvest", spec.name),
+                harvest_emitter: spec.harvest_emitter,
                 attract_key: format!("attract_{}", spec.name),
             });
         }
         // The hemp a break can shake seeds out of. The wild stand is an ENGINE
         // row; the mature stage comes off the crop def, so a rename there
         // cannot leave this list behind. Seedlings are deliberately absent.
-        let mut hemp_mature = vec![block("petramond:hemp")?];
-        if let Some(def) = crops
-            .iter()
-            .find(|c| c.planting_stock == "farming:hemp_seeds")
-        {
+        let mut hemp_mature = vec![block(keys::HEMP_WILD)?];
+        if let Some(def) = crops.iter().find(|c| c.planting_stock == keys::HEMP_SEEDS) {
             hemp_mature.push(def.stages[3]);
         }
         Some(Content {
-            farmland_dry: block("farming:farmland_dry")?,
-            farmland_wet: block("farming:farmland_wet")?,
-            farmland_fertile_dry: block("farming:farmland_fertile_dry")?,
-            farmland_fertile_wet: block("farming:farmland_fertile_wet")?,
-            wild_wheat: block("farming:wild_wheat")?,
-            wild_carrots: block("farming:wild_carrots")?,
-            wild_potatoes: block("farming:wild_potatoes")?,
+            farmland_dry: block(keys::FARMLAND_DRY)?,
+            farmland_wet: block(keys::FARMLAND_WET)?,
+            farmland_fertile_dry: block(keys::FARMLAND_FERTILE_DRY)?,
+            farmland_fertile_wet: block(keys::FARMLAND_FERTILE_WET)?,
+            wild_wheat: block(keys::WILD_WHEAT)?,
+            wild_carrots: block(keys::WILD_CARROTS)?,
+            wild_potatoes: block(keys::WILD_POTATOES)?,
             crops,
             compost: [
-                block("farming:compost_0")?,
-                block("farming:compost_1")?,
-                block("farming:compost_2")?,
-                block("farming:compost_3")?,
+                block(keys::COMPOST_0)?,
+                block(keys::COMPOST_1)?,
+                block(keys::COMPOST_2)?,
+                block(keys::COMPOST_3)?,
             ],
-            trough: block("farming:trough")?,
-            trough_filled: block("farming:trough_filled")?,
-            trough_wheat: block("farming:trough_wheat")?,
-            grass_fertilized: block("farming:grass_fertilized")?,
-            grass: block("petramond:grass")?,
-            dirt: block("petramond:dirt")?,
-            water: block("petramond:water")?,
+            trough: block(keys::TROUGH)?,
+            trough_filled: block(keys::TROUGH_FILLED)?,
+            trough_wheat: block(keys::TROUGH_WHEAT)?,
+            grass_fertilized: block(keys::GRASS_FERTILIZED)?,
+            grass: block(keys::GRASS)?,
+            dirt: block(keys::DIRT)?,
+            water: block(keys::WATER)?,
             sapling_finals,
             spreadable,
             clearable: [short_grass, fern, dead_bush],
             seed_cover: [short_grass, fern],
-            hemp_wild: block("petramond:hemp")?,
-            iron_hoe: item("farming:iron_hoe")?,
-            fertilizer: item("farming:fertilizer")?,
-            wheat_item: item("farming:wheat")?,
-            compostable: items_by_tag("farming:compostable"),
-            wooden_bucket: item("petramond:wooden_bucket")?,
-            water_bucket: item("petramond:water_bucket")?,
+            hemp_wild: block(keys::HEMP_WILD)?,
+            iron_hoe: item(keys::IRON_HOE)?,
+            fertilizer: item(keys::FERTILIZER)?,
+            wheat_item: item(keys::WHEAT)?,
+            compostable: items_by_tag(keys::COMPOSTABLE_TAG),
+            wooden_bucket: item(keys::WOODEN_BUCKET)?,
+            water_bucket: item(keys::WATER_BUCKET)?,
             husbandry,
-            rabbit: {
-                let Some(rabbit) = resolve_mob("farming:rabbit") else {
-                    log("farming: unknown mob 'farming:rabbit'");
-                    return None;
-                };
-                rabbit
-            },
+            rabbit: resolve_mob_logged(keys::RABBIT)?,
         })
     }
 

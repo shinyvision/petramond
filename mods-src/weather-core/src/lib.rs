@@ -208,6 +208,35 @@ pub fn storm(clock_ticks: u64, seed: u32) -> f32 {
     0.35 + 0.37 * time_lane(clock_ticks, STORM_PERIOD_S, seed ^ 0x94D0_49BB)
 }
 
+/// The field parameters for an accumulated advection offset at a clock
+/// value — the whole replicated state is a pure function of these three.
+pub fn field_params(off: [f64; 2], clock_ticks: u64, seed: u32) -> FieldParams {
+    let (epoch, epoch_frac) = epoch_at(clock_ticks);
+    FieldParams {
+        off: [wrap_coord(off[0]), wrap_coord(off[1])],
+        storm: storm(clock_ticks, seed),
+        seed,
+        epoch,
+        epoch_frac,
+    }
+}
+
+/// One tick of advection: the offset after the wind blowing at `clock_ticks`
+/// carries it for 1/20 s, wrapped into [0, [`WRAP`]). The weather mod steps
+/// its offset through this once per tick the clock moves, and a consumer
+/// holding the previous tick's [`FieldRow`] replays the same step
+/// ([`FieldRow::params_at`]) — so both sides agree without either knowing
+/// when the other runs.
+pub fn advance_offset(off: [f64; 2], clock_ticks: u64, seed: u32) -> [f64; 2] {
+    let w = wind(clock_ticks, seed);
+    let wrap = f64::from(WRAP);
+    let per_tick = TICKS_PER_S as f64;
+    [
+        (off[0] + f64::from(w[0]) / per_tick).rem_euclid(wrap),
+        (off[1] + f64::from(w[1]) / per_tick).rem_euclid(wrap),
+    ]
+}
+
 /// One cloud sheet: epoch-morphed fbm remapped by the storm bias to a
 /// [0, 1] coverage. `salt` separates the sheet's hash stream, `advect`
 /// scales the wind offset (INTEGER multiples only — wrap-exactness).
@@ -254,18 +283,12 @@ pub fn rain(x: f64, z: f64, p: &FieldParams) -> f32 {
     rain_from_coverage(coverage(x, z, p))
 }
 
-/// The cross-mod world-KV interop key. The weather server mod publishes a
-/// [`FieldRow`] under it every tick; any other server mod evaluates the
-/// field locally from that one read plus this crate — no dependency on the
-/// weather mod itself, and a missing key simply means "no weather".
-pub const KV_FIELD: &str = "weather:field";
-
 /// The core day/night clock's world-KV key (8-byte LE u64 absolute ticks) —
-/// the freshness reference every [`KV_FIELD`] consumer gates against.
+/// the weather clock, and the clock a consumer advances a [`FieldRow`] to.
 pub const CLOCK_KEY: &str = "petramond:clock";
 
 /// Decode a [`CLOCK_KEY`] value. `None` on a malformed row — an unreadable
-/// clock means "no verifiable stamp", never a stamp of zero.
+/// clock means "no verifiable clock", never a clock of zero.
 pub fn decode_clock(bytes: &[u8]) -> Option<u64> {
     Some(u64::from_le_bytes(bytes.try_into().ok()?))
 }
@@ -279,11 +302,10 @@ pub const DIRECT_SKY_MIN: u8 = 45;
 
 /// Everything a foreign server mod needs from the weather mod, in one row:
 /// the field parameters, the wind velocity, and the weather clock the row
-/// was published at. The clock is the row's FRESHNESS stamp — world KV
-/// persists in the save, so a row left behind by an uninstalled weather mod
-/// would otherwise read as an eternal frozen sky; a reader that can see
-/// `petramond:clock` must treat a row whose stamp has fallen behind it as
-/// absent.
+/// was published at. The weather mod publishes it every tick on the
+/// session-scoped `weather:field` mod event (see the `sdk` feature's `feed`
+/// module) — never into the persistent world KV, so a save carries no sky
+/// and a world without the weather mod simply hears none.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FieldRow {
     pub params: FieldParams,
@@ -348,29 +370,27 @@ impl FieldRow {
         ];
         floats.iter().all(|v| v.is_finite()).then_some(row)
     }
-}
 
-/// A row whose clock stamp trails (or leads) the day/night clock by more
-/// than this many ticks is a leftover from an uninstalled weather mod — the
-/// shared consumer tolerance (2 s of slack over the per-tick republish).
-pub const FIELD_STALE_TICKS: u64 = 40;
-
-/// The one consumer-side read: decode a [`KV_FIELD`] row and gate its
-/// freshness against the day/night clock (`petramond:clock`), so a persisted
-/// row from an uninstalled weather mod never reads as an eternal frozen sky.
-/// `clock: None` (a clockless harness) trusts the row — the stamp is
-/// unverifiable, not stale. Every server-side consumer (monsters' burn
-/// douse, farming's rain hydration) goes through this instead of hand-rolling
-/// the gate.
-pub fn fresh_params(row: &[u8], clock: Option<u64>) -> Option<FieldParams> {
-    let row = FieldRow::decode(row)?;
-    if let Some(clock) = clock {
-        if clock.abs_diff(row.clock) > FIELD_STALE_TICKS {
-            return None;
+    /// The field as the weather mod evaluates it at `clock`, from the row it
+    /// published on its previous tick: the same clock is the row itself; a
+    /// moved clock replays the producer's one advection step. A consumer
+    /// therefore reads the sky of whatever clock it sees, whether it runs
+    /// before or after the weather mod — no ordering contract between them.
+    pub fn params_at(&self, clock: u64) -> FieldParams {
+        if clock == self.clock {
+            return self.params;
         }
+        let off = [f64::from(self.params.off[0]), f64::from(self.params.off[1])];
+        field_params(
+            advance_offset(off, clock, self.params.seed),
+            clock,
+            self.params.seed,
+        )
     }
-    Some(row.params)
 }
+
+#[cfg(feature = "sdk")]
+pub mod feed;
 
 #[cfg(test)]
 mod tests {
@@ -552,5 +572,34 @@ mod tests {
             None,
             "non-finite floats must read as no-weather, never as NaN rain"
         );
+    }
+
+    #[test]
+    fn a_row_advanced_one_tick_matches_the_producers_next_row() {
+        let seed = 0x00AB_CDEF;
+        let clock = 20 * 3600 * 7 + 11;
+        let off = [60_123.456_7, 12.345_6];
+        let row = FieldRow {
+            params: field_params(off, clock, seed),
+            wind: wind(clock, seed),
+            clock,
+        };
+        assert_eq!(row.params_at(clock), row.params, "an unmoved clock is the row");
+        let next = field_params(advance_offset(off, clock + 1, seed), clock + 1, seed);
+        let replayed = row.params_at(clock + 1);
+        assert_eq!(
+            (replayed.storm, replayed.seed, replayed.epoch, replayed.epoch_frac),
+            (next.storm, next.seed, next.epoch, next.epoch_frac),
+            "the clock-driven lanes are exact"
+        );
+        for axis in 0..2 {
+            assert!(
+                (replayed.off[axis] - next.off[axis]).abs() < 0.01,
+                "the offset differs only by the row's f32 rounding: {:?} vs {:?}",
+                replayed.off,
+                next.off
+            );
+        }
+        assert_ne!(replayed.off, row.params.off, "the step really advects");
     }
 }

@@ -19,6 +19,7 @@ use mod_sdk::*;
 
 mod cauldron;
 mod chains;
+mod keys;
 mod lanterns;
 mod seats;
 
@@ -225,8 +226,8 @@ impl Mod for Furniture {
         self.chains = resolve_chains();
         self.lanterns = resolve_lanterns();
         self.cauldron = resolve_cauldron();
-        self.water_bucket = resolve_item("petramond:water_bucket");
-        self.wooden_bucket = resolve_item("petramond:wooden_bucket");
+        self.water_bucket = resolve_item(keys::WATER_BUCKET);
+        self.wooden_bucket = resolve_item(keys::WOODEN_BUCKET);
         self.dyeables = cauldron::load_dyeables();
         self.pigments = cauldron::load_pigments();
         register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT);
@@ -444,14 +445,16 @@ mod_sdk::register_mod!(Furniture);
 mod cabinet_documents {
     use mod_sdk::json::Value;
 
+    use crate::keys;
+
     const BLOCKS: &str = include_str!("../pack/blocks.json");
     const DOCUMENTS: &[(&str, &str)] = &[
         (
-            "furniture:cabinet",
+            keys::CABINET_GUI,
             include_str!("../pack/ui/documents/cabinet.gui.json"),
         ),
         (
-            "furniture:counter_cabinet",
+            keys::COUNTER_CABINET_GUI,
             include_str!("../pack/ui/documents/counter_cabinet.gui.json"),
         ),
     ];

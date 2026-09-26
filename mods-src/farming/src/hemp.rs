@@ -12,6 +12,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::keys;
 
 /// One-in-N chance that breaking a hemp plant shakes seeds loose (10 → 10%),
 /// and the count it then gives. Balance data.
@@ -41,7 +42,7 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, natural
     let (lo, hi) = SEED_COUNT;
     let count = (lo + rng_u64("hemp_seed_count") % (hi - lo + 1)) as u8;
     spawn_item(
-        "farming:hemp_seeds",
+        keys::HEMP_SEEDS,
         count,
         [
             pos[0] as f64 + 0.5,

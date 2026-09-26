@@ -12,6 +12,7 @@ mod codec;
 mod explore;
 mod fullmap;
 mod hud;
+mod keys;
 mod raster;
 mod waypoints;
 
@@ -146,16 +147,16 @@ impl Mod for Minimap {
     fn client_ui(&mut self, _kind_key: &str, event: &ClientUiEvent) {
         match event {
             ClientUiEvent::TextChanged { id, text } | ClientUiEvent::Submit { id, text }
-                if id == "name" =>
+                if id == keys::WIDGET_NAME =>
             {
                 self.draft = text.clone();
                 if matches!(event, ClientUiEvent::Submit { .. }) {
                     self.save_editor();
                 }
             }
-            ClientUiEvent::Click { id } if id == "save" => self.save_editor(),
-            ClientUiEvent::Click { id } if id == "cancel" => self.cancel_editor(),
-            ClientUiEvent::Click { id } if id == "delete" => self.delete_editor(),
+            ClientUiEvent::Click { id } if id == keys::WIDGET_SAVE => self.save_editor(),
+            ClientUiEvent::Click { id } if id == keys::WIDGET_CANCEL => self.cancel_editor(),
+            ClientUiEvent::Click { id } if id == keys::WIDGET_DELETE => self.delete_editor(),
             _ => {}
         }
     }

@@ -11,3 +11,6 @@ crate-type = ["cdylib"]
 [dependencies]
 mod-sdk = { path = "../../mod-sdk" }
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+pack-check = { path = "../pack-check" }

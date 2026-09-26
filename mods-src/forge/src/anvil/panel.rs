@@ -11,13 +11,7 @@ use machine_core::StepCtx;
 
 use crate::anvil::{AnvilSpec, CellState, ACC_AUGMENT, ACC_NONE, ACC_SOCKET, SLOT_TOOL, SOCKETS};
 use crate::augments::{condition_word, level_word, repairable, Entry, LEVEL_MAX};
-
-/// A socket cell's gui-state key. The panel document binds these by hand, so
-/// the test that pins the document against this module builds its expectations
-/// from here rather than restating the format.
-pub(super) fn sock_key(socket: usize, part: &str) -> String {
-    format!("forge:sock{socket}_{part}")
-}
+use crate::keys::anvil as keys;
 
 impl AnvilSpec {
     /// Publish the panel: the enlarged tool (a composited LAYER LIST on one
@@ -87,23 +81,23 @@ impl AnvilSpec {
             .map(|chance| format!("Gentle Mine +{chance}%"))
             .unwrap_or_default();
 
-        ctx.publish("forge:tool_view", GuiValue::Str(layers.join(",")));
-        ctx.publish("forge:anvil_hint", GuiValue::Str(hint));
+        ctx.publish(keys::TOOL_VIEW, GuiValue::Str(layers.join(",")));
+        ctx.publish(keys::ANVIL_HINT, GuiValue::Str(hint));
         ctx.publish(
-            "forge:preview_speed",
+            keys::PREVIEW_SPEED,
             GuiValue::Str(delta_line("Speed", speed_mult)),
         );
         ctx.publish(
-            "forge:preview_damage",
+            keys::PREVIEW_DAMAGE,
             GuiValue::Str(delta_line("Damage", damage_mult)),
         );
         ctx.publish(
-            "forge:preview_knockback",
+            keys::PREVIEW_KNOCKBACK,
             GuiValue::Str(delta_line("Knockback", knockback_mult)),
         );
-        ctx.publish("forge:preview_gentle", GuiValue::Str(gentle));
+        ctx.publish(keys::PREVIEW_GENTLE, GuiValue::Str(gentle));
         ctx.publish(
-            "forge:can_augment",
+            keys::CAN_AUGMENT,
             GuiValue::I32(self.apply_staged(slots).is_some() as i32),
         );
 
@@ -163,9 +157,10 @@ impl AnvilSpec {
             };
             let frame = if cell_empty { frame } else { 0 };
             let ghost = if cell_empty { ghost } else { String::new() };
-            ctx.publish(&sock_key(socket, "st"), GuiValue::I32(frame));
-            ctx.publish(&sock_key(socket, "ghost"), GuiValue::Str(ghost));
-            ctx.publish(&sock_key(socket, "acc"), GuiValue::I32(acc));
+            let cell = &keys::SOCKET_CELLS[socket];
+            ctx.publish(cell.st, GuiValue::I32(frame));
+            ctx.publish(cell.ghost, GuiValue::Str(ghost));
+            ctx.publish(cell.acc, GuiValue::I32(acc));
             // The socket tooltip (the engine's injected slot tip, keyed by
             // the CONTAINER cell index): mount level + augment name on the
             // level's colour, the condition word on its own.

@@ -13,11 +13,11 @@ use crate::host::prelude::*;
 
 use crate::fx::{HashMap, HashSet};
 use crate::geometry::FACES;
+use crate::keys::SUPPLY_DATA;
 use crate::survey::{key_of, ItemKey};
 
 /// The most containers one chain reaches.
 pub const MAX_CONTAINERS: usize = 32;
-const SUPPLY_DATA: &str = "builder:supply";
 
 /// A table's stock and the tick it was read.
 type ReadStock = (u64, Rc<Stock>);

@@ -1,9 +1,12 @@
 use machine_core::StepCtx;
 use mod_sdk::*;
 
+use crate::keys;
+
 pub const KEY: &str = "forge:fittings";
 pub const INFO_KEY: &str = "petramond:info";
-pub const PAGE: &str = "forge:forging_furnace_fittings";
+/// The `kind` each `forge:upgrades` row names, in bit order — also the order
+/// of [`keys::fittings::TABLE`], which holds each fitting's page keys.
 pub const KINDS: [&str; 4] = ["quench", "counterweight", "chute", "stoker"];
 
 #[derive(Default)]
@@ -32,8 +35,8 @@ pub fn record(bytes: &[u8]) -> u8 {
 
 impl Fittings {
     pub fn resolve() -> Self {
-        let rows = resolve_block("forge:forging_furnace")
-            .and_then(|b| block_data(b, "forge:upgrades"))
+        let rows = resolve_block(keys::FORGING_FURNACE)
+            .and_then(|b| block_data(b, keys::UPGRADES_DATA))
             .and_then(|b| String::from_utf8(b).ok())
             .and_then(|s| json::Value::parse(&s))
             .and_then(|v| {
@@ -50,8 +53,10 @@ impl Fittings {
             .find(|r| r.index == index && bits & (1 << index) != 0)
     }
 
-    pub fn buy(&self, anchor: [i32; 3], kind: &str) {
-        let Some(row) = self.rows.iter().find(|r| KINDS[r.index] == kind) else {
+    /// Buy the fitting at `index` (its [`KINDS`] position) for the clicking
+    /// player: only a shipped, not-yet-fitted row the player can pay for.
+    pub fn buy(&self, anchor: [i32; 3], index: usize) {
+        let Some(row) = self.rows.iter().find(|r| r.index == index) else {
             return;
         };
         let mut bits = record(&section_kv_get(anchor, KEY).unwrap_or_default());
@@ -98,18 +103,18 @@ impl Fittings {
             for row in &self.rows {
                 let bought = bits & (1 << row.index) != 0;
                 let affordable = purchase_plan(&inventory, &row.cost).is_some();
-                let prefix = format!("forge:fit_{}", KINDS[row.index]);
-                for (suffix, value) in [
-                    ("name", GuiValue::Str(row.name.clone())),
-                    ("image", GuiValue::Str(format!("../icons/{}.png", row.icon))),
+                let page = &keys::fittings::TABLE[row.index];
+                for (key, value) in [
+                    (page.name, GuiValue::Str(row.name.clone())),
+                    (page.image, GuiValue::Str(format!("../icons/{}.png", row.icon))),
                     (
-                        "inactive_image",
+                        page.inactive_image,
                         GuiValue::Str(format!("../icons/{}_inactive.png", row.icon)),
                     ),
-                    ("unbought", GuiValue::I32(i32::from(!bought))),
-                    ("info", GuiValue::Str(row.info.clone())),
+                    (page.unbought, GuiValue::I32(i32::from(!bought))),
+                    (page.info, GuiValue::Str(row.info.clone())),
                     (
-                        "cost",
+                        page.cost,
                         GuiValue::List(
                             row.cost
                                 .iter()
@@ -125,7 +130,7 @@ impl Fittings {
                         ),
                     ),
                     (
-                        "status",
+                        page.status,
                         GuiValue::Str(
                             if bought {
                                 ""
@@ -138,7 +143,7 @@ impl Fittings {
                         ),
                     ),
                     (
-                        "palette",
+                        page.palette,
                         GuiValue::Str(
                             if bought || affordable {
                                 "accent"
@@ -148,10 +153,10 @@ impl Fittings {
                             .into(),
                         ),
                     ),
-                    ("on", GuiValue::I32(i32::from(!bought && affordable))),
-                    ("bought", GuiValue::I32(i32::from(bought))),
+                    (page.on, GuiValue::I32(i32::from(!bought && affordable))),
+                    (page.bought, GuiValue::I32(i32::from(bought))),
                 ] {
-                    gui_state_set_for(player, &format!("{prefix}_{suffix}"), value);
+                    gui_state_set_for(player, key, value);
                 }
             }
         }

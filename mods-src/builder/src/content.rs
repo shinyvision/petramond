@@ -3,23 +3,16 @@
 use crate::host::logged;
 use crate::host::prelude::*;
 
-pub const TABLE_KIND: &str = "builder:schematic_table";
-pub const MATERIALS_KIND: &str = "builder:materials";
-pub const GOLEM_KIND: &str = "builder:golem";
-pub const GOLEM: &str = "builder:mason_golem";
+/// The golem, its blueprint and its burst, re-exported for the worker's
+/// modules; every pack id is declared once, in [`crate::keys`].
+pub use crate::keys::{BLUEPRINT, EARTH_BURST, GOLEM};
+use crate::keys::{RAW_COPPER, SCAFFOLDING_DATA, TABLE_BLOCK};
+
 /// The golem row's `size.half_width` (pack `mobs.json`): its footprint.
 pub const GOLEM_HALF_WIDTH: f32 = 0.3;
-/// Row data a block opts into scaffolding with: any pack's plain, sturdy
-/// block joins by patching its row.
-pub const SCAFFOLDING_DATA: &str = "builder:scaffolding";
 /// Instance data a bound blueprint carries: the world nonce and project id.
 pub const PROJECT_DATA: &str = "builder:project";
 pub const INFO_DATA: &str = "petramond:info";
-pub const EARTH_BURST: &str = "builder:earth_burst";
-
-pub const BLUEPRINT: &str = "builder:blueprint";
-const RAW_COPPER: &str = "petramond:raw_copper";
-pub const COPPER_BLOCK_RECIPE: &str = "builder:copper_block";
 
 pub struct Content {
     pub table: BlockId,
@@ -35,7 +28,7 @@ pub struct Content {
 impl Content {
     pub fn resolve() -> Option<Self> {
         Some(Self {
-            table: logged("block", TABLE_KIND, resolve_block(TABLE_KIND))?,
+            table: logged("block", TABLE_BLOCK, resolve_block(TABLE_BLOCK))?,
             scaffolding: ScaffoldKind::resolve(),
             golem: logged("mob", GOLEM, resolve_mob(GOLEM))?,
             blueprint: logged("item", BLUEPRINT, resolve_item(BLUEPRINT))?,

@@ -4,16 +4,7 @@
 
 use mod_sdk::*;
 
-/// The item-row data key naming a bow and its draw:
-/// `{"draw_ticks", "strain_ticks", "draw_speed_scale", "launch_speed":
-/// [weakest, fullest], "pull"?: [frame item names, weakest first]}`.
-pub const BOW_KEY: &str = "combat:bow";
-
-/// The item-row data key naming an arrow and its damage by arrival speed:
-/// `{"damage_weak": [min, max], "damage_full": [min, max], "speed_weak",
-/// "speed_full"}` — the ranges dealt arriving at the two speeds (m/s),
-/// linear between, clamped outside.
-pub const ARROW_KEY: &str = "combat:arrow";
+use crate::keys::{ARROW_KEY, BOW_KEY};
 
 /// One bow's authored draw.
 #[derive(Clone, Debug, PartialEq)]

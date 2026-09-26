@@ -30,6 +30,7 @@ mod clay;
 mod content;
 mod furnace;
 mod gold;
+mod keys;
 mod liquid;
 mod ore;
 mod unlocks;
@@ -165,29 +166,31 @@ impl Mod for Forge {
     }
 
     /// A widget in one of this pack's documents was clicked: the forging
-    /// furnace's pour lever, or the anvil's Augment button.
+    /// furnace's pour lever and fittings pages, or the anvil's Augment button.
     fn gui_click(&mut self, kind_key: &str, widget_id: &str, at: Option<ContainerAddress>) {
-        use machine_core::MachineSpec;
         let Some(ContainerAddress::Block(pos)) = at else {
             return;
         };
-        if kind_key == furnace::ForgingFurnaceSpec::KIND_KEY && widget_id == furnace::WIDGET_LEVER {
+        if kind_key == keys::FURNACE_GUI && widget_id == keys::WIDGET_LEVER {
             self.furnace.spec().pull_lever(pos, &mut self.caches);
         }
-        if kind_key == furnace::ForgingFurnaceSpec::KIND_KEY && widget_id == "fittings" {
-            gui_open(furnace::fittings::PAGE, Some(pos));
+        if kind_key == keys::FURNACE_GUI && widget_id == keys::WIDGET_FITTINGS {
+            gui_open(keys::FITTINGS_GUI, Some(pos));
         }
-        if kind_key == furnace::fittings::PAGE {
-            if widget_id == "back" {
-                gui_open(furnace::ForgingFurnaceSpec::KIND_KEY, Some(pos));
+        if kind_key == keys::FITTINGS_GUI {
+            if widget_id == keys::WIDGET_BACK {
+                gui_open(keys::FURNACE_GUI, Some(pos));
             }
-            if let Some(kind) = widget_id.strip_prefix("fit_") {
+            if let Some(index) = keys::fittings::TABLE
+                .iter()
+                .position(|fitting| fitting.widget == widget_id)
+            {
                 if self.furnace.is_present(pos) {
-                    self.furnace.spec().fittings.buy(pos, kind);
+                    self.furnace.spec().fittings.buy(pos, index);
                 }
             }
         }
-        if kind_key == anvil::AnvilSpec::KIND_KEY && widget_id == anvil::WIDGET_AUGMENT {
+        if kind_key == keys::ANVIL_GUI && widget_id == keys::WIDGET_AUGMENT {
             self.anvil.spec_mut().request_apply(pos);
         }
     }

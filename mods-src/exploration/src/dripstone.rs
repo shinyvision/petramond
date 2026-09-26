@@ -18,17 +18,15 @@
 
 use mod_sdk::*;
 
+use crate::keys;
+
 pub mod behavior;
 pub mod gen;
 pub mod hazard;
 
-/// The underground biome this pack registers for the caves.
-pub const BIOME_KEY: &str = "exploration:dripstone_caves";
 /// Top of the depth band that row declares (`"y": [-64, 96]`); worldgen
 /// derives its altitude gate from here.
 pub const BIOME_TOP_Y: i32 = 96;
-/// Registry name of the spike item — what a falling piece IS in flight.
-pub const POINTED_ITEM: &str = "exploration:pointed_dripstone";
 /// Longest run growth builds. Worldgen places shorter ones.
 pub const MAX_RUN: i32 = 7;
 /// Cell KV marking a spike as PLAYER-PLACED.
@@ -42,11 +40,6 @@ pub const MAX_RUN: i32 = 7;
 /// mark dies with the spike and a cell that falls and is regenerated comes
 /// back unmarked.
 pub const PLACED_KEY: &str = "exploration:placed";
-
-/// Item-data key a block row declares to be FILLED by a drip
-/// (`{"filled": "<block name>"}` — the row the vessel becomes). The
-/// furniture cauldron opts in through this pack's integration overlay.
-const VESSEL_KEY: &str = "exploration:drip_vessel";
 
 /// Which run a spike belongs to.
 ///
@@ -98,9 +91,10 @@ pub struct Dripstone {
 impl Dripstone {
     pub fn resolve(fluids: crate::fluids::Fluids) -> Option<Dripstone> {
         let mut vessels = Vec::new();
-        for (vessel, raw) in blocks_with_data(VESSEL_KEY) {
+        for (vessel, raw) in blocks_with_data(keys::DRIP_VESSEL) {
             let Ok(spec) = serde_json::from_str::<VesselSpec>(&raw) else {
-                log(&format!("exploration: malformed {VESSEL_KEY} entry: {raw}"));
+                let key = keys::DRIP_VESSEL;
+                log(&format!("exploration: malformed {key} entry: {raw}"));
                 continue;
             };
             if let Some(filled) = resolve_block_logged(&spec.filled) {
@@ -108,15 +102,15 @@ impl Dripstone {
             }
         }
         Some(Dripstone {
-            block: resolve_block_logged("exploration:dripstone_block")?,
-            stalactite: resolve_block_logged("exploration:stalactite")?,
-            stalactite_wet: resolve_block_logged("exploration:stalactite_wet")?,
-            stalagmite: resolve_block_logged("exploration:stalagmite")?,
-            water: resolve_block_logged("petramond:water")?,
+            block: resolve_block_logged(keys::DRIPSTONE_BLOCK)?,
+            stalactite: resolve_block_logged(keys::STALACTITE)?,
+            stalactite_wet: resolve_block_logged(keys::STALACTITE_WET)?,
+            stalagmite: resolve_block_logged(keys::STALAGMITE)?,
+            water: resolve_block_logged(keys::WATER)?,
             fluids,
             air: BlockId(0),
             vessels,
-            biome: resolve_underground_biome(BIOME_KEY),
+            biome: resolve_underground_biome(keys::DRIPSTONE_CAVES),
         })
     }
 

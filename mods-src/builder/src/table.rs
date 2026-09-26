@@ -15,9 +15,9 @@ mod panel;
 
 use crate::host::prelude::*;
 
-use crate::content::{MATERIALS_KIND, TABLE_KIND};
 use crate::fx::HashMap;
 use crate::jobs::Builder;
+use crate::keys;
 use crate::project::{Project, ProjectId};
 
 pub use actions::{chosen, click, positioned, use_blueprint};
@@ -66,7 +66,7 @@ fn project_at(builder: &Builder, table: [i32; 3]) -> Option<ProjectId> {
 fn table_of(viewer: &GuiViewerData) -> Option<[i32; 3]> {
     match viewer.anchor {
         Some(ContainerAddress::Block(table))
-            if viewer.kind == TABLE_KIND || viewer.kind == MATERIALS_KIND =>
+            if viewer.kind == keys::table::KIND || viewer.kind == keys::materials::KIND =>
         {
             Some(table)
         }
@@ -106,7 +106,7 @@ pub fn publish(builder: &mut Builder, now: u64, viewers: &[GuiViewerData]) {
 }
 
 fn publish_to(builder: &mut Builder, viewer: &GuiViewerData, table: [i32; 3], now: u64) {
-    if viewer.kind == TABLE_KIND {
+    if viewer.kind == keys::table::KIND {
         show_blueprint(builder, table, now);
         let state = panel::describe(builder, viewer.player_id, table, now);
         builder.panels.publish(viewer, &state);
@@ -124,7 +124,7 @@ pub fn closed(builder: &mut Builder, closed: &[GuiViewerData], now: u64) {
             continue;
         };
         builder.tables.refused.remove(&(viewer.player_id, table));
-        if viewer.kind == TABLE_KIND {
+        if viewer.kind == keys::table::KIND {
             show_blueprint(builder, table, now);
         }
     }

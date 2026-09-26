@@ -22,7 +22,7 @@
 
 use mod_sdk::*;
 
-use super::{held_places_a_block, Furniture};
+use super::{held_places_a_block, keys, Furniture};
 
 /// One sit-able furniture piece: its block, the model footprint (mirror of
 /// the pack's `models.json` `cells`), and its seats in unrotated footprint
@@ -35,12 +35,12 @@ pub(super) struct Piece {
 
 pub(super) const PIECES: &[Piece] = &[
     Piece {
-        block: "furniture:chair",
+        block: keys::CHAIR,
         footprint: [1, 2, 1],
         seats: &[[0.5, -0.1, 0.25]],
     },
     Piece {
-        block: "furniture:bench",
+        block: keys::BENCH,
         footprint: [2, 2, 1],
         seats: &[[0.5, -0.1, 0.25], [1.5, -0.1, 0.25]],
     },

@@ -6,7 +6,8 @@
 //! - **Server** (deterministic tick): integrates the global wind into the
 //!   field's advection offset, publishes the replicated `weather:*` shader
 //!   params (the WHOLE weather state is those few vec4s — see
-//!   `weather-core`), mirrors them into world KV for other server mods, and
+//!   `weather-core`), publishes the same field to other server mods on the
+//!   session-scoped `weather:field` event (`weather_core::feed`), and
 //!   accumulates snow layers on cold-biome surfaces while it snows there.
 //! - **Client** (presentation): reads the same params back
 //!   (`client_env_params`), evaluates the same field at the camera, and
@@ -19,14 +20,20 @@
 //! weather); the advection offset persists in world KV, so a storm front
 //! survives a reload mid-crossing.
 
+mod keys;
+
 use mod_sdk::*;
-use weather_core::{coverage, rain_from_coverage, storm, wind, FieldParams, WRAP};
+use weather_core::{advance_offset, coverage, field_params, rain_from_coverage, wind, FieldParams};
 
 /// The one tick system: advance + publish + accumulate.
 const TICK_WEATHER: u32 = 1;
 
 /// World-KV key persisting the advection offset (two LE f64).
 const KV_OFF: &str = "weather:off";
+/// Where earlier versions mirrored the field into the PERSISTENT world KV
+/// every tick; the row now travels on the `weather:field` session event, and
+/// init clears the leftover so saves stop carrying a frozen sky.
+const LEGACY_KV_FIELD: &str = "weather:field";
 
 /// Snow-accumulation probes per tick, round-robin over connected players.
 const SNOW_PROBES_PER_TICK: u32 = 8;
@@ -44,26 +51,21 @@ const COVER_DUCK: f32 = 0.3;
 /// cave or megastructure.
 const SKY_SCAN_MAX: i32 = 96;
 
-/// Leaf-block policy shared by both sides, keyed off the `leaves` block tag:
-/// the server lets snow rest on canopy tops; the client's sky probe treats
-/// these as TRANSPARENT so a canopy never suppresses the rainy mood. A pack
-/// leaf block joins by tagging its row `leaves` — no list to maintain here.
-const LEAF_TAG: &str = "petramond:leaves";
-
-/// The precipitation visuals this pack ships.
-const RAIN_BUNDLE: &str = "weather:rain";
-const SNOW_BUNDLE: &str = "weather:snow";
-const RAIN_LOOP: &str = "weather:rain_loop";
+/// The biomes where precipitation falls as snow and settles as layers. The
+/// pack's `weather:snow` emitter row lists the same biomes (and
+/// `weather:rain` excludes them) so particles and accumulation agree; every
+/// one of them is an engine biome whose worldgen lays snow cover. Both facts
+/// are pinned by this crate's tests against the shipped JSON.
+const SNOWY_BIOMES: [u8; 5] = [
+    biome::SNOWY_PLAINS,
+    biome::SNOWY_TUNDRA,
+    biome::SNOWY_TAIGA,
+    biome::SNOWY_PEAKS,
+    biome::SNOWY_SLOPES,
+];
 
 fn is_snowy_biome(biome: u8) -> bool {
-    matches!(
-        biome,
-        biome::SNOWY_PLAINS
-            | biome::SNOWY_TUNDRA
-            | biome::SNOWY_TAIGA
-            | biome::SNOWY_PEAKS
-            | biome::SNOWY_SLOPES
-    )
+    SNOWY_BIOMES.contains(&biome)
 }
 
 #[derive(Default)]
@@ -88,7 +90,7 @@ struct Weather {
     /// Engine water — excluded from snow footing (composed into
     /// [`Weather::full_solid_support`]).
     water: Option<BlockId>,
-    /// The [`LEAF_TAG`] member ids, queried at init — both sides use them:
+    /// The [`keys::LEAF_TAG`] member ids, queried at init — both sides use them:
     /// the server's snow accumulation rests layers on canopy tops, the
     /// client's sky probe sees through them.
     leaves: Vec<BlockId>,
@@ -112,20 +114,6 @@ struct Weather {
 }
 
 impl Weather {
-    fn field_params(&self, clock: u64) -> FieldParams {
-        let (epoch, epoch_frac) = weather_core::epoch_at(clock);
-        FieldParams {
-            off: [
-                weather_core::wrap_coord(self.off[0]),
-                weather_core::wrap_coord(self.off[1]),
-            ],
-            storm: storm(clock, self.seed),
-            seed: self.seed,
-            epoch,
-            epoch_frac,
-        }
-    }
-
     /// The weather clock: the persisted absolute day/night clock when core
     /// publishes one (frozen time freezes weather too), else the session
     /// tick counter.
@@ -143,17 +131,16 @@ impl Weather {
         // The FIRST tick after load only latches the clock — advancing on it
         // would leak one step of drift into a frozen world.
         if self.last_clock.is_some() && self.last_clock != Some(clock) {
-            self.off[0] = (self.off[0] + w[0] as f64 / 20.0).rem_euclid(WRAP as f64);
-            self.off[1] = (self.off[1] + w[1] as f64 / 20.0).rem_euclid(WRAP as f64);
+            self.off = advance_offset(self.off, clock, self.seed);
         }
         self.last_clock = Some(clock);
-        let params = self.field_params(clock);
+        let params = field_params(self.off, clock, self.seed);
 
         // The replicated visual/param state: everything the shader and every
         // client instance needs to evaluate the field locally.
-        shader_set_param("weather:wind", [params.off[0], params.off[1], w[0], w[1]]);
+        shader_set_param(keys::WIND_PARAM, [params.off[0], params.off[1], w[0], w[1]]);
         shader_set_param(
-            "weather:sky",
+            keys::SKY_PARAM,
             [
                 params.storm,
                 weather_core::RAIN_START,
@@ -163,22 +150,20 @@ impl Weather {
         );
         // The morph lane: which epoch pair the field is blending between.
         shader_set_param(
-            "weather:flux",
+            keys::FLUX_PARAM,
             [params.epoch as f32, params.epoch_frac, 0.0, 0.0],
         );
 
-        // Cross-mod interop mirror (server mods read KV, not shader params):
-        // the COMPLETE field in one row, so a foreign mod evaluates
-        // weather-core locally from one read. The clock stamp is the row's
-        // freshness lane — world KV persists, and a reader must be able to
-        // tell a live sky from the frozen row an uninstalled weather mod
-        // leaves behind.
-        let row = weather_core::FieldRow {
+        // Cross-mod interop (server mods cannot read shader params): the
+        // COMPLETE field in one row on the session-scoped channel, so a
+        // foreign mod evaluates weather-core locally from what it heard. A
+        // session event, not world KV: nothing persists, and a world without
+        // this mod simply hears no weather.
+        weather_core::feed::publish(&weather_core::FieldRow {
             params,
             wind: w,
             clock,
-        };
-        world_kv_set(weather_core::KV_FIELD, row.encode().to_vec());
+        });
 
         // Persist every tick: the offset moves up to 0.3 blocks/tick, and a
         // reload must not visibly rewind the deck (world KV rides the normal
@@ -272,13 +257,13 @@ impl Weather {
 
     fn client_frame_impl(&mut self, frame: &ClientFrameData) {
         self.frame = self.frame.wrapping_add(1);
-        let read = client_env_params(&["weather:wind", "weather:sky", "weather:flux"]);
+        let read = client_env_params(&[keys::WIND_PARAM, keys::SKY_PARAM, keys::FLUX_PARAM]);
         let (Some(wind_p), Some(sky_p)) = (read[0], read[1]) else {
             // No weather server mod publishing (or params not landed yet):
             // everything idles at zero and eases out on its own.
-            client_ambient_set(RAIN_BUNDLE, 0.0, [0.0, 0.0]);
-            client_ambient_set(SNOW_BUNDLE, 0.0, [0.0, 0.0]);
-            client_loop_set(RAIN_LOOP, 0.0);
+            client_ambient_set(keys::RAIN_BUNDLE, 0.0, [0.0, 0.0]);
+            client_ambient_set(keys::SNOW_BUNDLE, 0.0, [0.0, 0.0]);
+            client_loop_set(keys::RAIN_LOOP, 0.0);
             client_mood_set(0.0, 0.0);
             return;
         };
@@ -310,8 +295,8 @@ impl Weather {
         // BOTH bundles run at the same intensity: each filters itself per
         // column through its `biomes`/`exclude_biomes` row, so a biome
         // border shows rain and snow side by side, column-exact.
-        client_ambient_set(RAIN_BUNDLE, poured, wind_v);
-        client_ambient_set(SNOW_BUNDLE, poured, wind_v);
+        client_ambient_set(keys::RAIN_BUNDLE, poured, wind_v);
+        client_ambient_set(keys::SNOW_BUNDLE, poured, wind_v);
         // Audio and mood follow the CAMERA's column: standing in the snowy
         // column, the rain bed hushes.
         let rain_i = if snowy { 0.0 } else { poured };
@@ -326,7 +311,7 @@ impl Weather {
         client_mood_set(0.1 * mood_i, 0.22 * mood_i);
 
         let duck = if self.covered { COVER_DUCK } else { 1.0 };
-        client_loop_set(RAIN_LOOP, rain_i * duck);
+        client_loop_set(keys::RAIN_LOOP, rain_i * duck);
     }
 
     /// Roof probes, two verdicts from one column: `covered` (audio duck) is
@@ -405,7 +390,7 @@ impl Weather {
 impl Mod for Weather {
     fn init(&mut self) {
         self.side_is_client = runtime_side() == RuntimeSide::Client;
-        self.leaves = blocks_by_tag(LEAF_TAG);
+        self.leaves = blocks_by_tag(keys::LEAF_TAG);
         if self.side_is_client {
             // The client never rolls its own seed — it reconstructs the
             // field entirely from the replicated params.
@@ -415,11 +400,15 @@ impl Mod for Weather {
         // f32 exactly). The first draw of a named stream is a pure function
         // of (world seed, mod id, stream) — same value every session.
         self.seed = (rng_u64("field_seed") & 0xFF_FFFF) as u32;
+        // After core day/night (priority 0 in the same window), so the clock
+        // read is this tick's. No consumer depends on running after this:
+        // the field channel carries the clock and consumers advance to theirs.
         register_tick_system(Stage::Spawning, AttachSide::After, 10, TICK_WEATHER);
-        self.snow_layer = resolve_block_logged("petramond:snow_layer");
-        self.ice = resolve_block_logged("petramond:ice");
-        self.packed_ice = resolve_block_logged("petramond:packed_ice");
-        self.water = resolve_block_logged("petramond:water");
+        self.snow_layer = resolve_block_logged(keys::SNOW_LAYER);
+        self.ice = resolve_block_logged(keys::ICE);
+        self.packed_ice = resolve_block_logged(keys::PACKED_ICE);
+        self.water = resolve_block_logged(keys::WATER);
+        world_kv_delete(LEGACY_KV_FIELD);
         if let Some(bytes) = world_kv_get(KV_OFF) {
             if bytes.len() == 16 {
                 self.off = [

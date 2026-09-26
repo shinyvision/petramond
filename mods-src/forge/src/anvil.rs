@@ -62,7 +62,8 @@ use mod_sdk::*;
 
 use machine_core::{write_changed_slots, Caches, Machine, MachineSpec, Presentation, StepCtx};
 
-use crate::augments::{Record, NONDESTRUCTIVE_KEY, SOCKET_ITEM_KEY};
+use crate::augments::Record;
+use crate::keys;
 use rows::{Fit, ToolSlots, ToolStats};
 
 pub(crate) use rows::WearOn;
@@ -72,6 +73,7 @@ const STATE_KEY: &str = "forge:anvil_state";
 const SLOT_TOOL: usize = 0;
 /// Socket cells: container indices `1..=SOCKETS`, socket index = cell − 1.
 const SOCKETS: usize = 4;
+const _: () = assert!(keys::anvil::SOCKET_CELLS.len() == SOCKETS);
 const SLOTS: usize = 1 + SOCKETS;
 /// Every augmentable tool has this many sockets before any carving.
 const BASE_SOCKETS: u8 = 1;
@@ -83,22 +85,17 @@ const BASE_SOCKETS: u8 = 1;
 /// only far past the shipped augment set).
 const VALUE_CAP: usize = 128;
 
-/// The panel's Augment button (`pack/ui/documents/anvil.gui.json`).
-pub const WIDGET_AUGMENT: &str = "augment";
-
 /// Seeded RNG stream for augment wear rolls.
 const WEAR_STREAM: &str = "anvil_wear";
 
-/// Played when an Augment click actually installs something — after the
-/// gate, like the furnace lever's, so a click that fits nothing stays
-/// silent.
-const SOUND_AUGMENT: &str = "forge:augment_fit";
-
-/// The PETRAMOND gesture: a socket carved open or a mount level raised.
-/// One row for both because they are one player action — a gem dropped on
-/// a socket cell — whose outcome depends only on whether that cell was
-/// occupied. Repair (the augment's own material) is not this sound.
-const SOUND_SOCKET: &str = "forge:augment_unlock";
+// SOUND_AUGMENT plays when an Augment click actually installs something —
+// after the gate, like the furnace lever's, so a click that fits nothing
+// stays silent. SOUND_SOCKET is the PETRAMOND gesture: a socket carved open
+// or a mount level raised. One row for both because they are one player
+// action — a gem dropped on a socket cell — whose outcome depends only on
+// whether that cell was occupied. Repair (the augment's own material) is not
+// this sound.
+use crate::keys::{SOUND_AUGMENT, SOUND_SOCKET};
 
 /// Socket-cell accepts masks (`bind.accepts` on the panel's socket slots):
 /// bits over the cells' AUTHORED filter list, which is
@@ -171,8 +168,8 @@ impl AnvilSpec {
 }
 
 impl MachineSpec for AnvilSpec {
-    const KIND_KEY: &'static str = "forge:anvil";
-    const BLOCK_KEY: &'static str = "forge:anvil";
+    const KIND_KEY: &'static str = keys::ANVIL_GUI;
+    const BLOCK_KEY: &'static str = keys::ANVIL;
     const VARIANT_KEYS: &'static [&'static str] = &[];
     const ANCHORS_KEY: &'static str = "forge:anvils";
     const STATE_KEY: &'static str = STATE_KEY;
@@ -182,8 +179,8 @@ impl MachineSpec for AnvilSpec {
         (self.by_identity, self.material_of) = rows::index_by_identity(&self.augments);
         self.names = rows::display_names(&self.by_identity);
         self.tools = rows::augmentable_tools();
-        self.socket_items = rows::items_with(SOCKET_ITEM_KEY);
-        self.nondestructive = rows::items_with(NONDESTRUCTIVE_KEY);
+        self.socket_items = rows::items_with(keys::SOCKET_KEY_DATA);
+        self.nondestructive = rows::items_with(keys::NONDESTRUCTIVE_DATA);
         // The member counts are the only cheap signal the pack's data keys and
         // this module's constants are the same strings.
         log(&format!(

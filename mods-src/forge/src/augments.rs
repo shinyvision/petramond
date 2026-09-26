@@ -27,20 +27,6 @@
 /// the module docs and [`Record`]).
 pub(crate) const AUGMENTS_KEY: &str = "forge:augments";
 
-/// The row-data key an augment MATERIAL carries: its list of fits (tool kind,
-/// edge tier, multipliers, cost, overlay art, optional behaviour grant).
-pub(crate) const AUGMENT_KEY: &str = "forge:augment";
-
-/// The data key that marks an item as a SOCKET material (the petramond gem):
-/// consumed at the anvil to carve a locked socket open or raise a mount
-/// level. Membership is the whole vocabulary — the value is not read.
-pub(crate) const SOCKET_ITEM_KEY: &str = "forge:socket_key";
-
-/// Row-data key marking an item as an innately gentle miner. Gold's policy
-/// declares the behaviour; the anvil refuses fitting a `gentle` augment to a
-/// tool that already has it (no gold-on-gold).
-pub(crate) const NONDESTRUCTIVE_KEY: &str = "forge:nondestructive";
-
 /// A socket's mount can be upgraded this many times past Basic.
 pub(crate) const LEVEL_MAX: u8 = 3;
 

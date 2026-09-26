@@ -44,3 +44,25 @@ fn a_pack_missing_the_golem_leaves_the_mod_idle_and_says_why() {
         "mob '{GOLEM}' is not registered"
     ))));
 }
+
+/// The golem's footprint is mirrored from its `mobs.json` row, because the
+/// worker plans stances before any golem exists to measure. Resizing the row
+/// without this constant would plan footholds for a body of another size.
+#[test]
+fn the_golem_footprint_matches_its_mobs_json_row() {
+    use mod_sdk::json::Value;
+    let mobs = Value::parse(include_str!("../../pack/mobs.json")).expect("mobs.json parses");
+    let row = mobs
+        .get("mobs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|row| row.get("mob").and_then(Value::as_str) == Some(GOLEM))
+        .expect("the golem has a row");
+    let half_width = row
+        .get("size")
+        .and_then(|size| size.get("half_width"))
+        .and_then(Value::as_f64)
+        .expect("the row states its half width");
+    assert_eq!(half_width as f32, GOLEM_HALF_WIDTH);
+}

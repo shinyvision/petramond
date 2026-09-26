@@ -24,8 +24,8 @@
 //! outright: the engine cooldown is claimed to zero
 //! (`set_player_attribute`) and the in-flight arc bars the next attack (a
 //! denial) until its recovery, so the animation and the pace are one clock
-//! that cannot disagree. On [`COMBO_MOBS`] a paced hit also drops the
-//! engine i-frame from the damage pipeline (`mob_damage_pre` edits the
+//! that cannot disagree. On a species carrying [`PACED_COMBO_DATA`] a paced
+//! hit also drops the engine i-frame from the damage pipeline (`mob_damage_pre` edits the
 //! feedback components): the swing clock already limits hits to one per
 //! arc, so chained combos land exactly as they read.
 //!
@@ -94,6 +94,7 @@ mod bow;
 mod claims;
 mod families;
 mod guard;
+mod keys;
 mod strike;
 mod swing;
 
@@ -102,7 +103,7 @@ mod rig_clips;
 
 use body::{BodyClocks, Tools, TICK_SECONDS};
 use claims::Rule;
-use guard::BLOCK_SOUND;
+use keys::{BLOCK_SOUND, PACED_COMBO_DATA};
 use mod_sdk::*;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -114,13 +115,6 @@ const RAISE_HANDLER: u32 = 3;
 const COMBO_HANDLER: u32 = 4;
 const ATTACK_HANDLER: u32 = 5;
 const PROJECTILE_HANDLER: u32 = 6;
-
-/// Mobs that take every PACED hit: the engine i-frame is stripped from a
-/// hit whose attacker's swings this pack already paces, because the clock
-/// does the i-frame's job — one hit per arc — and the window would only
-/// swallow chained combos. Species policy; hits from unpaced hands (bare
-/// fists, another pack's weapon) keep the engine window.
-const COMBO_MOBS: &[&str] = &["monsters:zombie", "monsters:hushjaw"];
 
 /// The cue the server sends the wielder's client when their shield takes a
 /// hit. No payload: the client already knows the rule, and the only thing it
@@ -139,9 +133,8 @@ struct Combat {
     bow: Option<Rc<bow::Rows>>,
     /// The tool table.
     tools: Tools,
-    /// The [`COMBO_MOBS`] this build's registry actually carries — a
-    /// species from a pack that is not installed is one row of policy that
-    /// never applies, resolved once at init.
+    /// The species carrying [`PACED_COMBO_DATA`] in this build's registry,
+    /// resolved once at init — one crossing, whoever declared them.
     combo_mobs: Vec<MobId>,
     /// This instance is the server: it acts on edges and makes the
     /// simulation claims; a client only shows.
@@ -295,7 +288,7 @@ impl Combat {
     }
 
     /// The combo half of `mob_damage_pre`: a PACED attacker's hit on a
-    /// [`COMBO_MOBS`] species drops the `Immunity` component from its
+    /// [`PACED_COMBO_DATA`] species drops the `Immunity` component from its
     /// feedback pipeline, so the hit neither respects nor grants the engine
     /// i-frame window — the attacker's swing clock is already the rate
     /// limit. Everything else about the hit (health, flash, knockback,
@@ -352,9 +345,9 @@ impl Mod for Combat {
         // Registry-only, and legal on every instance (server, worldgen,
         // client) — the client half needs the rows just as much.
         self.tools = Tools::resolve();
-        self.combo_mobs = COMBO_MOBS
-            .iter()
-            .filter_map(|name| resolve_mob(name))
+        self.combo_mobs = mobs_with_data(PACED_COMBO_DATA)
+            .into_iter()
+            .map(|(kind, _)| kind)
             .collect();
         if let Some(rows) = bow::Rows::load() {
             let rows = Rc::new(rows);

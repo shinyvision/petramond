@@ -4,6 +4,7 @@
 use crate::host::prelude::*;
 
 use crate::jobs::Builder;
+use crate::keys::table;
 use crate::project::{Hold, Phase, Project};
 use crate::table::{blueprint_at, may_edit, project_at};
 
@@ -52,20 +53,20 @@ pub struct TablePanel {
 impl PanelState for TablePanel {
     fn values(&self) -> Vec<(&'static str, GuiValue)> {
         vec![
-            ("builder:title", gui_text(&self.title)),
-            ("builder:status", gui_text(&self.status)),
-            ("builder:status_palette", gui_text(self.tone.palette())),
-            ("builder:can_choose", gui_flag(self.can_choose)),
-            ("builder:can_position", gui_flag(self.can_position)),
-            ("builder:has_design", gui_flag(self.has_design)),
-            ("builder:can_ghost", gui_flag(self.can_ghost)),
-            ("builder:ghost_frame", gui_flag(self.ghost_shown)),
-            ("builder:show_start", gui_flag(self.show_start)),
-            ("builder:can_start", gui_flag(self.can_start)),
-            ("builder:show_pause", gui_flag(self.show_pause)),
-            ("builder:show_resume", gui_flag(self.show_resume)),
-            ("builder:can_resume", gui_flag(self.can_resume)),
-            ("builder:show_cancel", gui_flag(self.show_cancel)),
+            (table::TITLE, gui_text(&self.title)),
+            (table::STATUS, gui_text(&self.status)),
+            (table::STATUS_PALETTE, gui_text(self.tone.palette())),
+            (table::CAN_CHOOSE, gui_flag(self.can_choose)),
+            (table::CAN_POSITION, gui_flag(self.can_position)),
+            (table::HAS_DESIGN, gui_flag(self.has_design)),
+            (table::CAN_GHOST, gui_flag(self.can_ghost)),
+            (table::GHOST_FRAME, gui_flag(self.ghost_shown)),
+            (table::SHOW_START, gui_flag(self.show_start)),
+            (table::CAN_START, gui_flag(self.can_start)),
+            (table::SHOW_PAUSE, gui_flag(self.show_pause)),
+            (table::SHOW_RESUME, gui_flag(self.show_resume)),
+            (table::CAN_RESUME, gui_flag(self.can_resume)),
+            (table::SHOW_CANCEL, gui_flag(self.show_cancel)),
         ]
     }
 }

@@ -27,6 +27,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::keys;
 
 /// What fertilizer would do to `block`, if anything.
 enum Target {
@@ -147,8 +148,8 @@ fn feedback(pos: [i32; 3], y: f32) {
         pos[1] as f64 + f64::from(y),
         pos[2] as f64 + 0.5,
     ];
-    emit_sound("farming:till", Some(center));
-    emitter_burst("farming:fertilize_burst", center, 1.0);
+    emit_sound(keys::TILL_SOUND, Some(center));
+    emitter_burst(keys::FERTILIZE_BURST, center, 1.0);
 }
 
 /// CLIENT prediction mirror of [`on_item_use`]'s gate: the direct target

@@ -4,7 +4,8 @@
 
 use mod_sdk::*;
 
-use super::{Dripstone, POINTED_ITEM};
+use super::Dripstone;
+use crate::keys;
 
 /// Damage a falling piece deals per m/s of arrival speed, and its bounds in
 /// half-hearts. A one-block drop lands at ~6 m/s (three half-hearts); a
@@ -33,7 +34,7 @@ pub fn on_projectile_hit(payload: &mut EventPayload) -> Outcome {
     let Some(item) = item_entity(*entity) else {
         return Outcome::Continue;
     };
-    if item.stack.item != POINTED_ITEM {
+    if item.stack.item != keys::POINTED_DRIPSTONE_ITEM {
         return Outcome::Continue;
     }
     let speed = (vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]).sqrt();

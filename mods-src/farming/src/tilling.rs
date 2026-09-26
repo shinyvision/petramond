@@ -9,11 +9,20 @@
 //! nothing, quietly does nothing — no chat or sound spam, hoe untouched.
 
 use mod_sdk::*;
+use weather_core::FieldParams;
 
 use crate::content::Content;
 use crate::farmland::{self, Hydration};
+use crate::keys;
 
-pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) -> Outcome {
+/// `sky` is the weather field heard this tick (`None` = clear sky): rain on
+/// open ground tills straight to wet farmland.
+pub fn on_item_use(
+    content: &Content,
+    sky: Option<&FieldParams>,
+    item: ItemId,
+    target: Option<[i32; 3]>,
+) -> Outcome {
     if item != content.iron_hoe {
         return Outcome::Continue;
     }
@@ -44,7 +53,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
     if cover != BlockId::AIR {
         set_block(above, BlockId::AIR);
     }
-    let soil = match farmland::probe(content, pos) {
+    let soil = match farmland::probe(content, sky, pos) {
         Hydration::Hydrated => content.farmland_wet,
         Hydration::Dry | Hydration::Unknown => content.farmland_dry,
     };
@@ -54,8 +63,8 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
         pos[1] as f64 + 1.0,
         pos[2] as f64 + 0.5,
     ];
-    emit_sound("farming:till", Some(center));
-    emitter_burst("farming:till_burst", center, 1.0);
+    emit_sound(keys::TILL_SOUND, Some(center));
+    emitter_burst(keys::TILL_BURST, center, 1.0);
     Outcome::Cancel
 }
 

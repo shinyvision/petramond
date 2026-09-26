@@ -13,6 +13,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::keys;
 use crate::kv_counter::kv_counter_bump;
 
 /// One-in-N spread roll per random tick with vegetation on top (4 → 25%).
@@ -97,7 +98,7 @@ fn try_spread(content: &Content, pos: [i32; 3], plant: BlockId) {
         }
         set_block(c.head, plant);
         emitter_burst(
-            "farming:fertilize_burst",
+            keys::FERTILIZE_BURST,
             [
                 c.head[0] as f64 + 0.5,
                 c.head[1] as f64 + 0.3,

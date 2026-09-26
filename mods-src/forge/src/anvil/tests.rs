@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::augments::{Entry, AUGMENTS_KEY, AUGMENT_KEY};
+use crate::augments::{Entry, AUGMENTS_KEY};
 
 fn fit(tool: &str, overlay: &str, cost: u8, speed: f32, damage: f32) -> Fit {
     Fit {
@@ -537,7 +537,7 @@ fn the_panels_socket_cells_author_the_filters_these_bits_index() {
             .unwrap_or_default();
         assert_eq!(
             filters,
-            vec![AUGMENT_KEY, SOCKET_ITEM_KEY],
+            vec![keys::AUGMENT_DATA, keys::SOCKET_KEY_DATA],
             "socket {socket}: ACC_AUGMENT ({ACC_AUGMENT}) and ACC_SOCKET ({ACC_SOCKET}) are BIT \
              POSITIONS over this authored list. Reorder it and admission inverts silently — \
              locked cells would take augment materials and open cells only the gem — with no \
@@ -545,17 +545,17 @@ fn the_panels_socket_cells_author_the_filters_these_bits_index() {
         );
         assert_eq!(
             bound(slot, "accepts"),
-            Some(panel::sock_key(socket, "acc")),
+            Some(keys::anvil::SOCKET_CELLS[socket].acc.to_owned()),
             "socket {socket} binds a mask key the machine never publishes"
         );
         assert_eq!(
             child(frame, "hook").and_then(|h| bound(h, "item")),
-            Some(panel::sock_key(socket, "ghost")),
+            Some(keys::anvil::SOCKET_CELLS[socket].ghost.to_owned()),
             "socket {socket}'s ghost hook"
         );
         assert_eq!(
             child(frame, "image").and_then(|i| bound(i, "frame")),
-            Some(panel::sock_key(socket, "st")),
+            Some(keys::anvil::SOCKET_CELLS[socket].st.to_owned()),
             "socket {socket}'s state chrome"
         );
     }

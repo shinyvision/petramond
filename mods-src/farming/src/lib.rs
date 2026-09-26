@@ -12,7 +12,7 @@
 //! - [`worldgen`] — wild wheat/carrot/potato patches after the Trees stage.
 //! - [`tilling`] — the iron hoe turning grass/dirt into farmland.
 //! - [`farmland`] — the shared hydration probe (ground water OR overhead
-//!   rain via the `weather:field` interop row) + farmland's dry/wet visual
+//!   rain via the weather field's `weather:field` channel) + farmland's dry/wet visual
 //!   reconciliation (random ticks + neighbor re-arming).
 //! - [`crops`] — planting validation, scheduled four-stage growth with dry
 //!   pause, right-click harvesting, and supporting-soil invalidation.
@@ -49,6 +49,7 @@ mod growth;
 mod hemp;
 mod hop;
 mod husbandry;
+mod keys;
 mod kv_counter;
 mod predict;
 mod rest;
@@ -60,6 +61,7 @@ mod wellfed;
 mod worldgen;
 
 use mod_sdk::*;
+use weather_core::feed::FieldFeed;
 
 use content::Content;
 use crops::Growth;
@@ -82,6 +84,8 @@ const ON_PLAYER_DAMAGE_PRE: u32 = 5;
 const ON_BLOCK_BROKEN: u32 = 6;
 const ON_MOB_TAG_REMOVED: u32 = 7;
 const ON_ITEM_OBTAINED: u32 = 8;
+/// Mod events: the weather field channel (rain hydrates farmland).
+const ON_MOD_EVENT: u32 = 9;
 
 // Block-behavior callback ids.
 const HOOK_CROP: u32 = 1;
@@ -98,6 +102,7 @@ const AI_HUSBANDRY_GOAL: u32 = 2;
 // Tick system id.
 const TICK_HUSBANDRY: u32 = 1;
 const TICK_HOP: u32 = 2;
+const TICK_WEATHER_FEED: u32 = 3;
 
 #[derive(Default)]
 struct Farming {
@@ -111,6 +116,10 @@ struct Farming {
     /// Armed growth attempts (crop cell → due tick). Session-scoped by
     /// design: lost scheduling re-arms from random ticks (see [`crops`]).
     growth: Growth,
+    /// The latest weather field heard on its channel. Hydration reads it as
+    /// published: every reader runs before core day/night moves the clock,
+    /// so the published row IS the sky at the clock those readers see.
+    weather: FieldFeed,
 }
 
 impl Mod for Farming {
@@ -140,18 +149,22 @@ impl Mod for Farming {
         register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
         register_event_handler(EventKind::MobTagRemoved, 0, ON_MOB_TAG_REMOVED);
         register_event_handler(EventKind::ItemObtained, 0, ON_ITEM_OBTAINED);
-        register_block_behavior("farming:crop", HOOK_CROP);
-        register_block_behavior("farming:farmland", HOOK_FARMLAND);
-        register_block_behavior("farming:grass_fertilized", HOOK_SPREAD);
+        weather_core::feed::subscribe(ON_MOD_EVENT);
+        register_block_behavior(keys::CROP_HOOK, HOOK_CROP);
+        register_block_behavior(keys::FARMLAND_HOOK, HOOK_FARMLAND);
+        register_block_behavior(keys::SPREAD_HOOK, HOOK_SPREAD);
         register_worldgen_feature(WorldgenStage::Trees, GEN_WILD_PATCHES, worldgen::GEN_FILTER);
-        register_ai_node("farming:follow_wheat", AI_FOLLOW_WHEAT);
-        register_ai_node("farming:husbandry_goal", AI_HUSBANDRY_GOAL);
+        register_ai_node(keys::FOLLOW_WHEAT_NODE, AI_FOLLOW_WHEAT);
+        register_ai_node(keys::HUSBANDRY_GOAL_NODE, AI_HUSBANDRY_GOAL);
         // Right after the mobs move, so the sweep measures this tick's
         // positions and its steering tags are in place for the next.
         register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_HUSBANDRY);
         // The rabbit's hop gait: pack policy over the generic vertical-drive
         // seam, decided from each tick's fresh landings (see `hop`).
         register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_HOP);
+        // Ages the weather feed once per tick, so a weather mod that stops
+        // publishing reads as clear sky instead of a frozen storm.
+        register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_WEATHER_FEED);
     }
 
     fn tick_system(&mut self, system_id: u32) {
@@ -163,6 +176,9 @@ impl Mod for Farming {
         }
         if system_id == TICK_HOP {
             hop::on_tick(content);
+        }
+        if system_id == TICK_WEATHER_FEED {
+            self.weather.tick();
         }
     }
 
@@ -188,13 +204,18 @@ impl Mod for Farming {
                 _ => Outcome::Continue,
             };
         }
+        if handler_id == ON_MOD_EVENT {
+            self.weather.observe(payload);
+            return Outcome::Continue;
+        }
+        let sky = self.weather.params();
         match (handler_id, &mut *payload) {
             (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target, .. }) => {
                 // The hoe first (it consumes eligible clicks), then the
                 // fertilizer targets, then the compostable barrel fill, then
                 // the water trough bucket swap — each falls through quietly
                 // when the held item is not its business.
-                let first = chain(tilling::on_item_use(content, *item, *target), || {
+                let first = chain(tilling::on_item_use(content, sky.as_ref(), *item, *target), || {
                     fertilize::on_item_use(content, *item, *target)
                 });
                 let second = chain(first, || compost::on_item_use(content, *item, *target));
@@ -278,9 +299,10 @@ impl Mod for Farming {
         let Some(content) = &self.content else {
             return;
         };
+        let sky = self.weather.params();
         match callback_id {
-            HOOK_CROP => crops::on_hook(content, &mut self.growth, kind, pos),
-            HOOK_FARMLAND => farmland::on_hook(content, kind, pos),
+            HOOK_CROP => crops::on_hook(content, &mut self.growth, sky.as_ref(), kind, pos),
+            HOOK_FARMLAND => farmland::on_hook(content, sky.as_ref(), kind, pos),
             HOOK_SPREAD => spread::on_hook(content, kind, pos),
             _ => {}
         }

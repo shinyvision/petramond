@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 use mod_sdk::*;
 
+use crate::keys;
+
 /// Melt time for a metal with no `forge:metal` entry.
 const MELT_TICKS_DEFAULT: u32 = 240;
 /// And its colour: plain hot iron.
@@ -109,10 +111,10 @@ fn resolve_metals(raw: HashMap<String, RawMetal>) -> HashMap<String, Metal> {
 
 impl Casting {
     pub fn resolve() -> Casting {
-        let moulds = read_rows("forge:mould", |value| {
+        let moulds = read_rows(keys::MOULD_DATA, |value| {
             value.get("class")?.as_str().map(str::to_owned)
         });
-        let metals = resolve_metals(read_rows("forge:metal", |value| {
+        let metals = resolve_metals(read_rows(keys::METAL_DATA, |value| {
             Some(RawMetal {
                 melt_ticks: value
                     .get("melt_ticks")

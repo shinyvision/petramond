@@ -45,8 +45,9 @@ use std::collections::{HashMap, HashSet};
 
 use mod_sdk::*;
 
-use crate::augments::{Record, AUGMENTS_KEY, AUGMENT_KEY, NONDESTRUCTIVE_KEY};
+use crate::augments::{Record, AUGMENTS_KEY};
 use crate::content::read_rows;
+use crate::keys;
 
 /// Seeded RNG stream for the augmented slip roll.
 const SLIP_STREAM: &str = "gold_slip";
@@ -79,11 +80,11 @@ impl Gold {
     /// logged — the only cheap signal the data keys and this module's
     /// constants are the same strings (the tag-typo trap).
     pub fn resolve() -> Gold {
-        let tools = read_rows(NONDESTRUCTIVE_KEY, |value| {
+        let tools = read_rows(keys::NONDESTRUCTIVE_DATA, |value| {
             Some(tag_blocks(value.get("blocks")))
         });
         let mut granted: HashMap<String, Vec<Grant>> = HashMap::new();
-        let grant_rows = read_rows(AUGMENT_KEY, |value| {
+        let grant_rows = read_rows(keys::AUGMENT_DATA, |value| {
             let grants: Vec<(String, Grant)> = value
                 .as_array()?
                 .iter()

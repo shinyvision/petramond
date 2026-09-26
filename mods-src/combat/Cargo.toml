@@ -10,3 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mod-sdk = { path = "../../mod-sdk" }
+
+[dev-dependencies]
+pack-check = { path = "../pack-check" }

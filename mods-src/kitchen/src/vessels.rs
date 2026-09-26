@@ -14,6 +14,8 @@
 
 use mod_sdk::*;
 
+use crate::keys;
+
 /// One dish and the vessel it is served in. Adding a dish is ONE row; nothing
 /// here branches on a concrete item.
 struct VesselSpec {
@@ -22,8 +24,8 @@ struct VesselSpec {
 }
 
 const VESSELS: &[VesselSpec] = &[VesselSpec {
-    dish: "kitchen:rabbit_stew",
-    returns: "kitchen:wooden_bowl",
+    dish: keys::RABBIT_STEW,
+    returns: keys::WOODEN_BOWL,
 }];
 
 /// The rows with their dish resolved to a session id. A row whose dish is

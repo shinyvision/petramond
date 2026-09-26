@@ -12,10 +12,11 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::keys;
 
 /// (trigger item, recipe opened the first time the player ever holds it).
 fn triggers(content: &Content) -> [(ItemId, &'static str); 1] {
-    [(content.wheat_item, "farming:farmers_workbench")]
+    [(content.wheat_item, keys::FARMERS_WORKBENCH)]
 }
 
 pub fn on_item_obtained(content: &Content, player: PlayerId, item: ItemId) {

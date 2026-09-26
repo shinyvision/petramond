@@ -1,11 +1,9 @@
 //! Personal waypoints: the persisted list, deterministic colors, and the
 //! create/edit document flow (open, save, cancel, delete).
 
+use crate::keys::{CREATE_WAYPOINT_GUI, EDIT_WAYPOINT_GUI, WAYPOINT_NAME};
 use crate::*;
 
-const CREATE_KIND: &str = "minimap:create_waypoint";
-const EDIT_KIND: &str = "minimap:edit_waypoint";
-const WAYPOINT_NAME: &str = "minimap:waypoint_name";
 const WAYPOINTS_KEY: &str = "minimap:waypoints";
 
 #[derive(Clone)]
@@ -58,14 +56,14 @@ impl Minimap {
         self.editor = Editor::Edit(index);
         self.draft = self.waypoints[index].name.clone();
         client_ui_state_set(WAYPOINT_NAME, GuiValue::Str(self.draft.clone()));
-        client_gui_open(EDIT_KIND);
+        client_gui_open(EDIT_WAYPOINT_GUI);
     }
 
     pub(crate) fn open_create(&mut self) {
         self.editor = Editor::Create;
         self.draft.clear();
         client_ui_state_set(WAYPOINT_NAME, GuiValue::Str(String::new()));
-        client_gui_open(CREATE_KIND);
+        client_gui_open(CREATE_WAYPOINT_GUI);
     }
 
     pub(crate) fn save_editor(&mut self) {

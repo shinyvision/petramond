@@ -1,6 +1,6 @@
 use mod_sdk::*;
 
-const KEY: &str = "farming:husbandry";
+use crate::keys::HUSBANDRY_DATA as KEY;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Eaten {

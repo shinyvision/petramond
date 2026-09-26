@@ -10,4 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mod-sdk = { path = "../../mod-sdk" }
-weather-core = { path = "../weather-core" }
+weather-core = { path = "../weather-core", features = ["sdk"] }
+
+[dev-dependencies]
+pack-check = { path = "../pack-check" }

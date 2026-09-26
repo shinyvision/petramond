@@ -1,5 +1,6 @@
 use super::{State, SLOT_FUEL, SLOT_METAL};
 use crate::content::Casting;
+use crate::keys;
 use machine_core::Caches;
 use mod_sdk::*;
 
@@ -11,11 +12,11 @@ pub struct Storage {
 
 impl Storage {
     pub fn resolve() -> Self {
-        let blocks = blocks_with_data("forge:storage")
+        let blocks = blocks_with_data(keys::STORAGE_DATA)
             .into_iter()
             .map(|(id, _)| id)
             .collect();
-        let ids = items_with_data("forge:feed")
+        let ids = items_with_data(keys::FEED_DATA)
             .into_iter()
             .map(|(id, _)| id)
             .collect();

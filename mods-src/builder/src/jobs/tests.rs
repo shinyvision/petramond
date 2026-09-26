@@ -1,5 +1,5 @@
 use super::*;
-use crate::content::{INFO_DATA, TABLE_KIND};
+use crate::content::INFO_DATA;
 use crate::host::fake::rows::{AIR, CHEST, STONE, TABLE};
 use crate::project::{Hold, Note, Phase, Project};
 use crate::supplies::Shortfall;
@@ -396,7 +396,7 @@ fn a_watched_draft_is_compiled_surveyed_and_ghosted_in_one_tick() {
     assert!(session.builder.jobs.map.is_empty(), "nobody looks at it");
     session.world.state_mut().viewers.push(GuiViewerData {
         player_id: PlayerId(1),
-        kind: TABLE_KIND.into(),
+        kind: crate::keys::table::KIND.into(),
         anchor: Some(ContainerAddress::Block(TABLE_AT)),
     });
     session.world.set_now(2);

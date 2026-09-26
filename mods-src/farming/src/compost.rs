@@ -19,6 +19,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::keys;
 
 /// One compostable unit advances a non-full barrel one fill stage. The held
 /// item is checked before any host crossing (the tilling.rs order): every
@@ -42,8 +43,8 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
     }
     swap_block(pos, content.compost[stage as usize + 1]);
     let center = barrel_top(pos);
-    emit_sound("farming:till", Some(center));
-    emitter_burst("farming:compost_fill", center, 1.0);
+    emit_sound(keys::TILL_SOUND, Some(center));
+    emitter_burst(keys::COMPOST_FILL, center, 1.0);
     Outcome::Cancel
 }
 
@@ -55,10 +56,10 @@ pub fn on_interact(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome 
         return Outcome::Continue;
     }
     let center = barrel_top(pos);
-    spawn_item("farming:fertilizer", 1, center);
+    spawn_item(keys::FERTILIZER, 1, center);
     swap_block(pos, content.compost[0]);
-    emit_sound("farming:harvest", Some(center));
-    emitter_burst("farming:compost_fill", center, 1.0);
+    emit_sound(keys::HARVEST_SOUND, Some(center));
+    emitter_burst(keys::COMPOST_FILL, center, 1.0);
     Outcome::Cancel
 }
 

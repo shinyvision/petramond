@@ -67,51 +67,49 @@ fn cell_near(a: i64, b: i64) -> bool {
 /// deliberate-locomotion fact — never velocity: hopping stems from
 /// NAVIGATING, so a rabbit shoved by a player or bowled over by knockback
 /// slides like any other body instead of bouncing, and a navigating rabbit
-/// momentarily slowed by a wall or a crowd still hops. Duplicate sweeps of
-/// one rabbit from overlapping player ranges are harmless: the drive intent
-/// is a latch and both writes carry the same value, and the stall
-/// bookkeeping is keyed to the unchanged landing cell.
+/// momentarily slowed by a wall or a crowd still hops. One sweep covers
+/// every player's range and visits each rabbit ONCE, so overlapping ranges
+/// neither repeat the host calls nor count a launch twice toward a stall.
 pub fn on_tick(content: &Content) {
     let tick = current_tick() as i64;
-    for player in players() {
-        for snap in mobs_in_radius(player.state.pos, RANGE) {
-            if snap.kind != content.rabbit || !snap.on_ground || !snap.moving {
-                continue;
-            }
-            let Some(tags) = mob_tags_get(snap.id) else {
-                continue;
-            };
-            let tag = |key: &str| {
-                tags.iter().find_map(|(k, v)| match v {
-                    MobTagValue::I64(i) if k == key => Some(*i),
-                    _ => None,
-                })
-            };
-            if tag(CALM_UNTIL).is_some_and(|until| until > tick) {
-                continue; // walking it out
-            }
-            let here = packed_cell(snap.pos);
-            let continuous = tag(LAST_LAUNCH).is_some_and(|last| tick - last <= STALL_MEMORY_GAP);
-            mob_tag_set(snap.id, LAST_LAUNCH, MobTagValue::I64(tick));
-            match tag(ANCHOR).filter(|_| continuous) {
-                Some(anchor) if cell_near(anchor, here) => {
-                    let stall = tag(STALL).unwrap_or(0) + 1;
-                    if stall >= STALL_LAUNCHES {
-                        mob_tag_set(snap.id, CALM_UNTIL, MobTagValue::I64(tick + CALM_TICKS));
-                        mob_tag_delete(snap.id, ANCHOR);
-                        mob_tag_delete(snap.id, STALL);
-                        continue;
-                    }
-                    mob_tag_set(snap.id, STALL, MobTagValue::I64(stall));
-                }
-                _ => {
-                    mob_tag_set(snap.id, ANCHOR, MobTagValue::I64(here));
-                    if tag(STALL).is_some() {
-                        mob_tag_delete(snap.id, STALL);
-                    }
-                }
-            }
-            mob_drive_vertical(snap.id, HOP_SPEED, true);
+    let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
+    for snap in mobs_near_any(&anchors, RANGE) {
+        if snap.kind != content.rabbit || !snap.on_ground || !snap.moving {
+            continue;
         }
+        let Some(tags) = mob_tags_get(snap.id) else {
+            continue;
+        };
+        let tag = |key: &str| {
+            tags.iter().find_map(|(k, v)| match v {
+                MobTagValue::I64(i) if k == key => Some(*i),
+                _ => None,
+            })
+        };
+        if tag(CALM_UNTIL).is_some_and(|until| until > tick) {
+            continue; // walking it out
+        }
+        let here = packed_cell(snap.pos);
+        let continuous = tag(LAST_LAUNCH).is_some_and(|last| tick - last <= STALL_MEMORY_GAP);
+        mob_tag_set(snap.id, LAST_LAUNCH, MobTagValue::I64(tick));
+        match tag(ANCHOR).filter(|_| continuous) {
+            Some(anchor) if cell_near(anchor, here) => {
+                let stall = tag(STALL).unwrap_or(0) + 1;
+                if stall >= STALL_LAUNCHES {
+                    mob_tag_set(snap.id, CALM_UNTIL, MobTagValue::I64(tick + CALM_TICKS));
+                    mob_tag_delete(snap.id, ANCHOR);
+                    mob_tag_delete(snap.id, STALL);
+                    continue;
+                }
+                mob_tag_set(snap.id, STALL, MobTagValue::I64(stall));
+            }
+            _ => {
+                mob_tag_set(snap.id, ANCHOR, MobTagValue::I64(here));
+                if tag(STALL).is_some() {
+                    mob_tag_delete(snap.id, STALL);
+                }
+            }
+        }
+        mob_drive_vertical(snap.id, HOP_SPEED, true);
     }
 }

@@ -33,6 +33,7 @@
 //! `WorldScheduled` window, reading every machine's slots through batched
 //! calls (the ABI hot-loop rule) and writing back only what changed.
 
+mod keys;
 mod miller;
 mod oven;
 mod oven_draw;

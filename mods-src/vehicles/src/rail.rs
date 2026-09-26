@@ -130,7 +130,9 @@ pub enum Form {
 }
 
 impl Form {
-    /// Every form, in the order the pack's block rows are named.
+    /// Every form, for the tests that sweep them (the pack's rows are
+    /// `crate::keys::RAIL_ROWS`).
+    #[cfg(test)]
     pub const ALL: [Form; 10] = [
         Form::Straight(Axis::NS),
         Form::Straight(Axis::EW),
@@ -144,21 +146,6 @@ impl Form {
         Form::Slope(Dir::W),
     ];
 
-    /// The row-name suffix of this form (`vehicles:rail_<name>`).
-    pub fn name(self) -> &'static str {
-        match self {
-            Form::Straight(Axis::NS) => "ns",
-            Form::Straight(Axis::EW) => "ew",
-            Form::Curve(Corner::NE) => "curve_ne",
-            Form::Curve(Corner::SE) => "curve_se",
-            Form::Curve(Corner::SW) => "curve_sw",
-            Form::Curve(Corner::NW) => "curve_nw",
-            Form::Slope(Dir::N) => "slope_n",
-            Form::Slope(Dir::E) => "slope_e",
-            Form::Slope(Dir::S) => "slope_s",
-            Form::Slope(Dir::W) => "slope_w",
-        }
-    }
 
     pub fn is_curve(self) -> bool {
         matches!(self, Form::Curve(..))

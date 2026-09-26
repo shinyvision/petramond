@@ -13,6 +13,8 @@
 //! without a world; the mod supplies both from batched block reads and the
 //! registry's per-block collision.
 
+use std::collections::BTreeMap;
+
 use crate::rail::{add, link, Dir, Rail, RailMap};
 use crate::track::{dot2, grade, xz, yaw_facing, Path, RAIL_TOP};
 
@@ -390,6 +392,48 @@ pub fn resolve_contacts<'a>(cart: &Cart, others: impl Iterator<Item = &'a Cart>)
     }
 }
 
+/// The carts bucketed by the [`CART_LENGTH`]-sized ground cell their feet
+/// stand in, so a contact scan visits only the 3×3 cells around a cart
+/// instead of every other cart on the network: two carts in contact are less
+/// than a cart length apart on both ground axes, hence at most one cell.
+pub struct ContactGrid {
+    cells: BTreeMap<(i64, i64), Vec<usize>>,
+}
+
+impl ContactGrid {
+    pub fn new(carts: &[Cart]) -> Self {
+        let mut cells: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+        for (i, cart) in carts.iter().enumerate() {
+            cells.entry(Self::cell(cart)).or_default().push(i);
+        }
+        Self { cells }
+    }
+
+    fn cell(cart: &Cart) -> (i64, i64) {
+        let size = f64::from(CART_LENGTH);
+        (
+            (cart.pos[0] / size).floor() as i64,
+            (cart.pos[2] / size).floor() as i64,
+        )
+    }
+
+    /// The indices of every cart that may touch `carts[i]`, excluding it, in
+    /// ASCENDING order — the order a scan of the whole list visits them, so
+    /// [`resolve_contacts`] sums the same shoves in the same order.
+    pub fn neighbours(&self, carts: &[Cart], i: usize) -> Vec<usize> {
+        let (cx, cz) = Self::cell(&carts[i]);
+        let mut near: Vec<usize> = (cx - 1..=cx + 1)
+            .flat_map(|x| (cz - 1..=cz + 1).map(move |z| (x, z)))
+            .filter_map(|cell| self.cells.get(&cell))
+            .flatten()
+            .copied()
+            .filter(|&j| j != i)
+            .collect();
+        near.sort_unstable();
+        near
+    }
+}
+
 /// The signed speed a punch from `origin` gives the cart: away from the
 /// puncher, along the facing.
 pub fn punch(cart: &Cart, origin: [f64; 3]) -> f32 {
@@ -758,5 +802,43 @@ mod tests {
         let overhang = block_at([0, 1, -1]);
         let c2 = railed(step(&map, c, BODY, Controls { push: 1.0 }, &overhang));
         assert_eq!(c2.speed, 0.0, "{c2:?}");
+    }
+
+    #[test]
+    fn the_contact_grid_resolves_exactly_like_scanning_every_cart() {
+        // A yard of carts: trains in contact across cell borders, a stacked
+        // pair a level apart, loners far off — deterministic scatter.
+        let mut carts = Vec::new();
+        for i in 0..60u32 {
+            let h = i.wrapping_mul(0x9E37_79B9);
+            carts.push(Cart {
+                pos: [
+                    f64::from(h % 23) * 0.37 - 4.0,
+                    f64::from((h >> 8) % 3),
+                    f64::from((h >> 16) % 29) * 0.29 - 3.5,
+                ],
+                yaw: (h % 628) as f32 / 100.0,
+                pitch: 0.0,
+                speed: ((h >> 4) % 90) as f32 / 10.0 - 4.5,
+            });
+        }
+        let grid = ContactGrid::new(&carts);
+        let mut touched = 0;
+        for (i, cart) in carts.iter().enumerate() {
+            let everyone = carts
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, other)| other);
+            let near = grid.neighbours(&carts, i);
+            assert!(near.windows(2).all(|w| w[0] < w[1]), "ascending, unique");
+            let brute = resolve_contacts(cart, everyone);
+            let bucketed = resolve_contacts(cart, near.iter().map(|&j| &carts[j]));
+            assert_eq!(brute.to_bits(), bucketed.to_bits(), "cart {i}");
+            if brute != cart.speed {
+                touched += 1;
+            }
+        }
+        assert!(touched > 5, "the yard really has contacts ({touched})");
     }
 }

@@ -40,6 +40,8 @@
 //! SESSION mob ids, so a save/reload simply re-pairs — every other tag
 //! survives the reload meaningfully.
 
+use std::collections::HashMap;
+
 use mod_sdk::*;
 
 use crate::content::{Content, Eaten, HusbandryDef};
@@ -344,27 +346,26 @@ pub fn on_tick(content: &Content) {
     if !tick.is_multiple_of(SWEEP_EVERY) {
         return;
     }
+    // One sweep over every player's range, each animal once, in the order a
+    // player-by-player walk would first meet it (the worklist order pairing
+    // relies on for determinism).
+    let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
     let mut animals: Vec<Animal> = Vec::new();
-    for player in players() {
-        for snap in mobs_in_radius(player.state.pos, RANGE) {
-            let Some(def) = content.husbandry.iter().position(|d| d.kind == snap.kind) else {
-                continue;
-            };
-            if animals.iter().any(|a| a.snap.id == snap.id) {
-                continue;
-            }
-            let Some(tags) = mob_tags_get(snap.id) else {
-                continue;
-            };
-            let was = State::read(&tags);
-            let now = was.clone();
-            animals.push(Animal {
-                def,
-                snap,
-                was,
-                now,
-            });
-        }
+    for snap in mobs_near_any(&anchors, RANGE) {
+        let Some(def) = content.husbandry.iter().position(|d| d.kind == snap.kind) else {
+            continue;
+        };
+        let Some(tags) = mob_tags_get(snap.id) else {
+            continue;
+        };
+        let was = State::read(&tags);
+        let now = was.clone();
+        animals.push(Animal {
+            def,
+            snap,
+            was,
+            now,
+        });
     }
     for a in &mut animals {
         step_animal(content, &content.husbandry[a.def], a, tick);
@@ -818,18 +819,28 @@ pub fn clear_meals(content: &Content, pos: [i32; 3]) {
 /// steering target, and a pair that stays close long enough gets a newborn
 /// spawned between them.
 fn court(content: &Content, animals: &mut [Animal], tick: u64) {
+    // The worklist by mob id, and its lovers in worklist order: partner
+    // lookups and pairing candidates come from these instead of rescanning
+    // the whole flock per animal. Love itself does not change in here until
+    // a birth, which runs last.
+    let by_id: HashMap<i64, usize> = animals
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.snap.id as i64, i))
+        .collect();
+    let lover = |a: &Animal| a.now.in_love(tick);
+    let lovers: Vec<usize> = (0..animals.len()).filter(|&i| lover(&animals[i])).collect();
     // Validate existing partner links: the partner must be in this sweep, in
     // love, same species, and pointing back. Anything else unlinks (love
     // itself holds — the animal re-pairs when a candidate appears).
-    let lover = |a: &Animal| a.now.in_love(tick);
     for i in 0..animals.len() {
         let Some(pid) = animals[i].now.partner else {
             continue;
         };
         let ok = lover(&animals[i])
-            && animals.iter().any(|b| {
-                b.snap.id as i64 == pid
-                    && lover(b)
+            && by_id.get(&pid).is_some_and(|&j| {
+                let b = &animals[j];
+                lover(b)
                     && b.def == animals[i].def
                     && b.now.partner == Some(animals[i].snap.id as i64)
             });
@@ -842,14 +853,16 @@ fn court(content: &Content, animals: &mut [Animal], tick: u64) {
     }
     // Pair the unpaired: first unpaired lover takes its nearest unpaired
     // same-species lover in range (worklist order — deterministic).
-    for i in 0..animals.len() {
-        if !lover(&animals[i]) || animals[i].now.partner.is_some() {
+    for &i in &lovers {
+        if animals[i].now.partner.is_some() {
             continue;
         }
-        let mut near: Vec<(usize, f32)> = (0..animals.len())
+        let mut near: Vec<(usize, f32)> = lovers
+            .iter()
+            .copied()
             .filter(|&j| j != i)
             .filter(|&j| animals[j].def == animals[i].def)
-            .filter(|&j| lover(&animals[j]) && animals[j].now.partner.is_none())
+            .filter(|&j| animals[j].now.partner.is_none())
             .map(|j| (j, dist2(animals[i].snap.pos, animals[j].snap.pos)))
             .filter(|&(_, d2)| d2 <= PAIR_RANGE * PAIR_RANGE)
             .collect();
@@ -873,7 +886,7 @@ fn court(content: &Content, animals: &mut [Animal], tick: u64) {
         let Some(pid) = animals[i].now.partner else {
             continue;
         };
-        let Some(j) = animals.iter().position(|b| b.snap.id as i64 == pid) else {
+        let Some(&j) = by_id.get(&pid) else {
             continue;
         };
         if j <= i {

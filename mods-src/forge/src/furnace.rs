@@ -26,6 +26,7 @@ use machine_core::{
 use mod_sdk::*;
 
 use crate::content::Casting;
+use crate::keys;
 use crate::liquid::{Basin, Liquid, EJECT_AT};
 
 pub mod fittings;
@@ -36,10 +37,6 @@ mod storage;
 use state::{Phase, State};
 
 const STATE_KEY: &str = "forge:state";
-
-/// The class cast when the basin holds no mould: metal poured into bare stone
-/// sets as a plate.
-const CLASS_PLATE: &str = "forge:cast_plate";
 
 /// The tile the poured metal is drawn with. It must be NEAR WHITE: the tint is
 /// a straight multiply, so a mid-grey stone face comes out mustard and the
@@ -57,26 +54,17 @@ const SLOT_FUEL: usize = 1;
 const SLOT_MOULD: usize = 2;
 const SLOTS: usize = 3;
 
-/// The lever's widget id in `forging_furnace.gui.json`. Clicking it is the
-/// whole pour control; its DRAWN frame is `forge:lever_frame`, published from
-/// the machine state rather than its own latch, so the graphic can only ever
-/// show what the machine is actually doing.
-pub const WIDGET_LEVER: &str = "lever";
-
-/// The four moments the machine is AUDIBLE, and they are the four moments the
-/// player is waiting for: the fire catching, the lever thrown, the metal
-/// arriving in the basin, and the cast breaking free. Each is a TRANSITION —
-/// a machine that hums every tick is a machine you stop hearing, and every one
-/// of these costs a host call.
-///
-/// The rows are `sounds.json` keys, so what they actually play is content: the
-/// shipped rows point at engine clips at their own base pitch, and dropping a
-/// clip of this pack's own beside them is a one-line row change with nothing
-/// to alter here.
-const SOUND_FIRE: &str = "forge:fire_catch";
-const SOUND_LEVER: &str = "forge:lever";
-const SOUND_LAND: &str = "forge:pour_land";
-const SOUND_CAST: &str = "forge:cast_free";
+// The four moments the machine is AUDIBLE, and they are the four moments the
+// player is waiting for: the fire catching, the lever thrown, the metal
+// arriving in the basin, and the cast breaking free. Each is a TRANSITION —
+// a machine that hums every tick is a machine you stop hearing, and every one
+// of these costs a host call.
+//
+// The rows are `sounds.json` keys, so what they actually play is content: the
+// shipped rows point at engine clips at their own base pitch, and dropping a
+// clip of this pack's own beside them is a one-line row change with nothing
+// to alter here.
+use crate::keys::{SOUND_CAST, SOUND_FIRE, SOUND_LAND, SOUND_LEVER};
 
 /// The anchor cell's centre. Every sound this machine makes is positional and
 /// none of them needs to be more precise than the block: the attenuation
@@ -140,18 +128,18 @@ pub struct ForgingFurnaceSpec {
 }
 
 impl MachineSpec for ForgingFurnaceSpec {
-    const KIND_KEY: &'static str = "forge:forging_furnace";
-    const BLOCK_KEY: &'static str = "forge:forging_furnace";
+    const KIND_KEY: &'static str = keys::FURNACE_GUI;
+    const BLOCK_KEY: &'static str = keys::FORGING_FURNACE;
     /// Two variants, and both earn their row: a lit furnace has its own
     /// emission and hearth embers, and a POURING one has its own light and a
     /// particle stream of falling droplets. Everything else this furnace shows
     /// is a PART of the same model.
     const VARIANT_KEYS: &'static [&'static str] =
-        &["forge:forging_furnace_lit", "forge:forging_furnace_pour"];
+        &[keys::FORGING_FURNACE_LIT, keys::FORGING_FURNACE_POUR];
     const ANCHORS_KEY: &'static str = "forge:furnaces";
     const STATE_KEY: &'static str = STATE_KEY;
     const AUX_KEYS: &'static [&'static str] = &[fittings::KEY];
-    const PANEL_KEYS: &'static [&'static str] = &[fittings::PAGE];
+    const PANEL_KEYS: &'static [&'static str] = &[keys::FITTINGS_GUI];
 
     fn init(&mut self) {
         self.casting = Some(Casting::resolve());
@@ -342,7 +330,7 @@ fn mould_in(anchor: [i32; 3]) -> Option<String> {
 /// What the metal in the basin is casting: the mould's class, or a bare plate
 /// when the basin is empty.
 fn cast_class<'a>(c: &'a Casting, mould: Option<&str>) -> &'a str {
-    mould.and_then(|m| c.mould_class(m)).unwrap_or(CLASS_PLATE)
+    mould.and_then(|m| c.mould_class(m)).unwrap_or(keys::CAST_PLATE_CLASS)
 }
 
 /// What metal already running becomes: the mould's own route, else a plate.
@@ -362,7 +350,7 @@ fn cast_result(
 ) -> Option<ItemStackData> {
     caches
         .recipe_for(cast_class(c, mould), metal)
-        .or_else(|| caches.recipe_for(CLASS_PLATE, metal))
+        .or_else(|| caches.recipe_for(keys::CAST_PLATE_CLASS, metal))
 }
 
 impl ForgingFurnaceSpec {

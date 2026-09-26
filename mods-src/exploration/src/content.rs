@@ -8,6 +8,7 @@
 use mod_sdk::*;
 
 use crate::fluids::Fluids;
+use crate::keys;
 
 /// One mushroom species: a colour the whole cavern palette is built from.
 /// Adding a species is ONE row here plus its pack JSON — never a match arm.
@@ -49,25 +50,72 @@ impl Content {
     }
 }
 
-const SPECIES_NAMES: [&str; 4] = ["pink", "blue", "magenta", "purple"];
+/// One species' four rows, by registry name.
+struct SpeciesRows {
+    cap: &'static str,
+    sporeshroom: &'static str,
+    flower: &'static str,
+    glow_vine: &'static str,
+}
+
+/// The species palette. Adding a species is one row here plus its pack JSON.
+const SPECIES_ROWS: [SpeciesRows; 4] = [
+    SpeciesRows {
+        cap: keys::GLOWCAP_PINK,
+        sporeshroom: keys::SPORESHROOM_PINK,
+        flower: keys::CAVE_FLOWER_PINK,
+        glow_vine: keys::GLOW_VINE_PINK,
+    },
+    SpeciesRows {
+        cap: keys::GLOWCAP_BLUE,
+        sporeshroom: keys::SPORESHROOM_BLUE,
+        flower: keys::CAVE_FLOWER_BLUE,
+        glow_vine: keys::GLOW_VINE_BLUE,
+    },
+    SpeciesRows {
+        cap: keys::GLOWCAP_MAGENTA,
+        sporeshroom: keys::SPORESHROOM_MAGENTA,
+        flower: keys::CAVE_FLOWER_MAGENTA,
+        glow_vine: keys::GLOW_VINE_MAGENTA,
+    },
+    SpeciesRows {
+        cap: keys::GLOWCAP_PURPLE,
+        sporeshroom: keys::SPORESHROOM_PURPLE,
+        flower: keys::CAVE_FLOWER_PURPLE,
+        glow_vine: keys::GLOW_VINE_PURPLE,
+    },
+];
+
+impl SpeciesRows {
+    fn resolve(&self) -> Option<Species> {
+        Some(Species {
+            cap: resolve_block_logged(self.cap)?,
+            sporeshroom: resolve_block_logged(self.sporeshroom)?,
+            flower: resolve_block_logged(self.flower)?,
+            glow_vine: resolve_block_logged(self.glow_vine)?,
+        })
+    }
+}
 
 impl Content {
+    /// Resolve the cavern palette. A species with a missing row is dropped
+    /// (the resolve logs which row) and the caverns grow in the colours that
+    /// remain; only a missing structure row, or losing every species, turns
+    /// the feature off.
     pub fn resolve(fluids: Fluids) -> Option<Content> {
-        let mut species = Vec::with_capacity(SPECIES_NAMES.len());
-        for name in SPECIES_NAMES {
-            species.push(Species {
-                cap: resolve_block_logged(&format!("exploration:glowcap_{name}"))?,
-                sporeshroom: resolve_block_logged(&format!("exploration:sporeshroom_{name}"))?,
-                flower: resolve_block_logged(&format!("exploration:cave_flower_{name}"))?,
-                glow_vine: resolve_block_logged(&format!("exploration:glow_vine_{name}"))?,
-            });
+        let species: Vec<Species> = SPECIES_ROWS
+            .iter()
+            .filter_map(SpeciesRows::resolve)
+            .collect();
+        if species.is_empty() {
+            return None;
         }
         Some(Content {
-            stem: resolve_block_logged("exploration:mushroom_stem")?,
-            vine: resolve_block_logged("exploration:hanging_vine")?,
-            water: resolve_block_logged("petramond:water")?,
+            stem: resolve_block_logged(keys::MUSHROOM_STEM)?,
+            vine: resolve_block_logged(keys::HANGING_VINE)?,
+            water: resolve_block_logged(keys::WATER)?,
             fluids,
-            silt: resolve_block_logged("exploration:cave_silt")?,
+            silt: resolve_block_logged(keys::CAVE_SILT)?,
             air: BlockId(0),
             species,
         })

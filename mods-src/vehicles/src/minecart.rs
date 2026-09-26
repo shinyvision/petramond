@@ -35,16 +35,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mod_sdk::*;
 
-use crate::cart::{self, overlaps, Aabb, Body, Cart, Controls, Step};
+use crate::cart::{self, overlaps, Aabb, Body, Cart, ContactGrid, Controls, Step};
+use crate::keys;
 use crate::rail::{resolve_placement, Form, Rail, RailMap};
 use crate::track::{dot2, xz, yaw_facing, Path, RAIL_TOP};
 
 /// A block collision box in its own cell space.
 type LocalBox = ([f32; 3], [f32; 3]);
 
-const CART_KEY: &str = "vehicles:minecart";
-/// Spawn tag on the cart row: what the tick enumerates.
-const CART_TAG: &str = "vehicles:cart";
 /// Signed speed along the facing (m/s), persisted with the mob.
 const SPEED_TAG: &str = "vehicles:cart_speed";
 /// The wheels' looping clip in `minecart.bbmodel` and the authored wheel
@@ -57,38 +55,52 @@ const WHEEL_DIAMETER: f32 = 4.0 / 16.0;
 const RAIL_REACH: i32 = 2;
 /// Speed changes smaller than this are not written back to the tag.
 const SPEED_EPS: f32 = 1e-3;
-/// The rolling loop's `sounds.json` row, and how far its volume must move
-/// before the live play is retuned.
-const ROLL_SOUND: &str = "vehicles:minecart_roll";
+/// How far the rolling loop's volume must move before the live play is
+/// retuned.
 const ROLL_VOLUME_EPS: f32 = 0.02;
 
-/// One batched read of the rail rows in a box, answering the pure rules.
-struct RailBox<'a> {
-    table: &'a BTreeMap<u16, Rail>,
+/// One batched read of the cells in a cube around a centre.
+struct CellBox {
     min: [i32; 3],
     side: i32,
     blocks: Vec<Option<BlockId>>,
 }
 
-impl<'a> RailBox<'a> {
-    fn around(table: &'a BTreeMap<u16, Rail>, center: [i32; 3], reach: i32) -> Self {
+impl CellBox {
+    fn around(center: [i32; 3], reach: i32) -> Self {
+        Self::around_each(&[center], reach)
+            .pop()
+            .expect("one box per centre")
+    }
+
+    /// One box around each of `centers`, from ONE batched read of all their
+    /// cells (split only at the host's per-call cap) — a rail network costs
+    /// a call per few dozen carts per tick, not a call per cart.
+    fn around_each(centers: &[[i32; 3]], reach: i32) -> Vec<Self> {
         let side = 2 * reach + 1;
-        let min = [center[0] - reach, center[1] - reach, center[2] - reach];
-        let mut positions = Vec::with_capacity((side * side * side) as usize);
-        for y in 0..side {
-            for z in 0..side {
-                for x in 0..side {
-                    positions.push([min[0] + x, min[1] + y, min[2] + z]);
+        let per_box = (side * side * side) as usize;
+        let mins: Vec<[i32; 3]> = centers
+            .iter()
+            .map(|c| [c[0] - reach, c[1] - reach, c[2] - reach])
+            .collect();
+        let mut positions = Vec::with_capacity(per_box * centers.len());
+        for min in &mins {
+            for y in 0..side {
+                for z in 0..side {
+                    for x in 0..side {
+                        positions.push([min[0] + x, min[1] + y, min[2] + z]);
+                    }
                 }
             }
         }
-        let blocks = get_blocks(positions);
-        RailBox {
-            table,
-            min,
-            side,
-            blocks,
-        }
+        let mut blocks = paged(positions, get_blocks).into_iter();
+        mins.into_iter()
+            .map(|min| CellBox {
+                min,
+                side,
+                blocks: blocks.by_ref().take(per_box).collect(),
+            })
+            .collect()
     }
 
     fn block(&self, cell: [i32; 3]) -> Option<BlockId> {
@@ -104,9 +116,17 @@ impl<'a> RailBox<'a> {
     }
 }
 
+/// A cell box answering the pure rail rules.
+struct RailBox<'a> {
+    table: &'a BTreeMap<u16, Rail>,
+    cells: &'a CellBox,
+}
+
 impl RailMap for RailBox<'_> {
     fn rail(&self, cell: [i32; 3]) -> Option<Rail> {
-        self.block(cell).and_then(|b| self.table.get(&b.0).copied())
+        self.cells
+            .block(cell)
+            .and_then(|b| self.table.get(&b.0).copied())
     }
 }
 
@@ -133,19 +153,12 @@ pub struct Minecarts {
 
 impl Minecarts {
     pub fn init(&mut self) {
-        self.cart_item = resolve_item_logged(CART_KEY);
-        self.cart_kind = resolve_mob_logged(CART_KEY);
-        for booster in [false, true] {
-            let kind = if booster { "booster_rail" } else { "rail" };
-            for form in Form::ALL {
-                if booster && form.is_curve() {
-                    continue;
-                }
-                let name = format!("vehicles:{kind}_{}", form.name());
-                if let Some(id) = resolve_block_logged(&name) {
-                    self.rails.insert(id.0, Rail { form, booster });
-                    self.rows.insert((form, booster), id);
-                }
+        self.cart_item = resolve_item_logged(keys::MINECART_ITEM);
+        self.cart_kind = resolve_mob_logged(keys::MINECART_MOB);
+        for (form, booster, name) in keys::RAIL_ROWS {
+            if let Some(id) = resolve_block_logged(name) {
+                self.rails.insert(id.0, Rail { form, booster });
+                self.rows.insert((form, booster), id);
             }
         }
         log(&format!("{} rail rows", self.rails.len()));
@@ -165,7 +178,11 @@ impl Minecarts {
         let Some(placed) = self.rails.get(&block.0).copied() else {
             return;
         };
-        let map = RailBox::around(&self.rails, pos, RAIL_REACH);
+        let cells = CellBox::around(pos, RAIL_REACH);
+        let map = RailBox {
+            table: &self.rails,
+            cells: &cells,
+        };
         let res = resolve_placement(&map, pos, placed);
         let mut swaps: Vec<([i32; 3], Form, bool)> = vec![(pos, res.form, placed.booster)];
         for (cell, form) in &res.turns {
@@ -223,8 +240,8 @@ impl Minecarts {
         if !consume_held(item, 1) {
             return Outcome::Continue;
         }
-        if spawn_mob_checked(CART_KEY, pos, yaw).is_none() {
-            give_item(CART_KEY, 1);
+        if spawn_mob_checked(keys::MINECART_MOB, pos, yaw).is_none() {
+            give_item(keys::MINECART_ITEM, 1);
             return Outcome::Continue;
         }
         Outcome::Cancel
@@ -257,7 +274,7 @@ impl Minecarts {
 
     /// One step for every live cart.
     pub fn tick(&mut self) {
-        let carts = mobs_with_tag(CART_TAG, None);
+        let carts = mobs_with_tag(keys::CART_TAG, None);
         // Every cart's pre-tick state, so a contact resolves the same from
         // both sides whichever cart steps first.
         let before: Vec<Cart> = carts
@@ -269,23 +286,27 @@ impl Minecarts {
                 speed: read_speed(m.id),
             })
             .collect();
+        let contacts = ContactGrid::new(&before);
+        // Every cart's rail box in one batched read: stepping moves bodies,
+        // never blocks, so the whole tick reads the same terrain.
+        let centers: Vec<[i32; 3]> = carts.iter().map(|m| cell_of(m.pos)).collect();
+        let boxes = CellBox::around_each(&centers, RAIL_REACH);
         let mut seen = BTreeSet::new();
-        for (i, (m, start)) in carts.iter().zip(&before).enumerate() {
+        for (i, ((m, start), cells)) in carts.iter().zip(&before).zip(&boxes).enumerate() {
             seen.insert(m.id);
             let mut state = *start;
-            let others = before
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, other)| other);
-            state.speed = cart::resolve_contacts(start, others);
+            let others = contacts.neighbours(&before, i);
+            state.speed = cart::resolve_contacts(start, others.iter().map(|&j| &before[j]));
             let push = rider_push(m.id, state.yaw);
-            let map = RailBox::around(&self.rails, cell_of(m.pos), RAIL_REACH);
-            learn_collision(&mut self.collision, &map);
-            let blocked = |probe: Aabb| blocked_by(&self.collision, &map, probe);
+            learn_collision(&mut self.collision, cells);
+            let blocked = |probe: Aabb| blocked_by(&self.collision, cells, probe);
             let body = Body {
                 half_width: m.half_width,
                 height: m.height,
+            };
+            let map = RailBox {
+                table: &self.rails,
+                cells,
             };
             match cart::step(&map, state, body, Controls { push }, &blocked) {
                 Step::Railed(next) | Step::Derailed(next) => {
@@ -347,7 +368,7 @@ impl Minecarts {
         let volume = cart::roll_volume(speed);
         match self.humming.get(&id).copied() {
             None if volume > 0.0 => {
-                let handle = sound_play_on_mob(id, ROLL_SOUND, volume, 1.0);
+                let handle = sound_play_on_mob(id, keys::ROLL_SOUND, volume, 1.0);
                 if handle != 0 {
                     self.humming.insert(id, (handle, volume));
                 }
@@ -386,8 +407,8 @@ impl Minecarts {
 
 /// Ask the registry, once per block id, for the collision of every block the
 /// batched read holds — so the closures over the read never cross the ABI.
-fn learn_collision(collision: &mut BTreeMap<u16, Vec<LocalBox>>, map: &RailBox) {
-    for block in map.blocks.iter().flatten() {
+fn learn_collision(collision: &mut BTreeMap<u16, Vec<LocalBox>>, cells: &CellBox) {
+    for block in cells.blocks.iter().flatten() {
         if block.0 == BlockId::AIR.0 || collision.contains_key(&block.0) {
             continue;
         }
@@ -399,14 +420,15 @@ fn learn_collision(collision: &mut BTreeMap<u16, Vec<LocalBox>>, map: &RailBox) 
 /// Whether any terrain collision overlaps the world-space `probe` — from
 /// the batched read and the learnt per-id boxes; unloaded and unknown cells
 /// read as open.
-fn blocked_by(collision: &BTreeMap<u16, Vec<LocalBox>>, map: &RailBox, probe: Aabb) -> bool {
+fn blocked_by(collision: &BTreeMap<u16, Vec<LocalBox>>, cells: &CellBox, probe: Aabb) -> bool {
     let (lo, hi) = probe;
     let span = |i: usize| (lo[i].floor() as i32)..=((hi[i] - 1e-4).floor() as i32);
     span(1).any(|y| {
         span(2).any(|z| {
             span(0).any(|x| {
                 let cell = [x, y, z];
-                map.block(cell)
+                cells
+                    .block(cell)
                     .and_then(|b| collision.get(&b.0))
                     .is_some_and(|boxes| {
                         boxes.iter().any(|(mn, mx)| {

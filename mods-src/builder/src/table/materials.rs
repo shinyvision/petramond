@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use crate::host::prelude::*;
 
 use crate::jobs::Builder;
+use crate::keys::materials;
 use crate::table::{project_at, Tone};
 
 struct Row {
@@ -31,18 +32,21 @@ impl PanelState for MaterialsPanel {
                     short => format!("{short} short"),
                 };
                 BTreeMap::from([
-                    ("item".to_owned(), gui_text(&row.item)),
+                    (materials::ROW_ITEM.to_owned(), gui_text(&row.item)),
                     (
-                        "text".to_owned(),
+                        materials::ROW_TEXT.to_owned(),
                         gui_text(format!("{}x {}", row.need, row.name)),
                     ),
-                    ("done".to_owned(), gui_flag(row.short == 0)),
-                    ("note".to_owned(), gui_text(note)),
-                    ("note_palette".to_owned(), gui_text(Tone::Danger.palette())),
+                    (materials::ROW_DONE.to_owned(), gui_flag(row.short == 0)),
+                    (materials::ROW_NOTE.to_owned(), gui_text(note)),
+                    (
+                        materials::ROW_NOTE_PALETTE.to_owned(),
+                        gui_text(Tone::Danger.palette()),
+                    ),
                 ])
             })
             .collect();
-        vec![("builder:bill", GuiValue::List(rows))]
+        vec![(materials::BILL, GuiValue::List(rows))]
     }
 }
 

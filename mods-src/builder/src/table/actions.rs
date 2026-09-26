@@ -3,8 +3,8 @@
 
 use crate::host::prelude::*;
 
-use crate::content::{MATERIALS_KIND, TABLE_KIND};
 use crate::jobs::{Builder, Refusal};
+use crate::keys::{materials, table};
 use crate::project::{id_of_tag, tag_of, Phase, Project};
 use crate::table::blueprint::bind_blueprint;
 use crate::table::{blueprint_at, may_edit, project_at, publish_to, REFUSAL_TICKS};
@@ -26,15 +26,15 @@ enum Action {
 impl Action {
     fn parse(widget: &str) -> Option<Self> {
         Some(match widget {
-            "materials" => Action::Materials,
-            "back" => Action::Back,
-            "choose" => Action::Choose,
-            "position" => Action::Position,
-            "start" => Action::Start,
-            "pause" => Action::Pause,
-            "resume" => Action::Resume,
-            "cancel" => Action::Cancel,
-            "ghost" => Action::Ghost,
+            table::MATERIALS => Action::Materials,
+            materials::BACK => Action::Back,
+            table::CHOOSE => Action::Choose,
+            table::POSITION => Action::Position,
+            table::START => Action::Start,
+            table::PAUSE => Action::Pause,
+            table::RESUME => Action::Resume,
+            table::CANCEL => Action::Cancel,
+            table::GHOST => Action::Ghost,
             _ => return None,
         })
     }
@@ -44,7 +44,7 @@ pub fn click(builder: &mut Builder, kind: &str, widget: &str, at: Option<Contain
     let Some(ContainerAddress::Block(pos)) = at else {
         return;
     };
-    if kind != TABLE_KIND && kind != MATERIALS_KIND {
+    if kind != table::KIND && kind != materials::KIND {
         return;
     }
     if get_block(pos) != Some(builder.content.table) {
@@ -55,11 +55,11 @@ pub fn click(builder: &mut Builder, kind: &str, widget: &str, at: Option<Contain
     };
     match action {
         Action::Materials => {
-            gui_open(MATERIALS_KIND, Some(ContainerAddress::Block(pos)));
+            gui_open(materials::KIND, Some(ContainerAddress::Block(pos)));
             return;
         }
         Action::Back => {
-            gui_open(TABLE_KIND, Some(ContainerAddress::Block(pos)));
+            gui_open(table::KIND, Some(ContainerAddress::Block(pos)));
             return;
         }
         _ => {}

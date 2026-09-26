@@ -253,6 +253,13 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
+/// The monsters mod's copy of [`daylight`] (its sunburn and spawn-light
+/// rules read only the published day fraction), compiled here verbatim so a
+/// retune of the curve fails this crate's tests and names the mirror.
+#[cfg(test)]
+#[path = "../../mods-src/monsters/src/daylight.rs"]
+mod monsters_daylight;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,5 +454,17 @@ mod tests {
             Some(frozen_at + 1),
             "unfreeze resumes without replaying frozen ticks"
         );
+    }
+
+    #[test]
+    fn the_monsters_mod_mirrors_the_daylight_curve() {
+        for i in 0..=2000 {
+            let t = i as f32 / 2000.0;
+            assert_eq!(
+                super::monsters_daylight::daylight(t),
+                daylight(t),
+                "mods-src/monsters/src/daylight.rs disagrees with the sky at t = {t}"
+            );
+        }
     }
 }

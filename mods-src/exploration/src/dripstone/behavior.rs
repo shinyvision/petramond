@@ -7,7 +7,8 @@
 
 use mod_sdk::*;
 
-use super::{Dripstone, Run, MAX_RUN, PLACED_KEY, POINTED_ITEM};
+use super::{Dripstone, Run, MAX_RUN, PLACED_KEY};
+use crate::keys;
 
 // A cell is random-ticked about once every 68 seconds (the engine draws
 // `RANDOM_TICK_SPEED` = 3 of a section's 4,096 cells per tick, 20 ticks a
@@ -121,9 +122,9 @@ fn come_down(d: &Dripstone, pos: [i32; 3], block: BlockId) {
         pos[2] as f64 + 0.5,
     ];
     if d.run_of(block) == Some(Run::Hanging) {
-        launch_item(POINTED_ITEM, centre, [0.0, -FALL_SPEED, 0.0], None, &[]);
+        launch_item(keys::POINTED_DRIPSTONE_ITEM, centre, [0.0, -FALL_SPEED, 0.0], None, &[]);
     } else {
-        spawn_item(POINTED_ITEM, 1, centre);
+        spawn_item(keys::POINTED_DRIPSTONE_ITEM, 1, centre);
     }
 }
 

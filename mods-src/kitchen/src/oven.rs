@@ -9,10 +9,9 @@ use machine_core::{
     Presentation, StepCtx,
 };
 
-const STATE_KEY: &str = "kitchen:state";
+use crate::keys;
 
-/// The oven's machine-processing recipe class (see pack recipes.json rows).
-const COOKING_CLASS: &str = "kitchen:cooking";
+const STATE_KEY: &str = "kitchen:state";
 
 const SLOT_INPUT: usize = 0;
 const SLOT_FUEL: usize = 1;
@@ -56,14 +55,14 @@ pub type Oven = Machine<OvenSpec>;
 pub struct OvenSpec;
 
 impl MachineSpec for OvenSpec {
-    const KIND_KEY: &'static str = "kitchen:oven";
-    const BLOCK_KEY: &'static str = "kitchen:oven";
+    const KIND_KEY: &'static str = keys::OVEN_GUI;
+    const BLOCK_KEY: &'static str = keys::OVEN_BLOCK;
     /// The lit variant: the same authored model with the `fire` cube visible,
     /// block-light emission, and the underside fire particle emitter — all
     /// pack data on its rows. The spec's only visual job is swapping the
     /// placed block between the two on burn transitions (`swap_block`
     /// keeps container + state).
-    const VARIANT_KEYS: &'static [&'static str] = &["kitchen:oven_lit"];
+    const VARIANT_KEYS: &'static [&'static str] = &[keys::OVEN_LIT_BLOCK];
     const ANCHORS_KEY: &'static str = "kitchen:ovens";
     const STATE_KEY: &'static str = STATE_KEY;
 
@@ -97,7 +96,7 @@ impl MachineSpec for OvenSpec {
             .as_ref()
             .filter(|s| s.count > 0)
             .map(|s| s.item.clone())
-            .and_then(|k| caches.recipe_for(COOKING_CLASS, &k));
+            .and_then(|k| caches.recipe_for(keys::COOKING_CLASS, &k));
         let can_cook = result
             .as_ref()
             .is_some_and(|r| output_accepts(caches, &slots[SLOT_OUTPUT], r));
@@ -158,7 +157,7 @@ impl MachineSpec for OvenSpec {
         );
         if ctx.gui_open() {
             ctx.publish(
-                "kitchen:cook01",
+                keys::COOK01,
                 GuiValue::F32(state.cook_progress as f32 / COOK_TICKS as f32),
             );
             let burn01 = if state.burn_max == 0 {
@@ -166,7 +165,7 @@ impl MachineSpec for OvenSpec {
             } else {
                 state.burn_remaining as f32 / state.burn_max as f32
             };
-            ctx.publish("kitchen:burn01", GuiValue::F32(burn01));
+            ctx.publish(keys::BURN01, GuiValue::F32(burn01));
         }
     }
 }

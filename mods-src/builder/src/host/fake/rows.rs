@@ -151,11 +151,11 @@ pub fn blocks() -> Vec<BlockRow> {
         block("petramond:dirt", vec![CUBE])
             .hard(0.5, 0, Some("shovel"))
             .placed_by(1)
-            .with_data(crate::content::SCAFFOLDING_DATA),
+            .with_data(crate::keys::SCAFFOLDING_DATA),
         block("petramond:oak_planks", vec![CUBE])
             .hard(2.0, 0, Some("axe"))
             .placed_by(2)
-            .with_data(crate::content::SCAFFOLDING_DATA),
+            .with_data(crate::keys::SCAFFOLDING_DATA),
         block(
             "petramond:glass_pane",
             vec![([0.4375, 0.0, 0.0], [0.5625, 1.0, 1.0])],
@@ -170,8 +170,8 @@ pub fn blocks() -> Vec<BlockRow> {
         .hard(2.5, 0, Some("axe"))
         .placed_by(5)
         .used(BlockUse::OpenGui)
-        .with_data("builder:supply"),
-        block(crate::content::TABLE_KIND, Vec::new())
+        .with_data(crate::keys::SUPPLY_DATA),
+        block(crate::keys::TABLE_BLOCK, Vec::new())
             .hard(2.5, 0, Some("axe"))
             .placed_by(6)
             .used(BlockUse::OpenGui),
@@ -202,12 +202,12 @@ pub fn items() -> Vec<ItemRow> {
         item("petramond:glass_pane", "Glass Pane", Some(PANE)),
         item("petramond:oak_door", "Oak Door", Some(DOOR)),
         item("petramond:chest", "Chest", Some(CHEST)),
-        item(crate::content::TABLE_KIND, "Schematic Table", Some(TABLE)),
+        item(crate::keys::TABLE_ITEM, "Schematic Table", Some(TABLE)),
         item("petramond:oak_leaves", "Oak Leaves", Some(LEAVES)),
         item("petramond:oak_fence", "Oak Fence", Some(FENCE)),
         item("petramond:torch", "Torch", Some(TORCH)),
         {
-            let mut blueprint = item(crate::content::BLUEPRINT, "Blueprint", None);
+            let mut blueprint = item(crate::keys::BLUEPRINT, "Blueprint", None);
             blueprint.info.max_stack = 1;
             blueprint
         },
@@ -219,5 +219,5 @@ pub fn items() -> Vec<ItemRow> {
 }
 
 pub fn mobs() -> Vec<&'static str> {
-    vec![crate::content::GOLEM]
+    vec![crate::keys::GOLEM]
 }

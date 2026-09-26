@@ -1,14 +1,16 @@
 //! monsters — the hostile-monster mod (zombies + hushjaws), and a
-//! MOD-INTEROP consumer: it reads the core `petramond:time` world-KV value and
-//! the engine's split light channels to decide when to spawn and burn.
+//! MOD-INTEROP consumer: it reads the core `petramond:time` world-KV value,
+//! the engine's split light channels and (when a weather mod publishes one)
+//! the weather field to decide when to spawn and burn.
 //!
 //! What it does, all on the deterministic tick:
 //! - **Light-based spawning**: core selects physical hostile-spawn candidates
 //!   and asks this mod which species admits each one. Both species accept only
 //!   when `max(block_light, sky_light * daylight_factor)` is dark enough.
-//!   Daylight comes from `petramond:time`, using the same smooth dawn/dusk curve as
-//!   core day/night. Dark caves can spawn monsters during the day; torch/block
-//!   light blocks the spawn.
+//!   Daylight comes from `petramond:time`, through [`daylight`] — core
+//!   day/night's own dawn/dusk curve, pinned against it by an engine test.
+//!   Dark caves can spawn monsters during the day; torch/block light blocks
+//!   the spawn.
 //! - **Spawn-proof surfaces**: a dark site is still refused when the block
 //!   under the feet carries the `monsters:spawn_proof` block tag. Membership
 //!   is pure data — any pack lists the tag on any of its `blocks.json` rows
@@ -35,30 +37,27 @@
 //!   The mod does not start audio directly; the engine presentation layer plays
 //!   those semantic mob sound hooks.
 //!
-//! # World-KV keys
+//! # Interop inputs
 //!
-//! - reads `petramond:time` (4-byte LE f32 day fraction) — the sanctioned
-//!   interop surface published by core day/night.
-//! - reads `weather:field` (a `weather_core::FieldRow`) and `petramond:clock`
-//!   (8-byte LE u64, the row's freshness reference) — both OPTIONAL; absent
-//!   or stale means "clear sky".
+//! - reads `petramond:time` (4-byte LE f32 day fraction) and
+//!   `petramond:clock` (8-byte LE u64) — the sanctioned world-KV surface
+//!   published by core day/night.
+//! - hears the weather field on the `weather:field` session channel
+//!   (`weather_core::feed`) — OPTIONAL; nothing heard means "clear sky".
+
+mod daylight;
+mod keys;
 
 use mod_sdk::*;
+use weather_core::feed::FieldFeed;
 use weather_core::FieldParams;
 
 const MONSTERS_TICK_SYSTEM: u32 = 1;
 const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
+/// Mod events: the weather field channel.
+const ON_MOD_EVENT: u32 = 1;
 
-const ZOMBIE_KEY: &str = "monsters:zombie";
-const HUSHJAW_KEY: &str = "monsters:hushjaw";
 const TIME_KEY: &str = "petramond:time";
-const BURNING: &str = "petramond:burning";
-
-/// Block tag marking a surface no hostile spawns ON. Any pack lists it on any
-/// `blocks.json` row and that block is spawn-proof everywhere in the world,
-/// with no code change here and none in the engine — which knows neither this
-/// tag nor any block that carries it. See [`SpawnProof`].
-const SPAWN_PROOF_TAG: &str = "monsters:spawn_proof";
 
 /// Hushjaw spawn rules — a deep-cave apex predator, deliberately never near
 /// the surface, the player, or its own kind:
@@ -93,6 +92,8 @@ const SPAWN_LIGHT_THRESHOLD: f32 = 24.0;
 /// direct-sky threshold (rain lands exactly where the naked sun reaches).
 const SUNBURN_RADIUS: f32 = 160.0;
 const SUNBURN_SKY_THRESHOLD: f32 = weather_core::DIRECT_SKY_MIN as f32;
+/// The brightest raw sky light a cell can hold (6-bit channel).
+const MAX_SKY_LIGHT: f32 = 63.0;
 /// Per-TICK ignition chance for a sunlit, not-yet-burning zombie.
 const SUNBURN_CHANCE_PER_100: u64 = 5;
 /// Burn age before continued sunlight strengthens the flames.
@@ -110,6 +111,8 @@ const RAIN_COOL_BOOST: f32 = 3.0;
 struct Monsters {
     /// The burning condition and its light/great stages, resolved once.
     burning: Option<Burning>,
+    /// The latest weather field heard on its channel (rain douses a burn).
+    weather: FieldFeed,
     /// Surfaces no hostile spawns on, resolved once from the tag.
     spawn_proof: SpawnProof,
     /// This pack's species ids, resolved once. A mob snapshot names its
@@ -134,11 +137,14 @@ struct Species {
 
 impl Mod for Monsters {
     fn init(&mut self) {
-        // Priority 20: behind the weather mod's 10 in the same stage window,
-        // so the `weather:field` row read each tick is THIS tick's publish.
+        // After core day/night (priority 0 in the same window), so the time
+        // and clock read each tick are THIS tick's. Nothing here depends on
+        // running before or after any other mod: the weather feed advances
+        // its row to the clock read (see `weather_core::FieldRow::params_at`).
         register_tick_system(Stage::Spawning, AttachSide::After, 20, MONSTERS_TICK_SYSTEM);
         register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
-        self.burning = resolve_condition_logged(BURNING).and_then(|info| {
+        weather_core::feed::subscribe(ON_MOD_EVENT);
+        self.burning = resolve_condition_logged(keys::BURNING).and_then(|info| {
             Some(Burning {
                 id: info.id,
                 light: info.stage("light")?,
@@ -149,10 +155,10 @@ impl Mod for Monsters {
         // for tag-driven policy. The count is logged because a tag name is a
         // string agreed across two packs: a typo on either side is not a load
         // error anywhere, and this number is the only place it shows up.
-        self.spawn_proof = SpawnProof::new(blocks_by_tag(SPAWN_PROOF_TAG));
+        self.spawn_proof = SpawnProof::new(blocks_by_tag(keys::SPAWN_PROOF_TAG));
         self.species = Species {
-            zombie: resolve_mob_logged(ZOMBIE_KEY),
-            hushjaw: resolve_mob_logged(HUSHJAW_KEY),
+            zombie: resolve_mob_logged(keys::ZOMBIE),
+            hushjaw: resolve_mob_logged(keys::HUSHJAW),
         };
         log(&format!(
             "initialized: hostile spawner (zombie + hushjaw) + sunburn, {} spawn-proof surfaces",
@@ -161,6 +167,7 @@ impl Mod for Monsters {
     }
 
     fn tick_system(&mut self, _system_id: u32) {
+        self.weather.tick();
         // Core day/night publishes this before mods run in a real Game. Absent
         // or malformed time disables the environment-dependent systems for
         // this tick, so the mod remains usable in host-only tests and custom
@@ -168,10 +175,17 @@ impl Mod for Monsters {
         let Some(daylight) = daylight_factor_from_daynight() else {
             return;
         };
-        let field = weather_field();
+        let field = self.weather_field();
         let player = player_state();
         let near = mobs_in_radius(player.pos, SUNBURN_RADIUS);
         self.tick_fire(daylight, field.as_ref(), &near);
+    }
+
+    fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Outcome {
+        if handler_id == ON_MOD_EVENT {
+            self.weather.observe(payload);
+        }
+        Outcome::Continue
     }
 
     fn hostile_spawn_candidate(
@@ -222,9 +236,9 @@ fn site_species(
     // is dark enough is a zombie site (core still enforces species caps on
     // whatever key we return).
     if hushjaw_admits(candidate, species, claim_roll, nearby) {
-        return Some(HUSHJAW_KEY);
+        return Some(keys::HUSHJAW);
     }
-    zombie_admits(candidate, species, nearby).then_some(ZOMBIE_KEY)
+    zombie_admits(candidate, species, nearby).then_some(keys::ZOMBIE)
 }
 
 /// The cell a body standing at `cell` has under its feet.
@@ -277,7 +291,7 @@ fn hushjaw_admits(
 /// as a dense per-block-id table.
 ///
 /// Membership is data: ANY pack marks ANY block spawn-proof by listing
-/// [`SPAWN_PROOF_TAG`] on its `blocks.json` row. No block and no pack is named
+/// [`keys::SPAWN_PROOF_TAG`] on its `blocks.json` row. No block and no pack is named
 /// here, and with nothing tagged the table is empty and this mod behaves
 /// exactly as it did before the rule existed.
 ///
@@ -322,15 +336,33 @@ impl SpawnProof {
 }
 
 impl Monsters {
+    /// The weather field at this tick's clock, as heard on its channel;
+    /// `None` = clear sky (no weather mod publishing). Without a published
+    /// clock (a clockless harness) the row is taken as published.
+    fn weather_field(&self) -> Option<FieldParams> {
+        match world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b)) {
+            Some(clock) => self.weather.params_at(clock),
+            None => self.weather.params(),
+        }
+    }
+
     /// Sunlight supplies heat; the engine condition owns the burn itself.
     fn tick_fire(&mut self, daylight: f32, field: Option<&FieldParams>, near: &[MobSnapshot]) {
         let Some(fire) = self.burning else {
             return;
         };
+        // Full sky light is 63: below this daylight no cell is sunny enough
+        // to ignite or feed a burn, so a dry zombie's light is never read.
+        let sun_can_burn = MAX_SKY_LIGHT * daylight >= SUNBURN_SKY_THRESHOLD;
         let roll = rng_u64("sunburn");
         for mob in near.iter().filter(|m| Some(m.kind) == self.species.zombie) {
             let burning = mob.conditions.iter().find(|c| c.condition == fire.id);
             if burning.is_none() && splitmix64_mix(roll ^ mob.id) % 100 >= SUNBURN_CHANCE_PER_100 {
+                continue;
+            }
+            let rain = rain_at(field, mob.pos);
+            if rain == 0.0 && !sun_can_burn {
+                // Neither a douse nor a burn can follow: skip the light read.
                 continue;
             }
             let entity = EntityRef::Mob(mob.id);
@@ -338,7 +370,6 @@ impl Monsters {
             let Some(sky) = sky_light(cell) else {
                 continue;
             };
-            let rain = rain_at(field, mob.pos);
             let rained_on = rain > 0.0 && sky >= SUNBURN_SKY_THRESHOLD;
             if rained_on {
                 entity_condition_cool(entity, fire.id, (rain * RAIN_COOL_BOOST) as u32);
@@ -373,18 +404,6 @@ fn rain_at(field: Option<&FieldParams>, pos: [f64; 3]) -> f32 {
     field.map_or(0.0, |p| weather_core::rain(pos[0], pos[2], p))
 }
 
-/// The weather mod's published field row, verified FRESH. `None` = clear
-/// sky: no weather mod installed, or a stale row a removed weather mod left
-/// in the persistent world KV. The stamp is checked against
-/// `petramond:clock` when core publishes one; without a shared clock the
-/// stamp is unverifiable and the row is trusted (matching the weather mod's
-/// own session-tick clock fallback in clockless harnesses).
-fn weather_field() -> Option<FieldParams> {
-    let row = world_kv_get(weather_core::KV_FIELD)?;
-    let clock = world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
-    weather_core::fresh_params(&row, clock)
-}
-
 fn effective_light(sky: u8, block: u8, daylight: f32) -> f32 {
     (block as f32).max(sky as f32 * daylight)
 }
@@ -395,17 +414,7 @@ fn daylight_factor_from_daynight() -> Option<f32> {
     if !t.is_finite() || !(0.0..=1.0).contains(&t) {
         return None;
     }
-    Some(daylight(t.rem_euclid(1.0)))
-}
-
-fn daylight(t: f32) -> f32 {
-    let h = (core::f32::consts::PI * 0.04).sin();
-    smoothstep(-h, h, (core::f32::consts::TAU * t).sin())
-}
-
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    Some(daylight::daylight(t.rem_euclid(1.0)))
 }
 
 register_mod!(Monsters);
@@ -463,7 +472,7 @@ mod tests {
         // mine the floor of a serene cavern and it becomes dangerous.
         assert_eq!(
             species_over(&proof, Some(STONE)),
-            Some(ZOMBIE_KEY),
+            Some(keys::ZOMBIE),
             "the site was otherwise perfect, so the FLOOR is what refused it"
         );
         // Stream-finality fail-safe. The most likely thing a later
@@ -524,7 +533,7 @@ mod tests {
                 &no_claim,
                 &alone
             ),
-            Some(ZOMBIE_KEY),
+            Some(keys::ZOMBIE),
             "with nothing tagged, every previously-good site is still good"
         );
         assert_eq!(

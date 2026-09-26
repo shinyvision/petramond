@@ -21,9 +21,11 @@
 use std::collections::HashMap;
 
 use mod_sdk::*;
+use weather_core::FieldParams;
 
 use crate::content::{Content, CropDef};
 use crate::farmland::{self, Hydration};
+use crate::keys;
 
 /// Stage delay: 120–180 s at 20 TPS, jittered per (position, stage) so a
 /// field planted in one sweep ripens staggered, not as one synchronized wave.
@@ -185,8 +187,10 @@ pub fn on_interact(
     let fertile = soil_is_fertile(content, pos);
     // The plant is RETAINED here (reset, not removed), so no replant is owed.
     spawn_all(mature_yield(def, fertile, Taking::Retained), center);
-    emit_sound("farming:harvest", Some(center));
-    emitter_burst(&def.harvest_emitter, center, 1.0);
+    emit_sound(keys::HARVEST_SOUND, Some(center));
+    if let Some(emitter) = def.harvest_emitter {
+        emitter_burst(emitter, center, 1.0);
+    }
     set_block(pos, def.stages[0]);
     arm(growth, pos, 0, fertile);
     Outcome::Cancel
@@ -291,16 +295,23 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, harvest
 }
 
 /// The crop block hooks.
-pub fn on_hook(content: &Content, growth: &mut Growth, kind: BlockHookKind, pos: [i32; 3]) {
+/// `sky` is the weather field heard this tick (`None` = clear sky).
+pub fn on_hook(
+    content: &Content,
+    growth: &mut Growth,
+    sky: Option<&FieldParams>,
+    kind: BlockHookKind,
+    pos: [i32; 3],
+) {
     match kind {
-        BlockHookKind::ScheduledTick => attempt(content, growth, pos),
+        BlockHookKind::ScheduledTick => attempt(content, growth, sky, pos),
         BlockHookKind::RandomTick => rearm_if_lost(content, growth, pos),
         BlockHookKind::NeighborUpdate => support_check(content, growth, pos),
     }
 }
 
 /// One due growth attempt.
-fn attempt(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
+fn attempt(content: &Content, growth: &mut Growth, sky: Option<&FieldParams>, pos: [i32; 3]) {
     // Only act on the attempt we armed: a stale duplicate schedule (or a
     // foreign scheduled tick on this cell) must not double-advance a stage.
     match growth.pending.get(&pos) {
@@ -330,7 +341,7 @@ fn attempt(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
         retry(growth, pos);
         return;
     }
-    match farmland::probe(content, below) {
+    match farmland::probe(content, sky, below) {
         Hydration::Hydrated => {
             let next = stage + 1;
             set_block(pos, def.stages[next as usize]);

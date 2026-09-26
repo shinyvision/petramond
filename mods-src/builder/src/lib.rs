@@ -28,6 +28,7 @@ mod geometry;
 mod golem;
 mod host;
 mod jobs;
+mod keys;
 mod node;
 mod project;
 mod supplies;
@@ -80,7 +81,7 @@ impl Mod for BuilderMod {
         register_event_handler(EventKind::ItemObtained, 0, ON_ITEM_OBTAINED);
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
-        register_ai_node("builder:worker", AI_WORKER);
+        register_ai_node(keys::WORKER_NODE, AI_WORKER);
         // After the mobs move, so the golem is read where it stands this tick.
         register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_JOBS);
         // After the menu stage, where panels open: a fresh one is filled
@@ -135,7 +136,7 @@ impl Mod for BuilderMod {
             (ON_ITEM_OBTAINED, EventPayload::ItemObtained { player, item })
                 if Some(*item) == state.content.raw_copper =>
             {
-                unlock_recipe(*player, content::COPPER_BLOCK_RECIPE);
+                unlock_recipe(*player, keys::COPPER_BLOCK_RECIPE);
             }
             (ON_INTERACT, EventPayload::InteractAttempt { mob: Some(mob), .. }) => {
                 return golem::used(state, *mob);

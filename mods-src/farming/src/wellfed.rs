@@ -11,7 +11,7 @@
 
 use mod_sdk::*;
 
-const WELL_FED: &str = "farming:well_fed";
+use crate::keys::WELL_FED;
 
 pub fn on_player_damage(amount: &mut i32) {
     if *amount <= 1 {

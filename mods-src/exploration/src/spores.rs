@@ -14,8 +14,7 @@
 
 use mod_sdk::*;
 
-/// The ambient bundle declared in `pack/particle_emitters.json`.
-const BUNDLE: &str = "exploration:spore_drift";
+use crate::keys;
 
 /// Frames between biome samples, and between drives. The probe ring below is
 /// 16 blocks wide, so a quarter second of sprinting (~1.5 blocks) cannot move
@@ -72,7 +71,7 @@ pub(crate) struct Spores {
 
 impl Spores {
     pub(crate) fn init(&mut self) {
-        self.biome = resolve_underground_biome(crate::BIOME_KEY);
+        self.biome = resolve_underground_biome(keys::MUSHROOM_CAVERN);
         if self.biome.is_none() {
             log("exploration: no mushroom-cavern biome row; the spore haze stays off");
         }
@@ -93,7 +92,7 @@ impl Spores {
         }
         self.intensity += (self.sample(biome, frame) - self.intensity)
             * smoothing(SAMPLE_INTERVAL as f32 * frame.dt.clamp(0.001, 0.25));
-        client_ambient_set(BUNDLE, self.intensity, self.eddy());
+        client_ambient_set(keys::SPORE_DRIFT, self.intensity, self.eddy());
     }
 
     /// The share of the probe ring standing in the pack's biome. ONE ABI

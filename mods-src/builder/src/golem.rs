@@ -3,8 +3,8 @@
 
 use crate::host::prelude::*;
 
-use crate::content::GOLEM_KIND;
 use crate::jobs::Builder;
+use crate::keys::golem;
 use crate::table::Tone;
 use crate::worker::trouble::{self, Trouble};
 
@@ -19,18 +19,15 @@ struct GolemPanel {
 impl PanelState for GolemPanel {
     fn values(&self) -> Vec<(&'static str, GuiValue)> {
         vec![
-            ("builder:golem_status", gui_text(&self.status)),
-            (
-                "builder:golem_status_palette",
-                gui_text(self.tone.palette()),
-            ),
+            (golem::STATUS, gui_text(&self.status)),
+            (golem::STATUS_PALETTE, gui_text(self.tone.palette())),
         ]
     }
 }
 
 fn golem_of(viewer: &GuiViewerData) -> Option<u64> {
     match viewer.anchor {
-        Some(ContainerAddress::Mob(mob)) if viewer.kind == GOLEM_KIND => Some(mob),
+        Some(ContainerAddress::Mob(mob)) if viewer.kind == golem::KIND => Some(mob),
         _ => None,
     }
 }
@@ -47,7 +44,7 @@ pub fn used(builder: &Builder, mob: u64) -> Outcome {
     if mob_info(mob).is_none_or(|info| info.kind != builder.content.golem) {
         return Outcome::Continue;
     }
-    if gui_open(GOLEM_KIND, Some(ContainerAddress::Mob(mob))) {
+    if gui_open(golem::KIND, Some(ContainerAddress::Mob(mob))) {
         Outcome::Cancel
     } else {
         Outcome::Continue

@@ -43,7 +43,8 @@ use std::collections::BTreeMap;
 
 use mod_sdk::*;
 
-const BOAT_KEY: &str = "vehicles:boat";
+use crate::keys;
+
 
 /// Candidate cells for a shore-hugging boat click, nearest first: the clicked
 /// cell itself, then the surrounding water cells out to two blocks. The
@@ -130,6 +131,12 @@ struct Boat {
     /// Whether the two oar animations have been activated on the mob (done
     /// once at first control; thereafter only playback changes).
     oars_active: bool,
+    /// The playback each oar (left, right) was last steered to, `None` until
+    /// steered. The engine layer holds a steered rate, and a settle lands and
+    /// holds on its own, so an oar whose wanted playback has not changed
+    /// needs no state read and no command — an idle or cruising boat costs
+    /// no animation calls at all.
+    oar_steered: [Option<f32>; 2],
 }
 
 impl Boat {
@@ -140,6 +147,7 @@ impl Boat {
             yaw: wrap_yaw(yaw),
             yaw_vel: 0.0,
             oars_active: false,
+            oar_steered: [None; 2],
         }
     }
 }
@@ -158,9 +166,9 @@ pub struct Boats {
 
 impl Boats {
     pub fn init(&mut self) {
-        self.boat_item = resolve_item_logged(BOAT_KEY);
-        self.boat_kind = resolve_mob_logged(BOAT_KEY);
-        self.water = resolve_block_logged("petramond:water");
+        self.boat_item = resolve_item_logged(keys::BOAT_ITEM);
+        self.boat_kind = resolve_mob_logged(keys::BOAT_MOB);
+        self.water = resolve_block_logged(keys::WATER);
     }
 
     /// A use click with the boat item: on a water surface cell with air above,
@@ -201,10 +209,10 @@ impl Boats {
                 return None;
             }
             let feet = [c[0] as f64 + 0.5, c[1] as f64 + 0.9, c[2] as f64 + 0.5];
-            spawn_mob_checked(BOAT_KEY, feet, yaw)
+            spawn_mob_checked(keys::BOAT_MOB, feet, yaw)
         });
         if spawned.is_none() {
-            give_item(BOAT_KEY, 1);
+            give_item(keys::BOAT_ITEM, 1);
         }
         Outcome::Cancel
     }
@@ -303,9 +311,20 @@ impl Boats {
                 } else {
                     0.0
                 };
-                if !steer_oar(id, "row_left", left) || !steer_oar(id, "row_right", right) {
-                    deactivate_oars(id);
-                    boat.oars_active = false;
+                for (slot, (name, desired)) in [("row_left", left), ("row_right", right)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if boat.oar_steered[slot] == Some(desired) {
+                        continue;
+                    }
+                    if !steer_oar(id, name, desired) {
+                        deactivate_oars(id);
+                        boat.oars_active = false;
+                        boat.oar_steered = [None; 2];
+                        break;
+                    }
+                    boat.oar_steered[slot] = Some(desired);
                 }
             }
 

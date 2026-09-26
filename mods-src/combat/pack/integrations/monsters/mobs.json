@@ -1,0 +1,16 @@
+{
+  "mobs": [
+    {
+      "patch": "monsters:zombie",
+      "data": {
+        "combat:paced_combo": true
+      }
+    },
+    {
+      "patch": "monsters:hushjaw",
+      "data": {
+        "combat:paced_combo": true
+      }
+    }
+  ]
+}

@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 use mod_sdk::*;
 
 use crate::anvil::{BASE_SOCKETS, SOCKETS};
-use crate::augments::AUGMENT_KEY;
 use crate::content::read_rows;
+use crate::keys;
 
 /// One fit out of an augment material's `forge:augment` list.
 #[derive(Clone)]
@@ -103,7 +103,7 @@ pub(super) struct ToolStats {
 
 /// Every augment MATERIAL and the fits its row lists.
 pub(super) fn augment_fits() -> HashMap<String, Vec<Fit>> {
-    read_rows(AUGMENT_KEY, |value| {
+    read_rows(keys::AUGMENT_DATA, |value| {
         let fits: Vec<Fit> = value
             .as_array()?
             .iter()
@@ -204,7 +204,7 @@ pub(super) fn display_names(by_identity: &HashMap<String, Vec<Fit>>) -> HashMap<
 /// Every augmentable tool: its socket row + family, and the engine's own
 /// resolved stats, so the mod never restates the tier ladder.
 pub(super) fn augmentable_tools() -> HashMap<String, (ToolSlots, ToolStats)> {
-    let slotted = read_rows("forge:augment_slots", |value| {
+    let slotted = read_rows(keys::AUGMENT_SLOTS_DATA, |value| {
         Some(ToolSlots {
             family: value
                 .get("family")

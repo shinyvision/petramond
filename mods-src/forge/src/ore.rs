@@ -16,6 +16,8 @@
 
 use mod_sdk::*;
 
+use crate::keys;
+
 /// Frozen positional salt. Changing it reshuffles the ore in every world.
 const SALT_VEIN: u64 = 0xF012_04E0_0000_0001;
 
@@ -66,8 +68,8 @@ impl Ore {
     /// Registry resolution only: this runs on the DETACHED per-thread
     /// worldgen instances too, where there is no simulation to call into.
     pub fn init(&mut self) {
-        self.ore = resolve_block_logged("forge:petramond_ore");
-        self.stone = resolve_block_logged("petramond:stone");
+        self.ore = resolve_block_logged(keys::PETRAMOND_ORE);
+        self.stone = resolve_block_logged(keys::STONE);
     }
 
     pub fn generate(&self, ctx: &GenCtx) -> Vec<GenWrite> {

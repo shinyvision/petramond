@@ -11,6 +11,8 @@
 
 use mod_sdk::*;
 
+use crate::keys;
+
 /// The chain family: the shared shape-kind id and its three axis rows —
 /// vertical (the item-linked base), north/south, east/west.
 pub(super) struct Chains {
@@ -136,11 +138,11 @@ impl Chains {
 /// chains fall back to the row's static (cube) shape.
 pub(super) fn resolve_chains() -> Option<Chains> {
     Some(Chains {
-        shape: resolve_shape("furniture:chain")?,
+        shape: resolve_shape(keys::CHAIN_SHAPE)?,
         rows: [
-            resolve_block("furniture:chain")?,
-            resolve_block("furniture:chain_ns")?,
-            resolve_block("furniture:chain_ew")?,
+            resolve_block(keys::CHAIN)?,
+            resolve_block(keys::CHAIN_NS)?,
+            resolve_block(keys::CHAIN_EW)?,
         ],
     })
 }

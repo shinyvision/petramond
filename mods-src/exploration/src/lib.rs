@@ -12,6 +12,7 @@ mod cavern;
 mod content;
 mod dripstone;
 mod fluids;
+mod keys;
 mod probe;
 mod shroom;
 mod spores;
@@ -33,9 +34,9 @@ const HANDLER_PLACED: u32 = 4;
 /// The underground biome this pack registers in `underground_biomes.json`.
 /// Placement asks the engine for the biome id at a position and compares — the
 /// mod never re-implements the engine's selection noise.
-pub const BIOME_KEY: &str = "exploration:mushroom_cavern";
+pub(crate) use keys::MUSHROOM_CAVERN as BIOME_KEY;
 
-/// Top of the depth band that row declares (`"y": [-64, -8]`). Nothing this
+/// Top of the depth band that row declares (`"y": [-64, 96]`). Nothing this
 /// pack places can be rooted above it, so worldgen derives its altitude gate
 /// from here — retuning the band moves this one value with the JSON.
 pub const BIOME_TOP_Y: i32 = 96;
@@ -73,7 +74,7 @@ impl Mod for Exploration {
                     GEN_DRIPSTONE,
                     dripstone::gen::GEN_FILTER,
                 );
-                register_block_behavior("exploration:pointed_dripstone", HOOK_DRIPSTONE);
+                register_block_behavior(keys::POINTED_DRIPSTONE_HOOK, HOOK_DRIPSTONE);
                 register_event_handler(EventKind::ProjectileHit, 0, HANDLER_PROJECTILE);
                 register_event_handler(EventKind::PlayerDamagePre, 0, HANDLER_PLAYER_DAMAGE);
                 register_event_handler(EventKind::MobDamagePre, 0, HANDLER_MOB_DAMAGE);

@@ -31,7 +31,7 @@ use std::collections::HashMap;
 
 use mod_sdk::*;
 
-use super::{held_places_a_block, Furniture};
+use super::{held_places_a_block, keys, Furniture};
 
 /// Helper for the box tables: a [`ShapeAabb`] from authored 16ths.
 const fn px(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
@@ -131,7 +131,7 @@ const DYE_USES: u8 = 8;
 /// DATA-SURFACE INTEROP: this pack patches the engine wool block/stairs/slab
 /// items, and any pack can opt its own items in the same way. The dyed
 /// give-back needs the item's registry NAME, resolved once at init.
-const DYEABLE_KEY: &str = "furniture:dyeable";
+const DYEABLE_KEY: &str = keys::DYEABLE;
 
 /// Load every declared dyeable off the item-data surface, with its registry
 /// name (the `give_item_data` vocabulary).
@@ -188,7 +188,7 @@ fn dye_surface(uses: u8) -> ShapeAabb {
 /// faint half-layer), so whites brighten any dye — a near-black pot
 /// included — and repeated pure-white daisies converge to the mixing grid's
 /// white, `[248; 3]` (see [`mix_dye`]'s snap).
-const PIGMENT_KEY: &str = "furniture:pigment";
+const PIGMENT_KEY: &str = keys::PIGMENT;
 
 /// Load every declared pigment off the item-data surface.
 pub(super) fn load_pigments() -> Vec<(ItemId, [u8; 3], bool)> {
@@ -308,10 +308,10 @@ fn cell_center(pos: [i32; 3]) -> [f64; 3] {
 /// back to a plain shape block with no fill interaction.
 pub(super) fn resolve_cauldron() -> Option<Cauldron> {
     Some(Cauldron {
-        shape: resolve_shape("furniture:cauldron")?,
-        empty: resolve_block("furniture:cauldron")?,
-        water: resolve_block("furniture:cauldron_water")?,
-        dye: resolve_block("furniture:cauldron_dye")?,
+        shape: resolve_shape(keys::CAULDRON_SHAPE)?,
+        empty: resolve_block(keys::CAULDRON)?,
+        water: resolve_block(keys::CAULDRON_WATER)?,
+        dye: resolve_block(keys::CAULDRON_DYE)?,
     })
 }
 
@@ -394,19 +394,19 @@ impl Furniture {
             CauldronSwap::None => false,
             CauldronSwap::Absorb => true, // keep the pour ray off the full pot
             CauldronSwap::Fill => {
-                if !replace_held_one(self.water_bucket.unwrap(), "petramond:wooden_bucket") {
+                if !replace_held_one(self.water_bucket.unwrap(), keys::WOODEN_BUCKET) {
                     return false;
                 }
                 set_block(pos, cauldron.water);
-                emit_sound("petramond:water_splash_small", Some(cell_center(pos)));
+                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
                 true
             }
             CauldronSwap::Scoop => {
-                if !replace_held_one(self.wooden_bucket.unwrap(), "petramond:water_bucket") {
+                if !replace_held_one(self.wooden_bucket.unwrap(), keys::WATER_BUCKET) {
                     return false;
                 }
                 set_block(pos, cauldron.empty);
-                emit_sound("petramond:water_splash_small", Some(cell_center(pos)));
+                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
                 true
             }
             CauldronSwap::Dye(flower, pigment, dilute) => {
@@ -435,7 +435,7 @@ impl Furniture {
                 if block != cauldron.dye {
                     section_kv_set(pos, USES_KEY, vec![DYE_USES]);
                 }
-                emit_sound("petramond:water_splash_small", Some(cell_center(pos)));
+                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
                 true
             }
             CauldronSwap::DyeWool { dyeable, count } => {
@@ -460,7 +460,7 @@ impl Furniture {
                 } else {
                     section_kv_set(pos, USES_KEY, vec![uses - 1]);
                 }
-                emit_sound("petramond:water_splash_small", Some(cell_center(pos)));
+                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
                 true
             }
         }

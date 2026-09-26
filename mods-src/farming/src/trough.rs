@@ -8,6 +8,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::keys;
 
 /// Filling a trough costs this much wheat — the herd-feeding store the
 /// husbandry meals draw down (derived: a full trough is exactly
@@ -25,24 +26,24 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
     };
 
     if block == content.trough && item == content.water_bucket {
-        if !replace_held_one(content.water_bucket, "petramond:wooden_bucket") {
+        if !replace_held_one(content.water_bucket, keys::WOODEN_BUCKET) {
             return Outcome::Continue;
         }
         swap_block(pos, content.trough_filled);
         // Fresh water holds fresh sips (cell KV rides the swap).
         crate::husbandry::clear_sips(content, pos);
-        emit_sound("petramond:water_splash_small", Some(center(pos)));
+        emit_sound(keys::SPLASH_SOUND, Some(center(pos)));
         return Outcome::Cancel;
     }
 
     if block == content.trough_filled && item == content.wooden_bucket {
-        if !replace_held_one(content.wooden_bucket, "petramond:water_bucket") {
+        if !replace_held_one(content.wooden_bucket, keys::WATER_BUCKET) {
             return Outcome::Continue;
         }
         swap_block(pos, content.trough);
         // Collected water can't leave a stale sip count behind.
         crate::husbandry::clear_sips(content, pos);
-        emit_sound("petramond:water_splash_small", Some(center(pos)));
+        emit_sound(keys::SPLASH_SOUND, Some(center(pos)));
         return Outcome::Cancel;
     }
 
@@ -55,7 +56,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
             return Outcome::Continue;
         }
         swap_block(pos, content.trough_wheat);
-        emit_sound("farming:harvest", Some(center(pos)));
+        emit_sound(keys::HARVEST_SOUND, Some(center(pos)));
         return Outcome::Cancel;
     }
 
@@ -80,13 +81,13 @@ pub fn on_interact(
     let meals = crate::husbandry::meals_at(pos);
     let back = crate::husbandry::wheat_yield(meals);
     if back > 0 {
-        give_item("farming:wheat", back);
+        give_item(keys::WHEAT, back);
     }
     swap_block(pos, content.trough);
     // The swap carries cell KV across — an emptied trough must not bank a
     // stale meal count (the sip pattern).
     crate::husbandry::clear_meals(content, pos);
-    emit_sound("farming:harvest", Some(center(pos)));
+    emit_sound(keys::HARVEST_SOUND, Some(center(pos)));
     Outcome::Cancel
 }
 

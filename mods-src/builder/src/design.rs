@@ -9,6 +9,7 @@
 use crate::fx::{HashMap, HashSet};
 
 use crate::host::prelude::*;
+use crate::keys::{AIR, FRAGILE_TAG, LEAVES_TAG};
 
 pub use mod_sdk::paged;
 
@@ -72,12 +73,6 @@ pub struct Design {
     floor: HashSet<[i32; 2]>,
 }
 
-/// Blocks laid last: they decay unless what they live beside already stands.
-const LATE_TAG: &str = "leaves";
-const FRAGILE_TAG: &str = "fragile";
-/// The row a cell the design keeps empty is recorded as.
-const EMPTY: &str = "petramond:air";
-
 pub enum Progress {
     Compiling,
     Ready,
@@ -121,8 +116,8 @@ impl Design {
     /// away where it crowds or hides the work.
     pub fn overgrowth(&mut self) -> Vec<BlockId> {
         self.tagged
-            .entry(LATE_TAG)
-            .or_insert_with(|| blocks_by_tag(LATE_TAG).into_iter().collect())
+            .entry(LEAVES_TAG)
+            .or_insert_with(|| blocks_by_tag(LEAVES_TAG).into_iter().collect())
             .iter()
             .copied()
             .collect()
@@ -198,7 +193,7 @@ impl Design {
             for ((record, plan), (full, panel)) in fresh.into_iter().zip(plans).zip(shapes) {
                 let index = self.records.len() as u32;
                 let block = resolve_block(&record.block);
-                let late = block.is_some_and(|b| self.tagged(LATE_TAG, b));
+                let late = block.is_some_and(|b| self.tagged(LEAVES_TAG, b));
                 let fragile = block.is_some_and(|b| self.tagged(FRAGILE_TAG, b));
                 self.costs.push(match &plan {
                     RecordPlan::Unit { cost, .. } => cost.clone(),
@@ -301,7 +296,7 @@ impl Design {
     /// Rooms become units like any other: cells that must end up empty.
     fn add_rooms(&mut self) {
         let empty = BlockRecord {
-            block: EMPTY.into(),
+            block: AIR.into(),
             state: Vec::new(),
             refs: Vec::new(),
             data: Vec::new(),

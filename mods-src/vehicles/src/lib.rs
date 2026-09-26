@@ -11,6 +11,7 @@ use mod_sdk::*;
 
 mod boat;
 mod cart;
+mod keys;
 mod minecart;
 mod rail;
 mod track;

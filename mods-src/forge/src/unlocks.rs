@@ -19,12 +19,7 @@
 
 use mod_sdk::*;
 
-/// Anything the player pulls out of a fresh ore vein.
-const RAW_ORE_TAG: &str = "petramond:raw_ore";
-
-const FORGING_FURNACE: &str = "forge:forging_furnace";
-const POTTERY_TABLE: &str = "forge:pottery_table";
-const ANVIL: &str = "forge:anvil";
+use crate::keys;
 
 #[derive(Default)]
 pub struct Unlocks {
@@ -34,17 +29,17 @@ pub struct Unlocks {
 
 impl Unlocks {
     pub fn resolve() -> Unlocks {
-        let mut triggers: Vec<(ItemId, &'static str)> = items_by_tag(RAW_ORE_TAG)
+        let mut triggers: Vec<(ItemId, &'static str)> = items_by_tag(keys::RAW_ORE_TAG)
             .into_iter()
-            .map(|ore| (ore, FORGING_FURNACE))
+            .map(|ore| (ore, keys::FORGING_FURNACE_RECIPE))
             .collect();
         // A first diamond earns the anvil: with the vanilla diamond tool
         // recipes retired, the diamond in hand has no visible use until the
         // player learns where augments are fitted.
         for (name, recipe) in [
-            ("petramond:clay", POTTERY_TABLE),
-            (FORGING_FURNACE, POTTERY_TABLE),
-            ("petramond:diamond", ANVIL),
+            (keys::CLAY_ITEM, keys::POTTERY_TABLE_RECIPE),
+            (keys::FORGING_FURNACE_ITEM, keys::POTTERY_TABLE_RECIPE),
+            (keys::DIAMOND, keys::ANVIL_RECIPE),
         ] {
             if let Some(item) = resolve_item_logged(name) {
                 triggers.push((item, recipe));

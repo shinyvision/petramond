@@ -25,6 +25,8 @@
 
 use mod_sdk::*;
 
+use crate::keys;
+
 /// The lantern family: the shared shape-kind id and its rows — standing,
 /// hanging, and one per WALL side (indexed by [`WALL_SIDES`]).
 pub(super) struct Lanterns {
@@ -39,10 +41,10 @@ pub(super) struct Lanterns {
 /// `support` field declares, so the row name, the field and this table cannot
 /// drift apart.
 pub(super) const WALL_SIDES: [([i32; 3], &str); 4] = [
-    ([0, 0, -1], "north"),
-    ([0, 0, 1], "south"),
-    ([-1, 0, 0], "west"),
-    ([1, 0, 0], "east"),
+    ([0, 0, -1], keys::LANTERN_WALL_NORTH),
+    ([0, 0, 1], keys::LANTERN_WALL_SOUTH),
+    ([-1, 0, 0], keys::LANTERN_WALL_WEST),
+    ([1, 0, 0], keys::LANTERN_WALL_EAST),
 ];
 
 const T: f32 = 1.0 / 16.0;
@@ -193,13 +195,13 @@ impl Lanterns {
 /// static shape and the rest of the mod keeps working.
 pub(super) fn resolve_lanterns() -> Option<Lanterns> {
     let mut wall = [BlockId(0); 4];
-    for (i, (_, name)) in WALL_SIDES.iter().enumerate() {
-        wall[i] = resolve_block(&format!("furniture:lantern_wall_{name}"))?;
+    for (i, (_, row)) in WALL_SIDES.iter().enumerate() {
+        wall[i] = resolve_block(row)?;
     }
     Some(Lanterns {
-        shape: resolve_shape("furniture:lantern")?,
-        standing: resolve_block("furniture:lantern")?,
-        hanging: resolve_block("furniture:lantern_hanging")?,
+        shape: resolve_shape(keys::LANTERN_SHAPE)?,
+        standing: resolve_block(keys::LANTERN)?,
+        hanging: resolve_block(keys::LANTERN_HANGING)?,
         wall,
     })
 }

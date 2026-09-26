@@ -241,7 +241,7 @@ fn a_blueprint_is_bound_to_its_world_and_its_project() {
     let id = projects.create("ada".into(), [0, 0, 0]);
     let bound = |data: Vec<(String, Vec<u8>)>| {
         projects.bound(&ItemStackData {
-            item: crate::content::BLUEPRINT.into(),
+            item: crate::keys::BLUEPRINT.into(),
             count: 1,
             data,
         })
