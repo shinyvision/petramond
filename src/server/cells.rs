@@ -35,34 +35,32 @@ impl ServerGame {
         let Self {
             world,
             sessions,
-            bus,
+            mods,
             ..
         } = self;
-        let refused = Self::with_sessions_view(sessions, s, |sess| {
-            bus.cells_edit_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
-        });
+        let actor = Some(sessions[s].id);
+        let bus = mods.bus_mut();
+        let refused =
+            bus.cells_edit_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel;
         if refused {
             return Err((edit.finish().target, "This area cannot be edited".into()));
         }
         Ok(edit)
     }
 
-    /// Write this tick's share of `edit`. Returns whether it is complete.
+    /// Write this tick's share of session `s`'s `edit`. Returns whether it
+    /// is complete. The block hooks drain as the editing session.
     pub(super) fn step_cell_edit(
         &mut self,
+        s: usize,
         edit: &mut CellEdit,
         events: &mut TickEvents,
     ) -> Result<bool, String> {
+        let player = Some(self.sessions[s].id);
         let Self {
             world,
             sessions,
-            bus,
+            mods,
             ..
         } = self;
         world.step_cells(edit, CELLS_PER_TICK, &mut |world, hooks: CellHooks<'_>| {
@@ -74,24 +72,21 @@ impl ServerGame {
                     block,
                     harvested: false,
                     natural: false,
+                    player,
                 });
             let placed = hooks
                 .placed
                 .iter()
-                .map(|&(pos, block)| PostEvent::BlockPlaced { pos, block });
+                .map(|&(pos, block)| PostEvent::BlockPlaced { pos, block, player });
             let mut queued = 0;
             for event in removed.chain(placed) {
-                bus.emit(event);
+                mods.emit(event);
                 queued += 1;
                 if queued % HOOKS_PER_DRAIN == 0 {
-                    Self::with_sessions_view(sessions, 0, |host| {
-                        bus.drain_post(world, &mut host.player, &mut host.gui_state, events)
-                    });
+                    mods.drain_posts(world, sessions, events);
                 }
             }
-            Self::with_sessions_view(sessions, 0, |host| {
-                bus.drain_post(world, &mut host.player, &mut host.gui_state, events)
-            });
+            mods.drain_posts(world, sessions, events);
         })
     }
 }

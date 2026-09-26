@@ -88,18 +88,18 @@ impl ServerGame {
         let player = self.sessions[s].id;
         match request {
             SchematicRequest::Chosen { tag, digest } => {
-                if self.sessions[s].schematic.choose.as_ref() != Some(&tag) {
+                if self.sessions[s].sim.schematic.choose.as_ref() != Some(&tag) {
                     return;
                 }
                 if self.world.schematics().store.contains(&digest) {
-                    self.sessions[s].schematic.choose = None;
-                    self.bus.emit(PostEvent::SchematicChosen {
+                    self.sessions[s].sim.schematic.choose = None;
+                    self.mods.emit(PostEvent::SchematicChosen {
                         player,
                         tag,
                         asset: digest,
                     });
                 } else {
-                    self.sessions[s].schematic.want(Wanted::Choice(tag), digest);
+                    self.sessions[s].sim.schematic.want(Wanted::Choice(tag), digest);
                 }
             }
             SchematicRequest::Positioned {
@@ -108,7 +108,7 @@ impl ServerGame {
                 origin,
                 turns,
             } => {
-                if self.sessions[s].schematic.position != Some((tag.clone(), digest)) {
+                if self.sessions[s].sim.schematic.position != Some((tag.clone(), digest)) {
                     return;
                 }
                 let Some(pivot) = self.positioned_pivot(&digest, origin, turns) else {
@@ -119,15 +119,15 @@ impl ServerGame {
                     > crate::schematic::PLACEMENT_REACH + 2.0
                 {
                     self.sessions[s]
-                        .schematic
+                        .sim.schematic
                         .notices
                         .push(SchematicNotice::Refused {
                             message: "Place the schematic within reach".into(),
                         });
                     return;
                 }
-                self.sessions[s].schematic.position = None;
-                self.bus.emit(PostEvent::SchematicPositioned {
+                self.sessions[s].sim.schematic.position = None;
+                self.mods.emit(PostEvent::SchematicPositioned {
                     player,
                     tag,
                     asset: digest,
@@ -136,7 +136,7 @@ impl ServerGame {
                 });
             }
             SchematicRequest::Fetch { digest } => {
-                let session = &mut self.sessions[s].schematic;
+                let session = &mut self.sessions[s].sim.schematic;
                 if session.fetches.len() < FETCH_QUEUE && !session.fetches.contains(&digest) {
                     session.fetches.push_back(digest);
                 }
@@ -162,7 +162,7 @@ impl ServerGame {
     }
 
     fn receive_schematic_blob(&mut self, s: usize, packet: BlobPacket) {
-        let session = &mut self.sessions[s].schematic;
+        let session = &mut self.sessions[s].sim.schematic;
         match packet {
             BlobPacket::Begin { digest, .. } => {
                 let expected = session.wanted.as_ref().map(|(_, d)| *d);
@@ -221,8 +221,8 @@ impl ServerGame {
     /// Mod requests that open a choice or a positioning on a client.
     pub(super) fn open_schematic_choice(&mut self, player: crate::player::PlayerId, tag: String) {
         if let Some(sess) = self.sessions.iter_mut().find(|sess| sess.id == player) {
-            sess.schematic.choose = Some(tag.clone());
-            sess.schematic.notices.push(SchematicNotice::Choose { tag });
+            sess.sim.schematic.choose = Some(tag.clone());
+            sess.sim.schematic.notices.push(SchematicNotice::Choose { tag });
         }
     }
 
@@ -235,8 +235,8 @@ impl ServerGame {
         turns: u8,
     ) {
         if let Some(sess) = self.sessions.iter_mut().find(|sess| sess.id == player) {
-            sess.schematic.position = Some((tag.clone(), digest));
-            sess.schematic.notices.push(SchematicNotice::Position {
+            sess.sim.schematic.position = Some((tag.clone(), digest));
+            sess.sim.schematic.notices.push(SchematicNotice::Position {
                 tag,
                 digest,
                 origin: origin.map(|o| o.to_array()),
@@ -250,7 +250,7 @@ impl ServerGame {
         for finished in self.world.schematics_mut().store.poll() {
             let Finished::Published(result) = finished;
             for sess in &mut self.sessions {
-                let session = &mut sess.schematic;
+                let session = &mut sess.sim.schematic;
                 let done: Vec<_> = match &result {
                     Ok(digest) => session
                         .publishing
@@ -264,7 +264,7 @@ impl ServerGame {
                 for (tag, digest) in done {
                     if session.choose.as_ref() == Some(&tag) {
                         session.choose = None;
-                        self.bus.emit(PostEvent::SchematicChosen {
+                        self.mods.emit(PostEvent::SchematicChosen {
                             player: sess.id,
                             tag,
                             asset: digest,
@@ -284,7 +284,7 @@ impl ServerGame {
     }
 
     fn tick_schematic_upload(&mut self, s: usize) {
-        let session = &mut self.sessions[s].schematic;
+        let session = &mut self.sessions[s].sim.schematic;
         let Some(upload) = session.upload.as_mut() else {
             return;
         };
@@ -311,7 +311,7 @@ impl ServerGame {
     }
 
     fn tick_schematic_download(&mut self, s: usize) {
-        let session = &mut self.sessions[s].schematic;
+        let session = &mut self.sessions[s].sim.schematic;
         if let Some(download) = session.download.as_mut() {
             let packets = download.packets();
             session
@@ -369,7 +369,7 @@ impl ServerGame {
             .filter(|(_, g)| g.viewers.is_empty() || g.viewers.contains(&id))
             .map(|(key, g)| (key.clone(), g.placement))
             .collect();
-        let session = &mut self.sessions[s].schematic;
+        let session = &mut self.sessions[s].sim.schematic;
         if visible == session.ghosts_sent {
             return;
         }

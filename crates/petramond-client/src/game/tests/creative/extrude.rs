@@ -10,10 +10,10 @@ use petramond_world::item::{ItemStack, ItemType};
 fn wand() -> TestGame {
     let mut game = game_on_empty_chunk();
     game.player.set_mode(PlayerMode::Creative);
-    game.server.sessions[0]
-        .player
+    game.server.sessions_mut()[0]
+        .player_mut()
         .set_mode(PlayerMode::Creative);
-    game.server.sessions[0].player.inventory.add(ItemStack::new(
+    game.server.sessions_mut()[0].player_mut().inventory.add(ItemStack::new(
         ItemType::by_name("petramond:schematic_wand").unwrap(),
         1,
     ));

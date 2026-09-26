@@ -30,10 +30,11 @@ impl ServerGame {
     /// species' resolved `damage_feedback`. A pipeline without the `Immunity`
     /// component is DoT (burn ticks): neither blocked by an active i-frame
     /// window nor granting one.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// `mob_damage_pre` acts for the attacking PLAYER when the source names
+    /// one, and actor-less otherwise (a mob's bite, a fall, a mod's damage).
     pub fn damage_mob_through_pipeline(
         &mut self,
-        s: usize,
         idx: usize,
         amount: f32,
         source: DamageSource,
@@ -78,21 +79,16 @@ impl ServerGame {
             origin,
             feedback,
         };
+        let actor = source.attacker().and_then(crate::mob::EntityRef::player);
         let cancelled = {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            bus.mob_damage_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
+            let bus = mods.bus_mut();
+            bus.mob_damage_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel
         };
         if cancelled {
             return false;
@@ -112,7 +108,7 @@ impl ServerGame {
         // The observational twin of `mob_damage_pre`: what the pipeline
         // actually applied, after every handler had its say. A killing blow
         // announces both this and `mob_died`, in that order.
-        self.bus.emit(PostEvent::MobDamaged {
+        self.mods.emit(PostEvent::MobDamaged {
             mob_id,
             kind,
             amount: pre.amount,
@@ -123,7 +119,7 @@ impl ServerGame {
             if pre.feedback.plays_sound(MobDamageSound::Death) {
                 queue_mob_sound(events, mob_id, kind, MobSoundCategory::Death, death.pos);
             }
-            self.bus.emit(PostEvent::MobDied {
+            self.mods.emit(PostEvent::MobDied {
                 id: mob_id,
                 kind: death.kind,
                 pos: death.pos,
@@ -157,7 +153,7 @@ impl ServerGame {
                 crate::mob::EntityRef::Player(pid) => {
                     // A session gone mid-tick can't happen — the session list
                     // only changes between ticks.
-                    let Some(s) = self.sessions.iter().position(|sess| sess.id == pid) else {
+                    let Some(s) = self.sessions.index_of(pid) else {
                         continue;
                     };
                     if self.sessions[s].player.is_spectator() {
@@ -181,7 +177,6 @@ impl ServerGame {
                         continue;
                     };
                     self.damage_mob_through_pipeline(
-                        0,
                         idx,
                         a.damage.max(0.0),
                         DamageSource::MobAttack {
@@ -209,15 +204,7 @@ impl ServerGame {
             let Some(idx) = self.world.mobs().index_of_id(fall.mob_id) else {
                 continue;
             };
-            self.damage_mob_through_pipeline(
-                0,
-                idx,
-                amount,
-                DamageSource::Fall,
-                None,
-                None,
-                events,
-            );
+            self.damage_mob_through_pipeline(idx, amount, DamageSource::Fall, None, None, events);
         }
     }
 
@@ -331,8 +318,7 @@ impl ServerGame {
         for spill in self.world.mobs_mut().take_spills() {
             let centre = spill.pos + Vec3::new(0.0, 0.3, 0.0);
             for stack in spill.stacks {
-                self.spawn_counter = self.spawn_counter.wrapping_add(1);
-                let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
+                let mut drop = DroppedItem::new(centre, stack, self.seeds.draw());
                 drop.skylight = spill.skylight;
                 drop.blocklight = spill.blocklight;
                 self.world.spawn_item(drop);
@@ -347,16 +333,14 @@ impl ServerGame {
         let Some(table) = crate::mob::def(death.kind).loot.as_deref() else {
             return;
         };
-        self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        let mut rng = crate::mob::MobRng::new(self.spawn_counter as u64);
+        let mut rng = crate::mob::MobRng::new(self.seeds.draw() as u64);
         let stacks = petramond_world::loot::catalog()
             .roll(table, || rng.next_u64())
             .unwrap_or_default();
         // Pop from roughly the mob's body centre so drops don't clip into the floor.
         let centre = death.pos + Vec3::new(0.0, 0.3, 0.0);
         for stack in stacks {
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
-            let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
+            let mut drop = DroppedItem::new(centre, stack, self.seeds.draw());
             drop.skylight = death.skylight;
             drop.blocklight = death.blocklight;
             self.world.spawn_item(drop);
@@ -413,7 +397,7 @@ impl ServerGame {
         // One event per collected STACK. Whether the player has ever HELD one
         // of these is a different question, answered by `item_obtained`.
         for stack in collected {
-            self.bus.emit(PostEvent::ItemPickedUp {
+            self.mods.emit(PostEvent::ItemPickedUp {
                 player: requester,
                 item: stack.item,
                 count: stack.count,

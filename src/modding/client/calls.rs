@@ -136,7 +136,10 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // parity). `PlayerState` answers the ACTOR SNAPSHOT published for
         // the prediction dispatch (see `scope::enter_actor`) — the same
         // query-the-snapshot doctrine as the server side.
-        HostCall::RegisterEventHandler { .. } | HostCall::PlayerState => true,
+        // `ActingPlayer` answers the same snapshot's id.
+        HostCall::RegisterEventHandler { .. }
+        | HostCall::PlayerState
+        | HostCall::ActingPlayer => true,
         // Simulation and registry surfaces: server-side only.
         HostCall::CurrentTick
         | HostCall::RegisterTickSystem { .. }
@@ -296,7 +299,20 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ItemEntitiesInRadius { .. }
         | HostCall::ItemImpulses { .. }
         | HostCall::Players
-        | HostCall::PlayerIdentity { .. } => false,
+        | HostCall::PlayerIdentity { .. }
+        // The explicitly addressed player calls act on authoritative
+        // sessions — server-side, like the implicit calls they twin.
+        | HostCall::PlayerStateOf { .. }
+        | HostCall::ApplyKnockbackTo { .. }
+        | HostCall::SetHealthOf { .. }
+        | HostCall::TeleportPlayer { .. }
+        | HostCall::EffectApplyTo { .. }
+        | HostCall::EffectsActiveOf { .. }
+        | HostCall::ConsumeHeldBy { .. }
+        | HostCall::ReplaceHeldOneBy { .. }
+        | HostCall::GuiStateGetFor { .. }
+        | HostCall::GuiOpenFor { .. }
+        | HostCall::GuiCloseFor { .. } => false,
     }
 }
 

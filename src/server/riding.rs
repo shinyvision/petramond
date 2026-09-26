@@ -40,8 +40,8 @@ impl ServerGame {
             .sessions
             .iter()
             .map(|sess| {
-                let gameplay = sess.intent_gameplay;
-                let wish = sess.move_wishdir;
+                let gameplay = sess.input.intent_gameplay;
+                let wish = sess.input.move_wishdir;
                 let (sy, cy) = sess.player.yaw.sin_cos();
                 let (forward, strafe) = if gameplay {
                     (wish.x * sy + wish.z * cy, -wish.x * cy + wish.z * sy)
@@ -52,7 +52,7 @@ impl ServerGame {
                     id: sess.id.0,
                     forward: forward.clamp(-1.0, 1.0),
                     strafe: strafe.clamp(-1.0, 1.0),
-                    jump: sess.move_jump && gameplay,
+                    jump: sess.input.move_jump && gameplay,
                     sneak: sess.sneaking(),
                     yaw: sess.player.yaw,
                     pitch: sess.player.pitch,
@@ -92,8 +92,8 @@ impl ServerGame {
                 // clear: an edge lands on exactly one roster, one tick after
                 // its stage latched it, which the eased pose lane hides.
                 swing: mod_api::HandSwing {
-                    mining: sess.mining.overlay().is_some(),
-                    ..std::mem::take(&mut sess.swing_events)
+                    mining: sess.sim.mining.overlay().is_some(),
+                    ..std::mem::take(&mut sess.replication.swing_events)
                 },
                 conditions: crate::exposure::condition_data(sess.player.conditions()),
                 entombed: sess.player.entombed(),
@@ -112,7 +112,7 @@ impl ServerGame {
         for s in 0..self.sessions.len() {
             let id = self.sessions[s].id.0;
             let sneak = self.sessions[s].sneaking();
-            let prev_sneak = std::mem::replace(&mut self.sessions[s].prev_sneak, sneak);
+            let prev_sneak = std::mem::replace(&mut self.sessions[s].input.prev_sneak, sneak);
             if self.world.riding().mount_of(id).is_none() {
                 continue;
             }
@@ -120,7 +120,7 @@ impl ServerGame {
             if (sneak && !prev_sneak)
                 || sess.player.health() <= 0
                 || sess.player.is_spectator()
-                || sess.sleep.is_some()
+                || sess.sim.sleep.is_some()
             {
                 self.world.riding_mut().dismount(id);
             }
@@ -162,7 +162,7 @@ impl ServerGame {
         for s in 0..self.sessions.len() {
             let id = self.sessions[s].id.0;
             let now = self.world.riding().mount_of(id);
-            let before = std::mem::replace(&mut self.sessions[s].mount, now);
+            let before = std::mem::replace(&mut self.sessions[s].sim.mount, now);
             if before.is_some() && before != now {
                 self.place_dismounted_player(s);
             }
@@ -178,7 +178,7 @@ impl ServerGame {
     pub fn publish_dismounted(&mut self) {
         let detached: Vec<_> = self.world.riding_mut().drain_dismounted().collect();
         for (player, mount) in detached {
-            self.bus.emit(PostEvent::PlayerDismounted {
+            self.mods.emit(PostEvent::PlayerDismounted {
                 player: crate::player::PlayerId(player),
                 mount,
             });
@@ -191,7 +191,7 @@ impl ServerGame {
     pub fn detach_departing_session(&mut self, s: usize) {
         let id = self.sessions[s].id.0;
         self.world.riding_mut().dismount(id);
-        if self.sessions[s].mount.take().is_some() {
+        if self.sessions[s].sim.mount.take().is_some() {
             self.place_dismounted_player(s);
         }
         self.publish_dismounted();
@@ -212,7 +212,7 @@ impl ServerGame {
     ) -> Option<Player> {
         let sess = &self.sessions[s];
         let mut snapshot = sess.player.clone();
-        let mounted = sess.mount.is_some() || self.world.riding().mount_of(sess.id.0).is_some();
+        let mounted = sess.sim.mount.is_some() || self.world.riding().mount_of(sess.id.0).is_some();
         if !mounted {
             return Some(snapshot);
         }
@@ -245,9 +245,9 @@ impl ServerGame {
         sess.player.pos = pos;
         sess.player.vel = Vec3::ZERO;
         sess.player.on_ground = true;
-        sess.fall.reset(pos.y);
-        sess.pending_fall = 0.0;
-        sess.pending_splash = 0.0;
+        sess.sim.fall.reset(pos.y);
+        sess.sim.pending_fall = 0.0;
+        sess.sim.pending_splash = 0.0;
     }
 
     /// Stand a freshly dismounted player somewhere sensible: the first

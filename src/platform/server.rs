@@ -8,7 +8,7 @@
 //! One server codebase, two hosts: everything gameplay-visible (tick ladder,
 //! streaming, flow control, joins/leaves, saves) is shared with the listen
 //! server; the only headless-specific behavior lives behind
-//! `ServerGame::has_local_session` (no local pipe recipient, every session
+//! `SessionRegistry::has_local_session` (no local pipe recipient, every session
 //! ack-windowed, fixed ticks skipped while nobody is connected).
 
 use std::path::PathBuf;
@@ -113,7 +113,7 @@ pub fn run() {
 
     let mut server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
     server
-        .world
+        .world_mut()
         .mobs_mut()
         .set_sim_distance(settings.simulation_distance);
     let mut handle = crate::server::handle::spawn(server);

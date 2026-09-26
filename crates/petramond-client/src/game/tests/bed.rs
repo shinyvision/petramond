@@ -16,16 +16,16 @@ fn game_with_bed() -> (super::common::TestGame, IVec3) {
     let mut game = game_on_empty_chunk();
     for x in 0..16 {
         for z in 0..16 {
-            game.server.world.set_block_world(x, 63, z, Block::Stone);
+            game.server.world_mut().set_block_world(x, 63, z, Block::Stone);
         }
     }
     let base = IVec3::new(7, 64, 7);
-    assert!(game.server.world.place_model_block(base, Block::Bed));
+    assert!(game.server.world_mut().place_model_block(base, Block::Bed));
     (game, base)
 }
 
 fn interact_with_bed(game: &mut super::common::TestGame, base: IVec3) -> TickEvents {
-    game.server.sessions[0].look = Some(hit(base, IVec3::Y));
+    game.server.sessions_mut()[0].input_mut().look = Some(hit(base, IVec3::Y));
     game.server.queue_place_click_for_test(0);
     let mut events = TickEvents::default();
     game.server.tick_place(0, &mut events);
@@ -36,14 +36,14 @@ fn interact_with_bed(game: &mut super::common::TestGame, base: IVec3) -> TickEve
 /// drive tick steps directly, so the day/night system never overwrites it.
 fn make_night(game: &mut super::common::TestGame) {
     game.server
-        .world
+        .world_mut()
         .world_kv_set("petramond:is_night".into(), vec![1]);
 }
 
 fn clock(game: &super::common::TestGame) -> u64 {
     u64::from_le_bytes(
         game.server
-            .world
+            .world()
             .world_kv_get(CLOCK_KEY)
             .expect("core day/night publishes a clock")
             .try_into()
@@ -74,7 +74,7 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
         "bed clicks drive the interact hand jab"
     );
     assert!(
-        game.server.sessions[0].request_open_sleep,
+        game.server.sessions()[0].replication().request_open_sleep,
         "asks the app for the sleep overlay"
     );
     // `sleep_progress01` reads the replicated self view; stage-driven tests
@@ -82,21 +82,21 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
     game.sync_self_view_for_test();
     assert_eq!(game.sleep_progress01(), Some(0.0), "sleep starts at zero");
     assert_eq!(
-        game.server.sessions[0].player.pitch, PITCH_LIMIT,
+        game.server.sessions()[0].player().pitch, PITCH_LIMIT,
         "sleep starts looking up"
     );
     // The camera mirror is client-side, applied off the replicated sleep-open
     // one-shot after the fixed ticks (`Game::tick` calls this every frame).
     // Stage-driven test: adopt the tucked look, then feed the one-shot.
-    game.player.pitch = game.server.sessions[0].player.pitch;
-    game.player.yaw = game.server.sessions[0].player.yaw;
+    game.player.pitch = game.server.sessions()[0].player().pitch;
+    game.player.yaw = game.server.sessions()[0].player().yaw;
     game.sync_sleep_camera_on_open(&petramond::net::protocol::SelfEvents {
         open_screen: Some(petramond::net::protocol::OpenScreen::Sleep),
         ..Default::default()
     });
     assert_eq!(game.cam.pitch, PITCH_LIMIT, "camera mirrors the sleep look");
-    let bs = game.server.sessions[0]
-        .player
+    let bs = game.server.sessions()[0]
+        .player()
         .bed_spawn
         .expect("one interaction sets the spawn");
     assert_eq!(bs.bed, base);
@@ -111,9 +111,9 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
 fn a_mounted_player_sets_spawn_but_cannot_start_sleeping() {
     let (mut game, base) = game_with_bed();
     make_night(&mut game);
-    let player_id = game.server.sessions[0].id.0;
-    let before = game.server.sessions[0].player.pos;
-    assert!(game.server.world.riding_mut().mount(
+    let player_id = game.server.sessions()[0].id().0;
+    let before = game.server.sessions()[0].player().pos;
+    assert!(game.server.world_mut().riding_mut().mount(
         player_id,
         petramond::mob::riding::MountTarget::Mob(77),
         0
@@ -123,17 +123,17 @@ fn a_mounted_player_sets_spawn_but_cannot_start_sleeping() {
 
     assert!(events.player_at(0).bed_interacted);
     assert!(
-        game.server.sessions[0].player.bed_spawn.is_some(),
+        game.server.sessions()[0].player().bed_spawn.is_some(),
         "the bed still updates the respawn point"
     );
-    assert!(game.server.sessions[0].sleep.is_none());
-    assert!(!game.server.sessions[0].request_open_sleep);
+    assert!(game.server.sessions()[0].sim().sleep.is_none());
+    assert!(!game.server.sessions()[0].replication().request_open_sleep);
     assert_eq!(
-        game.server.sessions[0].player.pos, before,
+        game.server.sessions()[0].player().pos, before,
         "sleep never creates a second transform while the seat owns the body"
     );
     assert!(
-        game.server.world.riding().mount_of(player_id).is_some(),
+        game.server.world().riding().mount_of(player_id).is_some(),
         "the rejected sleep does not silently dismount the player"
     );
 }
@@ -149,13 +149,13 @@ fn daytime_bed_interaction_sets_the_spawn_but_never_sleeps() {
         "daytime bed clicks still animate the hand"
     );
     assert!(
-        game.server.sessions[0].player.bed_spawn.is_some(),
+        game.server.sessions()[0].player().bed_spawn.is_some(),
         "a daytime click still sets the spawn point"
     );
     game.sync_self_view_for_test();
     assert_eq!(game.sleep_progress01(), None, "sleeping is night-only");
     assert!(
-        !game.server.sessions[0].request_open_sleep,
+        !game.server.sessions()[0].replication().request_open_sleep,
         "no sleep overlay by day"
     );
 }
@@ -184,7 +184,7 @@ fn completing_a_sleep_skips_to_morning_and_wakes_beside_the_bed() {
         clock(&game) > clock_before,
         "completing the sleep advances the day clock to the next morning"
     );
-    let feet = game.server.sessions[0].player.pos;
+    let feet = game.server.sessions()[0].player().pos;
     assert!(
         (feet.x.floor() as i32, feet.z.floor() as i32) != (base.x, base.z),
         "the player wakes beside the bed, not inside it: {feet:?}"
@@ -208,7 +208,7 @@ fn cancelling_a_sleep_wakes_without_skipping_time() {
     );
     assert_eq!(clock(&game), clock_before, "no time skip on cancel");
     assert!(
-        game.server.sessions[0].player.bed_spawn.is_some(),
+        game.server.sessions()[0].player().bed_spawn.is_some(),
         "cancelling keeps the spawn point — one interaction was enough"
     );
 }
@@ -236,9 +236,9 @@ fn damage_while_sleeping_cancels_the_sleep_immediately() {
         clock_before,
         "an interrupted sleep skips no time"
     );
-    assert_eq!(game.server.sessions[0].player.health(), MAX_HEALTH - 2);
+    assert_eq!(game.server.sessions()[0].player().health(), MAX_HEALTH - 2);
     // Woken beside the bed, ready to face the attacker.
-    let feet = game.server.sessions[0].player.pos;
+    let feet = game.server.sessions()[0].player().pos;
     assert!(
         (feet.x.floor() as i32, feet.z.floor() as i32) != (base.x, base.z),
         "wakes beside the bed: {feet:?}"
@@ -252,35 +252,35 @@ fn keep_inventory_rule_skips_the_death_spill() {
     // Default rule: death spills every stack as item entities and empties
     // the inventory (the classic corpse pile).
     let (mut game, _) = game_with_bed();
-    game.server.sessions[0]
-        .player
+    game.server.sessions_mut()[0]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Stick, 5));
     kill_player(&mut game);
     assert!(
-        !game.server.world.item_entities().is_empty(),
+        !game.server.world().item_entities().is_empty(),
         "default death spills the inventory at the body"
     );
     assert!(
-        game.server.sessions[0].player.inventory.slot(0).is_none(),
+        game.server.sessions()[0].player().inventory.slot(0).is_none(),
         "spilled slots are empty"
     );
 
     // Keep-inventory ON: no corpse pile, the stacks stay where they were.
     let (mut game, _) = game_with_bed();
-    game.server.world.set_keep_inventory(true);
-    game.server.sessions[0]
-        .player
+    game.server.world_mut().set_keep_inventory(true);
+    game.server.sessions_mut()[0]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Stick, 5));
     kill_player(&mut game);
     assert!(
-        game.server.world.item_entities().is_empty(),
+        game.server.world().item_entities().is_empty(),
         "keep-inventory death spawns no drops"
     );
     assert_eq!(
-        game.server.sessions[0]
-            .player
+        game.server.sessions()[0]
+            .player()
             .inventory
             .slot(0)
             .map(|s| (s.item, s.count)),
@@ -305,11 +305,11 @@ fn respawning_with_a_bed_restores_health_beside_it() {
 
     assert!(events.player_at(0).respawned);
     assert_eq!(
-        game.server.sessions[0].player.health(),
+        game.server.sessions()[0].player().health(),
         MAX_HEALTH,
         "respawn restores health"
     );
-    let feet = game.server.sessions[0].player.pos;
+    let feet = game.server.sessions()[0].player().pos;
     let (dx, dz) = (feet.x - base.x as f64, feet.z - base.z as f64);
     assert!(
         dx.abs() < 8.0 && dz.abs() < 8.0,
@@ -329,7 +329,7 @@ fn respawn_ignores_requests_while_alive() {
     game.request_wake();
     game.server
         .tick_bed_and_respawn(0, &mut TickEvents::default());
-    let before = game.server.sessions[0].player.pos;
+    let before = game.server.sessions()[0].player().pos;
 
     game.request_respawn();
     let mut events = TickEvents::default();
@@ -338,7 +338,7 @@ fn respawn_ignores_requests_while_alive() {
         !events.player_at(0).respawned,
         "a living player never respawn-teleports"
     );
-    assert_eq!(game.server.sessions[0].player.pos, before);
+    assert_eq!(game.server.sessions()[0].player().pos, before);
 }
 
 #[test]
@@ -353,9 +353,9 @@ fn broken_bed_clears_the_spawn_and_respawn_falls_back_to_the_surface() {
     // The break path resolves the spawn clear before removal (breaking.rs);
     // this drives the same hook + removal pair it uses.
     game.server.clear_bed_spawn_at(base);
-    game.server.world.remove_compound(base);
+    game.server.world_mut().remove_compound(base);
     assert!(
-        game.server.sessions[0].player.bed_spawn.is_none(),
+        game.server.sessions()[0].player().bed_spawn.is_none(),
         "destroying the bed removes the respawn point"
     );
 
@@ -365,10 +365,10 @@ fn broken_bed_clears_the_spawn_and_respawn_falls_back_to_the_surface() {
     game.server.tick_bed_and_respawn(0, &mut events);
 
     assert!(events.player_at(0).respawned);
-    assert_eq!(game.server.sessions[0].player.health(), MAX_HEALTH);
+    assert_eq!(game.server.sessions()[0].player().health(), MAX_HEALTH);
     // The fallback is the fresh-world pick: a random dry-land column within
     // 500 blocks of the origin (plus the block-centre offset).
-    let feet = game.server.sessions[0].player.pos;
+    let feet = game.server.sessions()[0].player().pos;
     let dist_sq = feet.x * feet.x + feet.z * feet.z;
     assert!(
         dist_sq <= 501.0 * 501.0,

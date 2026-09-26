@@ -86,7 +86,7 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
             ))]
         );
     }
-    app.server.sessions[0].player.set_mode(PlayerMode::Survival);
+    app.server.sessions_mut()[0].player_mut().set_mode(PlayerMode::Survival);
     let state = app.server.build_self_state(0);
     app.game
         .as_mut()

@@ -237,7 +237,7 @@ impl RemoteHub {
                         continue;
                     };
                     log::info!("player '{name}' joined as id {}", client.id.0);
-                    server.enqueue_join_chat(&name);
+                    server.chat.joined(&name);
                     self.broadcast(
                         ServerToClient::PlayerJoined {
                             id: client.id,
@@ -287,7 +287,7 @@ impl RemoteHub {
                 client.id.0
             );
             if let Some(name) = &name {
-                server.enqueue_leave_chat(name);
+                server.chat.left(name);
             }
             // Their queued-but-unrouted messages in `inbound` die at the
             // pump's id→index resolution (the session is gone).

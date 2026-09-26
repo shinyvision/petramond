@@ -90,27 +90,16 @@ pub mod mods {
     /// Load every enabled pack's wasm for `seed` and install its worldgen
     /// hooks.
     ///
-    /// The init call wants a full simulation context, so this builds a
-    /// THROWAWAY one — a scratch world, a player at the origin, an empty GUI
-    /// map and bus. Only registrations survive the call; the scratch state is
-    /// dropped immediately.
+    /// The init call wants a simulation context, so this builds a THROWAWAY
+    /// one — a scratch world and bus. Only registrations survive the call;
+    /// the scratch state is dropped immediately.
     pub fn load(seed: u32) -> WorldgenMods {
         let mut host = crate::modding::ModHost::load(seed, &Default::default());
         let mut world = crate::world::World::new(seed, 4);
-        let mut player =
-            crate::player::Player::new(petramond_math::world_pos::WorldPos::new(0.0, 80.0, 0.0));
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut bus = crate::events::EventBus::default();
         let mut systems = crate::events::TickSystems::default();
         let mut sound = 1u64;
-        host.initialize(
-            &mut world,
-            &mut player,
-            &mut gui,
-            &mut bus,
-            &mut systems,
-            &mut sound,
-        );
+        host.initialize(&mut world, &mut bus, &mut systems, &mut sound);
         WorldgenMods { _host: host }
     }
 }

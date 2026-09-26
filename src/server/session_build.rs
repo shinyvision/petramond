@@ -4,7 +4,7 @@
 //! wraps it), the headless dedicated server, and
 //! the in-process test harness.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::net::identity::PlayerKey;
@@ -12,8 +12,9 @@ use crate::player::Player;
 use crate::player::PlayerId;
 use crate::save::{LevelData, WorldSave};
 use crate::server::accounts::PlayerRegistry;
-use crate::server::game::ServerGame;
+use crate::server::game::{ServerGame, ServerParts};
 use crate::server::player::ConnectedPlayer;
+use crate::server::progression::RecipeCatalog;
 use crate::worker::JobPool;
 use crate::world::{World, WorldRole};
 use petramond_math::math::Vec3;
@@ -204,100 +205,38 @@ pub fn build_server_with_pool(
     });
     perf.mark("save_attach");
 
-    let has_local_session = local.is_some();
     // The mod host answers `SmeltResult` from the same loaded catalog the
     // engine cooks from — install a shared snapshot (the process-wide pattern
     // gen hooks use). The unlock index is the other view of that catalog.
     let recipes = load_recipes_for(&disabled_mods);
     crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
-    let unlocks = std::sync::Arc::new(petramond_world::crafting::UnlockIndex::build(
-        recipes.crafting(),
-    ));
+    let catalog = RecipeCatalog::new(recipes);
     perf.mark("recipes");
-    let mut server = ServerGame {
-        hostile_spawn_cache: Default::default(),
+    let mods = crate::modding::ModHost::load(seed, &disabled_mods);
+    perf.mark("mod_wasm_load");
+    let mut server = ServerGame::assemble(ServerParts {
         world,
-        sessions: local.into_iter().collect(),
-        has_local_session,
+        local,
         operators,
         accounts,
-        recipes,
-        unlocks: unlocks.clone(),
-        bus: crate::events::EventBus::default(),
-        systems: crate::events::TickSystems::default(),
-        mods: {
-            let mods = crate::modding::ModHost::load(seed, &disabled_mods);
-            perf.mark("mod_wasm_load");
-            mods
-        },
-        spawn_counter: 0,
-        next_spatial_sound_handle: 1,
-        tick_accumulator: 0.0,
-        paused: false,
-        // Headless: remote players may exist from boot — Pause is never
-        // honorable (the same permanent gate Open-to-LAN sets on a host).
-        lan_ever_opened: !has_local_session,
-        pending_wire_events: Vec::new(),
-        live_spatial_loops: Default::default(),
-        pending_chat: Vec::new(),
-        exposure_scratch: Default::default(),
-        next_chat_seq: 0,
-        autosave_t: 0.0,
-        chest_viewers: HashMap::new(),
-        container_holds: HashMap::new(),
-        last_shipped_env: None,
-    };
-    crate::server::daynight::install_core(&mut server.world, &mut server.systems);
-    crate::server::progression::install_core(&mut server.bus, unlocks);
+        catalog,
+        mods,
+    });
+    server.install_core_systems();
     // Reconcile the restored record against THIS world's catalog before the
     // first tick (a pack installed since the player last played). The local
     // client half clones this player, so it starts already caught up.
-    for sess in &mut server.sessions {
-        crate::server::progression::catch_up(&mut sess.player, &server.unlocks);
-        sess.sent_unlock_count = sess.player.progression.unlocked().len();
-    }
+    server.catch_up_sessions();
     // Replication is live from construction: block/water changes log into
     // the capture at the announce choke point and drain into each pump's
     // `TickUpdate`.
     server.world.set_replication_capture(true);
-    // Mod init runs AFTER any engine registrations so mods sort behind the
+    // Mod init runs AFTER the engine registrations so mods sort behind the
     // engine at equal priority (the bus ordering contract), and after the
-    // full session state exists so init-time host calls see a real world.
-    // The mod ABI is single-player-shaped: init (and global tick stages)
-    // see the HOST session's player (session 0).
-    // Headless has no host session; init runs against a discarded stand-in
-    // (every OTHER `sessions[0]` ABI site runs inside the fixed tick, which
-    // the empty-session gate holds until a session exists).
-    {
-        let ServerGame {
-            world,
-            sessions,
-            bus,
-            systems,
-            mods,
-            next_spatial_sound_handle,
-            ..
-        } = &mut server;
-        let mut stand_in;
-        let (host_player, host_gui) = match sessions.first_mut() {
-            Some(host) => (&mut host.player, &mut host.gui_state),
-            None => {
-                stand_in = (
-                    spawn_player(seed),
-                    petramond_world::gui_state::empty_gui_state(),
-                );
-                (&mut stand_in.0, &mut stand_in.1)
-            }
-        };
-        mods.initialize(
-            world,
-            host_player,
-            host_gui,
-            bus,
-            systems,
-            next_spatial_sound_handle,
-        );
-    }
+    // world state exists so init-time host calls see a real world. Init
+    // belongs to no player — listen and headless servers alike run it
+    // actor-less.
+    server.mods.initialize(&mut server.world);
     perf.mark("mod_init");
     // Kick the first streaming wave NOW — after mod init, so the session's
     // worldgen hooks are installed before any gen job runs. The spawn area's

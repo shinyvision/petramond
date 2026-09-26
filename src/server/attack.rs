@@ -63,7 +63,7 @@ impl ServerGame {
     /// reports `swung_hand`; a click on a block (mining) does neither.
     pub fn tick_attack(&mut self, s: usize, events: &mut TickEvents) {
         let sess = &mut self.sessions[s];
-        sess.attack_cooldown = sess.attack_cooldown.saturating_sub(1);
+        sess.sim.attack_cooldown = sess.sim.attack_cooldown.saturating_sub(1);
         // A mod-denied swing is CONSUMED and dropped, never queued: the press
         // is spent, so releasing the claim cannot fire a stored punch. It arms
         // no cooldown either — a denied action did not happen, so nothing
@@ -73,9 +73,9 @@ impl ServerGame {
             .denied_actions()
             .denies(mod_api::BodyAction::Attack)
         {
-            sess.pending_attack = false;
-            sess.pending_attack_mob = None;
-            sess.pending_attack_player = None;
+            sess.input.pending_attack = false;
+            sess.input.pending_attack_mob = None;
+            sess.input.pending_attack_player = None;
             return;
         }
         // A press landing while the hand is still following through is HELD,
@@ -85,25 +85,25 @@ impl ServerGame {
         // validated against. The client holds its own press the same way, so
         // the two clocks queue the same swing rather than racing over whose
         // window ended first.
-        if sess.attack_cooldown != 0 {
+        if sess.sim.attack_cooldown != 0 {
             return;
         }
-        let mob_target = std::mem::take(&mut sess.pending_attack_mob);
-        let player_target = std::mem::take(&mut sess.pending_attack_player);
-        let pressed = std::mem::take(&mut sess.pending_attack);
+        let mob_target = std::mem::take(&mut sess.input.pending_attack_mob);
+        let player_target = std::mem::take(&mut sess.input.pending_attack_player);
+        let pressed = std::mem::take(&mut sess.input.pending_attack);
         if !pressed {
             return;
         }
         // The claimed targets resolve through the authoritative validators
         // BEFORE any consumer (mods included) can observe them: a forged,
         // vanished, dead, occluded or out-of-reach claim is no target at all.
-        let mob = self
-            .authoritative_mob_target(s, mob_target)
-            .map(|idx| self.world.mobs().instances()[idx].id());
+        let mob =
+            super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], mob_target)
+                .map(|idx| self.world.mobs().instances()[idx].id());
         let target = player_target
             .and_then(|t| self.authoritative_player_target(s, PlayerId(t)))
             .map(|t| self.sessions[t].id);
-        let look = self.sessions[s].look;
+        let look = self.sessions[s].input.look;
         let attempt = AttackAttempt {
             block: look.map(|t| t.block),
             face: look.map(|t| t.normal),
@@ -124,7 +124,7 @@ impl ServerGame {
             // own pacing gates the hand (a swing animation barring attacks
             // mid-arc) claims 0.0 here and the animation becomes the rate
             // limit; with no claim the constant stands.
-            self.sessions[s].attack_cooldown = self.sessions[s].player.scaled_ticks(
+            self.sessions[s].sim.attack_cooldown = self.sessions[s].player.scaled_ticks(
                 mod_api::PlayerAttribute::AttackCooldown,
                 ATTACK_COOLDOWN_TICKS,
             );
@@ -138,9 +138,8 @@ impl ServerGame {
 
     /// The mod consumer: dispatch the attempt to every registered
     /// `attack_attempt` handler; a handler's Cancel is a claim. Dispatched
-    /// within the sessions view so handlers (and the host calls they make —
-    /// `PlayerState`, `Players`, `DamageMob` naming the presser) resolve the
-    /// acting session.
+    /// with the presser as the actor, so handlers (and the host calls they
+    /// make — `PlayerState`, `DamageMob` naming the presser) resolve them.
     fn consume_registered_attack(
         &mut self,
         s: usize,
@@ -152,18 +151,12 @@ impl ServerGame {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            Self::with_sessions_view(sessions, s, |sess| {
-                bus.attack_attempt(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut ev,
-                ) == Outcome::Cancel
-            })
+            let actor = Some(sessions[s].id);
+            let bus = mods.bus_mut();
+            bus.attack_attempt(world, sessions, actor, events, &mut ev) == Outcome::Cancel
         };
         if claimed {
             Claim::Swung
@@ -182,7 +175,7 @@ impl ServerGame {
         events: &mut TickEvents,
     ) -> Claim {
         if let Some(target) = attempt.target {
-            if let Some(t) = self.sessions.iter().position(|sess| sess.id == target) {
+            if let Some(t) = self.sessions.index_of(target) {
                 self.resolve_player_attack(s, t, events);
             }
             Claim::Swung
@@ -193,7 +186,6 @@ impl ServerGame {
                 // The pipeline may cancel the damage; the swing still happened
                 // and still arms the cooldown.
                 self.damage_mob_through_pipeline(
-                    s,
                     idx,
                     damage,
                     DamageSource::PlayerAttack(self.sessions[s].id),
@@ -215,8 +207,7 @@ impl ServerGame {
     fn roll_attack_damage(&mut self, s: usize) -> f32 {
         let (lo, hi) =
             petramond_world::item::attack_damage(self.sessions[s].player.inventory.selected());
-        self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo)
+        lo + crate::entity::hash01(self.seeds.draw() as u64) * (hi - lo)
     }
 
     /// PvP target validation, the player twin of `authoritative_mob_target`:
@@ -227,7 +218,7 @@ impl ServerGame {
     /// block-target reach check uses (`apply_player_update`). Any failure =
     /// no target (the press degrades to the air punch the swing already is).
     fn authoritative_player_target(&self, s: usize, target: PlayerId) -> Option<usize> {
-        let t = self.sessions.iter().position(|sess| sess.id == target)?;
+        let t = self.sessions.index_of(target)?;
         if t == s {
             return None; // self-attack impossible (targeting skips own id; belt and braces)
         }

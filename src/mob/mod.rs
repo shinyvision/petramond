@@ -107,6 +107,18 @@ pub enum EntityRef {
     Mob(u64),
 }
 
+impl EntityRef {
+    /// The player this names, if it names one — the actor a dispatch on its
+    /// behalf acts for (a mob's action is actor-less).
+    #[inline]
+    pub fn player(self) -> Option<crate::player::PlayerId> {
+        match self {
+            Self::Player(id) => Some(id),
+            Self::Mob(_) => None,
+        }
+    }
+}
+
 /// A typed value in a mob's tag map. Tags are engine- or mod-owned key/value
 /// pairs attached to a live mob instance; they persist with the mob's chunk
 /// and are visible to AI and HostCalls. The engine reserves the `petramond:`

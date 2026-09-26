@@ -1,4 +1,3 @@
-use crate::events::tick::TickEvents;
 use crate::net::identity::PlayerKey;
 use crate::net::protocol::{ItemSlotWire, JoinData, JoinRejectReason, SelfRestore};
 use crate::player::PlayerId;
@@ -15,7 +14,7 @@ impl ServerGame {
         if self.sessions.iter().any(|s| s.key == *key) {
             return Err(JoinRejectReason::AlreadyConnected);
         }
-        if self.next_free_player_id().is_none() {
+        if self.sessions.next_free_id().is_none() {
             return Err(JoinRejectReason::ServerFull);
         }
         Ok(())
@@ -39,7 +38,8 @@ impl ServerGame {
     ) -> Result<(Box<JoinData>, String), JoinRejectReason> {
         self.check_admission(&key)?;
         let id = self
-            .next_free_player_id()
+            .sessions
+            .next_free_id()
             .expect("check_admission found a free id");
         let sessions = &self.sessions;
         let claim = self
@@ -58,14 +58,14 @@ impl ServerGame {
             .unwrap_or_else(|| crate::server::session_build::spawn_player(self.world.seed));
         // Reconcile the restored record against this world's catalog before
         // the handshake ships it (see `server::progression::catch_up`).
-        crate::server::progression::catch_up(&mut player, &self.unlocks);
+        crate::server::progression::catch_up(&mut player, self.catalog.unlocks());
         let data = Box::new(JoinData {
             player_id: id,
             seed: self.world.seed,
             clock: crate::server::daynight::current_clock(&self.world),
             tables: crate::net::remap::local_name_tables(),
             self_restore: self_restore_from(&player),
-            crafting_recipes: self.recipes.crafting().to_data(),
+            crafting_recipes: self.catalog.recipes().crafting().to_data(),
             players: self
                 .sessions
                 .iter()
@@ -74,13 +74,13 @@ impl ServerGame {
         });
         let mut session = ConnectedPlayer::new(id, key, name.clone(), player, view_distance);
         // The handshake already carried the full unlocked list.
-        session.sent_unlock_count = session.player.progression.unlocked().len();
-        session.terrain.seed_client_cache(cached_sections);
-        // Reseed the env params for the newcomer (see the local-join twin in
-        // game.rs): a static param map would otherwise never reach them.
-        self.last_shipped_env = None;
-        self.sessions.push(session);
-        self.replay_spatial_loops_to(self.sessions.len() - 1);
+        session.replication.sent_unlock_count = session.player.progression.unlocked().len();
+        session.transport.terrain.seed_client_cache(cached_sections);
+        // Reseed the env params for the newcomer: a static param map would
+        // otherwise never reach them.
+        self.broadcast.reseed_env();
+        self.broadcast.replay_spatial_loops(&mut session);
+        self.sessions.join(session);
         Ok((data, name))
     }
 
@@ -89,7 +89,7 @@ impl ServerGame {
     /// through the same `JoinData` path instead of reading server memory.
     /// `None` on a headless server (no local session).
     pub fn local_join_data(&self) -> Option<Box<JoinData>> {
-        if !self.has_local_session {
+        if !self.sessions.has_local_session() {
             return None;
         }
         let local = self.sessions.first()?;
@@ -99,20 +99,12 @@ impl ServerGame {
             clock: crate::server::daynight::current_clock(&self.world),
             tables: crate::net::remap::local_name_tables(),
             self_restore: self_restore_from(&local.player),
-            crafting_recipes: self.recipes.crafting().to_data(),
+            crafting_recipes: self.catalog.recipes().crafting().to_data(),
             players: self.sessions[1..]
                 .iter()
                 .map(|s| (s.id, s.name.clone()))
                 .collect(),
         }))
-    }
-
-    /// The smallest `PlayerId` no connected session uses (freed ids
-    /// recycle); `None` when all 256 are taken.
-    fn next_free_player_id(&self) -> Option<PlayerId> {
-        (0..=u8::MAX)
-            .map(PlayerId)
-            .find(|id| !self.sessions.iter().any(|s| s.id == *id))
     }
 
     /// The leave path, in order: close the open menu (cursor/craft returns,
@@ -129,17 +121,16 @@ impl ServerGame {
     /// iterations — the hub re-resolves ids at every drain, and the pump
     /// resolves its tagged inbox against the post-leave list.
     pub fn remove_remote_session(&mut self, id: PlayerId) -> Option<String> {
-        let s = self.sessions.iter().position(|x| x.id == id)?;
-        if s == 0 && self.has_local_session {
+        let s = self.sessions.index_of(id)?;
+        if s == 0 && self.sessions.has_local_session() {
             debug_assert!(false, "the local session never leaves");
             return None;
         }
-        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_spatial_sound_handle);
+        let mut events = self.mods.open_feed();
         self.close_open_menu_for(s, &mut events);
         self.tick_drops(s, &mut events);
-        self.next_spatial_sound_handle = events.next_spatial_sound_handle();
-        self.pending_wire_events
-            .extend(wire_world_events(&mut events.world));
+        self.mods.settle_feed(&events);
+        self.broadcast.bank_wire_events(wire_world_events(&mut events.world));
         let obstacles = self.world.mobs().solid_obstacles();
         let snapshot = self.player_snapshot_for_save(s, &obstacles);
         self.detach_departing_session(s);
@@ -153,7 +144,7 @@ impl ServerGame {
                 );
             }
         }
-        Some(self.sessions.swap_remove(s).name)
+        Some(self.sessions.leave(s).name)
     }
 }
 

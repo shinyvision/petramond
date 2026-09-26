@@ -196,10 +196,9 @@ mod tests {
     use mod_api::{HostCall, HostRet};
 
     use crate::events::tick::TickEvents;
-    use crate::events::{PostQueue, SimCtx};
+    use crate::events::{PostQueue, RosterRefs, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::player::Player;
     use crate::world::World;
     use petramond_math::world_pos::WorldPos;
 
@@ -209,14 +208,13 @@ mod tests {
     fn emit_sound_rides_the_tick_feed() {
         let mut data = ModStoreData::new("alpha", 1);
         let mut world = World::new(1, 1);
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -260,14 +258,13 @@ mod tests {
                 0.0
             ));
             let mob_id = world.mobs().instances()[0].id();
-            let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+            let mut nobody = RosterRefs::empty();
             let mut feed = TickEvents::default();
             let mut queue = PostQueue::default();
-            let mut gui = petramond_world::gui_state::empty_gui_state();
             let mut ctx = SimCtx {
                 world: &mut world,
-                player: &mut player,
-                gui_state: &mut gui,
+                actor: None,
+                players: &mut nobody,
                 feed: &mut feed,
                 queue: &mut queue,
             };

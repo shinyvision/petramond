@@ -24,8 +24,8 @@ fn targeted_chat_reaches_only_listed_sessions() {
     let remote_s = server.add_session_for_test(player);
     let remote_id = server.sessions[remote_s].id;
 
-    server.enqueue_authored_chat("only-remote", ChatTargets::Players(vec![remote_id]));
-    server.enqueue_authored_chat("everyone", ChatTargets::All);
+    server.chat.authored("only-remote", ChatTargets::Players(vec![remote_id]));
+    server.chat.authored("everyone", ChatTargets::All);
 
     let out = server.pump(0.0, &mut Vec::new());
     let local = chat_texts(&out.msgs);
@@ -112,15 +112,15 @@ fn a_cancelled_pre_damage_applies_neither_damage_nor_its_knockback() {
     use crate::events::{tick::TickEvents, DamageSource, Outcome};
 
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    server.sessions[0].intent_gameplay = true;
-    server.sessions[0].intent_use_held = true;
+    server.sessions[0].input.intent_gameplay = true;
+    server.sessions[0].input.intent_use_held = true;
     server.publish_player_inputs();
 
     // The handler cancels on a session-side intent — the class of predicate
     // that silently answered its default before the dispatch named its victim.
-    server.bus.on_player_damage_pre(0, move |ctx, _ev| {
+    server.mods.bus_mut().on_player_damage_pre(0, move |ctx, _ev| {
         let holding_use = ctx
-            .acting_player_id()
+            .actor
             .and_then(|id| {
                 ctx.world
                     .player_roster()
@@ -159,7 +159,7 @@ fn a_cancelled_pre_damage_applies_neither_damage_nor_its_knockback() {
     );
 
     // Release the intent and the same strike lands — non-vacuous.
-    server.sessions[0].intent_use_held = false;
+    server.sessions[0].input.intent_use_held = false;
     assert!(hit(&mut server), "an unguarded strike must land");
     assert_eq!(server.sessions[0].player.health(), 16);
 }
@@ -230,7 +230,7 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     use petramond_math::math::IVec3;
 
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    server.sessions[0].intent_gameplay = true;
+    server.sessions[0].input.intent_gameplay = true;
 
     // A solid cell right under the player's feet, targeted and being mined.
     let feet = server.sessions[0].player.pos;
@@ -242,16 +242,16 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     server
         .world
         .set_block_world(cell.x, cell.y, cell.z, petramond_world::block::Block::Stone);
-    server.sessions[0].look = Some(crate::net::protocol::TargetRef::face(
+    server.sessions[0].input.look = Some(crate::net::protocol::TargetRef::face(
         cell,
         IVec3::new(0, 1, 0),
     ));
-    server.sessions[0].intent_break_held = true;
+    server.sessions[0].input.intent_break_held = true;
 
     let mut events = TickEvents::default();
     server.tick_mining(0, &mut events);
     assert_eq!(
-        server.sessions[0].mining.overlay().map(|(p, _)| p),
+        server.sessions[0].sim.mining.overlay().map(|(p, _)| p),
         Some(cell),
         "an unclaimed body mines what it is looking at"
     );
@@ -262,19 +262,19 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
         .set_denied_actions("combat", DeniedActions::of([Attack, Mine]));
     server.tick_mining(0, &mut events);
     assert!(
-        server.sessions[0].mining.overlay().is_none(),
+        server.sessions[0].sim.mining.overlay().is_none(),
         "a denied mine RESETS the timer, it does not pause it"
     );
 
     // The attack half. Look at NOTHING first: a click on a block is mining,
     // and never swings whatever the claim says — asserting "no swing" with a
     // cell under the crosshair passes for the wrong reason.
-    server.sessions[0].look = None;
-    server.sessions[0].pending_attack = true;
+    server.sessions[0].input.look = None;
+    server.sessions[0].input.pending_attack = true;
     server.tick_attack(0, &mut events);
     assert!(!events.player_at(0).swung_hand, "no swing while denied");
     assert_eq!(
-        server.sessions[0].attack_cooldown, 0,
+        server.sessions[0].sim.attack_cooldown, 0,
         "a denied swing arms no cooldown — it did not happen"
     );
 
@@ -286,7 +286,7 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     );
 
     // Non-vacuous: the same press on a released body swings.
-    server.sessions[0].pending_attack = true;
+    server.sessions[0].input.pending_attack = true;
     server.tick_attack(0, &mut events);
     assert!(events.player_at(0).swung_hand);
 }
@@ -318,27 +318,87 @@ fn a_mob_holding_a_chest_open_lifts_its_lid_until_it_lets_go_or_leaves() {
     let mob = server.world.mobs().instances()[0].id();
 
     let mut events = TickEvents::default();
-    server.hold_container(mob, chest, true, &mut events);
-    server.hold_container(mob, chest, true, &mut events);
+    server
+        .containers
+        .set_mob_hold(&server.world, mob, chest, true, &mut events);
+    server
+        .containers
+        .set_mob_hold(&server.world, mob, chest, true, &mut events);
     assert_eq!(
-        server.chest_viewers.get(&chest),
-        Some(&1),
+        server.chest_viewers(chest),
+        1,
         "a mob is one viewer however often it asks"
     );
     assert_eq!(events.world.chest_changed, vec![(chest, true)]);
 
-    server.hold_container(mob, chest, false, &mut events);
-    assert!(!server.chest_viewers.contains_key(&chest));
-    server.hold_container(mob, chest, true, &mut events);
+    server
+        .containers
+        .set_mob_hold(&server.world, mob, chest, false, &mut events);
+    assert_eq!(server.chest_viewers(chest), 0);
+    server
+        .containers
+        .set_mob_hold(&server.world, mob, chest, true, &mut events);
 
     server.world.mobs_mut().remove(0);
-    server.release_absent_holders(&mut events);
-    assert!(
-        !server.chest_viewers.contains_key(&chest),
+    server
+        .containers
+        .release_absent_holders(server.world.mobs(), &mut events);
+    assert_eq!(
+        server.chest_viewers(chest),
+        0,
         "a mob gone from the world lets go"
     );
     assert_eq!(
         events.world.chest_changed,
         vec![(chest, true), (chest, false), (chest, true), (chest, false)]
+    );
+}
+
+/// Every dispatch names its actor explicitly: a death's post handlers act for
+/// the player who died (not session 0), and a tick system acts for nobody
+/// while still reaching every connected session by id.
+#[test]
+fn post_handlers_act_for_the_events_player_and_systems_for_nobody() {
+    use crate::events::tick::TickEvents;
+    use crate::events::{Attach, DamageSource, PostEventKind, Stage};
+    use std::sync::{Arc, Mutex};
+
+    let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let second = server.add_session_for_test(player);
+    let second_id = server.sessions[second].id;
+
+    type Seen = Arc<Mutex<Vec<(&'static str, Option<crate::player::PlayerId>, usize)>>>;
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    {
+        let seen = Arc::clone(&seen);
+        server
+            .mods
+            .bus_mut()
+            .on_post(PostEventKind::PlayerDied, 0, move |ctx, _| {
+                let reachable = ctx.player_ids().len();
+                seen.lock().unwrap().push(("died", ctx.actor, reachable));
+            });
+    }
+    {
+        let seen = Arc::clone(&seen);
+        server
+            .mods
+            .systems_mut()
+            .attach(Attach::Before(Stage::Mining), 0, move |ctx| {
+                let reachable = ctx.player_ids().len();
+                seen.lock().unwrap().push(("system", ctx.actor, reachable));
+            });
+    }
+
+    let mut events = TickEvents::default();
+    let health = server.sessions[second].player.health();
+    server.damage_player(second, health, DamageSource::Fall, None, &mut events);
+    // The tick drains the queued death first, then opens the Mining stage.
+    server.game_tick_step(&mut events);
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![("died", Some(second_id), 2), ("system", None, 2)]
     );
 }

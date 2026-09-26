@@ -110,7 +110,7 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
     let mut server = crate::server::session_build::build_headless_session("", 3, 2);
     let dismounts = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&dismounts);
-    server.bus.on_post(
+    server.mods.bus_mut().on_post(
         crate::events::PostEventKind::PlayerDismounted,
         0,
         move |_, event| {
@@ -137,7 +137,7 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
         .world
         .riding_mut()
         .mount(0, crate::mob::riding::MountTarget::Mob(77), 0));
-    server.sessions[0].mount = server.world.riding().mount_of(0);
+    server.sessions[0].sim.mount = server.world.riding().mount_of(0);
 
     assert_eq!(
         server.remove_remote_session(PlayerId(0)).as_deref(),
@@ -151,7 +151,7 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
         .expect("admitted");
     assert_eq!(second.player_id, PlayerId(0), "the freed id recycles");
     assert_eq!(server.world.riding().mount_of(0), None);
-    assert_eq!(server.sessions[0].mount, None);
+    assert_eq!(server.sessions[0].sim.mount, None);
 
     server.pump_tagged(crate::events::tick::TICK_DT * 1.01, &mut Vec::new(), &[]);
     assert_eq!(dismounts.load(AtomicOrdering::SeqCst), 1);
@@ -568,9 +568,9 @@ fn full_lan_join_place_pause_gate_and_leave() {
 #[test]
 fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     let mut server = crate::server::session_build::build_headless_session("", 11, 2);
-    assert!(!server.has_local_session);
+    assert!(!server.sessions.has_local_session());
     assert!(server.sessions.is_empty());
-    assert!(server.lan_ever_opened, "the pause gate starts open");
+    assert!(server.clock.lan_ever_opened(), "the pause gate starts open");
     // In-process smoke first: pumping an EMPTY headless server runs no
     // ticks, produces no recipients, and panics nowhere.
     let t0 = server.world.current_tick();

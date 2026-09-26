@@ -299,7 +299,7 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
 fn lan_menu_transition_never_stamps_an_unpopulated_shell_frame() {
     let mut app = app();
     app.session_ui.lan_port = Some(7434);
-    app.server.lan_ever_opened = true;
+    app.server.open_to_lan_for_test();
 
     app.handle_control(Control::CloseScreen, true); // ESC → Pause
     app.handle_control(Control::CloseScreen, false);

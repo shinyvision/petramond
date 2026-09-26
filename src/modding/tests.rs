@@ -8,8 +8,7 @@ use std::process::Command;
 use mod_api::{AttachSide, HostCall, Stage as ApiStage};
 
 use crate::events::tick::TickEvents;
-use crate::events::{Attach, EventBus, PostEvent, Stage, TickSystems};
-use crate::player::Player;
+use crate::events::{Attach, EventBus, PostEvent, RosterRefs, Stage, TickSystems};
 use crate::world::World;
 use petramond_math::math::Vec3;
 
@@ -20,10 +19,10 @@ use petramond_math::world_pos::WorldPos;
 mod abi;
 mod conditions;
 
+/// A player-less simulation: the contract tests below exercise the host's
+/// failure policy, not any player's state.
 struct Sim {
     world: World,
-    player: Player,
-    gui_state: std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
     feed: TickEvents,
     bus: EventBus,
     systems: TickSystems,
@@ -33,8 +32,6 @@ impl Sim {
     fn new() -> Self {
         Self {
             world: World::new(1, 1),
-            player: Player::new(WorldPos::new(0.0, 80.0, 0.0)),
-            gui_state: petramond_world::gui_state::empty_gui_state(),
             feed: TickEvents::default(),
             bus: EventBus::default(),
             systems: TickSystems::default(),
@@ -45,8 +42,6 @@ impl Sim {
         let mut next_spatial_sound_handle = 1;
         host.initialize(
             &mut self.world,
-            &mut self.player,
-            &mut self.gui_state,
             &mut self.bus,
             &mut self.systems,
             &mut next_spatial_sound_handle,
@@ -54,11 +49,15 @@ impl Sim {
     }
 
     fn run_slot(&mut self, at: Attach) {
+        self.run_slot_with(at, &mut RosterRefs::empty());
+    }
+
+    /// [`run_slot`](Self::run_slot) with `players` connected.
+    fn run_slot_with(&mut self, at: Attach, players: &mut RosterRefs<'_>) {
         self.systems.run(
             at,
             &mut self.world,
-            &mut self.player,
-            &mut self.gui_state,
+            players,
             &mut self.feed,
             self.bus.queue_mut(),
         );
@@ -360,16 +359,13 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
     assert!(ran_after.load(std::sync::atomic::Ordering::Relaxed));
 
     // The bus keeps draining post events normally with a disabled mod around.
-    sim.bus.emit(PostEvent::PlayerDied);
+    sim.bus.emit(PostEvent::PlayerDied {
+        player: crate::player::PlayerId(0),
+    });
     let Sim {
-        world,
-        player,
-        gui_state,
-        feed,
-        bus,
-        ..
+        world, feed, bus, ..
     } = &mut sim;
-    bus.drain_post(world, player, gui_state, feed);
+    bus.drain_post(world, &mut RosterRefs::empty(), feed);
 }
 
 /// Contract: the registration window is `mod_init` only — a registration
@@ -725,8 +721,8 @@ fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
     };
     let outcome = sim.bus.projectile_hit(
         &mut sim.world,
-        &mut sim.player,
-        &mut sim.gui_state,
+        &mut RosterRefs::empty(),
+        None,
         &mut sim.feed,
         &mut ev,
     );
@@ -741,24 +737,26 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
     use petramond_world::gui_state::{intern_kind, MenuSlot, PointerButton};
     use petramond_world::item::{ItemStack, ItemType};
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-    let player = crate::server::session_build::spawn_player(server.world.seed);
+    let player = crate::server::session_build::spawn_player(server.world().seed);
     let s = server.add_session_for_test(player);
-    let player_id = server.sessions[s].id;
-    server.sessions[0]
-        .player
+    let player_id = server.sessions()[s].id();
+    server.sessions_mut()[0]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Coal, 5));
-    server.sessions[s]
-        .player
+    server.sessions_mut()[s]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Coal, 5));
     let first = intern_kind("hostile:first").unwrap();
     let second = intern_kind("hostile:second").unwrap();
     let anchor = IVec3::new(1, 64, 1);
-    server.sessions[s]
+    let (world, sessions) = server.world_and_sessions_mut();
+    sessions[s]
+        .sim_mut()
         .menu
-        .open_document_gui(&mut server.world, first, Some(anchor.into()));
-    server.mods = ModHost::from_instances(vec![calling_guest(
+        .open_document_gui(world, first, Some(anchor.into()));
+    server.replace_mod_host_for_test(ModHost::from_instances(vec![calling_guest(
         "hostile",
         &[
             HostCall::TakeItem {
@@ -772,9 +770,9 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
                 at: Some(mod_api::ContainerAddress::Block(anchor.to_array())),
             },
         ],
-    )]);
-    server.sessions[s]
-        .pending_menu_actions
+    )]));
+    server.sessions_mut()[s]
+        .input_mut().pending_menu_actions
         .push(PendingMenuAction::SlotClick {
             slot: MenuSlot::Widget("navigate"),
             button: PointerButton::Primary,
@@ -787,16 +785,16 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
     server.apply_deferred_actions(&mut events);
     server.tick_menu(s, &mut events);
     assert_eq!(
-        server.sessions[s].request_open_gui,
+        server.sessions()[s].replication().request_open_gui,
         Some((second, Some(anchor.into())))
     );
-    assert_eq!(server.sessions[0].request_open_gui, None);
+    assert_eq!(server.sessions()[0].replication().request_open_gui, None);
     assert_eq!(
-        server.sessions[s].player.inventory.slot(0).unwrap().count,
+        server.sessions()[s].player().inventory.slot(0).unwrap().count,
         3
     );
     assert_eq!(
-        server.sessions[0].player.inventory.slot(0).unwrap().count,
+        server.sessions()[0].player().inventory.slot(0).unwrap().count,
         5
     );
 }

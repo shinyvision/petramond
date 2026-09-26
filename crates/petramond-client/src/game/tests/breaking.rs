@@ -15,9 +15,9 @@ fn stone_pickaxe_harvests_iron_as_raw_iron() {
         (15, petramond_world::light::BlockLight6::DARK),
         petramond_world::item::VariantId::NONE,
     );
-    assert_eq!(game.server.world.item_entities().len(), 1);
+    assert_eq!(game.server.world().item_entities().len(), 1);
     assert_eq!(
-        game.server.world.item_entities()[0].stack.item,
+        game.server.world().item_entities()[0].stack.item,
         ItemType::RawIron
     );
 }
@@ -31,7 +31,7 @@ fn copper_ore_drops_two_to_four_raw_copper() {
         (15, petramond_world::light::BlockLight6::DARK),
         petramond_world::item::VariantId::NONE,
     );
-    let drops = game.server.world.item_entities();
+    let drops = game.server.world().item_entities();
     assert_eq!(drops.len(), 1);
     assert_eq!(drops[0].stack.item, ItemType::RawCopper);
     assert!((2..=4).contains(&drops[0].stack.count), "2–4 raw copper");

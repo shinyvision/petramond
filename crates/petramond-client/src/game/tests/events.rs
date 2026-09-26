@@ -16,29 +16,20 @@ fn player_died_fires_exactly_once_on_the_zero_transition() {
     {
         let deaths = deaths.clone();
         game.server
-            .bus
+            .bus_mut()
             .on_post(PostEventKind::PlayerDied, 0, move |_, _| {
                 *deaths.lock().unwrap() += 1;
             });
     }
     let mut feed = TickEvents::default();
-    game.server.sessions[0].player.set_health(1);
+    game.server.sessions_mut()[0].player_mut().set_health(1);
     game.server
         .damage_player(0, 2, DamageSource::Fall, None, &mut feed); // 1 → 0: dies
     game.server
         .damage_player(0, 2, DamageSource::Fall, None, &mut feed); // already dead: no re-fire
     game.server
         .damage_player(0, 0, DamageSource::Fall, None, &mut feed); // the zero fall drain: non-event
-    {
-        let petramond::server::game::ServerGame {
-            world,
-            sessions,
-            bus,
-            ..
-        } = &mut game.server;
-        let sess = &mut sessions[0];
-        bus.drain_post(world, &mut sess.player, &mut sess.gui_state, &mut feed);
-    }
+    game.server.drain_post_events(&mut feed);
     assert_eq!(*deaths.lock().unwrap(), 1);
 }
 
@@ -54,7 +45,7 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
     ] {
         let log = log.clone();
         game.server
-            .systems
+            .systems_mut()
             .attach(at, 0, move |_| log.lock().unwrap().push(label));
     }
     {
@@ -62,16 +53,18 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
         // within the same tick — not linger to a later tick.
         let log = log.clone();
         game.server
-            .systems
+            .systems_mut()
             .attach(Attach::Before(Stage::Placement), 0, move |ctx| {
                 log.lock().unwrap().push("emit");
-                ctx.queue.emit(PostEvent::PlayerDied);
+                ctx.queue.emit(PostEvent::PlayerDied {
+                    player: petramond::player::PlayerId(0),
+                });
             });
     }
     {
         let log = log.clone();
         game.server
-            .bus
+            .bus_mut()
             .on_post(PostEventKind::PlayerDied, 0, move |_, _| {
                 log.lock().unwrap().push("post_handler");
             });
@@ -97,7 +90,7 @@ fn spatial_sound_commands_reach_game_events_without_loss() {
     let sound = petramond_world::sound_registry::by_name("petramond:item_pickup")
         .expect("engine sound exists");
     game.server
-        .systems
+        .systems_mut()
         .attach(Attach::Before(Stage::Mining), 0, move |ctx| {
             ctx.feed
                 .world

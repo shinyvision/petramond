@@ -53,7 +53,7 @@ impl fmt::Display for AbiVersion {
 
 /// The ABI revision this crate describes — what the engine speaks and what
 /// every guest built against this crate declares.
-pub const ABI_VERSION: AbiVersion = AbiVersion { major: 1, minor: 0 };
+pub const ABI_VERSION: AbiVersion = AbiVersion { major: 1, minor: 1 };
 
 /// A set of optional host feature domains. A guest declares the ones it cannot
 /// run without (`Mod::REQUIRES` in the SDK); the host refuses a guest whose
@@ -84,9 +84,16 @@ impl Capabilities {
     pub const MOD_GUIS: Self = Self(1 << 5);
     /// Cross-instance worldgen memo (`Memo*` calls).
     pub const WORLDGEN_MEMO: Self = Self(1 << 6);
+    /// Explicit player addressing (ABI 1.1): every dispatch names its actor
+    /// (`ActingPlayer`, `None` for tick systems, block hooks, spawn picks,
+    /// `mod_init` and mob actions), the single-player-era calls that act on
+    /// "the acting player" refuse an actor-less dispatch, and each of them
+    /// has a twin that names its player (`PlayerStateOf`, `GiveItemTo`,
+    /// `TeleportPlayer`, `GuiOpenFor`, ...).
+    pub const EXPLICIT_PLAYERS: Self = Self(1 << 7);
 
     /// Every named capability with its display name, in bit order.
-    const NAMED: [(Self, &'static str); 7] = [
+    const NAMED: [(Self, &'static str); 8] = [
         (Self::WORLDGEN, "worldgen"),
         (Self::CLIENT_MODULE, "client-module"),
         (Self::SHAPE_BAKES, "shape-bakes"),
@@ -94,6 +101,7 @@ impl Capabilities {
         (Self::BLOCK_BEHAVIORS, "block-behaviors"),
         (Self::MOD_GUIS, "mod-guis"),
         (Self::WORLDGEN_MEMO, "worldgen-memo"),
+        (Self::EXPLICIT_PLAYERS, "explicit-players"),
     ];
 
     pub const fn bits(self) -> u64 {

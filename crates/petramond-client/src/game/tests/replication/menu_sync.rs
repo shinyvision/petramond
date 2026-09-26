@@ -32,17 +32,17 @@ fn test_crafting_recipe(
 #[test]
 fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
     let mut game = game_on_empty_chunk();
-    let rev = |game: &super::common::TestGame| game.server.sessions[0].player.inventory.revision();
+    let rev = |game: &super::common::TestGame| game.server.sessions()[0].player().inventory.revision();
 
     // Pickup: an eligible drop at the body centre is collected in one tick.
-    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     let mut drop = DroppedItem::new(
-        game.server.sessions[0].player.body_center(),
+        game.server.sessions()[0].player().body_center(),
         ItemStack::new(ItemType::Dirt, 2),
         1,
     );
     drop.ticks_lived = petramond::world::ITEM_PICKUP_DELAY_TICKS;
-    game.server.world.spawn_item(drop);
+    game.server.world_mut().spawn_item(drop);
     let before = rev(&game);
     assert!(game.server.item_pickup_tick(0), "the drop was collected");
     assert_ne!(rev(&game), before, "a pickup bumps the revision");
@@ -59,7 +59,7 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
     game.apply_latched_actions_for_test();
 
     // Drop: Q drops one of the selected stack.
-    game.server.sessions[0].player.inventory = filled_inventory();
+    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
     let before = rev(&game);
     game.drop_selected_item(false);
     game.apply_latched_actions_for_test();
@@ -77,8 +77,8 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
             )],
             Vec::new(),
         ));
-    game.server.sessions[0]
-        .player
+    game.server.sessions_mut()[0]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Coal, 1));
     game.server
@@ -127,12 +127,12 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
             2.5, 64.0, 2.5,
         )));
-    game.server.sessions[0]
-        .player
+    game.server.sessions_mut()[0]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Coal, 1));
-    game.server.sessions[remote]
-        .player
+    game.server.sessions_mut()[remote]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Dirt, 1));
     game.server.open_crafting_for(0, CraftingStation::Inventory);
@@ -189,10 +189,10 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
         },
     );
     game.server.tick_menu(0, &mut events);
-    assert!(game.server.sessions[0].menu.craft_output().is_none());
+    assert!(game.server.sessions()[0].menu().craft_output().is_none());
     assert_eq!(
-        game.server.sessions[remote]
-            .menu
+        game.server.sessions()[remote]
+            .menu()
             .craft_output()
             .map(|s| s.item),
         Some(ItemType::Glass),
@@ -225,8 +225,8 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
         "an unchanged revision ships no inventory body"
     );
 
-    game.server.sessions[0]
-        .player
+    game.server.sessions_mut()[0]
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Stone, 5));
     let up3 = pump_one_tick(&mut game);
@@ -253,9 +253,9 @@ fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server.world_mut().set_block_world(3, 64, 3, Block::Chest);
     game.server
-        .world
+        .world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     let s1 = game
         .server
@@ -290,9 +290,9 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server.world_mut().set_block_world(3, 64, 3, Block::Chest);
     game.server
-        .world
+        .world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     let s1 = game
         .server
@@ -302,7 +302,7 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
 
     // Session 1 right-clicked the chest (latched edge + look, as its
     // PlayerUpdate/UseClick messages would leave them).
-    game.server.sessions[s1].look = Some(super::common::hit(pos, IVec3::Y));
+    game.server.sessions_mut()[s1].input_mut().look = Some(super::common::hit(pos, IVec3::Y));
     game.server.queue_place_click_for_test(s1);
 
     let update = pump_one_tick(&mut game);
@@ -333,9 +333,9 @@ fn menu_sync_ships_on_change_only() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server.world_mut().set_block_world(3, 64, 3, Block::Chest);
     game.server
-        .world
+        .world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
 
     let up1 = pump_one_tick(&mut game);
@@ -379,9 +379,9 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server.world_mut().set_block_world(3, 64, 3, Block::Chest);
     game.server
-        .world
+        .world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     let mut ev = TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
@@ -448,7 +448,7 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     // What a mod's GuiStateSet HostCall does on the tick: a copy-on-write
     // write against the session's map.
     petramond_world::gui_state::gui_state_set(
-        &mut game.server.sessions[0].gui_state,
+        &mut game.server.sessions_mut()[0].sim_mut().gui_state,
         "modtest:v".into(),
         GuiValue::I32(7),
     );
@@ -486,7 +486,7 @@ fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
     game.server
         .open_registered_gui_screen_for(remote, kind, Some(pos.into()));
     petramond_world::gui_state::gui_state_set(
-        &mut game.server.sessions[0].gui_state,
+        &mut game.server.sessions_mut()[0].sim_mut().gui_state,
         "kitchen:cook01".into(),
         GuiValue::F32(0.5),
     );
@@ -518,7 +518,7 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
     let pos = IVec3::new(3, 64, 3);
     // The tick's request site (interaction arm) writes this outbox field;
     // seed it directly to isolate the SelfEvents → GameEvents pipe.
-    game.server.sessions[0].request_open_gui =
+    game.server.sessions_mut()[0].replication_mut().request_open_gui =
         Some((petramond_world::gui_state::GuiKind::Chest, Some(pos.into())));
 
     let events = game.tick(TICK_DT, &GameInput::default());
@@ -528,7 +528,7 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
         "the one-shot rode SelfEvents.open_screen into GameEvents"
     );
     assert!(
-        game.server.sessions[0].request_open_gui.is_none(),
+        game.server.sessions()[0].replication().request_open_gui.is_none(),
         "the request outbox is consumed by the batch"
     );
 

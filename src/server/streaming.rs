@@ -338,7 +338,7 @@ impl ServerGame {
                     cz: (eye.z.floor() as i32).div_euclid(16),
                     // The session's requested view distance; world/streaming
                     // clamp it to the server budget (`world.render_dist`).
-                    radius: sess.view_radius,
+                    radius: sess.transport.view_radius,
                 }
             })
             .collect()
@@ -381,11 +381,11 @@ impl ServerGame {
         // pump (~5 ms) later: sections it ingests via the next plan, light it
         // bakes via the ship log drained here next pump.
         let relit = self.world.take_light_ship_log();
-        let local_at_zero = self.has_local_session;
+        let local_at_zero = self.sessions.has_local_session();
         for (s, msgs) in per_session.iter_mut().enumerate() {
             self.bank_light_refreshes(s, &relit);
             self.sessions[s]
-                .terrain
+                .transport.terrain
                 .configure_loopback(s == 0 && local_at_zero);
             self.send_batch_for(s, anchors[s], dt, queue_room[s], msgs);
         }
@@ -413,7 +413,7 @@ impl ServerGame {
         queue_room: usize,
         msgs: &mut Vec<ServerToClient>,
     ) {
-        let sync = &mut self.sessions[s].terrain;
+        let sync = &mut self.sessions[s].transport.terrain;
         let admitted_rate =
             presentation_admission_rate(sync.client_rate, sync.presentation_pressure);
         sync.batch_quota =
@@ -439,7 +439,7 @@ impl ServerGame {
         msgs.push(ServerToClient::StreamBatchEnd {
             count: count as u32,
         });
-        let sync = &mut self.sessions[s].terrain;
+        let sync = &mut self.sessions[s].transport.terrain;
         sync.batch_quota -= count as f32;
         sync.unacked_batches += 1;
     }
@@ -448,7 +448,7 @@ impl ServerGame {
     /// carryover. Sections it never received are skipped — their eventual
     /// `SectionData` carries current light.
     fn bank_light_refreshes(&mut self, s: usize, relit: &[SectionPos]) {
-        let sync = &mut self.sessions[s].terrain;
+        let sync = &mut self.sessions[s].transport.terrain;
         for &sp in relit {
             if sync.sent_sections.contains(&sp) {
                 sync.pending_light.insert(sp);
@@ -459,7 +459,7 @@ impl ServerGame {
     /// Ship `LightData` for pending refreshed sections, up to `allowance`
     /// messages; the remainder stays in `pending_light`.
     fn send_light_for(&mut self, s: usize, allowance: &mut usize, msgs: &mut Vec<ServerToClient>) {
-        let sync = &mut self.sessions[s].terrain;
+        let sync = &mut self.sessions[s].transport.terrain;
         if sync.pending_light.is_empty() {
             return;
         }
@@ -508,7 +508,7 @@ impl ServerGame {
         }
         let key = self.world.terrain_send_key(anchor);
         let target_key = self.world.terrain_target_key(anchor);
-        let sync = &mut self.sessions[s].terrain;
+        let sync = &mut self.sessions[s].transport.terrain;
         let plan_empty = sync.planned_sections.is_empty()
             && sync.planned_drop_sections.is_empty()
             && sync.planned_drop_columns.is_empty();

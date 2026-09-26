@@ -90,7 +90,7 @@ fn build(
     let join = server
         .local_join_data()
         .expect("a server built with a local player has a local session");
-    let enabled_mods = crate::modding::modset::active(server.world.disabled_mods())
+    let enabled_mods = crate::modding::modset::active(server.world().disabled_mods())
         .into_iter()
         .map(|entry| entry.id)
         .collect();
@@ -122,11 +122,11 @@ mod tests {
             "Local".to_string(),
             Arc::new(JobPool::inline()),
         );
-        let local = &server.sessions[0];
-        assert_eq!(session.join.player_id, local.id);
-        assert_eq!(session.join.seed, server.world.seed);
-        assert_eq!(session.join.self_restore.transform.pos, local.player.pos);
-        assert_eq!(session.join.self_restore.health, local.player.health());
+        let local = &server.sessions()[0];
+        assert_eq!(session.join.player_id, local.id());
+        assert_eq!(session.join.seed, server.world().seed);
+        assert_eq!(session.join.self_restore.transform.pos, local.player().pos);
+        assert_eq!(session.join.self_restore.health, local.player().health());
         assert!(session.join.players.is_empty(), "nobody else is connected");
         assert_eq!(
             session.join.tables,

@@ -156,7 +156,7 @@ impl TestApp {
         }
         self.server.apply_latched_actions_for_test();
         // Refresh the replicated self/menu views the way the next batch would.
-        self.server.sessions[0].last_sent_inventory_revision = None;
+        self.server.sessions_mut()[0].replication_mut().last_sent_inventory_revision = None;
         let state = self.server.build_self_state(0);
         let sync = self.server.build_menu_sync(0);
         game.apply_views_for_test(&state, sync);
@@ -179,14 +179,14 @@ impl TestApp {
 
     /// The SESSION inventory — the authoritative one the sim mutates.
     fn inventory(&self) -> &Inventory {
-        &self.server.sessions[0].player.inventory
+        &self.server.sessions()[0].player().inventory
     }
 
     fn add_to_inventory(&mut self, stack: ItemStack) {
-        self.server.sessions[0].player.inventory.add(stack);
+        self.server.sessions_mut()[0].player_mut().inventory.add(stack);
         // Recipe affordance is presentation-side and therefore reads the
         // replicated inventory, just like the real client after a batch.
-        self.server.sessions[0].last_sent_inventory_revision = None;
+        self.server.sessions_mut()[0].replication_mut().last_sent_inventory_revision = None;
         let state = self.server.build_self_state(0);
         let sync = self.server.build_menu_sync(0);
         self.app

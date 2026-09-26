@@ -85,7 +85,7 @@ impl ServerGame {
         let ridden: Vec<Option<u32>> = self
             .sessions
             .iter()
-            .map(|sess| match sess.mount?.target {
+            .map(|sess| match sess.sim.mount?.target {
                 MountTarget::Mob(id) => mob_index.position_of(id),
                 MountTarget::Anchor(_) => None,
             })
@@ -97,10 +97,10 @@ impl ServerGame {
             .iter_mut()
             .enumerate()
             .map(|(s, sess)| {
-                let view_chunks = sess.view_radius.min(view_cap).max(MIN_VIEW_CHUNKS);
+                let view_chunks = sess.transport.view_radius.min(view_cap).max(MIN_VIEW_CHUNKS);
                 let view_blocks = f64::from(view_chunks) * 16.0;
                 let at = sess.player.pos;
-                let players = sess.interest.players.refresh(
+                let players = sess.transport.interest.players.refresh(
                     &player_index,
                     Viewpoint::new(at, view_blocks),
                     &[s as u32],
@@ -109,12 +109,12 @@ impl ServerGame {
                     .tracked()
                     .filter_map(|p| ridden[p as usize])
                     .collect();
-                let mobs = sess.interest.mobs.refresh(
+                let mobs = sess.transport.interest.mobs.refresh(
                     &mob_index,
                     Viewpoint::new(at, view_blocks.min(MOB_TRACKING_BLOCKS)),
                     &mounts,
                 );
-                let items = sess.interest.items.refresh(
+                let items = sess.transport.interest.items.refresh(
                     &item_index,
                     Viewpoint::new(at, view_blocks.min(ITEM_TRACKING_BLOCKS)),
                     &[],
@@ -185,7 +185,7 @@ impl ServerGame {
             },
             on_ground: sess.player.on_ground,
             sneaking: sess.sneaking(),
-            sleeping: sess.sleep.is_some(),
+            sleeping: sess.sim.sleep.is_some(),
             sleep_yaw: self.sleep_head_yaw(s),
             alive,
             visible: alive && !sess.player.is_spectator(),
@@ -206,10 +206,10 @@ impl ServerGame {
             // The same overlay state `SelfState::mining` ships for the
             // player's own hand: target cell + crack stage. Observers derive
             // the arm-swing flag AND the remote crack overlay.
-            mining: sess.mining.overlay(),
-            eating: sess.eating.is_some(),
+            mining: sess.sim.mining.overlay(),
+            eating: sess.sim.eating.is_some(),
             eating_off_hand: sess
-                .eating
+                .sim.eating
                 .as_ref()
                 .is_some_and(|eat| eat.hand == Hand::Off),
             // Mod-set held-item poses (`SetPlayerHeldPose`), already resolved
@@ -228,9 +228,9 @@ impl ServerGame {
                 claims
             },
             hurt_recent: events.player_at(s).player_damaged,
-            snap: sess.tick_teleported,
+            snap: sess.replication.tick_teleported,
             mount: sess
-                .mount
+                .sim.mount
                 .map(crate::net::protocol::PlayerMount::from_mount),
         }
     }

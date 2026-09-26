@@ -62,14 +62,20 @@ use crate::sched::{AttachSide, Stage, WorldgenStage};
 /// and [`HostCall::SetPlayerHeldData`] (a write onto that player's held
 /// stack) are the reference examples: each names the session it acts on
 /// rather than inheriting one, and answers `false` when no such session is
-/// connected. The older single-player-era calls
-/// ([`HostCall::PlayerState`], [`HostCall::GiveItem`],
-/// [`HostCall::Teleport`], ...) address the ACTING
-/// session's player as a documented default — the session whose dispatch is
-/// running (the interacting player for event handlers, the host session for
-/// global tick systems). They are the legacy exception, not the pattern;
-/// their per-player reshape is pending, and enumerating sessions is already
-/// explicit via [`HostCall::Players`].
+/// connected.
+///
+/// Every dispatch has an ACTOR or none ([`HostCall::ActingPlayer`]): an
+/// event handler acts for the event's player (the clicking, eating, damaged
+/// or dying one — a `player_died` handler acts for whoever died), while tick
+/// systems, block hooks, spawn picks, `mod_init` and a mob's actions are
+/// actor-less. The older single-player-era calls ([`HostCall::PlayerState`],
+/// [`HostCall::GiveItem`], [`HostCall::Teleport`], [`HostCall::GuiOpen`],
+/// ...) address the actor, and answer [`HostRet::Error`] in an actor-less
+/// dispatch — there is no privileged "host" player to fall back on. Each has
+/// an explicit twin appended in ABI 1.1 ([`HostCall::PlayerStateOf`],
+/// [`HostCall::TeleportPlayer`], [`HostCall::GuiOpenFor`], ...; gated by
+/// [`Capabilities::EXPLICIT_PLAYERS`](crate::Capabilities::EXPLICIT_PLAYERS)),
+/// and enumerating sessions is explicit via [`HostCall::Players`].
 ///
 /// # Batch bounds
 ///
@@ -1302,10 +1308,8 @@ pub enum HostCall {
     /// nobody unlocks stays invisible, so a pack that authors recipes and no
     /// policy still gets the engine's ingredient-discovery default.
     ///
-    /// Reaching another player needs the dispatch site to publish the
-    /// sessions view: POST event handlers and attached tick systems always
-    /// do, and those are where an unlock belongs anyway. From a site that
-    /// does not, the call answers `false` and logs which case it hit.
+    /// Every dispatch reaches every connected session; an id that is not
+    /// connected answers `false` (and logs it).
     UnlockRecipe {
         player: PlayerId,
         recipe: String,
@@ -1490,12 +1494,10 @@ pub enum HostCall {
     /// form of [`GuiStateSet`](Self::GuiStateSet). `false` = no such connected
     /// session.
     ///
-    /// The implicit call writes whichever session the running dispatch belongs
-    /// to, and a TICK SYSTEM belongs to the host session — so a machine
-    /// publishing gauges from its tick reached exactly one player's panel, and
-    /// on a dedicated server that player was whoever joined first. Every mod
-    /// with a live readout needs this one; nothing on the implicit surface can
-    /// substitute for it.
+    /// The implicit call writes the dispatch's ACTOR's map, and a TICK SYSTEM
+    /// acts for nobody — so a machine publishing gauges from its tick has no
+    /// implicit map to write. Every mod with a live readout needs this one;
+    /// nothing on the implicit surface can substitute for it.
     ///
     /// Pair it with [`GuiViewers`](Self::GuiViewers): publish per viewer, and
     /// the flat key space stops being a problem too — one session has one GUI
@@ -1519,9 +1521,8 @@ pub enum HostCall {
     /// the per-player, per-stack read [`PlayerState`](Self::PlayerState)'s
     /// row-level `held` id cannot be: an augmented tool's `petramond:tool`
     /// override lives in the stack's data, and only containers exposed it
-    /// before. `None` = empty hand, no such connected session, or a
-    /// dispatch site that publishes no sessions view (event handlers and
-    /// attached tick systems always do). → [`HostRet::HeldStack`].
+    /// before. `None` = empty hand or no such connected session.
+    /// → [`HostRet::HeldStack`].
     PlayerHeld {
         player: PlayerId,
     },
@@ -1529,9 +1530,9 @@ pub enum HostCall {
     /// explicit-player addressing doctrine): fill that player's inventory,
     /// drop whatever doesn't fit at that player's feet, `data` as the
     /// stack's instance data. The delivery a machine owes a specific viewer
-    /// — a transient panel returning its contents on close — where the
-    /// implicit acting session would be whoever the tick system happens to
-    /// run as. `false` = unknown item name or no such connected session
+    /// — a transient panel returning its contents on close — where a tick
+    /// system has no actor to give to. `false` = unknown item name or no such
+    /// connected session
     /// (deliver another way — e.g. spawn at the machine); a malformed
     /// `data` map is [`HostRet::Error`]. → [`HostRet::Bool`].
     GiveItemTo {
@@ -2338,6 +2339,81 @@ pub enum HostCall {
     BlockChangesSince {
         since: Option<u64>,
     },
+    // --- explicit player addressing (ABI 1.1) ------------------------------
+    /// The session the running dispatch acts for, or `None` for an
+    /// actor-less dispatch (see "Player addressing" on [`HostCall`]).
+    /// → [`HostRet::ActingPlayer`].
+    ActingPlayer,
+    /// [`PlayerState`](Self::PlayerState) for a NAMED session.
+    /// → [`HostRet::PlayerOf`]: `None` = no such connected session.
+    PlayerStateOf {
+        player: PlayerId,
+    },
+    /// [`ApplyKnockback`](Self::ApplyKnockback) on a named session.
+    /// → [`HostRet::Bool`]: `false` = no such connected session.
+    ApplyKnockbackTo {
+        player: PlayerId,
+        impulse: [f32; 3],
+    },
+    /// [`SetHealth`](Self::SetHealth) on a named session.
+    /// → [`HostRet::Bool`]: `false` = no such connected session.
+    SetHealthOf {
+        player: PlayerId,
+        value: i32,
+    },
+    /// [`Teleport`](Self::Teleport) a named session.
+    /// → [`HostRet::Bool`]: `false` = no such connected session.
+    TeleportPlayer {
+        player: PlayerId,
+        pos: [f64; 3],
+    },
+    /// [`EffectApply`](Self::EffectApply) on a named session.
+    /// → [`HostRet::Bool`]: `false` = unknown effect or no such session.
+    EffectApplyTo {
+        player: PlayerId,
+        key: String,
+        ticks: u32,
+    },
+    /// [`EffectsActive`](Self::EffectsActive) of a named session.
+    /// → [`HostRet::EffectsOf`]: `None` = no such connected session.
+    EffectsActiveOf {
+        player: PlayerId,
+    },
+    /// [`ConsumeHeld`](Self::ConsumeHeld) from a named session's acting
+    /// hand. → [`HostRet::Bool`]: `false` = consumed nothing (or no such
+    /// session).
+    ConsumeHeldBy {
+        player: PlayerId,
+        item: ItemId,
+        count: u32,
+    },
+    /// [`ReplaceHeldOne`](Self::ReplaceHeldOne) in a named session's acting
+    /// hand. → [`HostRet::Bool`]: `false` = wrong/empty hand, unknown
+    /// replacement, no room, or no such session.
+    ReplaceHeldOneBy {
+        player: PlayerId,
+        item: ItemId,
+        replacement: String,
+    },
+    /// [`GuiStateGet`](Self::GuiStateGet) from a named session's GUI state
+    /// map — the read twin of [`GuiStateSetFor`](Self::GuiStateSetFor).
+    /// → [`HostRet::GuiValue`]: `None` = unset key or no such session.
+    GuiStateGetFor {
+        player_id: PlayerId,
+        key: String,
+    },
+    /// [`GuiOpen`](Self::GuiOpen) for a named session. → [`HostRet::Bool`]:
+    /// `false` = unknown kind, absent anchor, or no such session.
+    GuiOpenFor {
+        player_id: PlayerId,
+        kind_key: String,
+        at: Option<ContainerAddress>,
+    },
+    /// [`GuiClose`](Self::GuiClose) for a named session. → [`HostRet::Bool`]:
+    /// `false` = no such connected session.
+    GuiCloseFor {
+        player_id: PlayerId,
+    },
 }
 
 /// The three ways a [`HostCall::MemoClaim`] comes back.
@@ -2534,4 +2610,10 @@ pub enum HostRet {
     /// wrappers treat it like any unexpected reply; a mod that wants to degrade
     /// gracefully checks `mod_sdk::host_supports` before calling.
     Unsupported,
+    /// [`HostCall::ActingPlayer`]: `None` = an actor-less dispatch.
+    ActingPlayer(Option<PlayerId>),
+    /// [`HostCall::PlayerStateOf`]: `None` = no such connected session.
+    PlayerOf(Option<Box<PlayerSnapshot>>),
+    /// [`HostCall::EffectsActiveOf`]: `None` = no such connected session.
+    EffectsOf(Option<Vec<EffectStateData>>),
 }

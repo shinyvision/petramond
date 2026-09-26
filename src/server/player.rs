@@ -224,22 +224,33 @@ pub enum PendingMenuAction {
     },
 }
 
-/// One player's simulation session: authoritative player state plus every
-/// per-player latch, timer, and menu session the tick stages consume.
+/// One player's simulation session: the authoritative player plus every
+/// per-player latch, timer, and menu session the tick stages consume,
+/// grouped by who owns it — the sim ([`SessionSim`]), the latched client
+/// input ([`InputLatches`]), per-recipient replication ([`SessionReplication`])
+/// and the connection's streaming state ([`SessionTransport`]). Every field
+/// is private to the server; the rest of the engine reads a session through
+/// the accessors below.
 pub struct ConnectedPlayer {
-    pub id: PlayerId,
+    pub(in crate::server) id: PlayerId,
     /// The player's authenticated identity: keys the save file
     /// (`players/<key>.dat`) and operator rights. The local session's is the
     /// host client's own identity.
-    pub key: crate::net::identity::PlayerKey,
+    pub(in crate::server) key: crate::net::identity::PlayerKey,
     /// Display name, unique among the world's identities
     /// (`server::accounts`). Never a save or permission key.
-    pub name: String,
-    pub player: Player,
-    /// Block under this player's crosshair (block + face normal), latched from
-    /// the most recent `PlayerUpdate` and reach-validated at the latch. `None`
-    /// when a mob is the closer target.
-    pub look: Option<TargetRef>,
+    pub(in crate::server) name: String,
+    /// The authoritative player body.
+    pub(in crate::server) player: Player,
+    pub(in crate::server) sim: SessionSim,
+    pub(in crate::server) input: InputLatches,
+    pub(in crate::server) replication: SessionReplication,
+    pub(in crate::server) transport: SessionTransport,
+}
+
+/// Per-session simulation state beyond the body: mining and editing
+/// progress, timers, the open menu, sleep, the riding mirror.
+pub struct SessionSim {
     pub mining: MiningState,
     /// When this session last broke a block at once, without mining it: the
     /// repeat gate that keeps a held break from tearing through a row.
@@ -251,8 +262,40 @@ pub struct ConnectedPlayer {
     /// with this client.
     pub schematic: super::schematics::SchematicSession,
     pub attack_cooldown: u32,
-    // --- Input intent latched from the most recent message, consumed on the
-    // fixed tick. ---
+    /// Server-side fall measurement from the reported transforms.
+    pub fall: FallTracker,
+    /// Hardest landing (blocks) since the tick last consumed it, measured by
+    /// [`fall`](Self::fall) — `tick_fall_damage` converts it into damage.
+    pub pending_fall: f32,
+    /// Hardest fall INTO a splashing fluid (blocks) since the tick last
+    /// consumed it — `tick_fluid_splash` converts it into that fluid's splash.
+    pub pending_splash: f32,
+    /// The in-progress eat (held secondary button on food), or `None`.
+    pub eating: Option<EatingState>,
+    pub drop_queue: DropQueue,
+    /// SESSION MIRROR of this player's entry in the world riding registry,
+    /// maintained by the riding pass (`server::riding`) — the mirror drives
+    /// physical placement on a detach and what per-session consumers read
+    /// (movement skip, replication row). Detach events are recorded at the
+    /// authoritative registry transition, not inferred from this mirror.
+    pub mount: Option<crate::mob::riding::Mount>,
+    /// The open container GUI's persistent edit target for THIS player.
+    pub menu: ContainerMenu,
+    /// The in-flight sleep session (`None` = awake).
+    pub sleep: Option<SleepState>,
+    /// The open mod-GUI session's state map (written by mods on the tick via
+    /// `GuiStateSet`, cleared by the menu funnels on open/close). Snapshotted
+    /// behind the `Arc` per replication batch — copy-on-write on writes.
+    pub gui_state: std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
+}
+
+/// Input intent latched from the most recent messages, consumed on the fixed
+/// tick.
+pub struct InputLatches {
+    /// Block under this player's crosshair (block + face normal), latched from
+    /// the most recent `PlayerUpdate` and reach-validated at the latch. `None`
+    /// when a mob is the closer target.
+    pub look: Option<TargetRef>,
     pub intent_break_held: bool,
     pub intent_use_held: bool,
     pub intent_sneak: bool,
@@ -274,51 +317,13 @@ pub struct ConnectedPlayer {
     /// tick consumption atomic: no target/request/selection fragment can
     /// survive after the click itself is gone.
     pub pending_use_click: Option<PendingUseClick>,
-    /// Cells whose CURRENT authoritative state ships to this recipient in the
-    /// next batch (a use click that resolved to nothing, a denied place, or a
-    /// denied break): the reconcile channel for a client whose replica disagreed.
-    pub pending_corrective_cells: Vec<IVec3>,
-    /// Cells this session placed this tick window — stripped from the
-    /// initiator's `TickUpdate.events` so their local place prediction does
-    /// not hear a second `BlockPlaced` one RTT later. Taken in
-    /// `build_tick_update`.
-    pub presented_places: Vec<IVec3>,
-    /// Cells this session broke this tick window — same echo filter for
-    /// `BlockBroken`. Taken in `build_tick_update`.
-    pub presented_breaks: Vec<IVec3>,
     /// The held block's placement rotation, fed from `PlayerUpdate`'s raw
     /// counter (see [`HeldRotation::apply_wire`]). The placement paths read
     /// THIS copy, never the client's.
     pub held_rotation: HeldRotation,
-    /// Server-side fall measurement from the reported transforms.
-    pub fall: FallTracker,
-    /// Hardest landing (blocks) since the tick last consumed it, measured by
-    /// [`fall`](Self::fall) — `tick_fall_damage` converts it into damage.
-    pub pending_fall: f32,
-    /// Hardest fall INTO a splashing fluid (blocks) since the tick last
-    /// consumed it — `tick_fluid_splash` converts it into that fluid's splash.
-    pub pending_splash: f32,
-    /// Player position when this frame's fixed ticks began — a tick-side
-    /// position change is a teleport, which re-anchors [`fall`](Self::fall)
-    /// (see `ServerGame::pump`).
-    pub pos_before_ticks: petramond_math::world_pos::WorldPos,
-    /// Whether the LAST tick window teleported this player (the drift check
-    /// over [`pos_before_ticks`](Self::pos_before_ticks)) — replicated as
-    /// `PlayerStateRow::snap` so observers skip interpolating across the
-    /// jump. Replication bookkeeping, refreshed every pump.
-    pub tick_teleported: bool,
-    /// The in-progress eat (held secondary button on food), or `None`.
-    pub eating: Option<EatingState>,
-    pub drop_queue: DropQueue,
     /// Menu transitions and mutations latched since the last tick, applied in
     /// one arrival-ordered stream.
     pub pending_menu_actions: Vec<PendingMenuAction>,
-    /// Outcomes queued this tick window for the next `TickUpdate`.
-    pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
-    /// World events addressed to THIS recipient only, shipped ahead of the
-    /// shared list in its next tick batch — the join catch-up for stateful
-    /// world presentation (the spatial loops still playing).
-    pub pending_world_events: Vec<crate::net::protocol::WorldEventMsg>,
     /// Latched `BreakFinished` requests, applied by the mining stage in
     /// arrival order. A queue, not a single slot: instabreak blocks can
     /// legitimately finish two cells in one tick window, so each finish must
@@ -342,17 +347,6 @@ pub struct ConnectedPlayer {
     pub move_wishdir: petramond_math::math::Vec3,
     pub move_jump: bool,
     pub move_sprint: bool,
-    /// SESSION MIRROR of this player's entry in the world riding registry,
-    /// maintained by the riding pass (`server::riding`) — the mirror drives
-    /// physical placement on a detach and what per-session consumers read
-    /// (movement skip, replication row). Detach events are recorded at the
-    /// authoritative registry transition, not inferred from this mirror.
-    pub mount: Option<crate::mob::riding::Mount>,
-    /// Hand-swing one-shots latched by this tick's action stages (attack,
-    /// break, place, throw) via [`ConnectedPlayer::latch_swing`], published
-    /// on the next roster and cleared — the swing facts behind the mod ABI's
-    /// `PlayerSnapshot::swing`.
-    pub swing_events: mod_api::HandSwing,
     /// Last tick's sneak level — the rising edge while mounted is the
     /// dismount gesture (there is deliberately no other server-side sneak
     /// edge state; see `ConnectedPlayer::sneaking`).
@@ -369,15 +363,37 @@ pub struct ConnectedPlayer {
     /// server's free-running integration, so both the F1 closeness ring and
     /// the `SelfTransform` correction deadband scale with this.
     pub ticks_since_claim: u32,
-    /// The open container GUI's persistent edit target for THIS player.
-    pub menu: ContainerMenu,
-    /// The in-flight sleep session (`None` = awake).
-    pub sleep: Option<SleepState>,
     pub wake_requested: bool,
     pub respawn_requested: bool,
-    // --- One-shot outbox: screen/effect requests the tick queues for this
-    // player's client, consumed into its `SelfEvents` per replication batch
-    // (INTERNAL — the client only sees `OpenScreen`). ---
+}
+
+/// Per-recipient replication: the one-shot outbox the tick fills for this
+/// client and the bookkeeping that decides what its next batch carries.
+/// Replication state, not sim state.
+pub struct SessionReplication {
+    /// Cells whose CURRENT authoritative state ships to this recipient in the
+    /// next batch (a use click that resolved to nothing, a denied place, or a
+    /// denied break): the reconcile channel for a client whose replica disagreed.
+    pub pending_corrective_cells: Vec<IVec3>,
+    /// Cells this session placed this tick window — stripped from the
+    /// initiator's `TickUpdate.events` so their local place prediction does
+    /// not hear a second `BlockPlaced` one RTT later. Taken in
+    /// `build_tick_update`.
+    pub presented_places: Vec<IVec3>,
+    /// Cells this session broke this tick window — same echo filter for
+    /// `BlockBroken`. Taken in `build_tick_update`.
+    pub presented_breaks: Vec<IVec3>,
+    /// Outcomes queued this tick window for the next `TickUpdate`.
+    pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
+    /// World events addressed to THIS recipient only, shipped ahead of the
+    /// shared list in its next tick batch — the join catch-up for stateful
+    /// world presentation (the spatial loops still playing).
+    pub pending_world_events: Vec<crate::net::protocol::WorldEventMsg>,
+    /// Hand-swing one-shots latched by this tick's action stages (attack,
+    /// break, place, throw) via [`ConnectedPlayer::latch_swing`], published
+    /// on the next roster and cleared — the swing facts behind the mod ABI's
+    /// `PlayerSnapshot::swing`.
+    pub swing_events: mod_api::HandSwing,
     /// The GUI session the tick opened for this client this tick, if any —
     /// one field for every kind (engine containers and mod GUIs alike).
     pub request_open_gui: Option<(
@@ -386,44 +402,53 @@ pub struct ConnectedPlayer {
     )>,
     pub request_close_gui: bool,
     pub request_open_sleep: bool,
-    /// The open mod-GUI session's state map (written by mods on the tick via
-    /// `GuiStateSet`, cleared by the menu funnels on open/close). Snapshotted
-    /// behind the `Arc` per replication batch — copy-on-write on writes.
-    pub gui_state: std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
+    /// Player position when this frame's fixed ticks began — a tick-side
+    /// position change is a teleport, which re-anchors the fall tracker (see
+    /// `ServerGame::pump`).
+    pub pos_before_ticks: petramond_math::world_pos::WorldPos,
+    /// Whether the LAST tick window teleported this player (the drift check
+    /// over [`pos_before_ticks`](Self::pos_before_ticks)) — replicated as
+    /// `PlayerStateRow::snap` so observers skip interpolating across the
+    /// jump. Refreshed every pump.
+    pub tick_teleported: bool,
     /// The inventory revision the last emitted `SelfState` carried a full
-    /// inventory for — per-recipient replication bookkeeping, not sim state.
-    /// `None` = nothing sent yet, so the first update after join always
-    /// includes the inventory.
+    /// inventory for. `None` = nothing sent yet, so the first update after
+    /// join always includes the inventory.
     pub last_sent_inventory_revision: Option<u64>,
     /// The inventory revision the obtained-item scan last ran against, so a
     /// tick that changed nothing costs one comparison (see
-    /// `server::progression`). Bookkeeping, not sim state.
+    /// `server::progression`).
     pub last_obtained_scan: Option<u64>,
     /// How many of this player's unlocked recipes the client has been told
     /// about. Unlocking only appends, so the catch-up is the untold suffix.
     pub sent_unlock_count: usize,
     /// The last `MenuSyncMsg` this session was sent (its `gui_state` field
     /// always `None` — the map compares by `Arc` identity below). On-change
-    /// send detection; replication bookkeeping, not sim state.
+    /// send detection.
     pub last_menu_sync: Option<crate::net::protocol::MenuSyncMsg>,
     /// The `gui_state` map allocation the last sync shipped. Holding the
     /// `Arc` is what makes identity comparison sound: the next tick-side
     /// write is forced to copy-on-write onto a fresh allocation.
-    pub last_sent_gui_state: Option<std::sync::Arc<petramond_world::gui_state::GuiStateMap>>,
+    pub last_sent_gui_state:
+        Option<std::sync::Arc<petramond_world::gui_state::GuiStateMap>>,
+    /// The transform of the last `PlayerUpdate` this session applied — what
+    /// the CLIENT last claimed. After the ticks, a session transform that no
+    /// longer matches it means the tick moved the player (teleport,
+    /// knockback): the next `SelfState` ships a [`SelfTransform`] correction.
+    ///
+    /// [`SelfTransform`]: crate::net::protocol::SelfTransform
+    pub last_reported_transform: Option<crate::net::protocol::SelfTransform>,
+}
+
+/// The connection's streaming state: which terrain and entities this client
+/// holds, and how far it asked to see.
+pub struct SessionTransport {
     /// Per-connection terrain replication state (which columns/sections this
     /// client holds) — see `server::streaming`.
     pub terrain: crate::server::streaming::TerrainSync,
     /// Per-connection entity interest (which mobs, items and players this
     /// client tracks) — see `server::game::interest`.
     pub interest: crate::server::game::EntityInterest,
-    /// The transform of the last `PlayerUpdate` this session applied — what
-    /// the CLIENT last claimed. After the ticks, a session transform that no
-    /// longer matches it means the tick moved the player (teleport,
-    /// knockback): the next `SelfState` ships a [`SelfTransform`] correction.
-    /// Replication bookkeeping, not sim state.
-    ///
-    /// [`SelfTransform`]: crate::net::protocol::SelfTransform
-    pub last_reported_transform: Option<crate::net::protocol::SelfTransform>,
     /// This client's REQUESTED view distance in chunks (`Join` /
     /// `SetViewDistance`, clamped `4..=64`). Streaming uses
     /// `min(this, world.render_dist)` — the server's own budget stays the
@@ -445,69 +470,179 @@ impl ConnectedPlayer {
             id,
             key,
             name,
+            sim: SessionSim {
+                mining: MiningState::new(),
+                last_instant_break: None,
+                creative: Default::default(),
+                edits: Default::default(),
+                schematic: Default::default(),
+                attack_cooldown: 0,
+                fall,
+                pending_fall: 0.0,
+                pending_splash: 0.0,
+                eating: None,
+                drop_queue: DropQueue::default(),
+                mount: None,
+                menu: ContainerMenu::new(),
+                sleep: None,
+                gui_state: petramond_world::gui_state::empty_gui_state(),
+            },
+            input: InputLatches {
+                look: None,
+                intent_break_held: false,
+                intent_use_held: false,
+                intent_sneak: false,
+                intent_gameplay: false,
+                use_repeat_cooldown: 0,
+                pending_attack: false,
+                pending_attack_mob: None,
+                pending_attack_player: None,
+                pending_use_click: None,
+                held_rotation: HeldRotation::default(),
+                pending_menu_actions: Vec::new(),
+                pending_break_finished: Vec::new(),
+                deferred_break_finished: None,
+                pending_break_ack: Default::default(),
+                move_wishdir: petramond_math::math::Vec3::ZERO,
+                move_jump: false,
+                move_sprint: false,
+                prev_sneak: false,
+                claim_pos: pos_before_ticks,
+                claim_vel: petramond_math::math::Vec3::ZERO,
+                claim_on_ground: false,
+                claim_fresh: false,
+                ticks_since_claim: 0,
+                wake_requested: false,
+                respawn_requested: false,
+            },
+            replication: SessionReplication {
+                pending_corrective_cells: Vec::new(),
+                presented_places: Vec::new(),
+                presented_breaks: Vec::new(),
+                pending_action_outcomes: Vec::new(),
+                pending_world_events: Vec::new(),
+                swing_events: Default::default(),
+                request_open_gui: None,
+                request_close_gui: false,
+                request_open_sleep: false,
+                pos_before_ticks,
+                tick_teleported: false,
+                last_sent_inventory_revision: None,
+                last_obtained_scan: None,
+                sent_unlock_count: 0,
+                last_menu_sync: None,
+                last_sent_gui_state: None,
+                last_reported_transform: None,
+            },
+            transport: SessionTransport {
+                terrain: Default::default(),
+                interest: Default::default(),
+                view_radius: view_radius.clamp(4, 64),
+            },
             player,
-            look: None,
-            mining: MiningState::new(),
-            last_instant_break: None,
-            creative: Default::default(),
-            edits: Default::default(),
-            schematic: Default::default(),
-            attack_cooldown: 0,
-            intent_break_held: false,
-            intent_use_held: false,
-            intent_sneak: false,
-            intent_gameplay: false,
-            use_repeat_cooldown: 0,
-            pending_attack: false,
-            pending_attack_mob: None,
-            pending_attack_player: None,
-            pending_use_click: None,
-            pending_corrective_cells: Vec::new(),
-            presented_places: Vec::new(),
-            presented_breaks: Vec::new(),
-            held_rotation: HeldRotation::default(),
-            fall,
-            pending_fall: 0.0,
-            pending_splash: 0.0,
-            pos_before_ticks,
-            tick_teleported: false,
-            eating: None,
-            drop_queue: DropQueue::default(),
-            pending_menu_actions: Vec::new(),
-            pending_action_outcomes: Vec::new(),
-            pending_world_events: Vec::new(),
-            pending_break_finished: Vec::new(),
-            deferred_break_finished: None,
-            pending_break_ack: Default::default(),
-            move_wishdir: petramond_math::math::Vec3::ZERO,
-            move_jump: false,
-            move_sprint: false,
-            mount: None,
-            swing_events: Default::default(),
-            prev_sneak: false,
-            claim_pos: pos_before_ticks,
-            claim_vel: petramond_math::math::Vec3::ZERO,
-            claim_on_ground: false,
-            claim_fresh: false,
-            ticks_since_claim: 0,
-            menu: ContainerMenu::new(),
-            sleep: None,
-            wake_requested: false,
-            respawn_requested: false,
-            request_open_gui: None,
-            request_close_gui: false,
-            request_open_sleep: false,
-            gui_state: petramond_world::gui_state::empty_gui_state(),
-            last_sent_inventory_revision: None,
-            last_obtained_scan: None,
-            sent_unlock_count: 0,
-            last_menu_sync: None,
-            last_sent_gui_state: None,
-            terrain: Default::default(),
-            interest: Default::default(),
-            last_reported_transform: None,
-            view_radius: view_radius.clamp(4, 64),
         }
+    }
+
+    /// The session's stable id.
+    #[inline]
+    pub fn id(&self) -> PlayerId {
+        self.id
+    }
+
+    /// The session's authenticated identity.
+    #[inline]
+    pub fn key(&self) -> crate::net::identity::PlayerKey {
+        self.key
+    }
+
+    /// The session's display name.
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The authoritative player body.
+    #[inline]
+    pub fn player(&self) -> &Player {
+        &self.player
+    }
+
+    /// The authoritative player body, for fixtures that stage player state.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn player_mut(&mut self) -> &mut Player {
+        &mut self.player
+    }
+
+    /// The riding mirror (see [`SessionSim::mount`]).
+    #[inline]
+    pub fn mount(&self) -> Option<crate::mob::riding::Mount> {
+        self.sim.mount
+    }
+
+    /// The open container session.
+    #[inline]
+    pub fn menu(&self) -> &ContainerMenu {
+        &self.sim.menu
+    }
+
+    /// The reach-validated look target latched from the last update.
+    #[inline]
+    pub fn look(&self) -> Option<TargetRef> {
+        self.input.look
+    }
+
+    /// The open mod GUI's state map.
+    #[inline]
+    pub fn gui_state(&self) -> &std::sync::Arc<petramond_world::gui_state::GuiStateMap> {
+        &self.sim.gui_state
+    }
+
+    /// Fixture read of the simulation group.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sim(&self) -> &SessionSim {
+        &self.sim
+    }
+
+    /// Fixture access to the simulation group.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sim_mut(&mut self) -> &mut SessionSim {
+        &mut self.sim
+    }
+
+    /// Fixture read of the latched input.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn input(&self) -> &InputLatches {
+        &self.input
+    }
+
+    /// Fixture access to the latched input.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn input_mut(&mut self) -> &mut InputLatches {
+        &mut self.input
+    }
+
+    /// Fixture read of the replication bookkeeping.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn replication(&self) -> &SessionReplication {
+        &self.replication
+    }
+
+    /// Fixture access to the replication bookkeeping.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn replication_mut(&mut self) -> &mut SessionReplication {
+        &mut self.replication
+    }
+
+    /// Fixture read of the streaming state.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn transport(&self) -> &SessionTransport {
+        &self.transport
+    }
+
+    /// Fixture access to the streaming state.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn transport_mut(&mut self) -> &mut SessionTransport {
+        &mut self.transport
     }
 
     #[inline]
@@ -516,15 +651,16 @@ impl ConnectedPlayer {
     }
 
     /// Latch one hand's swing one-shot for the next roster publish (see
-    /// [`ConnectedPlayer::swing_events`]). Newest wins within a hand.
+    /// [`SessionReplication::swing_events`]). Newest wins within a hand.
     pub fn latch_swing(
         &mut self,
         hand: petramond_world::inventory::Hand,
         kind: mod_api::SwingKind,
     ) {
+        let swing = &mut self.replication.swing_events;
         match hand {
-            petramond_world::inventory::Hand::Main => self.swing_events.main = Some(kind),
-            petramond_world::inventory::Hand::Off => self.swing_events.off = Some(kind),
+            petramond_world::inventory::Hand::Main => swing.main = Some(kind),
+            petramond_world::inventory::Hand::Off => swing.off = Some(kind),
         }
     }
 
@@ -535,7 +671,7 @@ impl ConnectedPlayer {
     /// AI's player anchor.
     #[inline]
     pub fn sneaking(&self) -> bool {
-        self.intent_sneak && self.intent_gameplay
+        self.input.intent_sneak && self.input.intent_gameplay
     }
 
     /// Whether this session is HOLDING the interact (use) button right now:
@@ -544,27 +680,40 @@ impl ConnectedPlayer {
     /// (roster/snapshot `use_held`) and available to engine consumers.
     #[inline]
     pub fn using(&self) -> bool {
-        self.intent_use_held && self.intent_gameplay
+        self.input.intent_use_held && self.input.intent_gameplay
+    }
+
+    /// This session's open GUI, as the mod roster publishes it — read from
+    /// the ONE place a session's open GUI lives, so the `GuiViewers` answer
+    /// can never drift out of step with the panel.
+    pub fn open_gui(&self) -> Option<crate::events::OpenGui> {
+        match self.sim.menu.target() {
+            crate::menu::ContainerTarget::None => None,
+            crate::menu::ContainerTarget::Gui { kind, anchor } => {
+                Some(crate::events::OpenGui { kind, anchor })
+            }
+        }
     }
 
     /// A snapshot of the raw held-rotation state for the placement inputs —
     /// each family derives its own reading from it.
     #[inline]
     pub fn held_rotation_snapshot(&self) -> HeldRotation {
-        self.held_rotation.clone()
+        self.input.held_rotation.clone()
     }
 
     #[inline]
     pub fn held_slab_rotation(&self) -> petramond_world::slab::SlabRotation {
         // The acting hand's item: the rotation is armed per item, so an
         // off-hand pass only inherits it when both hands hold the same item.
-        self.held_rotation
+        self.input
+            .held_rotation
             .slab_rotation(self.player.held().map(|st| st.item))
     }
 
     /// The in-progress eat as `(progress / eat_ticks)` in `[0, 1)`, or `None`.
     pub fn eating_progress(&self) -> Option<f32> {
-        let eat = self.eating?;
+        let eat = self.sim.eating?;
         let ticks = eat.item.food()?.eat_ticks.max(1);
         Some(eat.progress as f32 / ticks as f32)
     }

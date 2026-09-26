@@ -18,7 +18,15 @@ pub enum Outcome {
 /// Every dispatchable event, pre and post.
 /// Registration key for [`HostCall::RegisterEventHandler`].
 ///
+/// A handler acts for the event's own player ([`HostCall::ActingPlayer`]):
+/// the clicking, placing, breaking, damaged, dying, collecting or
+/// GUI-opening session — including for the payloads that name no player
+/// (`PlayerDamaged`, `PlayerDied`, `ContainerOpened`/`ContainerClosed`,
+/// `ItemUsePre`). World events (mob life, sections, a mob's action, a mod's
+/// own event) are actor-less.
+///
 /// [`HostCall::RegisterEventHandler`]: crate::HostCall::RegisterEventHandler
+/// [`HostCall::ActingPlayer`]: crate::HostCall::ActingPlayer
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
     BlockPlacePre,
@@ -98,9 +106,9 @@ pub enum EventKind {
     /// an arrow does is the bow's law, landed through the ordinary calls
     /// naming the launcher as the attacker.
     ///
-    /// The dispatch acts as the launcher's session when the launcher is a
-    /// connected player, else as the host session — so a handler addresses
-    /// bodies by the ids it is handed, never by `PlayerState` alone.
+    /// The dispatch acts for the launcher when the launcher is a connected
+    /// player, and is actor-less otherwise — so a handler addresses bodies by
+    /// the ids it is handed, never by `PlayerState` alone.
     ///
     /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
     /// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity

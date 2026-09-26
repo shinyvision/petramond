@@ -12,7 +12,7 @@ use petramond_world::{
 
 fn creative_app() -> TestApp {
     let mut app = app();
-    app.server.sessions[0].player.set_mode(PlayerMode::Creative);
+    app.server.sessions_mut()[0].player_mut().set_mode(PlayerMode::Creative);
     app.add_to_inventory(ItemStack::new(ItemType::Dirt, 1));
     let state = app.server.build_self_state(0);
     app.game

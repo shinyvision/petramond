@@ -15,7 +15,7 @@ fn creative_mode_inventory_and_double_jump_follow_server_authority() {
     for _ in 0..3 {
         game.tick(0.05, &input);
     }
-    assert_eq!(game.server.sessions[0].player.mode(), PlayerMode::Creative);
+    assert_eq!(game.server.sessions()[0].player().mode(), PlayerMode::Creative);
     assert!(game.creative_mode());
     assert!(!game.creative_flying());
     game.jump_pressed(10.0);
@@ -31,7 +31,7 @@ fn creative_mode_inventory_and_double_jump_follow_server_authority() {
         game.tick(0.05, &GameInput::default());
     }
     assert_eq!(
-        game.server.sessions[0].menu.target().kind(),
+        game.server.sessions()[0].menu().target().kind(),
         Some(GuiKind::Creative)
     );
 }
@@ -41,13 +41,13 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
     use petramond_math::world_pos::WorldPos;
     use petramond_world::item::{ItemStack, ItemType};
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0]
-        .player
+    game.server.sessions_mut()[0]
+        .player_mut()
         .set_mode(PlayerMode::Creative);
     game.player.set_mode(PlayerMode::Creative);
     let wand = ItemType::by_name("petramond:schematic_wand").unwrap();
-    game.server.sessions[0]
-        .player
+    game.server.sessions_mut()[0]
+        .player_mut()
         .inventory
         .add(ItemStack::new(wand, 1));
     game.sync_self_view_for_test();

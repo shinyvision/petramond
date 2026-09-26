@@ -114,13 +114,12 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
             let mod_id = data.mod_id.clone();
             sim_query(move |ctx| {
                 let player = crate::player::PlayerId(player.0);
-                // Reachability is the sessions view's answer, exactly as for
-                // every other explicitly-addressed player call — silence here
-                // would look identical to a delivered cue nobody handled.
-                if ctx.with_player(player, |_| ()).is_none() {
+                // Reachability is the roster's answer, exactly as for every
+                // other explicitly-addressed player call — silence here would
+                // look identical to a delivered cue nobody handled.
+                if ctx.session_index(player).is_none() {
                     log::warn!(
-                        "[mod {mod_id}] EmitEventTo '{key}': player {} is not reachable from this \
-                         dispatch (no such session, or this site publishes no sessions view)",
+                        "[mod {mod_id}] EmitEventTo '{key}': player {} is not connected",
                         player.0
                     );
                     return HostRet::Bool(false);
@@ -162,8 +161,7 @@ fn event_key_guard(call: &str, mod_id: &str, key: &str, len: usize) -> Option<Ho
 mod tests {
     use mod_api::{HostCall, HostRet};
 
-    use crate::events::{PostQueue, SimCtx};
-    use petramond_math::world_pos::WorldPos;
+    use crate::events::{PostQueue, RosterRefs, SimCtx};
 
     /// The tick clock is legal in the detached AI-dispatch scope: with no sim
     /// scope active it reads the dispatcher's published tick instead of
@@ -196,7 +194,6 @@ mod tests {
     use crate::events::tick::TickEvents;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::player::Player;
     use crate::world::World;
 
     /// Shader params are the visual environment surface mods use for sky
@@ -207,14 +204,13 @@ mod tests {
         let mut alpha = ModStoreData::new("alpha", 1);
         let mut beta = ModStoreData::new("beta", 1);
         let mut world = World::new(1, 1);
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };

@@ -226,9 +226,9 @@ fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
         .map(|i| SectionPos::new(1000 + i, 0, 1000))
         .collect();
     for sp in awaiting.iter().copied() {
-        server.sessions[s].terrain.sent_insert(sp);
+        server.sessions[s].transport.terrain.sent_insert(sp);
     }
-    server.sessions[s].terrain.backlog = true;
+    server.sessions[s].transport.terrain.backlog = true;
 
     let room = STREAM_QUEUE_RESERVE + 100;
     let deadline = Instant::now() + TEST_HARD_DEADLINE;
@@ -309,7 +309,7 @@ fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
         ),
         "edit lands inside the streamed section"
     );
-    while !server.sessions[s].terrain.pending_light.contains(&lit) {
+    while !server.sessions[s].transport.terrain.pending_light.contains(&lit) {
         assert!(Instant::now() < deadline, "the rebake never landed");
         // `inbox` CARRIES phase 1's final acks into this first starved
         // pump: a window slot widowed by an undelivered ack would stay

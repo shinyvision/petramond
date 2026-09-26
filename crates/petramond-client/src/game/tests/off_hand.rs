@@ -36,13 +36,13 @@ fn off_hand_places_when_the_main_hand_cannot_act() {
     let mut game = game_on_empty_chunk();
     let floor = IVec3::new(4, 64, 4);
     game.server
-        .world
+        .world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server.sessions[0].player.inventory = hands(
+    game.server.sessions_mut()[0].player_mut().inventory = hands(
         Some(ItemStack::new(stick(), 1)),
         Some(ItemStack::new(ItemType::Dirt, 2)),
     );
-    game.server.sessions[0].look = Some(hit(floor, IVec3::Y));
+    game.server.sessions_mut()[0].input_mut().look = Some(hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
 
     let mut events = TickEvents::default();
@@ -50,11 +50,11 @@ fn off_hand_places_when_the_main_hand_cannot_act() {
 
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.server.world.chunk_block(above.x, above.y, above.z)),
+        Block::from_id(game.server.world().chunk_block(above.x, above.y, above.z)),
         Block::Dirt,
         "the ladder's second pass places the off-hand block"
     );
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(
         inv.off_hand().map(|s| s.count),
         Some(1),
@@ -78,13 +78,13 @@ fn the_main_hand_wins_when_both_hands_can_place() {
     let mut game = game_on_empty_chunk();
     let floor = IVec3::new(4, 64, 4);
     game.server
-        .world
+        .world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server.sessions[0].player.inventory = hands(
+    game.server.sessions_mut()[0].player_mut().inventory = hands(
         Some(ItemStack::new(ItemType::Dirt, 2)),
         Some(ItemStack::new(ItemType::Stone, 2)),
     );
-    game.server.sessions[0].look = Some(hit(floor, IVec3::Y));
+    game.server.sessions_mut()[0].input_mut().look = Some(hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
 
     let mut events = TickEvents::default();
@@ -92,11 +92,11 @@ fn the_main_hand_wins_when_both_hands_can_place() {
 
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.server.world.chunk_block(above.x, above.y, above.z)),
+        Block::from_id(game.server.world().chunk_block(above.x, above.y, above.z)),
         Block::Dirt,
         "the main hand acts whenever it can"
     );
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(inv.selected().map(|s| s.count), Some(1));
     assert_eq!(
         inv.off_hand().map(|s| s.count),
@@ -111,10 +111,10 @@ fn an_empty_off_hand_never_runs_a_second_pass() {
     let mut game = game_on_empty_chunk();
     let floor = IVec3::new(4, 64, 4);
     game.server
-        .world
+        .world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server.sessions[0].player.inventory = hands(Some(ItemStack::new(stick(), 1)), None);
-    game.server.sessions[0].look = Some(hit(floor, IVec3::Y));
+    game.server.sessions_mut()[0].player_mut().inventory = hands(Some(ItemStack::new(stick(), 1)), None);
+    game.server.sessions_mut()[0].input_mut().look = Some(hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
 
     let mut events = TickEvents::default();
@@ -123,7 +123,7 @@ fn an_empty_off_hand_never_runs_a_second_pass() {
     let p = events.player_at(0);
     assert!(p.placed_block.is_none() && !p.interacted && !p.used_item);
     assert_eq!(
-        Block::from_id(game.server.world.chunk_block(floor.x, floor.y + 1, floor.z)),
+        Block::from_id(game.server.world().chunk_block(floor.x, floor.y + 1, floor.z)),
         Block::Air,
         "an inert click with an empty off-hand does nothing"
     );
@@ -137,29 +137,29 @@ fn an_off_hand_change_after_receipt_denies_the_click() {
     let mut game = game_on_empty_chunk();
     let floor = IVec3::new(4, 64, 4);
     game.server
-        .world
+        .world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server.sessions[0].player.inventory = hands(
+    game.server.sessions_mut()[0].player_mut().inventory = hands(
         Some(ItemStack::new(stick(), 1)),
         Some(ItemStack::new(ItemType::Dirt, 2)),
     );
-    game.server.sessions[0].look = Some(hit(floor, IVec3::Y));
+    game.server.sessions_mut()[0].input_mut().look = Some(hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
 
     // The off-hand item changes before the tick consumes the click.
-    *game.server.sessions[0].player.inventory.off_hand_mut() =
+    *game.server.sessions_mut()[0].player_mut().inventory.off_hand_mut() =
         Some(ItemStack::new(ItemType::Stone, 2));
     let mut events = TickEvents::default();
     game.server.tick_place(0, &mut events);
 
     assert_eq!(
-        Block::from_id(game.server.world.chunk_block(floor.x, floor.y + 1, floor.z)),
+        Block::from_id(game.server.world().chunk_block(floor.x, floor.y + 1, floor.z)),
         Block::Air,
         "the superseded click must not act on an item it never aimed"
     );
     assert_eq!(
-        game.server.sessions[0]
-            .player
+        game.server.sessions()[0]
+            .player()
             .inventory
             .off_hand()
             .map(|s| s.count),
@@ -170,7 +170,7 @@ fn an_off_hand_change_after_receipt_denies_the_click() {
 #[test]
 fn swap_off_hand_swaps_the_selected_stack_and_predicts_it() {
     let mut game = game();
-    game.server.sessions[0].player.inventory = hands(Some(ItemStack::new(ItemType::Dirt, 5)), None);
+    game.server.sessions_mut()[0].player_mut().inventory = hands(Some(ItemStack::new(ItemType::Dirt, 5)), None);
     game.sync_self_view_for_test();
 
     game.game.swap_off_hand();
@@ -182,14 +182,14 @@ fn swap_off_hand_swaps_the_selected_stack_and_predicts_it() {
     assert!(game.self_view.inventory.selected().is_none());
     // …and the authoritative swap applies through the ordered menu stream.
     game.apply_latched_actions_for_test();
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(inv.off_hand().map(|s| s.count), Some(5));
     assert!(inv.selected().is_none());
 
     // F again swaps back (an empty hand takes the off-hand stack out).
     game.game.swap_off_hand();
     game.apply_latched_actions_for_test();
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert!(inv.off_hand().is_none());
     assert_eq!(inv.selected().map(|s| s.count), Some(5));
 }
@@ -208,7 +208,7 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     // Park the body clear of the place cell so the body gate cannot refuse.
     game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
-    game.server.sessions[0].player.inventory = hands(
+    game.server.sessions_mut()[0].player_mut().inventory = hands(
         Some(ItemStack::new(stick(), 1)),
         Some(ItemStack::new(ItemType::Dirt, 3)),
     );
@@ -242,7 +242,7 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
 #[test]
 fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
     let mut game = game();
-    game.server.sessions[0].player.inventory =
+    game.server.sessions_mut()[0].player_mut().inventory =
         hands(None, Some(ItemStack::new(ItemType::Stone, 7)));
     game.sync_self_view_for_test();
 
@@ -252,14 +252,14 @@ fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
     assert!(game.self_view.inventory.off_hand().is_none());
     // …and the authoritative decode agrees.
     game.apply_latched_actions_for_test();
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(inv.cursor().map(|s| s.count), Some(7));
     assert!(inv.off_hand().is_none());
 
     // A second plain click deposits the cursor stack back into the cell.
     game.menu_click(MenuSlot::OffHand, PointerButton::Primary, false, false);
     game.apply_latched_actions_for_test();
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(
         inv.off_hand().map(|s| s.count),
         Some(7),
@@ -270,7 +270,7 @@ fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
     // A shift-click ships the stack into the grid on both mirrors.
     game.menu_click(MenuSlot::OffHand, PointerButton::Primary, true, false);
     game.apply_latched_actions_for_test();
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert!(inv.off_hand().is_none(), "shift ships it into the grid");
     assert_eq!(super::common::count_item(inv, ItemType::Stone), 7);
     assert_eq!(
@@ -289,15 +289,15 @@ fn pickup_refills_a_matching_off_hand_before_the_grid() {
     use petramond::world::ITEM_PICKUP_DELAY_TICKS;
 
     let mut game = game();
-    game.server.sessions[0].player.inventory =
+    game.server.sessions_mut()[0].player_mut().inventory =
         hands(None, Some(ItemStack::new(ItemType::Dirt, 60)));
-    let centre = game.server.sessions[0].player.body_center();
+    let centre = game.server.sessions()[0].player().body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(ItemType::Dirt, 10), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-    game.server.world.spawn_item(drop);
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().spawn_item(drop);
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(
         inv.off_hand().map(|s| s.count),
         Some(64),
@@ -307,15 +307,15 @@ fn pickup_refills_a_matching_off_hand_before_the_grid() {
 
     // A different item routes past the off-hand entirely.
     let mut game = super::common::game();
-    game.server.sessions[0].player.inventory =
+    game.server.sessions_mut()[0].player_mut().inventory =
         hands(None, Some(ItemStack::new(ItemType::Stone, 1)));
-    let centre = game.server.sessions[0].player.body_center();
+    let centre = game.server.sessions()[0].player().body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(ItemType::Dirt, 3), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-    game.server.world.spawn_item(drop);
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().spawn_item(drop);
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(
         inv.off_hand().map(|s| (s.item, s.count)),
         Some((ItemType::Stone, 1)),
@@ -331,7 +331,7 @@ fn menu_f_swaps_the_hovered_inventory_slot_on_both_mirrors() {
     let mut game = game();
     let mut inv = Inventory::new();
     *inv.slot_mut(12).expect("in range") = Some(ItemStack::new(ItemType::Stone, 7));
-    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions_mut()[0].player_mut().inventory = inv;
     game.sync_self_view_for_test();
 
     game.game.menu_swap_off_hand(MenuSlot::Inventory(12));
@@ -342,7 +342,7 @@ fn menu_f_swaps_the_hovered_inventory_slot_on_both_mirrors() {
     );
     assert!(game.self_view.inventory.slot(12).is_none());
     game.apply_latched_actions_for_test();
-    let inv = &game.server.sessions[0].player.inventory;
+    let inv = &game.server.sessions()[0].player().inventory;
     assert_eq!(inv.off_hand().map(|s| s.count), Some(7));
     assert!(inv.slot(12).is_none());
 }
@@ -359,11 +359,11 @@ fn menu_f_swap_respects_container_slot_specs() {
     // Chest: a plain cell swaps whole, on both mirrors.
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server.world_mut().set_block_world(3, 64, 3, Block::Chest);
     game.server
-        .world
+        .world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
-    game.server.sessions[0].player.inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
+    game.server.sessions_mut()[0].player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
     let mut ev = TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
     game.sync_self_view_for_test();
@@ -379,15 +379,15 @@ fn menu_f_swap_respects_container_slot_specs() {
     game.apply_latched_actions_for_test();
     assert_eq!(
         game.server
-            .world
+            .world()
             .container_at(pos)
             .and_then(|c| c.slots[0])
             .map(|s| s.count),
         Some(5),
         "the authoritative chest cell agrees"
     );
-    assert!(game.server.sessions[0]
-        .player
+    assert!(game.server.sessions()[0]
+        .player()
         .inventory
         .off_hand()
         .is_none());
@@ -396,11 +396,11 @@ fn menu_f_swap_respects_container_slot_specs() {
     // half, so the WHOLE swap refuses.
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world.set_block_world(3, 64, 3, Block::Furnace);
+    game.server.world_mut().set_block_world(3, 64, 3, Block::Furnace);
     game.server
-        .world
+        .world_mut()
         .insert_furnace(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
-    game.server.sessions[0].player.inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
+    game.server.sessions_mut()[0].player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
     game.server.open_furnace_screen_for(0, pos);
     game.sync_self_view_for_test();
     game.sync_menu_view_for_test();
@@ -417,8 +417,8 @@ fn menu_f_swap_respects_container_slot_specs() {
         );
         game.apply_latched_actions_for_test();
         assert_eq!(
-            game.server.sessions[0]
-                .player
+            game.server.sessions()[0]
+                .player()
                 .inventory
                 .off_hand()
                 .map(|s| s.count),
@@ -427,7 +427,7 @@ fn menu_f_swap_respects_container_slot_specs() {
         );
         assert!(game
             .server
-            .world
+            .world()
             .container_at(pos)
             .and_then(|c| c.slots[cell])
             .is_none());
@@ -437,7 +437,7 @@ fn menu_f_swap_respects_container_slot_specs() {
 #[test]
 fn death_spills_the_off_hand_with_the_rest() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.inventory = hands(
+    game.server.sessions_mut()[0].player_mut().inventory = hands(
         Some(ItemStack::new(ItemType::Dirt, 3)),
         Some(ItemStack::new(ItemType::Stone, 4)),
     );
@@ -449,14 +449,14 @@ fn death_spills_the_off_hand_with_the_rest() {
         None,
         &mut events,
     ));
-    assert!(game.server.sessions[0]
-        .player
+    assert!(game.server.sessions()[0]
+        .player()
         .inventory
         .off_hand()
         .is_none());
     let spilled: u32 = game
         .server
-        .world
+        .world()
         .item_entities()
         .iter()
         .map(|it| it.stack.count as u32)
@@ -491,7 +491,7 @@ fn a_food_click_jabs_for_the_block_that_claims_it_and_otherwise_eats_without_one
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
-    game.server.sessions[0].player.inventory = hands(
+    game.server.sessions_mut()[0].player_mut().inventory = hands(
         Some(ItemStack::new(food, 3)),
         Some(ItemStack::new(ItemType::Dirt, 3)),
     );

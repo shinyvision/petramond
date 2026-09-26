@@ -12,9 +12,8 @@ use crate::events::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 /// Who a break is performed by, and where its consequences go.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Breaker {
-    /// The session the pre-event dispatch acts as (the host session for a
-    /// mob).
-    pub acting: usize,
+    /// Who breaks: the pre-event dispatch acts for this player, or
+    /// actor-less for a mob.
     pub actor: crate::mob::EntityRef,
     /// Whether the break yields anything: drops, scattered contents.
     pub yields: bool,
@@ -42,16 +41,16 @@ impl ServerGame {
     pub fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
         let now = self.world.current_tick();
         self.sessions[s]
-            .pending_break_ack
+            .input.pending_break_ack
             .retain(|_, broke_at| now.saturating_sub(*broke_at) <= BREAK_ACK_TTL_TICKS);
         // Last tick's single-block edits have had their hooks run by now.
         self.close_open_edit(s, events);
-        for req in std::mem::take(&mut self.sessions[s].pending_break_finished) {
+        for req in std::mem::take(&mut self.sessions[s].input.pending_break_finished) {
             self.resolve_break_finished(s, req, events);
         }
 
         if self.sessions[s].player.abilities().instant_break {
-            self.sessions[s].mining = MiningState::new();
+            self.sessions[s].sim.mining = MiningState::new();
             return;
         }
         let tool = self.sessions[s]
@@ -59,8 +58,8 @@ impl ServerGame {
             .inventory
             .selected()
             .and_then(|st| st.tool());
-        let look = self.sessions[s].look;
-        let break_held = self.sessions[s].intent_break_held;
+        let look = self.sessions[s].input.look;
+        let break_held = self.sessions[s].input.intent_break_held;
         // A barred mine reads exactly like a released button: the timer RESETS
         // rather than pausing, so releasing the claim starts the break over
         // instead of resuming a cell the player stopped looking at. The open
@@ -69,7 +68,7 @@ impl ServerGame {
             .player
             .denied_actions()
             .denies(mod_api::BodyAction::Mine);
-        if let Some(event) = self.sessions[s].mining.update(
+        if let Some(event) = self.sessions[s].sim.mining.update(
             TICK_DT,
             look.map(|t| t.block),
             break_held,
@@ -92,12 +91,12 @@ impl ServerGame {
             // belt in `game/replicated.rs`).
             let broken_pos = event.pos;
             let deferred = self.sessions[s]
-                .deferred_break_finished
+                .input.deferred_break_finished
                 .take_if(|d| d.pos == broken_pos);
             let presented = deferred.is_some_and(|d| d.predicted);
             if self.finish_player_break(s, event, events, presented) {
                 if let Some(req) = deferred {
-                    self.sessions[s].pending_break_ack.remove(&broken_pos);
+                    self.sessions[s].input.pending_break_ack.remove(&broken_pos);
                     self.push_action_outcome(s, req.request_id, true, None);
                 }
             } else if let Some(req) = deferred {
@@ -118,17 +117,17 @@ impl ServerGame {
 
     /// Drop a deferred TooFast finish whose cell is no longer being mined.
     fn abandon_deferred_break_if_stale(&mut self, s: usize) {
-        let Some(req) = self.sessions[s].deferred_break_finished else {
+        let Some(req) = self.sessions[s].input.deferred_break_finished else {
             return;
         };
         let still_mining = self.sessions[s]
-            .mining
+            .sim.mining
             .progress()
             .is_some_and(|(target, _)| target == req.pos);
         if still_mining {
             return;
         }
-        let req = self.sessions[s].deferred_break_finished.take().unwrap();
+        let req = self.sessions[s].input.deferred_break_finished.take().unwrap();
         self.deny_break_finished(
             s,
             req.request_id,
@@ -178,8 +177,8 @@ impl ServerGame {
         // BreakFinished arrives. If THIS session broke it, accept — never
         // deny/restore (that re-spawns the block and invites a second break).
         if block == Block::Air {
-            if self.sessions[s].pending_break_ack.remove(&pos).is_some() {
-                if let Some(old) = self.sessions[s].deferred_break_finished.take() {
+            if self.sessions[s].input.pending_break_ack.remove(&pos).is_some() {
+                if let Some(old) = self.sessions[s].input.deferred_break_finished.take() {
                     if old.pos != pos {
                         self.deny_break_finished(
                             s,
@@ -205,7 +204,7 @@ impl ServerGame {
         if self.sessions[s].player.abilities().instant_break {
             let now = self.world.current_tick();
             if self.sessions[s]
-                .last_instant_break
+                .sim.last_instant_break
                 .is_some_and(|last| now.saturating_sub(last) < INSTANT_BREAK_REPEAT_TICKS)
             {
                 self.deny_break_finished(s, request_id, pos, ActionDenyReason::TooFast);
@@ -226,8 +225,8 @@ impl ServerGame {
                 harvested: false,
             };
             if self.finish_player_break(s, event, events, predicted) {
-                self.sessions[s].last_instant_break = Some(now);
-                self.sessions[s].pending_break_ack.remove(&pos);
+                self.sessions[s].sim.last_instant_break = Some(now);
+                self.sessions[s].input.pending_break_ack.remove(&pos);
                 self.push_action_outcome(s, request_id, true, None);
             } else {
                 self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
@@ -262,7 +261,7 @@ impl ServerGame {
         }
 
         // Duration is validated against the SERVER'S OWN mining timer — the
-        // hold-path `sess.mining` that accrues from the latched look +
+        // hold-path `sess.sim.mining` that accrues from the latched look +
         // break_held every tick. Client-reported time is never trusted.
         // Instant blocks (expected 0) need no observed window.
         //
@@ -273,15 +272,15 @@ impl ServerGame {
         let expected = petramond_world::mining::break_time(block, auth_tool);
         if expected > 0.0 {
             let observed = self.sessions[s]
-                .mining
+                .sim.mining
                 .progress()
                 .and_then(|(target, elapsed)| (target == pos).then_some(elapsed));
             if observed.is_none_or(|elapsed| elapsed + 3.0 * TICK_DT < expected) {
                 // Supersede any prior deferred wait for another cell.
-                if let Some(old) = self.sessions[s].deferred_break_finished.take() {
+                if let Some(old) = self.sessions[s].input.deferred_break_finished.take() {
                     self.deny_break_finished(s, old.request_id, old.pos, ActionDenyReason::TooFast);
                 }
-                self.sessions[s].deferred_break_finished =
+                self.sessions[s].input.deferred_break_finished =
                     Some(crate::server::player::PendingBreakFinished {
                         request_id,
                         pos,
@@ -297,10 +296,10 @@ impl ServerGame {
             block,
             harvested: petramond_world::mining::harvests(block, auth_tool),
         };
-        self.sessions[s].mining = MiningState::new();
+        self.sessions[s].sim.mining = MiningState::new();
         // A successful BreakFinished clears any deferred wait for this cell
         // (should be empty — we only defer when the window is short).
-        if let Some(old) = self.sessions[s].deferred_break_finished.take() {
+        if let Some(old) = self.sessions[s].input.deferred_break_finished.take() {
             if old.pos != pos {
                 self.deny_break_finished(s, old.request_id, old.pos, ActionDenyReason::TooFast);
             } else {
@@ -310,7 +309,7 @@ impl ServerGame {
             }
         }
         if self.finish_player_break(s, event, events, predicted) {
-            self.sessions[s].pending_break_ack.remove(&pos);
+            self.sessions[s].input.pending_break_ack.remove(&pos);
             self.push_action_outcome(s, request_id, true, None);
         } else {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::Denied);
@@ -333,7 +332,7 @@ impl ServerGame {
     /// Authoritative footprint of `pos` into the session's corrective sync.
     fn queue_break_corrective_cells(&mut self, s: usize, pos: IVec3) {
         let cells = self.world.break_footprint_cells(pos);
-        self.sessions[s].pending_corrective_cells.extend(cells);
+        self.sessions[s].replication.pending_corrective_cells.extend(cells);
     }
 
     /// Apply a finished player break: the shared break funnel as that
@@ -353,12 +352,11 @@ impl ServerGame {
         initiator_presented: bool,
     ) -> bool {
         let hit_normal = self.sessions[s]
-            .look
+            .input.look
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
             .map(|h| h.normal);
         self.touch_edit_cells(s, self.world.break_footprint_cells(event.pos));
         let breaker = Breaker {
-            acting: s,
             actor: crate::mob::EntityRef::Player(self.sessions[s].id),
             yields: self.sessions[s].player.abilities().yields_drops,
             collector: None,
@@ -379,12 +377,12 @@ impl ServerGame {
         // needs the event, and one whose finish is in flight suppresses the
         // wire copy itself. Observers get the shared event either way.
         if initiator_presented {
-            self.sessions[s].presented_breaks.push(event.pos);
+            self.sessions[s].replication.presented_breaks.push(event.pos);
         }
         // A lagged BreakFinished for this already-cleared cell must accept,
         // not deny/restore. Tick-stamped for the ack TTL.
         let now = self.world.current_tick();
-        self.sessions[s].pending_break_ack.insert(event.pos, now);
+        self.sessions[s].input.pending_break_ack.insert(event.pos, now);
         true
     }
 
@@ -411,20 +409,17 @@ impl ServerGame {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            // The breaking session acts (the host session for a mob); the
-            // sessions view rides the dispatch.
-            let cancelled = Self::with_sessions_view(sessions, breaker.acting, |sess| {
-                bus.block_break_pre(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut pre,
-                ) == Outcome::Cancel
-            });
+            // The breaking player acts; a mob's break is actor-less.
+            let cancelled = mods.bus_mut().block_break_pre(
+                world,
+                sessions,
+                breaker.actor.player(),
+                events,
+                &mut pre,
+            ) == Outcome::Cancel;
             if cancelled {
                 return false;
             }
@@ -527,11 +522,12 @@ impl ServerGame {
                 self.deliver_break_stack(breaker.collector, event.pos, stack, (sky, blk));
             }
         }
-        self.bus.emit(PostEvent::BlockBroken {
+        self.mods.emit(PostEvent::BlockBroken {
             pos: event.pos,
             block: event.block,
             harvested: event.harvested,
             natural: false,
+            player: breaker.actor.player(),
         });
         self.push_noise_from(breaker.actor, event.pos, crate::mob::NoiseKind::BlockBroken);
         true
@@ -603,11 +599,12 @@ impl ServerGame {
             }
             // Sim-destroyed blocks are not cancellable (no pre event);
             // observers still hear about them.
-            self.bus.emit(PostEvent::BlockBroken {
+            self.mods.emit(PostEvent::BlockBroken {
                 pos,
                 block,
                 harvested,
                 natural: true,
+                player: None,
             });
         }
     }
@@ -696,20 +693,20 @@ impl ServerGame {
     ) -> Vec<ItemStack> {
         let mut stacks = Vec::new();
         for d in block.drop_spec().drops {
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
             // Probabilistic drops (chance < 1, e.g. a leaf's 10% sapling) roll first;
             // a guaranteed drop (chance 1.0) always passes. Reuses the same seeded
             // hash the count roll uses, so the roll stays deterministic on the tick.
-            if d.chance < 1.0 && crate::entity::hash01(self.spawn_counter as u64) >= d.chance {
+            let chance_seed = self.seeds.draw();
+            if d.chance < 1.0 && crate::entity::hash01(chance_seed as u64) >= d.chance {
                 continue;
             }
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
             // Roll a count in [min, max] (a fixed amount when min == max, e.g. the
             // 2–4 raw copper from copper ore).
+            let count_seed = self.seeds.draw();
             let count = if d.min >= d.max {
                 d.min
             } else {
-                let r = crate::entity::hash01(self.spawn_counter as u64);
+                let r = crate::entity::hash01(count_seed as u64);
                 let span = (d.max - d.min + 1) as f32;
                 (d.min + (r * span) as u8).min(d.max)
             };
@@ -737,8 +734,7 @@ impl ServerGame {
             return;
         }
         let centre = petramond_math::world_pos::WorldPos::block_center(pos);
-        self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
+        let mut drop = DroppedItem::new(centre, stack, self.seeds.draw());
         drop.skylight = sky;
         drop.blocklight = blk;
         self.world.spawn_item(drop);

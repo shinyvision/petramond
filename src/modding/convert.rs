@@ -406,7 +406,7 @@ pub(super) fn player_damage_pre(ev: &PlayerDamagePre) -> api::EventPayload {
 
 pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
     match *ev {
-        PostEvent::BlockPlaced { pos, block } => api::EventPayload::BlockPlaced {
+        PostEvent::BlockPlaced { pos, block, .. } => api::EventPayload::BlockPlaced {
             pos: ivec(pos),
             block: api::BlockId(block.id()),
         },
@@ -415,6 +415,7 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             block,
             harvested,
             natural,
+            ..
         } => api::EventPayload::BlockBroken {
             pos: ivec(pos),
             block: api::BlockId(block.id()),
@@ -440,15 +441,15 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             kind: api::MobId(kind.id()),
             pos: pos.to_array(),
         },
-        PostEvent::PlayerDamaged { amount, new_health } => {
-            api::EventPayload::PlayerDamaged { amount, new_health }
-        }
-        PostEvent::PlayerDied => api::EventPayload::PlayerDied,
-        PostEvent::ContainerOpened { kind, anchor } => api::EventPayload::ContainerOpened {
+        PostEvent::PlayerDamaged {
+            amount, new_health, ..
+        } => api::EventPayload::PlayerDamaged { amount, new_health },
+        PostEvent::PlayerDied { .. } => api::EventPayload::PlayerDied,
+        PostEvent::ContainerOpened { kind, anchor, .. } => api::EventPayload::ContainerOpened {
             kind: container(kind),
             at: anchor.map(container_address),
         },
-        PostEvent::ContainerClosed { kind, anchor } => api::EventPayload::ContainerClosed {
+        PostEvent::ContainerClosed { kind, anchor, .. } => api::EventPayload::ContainerClosed {
             kind: container(kind),
             at: anchor.map(container_address),
         },

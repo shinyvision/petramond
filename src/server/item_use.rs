@@ -82,42 +82,36 @@ impl ServerGame {
             return false;
         }
         let slot = sess.player.inventory.active_slot();
-        if sess.eating.is_some_and(|e| {
+        if sess.sim.eating.is_some_and(|e| {
             e.hand == hand
                 && e.item == item
                 && (hand == petramond_world::inventory::Hand::Off || e.slot == slot)
         }) {
             return true; // re-click mid-eat: consumed, nothing restarts
         }
-        let target = sess.look.map(|h| h.block);
+        let target = sess.input.look.map(|h| h.block);
         let mut pre = ItemUsePre { item, target };
         let cancelled = {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            // The eating session acts; the sessions view rides the dispatch.
-            Self::with_sessions_view(sessions, s, |sess| {
-                bus.item_use_pre(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut pre,
-                ) == Outcome::Cancel
-            })
+            // The eating session acts.
+            let actor = Some(sessions[s].id);
+            let bus = mods.bus_mut();
+            bus.item_use_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel
         };
         if cancelled {
-            self.bus.emit(PostEvent::ItemUsed {
+            self.mods.emit(PostEvent::ItemUsed {
                 player: self.sessions[s].id,
                 item,
                 kind: ItemUseEvent::Claimed,
             });
             return true;
         }
-        self.sessions[s].eating = Some(EatingState {
+        self.sessions[s].sim.eating = Some(EatingState {
             hand,
             slot,
             item,
@@ -133,7 +127,7 @@ impl ServerGame {
     /// effects when the hold reaches the row's `eat_ticks`.
     pub fn advance_eating(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
-        let Some(eat) = sess.eating else {
+        let Some(eat) = sess.sim.eating else {
             return;
         };
         let held = sess.player.inventory.held_in(eat.hand).map(|st| st.item);
@@ -146,8 +140,8 @@ impl ServerGame {
             .player
             .denied_actions()
             .denies(mod_api::BodyAction::Use);
-        if !sess.intent_use_held || barred || selection_moved || held != Some(eat.item) {
-            sess.eating = None;
+        if !sess.input.intent_use_held || barred || selection_moved || held != Some(eat.item) {
+            sess.sim.eating = None;
             // The eat gave the gesture up; the button, if still down, is free
             // for the next interaction. (A release frees it in `tick_place`
             // anyway — this is the swap-mid-eat case.)
@@ -161,25 +155,25 @@ impl ServerGame {
             return;
         }
         let Some(food) = eat.item.food() else {
-            sess.eating = None;
+            sess.sim.eating = None;
             return;
         };
         let progress = eat.progress + 1;
         if progress < food.eat_ticks {
-            sess.eating = Some(EatingState { progress, ..eat });
+            sess.sim.eating = Some(EatingState { progress, ..eat });
             return;
         }
         // Done: the food leaves the hand and its effects land, atomically on
         // this tick. The gesture is SPENT, not freed — finishing is not the
         // same as letting go, and without the distinction a held button eats
         // the whole stack.
-        sess.eating = None;
+        sess.sim.eating = None;
         sess.player.use_gesture = crate::player::UseGesture::Spent;
         sess.player.inventory.decrement_held(eat.hand);
         for &(effect, ticks) in food.effects {
             sess.player.apply_effect(effect, ticks);
         }
-        self.bus.emit(PostEvent::ItemUsed {
+        self.mods.emit(PostEvent::ItemUsed {
             player: self.sessions[s].id,
             item: eat.item,
             kind: ItemUseEvent::Eaten,
@@ -205,22 +199,16 @@ impl ServerGame {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            // The clicking session acts; the sessions view rides the dispatch.
-            Self::with_sessions_view(sessions, s, |sess| {
-                bus.item_use_pre(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut pre,
-                ) == Outcome::Cancel
-            })
+            // The clicking session acts.
+            let actor = Some(sessions[s].id);
+            let bus = mods.bus_mut();
+            bus.item_use_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel
         };
         if cancelled {
-            self.bus.emit(PostEvent::ItemUsed {
+            self.mods.emit(PostEvent::ItemUsed {
                 player: self.sessions[s].id,
                 item,
                 kind: ItemUseEvent::Claimed,
@@ -240,7 +228,7 @@ impl ServerGame {
             _ => false,
         };
         if used {
-            self.bus.emit(PostEvent::ItemUsed {
+            self.mods.emit(PostEvent::ItemUsed {
                 player: self.sessions[s].id,
                 item,
                 kind: ItemUseEvent::Handler,
@@ -264,7 +252,9 @@ impl ServerGame {
         {
             return false;
         }
-        let Some(idx) = self.authoritative_mob_target(s, target) else {
+        let Some(idx) =
+            super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], target)
+        else {
             return false;
         };
         let Some(ShearDrop {
@@ -279,8 +269,7 @@ impl ServerGame {
         };
         // Pop from roughly the mob's body centre, like death loot.
         let centre = pos + Vec3::new(0.0, 0.3, 0.0);
-        self.spawn_counter = self.spawn_counter.wrapping_add(1);
-        let mut drop = DroppedItem::new(centre, ItemStack::new(item, count), self.spawn_counter);
+        let mut drop = DroppedItem::new(centre, ItemStack::new(item, count), self.seeds.draw());
         drop.skylight = skylight;
         drop.blocklight = blocklight;
         self.world.spawn_item(drop);
@@ -377,19 +366,14 @@ impl ServerGame {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            // The pouring session acts; the sessions view rides the dispatch.
-            let cancelled = Self::with_sessions_view(sessions, s, |sess| {
-                bus.block_place_pre(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut pre,
-                ) == Outcome::Cancel
-            });
+            // The pouring session acts.
+            let actor = Some(sessions[s].id);
+            let bus = mods.bus_mut();
+            let cancelled =
+                bus.block_place_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel;
             if cancelled {
                 return false;
             }
@@ -401,9 +385,10 @@ impl ServerGame {
         if !self.world.set_block_world(p.x, p.y, p.z, fluid) {
             return false;
         }
-        self.bus.emit(PostEvent::BlockPlaced {
+        self.mods.emit(PostEvent::BlockPlaced {
             pos: p,
             block: fluid,
+            player: Some(self.sessions[s].id),
         });
         self.push_block_noise(s, p, crate::mob::NoiseKind::BlockPlaced);
         // A filled bucket row is max-stack 1 (the engine's water bucket; packs

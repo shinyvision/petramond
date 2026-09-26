@@ -435,6 +435,13 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
             ),
         };
     }
+    // ...and its `ActingPlayer` that snapshot's id: outside a prediction
+    // dispatch a client instance acts for nobody.
+    if data.side == RuntimeSide::Client && matches!(call, HostCall::ActingPlayer) {
+        return HostRet::ActingPlayer(
+            super::client::scope::active_actor().and_then(|actor| actor.id),
+        );
+    }
     // A client instance's body writes are PREDICTIONS against its own mirror,
     // not sim mutations, so they land on the client store beside the rest of
     // the presentation surface. Every call listed as a client capability must
@@ -551,7 +558,16 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::TakeItem { .. }
         | HostCall::SetPlayerHeldDisplay { .. }
         | HostCall::PlayerInventory { .. }
-        | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
+        | HostCall::ChatSend { .. }
+        | HostCall::ActingPlayer
+        | HostCall::PlayerStateOf { .. }
+        | HostCall::ApplyKnockbackTo { .. }
+        | HostCall::SetHealthOf { .. }
+        | HostCall::TeleportPlayer { .. }
+        | HostCall::EffectApplyTo { .. }
+        | HostCall::EffectsActiveOf { .. }
+        | HostCall::ConsumeHeldBy { .. }
+        | HostCall::ReplaceHeldOneBy { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }
         | HostCall::SoundPlayOnMob { .. }
@@ -631,7 +647,10 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::GuiViewers
         | HostCall::GuiStateGet { .. }
         | HostCall::GuiOpen { .. }
-        | HostCall::GuiClose => gui::handle_gui_call(&data.mod_id, call),
+        | HostCall::GuiClose
+        | HostCall::GuiStateGetFor { .. }
+        | HostCall::GuiOpenFor { .. }
+        | HostCall::GuiCloseFor { .. } => gui::handle_gui_call(&data.mod_id, call),
         HostCall::ContainerGet { .. }
         | HostCall::ContainerGetMany { .. }
         | HostCall::ContainerSet { .. }

@@ -8,7 +8,7 @@ use petramond_world::container::Container;
 use petramond_world::item::{ItemStack, ItemType};
 
 use crate::events::tick::TickEvents;
-use crate::events::{PostEvent, SimCtx};
+use crate::events::PostEvent;
 use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
 use crate::server::game::ServerGame;
@@ -18,47 +18,35 @@ use crate::server::game::ServerGame;
 fn server_with_worker(slots: Vec<Option<ItemStack>>) -> (ServerGame, u64) {
     let mut server = crate::server::session_build::build_server_inline("", 1, 1);
     server
-        .bus
+        .bus_mut()
         .queue_mut()
         .want_for_test(crate::events::PostEventKind::ActorActed);
-    server.sessions[0].player.pos = WorldPos::new(2.5, 65.0, 2.5);
+    server.sessions_mut()[0].player_mut().pos = WorldPos::new(2.5, 65.0, 2.5);
     for x in 4..=14 {
         for y in 64..=69 {
             for z in 4..=14 {
                 let block = if y == 64 { Block::Stone } else { Block::Air };
-                server.world.set_block_world(x, y, z, block);
+                server.world_mut().set_block_world(x, y, z, block);
             }
         }
     }
-    server.world.mobs_mut().restore([crate::mob::SavedMob {
+    server.world_mut().mobs_mut().restore([crate::mob::SavedMob {
         kind: crate::mob::Mob::Owl,
         pos: WorldPos::new(8.5, 65.0, 8.5),
         yaw: 0.0,
         tags: Default::default(),
         container: Container { slots },
     }]);
-    let id = server.world.mobs().instances()[0].id();
+    let id = server.world().mobs().instances()[0].id();
     (server, id)
 }
 
 fn call(server: &mut ServerGame, call: HostCall) -> HostRet {
     let mut store = ModStoreData::new("construction_test", 1);
     let mut feed = TickEvents::default();
-    let ServerGame {
-        world,
-        sessions,
-        bus,
-        ..
-    } = server;
-    let sess = &mut sessions[0];
-    let mut ctx = SimCtx {
-        world,
-        player: &mut sess.player,
-        gui_state: &mut sess.gui_state,
-        feed: &mut feed,
-        queue: bus.queue_mut(),
-    };
-    scope::enter(&mut ctx, || handle_host_call(&mut store, call))
+    server.dispatch_for_test(None, &mut feed, |ctx| {
+        scope::enter(ctx, || handle_host_call(&mut store, call))
+    })
 }
 
 /// Apply the queued actions and return the `actor_acted` outcomes they posted.
@@ -66,7 +54,7 @@ fn drain(server: &mut ServerGame) -> Vec<(ActorAction, Option<ActionRefusal>)> {
     let mut events = TickEvents::default();
     server.apply_deferred_actions(&mut events);
     server
-        .bus
+        .bus_mut()
         .queue_mut()
         .take_events_for_test()
         .into_iter()
@@ -86,7 +74,7 @@ fn aim(
     pos: IVec3,
     record: Option<mod_api::BlockRecord>,
 ) -> Result<[f64; 3], ActionRefusal> {
-    let feet = server.world.mobs().instances()[0].pos;
+    let feet = server.world().mobs().instances()[0].pos;
     match call(
         server,
         HostCall::ActorAims {
@@ -104,10 +92,10 @@ fn aim(
 /// Turn the worker's eyes onto its work at `pos`.
 fn look(server: &mut ServerGame, mob: u64, pos: IVec3, record: Option<mod_api::BlockRecord>) {
     let at = aim(server, mob, pos, record).expect("the work is seen from here");
-    let eye = server.world.actor(mob).unwrap().eye;
+    let eye = server.world().actor(mob).unwrap().eye;
     let to = WorldPos::new(at[0], at[1], at[2]) - eye;
-    let index = server.world.mobs().index_of_id(mob).unwrap();
-    server.world.mobs_mut().set_gaze_for_test(
+    let index = server.world().mobs().index_of_id(mob).unwrap();
+    server.world_mut().mobs_mut().set_gaze_for_test(
         index,
         (-to.x).atan2(-to.z),
         to.y.atan2((to.x * to.x + to.z * to.z).sqrt()),
@@ -128,7 +116,7 @@ fn a_dig_accrues_on_consecutive_ticks_and_collects_its_drop() {
     let (mut server, mob) = server_with_worker(vec![None, None]);
     let target = IVec3::new(10, 65, 8);
     server
-        .world
+        .world_mut()
         .set_block_world(target.x, target.y, target.z, Block::Dirt);
     look(&mut server, mob, target, None);
     let dig = |server: &mut ServerGame| {
@@ -144,7 +132,7 @@ fn a_dig_accrues_on_consecutive_ticks_and_collects_its_drop() {
     };
     let mut ticks = 0;
     loop {
-        server.world.restore_tick(100 + ticks);
+        server.world_mut().restore_tick(100 + ticks);
         match dig(&mut server) {
             HostRet::Dig(DigProgress::Digging { progress }) => {
                 assert!((0.0..1.0).contains(&progress));
@@ -167,10 +155,10 @@ fn a_dig_accrues_on_consecutive_ticks_and_collects_its_drop() {
     );
     assert_eq!(drain(&mut server), vec![(ActorAction::Dig, None)]);
     assert_eq!(
-        Block::from_id(server.world.chunk_block(target.x, target.y, target.z)),
+        Block::from_id(server.world().chunk_block(target.x, target.y, target.z)),
         Block::Air
     );
-    let carried = server.world.mobs().instances()[0].container().clone();
+    let carried = server.world().mobs().instances()[0].container().clone();
     assert_eq!(
         carried.count_like(ItemStack::new(ItemType::from_block(Block::Dirt), 1)),
         1,
@@ -183,11 +171,11 @@ fn an_interrupted_dig_starts_over() {
     let (mut server, mob) = server_with_worker(vec![None]);
     let target = IVec3::new(10, 65, 8);
     server
-        .world
+        .world_mut()
         .set_block_world(target.x, target.y, target.z, Block::Stone);
     look(&mut server, mob, target, None);
     let progress_at = |server: &mut ServerGame, tick| {
-        server.world.restore_tick(tick);
+        server.world_mut().restore_tick(tick);
         match call(
             server,
             HostCall::ActorDig {
@@ -241,11 +229,11 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
     );
     assert_eq!(drain(&mut server), vec![(ActorAction::Place, None)]);
     assert_eq!(
-        Block::from_id(server.world.chunk_block(on_floor.x, on_floor.y, on_floor.z)),
+        Block::from_id(server.world().chunk_block(on_floor.x, on_floor.y, on_floor.z)),
         Block::Cobblestone
     );
     let carried = |server: &ServerGame| {
-        server.world.mobs().instances()[0]
+        server.world().mobs().instances()[0]
             .container()
             .count_like(ItemStack::new(ItemType::from_block(Block::Cobblestone), 1))
     };
@@ -269,14 +257,14 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
         place(&mut server, second),
         HostRet::Place(PlaceRequest::Queued)
     );
-    let index = server.world.mobs().index_of_id(mob).unwrap();
-    server.world.mobs_mut().container_mut(index).unwrap().slots[0] = None;
+    let index = server.world().mobs().index_of_id(mob).unwrap();
+    server.world_mut().mobs_mut().container_mut(index).unwrap().slots[0] = None;
     assert_eq!(
         drain(&mut server),
         vec![(ActorAction::Place, Some(ActionRefusal::MissingItems))]
     );
     assert_eq!(
-        Block::from_id(server.world.chunk_block(second.x, second.y, second.z)),
+        Block::from_id(server.world().chunk_block(second.x, second.y, second.z)),
         Block::Air
     );
 }
@@ -319,7 +307,7 @@ fn a_face_turned_away_from_the_eye_is_no_face_to_build_on() {
     let (mut server, mob) = server_with_worker(vec![]);
     // A block overhead, off to one side: the cell on top of it is in plain
     // view, and the only face it could be placed against is the block's top.
-    server.world.set_block_world(10, 67, 8, Block::Stone);
+    server.world_mut().set_block_world(10, 67, 8, Block::Stone);
     let above = IVec3::new(10, 68, 8);
     assert_eq!(
         aim(&mut server, mob, above, Some(stone_record())),
@@ -369,7 +357,7 @@ fn a_mob_stepping_aside_under_its_own_power_reads_as_walking() {
         pos: WorldPos::new(2.5, 65.0, 2.5),
         ..Default::default()
     }];
-    server.world.tick_mobs(0.05, &anchors);
+    server.world_mut().tick_mobs(0.05, &anchors);
     let stepped = |server: &mut ServerGame, gait| {
         let reply = call(
             server,
@@ -383,9 +371,9 @@ fn a_mob_stepping_aside_under_its_own_power_reads_as_walking() {
             },
         );
         assert_eq!(reply, HostRet::Bool(true));
-        let before = server.world.mobs().instances()[0].pos;
-        server.world.tick_mobs(0.05, &anchors);
-        let after = &server.world.mobs().instances()[0];
+        let before = server.world().mobs().instances()[0].pos;
+        server.world_mut().tick_mobs(0.05, &anchors);
+        let after = &server.world().mobs().instances()[0];
         assert!(after.pos.x > before.x, "the drive moved the body");
         after.moving
     };
@@ -429,7 +417,7 @@ fn a_cell_of_two_parts_goes_in_a_click_at_a_time_each_paid_with_its_own_item() {
         assert_eq!(drain(server), vec![(ActorAction::Place, None)]);
     };
     let carried = |server: &ServerGame, block| {
-        server.world.mobs().instances()[0]
+        server.world().mobs().instances()[0]
             .container()
             .count_like(slab(block))
     };
@@ -445,7 +433,7 @@ fn a_cell_of_two_parts_goes_in_a_click_at_a_time_each_paid_with_its_own_item() {
     place(&mut server);
     assert_eq!(carried(&server, Block::StoneSlab), 0);
     assert_eq!(
-        server.world.slab_state_at(cell.x, cell.y, cell.z),
+        server.world().slab_state_at(cell.x, cell.y, cell.z),
         both,
         "two clicks leave the cell as recorded"
     );

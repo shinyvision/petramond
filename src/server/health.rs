@@ -45,13 +45,13 @@ impl ServerGame {
     }
 
     /// Consume the landing the SERVER-side fall tracker latched from the
-    /// session's reported transforms (`ConnectedPlayer::fall`, fed in
+    /// session's reported transforms (`SessionSim::fall`, fed in
     /// `tick_movement`) and apply its fall damage on the tick. The client
     /// physics still measures its own falls per frame, but nothing reads that
     /// latch anymore — the server trusts only what it measured itself.
     /// Spectators float, so their (absent) fall is drained without harm.
     pub fn tick_fall_damage(&mut self, s: usize, events: &mut TickEvents) {
-        let distance = std::mem::replace(&mut self.sessions[s].pending_fall, 0.0);
+        let distance = std::mem::replace(&mut self.sessions[s].sim.pending_fall, 0.0);
         if self.sessions[s].player.is_spectator() {
             return;
         }
@@ -69,7 +69,7 @@ impl ServerGame {
     /// splash at the surface. Presentation only, no damage: the fluid broke
     /// the fall.
     pub fn tick_fluid_splash(&mut self, s: usize, events: &mut TickEvents) {
-        let fall = std::mem::replace(&mut self.sessions[s].pending_splash, 0.0);
+        let fall = std::mem::replace(&mut self.sessions[s].sim.pending_splash, 0.0);
         if self.sessions[s].player.is_spectator() {
             return;
         }
@@ -145,25 +145,16 @@ impl ServerGame {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            // The VICTIM acts: the sessions view rides the dispatch so a
-            // handler can name whose damage this is (`PlayerSnapshot::id`)
-            // and read the session-side actor context that decides whether
-            // to cancel — a raised guard is `use_held`, which lives on the
-            // roster row, not on the body. Without the view every one of
-            // those reads silently answers "no", and a mod that cancels on
-            // one never fires.
-            Self::with_sessions_view(sessions, s, |sess| {
-                bus.player_damage_pre(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut pre,
-                ) == Outcome::Cancel
-            })
+            // The VICTIM acts: a handler names whose damage this is
+            // (`PlayerSnapshot::id`) and reads the session-side actor context
+            // that decides whether to cancel — a raised guard is `use_held`,
+            // which lives on the roster row, not on the body.
+            let actor = Some(sessions[s].id);
+            let bus = mods.bus_mut();
+            bus.player_damage_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel
         };
         if cancelled {
             return false;
@@ -181,7 +172,8 @@ impl ServerGame {
         // Being hurt in bed ends the sleep immediately — it never continues
         // through a fight (and a lethal hit hands straight over to death).
         self.interrupt_sleep(s, events);
-        self.bus.emit(PostEvent::PlayerDamaged {
+        self.mods.emit(PostEvent::PlayerDamaged {
+            player: self.sessions[s].id,
             amount: pre.amount,
             new_health,
         });
@@ -197,7 +189,9 @@ impl ServerGame {
             } else {
                 self.spill_inventory_on_death(s, events);
             }
-            self.bus.emit(PostEvent::PlayerDied);
+            self.mods.emit(PostEvent::PlayerDied {
+                player: self.sessions[s].id,
+            });
         }
         true
     }
@@ -231,8 +225,7 @@ impl ServerGame {
         );
         let (sky, blk) = self.world.dynamic_light_at_world(cell.0, cell.1, cell.2);
         for stack in stacks {
-            self.spawn_counter = self.spawn_counter.wrapping_add(1);
-            let mut drop = crate::entity::DroppedItem::new(centre, stack, self.spawn_counter);
+            let mut drop = crate::entity::DroppedItem::new(centre, stack, self.seeds.draw());
             drop.skylight = sky;
             drop.blocklight = blk;
             self.world.spawn_item(drop);
@@ -288,17 +281,16 @@ mod tests {
         assert_eq!(fall_damage_health(4.0 - 8e-6), 1);
     }
 
-    /// `player_damage_pre` must dispatch under the SESSIONS VIEW, naming the
-    /// victim.
+    /// `player_damage_pre` must dispatch with the VICTIM as its actor.
     ///
-    /// Without it, `acting_player_id` is `None` here and every session-side
-    /// field of the actor snapshot — `sneak`, `use_held`, and the victim's own
-    /// id — silently answers its default. A handler that cancels on one of
-    /// those (a raised guard is exactly `use_held`) then never fires, and
-    /// nothing anywhere reports a problem: the feature is simply dead. The
-    /// second session is here because the failure mode this replaced would
-    /// also have handed the handler whichever body the tick happened to run
-    /// as, which reads fine right up until somebody else is hit.
+    /// Without it every session-side field of the actor snapshot — `sneak`,
+    /// `use_held`, and the victim's own id — silently answers its default. A
+    /// handler that cancels on one of those (a raised guard is exactly
+    /// `use_held`) then never fires, and nothing anywhere reports a problem:
+    /// the feature is simply dead. The second session is here because an
+    /// implicit acting player would hand the handler whichever body the tick
+    /// happened to run as, which reads fine right up until somebody else is
+    /// hit.
     #[test]
     fn the_pre_damage_dispatch_names_its_victim_and_carries_their_intents() {
         use std::sync::{Arc, Mutex};
@@ -311,8 +303,8 @@ mod tests {
 
         // The victim is holding the use button; the host is not. A handler
         // reading the WRONG session sees the host's `false`.
-        server.sessions[victim_s].intent_use_held = true;
-        server.sessions[victim_s].intent_gameplay = true;
+        server.sessions[victim_s].input.intent_use_held = true;
+        server.sessions[victim_s].input.intent_gameplay = true;
         server.publish_player_inputs();
 
         /// What the handler saw: whose damage it is, and whether that
@@ -320,8 +312,8 @@ mod tests {
         type Seen = Vec<(Option<crate::player::PlayerId>, bool)>;
         let seen: Arc<Mutex<Seen>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
-        server.bus.on_player_damage_pre(0, move |ctx, _ev| {
-            let id = ctx.acting_player_id();
+        server.mods.bus_mut().on_player_damage_pre(0, move |ctx, _ev| {
+            let id = ctx.actor;
             let use_held = id
                 .and_then(|id| {
                     ctx.world

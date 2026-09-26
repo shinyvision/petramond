@@ -9,6 +9,20 @@ use crate::events::tick::TickEvents;
 
 type RequestId = crate::net::protocol::ClientRequestId;
 
+/// The server's one seed sequence for everything it scatters or rolls —
+/// dropped-item pops, loot and drop-count rolls, melee damage rolls — so the
+/// sim stays deterministic without a clock: each draw is the next value.
+#[derive(Default)]
+pub struct DropSeeds(u32);
+
+impl DropSeeds {
+    /// The next seed in the sequence.
+    pub fn draw(&mut self) -> u32 {
+        self.0 = self.0.wrapping_add(1);
+        self.0
+    }
+}
+
 /// Each queued intent carries ITS OWN optional request id, so every predicted
 /// drop is individually answered — a shared per-session latch would orphan all
 /// but the last id queued in a tick window (leaking the client's ledger).
@@ -100,7 +114,7 @@ impl ServerGame {
     /// so the fixed tick can still apply the user's throw.
     pub fn close_cursor_stack_for(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
-        sess.drop_queue
+        sess.sim.drop_queue
             .close_cursor_stack(&mut sess.player.inventory);
     }
 
@@ -108,7 +122,7 @@ impl ServerGame {
     /// and spawn the matching dropped entity in the same fixed-tick phase, before item
     /// physics gives fresh drops their first step.
     pub fn tick_drops(&mut self, s: usize, events: &mut TickEvents) {
-        for (action, request_id) in self.sessions[s].drop_queue.drain() {
+        for (action, request_id) in self.sessions[s].sim.drop_queue.drain() {
             let stack = match action {
                 PendingDropAction::Selected { slot, all } => {
                     self.take_hotbar_slot_for_drop(s, slot, all)

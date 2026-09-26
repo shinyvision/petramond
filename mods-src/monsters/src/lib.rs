@@ -176,8 +176,16 @@ impl Mod for Monsters {
             return;
         };
         let field = self.weather_field();
-        let player = player_state();
-        let near = mobs_in_radius(player.pos, SUNBURN_RADIUS);
+        // A tick system acts for nobody: the sun burns what stands near ANY
+        // connected player, each mob once however many players are near it.
+        let mut near: Vec<MobSnapshot> = Vec::new();
+        for player in players() {
+            for mob in mobs_in_radius(player.state.pos, SUNBURN_RADIUS) {
+                if !near.iter().any(|seen| seen.id == mob.id) {
+                    near.push(mob);
+                }
+            }
+        }
         self.tick_fire(daylight, field.as_ref(), &near);
     }
 

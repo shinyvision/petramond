@@ -1,16 +1,23 @@
 //! Player calls: state snapshot, the damage funnel, knockback, items,
 //! health, teleports, status effects, and chat delivery. (There is no kill
 //! call: `DamagePlayer` with current health is the kill, same funnel.)
+//!
+//! Every call reaches a player BY ID through the dispatch's roster. The
+//! single-player-era calls (`PlayerState`, `GiveItem`, `Teleport`, ...)
+//! address the dispatch's ACTOR and refuse an actor-less dispatch; each shares
+//! its body with an explicitly addressed twin (`PlayerStateOf`, `GiveItemTo`,
+//! `TeleportPlayer`, ...), so the two addressings can never disagree.
 
 use mod_api::{HostCall, HostRet, PlayerSnapshot};
 
-use crate::events::DeferredAction;
+use crate::events::{DeferredAction, SimCtx};
+use crate::player::PlayerId;
 use petramond_world::item::variant::{self, VariantMap};
 use petramond_world::item::{ItemStack, ItemType};
 
-use super::entities::{give_item, give_item_to};
+use super::entities::give_item_to;
 use super::guards::{
-    batch_guard, finite3, item_by_name, sim_call, sim_mutate, sim_mutating_query, sim_query,
+    actor_for, batch_guard, finite3, item_by_name, sim_mutate, sim_mutating_query, sim_query,
 };
 use super::intern_mod_id;
 
@@ -24,61 +31,138 @@ fn pose_anchor_of(world: &crate::world::World, id: u8) -> Option<[f64; 3]> {
     }
 }
 
+/// One player's ABI snapshot: the body read live off the session's player,
+/// the session-side facts (sneak, use-held, swing) off this tick's published
+/// roster row. The ONE assembly `PlayerState`, `PlayerStateOf` and `Players`
+/// share. `None` = no such connected session.
+fn player_snapshot(ctx: &mut SimCtx<'_>, id: PlayerId, mod_id: &str) -> Option<PlayerSnapshot> {
+    let (sneak, use_held, swing) = ctx
+        .world
+        .player_roster()
+        .iter()
+        .find(|r| r.id == id.0)
+        .map(|r| (r.sneak, r.use_held, r.swing))
+        .unwrap_or_default();
+    let pose_anchor = pose_anchor_of(ctx.world, id.0);
+    ctx.with_player(id, |p| PlayerSnapshot {
+        id: Some(mod_api::PlayerId(id.0)),
+        pos: p.pos.to_array(),
+        vel: p.vel.to_array(),
+        yaw: p.yaw,
+        pitch: p.pitch,
+        health: p.health(),
+        on_ground: p.on_ground,
+        spectator: p.is_spectator(),
+        sneak,
+        use_held,
+        holds_use: p.use_gesture.held_by(mod_id),
+        // The ACTING hand's stack: during the use-click ladder's off-hand
+        // pass this answers the off-hand item, so a handler gating on "what
+        // am I holding" acts for whichever hand the dispatch is offering —
+        // with no hand on the ABI.
+        held: p.held().map(|st| mod_api::ItemId(st.item.id())),
+        held_count: p.held().map_or(0, |st| st.count),
+        // The literal OFF-HAND slot, whichever hand is acting — the "both
+        // hands at once" read beside `held`/`off_held`.
+        off_held: p
+            .inventory
+            .off_hand()
+            .map(|st| mod_api::ItemId(st.item.id())),
+        pose_anchor,
+        swing,
+        half_width: crate::player::HALF_W,
+        height: crate::player::HEIGHT,
+        eye_height: crate::player::EYE,
+        entombed: p.entombed(),
+        conditions: crate::exposure::condition_data(p.conditions()),
+    })
+}
+
+/// Player `id`'s active status effects. `None` = no such session.
+fn effects_of(ctx: &mut SimCtx<'_>, id: PlayerId) -> Option<Vec<mod_api::EffectStateData>> {
+    ctx.with_player(id, |p| {
+        p.effects()
+            .iter()
+            .map(|e| mod_api::EffectStateData {
+                key: e.effect.def().name.to_owned(),
+                remaining: e.remaining,
+            })
+            .collect()
+    })
+}
+
+/// Apply the effect named `key` to player `id`. Unknown keys are forgiving
+/// (`false`) — a typo'd key is not a protocol break.
+fn apply_effect(ctx: &mut SimCtx<'_>, mod_id: &str, id: PlayerId, key: &str, ticks: u32) -> bool {
+    let Some(effect) = petramond_world::effect::by_name(key) else {
+        log::warn!("[mod {mod_id}] EffectApply: unknown effect '{key}'");
+        return false;
+    };
+    ctx.with_player(id, |p| p.apply_effect(effect, ticks))
+        .is_some()
+}
+
+/// Spend `count` of `item` from player `id`'s ACTING hand, atomically: only a
+/// stack holding at least `count` consumes — the held stack IS the
+/// validation, so no registry check. During the ladder's off-hand pass this
+/// spends the off-hand.
+fn consume_held(ctx: &mut SimCtx<'_>, id: PlayerId, item: mod_api::ItemId, count: u32) -> bool {
+    ctx.with_player(id, |p| {
+        let hand = p.acting_hand;
+        let holds = count > 0
+            && p.held()
+                .is_some_and(|st| st.item.0 == item.0 && st.count as u32 >= count);
+        if holds {
+            for _ in 0..count {
+                p.inventory.decrement_held(hand);
+            }
+        }
+        holds
+    })
+    .unwrap_or(false)
+}
+
+/// Swap ONE of player `id`'s acting-hand stack of `item` for `replacement`.
+fn replace_held_one(
+    ctx: &mut SimCtx<'_>,
+    mod_id: &str,
+    id: PlayerId,
+    item: mod_api::ItemId,
+    replacement: &str,
+) -> bool {
+    let Some(replacement_ty) = item_by_name(replacement) else {
+        log::warn!("[mod {mod_id}] ReplaceHeldOne: unknown item '{replacement}'");
+        return false;
+    };
+    ctx.with_player(id, |p| {
+        let hand = p.acting_hand;
+        p.held()
+            .is_some_and(|st| st.item.0 == item.0 && st.count >= 1)
+            && p.inventory
+                .replace_held_one(hand, ItemStack::new(replacement_ty, 1))
+    })
+    .unwrap_or(false)
+}
+
 /// Player calls (snapshot, damage/kill through the funnel, inventory,
 /// movement primitives).
 pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
+        HostCall::ActingPlayer => sim_query(|ctx| {
+            HostRet::ActingPlayer(ctx.actor.map(|id| mod_api::PlayerId(id.0)))
+        }),
         HostCall::PlayerState => sim_query(|ctx| {
-            // Sneak, use-held and the swing facts live on the session, not
-            // the `Player` body: read the acting session's published roster
-            // row (same tick, same intent latches). No roster published (mod
-            // init, unit fixtures) reads as neither.
-            let (sneak, use_held, swing) = ctx
-                .acting_player_id()
-                .and_then(|id| {
-                    ctx.world
-                        .player_roster()
-                        .iter()
-                        .find(|r| r.id == id.0)
-                        .map(|r| (r.sneak, r.use_held, r.swing))
-                })
-                .unwrap_or((false, false, Default::default()));
-            let id = ctx.acting_player_id().map(|id| mod_api::PlayerId(id.0));
-            let p = &*ctx.player;
-            HostRet::Player(Box::new(PlayerSnapshot {
-                id,
-                pos: p.pos.to_array(),
-                vel: p.vel.to_array(),
-                yaw: p.yaw,
-                pitch: p.pitch,
-                health: p.health(),
-                on_ground: p.on_ground,
-                spectator: p.is_spectator(),
-                sneak,
-                use_held,
-                holds_use: p.use_gesture.held_by(mod_id),
-                // The ACTING hand's stack: during the use-click ladder's
-                // off-hand pass this answers the off-hand item, so a handler
-                // gating on "what am I holding" acts for whichever hand the
-                // dispatch is offering — with no hand on the ABI.
-                held: p.held().map(|st| mod_api::ItemId(st.item.id())),
-                held_count: p.held().map_or(0, |st| st.count),
-                // The literal OFF-HAND slot, whichever hand is acting — the
-                // "both hands at once" read beside `held`/`off_held`.
-                off_held: p
-                    .inventory
-                    .off_hand()
-                    .map(|st| mod_api::ItemId(st.item.id())),
-                pose_anchor: ctx
-                    .acting_player_id()
-                    .and_then(|id| pose_anchor_of(ctx.world, id.0)),
-                swing,
-                half_width: crate::player::HALF_W,
-                height: crate::player::HEIGHT,
-                eye_height: crate::player::EYE,
-                entombed: p.entombed(),
-                conditions: crate::exposure::condition_data(p.conditions()),
-            }))
+            let id = match actor_for(ctx, "PlayerState", "PlayerStateOf") {
+                Ok(id) => id,
+                Err(e) => return e,
+            };
+            match player_snapshot(ctx, id, mod_id) {
+                Some(snapshot) => HostRet::Player(Box::new(snapshot)),
+                None => HostRet::Error(format!("PlayerState: actor {} is not connected", id.0)),
+            }
+        }),
+        HostCall::PlayerStateOf { player } => sim_query(|ctx| {
+            HostRet::PlayerOf(player_snapshot(ctx, PlayerId(player.0), mod_id).map(Box::new))
         }),
         HostCall::PlayerIdentity { player } => sim_query(|ctx| {
             HostRet::Identity(
@@ -93,38 +177,17 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             )
         }),
         HostCall::Players => sim_query(|ctx| {
-            HostRet::Players(
-                ctx.world
-                    .player_roster()
-                    .iter()
-                    .map(|p| mod_api::PlayerListEntry {
-                        id: mod_api::PlayerId(p.id),
-                        state: PlayerSnapshot {
-                            id: Some(mod_api::PlayerId(p.id)),
-                            pos: p.pos,
-                            vel: p.vel,
-                            yaw: p.yaw,
-                            pitch: p.pitch,
-                            health: p.health,
-                            on_ground: p.on_ground,
-                            spectator: p.spectator,
-                            sneak: p.sneak,
-                            use_held: p.use_held,
-                            holds_use: p.use_gesture.held_by(mod_id),
-                            held: p.held.map(|i| mod_api::ItemId(i.id())),
-                            held_count: p.held_count,
-                            off_held: p.off_held.map(|i| mod_api::ItemId(i.id())),
-                            pose_anchor: pose_anchor_of(ctx.world, p.id),
-                            swing: p.swing,
-                            half_width: crate::player::HALF_W,
-                            height: crate::player::HEIGHT,
-                            eye_height: crate::player::EYE,
-                            entombed: p.entombed,
-                            conditions: p.conditions.clone(),
-                        },
+            let entries = ctx
+                .player_ids()
+                .into_iter()
+                .filter_map(|id| {
+                    player_snapshot(ctx, id, mod_id).map(|state| mod_api::PlayerListEntry {
+                        id: mod_api::PlayerId(id.0),
+                        state,
                     })
-                    .collect(),
-            )
+                })
+                .collect();
+            HostRet::Players(entries)
         }),
         HostCall::DamagePlayer {
             player,
@@ -153,19 +216,36 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         },
         HostCall::ApplyKnockback { impulse } => match finite3(impulse, "ApplyKnockback.impulse") {
             Err(e) => e,
-            Ok(impulse) => sim_call(|ctx| ctx.player.apply_knockback(impulse)),
+            Ok(impulse) => sim_mutate(|ctx| {
+                let id = actor_for(ctx, "ApplyKnockback", "ApplyKnockbackTo")?;
+                ctx.with_player(id, |p| p.apply_knockback(impulse));
+                Ok(())
+            }),
         },
+        HostCall::ApplyKnockbackTo { player, impulse } => {
+            match finite3(impulse, "ApplyKnockbackTo.impulse") {
+                Err(e) => e,
+                Ok(impulse) => sim_mutating_query(|ctx| {
+                    let hit = ctx.with_player(PlayerId(player.0), |p| p.apply_knockback(impulse));
+                    HostRet::Bool(hit.is_some())
+                }),
+            }
+        }
         HostCall::GiveItem { item, count, data } => {
             let variant = match super::guards::intern_abi_data("GiveItem", &data) {
                 Ok(v) => v,
                 Err(e) => return e,
             };
             sim_query(|ctx| {
+                let id = match actor_for(ctx, "GiveItem", "GiveItemTo") {
+                    Ok(id) => id,
+                    Err(e) => return e,
+                };
                 let Some(item_ty) = item_by_name(&item) else {
                     log::warn!("[mod {mod_id}] GiveItem: unknown item '{item}'");
                     return HostRet::Bool(false);
                 };
-                give_item(ctx, item_ty, count, variant);
+                give_item_to(ctx, id, item_ty, count, variant);
                 HostRet::Bool(true)
             })
         }
@@ -190,14 +270,12 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         }
         // The per-player, per-stack held read: the stack's instance data
         // rides along, which the row-level `PlayerState.held` cannot carry.
-        // Resolvable sessions come from the published sessions view (the
-        // acting session always resolves through the ctx's own borrow);
-        // an unresolvable id answers `None`, like every id-addressed read.
+        // An unresolvable id answers `None`, like every id-addressed read.
         HostCall::PlayerHeld { player } => sim_query(move |ctx| {
             let id = crate::player::PlayerId(player.0);
             HostRet::HeldStack(
-                // The acting hand's stack (non-acting sessions are always
-                // outside a dispatch, so theirs reads the selected slot).
+                // The acting hand's stack (only the actor is ever mid-ladder,
+                // so every other session reads its selected slot).
                 ctx.with_player(id, |p| p.held().copied())
                     .flatten()
                     .map(super::guards::item_stack_data),
@@ -268,41 +346,34 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             })
         }
         // Atomic: only an acting-hand stack holding at least `count` of `item`
-        // consumes — the held stack IS the validation, so no registry check.
-        // During the ladder's off-hand pass this spends the off-hand.
+        // consumes. During the ladder's off-hand pass this spends the
+        // off-hand.
         HostCall::ConsumeHeld { item, count } => sim_mutating_query(|ctx| {
-            let hand = ctx.player.acting_hand;
-            let holds = count > 0
-                && ctx
-                    .player
-                    .held()
-                    .is_some_and(|st| st.item.0 == item.0 && st.count as u32 >= count);
-            if !holds {
-                return HostRet::Bool(false);
+            match actor_for(ctx, "ConsumeHeld", "ConsumeHeldBy") {
+                Ok(id) => HostRet::Bool(consume_held(ctx, id, item, count)),
+                Err(e) => e,
             }
-            for _ in 0..count {
-                ctx.player.inventory.decrement_held(hand);
-            }
-            HostRet::Bool(true)
+        }),
+        HostCall::ConsumeHeldBy {
+            player,
+            item,
+            count,
+        } => sim_mutating_query(|ctx| {
+            HostRet::Bool(consume_held(ctx, PlayerId(player.0), item, count))
         }),
         HostCall::ReplaceHeldOne { item, replacement } => sim_mutating_query(|ctx| {
-            let hand = ctx.player.acting_hand;
-            let holds = ctx
-                .player
-                .held()
-                .is_some_and(|st| st.item.0 == item.0 && st.count >= 1);
-            if !holds {
-                return HostRet::Bool(false);
+            match actor_for(ctx, "ReplaceHeldOne", "ReplaceHeldOneBy") {
+                Ok(id) => HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement)),
+                Err(e) => e,
             }
-            let Some(replacement_ty) = item_by_name(&replacement) else {
-                log::warn!("[mod {mod_id}] ReplaceHeldOne: unknown item '{replacement}'");
-                return HostRet::Bool(false);
-            };
-            let ok = ctx
-                .player
-                .inventory
-                .replace_held_one(hand, ItemStack::new(replacement_ty, 1));
-            HostRet::Bool(ok)
+        }),
+        HostCall::ReplaceHeldOneBy {
+            player,
+            item,
+            replacement,
+        } => sim_mutating_query(|ctx| {
+            let id = PlayerId(player.0);
+            HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement))
         }),
         HostCall::PlayerInput { player_id } => sim_query(|ctx| {
             HostRet::PlayerInput(ctx.world.player_input(player_id.0).map(|i| {
@@ -316,41 +387,58 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             }))
         }),
-        HostCall::SetHealth { value } => sim_call(|ctx| ctx.player.set_health(value)),
+        HostCall::SetHealth { value } => sim_mutate(|ctx| {
+            let id = actor_for(ctx, "SetHealth", "SetHealthOf")?;
+            ctx.with_player(id, |p| p.set_health(value));
+            Ok(())
+        }),
+        HostCall::SetHealthOf { player, value } => sim_mutating_query(|ctx| {
+            let hit = ctx.with_player(PlayerId(player.0), |p| p.set_health(value));
+            HostRet::Bool(hit.is_some())
+        }),
         HostCall::Teleport { pos } => match super::guards::finite_pos(pos, "Teleport.pos") {
             Err(e) => e,
-            Ok(pos) => sim_call(|ctx| ctx.player.teleport(pos)),
+            Ok(pos) => sim_mutate(|ctx| {
+                let id = actor_for(ctx, "Teleport", "TeleportPlayer")?;
+                ctx.with_player(id, |p| p.teleport(pos));
+                Ok(())
+            }),
         },
+        HostCall::TeleportPlayer { player, pos } => {
+            match super::guards::finite_pos(pos, "TeleportPlayer.pos") {
+                Err(e) => e,
+                Ok(pos) => sim_mutating_query(|ctx| {
+                    let hit = ctx.with_player(PlayerId(player.0), |p| p.teleport(pos));
+                    HostRet::Bool(hit.is_some())
+                }),
+            }
+        }
         // Status effects are player-state primitives like SetHealth: direct
-        // mutation, no events. Unknown keys are forgiving (Bool(false)) — a
-        // typo'd key is not a protocol break.
+        // mutation, no events.
         HostCall::EffectApply { key, ticks } => sim_query(|ctx| {
-            let Some(effect) = petramond_world::effect::by_name(&key) else {
-                log::warn!("[mod {mod_id}] EffectApply: unknown effect '{key}'");
-                return HostRet::Bool(false);
-            };
-            ctx.player.apply_effect(effect, ticks);
-            HostRet::Bool(true)
+            match actor_for(ctx, "EffectApply", "EffectApplyTo") {
+                Ok(id) => HostRet::Bool(apply_effect(ctx, mod_id, id, &key, ticks)),
+                Err(e) => e,
+            }
+        }),
+        HostCall::EffectApplyTo { player, key, ticks } => sim_query(|ctx| {
+            HostRet::Bool(apply_effect(ctx, mod_id, PlayerId(player.0), &key, ticks))
         }),
         HostCall::EffectsActive => sim_query(|ctx| {
-            HostRet::Effects(
-                ctx.player
-                    .effects()
-                    .iter()
-                    .map(|e| mod_api::EffectStateData {
-                        key: e.effect.def().name.to_owned(),
-                        remaining: e.remaining,
-                    })
-                    .collect(),
-            )
+            match actor_for(ctx, "EffectsActive", "EffectsActiveOf") {
+                Ok(id) => HostRet::Effects(effects_of(ctx, id).unwrap_or_default()),
+                Err(e) => e,
+            }
         }),
+        HostCall::EffectsActiveOf { player } => {
+            sim_query(|ctx| HostRet::EffectsOf(effects_of(ctx, PlayerId(player.0))))
+        }
         // Body-level player-state primitives like SetHealth: direct mutation
         // of the named session, no events. Both are per-player writes a tick
         // system re-states, so they address the player EXPLICITLY (the
-        // addressing doctrine) and route through the sessions view — never
-        // the acting-session shortcut. `BodyClaims` owns the invariants: the
-        // claim is keyed by THIS mod, non-finite is refused whole, and finite
-        // values clamp.
+        // addressing doctrine), never the actor. `BodyClaims` owns the
+        // invariants: the claim is keyed by THIS mod, non-finite is refused
+        // whole, and finite values clamp.
         HostCall::SetPlayerAttribute {
             player,
             attribute,
@@ -549,8 +637,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             HostRet::Bool(true)
         }),
         // Progression is per-player state, so both arms address a player
-        // explicitly (the addressing doctrine) and route through the sessions
-        // view — never the acting-session shortcut.
+        // explicitly (the addressing doctrine) — never the actor.
         HostCall::UnlockRecipe { player, recipe } => sim_query(|ctx| {
             // A key no catalog row owns would sit in the player's record
             // forever, unlocking nothing and never failing — refuse it, so a
@@ -565,14 +652,11 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 p.progression.unlock(&recipe)
             }) {
                 Some(unlocked) => HostRet::Bool(unlocked),
-                // No such session — or a dispatch site that publishes no
-                // sessions roster (the pre-event sites that still dispatch
-                // without `with_sessions_view`). Silence here would look
-                // exactly like "already unlocked", so say which.
+                // No such session. Silence here would look exactly like
+                // "already unlocked", so say which.
                 None => {
                     log::warn!(
-                        "[mod {mod_id}] UnlockRecipe '{recipe}': player {} is not reachable from \
-                         this dispatch (no such session, or this site publishes no sessions view)",
+                        "[mod {mod_id}] UnlockRecipe '{recipe}': player {} is not connected",
                         player.0
                     );
                     HostRet::Bool(false)
@@ -619,7 +703,7 @@ mod tests {
     use mod_api::{HostCall, HostRet};
 
     use crate::events::tick::TickEvents;
-    use crate::events::{PostQueue, SimCtx};
+    use crate::events::{PostQueue, RosterRefs, SessionPlayerRef, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
@@ -660,33 +744,34 @@ mod tests {
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
 
-        crate::events::with_sessions_scope(
-            (crate::player::PlayerId(0), 0),
-            None,
-            Vec::new(),
-            || {
-                let mut ctx = SimCtx {
-                    world: &mut world,
-                    player: &mut acting,
-                    gui_state: &mut gui,
-                    feed: &mut feed,
-                    queue: &mut queue,
-                };
-                scope::enter(&mut ctx, || {
-                    assert_eq!(
-                        write(&mut data, &stamp(9)),
-                        HostRet::Bool(false),
-                        "data the stack no longer carries loses the compare"
-                    );
-                    assert_eq!(
-                        write(&mut data, &variant::VariantMap::new()),
-                        HostRet::Bool(false),
-                        "an empty expectation means PLAIN, not 'any data'"
-                    );
-                    assert_eq!(write(&mut data, &stamp(2)), HostRet::Bool(true));
-                });
-            },
-        );
+        {
+            let mut players = RosterRefs::new(vec![SessionPlayerRef {
+                id: crate::player::PlayerId(0),
+                player: &mut acting,
+                gui_state: &mut gui,
+                gui: None,
+            }]);
+            let mut ctx = SimCtx {
+                world: &mut world,
+                actor: Some(crate::player::PlayerId(0)),
+                players: &mut players,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            scope::enter(&mut ctx, || {
+                assert_eq!(
+                    write(&mut data, &stamp(9)),
+                    HostRet::Bool(false),
+                    "data the stack no longer carries loses the compare"
+                );
+                assert_eq!(
+                    write(&mut data, &variant::VariantMap::new()),
+                    HostRet::Bool(false),
+                    "an empty expectation means PLAIN, not 'any data'"
+                );
+                assert_eq!(write(&mut data, &stamp(2)), HostRet::Bool(true));
+            });
+        }
         let after = acting.inventory.selected().expect("the stack survives");
         assert_eq!(*variant::get(after.variant).expect("data"), stamp(1));
     }
@@ -729,47 +814,47 @@ mod tests {
         let mut queue = PostQueue::default();
         let mut gui = petramond_world::gui_state::empty_gui_state();
 
-        crate::events::with_sessions_scope(
-            (crate::player::PlayerId(0), 0),
-            None,
-            Vec::new(),
-            || {
-                let mut ctx = SimCtx {
-                    world: &mut world,
-                    player: &mut acting,
-                    gui_state: &mut gui,
-                    feed: &mut feed,
-                    queue: &mut queue,
+        {
+            let mut players = RosterRefs::new(vec![SessionPlayerRef {
+                id: crate::player::PlayerId(0),
+                player: &mut acting,
+                gui_state: &mut gui,
+                gui: None,
+            }]);
+            let mut ctx = SimCtx {
+                world: &mut world,
+                actor: Some(crate::player::PlayerId(0)),
+                players: &mut players,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            scope::enter(&mut ctx, || {
+                assert_eq!(
+                    take(&mut data, 1, Some(&rejected)),
+                    HostRet::ItemStack(None),
+                    "a filter nothing carries takes nothing"
+                );
+                assert!(
+                    !variant::is_interned_for_test(&rejected),
+                    "the losing filter minted a variant row"
+                );
+                let HostRet::ItemStack(Some(took)) = take(&mut data, 3, Some(&stamp(2))) else {
+                    panic!("three tinted sticks are carried");
                 };
-                scope::enter(&mut ctx, || {
-                    assert_eq!(
-                        take(&mut data, 1, Some(&rejected)),
-                        HostRet::ItemStack(None),
-                        "a filter nothing carries takes nothing"
-                    );
-                    assert!(
-                        !variant::is_interned_for_test(&rejected),
-                        "the losing filter minted a variant row"
-                    );
-                    let HostRet::ItemStack(Some(took)) = take(&mut data, 3, Some(&stamp(2))) else {
-                        panic!("three tinted sticks are carried");
-                    };
-                    assert_eq!((took.count, took.data), (3, abi(&stamp(2))));
-                    let HostRet::ItemStack(Some(took)) = take(&mut data, 2, None) else {
-                        panic!("two plain sticks remain");
-                    };
-                    assert!(took.data.is_empty(), "no filter takes the first variant");
-                    assert_eq!(take(&mut data, 1, None), HostRet::ItemStack(None));
-                });
-            },
-        );
+                assert_eq!((took.count, took.data), (3, abi(&stamp(2))));
+                let HostRet::ItemStack(Some(took)) = take(&mut data, 2, None) else {
+                    panic!("two plain sticks remain");
+                };
+                assert!(took.data.is_empty(), "no filter takes the first variant");
+                assert_eq!(take(&mut data, 1, None), HostRet::ItemStack(None));
+            });
+        }
     }
 
     /// The progression arms: unlocking is per-player, idempotent (`true` only
     /// on the call that changed it), refuses a key no catalog row owns, and
-    /// the query reads back what the write stored. Reaching the player needs
-    /// the dispatch site's sessions view — an unreachable player answers
-    /// `false` rather than silently unlocking the acting one.
+    /// the query reads back what the write stored. An unreachable player
+    /// answers `false` rather than silently unlocking the actor.
     #[test]
     fn unlocking_is_per_player_idempotent_and_refuses_unknown_keys() {
         use crate::player::PlayerId;
@@ -818,18 +903,25 @@ mod tests {
         };
 
         let mut other_gui = petramond_world::gui_state::empty_gui_state();
-        let others = vec![crate::events::SessionPlayerRef {
-            id: PlayerId(1),
-            index: 1,
-            player: &mut other,
-            gui_state: &mut other_gui,
-            gui: None,
-        }];
-        crate::events::with_sessions_scope((PlayerId(0), 0), None, others, || {
+        {
+            let mut players = RosterRefs::new(vec![
+                SessionPlayerRef {
+                    id: PlayerId(0),
+                    player: &mut acting,
+                    gui_state: &mut gui,
+                    gui: None,
+                },
+                SessionPlayerRef {
+                    id: PlayerId(1),
+                    player: &mut other,
+                    gui_state: &mut other_gui,
+                    gui: None,
+                },
+            ]);
             let mut ctx = SimCtx {
                 world: &mut world,
-                player: &mut acting,
-                gui_state: &mut gui,
+                actor: Some(PlayerId(0)),
+                players: &mut players,
                 feed: &mut feed,
                 queue: &mut queue,
             };
@@ -856,12 +948,12 @@ mod tests {
                     HostRet::Bool(false)
                 );
             });
-        });
+        }
         assert_eq!(acting.progression.unlocked(), std::slice::from_ref(&key));
         assert_eq!(other.progression.unlocked(), [key]);
     }
     /// The body-claim primitives (`SetPlayerAttribute` /
-    /// `SetPlayerHeldPose`): per-player writes through the sessions view — an
+    /// `SetPlayerHeldPose`): per-player writes through the roster — an
     /// unreachable player answers `false` and the ADDRESSED body is written,
     /// not whoever the tick happens to run as. The claim is keyed by the
     /// CALLING mod, so the addressing doctrine survives the fold.
@@ -908,18 +1000,25 @@ mod tests {
         };
 
         let mut other_gui = petramond_world::gui_state::empty_gui_state();
-        let others = vec![crate::events::SessionPlayerRef {
-            id: PlayerId(1),
-            index: 1,
-            player: &mut other,
-            gui_state: &mut other_gui,
-            gui: None,
-        }];
-        crate::events::with_sessions_scope((PlayerId(0), 0), None, others, || {
+        {
+            let mut players = RosterRefs::new(vec![
+                SessionPlayerRef {
+                    id: PlayerId(0),
+                    player: &mut acting,
+                    gui_state: &mut gui,
+                    gui: None,
+                },
+                SessionPlayerRef {
+                    id: PlayerId(1),
+                    player: &mut other,
+                    gui_state: &mut other_gui,
+                    gui: None,
+                },
+            ]);
             let mut ctx = SimCtx {
                 world: &mut world,
-                player: &mut acting,
-                gui_state: &mut gui,
+                actor: Some(PlayerId(0)),
+                players: &mut players,
                 feed: &mut feed,
                 queue: &mut queue,
             };
@@ -949,7 +1048,7 @@ mod tests {
                 // per-player, never the acting shortcut.
                 assert_eq!(pose(&mut alpha, 1, None), HostRet::Bool(true));
             });
-        });
+        }
         assert_eq!(acting.move_scale(), 0.25, "two mods' claims multiply");
         assert_eq!(
             acting.claims.held_pose(Hand::Main),
@@ -958,8 +1057,113 @@ mod tests {
         );
         assert_eq!(acting.claims.held_pose(Hand::Off), None);
         // The other session stayed at its defaults (checked after the scope:
-        // its borrow lives in `others`).
+        // its borrow lives in the roster).
         assert_eq!(other.move_scale(), crate::player::MOVE_SCALE_DEFAULT);
         assert!(other.claims.is_empty());
+    }
+
+    /// The single-player-era calls act for the dispatch's ACTOR — the second
+    /// session here, never whoever joined first — and an actor-less dispatch
+    /// (a tick system) refuses them rather than lending some other player,
+    /// while their explicit twins reach any named session.
+    #[test]
+    fn implicit_calls_act_for_the_actor_and_refuse_an_actorless_dispatch() {
+        use crate::player::PlayerId;
+
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        let mut first = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut second = Player::new(WorldPos::new(4.0, 80.0, 0.0));
+        let mut first_gui = petramond_world::gui_state::empty_gui_state();
+        let mut second_gui = petramond_world::gui_state::empty_gui_state();
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut players = RosterRefs::new(vec![
+            SessionPlayerRef {
+                id: PlayerId(0),
+                player: &mut first,
+                gui_state: &mut first_gui,
+                gui: None,
+            },
+            SessionPlayerRef {
+                id: PlayerId(1),
+                player: &mut second,
+                gui_state: &mut second_gui,
+                gui: None,
+            },
+        ]);
+
+        // An event handler acting for the second session.
+        let mut ctx = SimCtx {
+            world: &mut world,
+            actor: Some(PlayerId(1)),
+            players: &mut players,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, || {
+            assert_eq!(
+                handle_host_call(&mut data, HostCall::ActingPlayer),
+                HostRet::ActingPlayer(Some(mod_api::PlayerId(1)))
+            );
+            let HostRet::Player(state) = handle_host_call(&mut data, HostCall::PlayerState) else {
+                panic!("the actor's snapshot");
+            };
+            assert_eq!(state.id, Some(mod_api::PlayerId(1)));
+            assert_eq!(state.pos[0], 4.0, "the actor's body, not session 0's");
+            assert_eq!(
+                handle_host_call(&mut data, HostCall::SetHealth { value: 5 }),
+                HostRet::Unit
+            );
+        });
+
+        // A tick system: nobody acts.
+        ctx.actor = None;
+        scope::enter(&mut ctx, || {
+            assert_eq!(
+                handle_host_call(&mut data, HostCall::ActingPlayer),
+                HostRet::ActingPlayer(None)
+            );
+            assert!(matches!(
+                handle_host_call(&mut data, HostCall::PlayerState),
+                HostRet::Error(_)
+            ));
+            assert!(matches!(
+                handle_host_call(&mut data, HostCall::SetHealth { value: 1 }),
+                HostRet::Error(_)
+            ));
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::SetHealthOf {
+                        player: mod_api::PlayerId(0),
+                        value: 7,
+                    }
+                ),
+                HostRet::Bool(true)
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::SetHealthOf {
+                        player: mod_api::PlayerId(9),
+                        value: 7,
+                    }
+                ),
+                HostRet::Bool(false),
+                "no such session"
+            );
+            let HostRet::PlayerOf(Some(state)) = handle_host_call(
+                &mut data,
+                HostCall::PlayerStateOf {
+                    player: mod_api::PlayerId(1),
+                },
+            ) else {
+                panic!("the named session's snapshot");
+            };
+            assert_eq!(state.health, 5);
+        });
+        assert_eq!(first.health(), 7, "only the explicit write reached session 0");
+        assert_eq!(second.health(), 5);
     }
 }

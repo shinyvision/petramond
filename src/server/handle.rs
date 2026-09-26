@@ -24,7 +24,6 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-use crate::events::tick::TICK_DT;
 use crate::net::handle::{ControlMsg, ServerEnd, ServerHandle};
 use crate::net::protocol::{ClientToServer, ServerToClient};
 use crate::player::PlayerId;
@@ -83,7 +82,7 @@ fn server_main(
 ) {
     // The scripted AI-node dispatch registry is thread-local (test isolation);
     // mods were initialized on the constructing thread, so install here too.
-    server.mods.install_thread_ai_nodes();
+    server.mods.host().install_thread_ai_nodes();
 
     let mut hub = RemoteHub::default();
     let mut msgs: Vec<(PlayerId, ClientToServer)> = Vec::new();
@@ -105,8 +104,7 @@ fn server_main(
                     if result.is_ok() {
                         // The pause gate becomes real and PERMANENT: remote
                         // players may exist (or reappear) from here on.
-                        server.lan_ever_opened = true;
-                        server.paused = false;
+                        server.clock.open_to_lan();
                     }
                     let _ = reply.send(result);
                 }
@@ -159,7 +157,11 @@ fn server_main(
         // exactly one fixed tick per iteration, compute-bound. Production
         // builds always take the real clock.
         #[cfg(any(test, feature = "test-support"))]
-        let dt = if unthrottled { TICK_DT } else { dt };
+        let dt = if unthrottled {
+            crate::events::tick::TICK_DT
+        } else {
+            dt
+        };
         let headroom = hub.send_headroom();
         let out = server.pump_tagged(dt, &mut msgs, &headroom);
         for msg in out.msgs {
@@ -186,7 +188,7 @@ fn server_main(
             std::thread::yield_now();
             continue;
         }
-        let until_tick = Duration::from_secs_f32((TICK_DT - server.tick_accumulator).max(0.0));
+        let until_tick = Duration::from_secs_f32(server.clock.until_next_tick());
         let sleep = until_tick.min(POLL_INTERVAL);
         if sleep > Duration::from_millis(1) {
             std::thread::sleep(sleep);

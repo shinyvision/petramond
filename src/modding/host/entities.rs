@@ -689,23 +689,10 @@ fn drop_seed(tick: u64, pos: petramond_math::world_pos::WorldPos, i: u32) -> u32
     (z ^ (z >> 31)) as u32
 }
 
-/// Give the player `count` of `item` through the normal inventory fill;
-/// whatever does not fit drops at the player's feet like any other overflow.
-pub(super) fn give_item(
-    ctx: &mut SimCtx<'_>,
-    item: ItemType,
-    count: u8,
-    variant: petramond_world::item::VariantId,
-) {
-    let (leftovers, at) = fill_inventory(ctx.player, item, count, variant);
-    drop_leftovers(ctx.world, at, leftovers);
-}
-
 /// The inventory half of a give: fill `player`'s inventory, returning what
 /// did not fit plus where its overflow should drop (the player's body). Split
-/// from the drop half so an EXPLICIT-player give (`GiveItemTo`) can run it
-/// inside the sessions-view borrow and spawn the drops outside it — one
-/// arithmetic for both addressings.
+/// from the drop half so the give can run it inside the roster's player
+/// borrow and spawn the drops outside it.
 fn fill_inventory(
     player: &mut crate::player::Player,
     item: ItemType,
@@ -745,8 +732,9 @@ fn drop_leftovers(
     }
 }
 
-/// [`give_item`] addressed to a NAMED session through the sessions view:
-/// `false` when the id resolves to no connected player.
+/// Give session `player` `count` of `item` through the normal inventory
+/// fill; whatever does not fit drops at the player's feet like any other
+/// overflow. `false` when the id resolves to no connected player.
 pub(super) fn give_item_to(
     ctx: &mut SimCtx<'_>,
     player: crate::player::PlayerId,
@@ -772,10 +760,9 @@ mod tests {
     use petramond_math::world_pos::WorldPos;
 
     use crate::events::tick::TickEvents;
-    use crate::events::{PostQueue, SimCtx};
+    use crate::events::{PostQueue, RosterRefs, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::player::Player;
     use crate::world::World;
     use petramond_world::chunk::{ChunkPos, SECTION_VOLUME};
 
@@ -790,14 +777,13 @@ mod tests {
         section.set_skylight(vec![0; SECTION_VOLUME].into());
         section.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
 
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -827,14 +813,13 @@ mod tests {
         let mut world = World::new(1, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         world.set_block_world(8, 64, 8, petramond_world::block::Block::Stone);
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -861,8 +846,8 @@ mod tests {
         world.set_block_world(8, 64, 8, petramond_world::block::Block::Air);
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -893,14 +878,13 @@ mod tests {
         assert!(world
             .mobs_mut()
             .spawn(crate::mob::Mob::Owl, WorldPos::new(2.0, 80.0, 2.0), 0.0));
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -1012,14 +996,13 @@ mod tests {
             .mobs_mut()
             .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
         let mob_id = world.mobs().instances()[0].id();
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -1111,14 +1094,13 @@ mod tests {
             .is_some());
         assert!(world.mobs().instances()[0].is_dead());
 
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };

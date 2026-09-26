@@ -16,16 +16,16 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
     use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
-    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     let floor = IVec3::new(3, 63, 3);
     game.server
-        .world
+        .world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server.sessions[0].player.inventory = filled_inventory();
-    game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
+    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+    game.server.sessions_mut()[0].input_mut().look = Some(super::common::hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
-    game.server.sessions[0]
-        .pending_use_click
+    game.server.sessions_mut()[0]
+        .input_mut().pending_use_click
         .as_mut()
         .expect("click queued")
         .predicted = false; // e.g. a model-block click
@@ -62,12 +62,12 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
-    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     let floor = IVec3::new(3, 63, 3);
     game.server
-        .world
+        .world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server.sessions[0].player.inventory = filled_inventory(); // Dirt in slot 0
+    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory(); // Dirt in slot 0
     let observer = game
         .server
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
@@ -75,7 +75,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         )));
 
     // Place: a latched use click against the floor's top face.
-    game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
+    game.server.sessions_mut()[0].input_mut().look = Some(super::common::hit(floor, IVec3::Y));
     game.server.queue_place_click_for_test(0);
     let mut inbox = Vec::new();
     let out = game.server.pump(TICK_DT, &mut inbox);
@@ -96,7 +96,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         "initiator must not re-hear their own BlockPlaced, got {:?}",
         initiator.events
     );
-    let observer_id = game.server.sessions[observer].id;
+    let observer_id = game.server.sessions()[observer].id();
     let observer_batch = out
         .remote
         .iter()
@@ -124,9 +124,9 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     // BlockBroken; stripping it here was the silent-break bug. A predicted
     // finish merely in flight presents once regardless: the client's own
     // suppress belt (`PredictionLedger::mark_presented`) drops the wire copy.
-    game.server.sessions[0].look = Some(super::common::hit(placed_at, IVec3::Y));
-    game.server.sessions[0].intent_gameplay = true;
-    game.server.sessions[0].intent_break_held = true;
+    game.server.sessions_mut()[0].input_mut().look = Some(super::common::hit(placed_at, IVec3::Y));
+    game.server.sessions_mut()[0].input_mut().intent_gameplay = true;
+    game.server.sessions_mut()[0].input_mut().intent_break_held = true;
     let mut initiator_heard = false;
     let mut observer_heard = false;
     for _ in 0..200 {
@@ -147,7 +147,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
             }
             if Block::from_id(
                 game.server
-                    .world
+                    .world()
                     .chunk_block(placed_at.x, placed_at.y, placed_at.z),
             ) == Block::Air
             {

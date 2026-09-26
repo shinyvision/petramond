@@ -37,13 +37,13 @@ impl ServerGame {
     }
 
     pub fn is_operator(&self, s: usize) -> bool {
-        (self.has_local_session && s == 0) || self.operators.contains(&self.sessions[s].key)
+        (self.sessions.has_local_session() && s == 0)
+            || self.operators.contains(&self.sessions[s].key)
     }
 
     fn is_operator_id(&self, id: PlayerId) -> bool {
         self.sessions
-            .iter()
-            .position(|session| session.id == id)
+            .index_of(id)
             .is_some_and(|s| self.is_operator(s))
     }
 
@@ -63,7 +63,7 @@ impl ServerGame {
                 if args.is_empty() {
                     self.command_reply(source, ChatColor::Red, "Usage: say <message>");
                 } else {
-                    self.enqueue_server_chat(args);
+                    self.chat.server(args);
                     log::info!("server command: say {args}");
                 }
             }
@@ -105,7 +105,7 @@ impl ServerGame {
     }
 
     fn is_local_player(&self, key: &PlayerKey) -> bool {
-        self.has_local_session && self.sessions.first().is_some_and(|s| s.key == *key)
+        self.sessions.has_local_session() && self.sessions.first().is_some_and(|s| s.key == *key)
     }
 
     fn set_operator(&mut self, source: CommandSource, requested: &str, enabled: bool) {
@@ -164,8 +164,8 @@ impl ServerGame {
             // strand them in a mode they no longer have permission to toggle.
             if let Some(session) = self.sessions.iter_mut().find(|session| session.key == key) {
                 session.player.set_mode(crate::player::PlayerMode::Survival);
-                session.fall.reset(session.player.pos.y);
-                session.pending_fall = 0.0;
+                session.sim.fall.reset(session.player.pos.y);
+                session.sim.pending_fall = 0.0;
             }
             crate::server::permissions::store(&mut self.world, &self.operators);
             self.command_reply(
@@ -232,7 +232,7 @@ impl ServerGame {
                 _ => log::info!("{text}"),
             },
             CommandSource::Player(id) => {
-                self.enqueue_plain_chat(text, color, ChatTargets::Players(vec![id]));
+                self.chat.plain(text, color, ChatTargets::Players(vec![id]));
             }
         }
     }
@@ -290,7 +290,7 @@ mod tests {
         let id = server.sessions[guest].id;
         let name = server.sessions[guest].name.clone();
         server.execute_console_command(&format!("op {name}"));
-        server.pending_chat.clear();
+        server.chat.take_pending();
 
         server.apply_message(
             guest,
@@ -314,20 +314,20 @@ mod tests {
             server.world.day_cycle_ticks() * 3 / 4,
             "leading whitespace makes the slash ordinary chat"
         );
-        assert!(server.pending_chat.iter().any(|pending| {
+        assert!(server.chat.pending().iter().any(|pending| {
             pending.targets.includes(id)
                 && crate::server::chat::display_text(&pending.line)
                     == format!("<{name}> /time set day")
         }));
 
-        server.pending_chat.clear();
+        server.chat.take_pending();
         server.apply_message(
             guest,
             ClientToServer::ChatSend {
                 text: "/save".into(),
             },
         );
-        assert!(server.pending_chat.iter().any(|pending| {
+        assert!(server.chat.pending().iter().any(|pending| {
             pending.targets == ChatTargets::Players(vec![id])
                 && crate::server::chat::display_text(&pending.line)
                     .contains("only available from the server console")

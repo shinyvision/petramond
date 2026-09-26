@@ -1,23 +1,30 @@
 use super::*;
 use crate::entity::fluid_fixture::{self, FLOOR_Y};
-use crate::events::{with_sessions_scope, PostQueue, SessionPlayerRef, SimCtx};
+use crate::events::{PostQueue, SessionPlayerRef, SimCtx};
+use crate::player::Player;
 use mod_api::{ConditionId, EntityRef, HostRet, PlayerId};
 use petramond_math::world_pos::WorldPos;
 
-fn run_with_other(sim: &mut Sim, other: &mut Player) {
+/// Run the Mining seam with two sessions connected: `host` as player 0 and
+/// `other` as player 1.
+fn run_with_other(sim: &mut Sim, host: &mut Player, other: &mut Player) {
+    let mut host_gui = petramond_world::gui_state::empty_gui_state();
     let mut other_gui = petramond_world::gui_state::empty_gui_state();
-    with_sessions_scope(
-        (crate::player::PlayerId(0), 0),
-        None,
-        vec![SessionPlayerRef {
+    let mut players = RosterRefs::new(vec![
+        SessionPlayerRef {
+            id: crate::player::PlayerId(0),
+            player: host,
+            gui_state: &mut host_gui,
+            gui: None,
+        },
+        SessionPlayerRef {
             id: crate::player::PlayerId(1),
-            index: 1,
             player: other,
             gui_state: &mut other_gui,
             gui: None,
-        }],
-        || sim.run_slot(Attach::Before(Stage::Mining)),
-    );
+        },
+    ]);
+    sim.run_slot_with(Attach::Before(Stage::Mining), &mut players);
 }
 
 #[test]
@@ -27,6 +34,7 @@ fn a_guest_applies_and_cools_a_condition_on_the_addressed_player_and_mob() {
     let strongest = (def.stages.len() - 1) as u8;
     let condition = ConditionId(burning.0);
     let mut sim = Sim::new();
+    let mut host_player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
     let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
     let mob = sim
         .world
@@ -44,10 +52,10 @@ fn a_guest_applies_and_cools_a_condition_on_the_addressed_player_and_mob() {
         }),
     )]);
     sim.init(&mut host);
-    run_with_other(&mut sim, &mut other);
+    run_with_other(&mut sim, &mut host_player, &mut other);
     assert!(!host.probe(0).0, "the real guest completed both host calls");
     assert!(
-        sim.player.conditions().active().is_empty(),
+        host_player.conditions().active().is_empty(),
         "the host player was not addressed"
     );
     let mob_conditions = sim.world.mobs().instances()[0].exposure().conditions();
@@ -68,7 +76,7 @@ fn a_guest_applies_and_cools_a_condition_on_the_addressed_player_and_mob() {
     // A fresh system list runs only the cooling producer.
     sim.systems = TickSystems::default();
     sim.init(&mut cool);
-    run_with_other(&mut sim, &mut other);
+    run_with_other(&mut sim, &mut host_player, &mut other);
     assert!(!cool.probe(0).0);
     assert!(other.conditions().active().is_empty());
     assert!(sim.world.mobs().instances()[0]
@@ -121,13 +129,12 @@ fn doused_grant_inner() {
     let mob = world.spawn_mob(crate::mob::Mob::Sheep, feet, 0.0).unwrap();
     let mut store = super::super::host::ModStoreData::new("condfix", 1);
     let mut grant = |world: &mut World| {
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let (mut feed, mut queue) = (TickEvents::default(), PostQueue::default());
-        let mut gui = petramond_world::gui_state::empty_gui_state();
+        let mut nobody = RosterRefs::empty();
         let mut ctx = SimCtx {
             world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };

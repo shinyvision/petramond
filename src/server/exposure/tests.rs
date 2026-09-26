@@ -62,7 +62,7 @@ fn record_player_damage(
 ) -> std::sync::Arc<std::sync::Mutex<Vec<DamageSource>>> {
     let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = hits.clone();
-    server.bus.on_player_damage_pre(0, move |_, hit| {
+    server.mods.bus_mut().on_player_damage_pre(0, move |_, hit| {
         sink.lock().unwrap().push(hit.source);
         crate::events::Outcome::Continue
     });
@@ -106,8 +106,8 @@ fn swimming_keeps_contact_damage_and_its_condition_active() {
     for y in 65..=69 {
         assert!(server.world.set_block_world(8, y, 8, hazard().block));
     }
-    server.sessions[0].move_jump = true;
-    server.sessions[0].intent_gameplay = true;
+    server.sessions[0].input.move_jump = true;
+    server.sessions[0].input.intent_gameplay = true;
     let health = server.sessions[0].player.health();
     let hits = record_player_damage(&mut server);
     for _ in 0..=pulse_interval().max(contact_interval()) {
@@ -118,7 +118,7 @@ fn swimming_keeps_contact_damage_and_its_condition_active() {
     assert!(!player.on_ground);
     assert!(player.health() < health);
     assert!(has_condition(player));
-    assert_eq!(server.sessions[0].pending_fall, 0.0);
+    assert_eq!(server.sessions[0].sim.pending_fall, 0.0);
     let hits = hits.lock().unwrap();
     assert!(hits.contains(&contact_source()));
     assert!(hits.contains(&condition_source()));
@@ -128,7 +128,8 @@ fn swimming_keeps_contact_damage_and_its_condition_active() {
 fn cancelled_damage_does_not_cancel_a_condition_or_change_its_cadence() {
     let mut server = server();
     server
-        .bus
+        .mods
+        .bus_mut()
         .on_player_damage_pre(0, |_, _| crate::events::Outcome::Cancel);
     server.world.set_block_world(8, 65, 8, hazard().block);
     let health = server.sessions[0].player.health();

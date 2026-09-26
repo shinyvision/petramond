@@ -7,9 +7,11 @@
 
 use std::collections::BTreeMap;
 
+use crate::mob::Mobs;
 use crate::net::protocol::{SpatialSoundMsg, WorldEventMsg};
+use crate::server::player::ConnectedPlayer;
 
-use super::ServerGame;
+use super::replication::Broadcast;
 
 /// Live loops keyed by session handle, as the command that (re)starts them.
 pub type LiveSpatialLoops = BTreeMap<u64, SpatialSoundMsg>;
@@ -84,13 +86,12 @@ pub fn fold_spatial_loops(
     }
 }
 
-impl ServerGame {
+impl Broadcast {
     /// [`fold_spatial_loops`] over the registry's rows and the world's live
     /// mobs, for the window about to ship.
-    pub(super) fn track_spatial_loops(&mut self, world_events: &mut Vec<WorldEventMsg>) {
-        let mobs = self.world.mobs();
+    pub fn track_spatial_loops(&mut self, mobs: &Mobs, world_events: &mut Vec<WorldEventMsg>) {
         fold_spatial_loops(
-            &mut self.live_spatial_loops,
+            self.spatial_loops_mut(),
             world_events,
             |sound_id| {
                 petramond_world::sound_registry::Sound(sound_id)
@@ -105,16 +106,16 @@ impl ServerGame {
         );
     }
 
-    /// Queue every live loop for session `s`'s next tick batch — the join
+    /// Queue every live loop for `sess`'s next tick batch — the join
     /// catch-up. A mob-pinned loop's client resolves the emitter from the
     /// mob rows in the same batch, so the stale `last_pos` only matters if
     /// the mob is already gone.
-    pub(crate) fn replay_spatial_loops_to(&mut self, s: usize) {
+    pub fn replay_spatial_loops(&self, sess: &mut ConnectedPlayer) {
         let replay = self
-            .live_spatial_loops
+            .spatial_loops()
             .values()
             .map(|cmd| WorldEventMsg::SpatialSound(*cmd));
-        self.sessions[s].pending_world_events.extend(replay);
+        sess.replication.pending_world_events.extend(replay);
     }
 }
 
@@ -200,7 +201,7 @@ mod tests {
             volume: 0.3,
             pitch: 1.0,
         };
-        server.live_spatial_loops.insert(7, restart);
+        server.broadcast.spatial_loops_mut().insert(7, restart);
         let joiner = crate::server::session_build::spawn_player(server.world.seed);
         let s = server.add_session_for_test(joiner);
         let joiner_id = server.sessions[s].id;

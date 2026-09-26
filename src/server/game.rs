@@ -7,17 +7,21 @@
 //! stay `Send` (asserted below). Presentation (camera, particles, lid/swing
 //! animation) stays on the client side in `src/game/`.
 
-use std::collections::HashMap;
-
 use crate::events::{EventBus, TickSystems};
-use crate::modding::ModHost;
-use crate::net::protocol::{ServerToClient, SleepTally, WorldEventMsg};
+use crate::net::protocol::{ServerToClient, SleepTally};
 use crate::player::PlayerId;
+use crate::server::chat::ChatService;
+use crate::server::drops::DropSeeds;
+use crate::server::mod_runtime::ModRuntime;
 use crate::server::player::ConnectedPlayer;
+use crate::server::progression::RecipeCatalog;
+use crate::server::sessions::SessionRegistry;
+use crate::server::viewers::ContainerViewers;
 use crate::world::World;
 use petramond_math::math::IVec3;
 use petramond_world::crafting::Recipes;
 
+mod clock;
 mod entity_rows;
 mod fixed_tick;
 mod interest;
@@ -30,7 +34,9 @@ mod stream_events;
 #[cfg(test)]
 mod tests;
 
+use clock::FrameClock;
 pub use interest::EntityInterest;
+use replication::Broadcast;
 pub use replication::wire_world_events;
 
 /// Most fixed ticks run in a single frame before the leftover is dropped. Caps
@@ -65,102 +71,194 @@ pub struct SharedTickRows {
     pub env: Option<Vec<(String, [f32; 4])>>,
 }
 
-/// The simulation half of the former `Game`: authoritative world + sessions +
-/// the tick machinery. Field-visible to the client crate-side (`pub`)
-/// because the client currently owns it in-process; the replica flip narrows
-/// this to the wire.
+/// The authoritative server: a thin coordinator over owned subsystems. Each
+/// subsystem keeps its own state behind its own API (the session registry,
+/// the mod runtime, container viewers, chat, the frame clock, replication
+/// bookkeeping, the recipe catalog); the stage systems in the sibling
+/// modules borrow the pieces they need. Nothing outside `crate::server`
+/// reaches a field: the rest of the engine and the client talk to the server
+/// through the methods below and the message pipe.
 pub struct ServerGame {
-    pub world: World,
-    /// The connected players' simulation sessions. On a LISTEN server (the
-    /// in-game host) the LOCAL session is index 0 and always exists; on a
-    /// HEADLESS server every session is remote and the list may be EMPTY —
-    /// fixed ticks are skipped while it is (the world freezes between
-    /// players), which is what keeps
-    /// every `sessions[0]` mod-ABI site sound: they all run inside the tick.
-    pub sessions: Vec<ConnectedPlayer>,
-    /// Whether `sessions[0]` is THIS process's local player (listen server).
-    /// False on a headless server ([`crate::game::session::
-    /// build_headless_session`]): no local pipe recipient, every session
-    /// windowed by the streaming ack loop, and the leave path may empty the
-    /// list.
-    pub has_local_session: bool,
+    pub(in crate::server) world: World,
+    /// The connected players' simulation sessions (see [`SessionRegistry`]).
+    pub(in crate::server) sessions: SessionRegistry,
     /// Player identities promoted through `op`. Persisted in the world's
     /// engine KV map; the listen server's local session is always an
     /// operator independently of this set.
-    pub operators: crate::server::permissions::Operators,
+    pub(in crate::server) operators: crate::server::permissions::Operators,
     /// Which identity goes by which display name on this world (the one
     /// name → identity map; see `server::accounts`).
-    pub accounts: crate::server::accounts::PlayerRegistry,
-    /// Loaded recipes (from layered `recipes.json`). Player CRAFT requests and
-    /// machine-processing ticks share this immutable catalog, which is why it
-    /// lives above individual menu sessions.
-    pub recipes: Recipes,
-    /// Which recipes each discovery opens, derived once from
-    /// [`recipes`](Self::recipes). Shared with the engine's unlock handler on
-    /// the bus (see `server::progression`) and read by every session start.
-    pub unlocks: std::sync::Arc<petramond_world::crafting::UnlockIndex>,
+    pub(in crate::server) accounts: crate::server::accounts::PlayerRegistry,
+    /// Loaded recipes and the unlock index derived from them.
+    pub(in crate::server) catalog: RecipeCatalog,
+    /// The WASM mods, the event bus and the tick-stage systems.
+    pub(in crate::server) mods: ModRuntime,
+    /// Who holds each container open (players' screens, mobs' holds).
+    pub(in crate::server) containers: ContainerViewers,
+    /// Chat lines accepted since the last pump.
+    pub(in crate::server) chat: ChatService,
+    /// Tick debt, the pause gate and the autosave timer.
+    pub(in crate::server) clock: FrameClock,
+    /// Replication bookkeeping shared by every recipient.
+    pub(in crate::server) broadcast: Broadcast,
     /// Memo for the hostile-spawn plan's player/terrain half (see
     /// [`crate::mob::HostileSpawnCache`]) — the planner runs every tick, its
     /// chunk-neighbourhood scans do not.
-    pub hostile_spawn_cache: crate::mob::HostileSpawnCache,
-    /// The modding event bus: pre events dispatch at their decision sites,
-    /// post events queue and drain at tick-stage boundaries. Engine handlers
-    /// register before any mod's.
-    pub bus: EventBus,
-    /// Systems attached between the fixed-tick stages.
-    pub systems: TickSystems,
-    /// The WASM mod instances. Their registered closures (held by
-    /// `bus`/`systems`) share ownership; the host keeps the canonical handles
-    /// for GUI click dispatch and diagnostics.
-    pub mods: ModHost,
-    pub spawn_counter: u32,
-    /// Next deterministic session handle for spatial sounds. The app
-    /// owns playback; this counter only gives mods stable identities for stop calls.
-    pub next_spatial_sound_handle: u64,
-    /// Wall-clock seconds banked toward the next fixed simulation tick.
-    pub tick_accumulator: f32,
-    /// Singleplayer pause (`ClientToServer::Pause`): while set, `pump` skips
-    /// the fixed ticks ONLY — message drain, streaming, and autosave keep
-    /// running — and banks no tick debt (the accumulator is pinned so resume
-    /// never fast-forwards). Honored only while [`lan_ever_opened`] is false
-    /// (the sole connection is the local one).
-    ///
-    /// [`lan_ever_opened`]: Self::lan_ever_opened
-    pub paused: bool,
-    /// Set (permanently, for the session) when "Open to LAN" first succeeds:
-    /// the server force-unpauses and `Pause` messages are ignored from then
-    /// on — remote players may exist (or reappear) at any time.
-    pub lan_ever_opened: bool,
-    /// World-anchored wire events produced OUTSIDE a tick window (a leaving
-    /// session's menu close, e.g. its chest 1→0 transition), shipped with the
-    /// next executed tick's batch so no observer misses them.
-    pub pending_wire_events: Vec<WorldEventMsg>,
-    /// Every spatial LOOP still playing (a `loop` row started and not yet
-    /// stopped), by handle — replayed to a joining session, ended with its
-    /// mob. See [`spatial_loops`].
-    pub live_spatial_loops: spatial_loops::LiveSpatialLoops,
-    /// Chat lines accepted since the last pump. Drained to currently connected
-    /// sessions only (per [`crate::server::chat::ChatTargets`]); this is
-    /// intentionally not history.
-    pub pending_chat: Vec<crate::server::chat::PendingChat>,
+    pub(in crate::server) hostile_spawn_cache: crate::mob::HostileSpawnCache,
+    /// The seed sequence for scattered drops and rolls.
+    pub(in crate::server) seeds: DropSeeds,
     /// Reused buffers for every session's exposure tick.
-    pub(crate) exposure_scratch: crate::exposure::ExposureScratch,
-    pub next_chat_seq: u64,
-    /// Wall-clock seconds since the last background autosave.
-    pub autosave_t: f32,
-    /// How many players currently have each chest's screen open, keyed by
-    /// world position. Server-side state (drives what EVERY client's lid
-    /// shows); entries are removed at zero. Updated by the menu open/close
-    /// funnels; 0↔1 transitions emit `ChestOpened`/`ChestClosed` world events.
-    pub chest_viewers: HashMap<IVec3, u8>,
-    /// The live mobs holding each container open (`ContainerHold`), each
-    /// counted once among its chest's viewers.
-    pub container_holds: HashMap<IVec3, Vec<u64>>,
-    /// The `WorldEnvironment` shader-param map the last `TickUpdate.env`
-    /// shipped (value-compared per tick window; the map is tiny). `None` =
-    /// nothing shipped yet, so the first window always carries the full set.
-    /// Replication bookkeeping, not sim state.
-    pub last_shipped_env: Option<std::sync::Arc<crate::world::environment::ShaderParamMap>>,
+    pub(in crate::server) exposure_scratch: crate::exposure::ExposureScratch,
+}
+
+/// The pieces a freshly built server starts from (see
+/// [`crate::server::session_build`]).
+pub(in crate::server) struct ServerParts {
+    pub world: World,
+    pub local: Option<ConnectedPlayer>,
+    pub operators: crate::server::permissions::Operators,
+    pub accounts: crate::server::accounts::PlayerRegistry,
+    pub catalog: RecipeCatalog,
+    pub mods: crate::modding::ModHost,
+}
+
+impl ServerGame {
+    /// Assemble a server around its world and (on a listen server) the local
+    /// session. A headless server's pause gate starts open: remote players
+    /// may exist from boot.
+    pub(in crate::server) fn assemble(parts: ServerParts) -> Self {
+        let remote_from_boot = parts.local.is_none();
+        Self {
+            world: parts.world,
+            sessions: SessionRegistry::new(parts.local),
+            operators: parts.operators,
+            accounts: parts.accounts,
+            catalog: parts.catalog,
+            mods: ModRuntime::new(parts.mods),
+            containers: ContainerViewers::default(),
+            chat: ChatService::default(),
+            clock: FrameClock::new(remote_from_boot),
+            broadcast: Broadcast::default(),
+            hostile_spawn_cache: Default::default(),
+            seeds: DropSeeds::default(),
+            exposure_scratch: Default::default(),
+        }
+    }
+
+    /// The authoritative world (read-only).
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+
+    /// The authoritative world, for fixtures that stage terrain and entities
+    /// directly.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+
+    /// The connected sessions (read-only).
+    pub fn sessions(&self) -> &SessionRegistry {
+        &self.sessions
+    }
+
+    /// The connected sessions, for fixtures that stage player state directly.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sessions_mut(&mut self) -> &mut SessionRegistry {
+        &mut self.sessions
+    }
+
+    /// The world and the sessions at once, for fixtures staging a session
+    /// against world state (a menu opened on a placed block).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn world_and_sessions_mut(&mut self) -> (&mut World, &mut SessionRegistry) {
+        (&mut self.world, &mut self.sessions)
+    }
+
+    /// The loaded recipe catalog.
+    pub fn recipes(&self) -> &Recipes {
+        self.catalog.recipes()
+    }
+
+    /// The event bus, for registering engine-side handlers.
+    pub fn bus_mut(&mut self) -> &mut EventBus {
+        self.mods.bus_mut()
+    }
+
+    /// The tick-stage seams, for attaching engine-side systems.
+    pub fn systems_mut(&mut self) -> &mut TickSystems {
+        self.mods.systems_mut()
+    }
+
+    /// The loaded WASM mods.
+    pub fn mod_host(&self) -> &crate::modding::ModHost {
+        self.mods.host()
+    }
+
+    /// Swap the mod host (fixtures installing hand-built guests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn replace_mod_host_for_test(&mut self, host: crate::modding::ModHost) {
+        self.mods.replace_host(host);
+    }
+
+    /// Every chest some player or mob holds open — the replicated set that
+    /// drives every client's lids.
+    pub fn open_chests(&self) -> Vec<IVec3> {
+        self.containers.open_chests()
+    }
+
+    /// How many players and mobs hold the chest at `pos` open.
+    pub fn chest_viewers(&self, pos: IVec3) -> u8 {
+        self.containers.viewers(pos)
+    }
+
+    /// One more (or one fewer) viewer of the chest at `pos`, standing in for
+    /// another player's screen.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_chest_viewed_for_test(
+        &mut self,
+        pos: IVec3,
+        viewed: bool,
+        events: &mut crate::events::tick::TickEvents,
+    ) {
+        if viewed {
+            self.containers.add_viewer(pos, events);
+        } else {
+            self.containers.drop_viewer(pos, events);
+        }
+    }
+
+    /// Singleplayer pause, exactly as the local client's `Pause` message
+    /// requests it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_paused_for_test(&mut self, paused: bool) {
+        self.clock.request_pause(paused);
+    }
+
+    /// The server as it is once "Open to LAN" succeeded: unpaused, and the
+    /// pause gate closed for good.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_to_lan_for_test(&mut self) {
+        self.clock.open_to_lan();
+    }
+
+    /// Run `f` inside a mod dispatch context over the live server, acting
+    /// for `actor` — fixtures driving host calls directly.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dispatch_for_test<R>(
+        &mut self,
+        actor: Option<PlayerId>,
+        feed: &mut crate::events::tick::TickEvents,
+        f: impl FnOnce(&mut crate::events::SimCtx) -> R,
+    ) -> R {
+        let Self {
+            world,
+            sessions,
+            mods,
+            ..
+        } = self;
+        mods.dispatch(world, sessions, actor, feed, |_, ctx| f(ctx))
+    }
 }
 
 /// The whole sim moves to the server thread at spawn ([`super::handle`]);

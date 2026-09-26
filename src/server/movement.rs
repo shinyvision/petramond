@@ -10,7 +10,9 @@ use crate::player::{self, Input};
 use petramond_math::math::Vec3;
 
 use super::game::ServerGame;
+use super::player::ConnectedPlayer;
 use crate::events::tick::TICK_DT;
+use crate::world::World;
 
 /// Base allowance of the claim-closeness ring, in ticks of worst-case
 /// legitimate speed on top of the observed claim gap: absorbs frame/tick
@@ -44,8 +46,8 @@ impl ServerGame {
     /// just for snapshot construction.
     pub fn tick_movements(&mut self) {
         let obstacles = self.world.mobs().solid_obstacles();
-        for s in 0..self.sessions.len() {
-            self.tick_movement_with_obstacles(s, &obstacles);
+        for sess in &mut self.sessions {
+            integrate_session(&self.world, sess, &obstacles);
         }
     }
 
@@ -54,196 +56,161 @@ impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn tick_movement(&mut self, s: usize) {
         let obstacles = self.world.mobs().solid_obstacles();
-        self.tick_movement_with_obstacles(s, &obstacles);
+        integrate_session(&self.world, &mut self.sessions[s], &obstacles);
+    }
+}
+
+/// Integrate one session's movement on the fixed tick from latched intent
+/// (F2), then soft-accept a validated client claim when it is close (F1).
+///
+/// A MOUNTED session skips all of it: the riding pass owns the transform
+/// (the player is slaved to its seat after the mobs move), claims are
+/// neither integrated nor adopted (the client slaves itself to the same
+/// replicated mount), and no fall accrues. Claim staleness bookkeeping
+/// still runs so the drift ring is honest on the dismount tick.
+fn integrate_session(
+    world: &World,
+    sess: &mut ConnectedPlayer,
+    obstacles: &[petramond_world::collision::DynBox],
+) {
+    let wishdir = sess.input.move_wishdir;
+    let jump = sess.input.move_jump && sess.input.intent_gameplay;
+    let sprint = sess.input.move_sprint && sess.input.intent_gameplay;
+    let sneak = sess.sneaking();
+    let claimed_pos = sess.input.claim_pos;
+    let claimed_vel = sess.input.claim_vel;
+    let claimed_on_ground = sess.input.claim_on_ground;
+    let spectator = sess.player.is_spectator();
+    let fresh = sess.input.claim_fresh;
+    // How many ticks the server free-ran since the previous claim — a slow
+    // client's report is that much staler, so the closeness ring (and the
+    // correction deadband) widen with it instead of rubber-banding every
+    // frame gap.
+    let gap = if fresh {
+        std::mem::replace(&mut sess.input.ticks_since_claim, 0)
+    } else {
+        sess.input.ticks_since_claim = sess.input.ticks_since_claim.saturating_add(1);
+        0
+    };
+    sess.input.claim_fresh = false;
+    if sess.sim.mount.is_some() {
+        return; // the riding pass owns a mounted transform (see above)
     }
 
-    /// Integrate one session's movement on the fixed tick from latched intent
-    /// (F2), then soft-accept a validated client claim when it is close (F1).
-    ///
-    /// A MOUNTED session skips all of it: the riding pass owns the transform
-    /// (the player is slaved to its seat after the mobs move), claims are
-    /// neither integrated nor adopted (the client slaves itself to the same
-    /// replicated mount), and no fall accrues. Claim staleness bookkeeping
-    /// still runs so the drift ring is honest on the dismount tick.
-    fn tick_movement_with_obstacles(
-        &mut self,
-        s: usize,
-        obstacles: &[petramond_world::collision::DynBox],
-    ) {
-        let (
-            wishdir,
-            jump,
-            sprint,
-            sneak,
-            claimed_pos,
-            claimed_vel,
-            claimed_on_ground,
-            spectator,
-            fresh,
-        ) = {
-            let sess = &self.sessions[s];
-            (
-                sess.move_wishdir,
-                sess.move_jump && sess.intent_gameplay,
-                sess.move_sprint && sess.intent_gameplay,
-                sess.sneaking(),
-                sess.claim_pos,
-                sess.claim_vel,
-                sess.claim_on_ground,
-                sess.player.is_spectator(),
-                sess.claim_fresh,
+    let input = Input {
+        wishdir,
+        jump,
+        sprint,
+        sneak,
+    };
+    // Where the server's OWN integration ended this tick, if grounded —
+    // trusted ground contact for the fall tracker below (claim adoption
+    // overwrites the transform before the tracker samples it).
+    let integrated_ground_y = if spectator
+        || (sess.player.columns_loaded(world) && body_terrain_final(&sess.player, world))
+    {
+        sess.player
+            .update_with_obstacles(TICK_DT, world, input, obstacles);
+        (!spectator && sess.player.on_ground).then_some(sess.player.pos.y)
+    } else {
+        None
+    };
+
+    // F1: only soft-accept a claim from a PlayerUpdate this pump. Stale
+    // claims must not yank the player every tick (tests and idle sessions).
+    let velocity_plausible = if sess.player.is_flying() {
+        claimed_vel.is_finite()
+            && claimed_vel.length() <= crate::player::creative_flight_speed(true) * CLAIM_VEL_SLACK
+    } else {
+        claim_velocity_plausible(claimed_vel, spectator)
+    };
+    let accept_claim = fresh
+        && velocity_plausible
+        && claim_within_drift(spectator, gap, claimed_pos - sess.player.pos)
+        && (claim_not_deeply_penetrating(claimed_pos, world, obstacles, spectator)
+            // A body ESCAPING geometry is inside it by definition, so the
+            // anti-noclip rule cannot apply while the server's own
+            // integration is in there too: both sides run the same
+            // deterministic escape, and rejecting the claim would fight
+            // it with corrections for as long as it takes to get out.
+            // The drift ring still bounds where the claim may be.
+            || !claim_not_deeply_penetrating(sess.player.pos, world, obstacles, spectator));
+
+    if accept_claim {
+        sess.player.pos = claimed_pos;
+        sess.player.vel = claimed_vel;
+        sess.player.on_ground = claimed_on_ground;
+    }
+
+    let pos = sess.player.pos;
+    let on_ground = sess.player.on_ground;
+
+    let immersion = world.body_fluid(pos, player::HEIGHT, petramond_world::fluid::Buoyancy::Swim);
+    let swimming = immersion.is_some();
+    // On a ladder? Same feet-cell probe the shared physics uses (see
+    // `Player::update`): a climbing body's descent is controlled, so the
+    // authoritative fall tracker must re-anchor while it is on the ladder —
+    // otherwise a climb up then a step off would measure the whole climb as
+    // one fall the client physics never latched.
+    let climbing = !swimming
+        && world
+            .climb_at(
+                pos.x.floor() as i32,
+                pos.y.floor() as i32,
+                pos.z.floor() as i32,
             )
-        };
-        // How many ticks the server free-ran since the previous claim — a
-        // slow client's report is that much staler, so the closeness ring
-        // (and the correction deadband) widen with it instead of
-        // rubber-banding every frame gap.
-        let gap = {
-            let sess = &mut self.sessions[s];
-            if fresh {
-                std::mem::replace(&mut sess.ticks_since_claim, 0)
-            } else {
-                sess.ticks_since_claim = sess.ticks_since_claim.saturating_add(1);
-                0
-            }
-        };
-        self.sessions[s].claim_fresh = false;
-        if self.sessions[s].mount.is_some() {
-            return; // the riding pass owns a mounted transform (see above)
-        }
-
-        let input = Input {
-            wishdir,
-            jump,
-            sprint,
-            sneak,
-        };
-        // Where the server's OWN integration ended this tick, if grounded —
-        // trusted ground contact for the fall tracker below (claim adoption
-        // overwrites the transform before the tracker samples it).
-        let integrated_ground_y = {
-            let Self {
-                world, sessions, ..
-            } = self;
-            let sess = &mut sessions[s];
-            if spectator
-                || (sess.player.columns_loaded(world) && body_terrain_final(&sess.player, world))
-            {
-                sess.player
-                    .update_with_obstacles(TICK_DT, world, input, obstacles);
-                (!spectator && sess.player.on_ground).then_some(sess.player.pos.y)
-            } else {
-                None
-            }
-        };
-
-        // F1: only soft-accept a claim from a PlayerUpdate this pump. Stale
-        // claims must not yank the player every tick (tests and idle sessions).
-        let velocity_plausible = if self.sessions[s].player.is_flying() {
-            claimed_vel.is_finite()
-                && claimed_vel.length()
-                    <= crate::player::creative_flight_speed(true) * CLAIM_VEL_SLACK
-        } else {
-            claim_velocity_plausible(claimed_vel, spectator)
-        };
-        let accept_claim = fresh
-            && velocity_plausible
-            && claim_within_drift(spectator, gap, claimed_pos - self.sessions[s].player.pos)
-            && (claim_not_deeply_penetrating(claimed_pos, &self.world, obstacles, spectator)
-                // A body ESCAPING geometry is inside it by definition, so the
-                // anti-noclip rule cannot apply while the server's own
-                // integration is in there too: both sides run the same
-                // deterministic escape, and rejecting the claim would fight
-                // it with corrections for as long as it takes to get out.
-                // The drift ring still bounds where the claim may be.
-                || !claim_not_deeply_penetrating(
-                    self.sessions[s].player.pos,
-                    &self.world,
-                    obstacles,
-                    spectator,
-                ));
-
-        let sess = &mut self.sessions[s];
-        if accept_claim {
-            sess.player.pos = claimed_pos;
-            sess.player.vel = claimed_vel;
-            sess.player.on_ground = claimed_on_ground;
-        }
-
-        let pos = sess.player.pos;
-        let on_ground = sess.player.on_ground;
-
-        let immersion =
-            self.world
-                .body_fluid(pos, player::HEIGHT, petramond_world::fluid::Buoyancy::Swim);
-        let swimming = immersion.is_some();
-        // On a ladder? Same feet-cell probe the shared physics uses (see
-        // `Player::update`): a climbing body's descent is controlled, so the
-        // authoritative fall tracker must re-anchor while it is on the ladder —
-        // otherwise a climb up then a step off would measure the whole climb as
-        // one fall the client physics never latched.
-        let climbing = !swimming
-            && self
-                .world
-                .climb_at(
-                    pos.x.floor() as i32,
-                    pos.y.floor() as i32,
-                    pos.z.floor() as i32,
-                )
-                .is_some();
-        // The fall tracker must not trust a CLAIMED on_ground flag: faking
-        // "grounded" every tick mid-fall would reset the peak and evade the
-        // landing. When the flag came from an accepted claim, verify it
-        // against real support under the feet — a legit grounded claim always
-        // has geometry there, so nothing tightens for real clients. The
-        // server's own integration (rejected claim) is already trustworthy,
-        // and unloaded columns can't answer, so both keep the flag as-is.
-        let grounded_for_fall = on_ground
-            && (!accept_claim
-                || !self.sessions[s].player.columns_loaded(&self.world)
-                || feet_supported(pos, &self.world, obstacles));
-        let sess = &mut self.sessions[s];
-        if sess.player.is_invulnerable() {
-            sess.fall.reset(pos.y);
-            sess.pending_fall = 0.0;
-            sess.pending_splash = 0.0;
-        } else if climbing {
-            // Re-anchor like immersion, but land nothing: grabbing a ladder is not a
-            // splash, and controlled ladder descent is never fall damage.
-            sess.fall.reset(pos.y);
-        } else {
-            // Sprinting down stairs touches each step for only a frame or
-            // two, so the once-per-tick claim samples are legitimately
-            // airborne for the whole descent and the tracker would measure
-            // the staircase as one tall fall. The server's own integration
-            // (trusted physics, never a client flag) did land on those
-            // steps: when the claim sample is airborne and dry, re-anchor
-            // the tracker at the integration's contact first — which also
-            // latches any real landing that happened between claim samples.
-            if !grounded_for_fall && !swimming {
-                if let Some(y) = integrated_ground_y {
-                    if let Some(super::player::FallOutcome::Landed(dist)) =
-                        sess.fall.observe(y, true, false)
-                    {
-                        sess.pending_fall = sess.pending_fall.max(dist);
-                    }
-                }
-            }
-            match sess.fall.observe(pos.y, grounded_for_fall, swimming) {
-                Some(super::player::FallOutcome::Landed(dist)) => {
-                    sess.pending_fall = sess.pending_fall.max(dist);
-                }
-                Some(super::player::FallOutcome::Splashed(dist))
-                    if immersion.is_some_and(|sample| sample.fluid.splash.is_some()) =>
+            .is_some();
+    // The fall tracker must not trust a CLAIMED on_ground flag: faking
+    // "grounded" every tick mid-fall would reset the peak and evade the
+    // landing. When the flag came from an accepted claim, verify it against
+    // real support under the feet — a legit grounded claim always has
+    // geometry there, so nothing tightens for real clients. The server's own
+    // integration (rejected claim) is already trustworthy, and unloaded
+    // columns can't answer, so both keep the flag as-is.
+    let grounded_for_fall = on_ground
+        && (!accept_claim
+            || !sess.player.columns_loaded(world)
+            || feet_supported(pos, world, obstacles));
+    if sess.player.is_invulnerable() {
+        sess.sim.fall.reset(pos.y);
+        sess.sim.pending_fall = 0.0;
+        sess.sim.pending_splash = 0.0;
+    } else if climbing {
+        // Re-anchor like immersion, but land nothing: grabbing a ladder is not a
+        // splash, and controlled ladder descent is never fall damage.
+        sess.sim.fall.reset(pos.y);
+    } else {
+        // Sprinting down stairs touches each step for only a frame or two, so
+        // the once-per-tick claim samples are legitimately airborne for the
+        // whole descent and the tracker would measure the staircase as one
+        // tall fall. The server's own integration (trusted physics, never a
+        // client flag) did land on those steps: when the claim sample is
+        // airborne and dry, re-anchor the tracker at the integration's contact
+        // first — which also latches any real landing that happened between
+        // claim samples.
+        if !grounded_for_fall && !swimming {
+            if let Some(y) = integrated_ground_y {
+                if let Some(super::player::FallOutcome::Landed(dist)) =
+                    sess.sim.fall.observe(y, true, false)
                 {
-                    sess.pending_splash = sess.pending_splash.max(dist);
+                    sess.sim.pending_fall = sess.sim.pending_fall.max(dist);
                 }
-                _ => {}
             }
         }
-        // Do NOT overwrite last_reported_transform here: it stays the client's
-        // claim so a rejected claim (or tick teleport) ships SelfTransform.
+        match sess.sim.fall.observe(pos.y, grounded_for_fall, swimming) {
+            Some(super::player::FallOutcome::Landed(dist)) => {
+                sess.sim.pending_fall = sess.sim.pending_fall.max(dist);
+            }
+            Some(super::player::FallOutcome::Splashed(dist))
+                if immersion.is_some_and(|sample| sample.fluid.splash.is_some()) =>
+            {
+                sess.sim.pending_splash = sess.sim.pending_splash.max(dist);
+            }
+            _ => {}
+        }
     }
+    // Do NOT overwrite last_reported_transform here: it stays the client's
+    // claim so a rejected claim (or tick teleport) ships SelfTransform.
 }
 
 /// The claimed velocity must fit the physics envelope: horizontal speed within
@@ -330,12 +297,11 @@ fn body_terrain_final(player: &crate::player::Player, world: &crate::world::Worl
 /// and a `SelfTransform` correction is in flight), so reach never tightens
 /// for real clients — but a fabricated far-away claim no longer grants
 /// remote reach over mining, placement, and interaction.
-pub fn reach_eye(
-    sess: &crate::server::player::ConnectedPlayer,
-) -> petramond_math::world_pos::WorldPos {
-    let delta = sess.claim_pos - sess.player.pos;
-    let base = if claim_within_drift(sess.player.is_spectator(), sess.ticks_since_claim, delta) {
-        sess.claim_pos
+pub fn reach_eye(sess: &ConnectedPlayer) -> petramond_math::world_pos::WorldPos {
+    let delta = sess.input.claim_pos - sess.player.pos;
+    let spectator = sess.player.is_spectator();
+    let base = if claim_within_drift(spectator, sess.input.ticks_since_claim, delta) {
+        sess.input.claim_pos
     } else {
         sess.player.pos
     };

@@ -5,7 +5,6 @@
 //! ascending, registration order)` via sorted insertion — dispatch never iterates
 //! a map. Registration order will be engine first, then mods in load order.
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use crate::events::tick::TickEvents;
@@ -17,6 +16,7 @@ use super::payload::{
     AttackAttempt, BlockBreakPre, BlockPlacePre, CellsEditPre, DeferredAction, InteractAttempt,
     ItemUsePre, MobDamagePre, PlayerDamagePre, PostEvent, PostEventKind, ProjectileHit,
 };
+use super::roster::{OpenGui, PlayerRoster};
 
 /// A pre handler's verdict. The first `Cancel` wins AND ends the dispatch:
 /// handlers after it never run (2026-07-17 — closing the double-act gap:
@@ -39,241 +39,79 @@ pub enum Outcome {
 /// the tick counter are reachable through `world`; WASM mods use their dedicated
 /// per-mod `RngU64` host streams instead.
 ///
-/// `player`/`gui_state` are the ACTING session's — a derived convenience, not
-/// the whole roster. Player-plural code uses the sessions-view accessors
-/// ([`acting_player_id`]/[`with_player`]), which reach EVERY
-/// connected session's player wherever the dispatch site published the roster
-/// (`ServerGame::with_sessions_view` — the tick-stage seams and the migrated
-/// pre-event sites). The direct fields stay because the mod ABI's player
-/// surface is per-acting-session and the WASM host reads them.
+/// Players are reached ONLY by id through `players` ([`with_player`],
+/// [`with_gui_state`]). `actor` names the session whose action this dispatch
+/// runs for — the clicking, eating, damaged or dying player — and is `None`
+/// for a global dispatch (tick systems, block hooks, spawn picks, mod init,
+/// a mob's action): there is no implicit "current player" to fall back on.
 ///
-/// [`acting_player_id`]: Self::acting_player_id
 /// [`with_player`]: Self::with_player
+/// [`with_gui_state`]: Self::with_gui_state
 pub struct SimCtx<'a> {
     pub world: &'a mut World,
-    pub player: &'a mut Player,
-    /// The ACTING session's mod-GUI state map (one map per player session):
-    /// `GuiStateSet/Get` HostCalls read/write it here.
-    pub gui_state: &'a mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
+    /// The session this dispatch acts for; `None` = actor-less.
+    pub actor: Option<PlayerId>,
+    /// Every connected session, passed explicitly by the dispatch site.
+    pub players: &'a mut dyn PlayerRoster,
     pub feed: &'a mut TickEvents,
     pub queue: &'a mut PostQueue,
 }
 
-/// One NON-acting session lent into [`with_sessions_scope`] — its stable id,
-/// its authoritative player, and the two things a per-player GUI write needs:
-/// that session's own state map and what it currently has open.
-pub struct SessionPlayerRef<'a> {
-    pub id: PlayerId,
-    /// The session's index in the server's roster — the slot its per-player
-    /// tick events live in.
-    pub index: usize,
-    pub player: &'a mut Player,
-    /// This session's mod-GUI state map. Lent alongside the player because a
-    /// tick system's gauges belong to whoever is LOOKING, and the acting
-    /// session (host, session 0) is nobody in particular on a server.
-    pub gui_state: &'a mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
-    /// The open GUI session: kind, and the block or mob it was opened on. `None` =
-    /// nothing open (or a non-mod screen).
-    pub gui: Option<OpenGui>,
-}
-
-/// One session's open GUI, as the roster publishes it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct OpenGui {
-    pub kind: petramond_world::gui_state::GuiKind,
-    pub anchor: Option<crate::menu::MenuAnchor>,
-}
-
-struct ScopeEntry {
-    id: PlayerId,
-    index: usize,
-    player: *mut Player,
-    gui_state: *mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
-    gui: Option<OpenGui>,
-}
-
-/// The published sessions roster: the acting session's identity plus raw
-/// handles to every OTHER session's player (the acting player deliberately
-/// never appears here — it is exactly the `&mut` lent into the live
-/// [`SimCtx`], and [`SimCtx::with_player`] routes its id through that borrow
-/// so two paths to one player can never exist).
-struct ScopeData {
-    acting: PlayerId,
-    /// The acting session's roster index.
-    acting_index: usize,
-    /// What the ACTING session has open — its map is the live `SimCtx` borrow,
-    /// so only this half of it can ride the roster.
-    acting_gui: Option<OpenGui>,
-    others: Vec<ScopeEntry>,
-}
-
-thread_local! {
-    /// The scoped sessions roster, mirroring `modding::scope`: dispatch sites
-    /// publish it around the region where a `SimCtx` is live, because the
-    /// bus/scheduler signatures (and the `SimCtx` field set) are part of the
-    /// frozen mod-facing surface and cannot thread it as a parameter.
-    static SESSIONS_SCOPE: RefCell<Option<ScopeData>> = const { RefCell::new(None) };
-}
-
-/// Publish the sessions roster for the duration of `f`, then restore whatever
-/// was published before (nesting-safe, panic-safe).
-///
-/// Soundness contract for the publisher (see `ServerGame::with_sessions_view`,
-/// the one production caller): `others` must NOT include the session whose
-/// player is lent into the `SimCtx`(s) built inside `f`, the referenced
-/// players must not be reachable through any other live path while `f` runs,
-/// and the underlying storage must stay untouched for the whole call. The
-/// borrows in `others` prove validity at entry; [`SimCtx::with_player`]'s
-/// deref relies on this contract for the rest.
-pub fn with_sessions_scope<R>(
-    acting: (PlayerId, usize),
-    acting_gui: Option<OpenGui>,
-    others: Vec<SessionPlayerRef<'_>>,
-    f: impl FnOnce() -> R,
-) -> R {
-    struct Restore {
-        prev: Option<ScopeData>,
-    }
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            SESSIONS_SCOPE.with(|s| *s.borrow_mut() = self.prev.take());
-        }
-    }
-    let entries = others
-        .into_iter()
-        .map(|o| ScopeEntry {
-            id: o.id,
-            index: o.index,
-            player: o.player as *mut Player,
-            gui_state: o.gui_state as *mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
-            gui: o.gui,
-        })
-        .collect();
-    let prev = SESSIONS_SCOPE.with(|s| {
-        s.borrow_mut().replace(ScopeData {
-            acting: acting.0,
-            acting_index: acting.1,
-            acting_gui,
-            others: entries,
-        })
-    });
-    let _restore = Restore { prev };
-    f()
-}
-
 impl SimCtx<'_> {
-    /// The id of the ACTING session — whose `player`/`gui_state` this context
-    /// carries. `None` when the dispatch site published no roster (mod init,
-    /// unit fixtures, not-yet-migrated pre-event sites): the context is then
-    /// single-session and anonymous, exactly the pre-roster behaviour.
-    pub fn acting_player_id(&self) -> Option<PlayerId> {
-        SESSIONS_SCOPE.with(|s| s.borrow().as_ref().map(|d| d.acting))
+    /// Every connected session's id, in roster order.
+    pub fn player_ids(&self) -> Vec<PlayerId> {
+        (0..self.players.len())
+            .map(|i| self.players.id_at(i))
+            .collect()
     }
 
     /// Session `id`'s roster index — where its per-player tick events live.
-    /// `None` = no such session, or no roster published here.
+    /// `None` = no such session.
     pub fn session_index(&self, id: PlayerId) -> Option<usize> {
-        SESSIONS_SCOPE.with(|s| {
-            let scope = s.borrow();
-            let d = scope.as_ref()?;
-            if d.acting == id {
-                return Some(d.acting_index);
-            }
-            d.others.iter().find(|e| e.id == id).map(|e| e.index)
-        })
+        self.players.index_of(id)
     }
 
-    /// Lend session `id`'s authoritative player to `f`. The acting session's
-    /// id resolves to `self.player` (the one live borrow); any other
-    /// connected session resolves through the published roster. `None` = no
-    /// such session, or no roster published here.
+    /// Lend session `id`'s authoritative player to `f`. `None` = no such
+    /// session.
     pub fn with_player<R>(&mut self, id: PlayerId, f: impl FnOnce(&mut Player) -> R) -> Option<R> {
-        enum Hit {
-            Acting,
-            Other(*mut Player),
-        }
-        let hit = SESSIONS_SCOPE.with(|s| {
-            let scope = s.borrow();
-            let d = scope.as_ref()?;
-            if d.acting == id {
-                return Some(Hit::Acting);
-            }
-            d.others
-                .iter()
-                .find(|e| e.id == id)
-                .map(|e| Hit::Other(e.player))
-        })?;
-        match hit {
-            Hit::Acting => Some(f(self.player)),
-            // SAFETY: the pointer was published by `with_sessions_scope` from
-            // a live `&mut` to a session OTHER than the acting one (the
-            // publisher's contract), so it cannot alias `self.player`; the
-            // publisher's split borrows keep it valid and exclusive for the
-            // scope's extent, and this method's `&mut self` receiver plus the
-            // module-private scope internals mean no second path can lend the
-            // same player while `f` runs.
-            Hit::Other(ptr) => Some(f(unsafe { &mut *ptr })),
-        }
+        let index = self.players.index_of(id)?;
+        Some(f(self.players.player_at(index)))
     }
 
-    /// Lend session `id`'s MOD-GUI state map to `f`, the same routing
-    /// [`with_player`](Self::with_player) does: the acting session resolves to
-    /// the one live borrow, any other through the roster. `None` = no such
-    /// session (or no roster published).
+    /// [`with_player`](Self::with_player) for the ACTOR. `None` = an
+    /// actor-less dispatch, or an actor no longer connected.
+    pub fn with_actor<R>(&mut self, f: impl FnOnce(&mut Player) -> R) -> Option<R> {
+        let id = self.actor?;
+        self.with_player(id, f)
+    }
+
+    /// Lend session `id`'s MOD-GUI state map to `f`. `None` = no such
+    /// session.
     ///
-    /// This is the seam under a per-player gauge. Without it a tick system
-    /// could only write the ACTING session's map — and the acting session for
-    /// a tick stage is the host, so a machine's readings reached exactly one
-    /// player however many were standing at machines.
+    /// This is the seam under a per-player gauge: a machine's readings belong
+    /// to whoever is LOOKING, so a tick system writes each viewer's map by id
+    /// rather than any one privileged session's.
     pub fn with_gui_state<R>(
         &mut self,
         id: PlayerId,
         f: impl FnOnce(&mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>) -> R,
     ) -> Option<R> {
-        enum Hit {
-            Acting,
-            Other(*mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>),
-        }
-        let hit = SESSIONS_SCOPE.with(|s| {
-            let scope = s.borrow();
-            let d = scope.as_ref()?;
-            if d.acting == id {
-                return Some(Hit::Acting);
-            }
-            d.others
-                .iter()
-                .find(|e| e.id == id)
-                .map(|e| Hit::Other(e.gui_state))
-        })?;
-        match hit {
-            Hit::Acting => Some(f(self.gui_state)),
-            // SAFETY: as `with_player` — the pointer came from a live `&mut`
-            // to a NON-acting session's map (so it cannot alias
-            // `self.gui_state`), the publisher keeps the storage untouched for
-            // the scope's extent, and the `&mut self` receiver plus the
-            // module-private scope internals leave no second path to it.
-            Hit::Other(ptr) => Some(f(unsafe { &mut *ptr })),
-        }
+        let index = self.players.index_of(id)?;
+        Some(f(self.players.gui_state_at(index)))
     }
 
-    /// Every connected session that currently has a GUI open, in session
-    /// order: `(id, kind, anchor cell)`. Empty when no roster is published.
+    /// Every connected session that currently has a GUI open, in id order:
+    /// `(id, kind + anchor)`.
     pub fn gui_viewers(&self) -> Vec<(PlayerId, OpenGui)> {
-        SESSIONS_SCOPE.with(|s| {
-            let scope = s.borrow();
-            let Some(d) = scope.as_ref() else {
-                return Vec::new();
-            };
-            let mut out: Vec<(PlayerId, OpenGui)> = d
-                .others
-                .iter()
-                .map(|e| (e.id, e.gui))
-                .chain(std::iter::once((d.acting, d.acting_gui)))
-                .filter_map(|(id, gui)| gui.map(|g| (id, g)))
-                .collect();
-            out.sort_by_key(|(id, _)| id.0);
-            out
-        })
+        let mut out: Vec<(PlayerId, OpenGui)> = (0..self.players.len())
+            .filter_map(|i| {
+                self.players
+                    .open_gui_at(i)
+                    .map(|gui| (self.players.id_at(i), gui))
+            })
+            .collect();
+        out.sort_by_key(|(id, _)| id.0);
+        out
     }
 }
 
@@ -386,12 +224,13 @@ macro_rules! pre_events {
                 /// Dispatch inline at the decision site, in `(priority,
                 /// registration)` order. The first `Cancel` ends the dispatch —
                 /// later handlers never see a consumed event (see [`Outcome`]).
-                /// `player`/`gui_state` are the ACTING session's.
+                /// `actor` is the session the event happens for (`None` for a
+                /// mob's action).
                 pub fn $dispatch(
                     &mut self,
                     world: &mut World,
-                    player: &mut Player,
-                    gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
+                    players: &mut dyn PlayerRoster,
+                    actor: Option<PlayerId>,
                     feed: &mut TickEvents,
                     ev: &mut $ty,
                 ) -> Outcome {
@@ -402,8 +241,8 @@ macro_rules! pre_events {
                     for h in handlers.iter_mut() {
                         let mut ctx = SimCtx {
                             world: &mut *world,
-                            player: &mut *player,
-                            gui_state: &mut *gui_state,
+                            actor,
+                            players: &mut *players,
                             feed: &mut *feed,
                             queue: &mut *queue,
                         };
@@ -518,8 +357,7 @@ impl EventBus {
     }
 
     /// Whether any post event is queued — the caller-side fast path, so a
-    /// drain site can skip its setup (publishing the sessions roster) on the
-    /// common empty tick edge.
+    /// drain site can skip its setup on the common empty tick edge.
     #[inline]
     pub fn has_queued_posts(&self) -> bool {
         !self.queue.events.is_empty()
@@ -530,11 +368,14 @@ impl EventBus {
     /// already-queued events (no recursion). The bound stops a runaway handler
     /// cascade from hanging the tick: hitting it is a handler bug, and the
     /// remainder of the queue is dropped loudly.
+    ///
+    /// Each event's handlers run with the event's own player as the actor
+    /// ([`PostEvent::actor`]) — the damaged, dying, collecting or clicking
+    /// session — and actor-less for world events.
     pub fn drain_post(
         &mut self,
         world: &mut World,
-        player: &mut Player,
-        gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
+        players: &mut dyn PlayerRoster,
         feed: &mut TickEvents,
     ) {
         if self.queue.events.is_empty() {
@@ -553,11 +394,12 @@ impl EventBus {
                 queue.events.clear();
                 break;
             }
+            let actor = ev.actor();
             for h in post[ev.kind() as usize].iter_mut() {
                 let mut ctx = SimCtx {
                     world: &mut *world,
-                    player: &mut *player,
-                    gui_state: &mut *gui_state,
+                    actor,
+                    players: &mut *players,
                     feed: &mut *feed,
                     queue: &mut *queue,
                 };
@@ -573,96 +415,67 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::super::payload::*;
+    use super::super::roster::{RosterRefs, SessionPlayerRef};
     use super::*;
     use petramond_math::math::IVec3;
     use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;
     use petramond_world::item::ItemType;
 
-    fn sim() -> (
-        World,
-        Player,
-        std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
-        TickEvents,
-    ) {
-        (
-            World::new(1, 1),
-            Player::new(WorldPos::new(0.0, 80.0, 0.0)),
-            petramond_world::gui_state::empty_gui_state(),
-            TickEvents::default(),
-        )
+    fn sim() -> (World, TickEvents) {
+        (World::new(1, 1), TickEvents::default())
     }
 
-    /// The sessions view: a published roster lets a handler reach EVERY
-    /// session's player by id — the acting one routed through the `SimCtx`'s
-    /// own borrow (never a second path), the rest through the scope — while an
-    /// unpublished context stays honestly single-session and anonymous.
+    /// The explicit roster: a handler reaches every session's player by id,
+    /// the actor is whoever the dispatch site named, and an actor-less
+    /// dispatch has no player to fall back on.
     #[test]
-    fn the_sessions_view_reaches_every_session_and_routes_the_acting_player() {
-        use crate::player::PlayerId;
-
-        let (mut world, mut acting, mut gui, mut feed) = sim();
-        let mut other = Player::new(WorldPos::new(4.0, 80.0, 0.0));
+    fn a_context_reaches_players_only_by_id_through_its_roster() {
+        let (mut world, mut feed) = sim();
+        let mut a = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut b = Player::new(WorldPos::new(4.0, 80.0, 0.0));
+        let mut a_gui = petramond_world::gui_state::empty_gui_state();
+        let mut b_gui = petramond_world::gui_state::empty_gui_state();
         let mut queue = PostQueue::default();
-
-        // No roster published: anonymous single-session context.
         {
+            let mut roster = RosterRefs::new(vec![
+                SessionPlayerRef {
+                    id: PlayerId(0),
+                    player: &mut a,
+                    gui_state: &mut a_gui,
+                    gui: None,
+                },
+                SessionPlayerRef {
+                    id: PlayerId(1),
+                    player: &mut b,
+                    gui_state: &mut b_gui,
+                    gui: None,
+                },
+            ]);
             let mut ctx = SimCtx {
                 world: &mut world,
-                player: &mut acting,
-                gui_state: &mut gui,
+                actor: Some(PlayerId(1)),
+                players: &mut roster,
                 feed: &mut feed,
                 queue: &mut queue,
             };
-            assert_eq!(ctx.acting_player_id(), None);
-            assert!(ctx.with_player(PlayerId(0), |_| ()).is_none());
-        }
-
-        let mut other_gui = petramond_world::gui_state::empty_gui_state();
-        let others = vec![SessionPlayerRef {
-            id: PlayerId(0),
-            index: 0,
-            player: &mut other,
-            gui_state: &mut other_gui,
-            gui: None,
-        }];
-        with_sessions_scope((PlayerId(1), 1), None, others, || {
-            let mut ctx = SimCtx {
-                world: &mut world,
-                player: &mut acting,
-                gui_state: &mut gui,
-                feed: &mut feed,
-                queue: &mut queue,
-            };
-            assert_eq!(ctx.acting_player_id(), Some(PlayerId(1)));
-            let touched = ctx.with_player(PlayerId(1), |p| {
-                p.set_health(5);
-                p.pos.x
-            });
-            assert_eq!(touched, Some(0.0), "the acting id lends ctx.player");
-            let touched = ctx.with_player(PlayerId(0), |p| {
-                p.set_health(3);
-                p.pos.x
-            });
-            assert_eq!(touched, Some(4.0), "another id lends that session's player");
+            assert_eq!(ctx.with_actor(|p| p.pos.x), Some(4.0), "the named actor");
+            assert_eq!(ctx.session_index(PlayerId(1)), Some(1));
+            ctx.with_player(PlayerId(0), |p| p.set_health(3));
             assert!(ctx.with_player(PlayerId(9), |_| ()).is_none());
-        });
-        // The mutations landed on the real players, and the scope is gone.
-        assert_eq!(acting.health(), 5);
-        assert_eq!(other.health(), 3);
-        let ctx = SimCtx {
-            world: &mut world,
-            player: &mut acting,
-            gui_state: &mut gui,
-            feed: &mut feed,
-            queue: &mut queue,
-        };
-        assert_eq!(ctx.acting_player_id(), None, "restored after the guard");
+
+            ctx.actor = None;
+            assert!(
+                ctx.with_actor(|_| ()).is_none(),
+                "an actor-less dispatch lends nobody"
+            );
+        }
+        assert_eq!(a.health(), 3, "the write landed on the addressed player");
     }
 
     #[test]
     fn pre_handlers_run_in_priority_then_registration_order() {
-        let (mut world, mut player, mut gui, mut feed) = sim();
+        let (mut world, mut feed) = sim();
         let mut bus = EventBus::default();
         let order = Arc::new(Mutex::new(Vec::new()));
         // Two handlers share priority 10: they must keep registration order.
@@ -677,7 +490,13 @@ mod tests {
             item: ItemType::Dirt,
             target: None,
         };
-        let out = bus.item_use_pre(&mut world, &mut player, &mut gui, &mut feed, &mut ev);
+        let out = bus.item_use_pre(
+            &mut world,
+            &mut RosterRefs::empty(),
+            None,
+            &mut feed,
+            &mut ev,
+        );
         assert_eq!(out, Outcome::Continue);
         assert_eq!(*order.lock().unwrap(), vec!["d", "b", "a", "c"]);
     }
@@ -689,7 +508,7 @@ mod tests {
     /// the event was NOT cancelled anyway).
     #[test]
     fn the_first_cancel_ends_the_dispatch() {
-        let (mut world, mut player, mut gui, mut feed) = sim();
+        let (mut world, mut feed) = sim();
         let mut bus = EventBus::default();
         let later_ran = Arc::new(AtomicI32::new(0));
         bus.on_player_damage_pre(0, |_, ev| {
@@ -708,7 +527,13 @@ mod tests {
             source: DamageSource::Fall,
             origin: None,
         };
-        let out = bus.player_damage_pre(&mut world, &mut player, &mut gui, &mut feed, &mut ev);
+        let out = bus.player_damage_pre(
+            &mut world,
+            &mut RosterRefs::empty(),
+            None,
+            &mut feed,
+            &mut ev,
+        );
         assert_eq!(out, Outcome::Cancel);
         assert_eq!(
             later_ran.load(Ordering::Relaxed),
@@ -720,7 +545,7 @@ mod tests {
 
     #[test]
     fn post_queue_drains_fifo_and_follow_ups_run_in_the_same_drain() {
-        let (mut world, mut player, mut gui, mut feed) = sim();
+        let (mut world, mut feed) = sim();
         let mut bus = EventBus::default();
         let seen = Arc::new(Mutex::new(Vec::new()));
         {
@@ -733,7 +558,9 @@ mod tests {
                 if pos.x == 0 {
                     // Follow-ups queue behind everything already pending and
                     // still run within this drain (same tick).
-                    ctx.queue.emit(PostEvent::PlayerDied);
+                    ctx.queue.emit(PostEvent::PlayerDied {
+                        player: PlayerId(0),
+                    });
                 }
             });
         }
@@ -746,15 +573,49 @@ mod tests {
         bus.emit(PostEvent::BlockPlaced {
             pos: IVec3::new(0, 0, 0),
             block: Block::Stone,
+            player: None,
         });
         bus.emit(PostEvent::BlockPlaced {
             pos: IVec3::new(1, 0, 0),
             block: Block::Stone,
+            player: None,
         });
-        bus.drain_post(&mut world, &mut player, &mut gui, &mut feed);
+        bus.drain_post(&mut world, &mut RosterRefs::empty(), &mut feed);
         assert_eq!(
             *seen.lock().unwrap(),
             vec![("placed", 0), ("placed", 1), ("died", -1)]
+        );
+    }
+
+    /// A post handler acts for the event's OWN player: two deaths in one
+    /// drain dispatch as two different actors, and a world event as none —
+    /// never as whichever session happens to come first.
+    #[test]
+    fn post_handlers_act_for_the_events_own_player() {
+        let (mut world, mut feed) = sim();
+        let mut bus = EventBus::default();
+        let actors = Arc::new(Mutex::new(Vec::new()));
+        for kind in [PostEventKind::PlayerDied, PostEventKind::BlockPlaced] {
+            let actors = actors.clone();
+            bus.on_post(kind, 0, move |ctx, _| {
+                actors.lock().unwrap().push(ctx.actor);
+            });
+        }
+        bus.emit(PostEvent::PlayerDied {
+            player: PlayerId(2),
+        });
+        bus.emit(PostEvent::BlockPlaced {
+            pos: IVec3::ZERO,
+            block: Block::Stone,
+            player: None,
+        });
+        bus.emit(PostEvent::PlayerDied {
+            player: PlayerId(5),
+        });
+        bus.drain_post(&mut world, &mut RosterRefs::empty(), &mut feed);
+        assert_eq!(
+            *actors.lock().unwrap(),
+            vec![Some(PlayerId(2)), None, Some(PlayerId(5))]
         );
     }
 }

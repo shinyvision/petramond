@@ -148,7 +148,7 @@ fn join_profile_sync() {
             (feet.x.floor() as i32).div_euclid(16),
             (feet.z.floor() as i32).div_euclid(16),
         );
-        if t_first_server_install.is_none() && server.world.loaded_section_count() > 0 {
+        if t_first_server_install.is_none() && server.world().loaded_section_count() > 0 {
             t_first_server_install = Some(t_click.elapsed());
         }
         if t_server_spawn_light_final.is_none() {
@@ -162,14 +162,14 @@ fn join_profile_sync() {
                             pc.cz + dz,
                         );
                         let loaded = server
-                            .world
+                            .world()
                             .section_at_world_for_test(sp.cx * 16, sp.cy * 16, sp.cz * 16)
                             .is_some();
-                        !loaded || server.world.section_light_final(sp)
+                        !loaded || server.world().section_light_final(sp)
                     })
                 })
             });
-            let any_loaded = server.world.loaded_section_count() > 0;
+            let any_loaded = server.world().loaded_section_count() > 0;
             if any_loaded && all_final {
                 t_server_spawn_light_final = Some(t_click.elapsed());
             }

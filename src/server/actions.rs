@@ -26,22 +26,22 @@ impl ServerGame {
             } => self.apply_use_click(s, mob, target, request_id, predicted, jabbed),
             PlayerAction::AttackClick { mob, player } => {
                 let sess = &mut self.sessions[s];
-                sess.pending_attack = true;
-                sess.pending_attack_mob = mob;
-                sess.pending_attack_player = player;
+                sess.input.pending_attack = true;
+                sess.input.pending_attack_mob = mob;
+                sess.input.pending_attack_player = player;
             }
             PlayerAction::Drop { all, request_id } => {
                 let sess = &mut self.sessions[s];
                 let slot = sess.player.inventory.active_slot();
-                sess.drop_queue.queue_selected(slot, all, Some(request_id));
+                sess.sim.drop_queue.queue_selected(slot, all, Some(request_id));
             }
             PlayerAction::ThrowCursor { amount, request_id } => {
                 let sess = &mut self.sessions[s];
                 if !sess
-                    .drop_queue
+                    .sim.drop_queue
                     .queue_cursor(&sess.player.inventory, amount, Some(request_id))
                 {
-                    sess.pending_action_outcomes
+                    sess.replication.pending_action_outcomes
                         .push(ActionOutcome::deny(request_id, ActionDenyReason::Denied));
                 }
             }
@@ -59,8 +59,8 @@ impl ServerGame {
                 if self.is_operator(s) {
                     let sess = &mut self.sessions[s];
                     sess.player.toggle_mode();
-                    sess.fall.reset(sess.player.pos.y);
-                    sess.pending_fall = 0.0;
+                    sess.sim.fall.reset(sess.player.pos.y);
+                    sess.sim.pending_fall = 0.0;
                 }
             }
             PlayerAction::ToggleCreative | PlayerAction::ToggleFlight => {
@@ -68,11 +68,11 @@ impl ServerGame {
                     let sess = &mut self.sessions[s];
                     if action == PlayerAction::ToggleCreative {
                         sess.player.toggle_creative();
-                    } else if sess.mount.is_none() {
+                    } else if sess.sim.mount.is_none() {
                         sess.player.toggle_creative_flight();
                     }
-                    sess.fall.reset(sess.player.pos.y);
-                    sess.pending_fall = 0.0;
+                    sess.sim.fall.reset(sess.player.pos.y);
+                    sess.sim.pending_fall = 0.0;
                 }
             }
             PlayerAction::Creative(action) => {
@@ -86,12 +86,12 @@ impl ServerGame {
                     return;
                 }
                 self.sessions[s]
-                    .creative
+                    .sim.creative
                     .try_enqueue(super::creative::Pending::Action(action));
             }
             PlayerAction::Schematic(request) => self.apply_schematic_request(s, request),
-            PlayerAction::Wake => self.sessions[s].wake_requested = true,
-            PlayerAction::Respawn => self.sessions[s].respawn_requested = true,
+            PlayerAction::Wake => self.sessions[s].input.wake_requested = true,
+            PlayerAction::Respawn => self.sessions[s].input.respawn_requested = true,
             // Menu transitions join clicks and crafts in one ordered queue so
             // arrival order remains authoritative on the fixed tick.
             PlayerAction::OpenInventory => {
@@ -101,11 +101,11 @@ impl ServerGame {
                     petramond_world::gui_state::GuiKind::Inventory
                 };
                 self.sessions[s]
-                    .pending_menu_actions
+                    .input.pending_menu_actions
                     .push(PendingMenuAction::OpenGui { kind, anchor: None })
             }
             PlayerAction::CloseMenu => self.sessions[s]
-                .pending_menu_actions
+                .input.pending_menu_actions
                 .push(PendingMenuAction::Close),
         }
     }
@@ -136,11 +136,11 @@ impl ServerGame {
         click.target = self.authoritative_use_target(s, click.ray_item(), click.target);
         let sess = &mut self.sessions[s];
         if let Some(old) = sess
-            .pending_use_click
+            .input.pending_use_click
             .replace(click)
             .and_then(|old| old.request_id)
         {
-            sess.pending_action_outcomes
+            sess.replication.pending_action_outcomes
                 .push(ActionOutcome::deny(old, ActionDenyReason::Denied));
         }
     }
@@ -157,20 +157,20 @@ impl ServerGame {
         // id so the ledger cannot leak. In-flight finishes are NOT superseded:
         // instabreak blocks can legitimately finish two cells in one tick
         // window, so each finish queues and resolves independently.
-        let old_deferred = self.sessions[s].deferred_break_finished.take();
+        let old_deferred = self.sessions[s].input.deferred_break_finished.take();
         if let Some(old) = old_deferred {
             self.sessions[s]
-                .pending_action_outcomes
+                .replication.pending_action_outcomes
                 .push(ActionOutcome::deny(
                     old.request_id,
                     ActionDenyReason::Denied,
                 ));
             // Old optimistic clear may still be on the client.
             let cells = self.world.break_footprint_cells(old.pos);
-            self.sessions[s].pending_corrective_cells.extend(cells);
+            self.sessions[s].replication.pending_corrective_cells.extend(cells);
         }
         self.sessions[s]
-            .pending_break_finished
+            .input.pending_break_finished
             .push(PendingBreakFinished {
                 request_id,
                 pos,
@@ -187,7 +187,7 @@ impl ServerGame {
         reason: Option<ActionDenyReason>,
     ) {
         self.sessions[s]
-            .pending_action_outcomes
+            .replication.pending_action_outcomes
             .push(crate::net::protocol::ActionOutcome {
                 id,
                 accepted,

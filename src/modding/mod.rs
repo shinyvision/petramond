@@ -80,7 +80,7 @@ use crate::events::{
     TickSystems,
 };
 use crate::mob::{Mob, MobCategory};
-use crate::player::{BonePose, Player};
+use crate::player::BonePose;
 use crate::world::World;
 use petramond_math::math::IVec3;
 
@@ -244,11 +244,13 @@ impl ModHost {
     /// a fresh epoch, is what evicts a previous session's config). Call once,
     /// after the engine's own handlers (if any) have registered, so mods sort
     /// behind them at equal priority.
+    ///
+    /// Init belongs to no player: it runs ACTOR-LESS over an empty roster,
+    /// so an init-time player call answers "no such player" on a listen
+    /// server and a headless one alike.
     pub fn initialize(
         &mut self,
         world: &mut World,
-        player: &mut Player,
-        gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
         bus: &mut EventBus,
         systems: &mut TickSystems,
         next_spatial_sound_handle: &mut u64,
@@ -264,10 +266,11 @@ impl ModHost {
             let t_init = std::time::Instant::now();
             let registrations = {
                 let mut inst = shared.lock().unwrap();
+                let mut nobody = crate::events::RosterRefs::empty();
                 let mut ctx = SimCtx {
                     world: &mut *world,
-                    player: &mut *player,
-                    gui_state: &mut *gui_state,
+                    actor: None,
+                    players: &mut nobody,
                     feed: &mut feed,
                     queue: bus.queue_mut(),
                 };

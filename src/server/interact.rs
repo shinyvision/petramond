@@ -129,7 +129,7 @@ impl ServerGame {
             .denied_actions()
             .denies(mod_api::BodyAction::Use)
         {
-            self.sessions[s].pending_use_click = None;
+            self.sessions[s].input.pending_use_click = None;
             self.advance_eating(s);
             return;
         }
@@ -138,7 +138,7 @@ impl ServerGame {
         // continuous use: an eat runs to its end and a raised guard stays up,
         // and neither is interrupted by the button it is still riding.
         if !self.sessions[s].player.use_gesture.is_free() {
-            self.sessions[s].pending_use_click = None;
+            self.sessions[s].input.pending_use_click = None;
             self.advance_eating(s);
             return;
         }
@@ -146,7 +146,7 @@ impl ServerGame {
         // verdict, and held-selection guard together. A newer hotbar
         // selection invalidates the attempt before any consumer can observe
         // or mutate through a different item than receipt-time targeting used.
-        if let Some(click) = self.sessions[s].pending_use_click.take() {
+        if let Some(click) = self.sessions[s].input.pending_use_click.take() {
             if click.selection_still_matches(&self.sessions[s].player) {
                 self.dispatch_use_click(s, click, events, false);
             } else {
@@ -154,7 +154,7 @@ impl ServerGame {
             }
             // A real click paces the hold-repeat: the first repeat comes one
             // full interval after it (and spam clicks never compound rates).
-            self.sessions[s].use_repeat_cooldown = USE_REPEAT_TICKS;
+            self.sessions[s].input.use_repeat_cooldown = USE_REPEAT_TICKS;
         } else {
             self.tick_use_repeat(s, events);
         }
@@ -181,15 +181,15 @@ impl ServerGame {
         // pack's claim — was asked once in `tick_place`, which is the only
         // caller. What is left is what only a repeat cares about.
         let sess = &mut self.sessions[s];
-        if !sess.intent_use_held || sess.eating.is_some() {
+        if !sess.input.intent_use_held || sess.sim.eating.is_some() {
             return;
         }
-        sess.use_repeat_cooldown = sess.use_repeat_cooldown.saturating_sub(1);
-        if sess.use_repeat_cooldown > 0 {
+        sess.input.use_repeat_cooldown = sess.input.use_repeat_cooldown.saturating_sub(1);
+        if sess.input.use_repeat_cooldown > 0 {
             return;
         }
-        sess.use_repeat_cooldown = USE_REPEAT_TICKS;
-        let look = sess.look;
+        sess.input.use_repeat_cooldown = USE_REPEAT_TICKS;
+        let look = sess.input.look;
         let click = PendingUseClick::capture(&sess.player, None, look, None, false, false);
         self.dispatch_use_click(s, click, events, true);
     }
@@ -215,8 +215,7 @@ impl ServerGame {
         // The claimed mob resolves through the authoritative view-ray
         // validator BEFORE any consumer (mods included) can observe it: a
         // forged, vanished, dead, or occluded claim is no mob at all.
-        let mob = self
-            .authoritative_mob_target(s, mob)
+        let mob = super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], mob)
             .map(|idx| self.world.mobs().instances()[idx].id());
         let attempt = InteractAttempt {
             block: target.map(|t| t.block),
@@ -302,18 +301,12 @@ impl ServerGame {
                 let Self {
                     world,
                     sessions,
-                    bus,
+                    mods,
                     ..
                 } = self;
-                Self::with_sessions_view(sessions, s, |sess| {
-                    bus.use_unclaimed(
-                        world,
-                        &mut sess.player,
-                        &mut sess.gui_state,
-                        events,
-                        &mut ev,
-                    ) == Outcome::Cancel
-                })
+                let actor = Some(sessions[s].id);
+                let bus = mods.bus_mut();
+                bus.use_unclaimed(world, sessions, actor, events, &mut ev) == Outcome::Cancel
             };
             // Deliberately NOT folded into `consumed`: the chain already
             // passed, so nothing happened to the world and the hand has
@@ -328,7 +321,7 @@ impl ServerGame {
         // OBSERVE the click (progression, statistics, tutorial hints) reads
         // it, with the outcome attached.
         if attempt.block.is_some() || attempt.mob.is_some() {
-            self.bus.emit(PostEvent::Interacted {
+            self.mods.emit(PostEvent::Interacted {
                 block: attempt.block,
                 face: attempt.face,
                 mob: attempt.mob,
@@ -394,17 +387,17 @@ impl ServerGame {
 
     fn queue_use_corrective_cells(&mut self, s: usize, target: TargetRef) {
         let sess = &mut self.sessions[s];
-        sess.pending_corrective_cells.push(target.block);
+        sess.replication.pending_corrective_cells.push(target.block);
         if target.normal != IVec3::ZERO {
-            sess.pending_corrective_cells
+            sess.replication.pending_corrective_cells
                 .push(target.block + target.normal);
         }
     }
 
     /// The mod consumer: dispatch the attempt to every registered
     /// `interact_attempt` handler; a handler's Cancel is a claim. Dispatched
-    /// within the sessions view so handlers (and the host calls they make —
-    /// `PlayerState`, `Players`) resolve the acting session.
+    /// with the clicking session as the actor, so handlers (and the host
+    /// calls they make — `PlayerState`) resolve it.
     fn consume_registered_attempt(
         &mut self,
         s: usize,
@@ -420,18 +413,12 @@ impl ServerGame {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            Self::with_sessions_view(sessions, s, |sess| {
-                bus.interact_attempt(
-                    world,
-                    &mut sess.player,
-                    &mut sess.gui_state,
-                    events,
-                    &mut ev,
-                ) == Outcome::Cancel
-            })
+            let actor = Some(sessions[s].id);
+            let bus = mods.bus_mut();
+            bus.interact_attempt(world, sessions, actor, events, &mut ev) == Outcome::Cancel
         };
         if claimed {
             events.player(s).interacted = true;
@@ -512,7 +499,7 @@ impl ServerGame {
             // (chest viewer, machine gauges, mod container anchoring) and
             // gui_click dispatches know where the GUI was opened from.
             BlockInteraction::OpenGui(kind) => {
-                self.sessions[s].pending_menu_actions.push(
+                self.sessions[s].input.pending_menu_actions.push(
                     crate::server::player::PendingMenuAction::OpenGui {
                         kind,
                         anchor: Some(crate::menu::MenuAnchor::Block(pos)),
@@ -649,13 +636,13 @@ impl ServerGame {
         // A real client sends a use click only from gameplay focus, and the
         // engine bars the hands of a body whose menu is open — so a click that
         // did not say so would model a body that cannot act.
-        sess.intent_gameplay = true;
+        sess.input.intent_gameplay = true;
         // The hook models a client that ran its full place prediction (the
         // common case), so the echo strip applies like production.
-        sess.pending_use_click = Some(PendingUseClick::capture(
+        sess.input.pending_use_click = Some(PendingUseClick::capture(
             &sess.player,
             None,
-            sess.look,
+            sess.input.look,
             None,
             true,
             false,
@@ -669,8 +656,8 @@ impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn queue_mob_use_click_for_test(&mut self, s: usize, mob: u64) {
         let sess = &mut self.sessions[s];
-        sess.intent_gameplay = true;
-        sess.pending_use_click = Some(PendingUseClick::capture(
+        sess.input.intent_gameplay = true;
+        sess.input.pending_use_click = Some(PendingUseClick::capture(
             &sess.player,
             Some(mob),
             None,
@@ -769,7 +756,7 @@ mod tests {
             let standing = WorldPos::new(bx as f64 + 0.5, by as f64, bz as f64 + 0.5);
             sess.player.pos = standing;
             sess.player.vel = Vec3::ZERO;
-            sess.claim_pos = standing;
+            sess.input.claim_pos = standing;
         }
 
         // A contained one-cell pool two cells ahead of the player (+x):
@@ -789,7 +776,7 @@ mod tests {
 
         // A use click is a GAMEPLAY click: the engine bars the hands of a body
         // whose menu is open, and the client never sends one from a menu.
-        server.sessions[0].intent_gameplay = true;
+        server.sessions[0].input.intent_gameplay = true;
 
         let boat = ItemType::by_key("vehicles:boat").expect("the vehicles pack item registered");
         server.sessions[0]
@@ -853,7 +840,7 @@ mod tests {
         );
         assert!(
             server.sessions[0]
-                .pending_use_click
+                .input.pending_use_click
                 .is_some_and(|c| c.target.is_some()),
             "the receipt-time water-ray validator accepted the claimed cell"
         );

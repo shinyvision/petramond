@@ -1,9 +1,11 @@
 //! The internal game server.
 //!
-//! Owns the authoritative simulation ([`game::ServerGame`]: world, sessions,
-//! recipes/loot, mod host, and the 20 TPS fixed-tick stage ladder) plus the
-//! per-connected-player state ([`player::ConnectedPlayer`]). The
-//! `ServerGame` runs on its OWN self-clocked thread
+//! Owns the authoritative simulation ([`game::ServerGame`], a coordinator over
+//! owned subsystems: the world, the [`sessions::SessionRegistry`], the
+//! [`mod_runtime::ModRuntime`], [`viewers::ContainerViewers`], chat, and the
+//! 20 TPS fixed-tick stage ladder) plus the per-connected-player state
+//! ([`player::ConnectedPlayer`]). The `ServerGame` runs on its OWN
+//! self-clocked thread
 //! ([`handle::spawn`]); the client talks to it
 //! exclusively over message channels. Remote (TCP) connections ride the same
 //! loop through [`remote::RemoteHub`] ("Open to LAN").
@@ -30,6 +32,7 @@ pub mod interact;
 pub mod item_use;
 pub mod menu;
 pub mod mob_target;
+pub mod mod_runtime;
 pub mod movement;
 pub mod permissions;
 pub mod placement;
@@ -40,4 +43,6 @@ pub mod remote;
 pub mod riding;
 pub mod schematics;
 pub mod session_build;
+pub mod sessions;
 pub mod streaming;
+pub mod viewers;

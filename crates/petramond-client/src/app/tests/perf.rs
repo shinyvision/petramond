@@ -85,7 +85,7 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
     let session = || {
         let mut app = app_with_render_dist(4);
         app.app.game.as_mut().unwrap().place_player_for_test(home);
-        app.server.sessions[0].player.pos = home;
+        app.server.sessions_mut()[0].player_mut().pos = home;
         let mut kinds = std::collections::BTreeMap::<String, usize>::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let mut frames = 0u32;

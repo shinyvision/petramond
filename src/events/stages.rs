@@ -6,10 +6,10 @@
 //! reorders or replaces engine steps.
 
 use crate::events::tick::TickEvents;
-use crate::player::Player;
 use crate::world::World;
 
 use super::bus::{PostQueue, SimCtx};
+use super::roster::PlayerRoster;
 
 /// The engine steps of one fixed game tick, in execution order. `WorldScheduled`
 /// is `World::game_tick`, whose internal order (scheduled → block updates →
@@ -92,28 +92,22 @@ impl TickSystems {
         self.slots[at.slot()].is_empty()
     }
 
-    /// Run the systems attached at `at`, in order. `player`/`gui_state` are
-    /// the ACTING session's — the HOST's (session 0) at these stage seams, a
-    /// derived convenience of the sessions view. Player-plural systems reach
-    /// every connected session through the `SimCtx` accessors
-    /// (`acting_player_id`/`with_player`), served by the roster
-    /// the caller publishes around this run (`ServerGame::with_sessions_view`);
-    /// with no roster published (unit fixtures) the context is single-session
-    /// and anonymous.
+    /// Run the systems attached at `at`, in order. A stage seam belongs to no
+    /// player: every system runs ACTOR-LESS and reaches the connected
+    /// sessions by id through `players`.
     pub fn run(
         &mut self,
         at: Attach,
         world: &mut World,
-        player: &mut Player,
-        gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
+        players: &mut dyn PlayerRoster,
         feed: &mut TickEvents,
         queue: &mut PostQueue,
     ) {
         for s in self.slots[at.slot()].iter_mut() {
             let mut ctx = SimCtx {
                 world: &mut *world,
-                player: &mut *player,
-                gui_state: &mut *gui_state,
+                actor: None,
+                players: &mut *players,
                 feed: &mut *feed,
                 queue: &mut *queue,
             };
@@ -127,7 +121,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use petramond_math::world_pos::WorldPos;
 
     #[test]
     fn systems_in_one_slot_run_in_priority_then_registration_order() {
@@ -144,15 +137,12 @@ mod tests {
         assert!(systems.is_empty_at(Attach::After(Stage::Mining)));
 
         let mut world = World::new(1, 1);
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         systems.run(
             Attach::Before(Stage::Mining),
             &mut world,
-            &mut player,
-            &mut gui,
+            &mut super::super::roster::RosterRefs::empty(),
             &mut feed,
             &mut queue,
         );

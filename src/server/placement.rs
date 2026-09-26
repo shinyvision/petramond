@@ -5,7 +5,7 @@
 
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
-use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
+use crate::events::{BlockPlacePre, Outcome, PostEvent};
 use crate::net::protocol::TargetRef;
 use petramond_math::math::IVec3;
 use petramond_world::block::{Aabb, Block, CellPart};
@@ -40,13 +40,17 @@ impl ServerGame {
         // place, slab stack, frozen ledger — keeps its event, or
         // the initiator never hears their own place.
         if predicted {
-            self.sessions[s].presented_places.push(pos);
+            self.sessions[s].replication.presented_places.push(pos);
         }
         if let Some(block) = held {
             // Every observer presents the placement (positional sound)
             // from the world-anchored event.
             events.world.block_placed.push((pos, block));
-            self.bus.emit(PostEvent::BlockPlaced { pos, block });
+            self.mods.emit(PostEvent::BlockPlaced {
+                pos,
+                block,
+                player: Some(self.sessions[s].id),
+            });
             self.push_block_noise(s, pos, crate::mob::NoiseKind::BlockPlaced);
         }
         Some(pos)
@@ -125,21 +129,15 @@ impl ServerGame {
                 facing: player_facing,
                 actor: crate::mob::EntityRef::Player(self.sessions[s].id),
             };
+            let actor = Some(self.sessions[s].id);
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            if bus.block_place_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
-            {
+            let bus = mods.bus_mut();
+            if bus.block_place_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel {
                 return None;
             }
         }
@@ -211,23 +209,17 @@ impl ServerGame {
             place_pos: inputs.place_pos.to_array(),
             player_facing: inputs.player_facing as u8,
         };
+        let actor = Some(self.sessions[s].id);
         let result = {
             let Self {
                 world,
                 sessions,
-                bus,
                 mods,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            let mut ctx = SimCtx {
-                world,
-                player: &mut sess.player,
-                gui_state: &mut sess.gui_state,
-                feed: events,
-                queue: bus.queue_mut(),
-            };
-            mods.shape_placement_plan(&mut ctx, shape_key, shape_kind, block.id(), view)?
+            mods.dispatch(world, sessions, actor, events, |host, ctx| {
+                host.shape_placement_plan(ctx, shape_key, shape_kind, block.id(), view)
+            })?
         };
         if !result.accepted {
             return Some(None);
@@ -273,7 +265,6 @@ impl ServerGame {
             let Self {
                 world,
                 sessions,
-                bus,
                 mods,
                 ..
             } = self;
@@ -281,15 +272,9 @@ impl ServerGame {
             // post-placement pump uses, so the gate and the pump bake from
             // identical inputs by construction.
             let input = world.bake_cell_input(anchor, write_block);
-            let sess = &mut sessions[s];
-            let mut ctx = SimCtx {
-                world,
-                player: &mut sess.player,
-                gui_state: &mut sess.gui_state,
-                feed: events,
-                queue: bus.queue_mut(),
-            };
-            mods.bake_placement_sim_boxes(&mut ctx, shape_key, shape_kind, input)
+            mods.dispatch(world, sessions, actor, events, |host, ctx| {
+                host.bake_placement_sim_boxes(ctx, shape_key, shape_kind, input)
+            })
         };
         let boxes: &[petramond_world::block::Aabb] = match &boxes {
             Some(b) => b,
@@ -341,7 +326,7 @@ impl ServerGame {
     /// (the latched look stands in for the click target they never build).
     #[cfg(any(test, feature = "test-support"))]
     pub fn try_place_for_test(&mut self) -> bool {
-        let target = self.sessions[0].look;
+        let target = self.sessions[0].input.look;
         self.try_place(0, target, &mut Default::default()).is_some()
     }
 }

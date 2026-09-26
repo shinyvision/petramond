@@ -1061,6 +1061,23 @@ fn samples() -> Samples {
         player: PlayerId(2), tag: "m:t".into(), asset: [3; 32], origin: [1, 2, 3], turns: 1,
     });
     s.pin("HostRet::Unsupported", &HostRet::Unsupported);
+    s.pin("HostCall::ActingPlayer", &HostCall::ActingPlayer);
+    s.pin("HostCall::PlayerStateOf", &HostCall::PlayerStateOf { player: PlayerId(2) });
+    s.pin("HostCall::ApplyKnockbackTo", &HostCall::ApplyKnockbackTo { player: PlayerId(2), impulse: [1.0, 2.0, 3.0] });
+    s.pin("HostCall::SetHealthOf", &HostCall::SetHealthOf { player: PlayerId(2), value: 20 });
+    s.pin("HostCall::TeleportPlayer", &HostCall::TeleportPlayer { player: PlayerId(2), pos: [1.0, 2.0, 3.0] });
+    s.pin("HostCall::EffectApplyTo", &HostCall::EffectApplyTo { player: PlayerId(2), key: "m:e".into(), ticks: 40 });
+    s.pin("HostCall::EffectsActiveOf", &HostCall::EffectsActiveOf { player: PlayerId(2) });
+    s.pin("HostCall::ConsumeHeldBy", &HostCall::ConsumeHeldBy { player: PlayerId(2), item: ItemId(5), count: 3 });
+    s.pin("HostCall::ReplaceHeldOneBy", &HostCall::ReplaceHeldOneBy { player: PlayerId(2), item: ItemId(5), replacement: "m:i".into() });
+    s.pin("HostCall::GuiStateGetFor", &HostCall::GuiStateGetFor { player_id: PlayerId(2), key: "k".into() });
+    s.pin("HostCall::GuiOpenFor", &HostCall::GuiOpenFor {
+        player_id: PlayerId(2), kind_key: "m:g".into(), at: Some(crate::ContainerAddress::Block([1, 2, 3])),
+    });
+    s.pin("HostCall::GuiCloseFor", &HostCall::GuiCloseFor { player_id: PlayerId(2) });
+    s.pin("HostRet::ActingPlayer", &HostRet::ActingPlayer(Some(PlayerId(2))));
+    s.pin("HostRet::PlayerOf", &HostRet::PlayerOf(None));
+    s.pin("HostRet::EffectsOf", &HostRet::EffectsOf(Some(vec![EffectStateData { key: "m:e".into(), remaining: 40 }])));
 
     s
 }
@@ -1450,6 +1467,21 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::SchematicChosen", "1d02036d3a740303030303030303030303030303030303030303030303030303030303030303"),
     ("EventPayload::SchematicPositioned", "1e02036d3a74030303030303030303030303030303030303030303030303030303030303030302040601"),
     ("HostRet::Unsupported", "4d"),
+    ("HostCall::ActingPlayer", "cc01"),
+    ("HostCall::PlayerStateOf", "cd0102"),
+    ("HostCall::ApplyKnockbackTo", "ce01020000803f0000004000004040"),
+    ("HostCall::SetHealthOf", "cf010228"),
+    ("HostCall::TeleportPlayer", "d00102000000000000f03f00000000000000400000000000000840"),
+    ("HostCall::EffectApplyTo", "d10102036d3a6528"),
+    ("HostCall::EffectsActiveOf", "d20102"),
+    ("HostCall::ConsumeHeldBy", "d301020503"),
+    ("HostCall::ReplaceHeldOneBy", "d4010205036d3a69"),
+    ("HostCall::GuiStateGetFor", "d50102016b"),
+    ("HostCall::GuiOpenFor", "d60102036d3a670100020406"),
+    ("HostCall::GuiCloseFor", "d70102"),
+    ("HostRet::ActingPlayer", "4e0102"),
+    ("HostRet::PlayerOf", "4f00"),
+    ("HostRet::EffectsOf", "500101036d3a6528"),
 ];
 
 #[test]

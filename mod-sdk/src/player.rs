@@ -17,8 +17,26 @@ pub fn player_facing_xz(yaw: f32) -> [f32; 2] {
 }
 
 host_fn! {
-    /// The player's current state (position, velocity, look, health, flags).
+    /// The player the running dispatch acts for — the clicking, eating,
+    /// damaged or dying one — or `None` in an actor-less dispatch (tick
+    /// systems, block hooks, hostile spawn picks, `init`, a mob's action).
+    pub fn acting_player() -> Option<PlayerId> => ActingPlayer => ActingPlayer
+}
+
+host_fn! {
+    /// The acting player's current state (position, velocity, look, health,
+    /// flags).
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`player_state_of`] there.
     pub fn player_state() -> Box<PlayerSnapshot> => PlayerState => Player
+}
+
+host_fn! {
+    /// [`player_state`] of a NAMED player. `None` = no such connected player.
+    pub fn player_state_of(player: PlayerId) -> Option<Box<PlayerSnapshot>>
+        => PlayerStateOf { player } => PlayerOf
 }
 
 host_fn! {
@@ -33,9 +51,7 @@ host_fn! {
     /// The named session's currently held stack, INSTANCE DATA included — the
     /// per-player, per-stack read [`player_state`]'s row-level `held` id
     /// cannot be (an augmented tool's `petramond:tool` override lives in the
-    /// stack's data). `None` = empty hand, no such connected session, or a
-    /// dispatch site without a sessions view (event handlers and attached
-    /// tick systems always have one).
+    /// stack's data). `None` = empty hand or no such connected session.
     pub fn player_held(player: PlayerId) -> Option<mod_api::ItemStackData>
         => PlayerHeld { player } => HeldStack
 }
@@ -91,8 +107,19 @@ host_fn! {
     /// when it holds `item` with at least `count` — the spend primitive for item
     /// uses that place no block (spawning an entity from an `item_use_pre`
     /// handler). `false` = consumed nothing.
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`consume_held_by`] there.
     pub fn consume_held(item: mod_api::ItemId, count: u32) -> bool
         => ConsumeHeld { item, count } => Bool
+}
+
+host_fn! {
+    /// [`consume_held`] from a NAMED player's acting hand. `false` = consumed
+    /// nothing, or no such connected player.
+    pub fn consume_held_by(player: PlayerId, item: mod_api::ItemId, count: u32) -> bool
+        => ConsumeHeldBy { player, item, count } => Bool
 }
 
 host_fn! {
@@ -101,8 +128,19 @@ host_fn! {
     /// place; a larger stack consumes one unit and gives the replacement through
     /// normal inventory fill. `false` = wrong/empty hand, unknown replacement, or
     /// no room. This is the bucket empty/fill primitive.
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`replace_held_one_by`] there.
     pub fn replace_held_one(item: mod_api::ItemId, replacement: &str) -> bool
         => ReplaceHeldOne { item, replacement: replacement.into() } => Bool
+}
+
+host_fn! {
+    /// [`replace_held_one`] in a NAMED player's acting hand. `false` also
+    /// when no such player is connected.
+    pub fn replace_held_one_by(player: PlayerId, item: mod_api::ItemId, replacement: &str) -> bool
+        => ReplaceHeldOneBy { player, item, replacement: replacement.into() } => Bool
 }
 
 host_fn! {
@@ -131,13 +169,30 @@ host_fn! {
 }
 
 host_fn! {
-    /// Add a knockback impulse to the player's velocity (spectator no-op).
+    /// Add a knockback impulse to the acting player's velocity (spectator
+    /// no-op).
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`apply_knockback_to`] there.
     pub fn apply_knockback(impulse: [f32; 3]) => ApplyKnockback { impulse }
 }
 
 host_fn! {
-    /// Give the player items (by registry NAME) through the normal inventory
-    /// fill; overflow drops at the player's feet. `false` = unknown item name.
+    /// [`apply_knockback`] on a NAMED player. `false` = no such connected
+    /// player.
+    pub fn apply_knockback_to(player: PlayerId, impulse: [f32; 3]) -> bool
+        => ApplyKnockbackTo { player, impulse } => Bool
+}
+
+host_fn! {
+    /// Give the acting player items (by registry NAME) through the normal
+    /// inventory fill; overflow drops at the player's feet. `false` = unknown
+    /// item name.
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`give_item_to`] there.
     pub fn give_item(item: &str, count: u8) -> bool
         => GiveItem { item: item.into(), count, data: Vec::new() } => Bool
 }
@@ -201,15 +256,35 @@ host_fn! {
 }
 
 host_fn! {
-    /// Overwrite the player's health (clamped to `0..=20` half-hearts), bypassing
-    /// the damage funnel — the heal/set primitive, no events fire.
+    /// Overwrite the acting player's health (clamped to `0..=20` half-hearts),
+    /// bypassing the damage funnel — the heal/set primitive, no events fire.
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`set_health_of`] there.
     pub fn set_health(value: i32) => SetHealth { value }
 }
 
 host_fn! {
-    /// Move the player's feet to `pos`; fall tracking is cleared so a teleport can
-    /// never land as fall damage.
+    /// [`set_health`] on a NAMED player. `false` = no such connected player.
+    pub fn set_health_of(player: PlayerId, value: i32) -> bool
+        => SetHealthOf { player, value } => Bool
+}
+
+host_fn! {
+    /// Move the acting player's feet to `pos`; fall tracking is cleared so a
+    /// teleport can never land as fall damage.
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`teleport_player`] there.
     pub fn teleport(pos: [f64; 3]) => Teleport { pos }
+}
+
+host_fn! {
+    /// [`teleport`] a NAMED player. `false` = no such connected player.
+    pub fn teleport_player(player: PlayerId, pos: [f64; 3]) -> bool
+        => TeleportPlayer { player, pos } => Bool
 }
 
 host_fn! {
@@ -218,8 +293,19 @@ host_fn! {
     /// already-active effect is overwritten with the new duration; `0` removes it.
     /// A state primitive like [`set_health`] — no events fire. `false` = unknown
     /// effect key.
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`effect_apply_to`] there.
     pub fn effect_apply(key: &str, ticks: u32) -> bool
         => EffectApply { key: key.into(), ticks } => Bool
+}
+
+host_fn! {
+    /// [`effect_apply`] on a NAMED player. `false` = unknown effect key or no
+    /// such connected player.
+    pub fn effect_apply_to(player: PlayerId, key: &str, ticks: u32) -> bool
+        => EffectApplyTo { player, key: key.into(), ticks } => Bool
 }
 
 /// Remove the status effect `key` from the player if active. `false` =
@@ -230,8 +316,19 @@ pub fn effect_remove(key: &str) -> bool {
 }
 
 host_fn! {
-    /// The player's active status effects, in application order.
+    /// The acting player's active status effects, in application order.
+    ///
+    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
+    /// dispatch (a tick system, block hook, `init`) the host refuses it and
+    /// the mod is disabled — name the player with [`effects_active_of`] there.
     pub fn effects_active() -> Vec<EffectStateData> => EffectsActive => Effects
+}
+
+host_fn! {
+    /// A NAMED player's active status effects, in application order. `None`
+    /// = no such connected player.
+    pub fn effects_active_of(player: PlayerId) -> Option<Vec<EffectStateData>>
+        => EffectsActiveOf { player } => EffectsOf
 }
 
 host_fn! {

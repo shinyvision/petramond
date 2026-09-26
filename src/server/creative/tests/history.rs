@@ -177,7 +177,7 @@ fn redo_after_grass_spreads_and_undo_after_replacement_notify_the_actual_removed
         .set_block_world(pos.x, pos.y, pos.z, Block::Grass);
     let broken = Arc::new(Mutex::new(Vec::new()));
     let observed = Arc::clone(&broken);
-    server.bus.on_post(
+    server.mods.bus_mut().on_post(
         crate::events::PostEventKind::BlockBroken,
         0,
         move |_, event| {
@@ -257,7 +257,7 @@ fn placement_history_stays_bounded_when_records_move_between_undo_and_redo() {
         )
         .unwrap();
     }
-    let retained = server.sessions[0].edits.undo_len();
+    let retained = server.sessions[0].sim.edits.undo_len();
     assert!(retained < 20);
     let mut events = TickEvents::default();
     for _ in 0..2 {
@@ -318,12 +318,12 @@ fn a_build_beyond_the_old_save_limits_places_and_restores_as_one_history_entry()
         .place_schematic(0, &schematic, origin.to_array(), 0, &mut events)
         .unwrap();
     assert!(
-        server.sessions[0].creative.job.is_some(),
+        server.sessions[0].sim.creative.job.is_some(),
         "a large edit spreads over ticks"
     );
-    assert_eq!(server.sessions[0].edits.undo_len(), 0);
+    assert_eq!(server.sessions[0].sim.edits.undo_len(), 0);
     finish_edit(&mut server);
-    assert_eq!(server.sessions[0].edits.undo_len(), 1);
+    assert_eq!(server.sessions[0].sim.edits.undo_len(), 1);
     for p in schematic.cells().map(|c| IVec3::from_array(c.pos) + origin) {
         assert_eq!(server.world.snapshot_cell(p).unwrap().block, Block::Stone);
     }
@@ -342,5 +342,5 @@ fn a_build_beyond_the_old_save_limits_places_and_restores_as_one_history_entry()
     for p in schematic.cells().map(|c| IVec3::from_array(c.pos) + origin) {
         assert_eq!(server.world.snapshot_cell(p).unwrap().block, Block::Stone);
     }
-    assert_eq!(server.sessions[0].edits.undo_len(), 1);
+    assert_eq!(server.sessions[0].sim.edits.undo_len(), 1);
 }

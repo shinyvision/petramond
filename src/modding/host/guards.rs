@@ -75,6 +75,22 @@ pub(super) fn public_write_key_guard(mod_id: &str, key: &str) -> Option<HostRet>
     None
 }
 
+/// The actor a single-player-era call addresses implicitly, or the refusal
+/// an actor-less dispatch answers it with: there is no privileged player to
+/// fall back on. `twin` names the explicit call that does the same thing.
+pub(super) fn actor_for(
+    ctx: &SimCtx<'_>,
+    call: &str,
+    twin: &str,
+) -> Result<crate::player::PlayerId, HostRet> {
+    ctx.actor.ok_or_else(|| {
+        HostRet::Error(format!(
+            "{call} addresses the acting player, and this dispatch (a tick system, block hook, \
+             spawn pick, mod_init or mob action) has none; name the player with {twin}"
+        ))
+    })
+}
+
 /// Run a call that mutates the live simulation, or reject it when no guest
 /// dispatch scope is active (the same gate `CurrentTick` uses), or when the
 /// active dispatch is READ-ONLY (the shape placement-plan dispatch, whose ABI

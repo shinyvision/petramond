@@ -324,6 +324,8 @@ pub enum PostEvent {
     BlockPlaced {
         pos: IVec3,
         block: Block,
+        /// The placing session; `None` for a mob or the world itself.
+        player: Option<crate::player::PlayerId>,
     },
     BlockBroken {
         pos: IVec3,
@@ -332,6 +334,8 @@ pub enum PostEvent {
         /// True when the simulation destroyed the block (support loss, washed
         /// away) rather than the player mining it.
         natural: bool,
+        /// The breaking session; `None` for a mob or the world itself.
+        player: Option<crate::player::PlayerId>,
     },
     ItemUsed {
         player: crate::player::PlayerId,
@@ -352,21 +356,26 @@ pub enum PostEvent {
         pos: petramond_math::world_pos::WorldPos,
     },
     PlayerDamaged {
+        player: crate::player::PlayerId,
         amount: i32,
         new_health: i32,
     },
     /// Health crossed >0 → 0. NO default consequence — a mod (or future core
     /// content) decides what death means.
-    PlayerDied,
+    PlayerDied {
+        player: crate::player::PlayerId,
+    },
     /// A container GUI session began. `kind` is the session's registered
     /// `GuiKind` — engine containers (the inventory's own recipe browser
     /// included) and mod GUIs speak the one kind registry; the ABI mirror
     /// carries the kind's key string.
     ContainerOpened {
+        player: crate::player::PlayerId,
         kind: petramond_world::gui_state::GuiKind,
         anchor: Option<crate::menu::MenuAnchor>,
     },
     ContainerClosed {
+        player: crate::player::PlayerId,
         kind: petramond_world::gui_state::GuiKind,
         anchor: Option<crate::menu::MenuAnchor>,
     },
@@ -514,7 +523,7 @@ impl PostEvent {
             PostEvent::MobDied { .. } => PostEventKind::MobDied,
             PostEvent::MobSpawned { .. } => PostEventKind::MobSpawned,
             PostEvent::PlayerDamaged { .. } => PostEventKind::PlayerDamaged,
-            PostEvent::PlayerDied => PostEventKind::PlayerDied,
+            PostEvent::PlayerDied { .. } => PostEventKind::PlayerDied,
             PostEvent::ContainerOpened { .. } => PostEventKind::ContainerOpened,
             PostEvent::ContainerClosed { .. } => PostEventKind::ContainerClosed,
             PostEvent::SectionGenerated { .. } => PostEventKind::SectionGenerated,
@@ -530,6 +539,37 @@ impl PostEvent {
             PostEvent::ActorActed { .. } => PostEventKind::ActorActed,
             PostEvent::SchematicChosen { .. } => PostEventKind::SchematicChosen,
             PostEvent::SchematicPositioned { .. } => PostEventKind::SchematicPositioned,
+        }
+    }
+
+    /// The session this event happened FOR — who its handlers act as. World
+    /// events (mob life, sections, a mob's own action, a mod's event) have
+    /// no actor.
+    pub fn actor(&self) -> Option<crate::player::PlayerId> {
+        match self {
+            PostEvent::BlockPlaced { player, .. } | PostEvent::BlockBroken { player, .. } => {
+                *player
+            }
+            PostEvent::ItemUsed { player, .. }
+            | PostEvent::PlayerDamaged { player, .. }
+            | PostEvent::PlayerDied { player }
+            | PostEvent::ContainerOpened { player, .. }
+            | PostEvent::ContainerClosed { player, .. }
+            | PostEvent::PlayerDismounted { player, .. }
+            | PostEvent::ItemPickedUp { player, .. }
+            | PostEvent::ItemObtained { player, .. }
+            | PostEvent::Interacted { player, .. }
+            | PostEvent::SchematicChosen { player, .. }
+            | PostEvent::SchematicPositioned { player, .. } => Some(*player),
+            PostEvent::ActorActed { actor, .. } => actor.player(),
+            PostEvent::MobDied { .. }
+            | PostEvent::MobSpawned { .. }
+            | PostEvent::SectionGenerated { .. }
+            | PostEvent::SectionLoaded { .. }
+            | PostEvent::MobTagAdded { .. }
+            | PostEvent::MobTagRemoved { .. }
+            | PostEvent::MobDamaged { .. }
+            | PostEvent::ModEvent { .. } => None,
         }
     }
 }

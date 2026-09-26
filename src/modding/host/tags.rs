@@ -117,10 +117,9 @@ mod tests {
     use mod_api::{HostCall, HostRet, MobTagValue as Api};
 
     use crate::events::tick::TickEvents;
-    use crate::events::{PostEvent, PostEventKind, PostQueue, SimCtx};
+    use crate::events::{PostEvent, PostEventKind, PostQueue, RosterRefs, SimCtx};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
-    use crate::player::Player;
     use crate::world::World;
     use petramond_math::world_pos::WorldPos;
 
@@ -137,16 +136,15 @@ mod tests {
             .spawn(crate::mob::Mob::Owl, WorldPos::new(1.0, 80.0, 1.0), 0.0));
         let id = world.mobs().instances()[0].id();
 
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+        let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         queue.want_for_test(PostEventKind::MobTagAdded);
         queue.want_for_test(PostEventKind::MobTagRemoved);
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };
@@ -195,8 +193,8 @@ mod tests {
         // MobInfo: the single-mob snapshot answers live mobs and only them.
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };

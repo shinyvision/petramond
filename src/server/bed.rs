@@ -89,11 +89,11 @@ impl ServerGame {
         sess.player.teleport(group_centre(&cells));
         sess.player.vel = Vec3::ZERO;
         sess.player.pitch = PITCH_LIMIT;
-        sess.sleep = Some(SleepState { base, progress: 0 });
+        sess.sim.sleep = Some(SleepState { base, progress: 0 });
         // The camera mirror that used to run here for the local player is
         // presentation: the client applies it after the fixed ticks, keyed on
         // this open request (`Game::tick`), before any presentation read.
-        sess.request_open_sleep = true;
+        sess.replication.request_open_sleep = true;
         true
     }
 
@@ -101,7 +101,7 @@ impl ServerGame {
     /// client derives the lying body's head yaw from it against the REPLICA's
     /// model group; see `Game::sleep_head_yaw`). `None` while awake.
     pub fn sleep_bed_base(&self, s: usize) -> Option<IVec3> {
-        Some(self.sessions[s].sleep.as_ref()?.base)
+        Some(self.sessions[s].sim.sleep.as_ref()?.base)
     }
 
     /// While session `s` sleeps, the engine yaw the lying body's head faces:
@@ -123,7 +123,7 @@ impl ServerGame {
     /// reads its `SelfView` mirror.
     pub fn sleep_progress01(&self, s: usize) -> Option<f32> {
         self.sessions[s]
-            .sleep
+            .sim.sleep
             .as_ref()
             .map(|st| (st.progress as f32 / SLEEP_TICKS as f32).clamp(0.0, 1.0))
     }
@@ -138,20 +138,20 @@ impl ServerGame {
 
     fn tick_sleep(&mut self, s: usize, events: &mut TickEvents) {
         let sess = &mut self.sessions[s];
-        let Some(state) = sess.sleep.as_mut() else {
-            sess.wake_requested = false;
+        let Some(state) = sess.sim.sleep.as_mut() else {
+            sess.input.wake_requested = false;
             return;
         };
         // Dying in bed ends the sleep without a wake teleport — the death
         // screen (and later the respawn) takes over from here.
         if sess.player.health() == 0 {
-            sess.sleep = None;
+            sess.sim.sleep = None;
             events.player(s).sleep_ended = true;
             return;
         }
-        if std::mem::take(&mut sess.wake_requested) {
+        if std::mem::take(&mut sess.input.wake_requested) {
             let base = state.base;
-            sess.sleep = None;
+            sess.sim.sleep = None;
             self.wake_at_bed(s, base);
             events.player(s).sleep_ended = true;
             return;
@@ -166,10 +166,10 @@ impl ServerGame {
     /// this matches the old single-player behaviour tick-for-tick.
     pub fn resolve_sleep_completion(&mut self, events: &mut TickEvents) {
         let everyone_asleep = self.sessions.iter().all(|sess| {
-            sess.sleep.is_some() || sess.player.is_spectator() || sess.player.health() == 0
+            sess.sim.sleep.is_some() || sess.player.is_spectator() || sess.player.health() == 0
         });
         let any_done = self.sessions.iter().any(|sess| {
-            sess.sleep
+            sess.sim.sleep
                 .as_ref()
                 .is_some_and(|st| st.progress >= SLEEP_TICKS)
         });
@@ -178,7 +178,7 @@ impl ServerGame {
         }
         super::daynight::skip_to_morning(&mut self.world);
         for s in 0..self.sessions.len() {
-            if let Some(state) = self.sessions[s].sleep.take() {
+            if let Some(state) = self.sessions[s].sim.sleep.take() {
                 self.wake_at_bed(s, state.base);
                 events.player(s).sleep_ended = true;
             }
@@ -190,7 +190,7 @@ impl ServerGame {
     /// the damage funnel; a lethal hit skips the wake teleport — the death
     /// screen takes over where they lay.
     pub(super) fn interrupt_sleep(&mut self, s: usize, events: &mut TickEvents) {
-        let Some(state) = self.sessions[s].sleep.take() else {
+        let Some(state) = self.sessions[s].sim.sleep.take() else {
             return;
         };
         if self.sessions[s].player.health() > 0 {
@@ -200,7 +200,7 @@ impl ServerGame {
     }
 
     fn tick_respawn(&mut self, s: usize, events: &mut TickEvents) {
-        if !std::mem::take(&mut self.sessions[s].respawn_requested) {
+        if !std::mem::take(&mut self.sessions[s].input.respawn_requested) {
             return;
         }
         // Respawn is only meaningful for a dead player; a stale request

@@ -1,13 +1,11 @@
 use mod_api::{HostCall, HostRet};
 
 use crate::events::tick::TickEvents;
-use crate::events::{PostQueue, SimCtx};
+use crate::events::{PostQueue, RosterRefs, SimCtx};
 use crate::modding::host::guards::KV_MAX_VALUE_BYTES;
 use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
-use crate::player::Player;
 use crate::world::World;
-use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn sparse_find_is_sorted_and_never_fabricates_unloaded_cells() {
@@ -76,14 +74,13 @@ fn with_ctx(f: impl FnOnce()) {
         }
     }
     world.insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), c);
-    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+    let mut nobody = RosterRefs::empty();
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
-    let mut gui = petramond_world::gui_state::empty_gui_state();
     let mut ctx = SimCtx {
         world: &mut world,
-        player: &mut player,
-        gui_state: &mut gui,
+        actor: None,
+        players: &mut nobody,
         feed: &mut feed,
         queue: &mut queue,
     };

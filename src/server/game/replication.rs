@@ -3,10 +3,76 @@ use crate::net::protocol::{
     BlockDelta, ClientEventMsg, ItemSlotWire, OpenScreen, SelfEvents, SelfState, SelfTransform,
     SleepTally, SpatialSoundMsg, TickUpdate, Transform, WorldEventMsg,
 };
-use petramond_math::math::IVec3;
 use petramond_world::inventory::Hand;
 
+use super::spatial_loops::LiveSpatialLoops;
 use super::{ServerGame, SharedTickRows};
+
+/// The server-wide replication bookkeeping every recipient's batch draws on
+/// (per-recipient bookkeeping lives on each session). Replication state, not
+/// sim state.
+#[derive(Default)]
+pub struct Broadcast {
+    /// World-anchored wire events produced OUTSIDE a tick window (a leaving
+    /// session's menu close, e.g. its chest 1→0 transition), shipped with the
+    /// next executed tick's batch so no observer misses them.
+    pending_wire_events: Vec<WorldEventMsg>,
+    /// Every spatial LOOP still playing (a `loop` row started and not yet
+    /// stopped), by handle — replayed to a joining session, ended with its
+    /// mob. See [`super::spatial_loops`].
+    live_spatial_loops: LiveSpatialLoops,
+    /// The `WorldEnvironment` shader-param map the last `TickUpdate.env`
+    /// shipped (value-compared per tick window; the map is tiny). `None` =
+    /// nothing shipped yet, so the next window carries the full set.
+    last_shipped_env: Option<std::sync::Arc<crate::world::environment::ShaderParamMap>>,
+}
+
+impl Broadcast {
+    /// Bank world events produced between tick windows for the next batch.
+    pub fn bank_wire_events(&mut self, events: impl IntoIterator<Item = WorldEventMsg>) {
+        self.pending_wire_events.extend(events);
+    }
+
+    /// The banked out-of-window events, oldest first, for the batch about to
+    /// ship.
+    pub fn take_wire_events(&mut self) -> Vec<WorldEventMsg> {
+        std::mem::take(&mut self.pending_wire_events)
+    }
+
+    /// Forget what the last batch shipped of the environment, so the next
+    /// window carries the full set — a joining session must receive the
+    /// CURRENT params even when the map is static (a frozen clock freezes
+    /// day/night AND weather params).
+    pub fn reseed_env(&mut self) {
+        self.last_shipped_env = None;
+    }
+
+    /// The full shader-param map when `params` differs from what the last
+    /// batch shipped (then remembered as shipped), else `None`.
+    pub fn env_update(
+        &mut self,
+        params: std::sync::Arc<crate::world::environment::ShaderParamMap>,
+    ) -> Option<Vec<(String, [f32; 4])>> {
+        if self
+            .last_shipped_env
+            .as_ref()
+            .is_some_and(|last| **last == *params)
+        {
+            return None;
+        }
+        let rows = params.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        self.last_shipped_env = Some(params);
+        Some(rows)
+    }
+
+    pub fn spatial_loops(&self) -> &LiveSpatialLoops {
+        &self.live_spatial_loops
+    }
+
+    pub fn spatial_loops_mut(&mut self) -> &mut LiveSpatialLoops {
+        &mut self.live_spatial_loops
+    }
+}
 
 impl ServerGame {
     /// The per-tick batch parts, built once per window: the parts every
@@ -17,29 +83,19 @@ impl ServerGame {
     pub fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
         let recipients = self.entity_lanes(events);
         let sleep_tally = SleepTally {
-            sleeping: self.sessions.iter().filter(|s| s.sleep.is_some()).count() as u16,
+            sleeping: self.sessions.iter().filter(|s| s.sim.sleep.is_some()).count() as u16,
             connected: self.sessions.len() as u16,
         };
-        // Full open-chest state per batch (chest_viewers keys; tiny), sorted
-        // so the wire batch is deterministic.
-        let mut open_chests: Vec<IVec3> = self.chest_viewers.keys().copied().collect();
-        open_chests.sort_unstable_by_key(|p| (p.x, p.y, p.z));
+        // Full open-chest state per batch (tiny), sorted so the wire batch is
+        // deterministic.
+        let open_chests = self.containers.open_chests();
         // Environment shader params: value-compare against the last-shipped
         // copy and ship the changed FULL set (the map is ~a dozen entries;
         // day/night rewrites its params most ticks, so this rides most
         // windows). `None` = unchanged, the client keeps what it has.
-        let params = self.world.environment().shader_params().clone();
-        let env = if self
-            .last_shipped_env
-            .as_ref()
-            .is_some_and(|last| **last == *params)
-        {
-            None
-        } else {
-            let rows = params.iter().map(|(k, v)| (k.clone(), *v)).collect();
-            self.last_shipped_env = Some(params);
-            Some(rows)
-        };
+        let env = self
+            .broadcast
+            .env_update(self.world.environment().shader_params().clone());
         SharedTickRows {
             tick: self.world.current_tick(),
             clock: crate::server::daynight::current_clock(&self.world),
@@ -69,49 +125,49 @@ impl ServerGame {
         // Per-recipient delta filter: only sections this client holds.
         let mut block_deltas: Vec<BlockDelta> = deltas
             .iter()
-            .filter(|d| self.sessions[s].terrain.covers(d.pos))
+            .filter(|d| self.sessions[s].transport.terrain.covers(d.pos))
             .cloned()
             .collect();
         // Cell KV deltas ride the same recipient filter as block deltas.
         let cell_kv_deltas: Vec<crate::net::protocol::CellKvDelta> = kv_deltas
             .iter()
-            .filter(|d| self.sessions[s].terrain.covers(d.pos))
+            .filter(|d| self.sessions[s].transport.terrain.covers(d.pos))
             .cloned()
             .collect();
         // Mod draw sets ride the same recipient filter.
         let block_draws: Vec<crate::net::protocol::BlockDrawDelta> = draw_deltas
             .iter()
-            .filter(|d| self.sessions[s].terrain.covers(d.pos))
+            .filter(|d| self.sessions[s].transport.terrain.covers(d.pos))
             .cloned()
             .collect();
         // Corrective cell sync: the CURRENT state of cells a use click
         // disagreed about (no-op click, denied place) — how a client whose
         // replica lied (ghost block, stale cell) reconciles. A shared delta
         // for the same cell already carries the truth.
-        for pos in std::mem::take(&mut self.sessions[s].pending_corrective_cells) {
-            if !self.sessions[s].terrain.covers(pos) || block_deltas.iter().any(|d| d.pos == pos) {
+        for pos in std::mem::take(&mut self.sessions[s].replication.pending_corrective_cells) {
+            if !self.sessions[s].transport.terrain.covers(pos) || block_deltas.iter().any(|d| d.pos == pos) {
                 continue;
             }
             if let Some(d) = self.world.block_delta_at(pos) {
                 block_deltas.push(d);
             }
         }
-        let action_outcomes = std::mem::take(&mut self.sessions[s].pending_action_outcomes);
+        let action_outcomes = std::mem::take(&mut self.sessions[s].replication.pending_action_outcomes);
         // Echo rule: the initiator already presented their own place/break
         // locally — strip matching world events from THEIR batch only.
         // Observers still receive the shared list unchanged.
         let presented_places: rustc_hash::FxHashSet<_> =
-            std::mem::take(&mut self.sessions[s].presented_places)
+            std::mem::take(&mut self.sessions[s].replication.presented_places)
                 .into_iter()
                 .collect();
         let presented_breaks: rustc_hash::FxHashSet<_> =
-            std::mem::take(&mut self.sessions[s].presented_breaks)
+            std::mem::take(&mut self.sessions[s].replication.presented_breaks)
                 .into_iter()
                 .collect();
         // The recipient's own catch-up events lead, so a replayed loop's
         // start precedes any retune or stop the shared window carries.
         let mut events_for_recipient: Vec<WorldEventMsg> =
-            std::mem::take(&mut self.sessions[s].pending_world_events);
+            std::mem::take(&mut self.sessions[s].replication.pending_world_events);
         if presented_places.is_empty() && presented_breaks.is_empty() {
             events_for_recipient.extend_from_slice(world_events);
         } else {
@@ -145,8 +201,8 @@ impl ServerGame {
             events: events_for_recipient,
             self_events: self.build_self_events(s, events),
             action_outcomes,
-            creative: self.sessions[s].creative.take_replies(),
-            schematics: self.sessions[s].schematic.take_notices(),
+            creative: self.sessions[s].sim.creative.take_replies(),
+            schematics: self.sessions[s].sim.schematic.take_notices(),
             menu_sync: self.build_menu_sync(s),
         }
     }
@@ -160,8 +216,8 @@ impl ServerGame {
         let id = sess.id;
         // Take every request so nothing lingers; the tick can only set one of
         // them (one consumed click per tick), so first-Some is the open.
-        let gui = sess.request_open_gui.take();
-        let sleep = std::mem::take(&mut sess.request_open_sleep);
+        let gui = sess.replication.request_open_gui.take();
+        let sleep = std::mem::take(&mut sess.replication.request_open_sleep);
         let open_screen = if let Some((kind, anchor)) = gui {
             // The wire speaks kind KEYS (GuiKind ids are process-local) — one
             // lane for engine containers and mod GUIs alike.
@@ -187,7 +243,7 @@ impl ServerGame {
             sleep_ended: p.sleep_ended,
             respawned: p.respawned,
             open_screen,
-            close_document_gui: std::mem::take(&mut sess.request_close_gui),
+            close_document_gui: std::mem::take(&mut sess.replication.request_close_gui),
             toggled_panel: p.toggled_panel,
             used_unpredicted: p.used_unpredicted,
             used_unpredicted_off: p.used_unpredicted && p.click_off_hand,
@@ -229,11 +285,11 @@ impl ServerGame {
             },
             on_ground: player.on_ground,
         };
-        let diverged = match &sess.last_reported_transform {
+        let diverged = match &sess.replication.last_reported_transform {
             None => true,
             Some(r) => {
                 let spectator = player.is_spectator();
-                let gap = sess.ticks_since_claim;
+                let gap = sess.input.ticks_since_claim;
                 let r = &r.transform;
                 !crate::server::movement::claim_within_drift(spectator, gap, player.pos - r.pos)
                     || (player.vel - r.vel).length()
@@ -248,9 +304,9 @@ impl ServerGame {
         // to the mount every tick (always "diverged" from the claim), and the
         // client slaves itself to the same replicated mount row. The dismount
         // tick clears `mount`, so the first free tick corrects any residue.
-        let transform = (sess.mount.is_none() && diverged).then_some(current);
+        let transform = (sess.sim.mount.is_none() && diverged).then_some(current);
         let revision = player.inventory.revision();
-        let inventory = (sess.last_sent_inventory_revision != Some(revision)).then(|| {
+        let inventory = (sess.replication.last_sent_inventory_revision != Some(revision)).then(|| {
             player
                 .inventory
                 .raw_slots()
@@ -261,7 +317,7 @@ impl ServerGame {
                 .map(|slot| slot.map(ItemSlotWire::from_stack))
                 .collect()
         });
-        sess.last_sent_inventory_revision = Some(revision);
+        sess.replication.last_sent_inventory_revision = Some(revision);
         SelfState {
             health: player.health(),
             conditions: condition_stages(player.conditions()),
@@ -285,7 +341,7 @@ impl ServerGame {
                 .eating_progress()
                 .map(|p| (p.clamp(0.0, 1.0) * 255.0).round() as u8),
             eating_off_hand: sess
-                .eating
+                .sim.eating
                 .as_ref()
                 .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
             sleeping,
@@ -311,7 +367,7 @@ impl ServerGame {
         use crate::net::protocol::{GuiValueWire, MenuTargetWire};
 
         let base = self.build_menu_sync_base(s);
-        let target = self.sessions[s].menu.target();
+        let target = self.sessions[s].sim.menu.target();
         let gui_arc = target
             .kind()
             .is_some_and(|kind| kind.is_registered())
@@ -322,12 +378,12 @@ impl ServerGame {
         // (the anvil's ~20 keys, every gauge) forces `Arc::make_mut` onto a
         // fresh allocation each time — ptr inequality alone re-shipped the
         // whole map 20×/s per viewer for zero information.
-        let gui_changed = match (&gui_arc, &sess.last_sent_gui_state) {
+        let gui_changed = match (&gui_arc, &sess.replication.last_sent_gui_state) {
             (None, None) => false,
             (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b) && **a != **b,
             _ => true,
         };
-        let base_changed = sess.last_menu_sync.as_ref() != Some(&base);
+        let base_changed = sess.replication.last_menu_sync.as_ref() != Some(&base);
         if !base_changed && !gui_changed {
             return None;
         }
@@ -342,9 +398,9 @@ impl ServerGame {
                         .collect(),
                 );
             }
-            sess.last_sent_gui_state = gui_arc;
+            sess.replication.last_sent_gui_state = gui_arc;
         }
-        sess.last_menu_sync = Some(base);
+        sess.replication.last_menu_sync = Some(base);
         Some(out)
     }
 
@@ -353,11 +409,11 @@ impl ServerGame {
         s: usize,
         target: crate::menu::ContainerTarget,
     ) -> std::sync::Arc<petramond_world::gui_state::GuiStateMap> {
-        let own = self.sessions[s].gui_state.clone();
+        let own = self.sessions[s].sim.gui_state.clone();
         if s == 0 || !own.is_empty() {
             return own;
         }
-        let host = self.sessions[0].gui_state.clone();
+        let host = self.sessions[0].sim.gui_state.clone();
         if host.is_empty() || !self.host_gui_state_applies_to(target) {
             return own;
         }
@@ -365,12 +421,12 @@ impl ServerGame {
     }
 
     fn host_gui_state_applies_to(&self, target: crate::menu::ContainerTarget) -> bool {
-        if self.sessions[0].menu.target() == target {
+        if self.sessions[0].sim.menu.target() == target {
             return true;
         }
         let mut open_target = None;
         for sess in &self.sessions {
-            let t = sess.menu.target();
+            let t = sess.sim.menu.target();
             if !t.kind().is_some_and(|kind| kind.is_registered()) {
                 continue;
             }
@@ -506,4 +562,29 @@ pub(super) fn condition_stages(
         .iter()
         .map(|c| (c.condition.0, c.stage()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Broadcast;
+
+    /// The environment ships in full on the first window, then only when it
+    /// changed — and a joining session's reseed forces the next window to
+    /// carry it again even though nothing changed.
+    #[test]
+    fn env_ships_on_change_and_after_a_reseed() {
+        let mut broadcast = Broadcast::default();
+        let params = std::sync::Arc::new(crate::world::environment::ShaderParamMap::from([(
+            "petramond:sky".to_owned(),
+            [1.0, 0.5, 0.25, 1.0],
+        )]));
+        assert!(broadcast.env_update(params.clone()).is_some(), "first window");
+        assert!(broadcast.env_update(params.clone()).is_none(), "unchanged");
+        broadcast.reseed_env();
+        assert_eq!(
+            broadcast.env_update(params),
+            Some(vec![("petramond:sky".to_owned(), [1.0, 0.5, 0.25, 1.0])]),
+            "a newcomer's window carries the full map"
+        );
+    }
 }

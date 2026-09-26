@@ -19,7 +19,7 @@ fn single_block_edits_made_in_one_tick_undo_as_one_edit() {
         Some(ItemStack::new(ItemType::Stone, 1));
     let mut events = TickEvents::default();
     server.sessions[0]
-        .pending_break_finished
+        .input.pending_break_finished
         .push(break_request(1, broken));
     server.tick_mining(0, &mut events);
     server
@@ -34,7 +34,7 @@ fn single_block_edits_made_in_one_tick_undo_as_one_edit() {
         .unwrap();
     server.world.restore_tick(server.world.current_tick() + 1);
     server.tick_mining(0, &mut events);
-    assert_eq!(server.sessions[0].edits.undo_len(), 1);
+    assert_eq!(server.sessions[0].sim.edits.undo_len(), 1);
 
     server
         .apply_creative(0, CreativeAction::Undo, &mut events)
@@ -64,7 +64,7 @@ fn single_block_edits_made_in_one_tick_undo_as_one_edit() {
 fn a_listener_that_reinitialises_placed_blocks_cannot_replace_copied_instance_data() {
     let mut server = server();
     let pos = IVec3::new(10, 65, 8);
-    server.bus.on_post(
+    server.mods.bus_mut().on_post(
         crate::events::PostEventKind::BlockPlaced,
         0,
         |ctx, event| {
@@ -93,7 +93,7 @@ fn a_listener_that_reinitialises_placed_blocks_cannot_replace_copied_instance_da
 fn a_cancelled_pre_event_refuses_the_whole_edit() {
     let mut server = server();
     let pos = IVec3::new(10, 65, 8);
-    server.bus.on_cells_edit_pre(0, move |_, edit| {
+    server.mods.bus_mut().on_cells_edit_pre(0, move |_, edit| {
         assert_eq!((edit.min, edit.max, edit.cells), (pos, pos, 1));
         Outcome::Cancel
     });
@@ -107,7 +107,7 @@ fn a_cancelled_pre_event_refuses_the_whole_edit() {
         )
         .is_err());
     assert_eq!(server.world.snapshot_cell(pos).unwrap().block, Block::Air);
-    assert_eq!(server.sessions[0].edits.undo_len(), 0);
+    assert_eq!(server.sessions[0].sim.edits.undo_len(), 0);
 }
 
 #[test]

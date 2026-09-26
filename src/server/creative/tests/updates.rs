@@ -28,12 +28,12 @@ fn a_floor_pasted_without_air_breaks_litter_that_cannot_live_on_the_new_surface(
             server.world.set_block_world(p.x, p.y + 1, p.z, b);
         }
     }
-    server.world.game_tick(&server.recipes);
+    server.world.game_tick(server.catalog.recipes());
     assert!(server.world.take_natural_breaks().is_empty());
     server
         .place_schematic(0, &floor, origin.to_array(), 0, &mut TickEvents::default())
         .unwrap();
-    server.world.game_tick(&server.recipes);
+    server.world.game_tick(server.catalog.recipes());
     let breaks = server.world.take_natural_breaks();
     let remaining: Vec<_> = litter
         .into_iter()
@@ -147,7 +147,7 @@ fn schematic_placement_updates_skipped_interior_cells_and_the_rotated_one_block_
                 "copied solids also receive updates"
             );
         }
-        server.world.game_tick(&server.recipes);
+        server.world.game_tick(server.catalog.recipes());
         let breaks = server.world.take_natural_breaks();
         for (p, block) in unsupported {
             assert_eq!(server.world.snapshot_cell(p).unwrap().block, Block::Air);

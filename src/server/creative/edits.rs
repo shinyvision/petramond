@@ -52,7 +52,7 @@ impl ServerGame {
         let edit = self
             .begin_cell_edit(s, cells, policy, events)
             .map_err(|(_, message)| message)?;
-        self.sessions[s].creative.job = Some(EditJob {
+        self.sessions[s].sim.creative.job = Some(EditJob {
             edit,
             kind: JobKind::Placement { update_bounds },
         });
@@ -67,7 +67,7 @@ impl ServerGame {
     ) -> Result<(), String> {
         self.close_open_edit(s, events);
         let mut record = self.sessions[s]
-            .edits
+            .sim.edits
             .take(replay)
             .ok_or_else(|| format!("Nothing to {}", replay.verb()))?;
         let policy = CellPolicy {
@@ -76,7 +76,7 @@ impl ServerGame {
         };
         match self.begin_cell_edit(s, record.take_side(replay), policy, events) {
             Ok(edit) => {
-                self.sessions[s].creative.job = Some(EditJob {
+                self.sessions[s].sim.creative.job = Some(EditJob {
                     edit,
                     kind: JobKind::Replay { record, replay },
                 });
@@ -84,7 +84,7 @@ impl ServerGame {
             }
             Err((cells, message)) => {
                 record.put_side(replay, cells);
-                self.sessions[s].edits.settle(record, replay, false);
+                self.sessions[s].sim.edits.settle(record, replay, false);
                 Err(message)
             }
         }
@@ -97,16 +97,16 @@ impl ServerGame {
         s: usize,
         events: &mut TickEvents,
     ) -> Result<(), String> {
-        let Some(mut job) = self.sessions[s].creative.job.take() else {
+        let Some(mut job) = self.sessions[s].sim.creative.job.take() else {
             return Ok(());
         };
-        let outcome = self.step_cell_edit(&mut job.edit, events);
+        let outcome = self.step_cell_edit(s, &mut job.edit, events);
         if outcome == Ok(false) {
-            self.sessions[s].creative.job = Some(job);
+            self.sessions[s].sim.creative.job = Some(job);
             return Ok(());
         }
         let mut receipt = job.edit.finish();
-        let history = &mut self.sessions[s].edits;
+        let history = &mut self.sessions[s].sim.edits;
         match job.kind {
             // An interrupted placement records what it did write, so undo
             // still takes back exactly that.
@@ -142,7 +142,7 @@ impl ServerGame {
         } = self;
         for pos in cells {
             sessions[s]
-                .edits
+                .sim.edits
                 .touch(pos, || world.snapshot_cell(pos).ok());
         }
     }
@@ -150,13 +150,13 @@ impl ServerGame {
     /// File the cells touched since the last close as one edit, once the
     /// block hooks they queued have settled.
     pub(in crate::server) fn close_open_edit(&mut self, s: usize, events: &mut TickEvents) {
-        if !self.sessions[s].edits.has_open() {
+        if !self.sessions[s].sim.edits.has_open() {
             return;
         }
         self.drain_post_events(events);
         let Self {
             world, sessions, ..
         } = self;
-        sessions[s].edits.close(|pos| world.snapshot_cell(pos).ok());
+        sessions[s].sim.edits.close(|pos| world.snapshot_cell(pos).ok());
     }
 }

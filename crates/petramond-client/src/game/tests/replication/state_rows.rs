@@ -27,8 +27,8 @@ fn replicated_conditions_draw_on_local_and_remote_players_without_hud_effects() 
     )
     .unwrap();
     for s in [0, remote] {
-        game.server.sessions[s]
-            .player
+        game.server.sessions_mut()[s]
+            .player_mut()
             .exposure_mut()
             .apply(burning.def(), strongest, 80);
     }
@@ -70,7 +70,7 @@ fn replicated_conditions_draw_on_local_and_remote_players_without_hud_effects() 
     game.set_particles_mode(petramond::save::client::ParticlesMode::Full);
 
     for s in [0, remote] {
-        game.server.sessions[s].player.clear_exposure();
+        game.server.sessions_mut()[s].player_mut().clear_exposure();
     }
     let shared = game.server.shared_tick_rows(&events);
     let update = game
@@ -105,7 +105,7 @@ fn hud_health_matches_session_truth_after_a_damage_tick() {
     let hud = game.player_health().expect("survival draws hearts");
     assert_eq!(
         hud.current,
-        game.server.sessions[0].player.health(),
+        game.server.sessions()[0].player().health(),
         "the replicated HUD health equals the session's"
     );
     assert_eq!(hud.current, petramond::player::MAX_HEALTH - 3);
@@ -123,14 +123,14 @@ fn every_sessions_player_row_reaches_the_local_batch() {
     let s1 = game
         .server
         .add_session_for_test(petramond::player::Player::new(s1_pos));
-    let s1_id = game.server.sessions[s1].id;
+    let s1_id = game.server.sessions()[s1].id();
 
     let update = pump_one_tick(&mut game);
     assert!(
         update
             .players
             .iter()
-            .any(|p| p.id == game.server.sessions[0].id),
+            .any(|p| p.id == game.server.sessions()[0].id()),
         "the recipient's own row ships too (the client skips it)"
     );
     let row = update
@@ -164,27 +164,27 @@ fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
     let mut game = game_on_empty_chunk();
     for x in 0..16 {
         for z in 0..16 {
-            game.server.world.set_block_world(x, 63, z, Block::Stone);
+            game.server.world_mut().set_block_world(x, 63, z, Block::Stone);
         }
     }
     let base = IVec3::new(7, 64, 7);
-    assert!(game.server.world.place_model_block(base, Block::Bed));
+    assert!(game.server.world_mut().place_model_block(base, Block::Bed));
     // Night gate: the core day/night system republishes only at tick END
     // (After(Spawning)), so the flag survives until the Placement stage.
     game.server
-        .world
+        .world_mut()
         .world_kv_set("petramond:is_night".into(), vec![1]);
-    game.server.sessions[0].look = Some(super::common::hit(base, IVec3::Y));
+    game.server.sessions_mut()[0].input_mut().look = Some(super::common::hit(base, IVec3::Y));
     game.server.queue_place_click_for_test(0);
 
     let update = pump_one_tick(&mut game);
     let row = update
         .players
         .iter()
-        .find(|p| p.id == game.server.sessions[0].id)
+        .find(|p| p.id == game.server.sessions()[0].id())
         .expect("own row ships");
     assert!(row.sleeping, "the bed interaction started the sleep");
-    let (_, _, cells) = game.server.world.model_group(base).expect("bed group");
+    let (_, _, cells) = game.server.world().model_group(base).expect("bed group");
     let other = cells
         .iter()
         .copied()
@@ -209,7 +209,7 @@ fn shader_params_replicate_into_the_replica_environment() {
     for _ in 0..3 {
         game.tick(TICK_DT, &crate::game::GameInput::default());
     }
-    let server_params = game.server.world.environment().shader_params().clone();
+    let server_params = game.server.world().environment().shader_params().clone();
     assert!(
         server_params.contains_key(petramond::rules::daynight::SKY_TIME_PARAM)
             && server_params.contains_key(petramond::rules::daynight::SKY_LIGHT_PARAM),

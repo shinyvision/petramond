@@ -13,15 +13,15 @@ use petramond_world::item::{ItemStack, ItemType};
 #[test]
 fn spawn_drops_dirt_yields_one_drop() {
     let mut game = game();
-    assert!(game.server.world.item_entities().is_empty());
+    assert!(game.server.world().item_entities().is_empty());
     game.server.spawn_drops(
         IVec3::new(2, 3, 4),
         Block::Dirt,
         (17, petramond_world::light::BlockLight6::DARK),
         petramond_world::item::VariantId::NONE,
     );
-    assert_eq!(game.server.world.item_entities().len(), 1);
-    let d = &game.server.world.item_entities()[0];
+    assert_eq!(game.server.world().item_entities().len(), 1);
+    let d = &game.server.world().item_entities()[0];
     assert_eq!(d.stack.item, petramond_world::item::ItemType::Dirt);
     assert_eq!(d.stack.count, 1);
     assert_eq!(d.skylight, 17);
@@ -46,7 +46,7 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
         // or the streaming-finality guard drops the dispatched break.
         let ground = IVec3::new(7 + 2 * i as i32, 64, 8);
         let cell = ground + IVec3::new(0, 1, 0);
-        let w = &mut game.server.world;
+        let w = game.server.world_mut();
         w.set_block_world(ground.x, ground.y, ground.z, Block::Grass);
         w.set_block_world(cell.x, cell.y, cell.z, block);
         // Undermine it: the fragile block breaks at the undermining update.
@@ -56,16 +56,16 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
             game.server.game_tick_step(&mut feed);
         }
         assert_eq!(
-            Block::from_id(game.server.world.chunk_block(cell.x, cell.y, cell.z)),
+            Block::from_id(game.server.world().chunk_block(cell.x, cell.y, cell.z)),
             Block::Air,
             "{block:?} must shatter once unsupported"
         );
         assert_eq!(
-            game.server.world.item_entities().len(),
+            game.server.world().item_entities().len(),
             expected_drops,
             "{block:?} natural break drops exactly its hand-break yield"
         );
-        game.server.world.item_entities_mut().clear();
+        game.server.world_mut().item_entities_mut().clear();
     }
 }
 
@@ -73,16 +73,16 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
 fn dropped_item_is_picked_up_near_player() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    let before = count_item(&game.server.sessions[0].player.inventory, item);
-    let centre = game.server.sessions[0].player.body_center();
+    let before = count_item(&game.server.sessions()[0].player().inventory, item);
+    let centre = game.server.sessions()[0].player().body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(item, 1), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // past the pickup delay
-    game.server.world.spawn_item(drop);
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().spawn_item(drop);
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
-    let after = count_item(&game.server.sessions[0].player.inventory, item);
+    let after = count_item(&game.server.sessions()[0].player().inventory, item);
     assert_eq!(after, before + 1);
-    assert!(game.server.world.item_entities().is_empty());
+    assert!(game.server.world().item_entities().is_empty());
 }
 
 #[test]
@@ -95,26 +95,26 @@ fn partial_pickup_takes_what_fits_and_leaves_the_rest() {
     for _ in 0..(petramond_world::inventory::TOTAL_SLOTS - 1) {
         inv.add(ItemStack::new(ItemType::Stone, 64));
     }
-    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions_mut()[0].player_mut().inventory = inv;
 
-    let centre = game.server.sessions[0].player.body_center();
+    let centre = game.server.sessions()[0].player().body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(ItemType::Dirt, 5), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-    game.server.world.spawn_item(drop);
+    game.server.world_mut().spawn_item(drop);
 
     // One tick plans the partial pickup and absorbs the requested split because
     // the stack is already inside the pickup radius.
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
 
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt),
+        count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt),
         64,
         "took exactly the one dirt that fit"
     );
     let loose: u32 = game
         .server
-        .world
+        .world()
         .item_entities()
         .iter()
         .filter(|d| d.stack.item == ItemType::Dirt)
@@ -136,9 +136,9 @@ fn pickup_planning_reserves_capacity_before_magnetizing() {
     for _ in 0..(petramond_world::inventory::TOTAL_SLOTS - 1) {
         inv.add(ItemStack::new(ItemType::Stone, 64));
     }
-    game.server.sessions[0].player.inventory = inv;
+    game.server.sessions_mut()[0].player_mut().inventory = inv;
 
-    let chest = game.server.sessions[0].player.body_center();
+    let chest = game.server.sessions()[0].player().body_center();
     for (seed, offset) in [
         (
             1,
@@ -152,19 +152,19 @@ fn pickup_planning_reserves_capacity_before_magnetizing() {
         let mut drop = DroppedItem::new(chest + offset, ItemStack::new(ItemType::Dirt, 1), seed);
         drop.vel = Vec3::ZERO;
         drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-        game.server.world.spawn_item(drop);
+        game.server.world_mut().spawn_item(drop);
     }
 
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
 
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt),
+        count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt),
         63
     );
     let requested: u32 = game
         .server
-        .world
+        .world()
         .item_entities()
         .iter()
         .filter(|d| d.pickup_requested.is_some())
@@ -177,46 +177,46 @@ fn pickup_planning_reserves_capacity_before_magnetizing() {
 fn fresh_dropped_item_waits_out_pickup_delay() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    let centre = game.server.sessions[0].player.body_center();
+    let centre = game.server.sessions()[0].player().body_center();
     // ticks_lived 0: sitting right on the player but still inside the delay.
     game.server
-        .world
+        .world_mut()
         .spawn_item(DroppedItem::new(centre, ItemStack::new(item, 1), 1));
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
     assert_eq!(
-        game.server.world.item_entities().len(),
+        game.server.world().item_entities().len(),
         1,
         "delay blocks immediate pickup"
     );
     // Each tick ages it by one; once past the delay it is collected.
     for _ in 0..ITEM_PICKUP_DELAY_TICKS {
-        game.server.world.tick_item_lifetime();
+        game.server.world_mut().tick_item_lifetime();
         game.server.item_pickup_tick(0);
     }
-    assert!(game.server.world.item_entities().is_empty());
+    assert!(game.server.world().item_entities().is_empty());
 }
 
 #[test]
 fn dropped_item_magnets_toward_player_then_absorbs() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    let before = count_item(&game.server.sessions[0].player.inventory, item);
-    let chest = game.server.sessions[0].player.body_center();
+    let before = count_item(&game.server.sessions()[0].player().inventory, item);
+    let chest = game.server.sessions()[0].player().body_center();
     let start = chest + Vec3::new(0.0, petramond::entity::ATTRACT_RADIUS - 0.1, 0.0);
     let mut drop = DroppedItem::new(start, ItemStack::new(item, 1), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // skip the delay so the magnet engages now
-    game.server.world.spawn_item(drop);
-    let d0 = (game.server.world.item_entities()[0].pos - chest).length();
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().spawn_item(drop);
+    let d0 = (game.server.world().item_entities()[0].pos - chest).length();
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
-    let p0 = game.server.sessions[0].id;
+    let p0 = game.server.sessions()[0].id();
     assert_eq!(
-        game.server.world.item_entities()[0].pickup_requested,
+        game.server.world().item_entities()[0].pickup_requested,
         Some(p0)
     );
-    let pp = game.server.sessions[0].player.body_center();
-    game.server.world.tick_item_physics(
+    let pp = game.server.sessions()[0].player().body_center();
+    game.server.world_mut().tick_item_physics(
         TICK_DT,
         &[petramond::mob::PlayerAnchor {
             id: p0,
@@ -224,20 +224,20 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
             ..Default::default()
         }],
     );
-    if !game.server.world.item_entities().is_empty() {
-        let d1 = (game.server.world.item_entities()[0].pos - chest).length();
+    if !game.server.world().item_entities().is_empty() {
+        let d1 = (game.server.world().item_entities()[0].pos - chest).length();
         assert!(d1 < d0);
     }
     // Item physics + pickup both run on the fixed tick now: the magnet flies it in,
     // and the pickup absorbs it once it's in range.
     for _ in 0..60 {
-        if game.server.world.item_entities().is_empty() {
+        if game.server.world().item_entities().is_empty() {
             break;
         }
-        game.server.world.tick_item_lifetime();
+        game.server.world_mut().tick_item_lifetime();
         game.server.item_pickup_tick(0);
-        let pp = game.server.sessions[0].player.body_center();
-        game.server.world.tick_item_physics(
+        let pp = game.server.sessions()[0].player().body_center();
+        game.server.world_mut().tick_item_physics(
             TICK_DT,
             &[petramond::mob::PlayerAnchor {
                 id: p0,
@@ -246,9 +246,9 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
             }],
         );
     }
-    assert!(game.server.world.item_entities().is_empty());
+    assert!(game.server.world().item_entities().is_empty());
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, item),
+        count_item(&game.server.sessions()[0].player().inventory, item),
         before + 1
     );
 }
@@ -256,19 +256,19 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
 #[test]
 fn a_dropped_item_enters_the_world_on_the_tick_not_the_frame() {
     let mut game = game();
-    game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
-    game.server.sessions[0].player.inventory.set_active(0);
-    let before = count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt);
+    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory(); // a stack of Dirt
+    game.server.sessions_mut()[0].player_mut().inventory.set_active(0);
+    let before = count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt);
 
     // Q-drop queues intent only; inventory and world stay unchanged until the tick.
     game.drop_selected_item(false);
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt),
+        count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt),
         before,
         "inventory mutation waits for the tick"
     );
     assert!(
-        game.server.world.item_entities().is_empty(),
+        game.server.world().item_entities().is_empty(),
         "the drop hasn't entered the world until a tick runs"
     );
 
@@ -276,11 +276,11 @@ fn a_dropped_item_enters_the_world_on_the_tick_not_the_frame() {
     let events = apply_drop_actions(&mut game);
     assert!(events.player_at(0).threw_item);
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt),
+        count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt),
         before - 1
     );
     assert_eq!(
-        game.server.world.item_entities().len(),
+        game.server.world().item_entities().len(),
         1,
         "the drop spawns on the tick"
     );
@@ -290,18 +290,18 @@ fn a_dropped_item_enters_the_world_on_the_tick_not_the_frame() {
 fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    let before = count_item(&game.server.sessions[0].player.inventory, item);
-    let chest = game.server.sessions[0].player.body_center();
+    let before = count_item(&game.server.sessions()[0].player().inventory, item);
+    let chest = game.server.sessions()[0].player().body_center();
     let start = chest + Vec3::new(petramond::entity::ATTRACT_RADIUS + 0.05, 0.0, 0.0);
     let mut drop = DroppedItem::new(start, ItemStack::new(item, 1), 1);
     drop.vel = Vec3::ZERO;
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible for pickup, so only range gates it
-    game.server.world.spawn_item(drop);
+    game.server.world_mut().spawn_item(drop);
 
     for _ in 0..60 {
-        let pp = game.server.sessions[0].player.body_center();
-        let p0 = game.server.sessions[0].id;
-        game.server.world.tick_item_physics(
+        let pp = game.server.sessions()[0].player().body_center();
+        let p0 = game.server.sessions()[0].id();
+        game.server.world_mut().tick_item_physics(
             TICK_DT,
             &[petramond::mob::PlayerAnchor {
                 id: p0,
@@ -309,13 +309,13 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
                 ..Default::default()
             }],
         );
-        game.server.world.tick_item_lifetime();
+        game.server.world_mut().tick_item_lifetime();
         game.server.item_pickup_tick(0);
     }
 
-    assert_eq!(game.server.world.item_entities().len(), 1);
+    assert_eq!(game.server.world().item_entities().len(), 1);
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, item),
+        count_item(&game.server.sessions()[0].player().inventory, item),
         before
     );
 }
@@ -323,23 +323,23 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
 #[test]
 fn distant_dropped_item_is_not_picked_up() {
     let mut game = game();
-    let far = game.server.sessions[0].player.eye() + Vec3::new(50.0, 0.0, 0.0);
+    let far = game.server.sessions()[0].player().eye() + Vec3::new(50.0, 0.0, 0.0);
     let mut drop = DroppedItem::new(
         far,
         ItemStack::new(petramond_world::item::ItemType::Dirt, 1),
         2,
     );
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible, but far out of range
-    game.server.world.spawn_item(drop);
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().spawn_item(drop);
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
-    assert_eq!(game.server.world.item_entities().len(), 1);
+    assert_eq!(game.server.world().item_entities().len(), 1);
 }
 
 #[test]
 fn stale_dropped_item_despawns_on_the_lifetime_tick() {
     let mut game = game();
-    let far = game.server.sessions[0].player.eye() + Vec3::new(50.0, 0.0, 0.0);
+    let far = game.server.sessions()[0].player().eye() + Vec3::new(50.0, 0.0, 0.0);
     let mut item = DroppedItem::new(
         far,
         ItemStack::new(petramond_world::item::ItemType::Dirt, 1),
@@ -347,10 +347,10 @@ fn stale_dropped_item_despawns_on_the_lifetime_tick() {
     );
     // One tick short of the lifetime limit: the next fixed tick ages it out.
     item.ticks_lived = ITEM_LIFETIME_TICKS - 1;
-    game.server.world.spawn_item(item);
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().spawn_item(item);
+    game.server.world_mut().tick_item_lifetime();
     game.server.item_pickup_tick(0);
-    assert!(game.server.world.item_entities().is_empty());
+    assert!(game.server.world().item_entities().is_empty());
 }
 
 /// Cursor throws and hotbar drops: each case queues one intent, checks the
@@ -446,7 +446,7 @@ fn cursor_throw_and_drop_selected_cases() {
     ];
 
     fn source_count(game: &super::common::TestGame, source: Source) -> Option<u8> {
-        let inv = &game.server.sessions[0].player.inventory;
+        let inv = &game.server.sessions()[0].player().inventory;
         match source {
             Source::Cursor => inv.cursor().map(|s| s.count),
             Source::Selected => inv.selected().map(|s| s.count),
@@ -455,7 +455,7 @@ fn cursor_throw_and_drop_selected_cases() {
 
     for case in cases {
         let mut game = game();
-        game.server.sessions[0].player.inventory = match (case.held, case.source) {
+        game.server.sessions_mut()[0].player_mut().inventory = match (case.held, case.source) {
             (false, _) => Inventory::new(),
             (true, Source::Cursor) => Inventory::from_parts(
                 [None; petramond_world::inventory::TOTAL_SLOTS],
@@ -492,12 +492,12 @@ fn cursor_throw_and_drop_selected_cases() {
         match case.dropped {
             Some(count) => {
                 assert_eq!(
-                    game.server.world.item_entities().len(),
+                    game.server.world().item_entities().len(),
                     1,
                     "[{}] exactly one drop spawns on the tick",
                     case.label
                 );
-                let drop = &game.server.world.item_entities()[0];
+                let drop = &game.server.world().item_entities()[0];
                 assert_eq!(
                     drop.stack,
                     ItemStack::new(ItemType::Dirt, count),
@@ -511,7 +511,7 @@ fn cursor_throw_and_drop_selected_cases() {
                 );
             }
             None => assert!(
-                game.server.world.item_entities().is_empty(),
+                game.server.world().item_entities().is_empty(),
                 "[{}] a noop throw must spawn nothing",
                 case.label
             ),
@@ -528,7 +528,7 @@ fn cursor_throw_and_drop_selected_cases() {
 #[test]
 fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
     let mut game = game();
-    game.server.sessions[0].player.inventory = Inventory::from_parts(
+    game.server.sessions_mut()[0].player_mut().inventory = Inventory::from_parts(
         [None; petramond_world::inventory::TOTAL_SLOTS],
         Some(ItemStack::new(ItemType::Dirt, 12)),
         None,
@@ -537,29 +537,29 @@ fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
 
     game.throw_cursor(ThrowAmount::All);
     assert!(
-        game.server.sessions[0].player.inventory.cursor().is_some(),
+        game.server.sessions()[0].player().inventory.cursor().is_some(),
         "throwing does not mutate the cursor until another tick/close action"
     );
     game.server.close_cursor_stack_for(0);
 
     assert!(
-        game.server.sessions[0].player.inventory.cursor().is_none(),
+        game.server.sessions()[0].player().inventory.cursor().is_none(),
         "the committed cursor throw is not stashed on close"
     );
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt),
+        count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt),
         0
     );
     assert!(
-        game.server.world.item_entities().is_empty(),
+        game.server.world().item_entities().is_empty(),
         "entity spawn still waits for the tick"
     );
 
     let events = apply_drop_actions(&mut game);
     assert!(events.player_at(0).threw_item);
-    assert_eq!(game.server.world.item_entities().len(), 1);
+    assert_eq!(game.server.world().item_entities().len(), 1);
     assert_eq!(
-        game.server.world.item_entities()[0].stack,
+        game.server.world().item_entities()[0].stack,
         ItemStack::new(ItemType::Dirt, 12)
     );
 }
@@ -567,7 +567,7 @@ fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
 #[test]
 fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
     let mut game = game();
-    game.server.sessions[0].player.inventory = Inventory::from_parts(
+    game.server.sessions_mut()[0].player_mut().inventory = Inventory::from_parts(
         [None; petramond_world::inventory::TOTAL_SLOTS],
         Some(ItemStack::new(ItemType::Dirt, 12)),
         None,
@@ -576,8 +576,8 @@ fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
 
     game.throw_cursor(ThrowAmount::One);
     assert_eq!(
-        game.server.sessions[0]
-            .player
+        game.server.sessions()[0]
+            .player()
             .inventory
             .cursor()
             .unwrap()
@@ -587,21 +587,21 @@ fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
     );
     game.server.close_cursor_stack_for(0);
 
-    assert!(game.server.sessions[0].player.inventory.cursor().is_none());
+    assert!(game.server.sessions()[0].player().inventory.cursor().is_none());
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt),
+        count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt),
         11,
         "close stashes only the part not committed to the throw"
     );
     let events = apply_drop_actions(&mut game);
     assert!(events.player_at(0).threw_item);
-    assert_eq!(game.server.world.item_entities().len(), 1);
+    assert_eq!(game.server.world().item_entities().len(), 1);
     assert_eq!(
-        game.server.world.item_entities()[0].stack,
+        game.server.world().item_entities()[0].stack,
         ItemStack::new(ItemType::Dirt, 1)
     );
     assert_eq!(
-        count_item(&game.server.sessions[0].player.inventory, ItemType::Dirt),
+        count_item(&game.server.sessions()[0].player().inventory, ItemType::Dirt),
         11
     );
 }
@@ -612,25 +612,25 @@ fn queued_q_drop_uses_the_action_time_hotbar_slot() {
     let mut slots = [None; petramond_world::inventory::TOTAL_SLOTS];
     slots[0] = Some(ItemStack::new(ItemType::Dirt, 5));
     slots[1] = Some(ItemStack::new(ItemType::Stone, 7));
-    game.server.sessions[0].player.inventory = Inventory::from_parts(slots, None, None, 0);
+    game.server.sessions_mut()[0].player_mut().inventory = Inventory::from_parts(slots, None, None, 0);
 
     game.drop_selected_item(false);
-    game.server.sessions[0].player.inventory.set_active(1);
+    game.server.sessions_mut()[0].player_mut().inventory.set_active(1);
 
     let events = apply_drop_actions(&mut game);
     assert!(events.player_at(0).threw_item);
     assert_eq!(
-        game.server.sessions[0].player.inventory.slot(0),
+        game.server.sessions()[0].player().inventory.slot(0),
         Some(&ItemStack::new(ItemType::Dirt, 4))
     );
     assert_eq!(
-        game.server.sessions[0].player.inventory.slot(1),
+        game.server.sessions()[0].player().inventory.slot(1),
         Some(&ItemStack::new(ItemType::Stone, 7)),
         "changing selection before the tick must not redirect the drop"
     );
-    assert_eq!(game.server.world.item_entities().len(), 1);
+    assert_eq!(game.server.world().item_entities().len(), 1);
     assert_eq!(
-        game.server.world.item_entities()[0].stack,
+        game.server.world().item_entities()[0].stack,
         ItemStack::new(ItemType::Dirt, 1)
     );
 }
@@ -640,8 +640,8 @@ fn applying_a_real_throw_arms_the_hand_throw_jab() {
     // The Q drop throws from the active hotbar slot.
     {
         let mut game = game();
-        game.server.sessions[0].player.inventory = filled_inventory();
-        game.server.sessions[0].player.inventory.set_active(0);
+        game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+        game.server.sessions_mut()[0].player_mut().inventory.set_active(0);
         game.drop_selected_item(false);
         let events = apply_drop_actions(&mut game);
         assert!(
@@ -652,8 +652,8 @@ fn applying_a_real_throw_arms_the_hand_throw_jab() {
     // Both inventory drag-outs throw from the cursor-held stack.
     for amount in [ThrowAmount::All, ThrowAmount::One] {
         let mut game = game();
-        game.server.sessions[0].player.inventory = filled_inventory();
-        game.server.sessions[0].player.inventory.click_slot(0); // pick the stack onto the cursor
+        game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+        game.server.sessions_mut()[0].player_mut().inventory.click_slot(0); // pick the stack onto the cursor
         game.throw_cursor(amount);
         let events = apply_drop_actions(&mut game);
         assert!(
@@ -666,11 +666,11 @@ fn applying_a_real_throw_arms_the_hand_throw_jab() {
 #[test]
 fn a_noop_throw_does_not_arm_the_throw_jab() {
     let mut game = game();
-    game.server.sessions[0].player.inventory = petramond_world::inventory::Inventory::new();
+    game.server.sessions_mut()[0].player_mut().inventory = petramond_world::inventory::Inventory::new();
     // Nothing in hand or on the cursor: every throw path is a no-op.
     for _ in 0..64 {
-        game.server.sessions[0]
-            .player
+        game.server.sessions_mut()[0]
+            .player_mut()
             .inventory
             .decrement_selected();
     }
@@ -687,8 +687,8 @@ fn a_noop_throw_does_not_arm_the_throw_jab() {
 #[test]
 fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
     let mut game = game();
-    game.server.sessions[0].player.inventory = filled_inventory();
-    game.server.sessions[0].player.inventory.set_active(0);
+    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+    game.server.sessions_mut()[0].player_mut().inventory.set_active(0);
     game.sync_self_view_for_test();
     game.drop_selected_item(false);
 
@@ -699,8 +699,8 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
         "the throw animates at the click frame (P0 prediction)"
     );
     assert!(
-        game.server.sessions[0]
-            .player
+        game.server.sessions()[0]
+            .player()
             .inventory
             .selected()
             .is_some(),
@@ -726,32 +726,32 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
 fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    game.server.sessions[0].player.pos = WorldPos::new(0.5, 64.0, 0.5);
+    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(0.5, 64.0, 0.5);
     let other = game
         .server
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
             20.5, 64.0, 0.5,
         )));
     for s in [0, other] {
-        let centre = game.server.sessions[s].player.body_center();
+        let centre = game.server.sessions()[s].player().body_center();
         let mut drop = DroppedItem::new(centre, ItemStack::new(item, 1), s as u32 + 1);
         drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-        game.server.world.spawn_item(drop);
+        game.server.world_mut().spawn_item(drop);
     }
 
     // One tick's Pickup stage: each session plans + collects in id order.
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().tick_item_lifetime();
     for s in [0, other] {
         assert!(game.server.item_pickup_tick(s), "session {s} collects");
     }
 
     assert!(
-        game.server.world.item_entities().is_empty(),
+        game.server.world().item_entities().is_empty(),
         "both drops collected"
     );
     for s in [0, other] {
         assert_eq!(
-            count_item(&game.server.sessions[s].player.inventory, item),
+            count_item(&game.server.sessions()[s].player().inventory, item),
             1,
             "session {s} got exactly its own drop"
         );
@@ -764,31 +764,31 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
 fn a_single_drop_between_two_players_goes_to_exactly_one() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
-    game.server.sessions[0].player.pos = WorldPos::new(0.0, 64.0, 0.5);
+    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(0.0, 64.0, 0.5);
     let other = game
         .server
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
             1.0, 64.0, 0.5,
         )));
     // Midway between the two body centres: within the absorb radius of both.
-    let mid = game.server.sessions[0]
-        .player
+    let mid = game.server.sessions()[0]
+        .player()
         .body_center()
-        .lerp(game.server.sessions[other].player.body_center(), 0.5);
+        .lerp(game.server.sessions()[other].player().body_center(), 0.5);
     let mut drop = DroppedItem::new(mid, ItemStack::new(item, 1), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-    game.server.world.spawn_item(drop);
+    game.server.world_mut().spawn_item(drop);
 
-    game.server.world.tick_item_lifetime();
+    game.server.world_mut().tick_item_lifetime();
     let took_0 = game.server.item_pickup_tick(0);
     let took_1 = game.server.item_pickup_tick(other);
 
     assert!(
-        game.server.world.item_entities().is_empty(),
+        game.server.world().item_entities().is_empty(),
         "the drop is gone"
     );
     assert!(took_0 && !took_1, "first come in session order takes it");
-    let total = count_item(&game.server.sessions[0].player.inventory, item)
-        + count_item(&game.server.sessions[other].player.inventory, item);
+    let total = count_item(&game.server.sessions()[0].player().inventory, item)
+        + count_item(&game.server.sessions()[other].player().inventory, item);
     assert_eq!(total, 1, "no dupe, no vanish");
 }

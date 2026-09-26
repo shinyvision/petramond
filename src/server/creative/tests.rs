@@ -40,7 +40,7 @@ fn server() -> ServerGame {
 /// Run the session's multi-tick edit to completion.
 fn finish_edit(server: &mut ServerGame) {
     let mut events = TickEvents::default();
-    while server.sessions[0].creative.job.is_some() {
+    while server.sessions[0].sim.creative.job.is_some() {
         server.tick_creative(0, &mut events);
     }
 }
@@ -167,7 +167,7 @@ fn survival_cannot_use_creative_history_actions() {
     let before = server.sessions[0].player.inventory.selected().copied();
     for action in [CreativeAction::Undo, CreativeAction::Redo] {
         server.sessions[0]
-            .creative
+            .sim.creative
             .pending
             .push_back(Pending::Action(action));
         server.tick_creative(0, &mut TickEvents::default());
@@ -177,10 +177,10 @@ fn survival_cannot_use_creative_history_actions() {
         before
     );
     assert!(matches!(
-        server.sessions[0].creative.replies.last(),
+        server.sessions[0].sim.creative.replies.last(),
         Some(CreativeReply::Message(_))
     ));
-    assert_eq!(server.sessions[0].creative.replies.len(), 2);
+    assert_eq!(server.sessions[0].sim.creative.replies.len(), 2);
 }
 
 #[test]
@@ -199,14 +199,14 @@ fn instant_mining_keeps_a_repeat_delay_and_creative_placement_keeps_the_stack() 
         predicted: false,
     };
     server.sessions[0]
-        .pending_break_finished
+        .input.pending_break_finished
         .extend([request(1, a), request(2, b)]);
     server.tick_mining(0, &mut events);
     assert_eq!(server.world.chunk_block(a.x, a.y, a.z), Block::Air.id());
     assert_eq!(server.world.chunk_block(b.x, b.y, b.z), Block::Stone.id());
     server.world.restore_tick(server.world.current_tick() + 10);
     server.sessions[0]
-        .pending_break_finished
+        .input.pending_break_finished
         .push(request(3, b));
     server.tick_mining(0, &mut events);
     assert_eq!(server.world.chunk_block(b.x, b.y, b.z), Block::Air.id());
@@ -316,16 +316,16 @@ fn creative_catalog_pickup_requires_a_creative_menu_and_authorized_player() {
         item: Some(ItemType::Stone.registry_name().into()),
         request_id: 1,
     };
-    server.sessions[0].pending_menu_actions.push(pick());
+    server.sessions[0].input.pending_menu_actions.push(pick());
     server.tick_menu(0, &mut events);
     assert!(server.sessions[0].player.inventory.cursor().is_none());
-    server.sessions[0].pending_menu_actions.push(
+    server.sessions[0].input.pending_menu_actions.push(
         crate::server::player::PendingMenuAction::OpenGui {
             kind: petramond_world::gui_state::GuiKind::Creative,
             anchor: None,
         },
     );
-    server.sessions[0].pending_menu_actions.push(pick());
+    server.sessions[0].input.pending_menu_actions.push(pick());
     server.tick_menu(0, &mut events);
     assert_eq!(
         server.sessions[0].player.inventory.cursor().unwrap().item,
@@ -335,18 +335,18 @@ fn creative_catalog_pickup_requires_a_creative_menu_and_authorized_player() {
         item: None,
         request_id: 2,
     };
-    server.sessions[0].pending_menu_actions.push(discard());
+    server.sessions[0].input.pending_menu_actions.push(discard());
     server.tick_menu(0, &mut events);
     assert!(server.sessions[0].player.inventory.cursor().is_none());
     server.sessions[0]
         .player
         .set_mode(crate::player::PlayerMode::Survival);
-    server.sessions[0].pending_menu_actions.push(pick());
+    server.sessions[0].input.pending_menu_actions.push(pick());
     server.tick_menu(0, &mut events);
     assert!(server.sessions[0].player.inventory.cursor().is_none());
     let held = ItemStack::new(ItemType::Dirt, 7);
     *server.sessions[0].player.inventory.cursor_mut() = Some(held);
-    server.sessions[0].pending_menu_actions.push(discard());
+    server.sessions[0].input.pending_menu_actions.push(discard());
     server.tick_menu(0, &mut events);
     assert_eq!(server.sessions[0].player.inventory.cursor(), Some(&held));
 }

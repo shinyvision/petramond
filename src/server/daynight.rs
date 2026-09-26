@@ -176,7 +176,6 @@ fn read_time_bytes(bytes: &[u8]) -> Option<[u8; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond_math::world_pos::WorldPos;
     use petramond_world::crafting::Recipes;
 
     use crate::rules::daynight::DEFAULT_CYCLE_TICKS;
@@ -207,8 +206,7 @@ mod tests {
     }
 
     use crate::events::tick::TickEvents;
-    use crate::events::EventBus;
-    use crate::player::Player;
+    use crate::events::{EventBus, RosterRefs};
 
     fn published_time(world: &World) -> f32 {
         let bytes = world.world_kv_get(TIME_KEY).expect("petramond time");
@@ -240,15 +238,12 @@ mod tests {
         assert_eq!(params.get(SKY_TIME_PARAM).expect("sky time param")[0], t0);
 
         world.game_tick(&Recipes::default());
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut bus = EventBus::default();
         systems.run(
             Attach::After(Stage::Spawning),
             &mut world,
-            &mut player,
-            &mut gui,
+            &mut RosterRefs::empty(),
             &mut feed,
             bus.queue_mut(),
         );
@@ -268,8 +263,7 @@ mod tests {
         systems.run(
             Attach::After(Stage::Spawning),
             &mut world,
-            &mut player,
-            &mut gui,
+            &mut RosterRefs::empty(),
             &mut feed,
             bus.queue_mut(),
         );
@@ -283,8 +277,7 @@ mod tests {
         systems.run(
             Attach::After(Stage::Spawning),
             &mut world,
-            &mut player,
-            &mut gui,
+            &mut RosterRefs::empty(),
             &mut feed,
             bus.queue_mut(),
         );
@@ -313,8 +306,6 @@ mod tests {
         let frozen_at = read_clock(&world).unwrap();
         let mut systems = TickSystems::default();
         install_core(&mut world, &mut systems);
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
-        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut bus = EventBus::default();
         for _ in 0..3 {
@@ -322,8 +313,7 @@ mod tests {
             systems.run(
                 Attach::After(Stage::Spawning),
                 &mut world,
-                &mut player,
-                &mut gui,
+                &mut RosterRefs::empty(),
                 &mut feed,
                 bus.queue_mut(),
             );
@@ -336,8 +326,7 @@ mod tests {
         systems.run(
             Attach::After(Stage::Spawning),
             &mut world,
-            &mut player,
-            &mut gui,
+            &mut RosterRefs::empty(),
             &mut feed,
             bus.queue_mut(),
         );

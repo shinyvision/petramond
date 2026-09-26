@@ -50,37 +50,24 @@ impl ServerGame {
         self.apply_fate(impact, ev.fate);
     }
 
-    /// Run the `projectile_hit` handlers over `ev`. The dispatch acts as the
-    /// LAUNCHER when it is a connected player — so a handler's
-    /// `PlayerState`, and the damage it lands naming the presser, resolve
-    /// the launcher. Any other launcher (a mob's, or a player gone) is
-    /// dispatched as the HOST session (session 0), the same convention the
-    /// tick systems use: a handler must address by the payload's ids
-    /// (`owner`, `target`, `entity`), never by the acting player. With no
-    /// session at all (a headless server between players, a reloaded flight
-    /// landing) there is nobody to dispatch as: the engine's default fate
-    /// stands, undisputed.
+    /// Run the `projectile_hit` handlers over `ev`. The dispatch acts for
+    /// the LAUNCHER when it is a connected player — so a handler's
+    /// `PlayerState`, and the damage it lands naming the presser, resolve the
+    /// launcher. Any other launcher (a mob's, or a player gone) dispatches
+    /// actor-less: a handler addresses by the payload's ids (`owner`,
+    /// `target`, `entity`).
     fn dispatch_projectile_hit(&mut self, ev: &mut ProjectileHit, events: &mut TickEvents) {
-        if self.sessions.is_empty() {
-            return;
-        }
-        let acting = match ev.owner {
-            Some(EntityRef::Player(id)) => self
-                .sessions
-                .iter()
-                .position(|sess| sess.id == id)
-                .unwrap_or(0),
-            _ => 0,
-        };
+        let actor = ev
+            .owner
+            .and_then(EntityRef::player)
+            .filter(|&id| self.sessions.by_id(id).is_some());
         let Self {
             world,
             sessions,
-            bus,
+            mods,
             ..
         } = self;
-        Self::with_sessions_view(sessions, acting, |sess| {
-            bus.projectile_hit(world, &mut sess.player, &mut sess.gui_state, events, ev);
-        });
+        mods.bus_mut().projectile_hit(world, sessions, actor, events, ev);
     }
 
     /// The settled fate, on the entity: a lodge needs the block it struck,
@@ -199,13 +186,13 @@ mod tests {
 
         let seen = Arc::new(AtomicUsize::new(0));
         let first = seen.clone();
-        server.bus.on_projectile_hit(0, move |_, ev| {
+        server.mods.bus_mut().on_projectile_hit(0, move |_, ev| {
             first.fetch_add(1, Ordering::SeqCst);
             ev.fate = Fate::Lodge;
             Outcome::Cancel
         });
         let second = seen.clone();
-        server.bus.on_projectile_hit(1, move |_, _| {
+        server.mods.bus_mut().on_projectile_hit(1, move |_, _| {
             second.fetch_add(10, Ordering::SeqCst);
             Outcome::Continue
         });
@@ -227,7 +214,7 @@ mod tests {
         // exactly like a Cancelling one's.
         let mut server = fresh_server();
         let cell = stone_cell(&mut server);
-        server.bus.on_projectile_hit(0, |_, ev| {
+        server.mods.bus_mut().on_projectile_hit(0, |_, ev| {
             ev.fate = Fate::Consume;
             Outcome::Continue
         });
@@ -239,8 +226,8 @@ mod tests {
         );
     }
 
-    /// A headless server between players has no session to dispatch as; the
-    /// engine's default stands instead of a panic.
+    /// An impact with nobody connected dispatches actor-less over an empty
+    /// roster; with no handler to dispute it, the engine's default stands.
     #[test]
     fn an_impact_with_no_sessions_takes_the_default_fate() {
         let mut server = fresh_server();
@@ -251,7 +238,7 @@ mod tests {
             cell.z as f64 + 0.5,
         );
         let id = launch(&mut server, at);
-        server.sessions.clear();
+        server.sessions.clear_for_test();
         let mut events = TickEvents::default();
         server.resolve_item_impacts(vec![block_impact(id, cell)], &mut events);
         let it = server
@@ -269,7 +256,7 @@ mod tests {
         let mut server = fresh_server();
         let at = server.sessions[0].player.pos + Vec3::new(2.0, 1.0, 0.0);
         let id = launch(&mut server, at);
-        server.bus.on_projectile_hit(0, |_, ev| {
+        server.mods.bus_mut().on_projectile_hit(0, |_, ev| {
             ev.fate = Fate::Lodge;
             Outcome::Continue
         });

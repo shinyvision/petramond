@@ -26,12 +26,12 @@ fn malformed_requests_are_rejected_before_entering_simulation() {
 #[test]
 fn read_only_dispatch_can_query_but_cannot_change_item_velocity() {
     use crate::entity::DroppedItem;
-    use crate::events::{tick::TickEvents, PostQueue, SimCtx};
+    use crate::events::{tick::TickEvents, PostQueue, RosterRefs, SimCtx};
     use crate::modding::{
         host::{handle_host_call, ModStoreData},
         scope,
     };
-    use crate::{player::Player, world::World};
+    use crate::world::World;
     use petramond_math::math::Vec3;
     use petramond_world::{
         chunk::{Chunk, ChunkPos},
@@ -44,15 +44,14 @@ fn read_only_dispatch_can_query_but_cannot_change_item_velocity() {
     let pos = WorldPos::new(4.5, 64.5, 4.5);
     let id = world.spawn_item(DroppedItem::new(pos, ItemStack::new(ItemType::Dirt, 1), 1));
     let before = world.dropped_items().get(id).unwrap().vel;
-    let mut player = Player::new(pos);
+    let mut nobody = RosterRefs::empty();
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
-    let mut gui = petramond_world::gui_state::empty_gui_state();
     let mut store = ModStoreData::new("fixture", 1);
     let mut ctx = SimCtx {
         world: &mut world,
-        player: &mut player,
-        gui_state: &mut gui,
+        actor: None,
+        players: &mut nobody,
         feed: &mut feed,
         queue: &mut queue,
     };

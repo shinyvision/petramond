@@ -29,8 +29,8 @@ const HOME_COLUMN: ChunkPos = ChunkPos { cx: 0, cz: 0 };
 fn place_player(game: &mut TestGame, feet: WorldPos) {
     game.player.pos = feet;
     game.player.vel = Vec3::ZERO;
-    game.server.sessions[0].player.pos = feet;
-    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions_mut()[0].player_mut().pos = feet;
+    game.server.sessions_mut()[0].player_mut().vel = Vec3::ZERO;
 }
 
 fn frame(game: &mut TestGame) -> Vec<ServerToClient> {
@@ -187,7 +187,7 @@ fn unmoved_sections_repromote_from_the_cache_byte_identically() {
             .expect("re-promoted section is live client-side");
         let server = game
             .server
-            .world
+            .world()
             .section_payload(*sp)
             .expect("re-entered section is loaded server-side");
         assert_eq!(
@@ -217,8 +217,8 @@ fn a_moved_belief_hash_resends_the_full_payload() {
     // Stand in for "the content changed while the client was away": force the
     // belief to a hash current content can never equal (a real edit moves the
     // CURRENT hash instead — the same inequality drives the same branch).
-    game.server.sessions[0]
-        .terrain
+    game.server.sessions_mut()[0]
+        .transport_mut().terrain
         .seed_client_cache(&[SectionCacheClaim {
             pos: sp,
             hash: hash.wrapping_add(1),

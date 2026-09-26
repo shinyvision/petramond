@@ -8,7 +8,7 @@
 //! `ContainerMenu` — two players can stand in one chest; their clicks apply in
 //! session-id order on the tick.
 
-use crate::events::{PostEvent, SimCtx};
+use crate::events::PostEvent;
 use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 use petramond_math::math::IVec3;
 use petramond_world::crafting::CraftingStation;
@@ -48,12 +48,12 @@ impl ServerGame {
     /// GUI's owning mod instead. Keeping transitions and mutations in one
     /// stream prevents close/click/craft races.
     pub fn tick_menu(&mut self, s: usize, events: &mut TickEvents) {
-        for action in std::mem::take(&mut self.sessions[s].pending_menu_actions) {
+        for action in std::mem::take(&mut self.sessions[s].input.pending_menu_actions) {
             match action {
                 PendingMenuAction::OpenGui { kind, anchor } => {
                     self.replace_open_menu_for(s, events);
                     if self.open_gui_for(s, kind, anchor, events) {
-                        self.sessions[s].request_open_gui = Some((kind, anchor));
+                        self.sessions[s].replication.request_open_gui = Some((kind, anchor));
                     }
                 }
                 PendingMenuAction::Close => self.close_open_menu_for(s, events),
@@ -64,7 +64,7 @@ impl ServerGame {
                     };
                     let allowed = self.is_operator(s)
                         && self.sessions[s].player.abilities().item_catalog
-                        && self.sessions[s].menu.target().kind() == Some(GuiKind::Creative);
+                        && self.sessions[s].sim.menu.target().kind() == Some(GuiKind::Creative);
                     let resolved = item
                         .as_deref()
                         .and_then(ItemType::by_name)
@@ -74,8 +74,8 @@ impl ServerGame {
                         *self.sessions[s].player.inventory.cursor_mut() =
                             resolved.map(|i| ItemStack::new(i, i.max_stack_size()));
                     }
-                    self.sessions[s].last_sent_inventory_revision = None;
-                    self.sessions[s].last_menu_sync = None;
+                    self.sessions[s].replication.last_sent_inventory_revision = None;
+                    self.sessions[s].replication.last_menu_sync = None;
                     self.push_action_outcome(
                         s,
                         request_id,
@@ -98,8 +98,8 @@ impl ServerGame {
                         }
                     } else {
                         let sess = &mut self.sessions[s];
-                        let gui = sess.gui_state.clone();
-                        sess.menu.click(
+                        let gui = sess.sim.gui_state.clone();
+                        sess.sim.menu.click(
                             &mut self.world,
                             &mut sess.player.inventory,
                             Some(&gui),
@@ -115,8 +115,8 @@ impl ServerGame {
                         // ordinary on-change gate moved — the client skips
                         // interim snapshots while its prediction is pending
                         // and reconciles from exactly this batch.
-                        sess.last_sent_inventory_revision = None;
-                        sess.last_menu_sync = None;
+                        sess.replication.last_sent_inventory_revision = None;
+                        sess.replication.last_menu_sync = None;
                     }
                     self.push_action_outcome(s, request_id, true, None);
                 }
@@ -126,8 +126,8 @@ impl ServerGame {
                     request_id,
                 } => {
                     let sess = &mut self.sessions[s];
-                    let gui = sess.gui_state.clone();
-                    sess.menu.drag_slots(
+                    let gui = sess.sim.gui_state.clone();
+                    sess.sim.menu.drag_slots(
                         &mut self.world,
                         &mut sess.player.inventory,
                         Some(&gui),
@@ -138,8 +138,8 @@ impl ServerGame {
                     // the authoritative pair into the outcome batch even if
                     // stale client capacity made the server-side action a
                     // no-op and neither ordinary on-change gate moved.
-                    sess.last_sent_inventory_revision = None;
-                    sess.last_menu_sync = None;
+                    sess.replication.last_sent_inventory_revision = None;
+                    sess.replication.last_menu_sync = None;
                     self.push_action_outcome(s, request_id, true, None);
                 }
                 PendingMenuAction::DropSlot {
@@ -149,11 +149,11 @@ impl ServerGame {
                 } => {
                     let dropped = {
                         let sess = &mut self.sessions[s];
-                        sess.menu
+                        sess.sim.menu
                             .drop_slot(&mut self.world, &mut sess.player.inventory, slot, all)
                     };
                     if let Some(stack) = dropped {
-                        self.sessions[s].drop_queue.queue_stack(stack);
+                        self.sessions[s].sim.drop_queue.queue_stack(stack);
                     }
                     self.push_action_outcome(
                         s,
@@ -166,8 +166,8 @@ impl ServerGame {
                     let accepted = !self.sessions[s].player.is_spectator();
                     if accepted {
                         let sess = &mut self.sessions[s];
-                        let gui = sess.gui_state.clone();
-                        sess.menu.swap_off_hand(
+                        let gui = sess.sim.gui_state.clone();
+                        sess.sim.menu.swap_off_hand(
                             &mut self.world,
                             &mut sess.player.inventory,
                             Some(&gui),
@@ -177,8 +177,8 @@ impl ServerGame {
                         // force the authoritative pair into the outcome batch
                         // so the pending prediction reconciles from it (the
                         // SlotClick rule).
-                        sess.last_sent_inventory_revision = None;
-                        sess.last_menu_sync = None;
+                        sess.replication.last_sent_inventory_revision = None;
+                        sess.replication.last_menu_sync = None;
                     }
                     self.push_action_outcome(
                         s,
@@ -194,10 +194,10 @@ impl ServerGame {
                 } => {
                     let result = {
                         let sess = &mut self.sessions[s];
-                        let (player, menu) = (&mut sess.player, &mut sess.menu);
+                        let (player, menu) = (&mut sess.player, &mut sess.sim.menu);
                         menu.craft_recipe(
                             &mut player.inventory,
-                            &self.recipes,
+                            self.catalog.recipes(),
                             &player.progression,
                             &recipe,
                             bulk,
@@ -206,7 +206,7 @@ impl ServerGame {
                     match result {
                         Ok(overflow) => {
                             for stack in overflow {
-                                self.sessions[s].drop_queue.queue_stack(stack);
+                                self.sessions[s].sim.drop_queue.queue_stack(stack);
                             }
                             self.push_action_outcome(s, request_id, true, None);
                         }
@@ -229,7 +229,7 @@ impl ServerGame {
     /// recovered exactly once, and chest viewer state cannot leak across a
     /// direct menu transition.
     fn replace_open_menu_for(&mut self, s: usize, events: &mut TickEvents) {
-        if self.sessions[s].menu.target() != ContainerTarget::None {
+        if self.sessions[s].sim.menu.target() != ContainerTarget::None {
             self.close_open_menu_for(s, events);
         } else {
             self.clear_menu_open_requests(s);
@@ -237,7 +237,7 @@ impl ServerGame {
     }
 
     fn clear_menu_open_requests(&mut self, s: usize) {
-        self.sessions[s].request_open_gui = None;
+        self.sessions[s].replication.request_open_gui = None;
     }
 
     /// Begin session `s`'s GUI session for `kind`, opened on `anchor`
@@ -267,7 +267,7 @@ impl ServerGame {
         match kind {
             GuiKind::Creative if self.sessions[s].player.abilities().item_catalog => {
                 self.sessions[s]
-                    .menu
+                    .sim.menu
                     .open_document_gui(&mut self.world, kind, None);
                 self.emit_container_opened(s);
             }
@@ -300,7 +300,7 @@ impl ServerGame {
         widget_id: petramond_world::gui_state::WidgetId,
         events: &mut TickEvents,
     ) {
-        let ContainerTarget::Gui { kind, anchor } = self.sessions[s].menu.target() else {
+        let ContainerTarget::Gui { kind, anchor } = self.sessions[s].sim.menu.target() else {
             return;
         };
         // Engine kinds have no owning mod; their buttons are documented dead
@@ -313,36 +313,29 @@ impl ServerGame {
         let Some(kind_key) = petramond_world::gui_state::kind_key(kind) else {
             return;
         };
+        let actor = Some(self.sessions[s].id);
         let Self {
             world,
             sessions,
-            bus,
             mods,
             ..
         } = self;
-        Self::with_sessions_view(sessions, s, |sess| {
-            let mut ctx = SimCtx {
-                world,
-                player: &mut sess.player,
-                gui_state: &mut sess.gui_state,
-                feed: events,
-                queue: bus.queue_mut(),
-            };
-            mods.dispatch_gui_click(&mut ctx, kind_key, widget_id, anchor);
+        mods.dispatch(world, sessions, actor, events, |host, ctx| {
+            host.dispatch_gui_click(ctx, kind_key, widget_id, anchor)
         });
     }
 
     /// Begin a fresh player-crafting session for the requested station.
     pub fn open_crafting_for(&mut self, s: usize, station: CraftingStation) {
         let sess = &mut self.sessions[s];
-        sess.menu.open_crafting(station);
+        sess.sim.menu.open_crafting(station);
         self.emit_container_opened(s);
     }
 
     /// Begin session `s`'s furnace-screen session at `pos`.
     pub fn open_furnace_screen_for(&mut self, s: usize, pos: IVec3) {
         let sess = &mut self.sessions[s];
-        sess.menu.open_furnace_screen(&mut self.world, pos);
+        sess.sim.menu.open_furnace_screen(&mut self.world, pos);
         self.emit_container_opened(s);
     }
 
@@ -353,89 +346,18 @@ impl ServerGame {
         // no phantom close→open transition events); a different chest first
         // releases the old slot.
         let same = matches!(
-            self.sessions[s].menu.target(),
+            self.sessions[s].sim.menu.target(),
             ContainerTarget::Gui { kind: petramond_world::gui_state::GuiKind::Chest, anchor: Some(MenuAnchor::Block(p)) } if p == pos
         );
         if !same {
             self.release_chest_viewer(s, events);
         }
         let sess = &mut self.sessions[s];
-        sess.menu.open_chest_screen(&mut self.world, pos);
+        sess.sim.menu.open_chest_screen(&mut self.world, pos);
         if !same {
-            self.add_chest_viewer(pos, events);
+            self.containers.add_viewer(pos, events);
         }
         self.emit_container_opened(s);
-    }
-
-    /// One more viewer of the chest at `pos`; the first lifts its lid.
-    fn add_chest_viewer(&mut self, pos: IVec3, events: &mut TickEvents) {
-        let count = self.chest_viewers.entry(pos).or_insert(0);
-        *count += 1;
-        if *count == 1 {
-            events.world.chest_changed.push((pos, true));
-        }
-    }
-
-    /// One viewer fewer of the chest at `pos`; the last lets its lid fall.
-    fn drop_chest_viewer(&mut self, pos: IVec3, events: &mut TickEvents) {
-        if let Some(count) = self.chest_viewers.get_mut(&pos) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                self.chest_viewers.remove(&pos);
-                events.world.chest_changed.push((pos, false));
-            }
-        }
-    }
-
-    /// A mob holding the container at `pos` open, or letting it go
-    /// (`ContainerHold`). Only a chest shows it: the mob counts once among
-    /// its viewers, as a player's open screen does.
-    pub(super) fn hold_container(
-        &mut self,
-        mob_id: u64,
-        pos: IVec3,
-        open: bool,
-        events: &mut TickEvents,
-    ) {
-        let holders = self.container_holds.entry(pos).or_default();
-        let held = holders.contains(&mob_id);
-        if open && !held && self.world.mobs().index_of_id(mob_id).is_some() {
-            holders.push(mob_id);
-            let chest = self
-                .world
-                .block_if_stream_final(pos.x, pos.y, pos.z)
-                .is_some_and(|b| {
-                    b.interaction()
-                        == petramond_world::block::BlockInteraction::OpenGui(
-                            petramond_world::gui_state::GuiKind::Chest,
-                        )
-                });
-            if chest {
-                self.add_chest_viewer(pos, events);
-            }
-        } else if !open && held {
-            holders.retain(|id| *id != mob_id);
-            if holders.is_empty() {
-                self.container_holds.remove(&pos);
-            }
-            self.drop_chest_viewer(pos, events);
-        }
-    }
-
-    /// Let go every container held by a mob no longer in the world.
-    pub(super) fn release_absent_holders(&mut self, events: &mut TickEvents) {
-        if self.container_holds.is_empty() {
-            return;
-        }
-        let gone: Vec<(IVec3, u64)> = self
-            .container_holds
-            .iter()
-            .flat_map(|(pos, ids)| ids.iter().map(move |id| (*pos, *id)))
-            .filter(|(_, id)| self.world.mobs().index_of_id(*id).is_none())
-            .collect();
-        for (pos, id) in gone {
-            self.hold_container(id, pos, false, events);
-        }
     }
 
     /// Release player `s`'s viewer slot on whatever chest their menu targets.
@@ -445,9 +367,9 @@ impl ServerGame {
         if let ContainerTarget::Gui {
             kind: petramond_world::gui_state::GuiKind::Chest,
             anchor: Some(MenuAnchor::Block(pos)),
-        } = self.sessions[s].menu.target()
+        } = self.sessions[s].sim.menu.target()
         {
-            self.drop_chest_viewer(pos, events);
+            self.containers.drop_viewer(pos, events);
         }
     }
 
@@ -465,8 +387,8 @@ impl ServerGame {
             self.clear_all_gui_states();
         }
         let sess = &mut self.sessions[s];
-        petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
-        sess.menu.open_document_gui(&mut self.world, kind, anchor);
+        petramond_world::gui_state::gui_state_clear(&mut sess.sim.gui_state);
+        sess.sim.menu.open_document_gui(&mut self.world, kind, anchor);
         self.emit_container_opened(s);
     }
 
@@ -476,13 +398,13 @@ impl ServerGame {
     pub(super) fn close_menus_on_absent_anchors(&mut self, events: &mut TickEvents) {
         for s in 0..self.sessions.len() {
             let gone = self.sessions[s]
-                .menu
+                .sim.menu
                 .target()
                 .anchor()
                 .is_some_and(|anchor| !anchor.present(&self.world));
             if gone {
                 self.close_open_menu_for(s, events);
-                self.sessions[s].request_close_gui = true;
+                self.sessions[s].replication.request_close_gui = true;
             }
         }
     }
@@ -494,19 +416,23 @@ impl ServerGame {
         // `container_closed` for whatever session was actually open. Emitted
         // (not dispatched) here: the handler runs at the tick's next drain
         // point, like every queued event.
-        if let Some((kind, anchor)) = container_event_key(self.sessions[s].menu.target()) {
-            self.bus.emit(PostEvent::ContainerClosed { kind, anchor });
+        if let Some((kind, anchor)) = container_event_key(self.sessions[s].sim.menu.target()) {
+            self.mods.emit(PostEvent::ContainerClosed {
+                player: self.sessions[s].id,
+                kind,
+                anchor,
+            });
         }
         self.release_chest_viewer(s, events);
         self.close_cursor_stack_for(s);
         self.close_crafting_for(s);
-        self.sessions[s].menu.close_furnace();
-        self.sessions[s].menu.close_chest();
+        self.sessions[s].sim.menu.close_furnace();
+        self.sessions[s].sim.menu.close_chest();
         self.close_registered_gui_for(s);
-        if self.sessions[s].menu.target().kind()
+        if self.sessions[s].sim.menu.target().kind()
             == Some(petramond_world::gui_state::GuiKind::Creative)
         {
-            self.sessions[s].menu.close_document_gui();
+            self.sessions[s].sim.menu.close_document_gui();
         }
         self.clear_menu_open_requests(s);
     }
@@ -516,8 +442,12 @@ impl ServerGame {
     /// (whether from a block interact, a mod action, or the inventory key),
     /// so the event fires exactly once per session.
     fn emit_container_opened(&mut self, s: usize) {
-        if let Some((kind, anchor)) = container_event_key(self.sessions[s].menu.target()) {
-            self.bus.emit(PostEvent::ContainerOpened { kind, anchor });
+        if let Some((kind, anchor)) = container_event_key(self.sessions[s].sim.menu.target()) {
+            self.mods.emit(PostEvent::ContainerOpened {
+                player: self.sessions[s].id,
+                kind,
+                anchor,
+            });
         }
     }
 
@@ -526,24 +456,24 @@ impl ServerGame {
     fn close_crafting_for(&mut self, s: usize) {
         let mut overflow = Vec::new();
         let sess = &mut self.sessions[s];
-        sess.menu
+        sess.sim.menu
             .close_crafting(&mut sess.player.inventory, |stack| overflow.push(stack));
         for stack in overflow {
-            sess.drop_queue.queue_stack(stack);
+            sess.sim.drop_queue.queue_stack(stack);
         }
     }
 
     /// End the mod GUI session and clear its state map.
     fn close_registered_gui_for(&mut self, s: usize) {
         if self.sessions[s]
-            .menu
+            .sim.menu
             .target()
             .kind()
             .is_some_and(|kind| kind.is_registered())
         {
             let sess = &mut self.sessions[s];
-            petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
-            sess.menu.close_document_gui();
+            petramond_world::gui_state::gui_state_clear(&mut sess.sim.gui_state);
+            sess.sim.menu.close_document_gui();
             if !self.any_registered_gui_open() {
                 self.clear_all_gui_states();
             }
@@ -552,7 +482,7 @@ impl ServerGame {
 
     fn any_registered_gui_open(&self) -> bool {
         self.sessions.iter().any(|sess| {
-            sess.menu
+            sess.sim.menu
                 .target()
                 .kind()
                 .is_some_and(|kind| kind.is_registered())
@@ -561,8 +491,8 @@ impl ServerGame {
 
     fn clear_all_gui_states(&mut self) {
         for sess in &mut self.sessions {
-            petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
-            sess.last_sent_gui_state = None;
+            petramond_world::gui_state::gui_state_clear(&mut sess.sim.gui_state);
+            sess.replication.last_sent_gui_state = None;
         }
     }
 
@@ -573,23 +503,23 @@ impl ServerGame {
         // EVERY container ships as the generic keyed slot list plus whatever
         // named gauge readings its block entity publishes. No engine content
         // identity remains here, so adding one is not a wire change.
-        let target = match sess.menu.target() {
+        let target = match sess.sim.menu.target() {
             ContainerTarget::None => MenuTargetWire::None,
             ContainerTarget::Gui { kind, anchor } => match kind {
                 kind if CraftingStation::of_kind(kind).is_some() => MenuTargetWire::Crafting {
-                    output: slot_wire(sess.menu.craft_output()),
+                    output: slot_wire(sess.sim.menu.craft_output()),
                 },
                 kind => {
                     // A machine's readings ride the SAME generic state map a
                     // pack GUI uses, so no engine machine needs a wire variant.
-                    let gauges = sess.menu.open_gauges(&self.world);
+                    let gauges = sess.sim.menu.open_gauges(&self.world);
                     MenuTargetWire::Container {
                         kind_key: petramond_world::gui_state::kind_key(kind)
                             .unwrap_or_default()
                             .to_string(),
                         anchor,
                         slots: sess
-                            .menu
+                            .sim.menu
                             .open_container_view(&self.world)
                             .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect()),
                         gui_state: (!gauges.is_empty()).then(|| {
@@ -648,7 +578,7 @@ mod tests {
     fn open_on_mob(server: &mut ServerGame, mob: u64, events: &mut TickEvents) {
         let kind = intern_kind("anchortest:pack").unwrap();
         server.sessions[0]
-            .pending_menu_actions
+            .input.pending_menu_actions
             .push(PendingMenuAction::OpenGui {
                 kind,
                 anchor: Some(MenuAnchor::Mob(mob)),
@@ -658,7 +588,7 @@ mod tests {
 
     fn click(server: &mut ServerGame, slot: MenuSlot, events: &mut TickEvents) {
         server.sessions[0]
-            .pending_menu_actions
+            .input.pending_menu_actions
             .push(PendingMenuAction::SlotClick {
                 slot,
                 button: PointerButton::Primary,
@@ -683,7 +613,7 @@ mod tests {
         };
         open_on_mob(&mut server, mob, &mut events);
         assert_eq!(
-            server.sessions[0].menu.target().anchor(),
+            server.sessions[0].sim.menu.target().anchor(),
             Some(MenuAnchor::Mob(mob))
         );
 
@@ -710,16 +640,16 @@ mod tests {
         let mut events = TickEvents::default();
         open_on_mob(&mut server, mob, &mut events);
         server.close_menus_on_absent_anchors(&mut events);
-        assert_ne!(server.sessions[0].menu.target(), ContainerTarget::None);
+        assert_ne!(server.sessions[0].sim.menu.target(), ContainerTarget::None);
 
         server.world.mobs_mut().remove(0);
         server.close_menus_on_absent_anchors(&mut events);
-        assert_eq!(server.sessions[0].menu.target(), ContainerTarget::None);
-        assert!(server.sessions[0].request_close_gui);
+        assert_eq!(server.sessions[0].sim.menu.target(), ContainerTarget::None);
+        assert!(server.sessions[0].replication.request_close_gui);
 
         open_on_mob(&mut server, mob, &mut events);
         assert_eq!(
-            server.sessions[0].menu.target(),
+            server.sessions[0].sim.menu.target(),
             ContainerTarget::None,
             "a session cannot open on a mob that is not there"
         );

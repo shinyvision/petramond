@@ -42,7 +42,6 @@ impl ServerGame {
             let species =
                 &crate::mob::def(self.world.mobs().instances()[index].kind).damage_feedback;
             self.damage_mob_through_pipeline(
-                0,
                 index,
                 hit.damage.amount as f32,
                 source(hit.damage),

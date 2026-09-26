@@ -10,17 +10,19 @@
 
 mod bus;
 mod payload;
+mod roster;
 mod stages;
 pub mod tick;
 
 pub use crate::mob::{MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound};
 #[allow(unused_imports)] // named only by tests that build a `SimCtx` by hand.
 pub use bus::PostQueue;
-pub use bus::{with_sessions_scope, EventBus, OpenGui, Outcome, SessionPlayerRef, SimCtx};
+pub use bus::{EventBus, Outcome, SimCtx};
 pub use payload::{
     AttackAttempt, BlockBreakPre, BlockPlacePre, CellsEditPre, DamageSource, DeferredAction,
     InteractAttempt, ItemUseEvent, ItemUsePre, MobDamagePre, PlayerDamagePre, PostEvent,
     PostEventKind, ProjectileHit,
 };
+pub use roster::{OpenGui, PlayerRoster, RosterRefs, SessionPlayerRef};
 pub use stages::{Attach, Stage, TickSystems};
 pub use tick::ClientEvent;

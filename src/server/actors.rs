@@ -30,7 +30,7 @@ impl ServerGame {
         let refusal = self
             .actor_break(mob_id, pos, target, tool_slot, collect, events)
             .err();
-        self.bus.emit(PostEvent::ActorActed {
+        self.mods.emit(PostEvent::ActorActed {
             actor: EntityRef::Mob(mob_id),
             pos,
             action: ActorAction::Dig,
@@ -47,11 +47,6 @@ impl ServerGame {
         collect: bool,
         events: &mut TickEvents,
     ) -> Result<(), ActionRefusal> {
-        // Pre-event handlers dispatch as a session; with nobody connected
-        // there is no world streamed in to act on either.
-        if self.sessions.is_empty() {
-            return Err(ActionRefusal::Unloaded);
-        }
         let actor = self.world.actor(mob_id)?;
         let now = self.world.dig_check(&actor, pos, tool_slot)?;
         if now != target {
@@ -64,7 +59,6 @@ impl ServerGame {
             harvested: petramond_world::mining::harvests(now.block, tool),
         };
         let breaker = Breaker {
-            acting: 0,
             actor: EntityRef::Mob(mob_id),
             yields: true,
             collector: collect.then_some(mob_id),
@@ -86,7 +80,7 @@ impl ServerGame {
         events: &mut TickEvents,
     ) {
         let refusal = self.actor_use(mob_id, pos, events).err();
-        self.bus.emit(PostEvent::ActorActed {
+        self.mods.emit(PostEvent::ActorActed {
             actor: EntityRef::Mob(mob_id),
             pos,
             action: ActorAction::Use,
@@ -131,7 +125,7 @@ impl ServerGame {
         events: &mut TickEvents,
     ) {
         let refusal = self.actor_place(mob_id, pos, &record, pay, events).err();
-        self.bus.emit(PostEvent::ActorActed {
+        self.mods.emit(PostEvent::ActorActed {
             actor: EntityRef::Mob(mob_id),
             pos,
             action: ActorAction::Place,
@@ -147,9 +141,6 @@ impl ServerGame {
         pay: bool,
         events: &mut TickEvents,
     ) -> Result<(), ActionRefusal> {
-        if self.sessions.is_empty() {
-            return Err(ActionRefusal::Unloaded);
-        }
         let ready = self.check_actor_place(mob_id, pos, record, pay)?;
         let block = ready
             .plan
@@ -163,22 +154,16 @@ impl ServerGame {
             facing: ready.click.facing,
             actor: EntityRef::Mob(mob_id),
         };
+        // A mob's placement belongs to no player: actor-less.
         let cancelled = {
             let Self {
                 world,
                 sessions,
-                bus,
+                mods,
                 ..
             } = self;
-            Self::with_sessions_view(sessions, 0, |host| {
-                bus.block_place_pre(
-                    world,
-                    &mut host.player,
-                    &mut host.gui_state,
-                    events,
-                    &mut pre,
-                ) == Outcome::Cancel
-            })
+            let bus = mods.bus_mut();
+            bus.block_place_pre(world, sessions, None, events, &mut pre) == Outcome::Cancel
         };
         if cancelled {
             return Err(ActionRefusal::Vetoed);
@@ -207,9 +192,10 @@ impl ServerGame {
             debug_assert!(paid, "the carried cost was proven just before the commit");
         }
         events.world.block_placed.push((writes.anchor, block));
-        self.bus.emit(PostEvent::BlockPlaced {
+        self.mods.emit(PostEvent::BlockPlaced {
             pos: writes.anchor,
             block,
+            player: None,
         });
         self.push_noise_from(
             EntityRef::Mob(mob_id),

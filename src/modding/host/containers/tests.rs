@@ -1,10 +1,9 @@
 use mod_api::{HostCall, HostRet};
 
 use crate::events::tick::TickEvents;
-use crate::events::{PostQueue, SimCtx};
+use crate::events::{PostQueue, RosterRefs, SimCtx};
 use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
-use crate::player::Player;
 use crate::world::World;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::ChunkPos;
@@ -33,14 +32,13 @@ fn container_calls_canonicalize_to_the_group_anchor() {
     // caller's own namespace, so the test store impersonates the engine
     // namespace — this keeps the test off the heavy WASM fixture.
     let mut store = ModStoreData::new(petramond_world::registry::ENGINE_NAMESPACE, 1);
-    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+    let mut nobody = RosterRefs::empty();
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
-    let mut gui = petramond_world::gui_state::empty_gui_state();
     let mut ctx = SimCtx {
         world: &mut world,
-        player: &mut player,
-        gui_state: &mut gui,
+        actor: None,
+        players: &mut nobody,
         feed: &mut feed,
         queue: &mut queue,
     };
@@ -94,10 +92,9 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
     world.set_block_world(chest.x, chest.y, chest.z, Block::Chest);
     world.take_container(chest);
     let mut store = ModStoreData::new("transfer_test", 1);
-    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+    let mut nobody = RosterRefs::empty();
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
-    let mut gui = petramond_world::gui_state::empty_gui_state();
     let stack = |item: &str, count| mod_api::ItemStackData {
         item: item.into(),
         count,
@@ -105,8 +102,8 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
     };
     let mut ctx = SimCtx {
         world: &mut world,
-        player: &mut player,
-        gui_state: &mut gui,
+        actor: None,
+        players: &mut nobody,
         feed: &mut feed,
         queue: &mut queue,
     };
@@ -184,8 +181,8 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
     )));
     let mut ctx = SimCtx {
         world: &mut world,
-        player: &mut player,
-        gui_state: &mut gui,
+        actor: None,
+        players: &mut nobody,
         feed: &mut feed,
         queue: &mut queue,
     };
@@ -221,10 +218,9 @@ fn a_transfer_moves_only_what_the_destination_admits() {
     world.set_block_world(machine.x, machine.y, machine.z, Block::Furnace);
     world.set_block_world(chest.x, chest.y, chest.z, Block::Chest);
     let mut store = ModStoreData::new("transfer_test", 1);
-    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+    let mut nobody = RosterRefs::empty();
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
-    let mut gui = petramond_world::gui_state::empty_gui_state();
     let coal = |count| mod_api::ItemStackData {
         item: "petramond:coal".into(),
         count,
@@ -232,8 +228,8 @@ fn a_transfer_moves_only_what_the_destination_admits() {
     };
     let mut ctx = SimCtx {
         world: &mut world,
-        player: &mut player,
-        gui_state: &mut gui,
+        actor: None,
+        players: &mut nobody,
         feed: &mut feed,
         queue: &mut queue,
     };
@@ -313,14 +309,13 @@ fn a_mobs_carried_slots_are_a_container_and_spill_when_it_leaves() {
     }]);
     let mob = world.mobs().instances()[0].id();
     let mut store = ModStoreData::new("transfer_test", 1);
-    let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
+    let mut nobody = RosterRefs::empty();
     let mut feed = TickEvents::default();
     let mut queue = PostQueue::default();
-    let mut gui = petramond_world::gui_state::empty_gui_state();
     let mut ctx = SimCtx {
         world: &mut world,
-        player: &mut player,
-        gui_state: &mut gui,
+        actor: None,
+        players: &mut nobody,
         feed: &mut feed,
         queue: &mut queue,
     };

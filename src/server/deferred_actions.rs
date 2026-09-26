@@ -5,7 +5,7 @@
 //! systems batch and before each post-event drain — see `server::game`), on the
 //! same tick, in queue order.
 
-use crate::events::{DamageSource, DeferredAction};
+use crate::events::DeferredAction;
 
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
@@ -17,10 +17,10 @@ impl ServerGame {
     /// by a `player_damage_pre` handler) land at the next action point — the
     /// per-tick point count bounds them, no recursion.
     pub fn apply_deferred_actions(&mut self, events: &mut TickEvents) {
-        if !self.bus.queue_mut().has_actions() {
+        if !self.mods.bus_mut().queue_mut().has_actions() {
             return;
         }
-        for action in self.bus.queue_mut().take_actions() {
+        for action in self.mods.bus_mut().queue_mut().take_actions() {
             match action {
                 DeferredAction::DamagePlayer {
                     player,
@@ -28,7 +28,7 @@ impl ServerGame {
                     source,
                     origin,
                 } => {
-                    let Some(t) = self.sessions.iter().position(|sess| sess.id == player) else {
+                    let Some(t) = self.sessions.index_of(player) else {
                         continue; // the named session left before the drain
                     };
                     // A named attacker's hit is the engine's own melee in
@@ -54,19 +54,11 @@ impl ServerGame {
                     let Some(index) = self.world.mobs().index_of_id(mob_id) else {
                         continue;
                     };
-                    // The pipeline's acting session is the attacker's when
-                    // the source names one (a `mob_damage_pre` handler then
-                    // reads the same actor the engine's own hit shows it).
-                    let acting = match source {
-                        DamageSource::PlayerAttack(id) => self
-                            .sessions
-                            .iter()
-                            .position(|sess| sess.id == id)
-                            .unwrap_or(0),
-                        _ => 0,
-                    };
+                    // The pipeline acts for the attacker the source names (a
+                    // `mob_damage_pre` handler then reads the same actor the
+                    // engine's own hit shows it).
                     self.damage_mob_through_pipeline(
-                        acting, index, amount, source, origin, feedback, events,
+                        index, amount, source, origin, feedback, events,
                     );
                 }
                 // GUI opens share the ordered menu boundary with player
@@ -76,18 +68,18 @@ impl ServerGame {
                     kind,
                     anchor,
                 } => {
-                    let Some(s) = self.sessions.iter().position(|sess| sess.id == player) else {
+                    let Some(s) = self.sessions.index_of(player) else {
                         continue;
                     };
                     self.sessions[s]
-                        .pending_menu_actions
+                        .input.pending_menu_actions
                         .push(crate::server::player::PendingMenuAction::OpenGui { kind, anchor });
                 }
                 DeferredAction::CloseGui { player } => {
-                    let Some(s) = self.sessions.iter().position(|sess| sess.id == player) else {
+                    let Some(s) = self.sessions.index_of(player) else {
                         continue;
                     };
-                    self.sessions[s].request_close_gui = true;
+                    self.sessions[s].replication.request_close_gui = true;
                 }
                 DeferredAction::ActorBreak {
                     mob_id,
@@ -106,7 +98,8 @@ impl ServerGame {
                     self.apply_actor_interact(mob_id, pos, events)
                 }
                 DeferredAction::ContainerHold { mob_id, pos, open } => {
-                    self.hold_container(mob_id, pos, open, events)
+                    self.containers
+                        .set_mob_hold(&self.world, mob_id, pos, open, events)
                 }
                 DeferredAction::SchematicChoose { player, tag } => {
                     self.open_schematic_choice(player, tag)
@@ -125,7 +118,7 @@ impl ServerGame {
                             ids.into_iter().map(crate::player::PlayerId).collect(),
                         ),
                     };
-                    self.enqueue_authored_chat(&text, targets);
+                    self.chat.authored(&text, targets);
                 }
             }
         }

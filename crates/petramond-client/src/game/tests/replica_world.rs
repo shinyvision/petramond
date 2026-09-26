@@ -18,7 +18,7 @@ use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 /// replicates.
 fn floored_game_at(feet: WorldPos) -> super::common::TestGame {
     let mut game = game();
-    game.server.world.clear_world();
+    game.server.world_mut().clear_world();
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
@@ -26,7 +26,7 @@ fn floored_game_at(feet: WorldPos) -> super::common::TestGame {
         }
     }
     game.server
-        .world
+        .world_mut()
         .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
     place_player(&mut game, feet);
     game
@@ -35,8 +35,8 @@ fn floored_game_at(feet: WorldPos) -> super::common::TestGame {
 fn place_player(game: &mut super::common::TestGame, feet: WorldPos) {
     game.player.pos = feet;
     game.player.vel = Vec3::ZERO;
-    game.server.sessions[0].player.pos = feet;
-    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions_mut()[0].player_mut().pos = feet;
+    game.server.sessions_mut()[0].player_mut().vel = Vec3::ZERO;
 }
 
 /// One frame that executes exactly one fixed tick (dt = TICK_DT).
@@ -75,7 +75,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     );
 
     // A post-join server edit reaches the replica through the delta pipe.
-    assert!(game.server.world.set_block_world(8, 66, 8, Block::Dirt));
+    assert!(game.server.world_mut().set_block_world(8, 66, 8, Block::Dirt));
     frame(&mut game);
     assert_eq!(
         game.replica.chunk_block(8, 66, 8),
@@ -89,7 +89,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     let door = IVec3::new(5, 65, 5);
     assert!(game
         .server
-        .world
+        .world_mut()
         .place_door(door, Block::OakDoor, Facing::East));
     frame(&mut game);
     assert_eq!(
@@ -99,7 +99,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         Some(false),
         "the placed door replicated closed"
     );
-    assert_eq!(game.server.world.toggle_door(door), Some(door));
+    assert_eq!(game.server.world_mut().toggle_door(door), Some(door));
     frame(&mut game);
     assert_eq!(
         game.replica
@@ -155,10 +155,10 @@ fn server_rebakes_replicate_as_light_data() {
     // (Emitters come from the torch placement map — mirror the place funnel.)
     assert!(game
         .server
-        .world
+        .world_mut()
         .set_block_world(torch.x, torch.y, torch.z, Block::Torch));
     game.server
-        .world
+        .world_mut()
         .insert_torch(torch, petramond_world::torch::TorchPlacement::Floor);
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while block_at(&game).is_dark() {
@@ -182,9 +182,9 @@ fn open_chest_state_replicates_and_drives_the_lid_target() {
     let pos = IVec3::new(3, 65, 3);
     assert!(game
         .server
-        .world
+        .world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Chest));
-    game.server.world.insert_chest(pos, Facing::West);
+    game.server.world_mut().insert_chest(pos, Facing::West);
 
     game.server
         .open_chest_screen_for(0, pos, &mut Default::default());

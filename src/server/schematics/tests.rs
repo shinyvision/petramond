@@ -38,7 +38,7 @@ fn server() -> ServerGame {
         PostEventKind::SchematicChosen,
         PostEventKind::SchematicPositioned,
     ] {
-        server.bus.queue_mut().want_for_test(kind);
+        server.mods.bus_mut().queue_mut().want_for_test(kind);
     }
     server
 }
@@ -62,7 +62,8 @@ fn a_choice_uploads_what_the_world_lacks_then_reports_it() {
     let player = server.sessions[0].id;
     let mut events = TickEvents::default();
     server
-        .bus
+        .mods
+        .bus_mut()
         .queue_mut()
         .push_action(DeferredAction::SchematicChoose {
             player,
@@ -70,7 +71,7 @@ fn a_choice_uploads_what_the_world_lacks_then_reports_it() {
         });
     server.apply_deferred_actions(&mut events);
     assert_eq!(
-        server.sessions[0].schematic.take_notices(),
+        server.sessions[0].sim.schematic.take_notices(),
         vec![SchematicNotice::Choose {
             tag: "fixture:table".into()
         }]
@@ -86,7 +87,7 @@ fn a_choice_uploads_what_the_world_lacks_then_reports_it() {
             digest: id,
         },
     );
-    assert!(server.sessions[0].schematic.take_notices().is_empty());
+    assert!(server.sessions[0].sim.schematic.take_notices().is_empty());
 
     server.apply_schematic_request(
         0,
@@ -96,7 +97,7 @@ fn a_choice_uploads_what_the_world_lacks_then_reports_it() {
         },
     );
     assert_eq!(
-        server.sessions[0].schematic.take_notices(),
+        server.sessions[0].sim.schematic.take_notices(),
         vec![SchematicNotice::Want { digest: id }]
     );
     let mut sender = BlobSender::new(id, bytes.into());
@@ -104,13 +105,14 @@ fn a_choice_uploads_what_the_world_lacks_then_reports_it() {
         for packet in sender.packets() {
             server.apply_schematic_request(0, SchematicRequest::Blob(packet));
         }
-        for notice in server.sessions[0].schematic.take_notices() {
+        for notice in server.sessions[0].sim.schematic.take_notices() {
             if let SchematicNotice::Blob(BlobPacket::Credit { count, .. }) = notice {
                 sender.credit(count);
             }
         }
         server
-            .bus
+            .mods
+            .bus_mut()
             .queue_mut()
             .take_events_for_test()
             .iter()
@@ -143,7 +145,7 @@ fn positioning_reports_only_the_open_request_within_reach() {
         turns: 0,
     };
     server.apply_schematic_request(0, far);
-    assert!(server.bus.queue_mut().take_events_for_test().is_empty());
+    assert!(server.mods.bus_mut().queue_mut().take_events_for_test().is_empty());
     server.apply_schematic_request(
         0,
         SchematicRequest::Positioned {
@@ -154,7 +156,7 @@ fn positioning_reports_only_the_open_request_within_reach() {
         },
     );
     assert!(matches!(
-        server.bus.queue_mut().take_events_for_test().as_slice(),
+        server.mods.bus_mut().queue_mut().take_events_for_test().as_slice(),
         [PostEvent::SchematicPositioned { turns: 1, .. }]
     ));
     server.apply_schematic_request(
@@ -167,7 +169,7 @@ fn positioning_reports_only_the_open_request_within_reach() {
         },
     );
     assert!(
-        server.bus.queue_mut().take_events_for_test().is_empty(),
+        server.mods.bus_mut().queue_mut().take_events_for_test().is_empty(),
         "one positioning answers once"
     );
 }
@@ -194,18 +196,18 @@ fn ghosts_reach_only_their_viewers_and_changes_only_once() {
         .insert("fixture:b".into(), ghost(vec![crate::player::PlayerId(99)]));
     server.tick_schematics();
     assert_eq!(
-        server.sessions[0].schematic.take_notices(),
+        server.sessions[0].sim.schematic.take_notices(),
         vec![SchematicNotice::Ghost {
             key: "fixture:a".into(),
             placement: Some(placement),
         }]
     );
     server.tick_schematics();
-    assert!(server.sessions[0].schematic.take_notices().is_empty());
+    assert!(server.sessions[0].sim.schematic.take_notices().is_empty());
     server.world.schematics_mut().ghosts.remove("fixture:a");
     server.tick_schematics();
     assert_eq!(
-        server.sessions[0].schematic.take_notices(),
+        server.sessions[0].sim.schematic.take_notices(),
         vec![SchematicNotice::Ghost {
             key: "fixture:a".into(),
             placement: None,

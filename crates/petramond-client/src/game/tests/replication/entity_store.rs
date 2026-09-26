@@ -411,15 +411,15 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
 #[test]
 fn pumped_mob_batches_become_interpolated_presentation_rows() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     // An owl in free fall right above the player: gravity guarantees its
     // position differs between consecutive ticks.
     assert!(game
         .server
-        .world
+        .world_mut()
         .spawn_mob(Mob::Owl, WorldPos::new(8.5, 70.0, 8.5), 0.0)
         .is_some());
-    let id = game.server.world.mobs().instances()[0].id();
+    let id = game.server.world().mobs().instances()[0].id();
 
     let batch1 = pump_one_tick(&mut game);
     let row1 = batch1
@@ -463,13 +463,13 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
 #[test]
 fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     assert!(game
         .server
-        .world
+        .world_mut()
         .spawn_mob(Mob::Owl, WorldPos::new(8.5, 70.0, 8.5), 0.0)
         .is_some());
-    let id = game.server.world.mobs().instances()[0].id();
+    let id = game.server.world().mobs().instances()[0].id();
 
     let batch = pump_one_tick(&mut game);
     game.apply_tick_update(batch);
@@ -478,11 +478,11 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
 
     let index = game
         .server
-        .world
+        .world()
         .mobs()
         .index_of_id(id)
         .expect("still alive server-side");
-    assert!(game.server.world.mobs_mut().remove(index));
+    assert!(game.server.world_mut().mobs_mut().remove(index));
     let batch = pump_one_tick(&mut game);
     game.apply_tick_update(batch);
     game.commit_replication_window_for_test();
@@ -516,8 +516,8 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
         1,
     );
     drop.vel = Vec3::ZERO;
-    game.server.world.spawn_item(drop);
-    let id = game.server.world.item_entities()[0].id;
+    game.server.world_mut().spawn_item(drop);
+    let id = game.server.world().item_entities()[0].id;
     assert_ne!(id, 0, "entering the active set assigns a stable id");
 
     let batch1 = pump_one_tick(&mut game);

@@ -92,24 +92,21 @@ pub(super) fn with_active<R>(f: impl FnOnce(&mut SimCtx<'_>) -> R) -> Option<R> 
 mod tests {
     use super::*;
     use crate::events::tick::TickEvents;
-    use crate::events::PostQueue;
-    use crate::player::Player;
+    use crate::events::{PostQueue, RosterRefs};
     use crate::world::World;
-    use petramond_math::world_pos::WorldPos;
 
     #[test]
     fn scope_is_bounded_and_reentrancy_safe() {
         let mut world = World::new(1, 1);
-        let mut player = Player::new(WorldPos::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
 
         assert!(with_active(|_| ()).is_none(), "no scope outside enter");
-        let mut gui = petramond_world::gui_state::empty_gui_state();
+        let mut nobody = RosterRefs::empty();
         let mut ctx = SimCtx {
             world: &mut world,
-            player: &mut player,
-            gui_state: &mut gui,
+            actor: None,
+            players: &mut nobody,
             feed: &mut feed,
             queue: &mut queue,
         };

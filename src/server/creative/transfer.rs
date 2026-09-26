@@ -47,21 +47,21 @@ impl ServerGame {
     ) {
         if !self.may_edit(s) {
             return self.sessions[s]
-                .creative
+                .sim.creative
                 .refuse("Creative tools require creative mode".into());
         }
         let design = if self.world.schematics().store.contains(&digest) {
             Design::Held(digest)
-        } else if self.sessions[s].creative.has_room()
-            && self.sessions[s].schematic.want(Wanted::Edit, digest)
+        } else if self.sessions[s].sim.creative.has_room()
+            && self.sessions[s].sim.schematic.want(Wanted::Edit, digest)
         {
             Design::Arriving(digest)
         } else {
             return self.sessions[s]
-                .creative
+                .sim.creative
                 .refuse("A schematic is still being transferred".into());
         };
-        self.sessions[s].creative.try_enqueue(Pending::Placement {
+        self.sessions[s].sim.creative.try_enqueue(Pending::Placement {
             design,
             origin,
             turns,
@@ -76,7 +76,7 @@ impl ServerGame {
         arrived: Digest,
         bytes: Vec<u8>,
     ) {
-        for pending in &mut self.sessions[s].creative.pending {
+        for pending in &mut self.sessions[s].sim.creative.pending {
             if let Pending::Placement { design, .. } = pending {
                 if matches!(design, Design::Arriving(d) if *d == arrived) {
                     *design = Design::Decoding(std::thread::spawn(move || archive::decode(&bytes)));
@@ -100,7 +100,7 @@ impl ServerGame {
                 Lookup::Missing => Some(Err("The world does not hold that schematic".into())),
                 Lookup::Failed(message) => Some(Err(message)),
             },
-            Design::Arriving(digest) => (!self.sessions[s].schematic.wants(digest))
+            Design::Arriving(digest) => (!self.sessions[s].sim.schematic.wants(digest))
                 .then(|| Err("The schematic did not arrive".into())),
             Design::Decoding(job) if !job.is_finished() => None,
             Design::Decoding(_) => {
@@ -131,7 +131,7 @@ impl ServerGame {
             include_air,
             public_only,
         )?;
-        self.sessions[s].creative.capture = Some(std::thread::spawn(move || {
+        self.sessions[s].sim.creative.capture = Some(std::thread::spawn(move || {
             let bytes = archive::encode_bare(&capture.run()?)?;
             Ok((digest(&bytes), bytes.into()))
         }));
@@ -142,14 +142,14 @@ impl ServerGame {
     /// advance: a capture still running holds the requests behind it.
     pub(super) fn poll_capture(&mut self, s: usize) -> bool {
         let session = &mut self.sessions[s];
-        let Some(job) = session.creative.capture.as_ref() else {
+        let Some(job) = session.sim.creative.capture.as_ref() else {
             return true;
         };
         if !job.is_finished() {
             return false;
         }
         let captured = session
-            .creative
+            .sim.creative
             .capture
             .take()
             .unwrap()
@@ -158,12 +158,12 @@ impl ServerGame {
         match captured {
             Ok((digest, bytes)) => {
                 session
-                    .creative
+                    .sim.creative
                     .replies
                     .push(CreativeReply::Captured { digest });
-                session.schematic.send(digest, bytes);
+                session.sim.schematic.send(digest, bytes);
             }
-            Err(message) => session.creative.refuse(message),
+            Err(message) => session.sim.creative.refuse(message),
         }
         true
     }

@@ -80,27 +80,27 @@ impl ServerGame {
             return;
         }
         // An edit in progress holds the queue: requests apply in order.
-        if self.sessions[s].creative.job.is_some() {
+        if self.sessions[s].sim.creative.job.is_some() {
             if let Err(message) = self.step_edit_job(s, events) {
-                self.sessions[s].creative.refuse(message);
+                self.sessions[s].sim.creative.refuse(message);
             }
             return;
         }
-        let Some(mut request) = self.sessions[s].creative.pending.pop_front() else {
+        let Some(mut request) = self.sessions[s].sim.creative.pending.pop_front() else {
             return;
         };
         let mut decoded = None;
         if let Pending::Placement { design, .. } = &mut request {
             match self.poll_design(s, design) {
-                None => return self.sessions[s].creative.pending.push_front(request),
+                None => return self.sessions[s].sim.creative.pending.push_front(request),
                 Some(Ok(design)) => decoded = Some(design),
-                Some(Err(message)) => return self.sessions[s].creative.refuse(message),
+                Some(Err(message)) => return self.sessions[s].sim.creative.refuse(message),
             }
         }
         // Saving a selection is authoring, not editing: a player choosing a
         // design for a mod may save one in any mode.
         let authoring = matches!(request, Pending::Action(CreativeAction::Capture { .. }))
-            && self.sessions[s].schematic.choice_open()
+            && self.sessions[s].sim.schematic.choice_open()
             && self.sessions[s].player.health() > 0;
         let result = if !(self.may_edit(s) || authoring) {
             Err("Creative tools require creative mode".into())
@@ -114,7 +114,7 @@ impl ServerGame {
             }
         };
         if let Err(message) = result {
-            self.sessions[s].creative.refuse(message);
+            self.sessions[s].sim.creative.refuse(message);
         }
     }
 

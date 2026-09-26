@@ -1,24 +1,21 @@
 use crate::events::{PostEvent, PostEventKind};
-use crate::world::StreamEvent;
+use crate::server::mod_runtime::ModRuntime;
+use crate::world::{StreamEvent, World};
 
-use super::ServerGame;
-
-impl ServerGame {
-    /// Hand the section stream events buffered by the per-frame `World::poll` to
-    /// the bus. The capture gate mirrors listener presence so an idle bus costs
-    /// the streamer nothing.
-    pub(super) fn pump_stream_events(&mut self) {
-        let wants = self.bus.wants(PostEventKind::SectionGenerated)
-            || self.bus.wants(PostEventKind::SectionLoaded);
-        self.world.set_stream_event_capture(wants);
-        if !wants {
-            return;
-        }
-        for ev in self.world.take_stream_events() {
-            self.bus.emit(match ev {
-                StreamEvent::Generated(pos) => PostEvent::SectionGenerated { pos },
-                StreamEvent::Loaded(pos) => PostEvent::SectionLoaded { pos },
-            });
-        }
+/// Hand the section stream events buffered by the per-frame `World::poll` to
+/// the bus. The capture gate mirrors listener presence so an idle bus costs
+/// the streamer nothing.
+pub(super) fn pump_stream_events(world: &mut World, mods: &mut ModRuntime) {
+    let wants = mods.bus().wants(PostEventKind::SectionGenerated)
+        || mods.bus().wants(PostEventKind::SectionLoaded);
+    world.set_stream_event_capture(wants);
+    if !wants {
+        return;
+    }
+    for ev in world.take_stream_events() {
+        mods.emit(match ev {
+            StreamEvent::Generated(pos) => PostEvent::SectionGenerated { pos },
+            StreamEvent::Loaded(pos) => PostEvent::SectionLoaded { pos },
+        });
     }
 }

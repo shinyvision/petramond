@@ -23,9 +23,35 @@ use std::sync::Arc;
 
 use crate::events::{EventBus, PostEvent, PostEventKind};
 use crate::player::Player;
-use petramond_world::crafting::UnlockIndex;
+use petramond_world::crafting::{Recipes, UnlockIndex};
 
-use super::game::ServerGame;
+use super::mod_runtime::ModRuntime;
+use super::sessions::SessionRegistry;
+
+/// The loaded recipe catalog and the unlock index derived from it — built
+/// together, so the index can never describe a different catalog. Player
+/// CRAFT requests and machine-processing ticks share the immutable catalog;
+/// the engine's unlock handler and every session start read the index.
+pub struct RecipeCatalog {
+    recipes: Recipes,
+    unlocks: Arc<UnlockIndex>,
+}
+
+impl RecipeCatalog {
+    pub fn new(recipes: Recipes) -> Self {
+        let unlocks = Arc::new(UnlockIndex::build(recipes.crafting()));
+        Self { recipes, unlocks }
+    }
+
+    pub fn recipes(&self) -> &Recipes {
+        &self.recipes
+    }
+
+    /// Which recipes each discovery opens (shared with the bus handler).
+    pub fn unlocks(&self) -> &Arc<UnlockIndex> {
+        &self.unlocks
+    }
+}
 
 /// Register the engine's default unlock rule. Runs before mod init, so a mod
 /// handler at equal priority observes an already-applied default.
@@ -56,40 +82,38 @@ pub fn catch_up(player: &mut Player, unlocks: &UnlockIndex) {
     }
 }
 
-impl ServerGame {
-    /// Emit `item_obtained` for every item kind that entered a session's
-    /// inventory for the first time. Gated on the inventory revision, so an
-    /// unchanged tick costs one comparison per session.
-    ///
-    /// Runs inside the last stage so the events drain at that stage's
-    /// boundary: a recipe unlocked by a pickup is craftable on the same tick.
-    pub fn detect_obtained_items(&mut self) {
-        let mut fresh: Vec<(crate::player::PlayerId, petramond_world::item::ItemType)> = Vec::new();
-        for sess in &mut self.sessions {
-            let revision = sess.player.inventory.revision();
-            if sess.last_obtained_scan == Some(revision) {
-                continue;
-            }
-            sess.last_obtained_scan = Some(revision);
-            let held = sess
-                .player
-                .inventory
-                .raw_slots()
-                .iter()
-                .chain(std::iter::once(&sess.player.inventory.cursor().copied()))
-                .chain(std::iter::once(&sess.player.inventory.off_hand().copied()))
-                .flatten()
-                .map(|stack| stack.item)
-                .collect::<Vec<_>>();
-            for item in held {
-                if sess.player.progression.obtain(item) {
-                    fresh.push((sess.id, item));
-                }
+/// Emit `item_obtained` for every item kind that entered a session's
+/// inventory for the first time. Gated on the inventory revision, so an
+/// unchanged tick costs one comparison per session.
+///
+/// Runs inside the last stage so the events drain at that stage's
+/// boundary: a recipe unlocked by a pickup is craftable on the same tick.
+pub fn detect_obtained_items(sessions: &mut SessionRegistry, mods: &mut ModRuntime) {
+    let mut fresh: Vec<(crate::player::PlayerId, petramond_world::item::ItemType)> = Vec::new();
+    for sess in sessions {
+        let revision = sess.player.inventory.revision();
+        if sess.replication.last_obtained_scan == Some(revision) {
+            continue;
+        }
+        sess.replication.last_obtained_scan = Some(revision);
+        let held = sess
+            .player
+            .inventory
+            .raw_slots()
+            .iter()
+            .chain(std::iter::once(&sess.player.inventory.cursor().copied()))
+            .chain(std::iter::once(&sess.player.inventory.off_hand().copied()))
+            .flatten()
+            .map(|stack| stack.item)
+            .collect::<Vec<_>>();
+        for item in held {
+            if sess.player.progression.obtain(item) {
+                fresh.push((sess.id, item));
             }
         }
-        for (player, item) in fresh {
-            self.bus.emit(PostEvent::ItemObtained { player, item });
-        }
+    }
+    for (player, item) in fresh {
+        mods.emit(PostEvent::ItemObtained { player, item });
     }
 }
 
@@ -114,7 +138,8 @@ mod tests {
         {
             let (seen, logs) = (seen.clone(), logs.clone());
             server
-                .bus
+                .mods
+                .bus_mut()
                 .on_post(PostEventKind::ItemObtained, 0, move |_, ev| {
                     if let PostEvent::ItemObtained { item, .. } = ev {
                         seen.fetch_add(1, Ordering::Relaxed);
