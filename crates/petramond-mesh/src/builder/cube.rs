@@ -14,9 +14,9 @@ use petramond_world::tile::Tile;
 
 use super::super::boxset::cell_wears_snow;
 use super::super::face::{quad_for, Face, FaceShading, FACES};
-use super::super::face_emit::push_cube_face_with_cell_uvs;
+use super::super::face_emit::{push_cube_face, FaceSpec};
 use super::super::greedy::FlatFace;
-use super::super::vertex::{transition::Transition, BlockLightVertexExt, UV_MODE_NONE};
+use super::super::vertex::{transition::Transition, BlockLightVertexExt};
 use super::cube_face::{
     cube_face_tile, cube_face_uv_turn, face_axes, face_index, facing_face, log_side_cell_uvs,
     log_side_uvs_apply,
@@ -250,21 +250,20 @@ impl SectionMesher<'_> {
         } else {
             &mut self.out.opaque
         };
-        let start = push_cube_face_with_cell_uvs(
+        let start = push_cube_face(
             vbuf,
-            corners,
-            base_tile,
-            overlay,
-            has_overlay,
-            UV_MODE_NONE,
-            log_uvs,
-            uv_turn,
-            tint,
-            face,
-            ao,
-            light6,
-            block6,
-            dyed,
+            &FaceSpec {
+                face,
+                corners,
+                base_tile,
+                overlay,
+                has_overlay,
+                cell_uvs: log_uvs,
+                uv_turn,
+                tint,
+                light: (ao, light6, block6),
+                dyed,
+            },
         );
         // A transition recolours the face; a set may add a biome tint.
         if let Some(plan) = transition {

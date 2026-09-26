@@ -467,7 +467,7 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
                 transition_blocked: &pad.transition_blocked,
                 biome: &biome,
             },
-            petramond_world::texture_transition::rules(),
+            petramond_mesh::MeshContext::global(),
             &|| cancel.is_cancelled(),
         )
     });

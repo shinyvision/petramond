@@ -1,0 +1,13 @@
+[package]
+name = "petramond-persist"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Crash-safe file replacement and byte codecs shared by save and region formats."
+
+[lints]
+workspace = true
+
+[dependencies]
+flate2 = { workspace = true }

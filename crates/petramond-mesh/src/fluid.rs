@@ -9,6 +9,7 @@
 //! `petramond_world::fluid_math`; this module only turns those values into
 //! vertices.
 
+use glam::IVec3;
 use petramond_world::block::Block;
 use petramond_world::tile::Tile;
 
@@ -41,6 +42,15 @@ pub(super) fn side_vs_fluid(full: bool, is_side: bool, neighbour_full: bool) -> 
     }
 }
 
+/// The world reads a fluid surface is shaped from, by world coordinate: the
+/// block at a cell, the same fluid's surface height there (`None` where it is
+/// not that fluid), and whether it is a still source.
+pub(super) struct FluidReads<'r> {
+    pub(super) block_at: &'r dyn Fn(i32, i32, i32) -> Block,
+    pub(super) height_at: &'r dyn Fn(i32, i32, i32) -> Option<f32>,
+    pub(super) still_at: &'r dyn Fn(i32, i32, i32) -> bool,
+}
+
 /// The resolved surface shape of one fluid cell, computed once before its faces
 /// are emitted.
 pub(super) struct FluidSurface {
@@ -60,28 +70,24 @@ pub(super) struct FluidSurface {
 }
 
 impl FluidSurface {
-    /// Compute the surface shape for the fluid cell at world `(wx, wy, wz)`. `full`
-    /// is the cell's `fills_cell` result and `falling` its FALLING meta bit (passed
-    /// in since the caller already has the meta lookup); `block_at`/`fluid_at`
-    /// sample the world for the corner-height average and the flow gradient;
-    /// `block` names the fluid (its row owns the still/flow tiles).
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn new<B, F, S>(
-        wx: i32,
-        wy: i32,
-        wz: i32,
+    /// Compute the surface shape for the `fluid` cell at world `pos`. `full` is
+    /// the cell's `fills_cell` result and `falling` its FALLING meta bit (passed
+    /// in since the caller already has the meta lookup); `reads` sample the
+    /// world for the corner-height average and the flow gradient. The fluid's
+    /// row owns the still/flow tiles.
+    pub(super) fn new(
+        pos: IVec3,
         fluid: Block,
         full: bool,
         falling: bool,
-        block_at: &B,
-        fluid_at: &F,
-        still_at: &S,
-    ) -> Self
-    where
-        B: Fn(i32, i32, i32) -> Block,
-        F: Fn(i32, i32, i32) -> Option<f32>,
-        S: Fn(i32, i32, i32) -> bool,
-    {
+        reads: &FluidReads<'_>,
+    ) -> Self {
+        let IVec3 {
+            x: wx,
+            y: wy,
+            z: wz,
+        } = pos;
+        let fluid_at = reads.height_at;
         // 2x2 corner heights, indexed [cx][cz]: average the up-to-4 same-fluid
         // cells meeting at each corner.
         let mut corner_h = [[1.0f32; 2]; 2];
@@ -105,7 +111,13 @@ impl FluidSurface {
         // current push matches the texture heading.
         let mut top_angle = 0u32;
         let flow = petramond_world::fluid_math::surface_flow_dir(
-            wx, wy, wz, fluid, block_at, fluid_at, still_at,
+            wx,
+            wy,
+            wz,
+            fluid,
+            &reads.block_at,
+            &reads.height_at,
+            &reads.still_at,
         );
         let streams = flow.length_squared() > 0.0;
         if streams {

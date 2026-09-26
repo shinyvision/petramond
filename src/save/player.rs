@@ -19,7 +19,7 @@ use crate::save::palette::Palette;
 use crate::save::wire::{tagged_record, wire_struct, UnknownFields, Wire};
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
-use petramond_util::bytecodec::{put_u32, Reader};
+use petramond_persist::bytecodec::{put_u32, Reader};
 use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
 use petramond_world::item::ItemStack;
 

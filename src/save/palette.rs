@@ -318,7 +318,7 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
         // the palette is active and the palette never changes while a world
         // is open, so every record written this session maps through ids
         // that are already on disk.
-        petramond_util::atomic_file::replace(
+        petramond_persist::atomic_file::replace(
             &path,
             serde_json::to_string_pretty(&file)
                 .expect("serializes")

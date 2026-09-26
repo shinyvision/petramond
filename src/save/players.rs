@@ -123,7 +123,7 @@ impl PlayerFiles {
             );
             return Ok(Some(data));
         }
-        if let Err(e) = petramond_util::atomic_file::sync_dir(&self.players_dir) {
+        if let Err(e) = petramond_persist::atomic_file::sync_dir(&self.players_dir) {
             log::warn!("could not sync the players directory: {e}");
         }
         Ok(Some(data))
@@ -205,7 +205,7 @@ impl PlayerFiles {
             return Ok(false);
         }
         std::fs::create_dir_all(&self.players_dir)?;
-        petramond_util::atomic_file::replace(&self.players_dir.join(PLAYER_REGISTRY_FILE), bytes)?;
+        petramond_persist::atomic_file::replace(&self.players_dir.join(PLAYER_REGISTRY_FILE), bytes)?;
         *written = generation;
         Ok(true)
     }

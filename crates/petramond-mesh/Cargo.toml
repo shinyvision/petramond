@@ -15,7 +15,6 @@ test-support = []
 
 [dependencies]
 petramond-math = { workspace = true }
-petramond-util = { workspace = true }
 petramond-world = { workspace = true }
 bytemuck = { workspace = true }
 glam = { workspace = true }

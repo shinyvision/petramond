@@ -26,7 +26,8 @@ pub mod vertex;
 pub mod visibility;
 
 pub use builder::{
-    build_section_mesh, build_section_mesh_cancellable, build_section_mesh_from_pad, SectionMeshPad,
+    build_section_mesh, build_section_mesh_cancellable, build_section_mesh_from_pad, MeshContext,
+    MeshRegistry, SectionMeshPad, WorldReads,
 };
 pub use builder::{SamplingHalo, FOLIAGE_OVERHANG, SAMPLING_HALO};
 #[cfg(test)]

@@ -237,7 +237,7 @@ pub(super) fn face_lighting(
     let mut light6 = [0u32; 4];
     let mut block6 = [BlockLight6::DARK; 4];
     let flat = fold_light(f_l, f_bl.channels().map(u32::from), SKY_FULL as u32);
-    let (fx, fy, fz) = (front.x, front.y, front.z);
+    let (u, v) = (face.ao_u(), face.ao_v());
     for corner in 0..4 {
         let (su, sv) = signs[corner];
         let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
@@ -249,21 +249,13 @@ pub(super) fn face_lighting(
             || (probe_cell[iu][iv] && !c)
         {
             let pk = corner_cast_probes(face, su, sv, plane);
-            let cell_of = |s_u: i32, s_v: i32| {
-                (
-                    fx + s_u * ux + s_v * vx,
-                    fy + s_u * uy + s_v * vy,
-                    fz + s_u * uz + s_v * vz,
-                )
+            let cell_of = |s_u: i32, s_v: i32| front + u * s_u + v * s_v;
+            // A front-cell-local pocket re-expressed local to ring cell `cl`.
+            let local = |p: [f32; 3], cl: IVec3| {
+                let o = (cl - front).as_vec3();
+                [p[0] - o.x, p[1] - o.y, p[2] - o.z]
             };
-            let local = |p: [f32; 3], cl: (i32, i32, i32)| {
-                [
-                    p[0] - (cl.0 - fx) as f32,
-                    p[1] - (cl.1 - fy) as f32,
-                    p[2] - (cl.2 - fz) as f32,
-                ]
-            };
-            let probe = |cl: (i32, i32, i32), (lo, hi): ([f32; 3], [f32; 3])| {
+            let probe = |cl: IVec3, (lo, hi): ([f32; 3], [f32; 3])| {
                 nb.matter(cl, local(lo, cl), local(hi, cl))
             };
             if probe_cell[iu][1] && !s1 {
@@ -276,7 +268,7 @@ pub(super) fn face_lighting(
                 c = probe(cell_of(su, sv), pk[2]);
             }
             if front_probe {
-                q_int = probe((fx, fy, fz), pk[3]);
+                q_int = probe(front, pk[3]);
             }
         }
         ao[corner] = quad_ao(q_int, s1, s2, c);

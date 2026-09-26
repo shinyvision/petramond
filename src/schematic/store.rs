@@ -263,7 +263,7 @@ fn publish_file(dir: &Path, digest: &Digest, bytes: &[u8]) -> Result<(), String>
     if target.exists() {
         return Ok(());
     }
-    match petramond_util::atomic_file::publish_new(&target, |file| file.write_all(bytes)) {
+    match petramond_persist::atomic_file::publish_new(&target, |file| file.write_all(bytes)) {
         Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => Err(e.to_string()),
         _ => Ok(()),
     }

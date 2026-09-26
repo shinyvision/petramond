@@ -160,6 +160,16 @@ fn test_rules() -> &'static petramond_world::texture_transition::Rules {
     &RULES
 }
 
+/// The context every mesh test builds under: the global block registry's
+/// dispatch tables and [`test_rules`].
+fn test_ctx() -> crate::MeshContext<'static> {
+    crate::MeshContext {
+        content: petramond_world::content::Content::current(),
+        registry: crate::MeshRegistry::global(),
+        rules: test_rules(),
+    }
+}
+
 /// Mesh `section` standalone with overridable skylight and loadedness; all
 /// other lookups answer from the section itself.
 fn mesh_with(
@@ -189,38 +199,43 @@ fn mesh_lit(
     build_section_mesh(
         section,
         SectionPos::new(0, 0, 0),
-        test_rules(),
-        |wx, wy, wz| {
-            if in_section(wx, wy, wz) {
-                section.block_raw(wx as usize, wy as usize, wz as usize)
-            } else {
-                Block::Air.id()
-            }
-        },
-        |wx, wy, wz| {
-            if in_section(wx, wy, wz) {
-                section.cell_state(wx as usize, wy as usize, wz as usize)
-            } else {
-                petramond_world::block::ShapeState::NONE
-            }
-        },
-        |wx, wy, wz| {
-            if in_section(wx, wy, wz) {
-                section.fluid_meta(wx as usize, wy as usize, wz as usize)
-            } else {
-                0
-            }
-        },
-        |_, _| 0,
-        sky,
-        block_light,
-        loaded,
-        |wx, wy, wz| {
-            in_section(wx, wy, wz)
-                && dyed.contains_key(
-                    &(petramond_world::chunk::section_idx(wx as usize, wy as usize, wz as usize)
-                        as u16),
-                )
+        test_ctx(),
+        &crate::WorldReads {
+            block: &|wx, wy, wz| {
+                if in_section(wx, wy, wz) {
+                    section.block_raw(wx as usize, wy as usize, wz as usize)
+                } else {
+                    Block::Air.id()
+                }
+            },
+            cell_state: &|wx, wy, wz| {
+                if in_section(wx, wy, wz) {
+                    section.cell_state(wx as usize, wy as usize, wz as usize)
+                } else {
+                    petramond_world::block::ShapeState::NONE
+                }
+            },
+            fluid_meta: &|wx, wy, wz| {
+                if in_section(wx, wy, wz) {
+                    section.fluid_meta(wx as usize, wy as usize, wz as usize)
+                } else {
+                    0
+                }
+            },
+            biome: &|_, _| 0,
+            skylight: &sky,
+            blocklight: &block_light,
+            loaded: &loaded,
+            dyed: &|wx, wy, wz| {
+                in_section(wx, wy, wz)
+                    && dyed.contains_key(
+                        &(petramond_world::chunk::section_idx(
+                            wx as usize,
+                            wy as usize,
+                            wz as usize,
+                        ) as u16),
+                    )
+            },
         },
     )
 }
@@ -254,15 +269,17 @@ fn mesh_in_scene(
     build_section_mesh(
         section,
         pos,
-        test_rules(),
-        block,
-        |_, _, _| petramond_world::block::ShapeState::NONE,
-        |_, _, _| 0,
-        |_, _| 0,
-        sky,
-        |_, _, _| petramond_world::light::LightRgb::ZERO,
-        |_, _, _| true,
-        |_, _, _| false,
+        test_ctx(),
+        &crate::WorldReads {
+            block: &block,
+            cell_state: &|_, _, _| petramond_world::block::ShapeState::NONE,
+            fluid_meta: &|_, _, _| 0,
+            biome: &|_, _| 0,
+            skylight: &sky,
+            blocklight: &|_, _, _| petramond_world::light::LightRgb::ZERO,
+            loaded: &|_, _, _| true,
+            dyed: &|_, _, _| false,
+        },
     )
 }
 

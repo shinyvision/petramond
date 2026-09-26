@@ -37,28 +37,30 @@ impl Geometry {
             let mesh = petramond_mesh::build_section_mesh(
                 section,
                 *pos,
-                petramond_world::texture_transition::rules(),
-                |x, y, z| {
-                    lookup(x, y, z).map_or(Block::Air.id(), |s| {
-                        s.block((x & 15) as usize, (y & 15) as usize, (z & 15) as usize)
-                            .id()
-                    })
+                petramond_mesh::MeshContext::global(),
+                &petramond_mesh::WorldReads {
+                    block: &|x, y, z| {
+                        lookup(x, y, z).map_or(Block::Air.id(), |s| {
+                            s.block((x & 15) as usize, (y & 15) as usize, (z & 15) as usize)
+                                .id()
+                        })
+                    },
+                    cell_state: &|x, y, z| {
+                        lookup(x, y, z).map_or(ShapeState::NONE, |s| {
+                            s.cell_state((x & 15) as usize, (y & 15) as usize, (z & 15) as usize)
+                        })
+                    },
+                    fluid_meta: &|x, y, z| {
+                        lookup(x, y, z).map_or(0, |s| {
+                            s.fluid_meta((x & 15) as usize, (y & 15) as usize, (z & 15) as usize)
+                        })
+                    },
+                    biome: &|_, _| 0,
+                    skylight: &|_, _, _| petramond_world::chunk::SKY_FULL,
+                    blocklight: &|_, _, _| petramond_world::light::LightRgb::ZERO,
+                    loaded: &|_, _, _| true,
+                    dyed: &|_, _, _| false,
                 },
-                |x, y, z| {
-                    lookup(x, y, z).map_or(ShapeState::NONE, |s| {
-                        s.cell_state((x & 15) as usize, (y & 15) as usize, (z & 15) as usize)
-                    })
-                },
-                |x, y, z| {
-                    lookup(x, y, z).map_or(0, |s| {
-                        s.fluid_meta((x & 15) as usize, (y & 15) as usize, (z & 15) as usize)
-                    })
-                },
-                |_, _| 0,
-                |_, _, _| petramond_world::chunk::SKY_FULL,
-                |_, _, _| petramond_world::light::LightRgb::ZERO,
-                |_, _, _| true,
-                |_, _, _| false,
             );
             for (stream, two_sided) in [
                 (mesh.opaque, false),

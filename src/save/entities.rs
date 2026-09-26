@@ -19,7 +19,7 @@ use crate::save::palette::Palette;
 use crate::save::wire::{tagged_record, wire_struct, UnknownFields, Wire};
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
-use petramond_util::bytecodec::Reader;
+use petramond_persist::bytecodec::Reader;
 
 petramond_math::wire_enum::wire_enum! {
     /// The persisted motion tag. A flight persists WITHOUT its owner (a

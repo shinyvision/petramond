@@ -143,15 +143,17 @@ mod parallel_parity_tests {
             build_section_mesh(
                 section,
                 *pos,
-                test_rules(),
-                nb,
-                |_, _, _| petramond_world::block::ShapeState::NONE,
-                |_, _, _| 0,
-                nb_biome,
-                nb_light,
-                |_, _, _| petramond_world::light::LightRgb::ZERO,
-                |_, _, _| true,
-                |_, _, _| false,
+                test_ctx(),
+                &crate::WorldReads {
+                    block: &nb,
+                    cell_state: &|_, _, _| petramond_world::block::ShapeState::NONE,
+                    fluid_meta: &|_, _, _| 0,
+                    biome: &nb_biome,
+                    skylight: &nb_light,
+                    blocklight: &|_, _, _| petramond_world::light::LightRgb::ZERO,
+                    loaded: &|_, _, _| true,
+                    dyed: &|_, _, _| false,
+                },
             )
         };
 
@@ -400,19 +402,7 @@ fn closure_front_end_meshes_the_pad_the_mesh_pool_would_assemble() {
     let pidx = |x: usize, y: usize, z: usize| (y * PAD + z) * PAD + x;
     let (section, scene) = fixtures::showcase();
     let pos = SectionPos::new(0, 0, 0);
-    let closures = build_section_mesh(
-        &section,
-        pos,
-        test_rules(),
-        &scene.block,
-        &scene.cell_state,
-        &scene.fluid,
-        &scene.biome,
-        &scene.sky,
-        &scene.blocklight,
-        &scene.loaded,
-        &scene.dyed,
-    );
+    let closures = build_section_mesh(&section, pos, test_ctx(), &scene.reads());
 
     let mut blocks = vec![0u16; PAD_VOL];
     let mut fluid = vec![0u8; PAD_VOL];
@@ -459,7 +449,7 @@ fn closure_front_end_meshes_the_pad_the_mesh_pool_would_assemble() {
             transition_blocked: &transition_blocked,
             biome: &biome,
         },
-        test_rules(),
+        test_ctx(),
     );
     assert_same_mesh(&closures, &pad, "closure front end vs assembled pad");
 }

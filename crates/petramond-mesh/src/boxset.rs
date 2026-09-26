@@ -50,6 +50,7 @@
 //! one shared light field, so seams are invisible.
 
 use crate::vertex::BlockLightVertexExt;
+use glam::IVec3;
 use petramond_world::block::Block;
 
 use super::builder::{boundary_plane, face_axes, CornerLight};
@@ -107,16 +108,57 @@ pub(super) const PROBE_REACH: f32 = 1.5 / 16.0;
 
 /// The shared sub-cell AO occupancy oracle: does the world cell's matter
 /// overlap the cell-local pocket AABB `(lo, hi)`?
-pub(super) type MatterFn<'a> = dyn Fn((i32, i32, i32), [f32; 3], [f32; 3]) -> bool + 'a;
+pub(super) type MatterFn<'a> = dyn Fn(IVec3, [f32; 3], [f32; 3]) -> bool + 'a;
 
-/// Fills `out` with a neighbour cell's occupancy boxes (neighbour-local).
-pub(super) type NeighborBoxesFn<'a> = dyn Fn(Face, &mut Vec<([f32; 3], [f32; 3])>) + 'a;
+/// The world around one box-set cell, as the emitter reads it. The mesher
+/// answers it from its neighbourhood; the emitter holds no world knowledge.
+pub(super) trait BoxWorld {
+    /// Whether a full opaque occupier lies across the cell's `face` boundary
+    /// (the classic whole-face cull).
+    fn neighbour_solid(&self, face: Face) -> bool;
 
-/// The mesher's face-lighting gather: `face_light(face, front, plane, smooth)` is
-/// the per-corner light of a `face` plane lying `plane` along the normal from
-/// the `front` world voxel's minimum corner; `smooth = false` lights it flat
-/// from the front voxel.
-pub(super) type FaceLightFn<'a> = dyn Fn(Face, glam::IVec3, f32, bool) -> CornerLight + 'a;
+    /// Push the occupancy boxes of the neighbour across `face`, in
+    /// NEIGHBOUR-local coordinates, for sub-cell boundary culling. May push
+    /// nothing (unknown/none).
+    fn neighbour_boxes(&self, face: Face, out: &mut Vec<([f32; 3], [f32; 3])>);
+
+    /// The shared sub-cell AO occupancy query (world cell + cell-local
+    /// pocket AABB) — the out-of-cell probe resolution AND the plane
+    /// gather's cast probe, so box shapes receive neighbour casting with
+    /// exactly the cube faces' semantics.
+    fn matter(&self, cell: IVec3, lo: [f32; 3], hi: [f32; 3]) -> bool;
+
+    /// The mesher's face-lighting gather: the per-corner light of a `face`
+    /// plane lying `plane` along the normal from the `front` world voxel's
+    /// minimum corner; `smooth = false` lights it flat from the front voxel.
+    fn face_light(&self, face: Face, front: IVec3, plane: f32, smooth: bool) -> CornerLight;
+}
+
+/// Where a box-set cell sits: its world cell, and the mesh-space origin the
+/// emitted positions are relative to.
+#[derive(Copy, Clone)]
+pub(super) struct BoxCell {
+    pub(super) cell: IVec3,
+    pub(super) anchor: IVec3,
+}
+
+impl BoxCell {
+    /// A cell-local point in mesh space.
+    #[inline]
+    fn mesh_pos(self, local: [f32; 3]) -> [f32; 3] {
+        let base = (self.cell - self.anchor).as_vec3();
+        [base.x + local[0], base.y + local[1], base.z + local[2]]
+    }
+}
+
+/// One face plane of a box: its axes (`face_axes`), which way it faces, and
+/// its cell-local coordinate along the normal.
+#[derive(Copy, Clone)]
+struct FacePlane {
+    axes: (usize, usize, usize),
+    positive: bool,
+    d: f32,
+}
 
 /// Reusable scratch for [`emit_box_set`] — one per mesh build, so the hot
 /// loop allocates nothing after warm-up.
@@ -135,33 +177,16 @@ pub(super) struct BoxSetScratch {
     planes: Vec<(f32, PlaneLight)>,
 }
 
-/// Mesh one cell's box set. See the module doc for the model.
-///
-/// - `neighbor_solid(face)`: full opaque occupier across that boundary (the
-///   classic whole-face cull).
-/// - `neighbor_boxes(face, out)`: the neighbour cell's own occupancy boxes in
-///   NEIGHBOUR-local coordinates, for sub-cell boundary culling. May push
-///   nothing (unknown/none).
-/// - `matter(cell, lo, hi)`: the shared sub-cell AO occupancy query (world
-///   cell + cell-local pocket AABB) — the out-of-cell probe resolution AND
-///   the plane gather's cast probe, so box shapes receive neighbour casting
-///   with exactly the cube faces' semantics.
-/// - `face_light`: the face-lighting gather every plane is lit through.
-/// - `anchor`: the mesh-space origin the emitted positions are relative to.
-#[allow(clippy::too_many_arguments)]
+/// Mesh one cell's box set. See the module doc for the model; `world`
+/// answers every read beyond the cell's own boxes.
 pub(super) fn emit_box_set(
     vbuf: &mut Vec<Vertex>,
-    wx: i32,
-    wy: i32,
-    wz: i32,
-    anchor: glam::IVec3,
+    at: BoxCell,
     boxes: &[ShapeBox],
     scratch: &mut BoxSetScratch,
-    neighbor_solid: &dyn Fn(Face) -> bool,
-    neighbor_boxes: &NeighborBoxesFn,
-    matter: &MatterFn,
-    face_light: &FaceLightFn,
+    world: &dyn BoxWorld,
 ) {
+    let matter = |cell: IVec3, lo: [f32; 3], hi: [f32; 3]| world.matter(cell, lo, hi);
     for face in FACES {
         let fi = face as usize;
         let (axis, ua, va) = face_axes(face);
@@ -176,16 +201,7 @@ pub(super) fn emit_box_set(
         for (i, b) in boxes.iter().enumerate() {
             let Some(style) = b.faces[fi] else { continue };
             if let Some(pose) = b.pose {
-                emit_posed_face(
-                    vbuf,
-                    (wx, wy, wz),
-                    anchor,
-                    b,
-                    &pose,
-                    face,
-                    &style,
-                    face_light,
-                );
+                emit_posed_face(vbuf, at, b, &pose, face, &style, world);
                 continue;
             }
             let d = if positive {
@@ -198,7 +214,7 @@ pub(super) fn emit_box_set(
             if flush {
                 let s = match solid {
                     Some(s) => s,
-                    None => *solid.insert(neighbor_solid(face)),
+                    None => *solid.insert(world.neighbour_solid(face)),
                 };
                 if s {
                     continue;
@@ -206,7 +222,7 @@ pub(super) fn emit_box_set(
                 if !nb_fetched {
                     nb_fetched = true;
                     scratch.nb.clear();
-                    neighbor_boxes(face, &mut scratch.nb);
+                    world.neighbour_boxes(face, &mut scratch.nb);
                 }
             }
 
@@ -218,6 +234,11 @@ pub(super) fn emit_box_set(
             };
 
             // Everything covering the space just in front of this face.
+            let face_plane = FacePlane {
+                axes: (axis, ua, va),
+                positive,
+                d,
+            };
             scratch.occ.clear();
             for (j, o) in boxes.iter().enumerate() {
                 // A posed sibling lies on no axis plane: it can neither seal
@@ -225,11 +246,8 @@ pub(super) fn emit_box_set(
                 if j != i && o.pose.is_none() {
                     push_occluder(
                         &mut scratch.occ,
-                        o.aabb.min,
-                        o.aabb.max,
-                        (axis, ua, va),
-                        positive,
-                        d,
+                        (o.aabb.min, o.aabb.max),
+                        face_plane,
                         // The coincidence tie-break only settles WHICH of two
                         // boxes draws a shared plane. A box that never emits
                         // this face has no claim on it and must not suppress
@@ -248,16 +266,7 @@ pub(super) fn emit_box_set(
                     let mut smax = nmax;
                     smin[axis] += shift;
                     smax[axis] += shift;
-                    push_occluder(
-                        &mut scratch.occ,
-                        smin,
-                        smax,
-                        (axis, ua, va),
-                        positive,
-                        d,
-                        false,
-                        &rect,
-                    );
+                    push_occluder(&mut scratch.occ, (smin, smax), face_plane, false, &rect);
                 }
             }
 
@@ -273,14 +282,13 @@ pub(super) fn emit_box_set(
             }
 
             if !scratch.planes.iter().any(|(pd, _)| (pd - d).abs() <= T) {
-                let cell = glam::IVec3::new(wx, wy, wz);
-                let front = if flush { cell + face.dir() } else { cell };
+                let front = if flush { at.cell + face.dir() } else { at.cell };
                 // The gather's probe pockets sit ON the face plane, measured
                 // from the front cell — the voxel boundary when flush, the
                 // box's own plane height when interior (a slab top's pockets
                 // at 0.5, not the cell floor).
                 let plane = if flush { boundary_plane(face) } else { d };
-                let (ao, sky, block) = face_light(
+                let (ao, sky, block) = world.face_light(
                     face,
                     front,
                     plane,
@@ -311,7 +319,7 @@ pub(super) fn emit_box_set(
                 let local = face.quad_box(min3, max3);
 
                 // The corner rotation that expresses the darker AO diagonal
-                // (see `face_emit::push_cube_face_with_cell_uvs`) needs every
+                // (see `face_emit::push_cube_face`) needs every
                 // corner's AO before any vertex is written, so the corners are
                 // sampled first and emitted second.
                 let mut quad_ao = [3u32; 4];
@@ -321,15 +329,7 @@ pub(super) fn emit_box_set(
                 for (ci, lp) in local.into_iter().enumerate() {
                     let [u, v] = cell_uv(face, lp);
                     let (mut ao, sky6, block) = pl.sample(u, v);
-                    ao = ao.min(probe_ao(
-                        boxes,
-                        lp,
-                        (axis, ua, va),
-                        positive,
-                        &r,
-                        (wx, wy, wz),
-                        matter,
-                    ));
+                    ao = ao.min(probe_ao(boxes, lp, face_plane, &r, at.cell, &matter));
                     if b.ao_strength < 1.0 {
                         // Scale the DARKENING, not the value: 3 stays 3, and
                         // strength 0 lifts every corner to full brightness.
@@ -347,13 +347,8 @@ pub(super) fn emit_box_set(
                 let rot = usize::from(should_flip(quad_ao));
                 for k in 0..4usize {
                     let ci = (k + rot) & 3;
-                    let lp = local[ci];
                     vbuf.push(Vertex {
-                        pos: [
-                            (wx - anchor.x) as f32 + lp[0],
-                            (wy - anchor.y) as f32 + lp[1],
-                            (wz - anchor.z) as f32 + lp[2],
-                        ],
+                        pos: at.mesh_pos(local[ci]),
                         tint: light[ci].tint_word(style.tint),
                         packed: pack_vertex(
                             style.tile.index() as u32,
@@ -400,16 +395,14 @@ fn quant_uv(x: f32) -> u32 {
 /// plate shades like the axis face it most resembles and blends toward the
 /// cell's light at its edges. The sub-cell corner probes are axis-aligned by
 /// construction and are skipped; the plane's own ring AO still applies.
-#[allow(clippy::too_many_arguments)]
 fn emit_posed_face(
     vbuf: &mut Vec<Vertex>,
-    (wx, wy, wz): (i32, i32, i32),
-    anchor: glam::IVec3,
+    at: BoxCell,
     b: &ShapeBox,
     pose: &petramond_world::block::BoxPose,
     face: Face,
     style: &ShapeFace,
-    face_light: &FaceLightFn,
+    world: &dyn BoxWorld,
 ) {
     let (_, ua, va) = face_axes(face);
     // The edge faces of a flat plane have no area.
@@ -424,12 +417,7 @@ fn emit_posed_face(
         .iter()
         .fold(0.0f32, |acc, p| acc + p[laxis] * 0.25)
         .clamp(0.0, 1.0);
-    let (ao, sky6, block6) = face_light(
-        lit,
-        glam::IVec3::new(wx, wy, wz),
-        centre,
-        lit != Face::NegY,
-    );
+    let (ao, sky6, block6) = world.face_light(lit, at.cell, centre, lit != Face::NegY);
     let pl = PlaneLight {
         ao,
         sky: sky6,
@@ -461,13 +449,8 @@ fn emit_posed_face(
     let rot = usize::from(should_flip(quad_ao));
     for k in 0..4usize {
         let ci = (k + rot) & 3;
-        let p = posed[ci];
         vbuf.push(Vertex {
-            pos: [
-                (wx - anchor.x) as f32 + p[0],
-                (wy - anchor.y) as f32 + p[1],
-                (wz - anchor.z) as f32 + p[2],
-            ],
+            pos: at.mesh_pos(posed[ci]),
             tint: light[ci].tint_word(style.tint),
             packed: pack_vertex(
                 style.tile.index() as u32,
@@ -686,17 +669,18 @@ fn covers_boundary(boxes: &[ShapeBox], face: Face, scratch: &mut BoxSetScratch) 
 /// buffer stops separating them, which only shows AT DISTANCE. So a pack shape
 /// built from overlapping boxes should BUTT them instead; the furniture
 /// cauldron's belly plates were the case that taught this (2026-07-30).
-#[allow(clippy::too_many_arguments)]
 fn push_occluder(
     occ: &mut Vec<Rect>,
-    omin: [f32; 3],
-    omax: [f32; 3],
-    (axis, ua, va): (usize, usize, usize),
-    positive: bool,
-    d: f32,
+    (omin, omax): ([f32; 3], [f32; 3]),
+    plane: FacePlane,
     earlier: bool,
     rect: &Rect,
 ) {
+    let FacePlane {
+        axes: (axis, ua, va),
+        positive,
+        d,
+    } = plane;
     let (lo, hi) = (omin[axis], omax[axis]);
     let hides = if positive {
         ((lo - d).abs() <= T && hi > d + T) || (earlier && (hi - d).abs() <= T && lo < d - T)
@@ -825,12 +809,16 @@ fn subtract(
 fn probe_ao(
     boxes: &[ShapeBox],
     corner: [f32; 3],
-    (axis, ua, va): (usize, usize, usize),
-    positive: bool,
+    plane: FacePlane,
     rect: &Rect,
-    wcell: (i32, i32, i32),
+    wcell: IVec3,
     matter: &MatterFn,
 ) -> u32 {
+    let FacePlane {
+        axes: (axis, ua, va),
+        positive,
+        ..
+    } = plane;
     let su = if corner[ua] - rect.u0 < rect.u1 - corner[ua] {
         -PROBE_REACH
     } else {
@@ -891,7 +879,7 @@ fn probe_ao(
                     if zh - zl <= T || (ox, oy, oz) == (0, 0, 0) {
                         continue;
                     }
-                    let cl = (wcell.0 + ox, wcell.1 + oy, wcell.2 + oz);
+                    let cl = wcell + IVec3::new(ox, oy, oz);
                     let off = [ox as f32, oy as f32, oz as f32];
                     if matter(
                         cl,

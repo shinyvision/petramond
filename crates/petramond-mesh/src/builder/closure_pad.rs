@@ -15,16 +15,16 @@ use super::pad::{
 
 /// The world around a section, as world-coordinate reads. Out-of-world and
 /// unloaded reads answer whatever the caller defines (air, open sky...).
-pub(crate) struct WorldReads<'r> {
-    pub(crate) block: &'r dyn Fn(i32, i32, i32) -> u16,
-    pub(crate) cell_state: &'r dyn Fn(i32, i32, i32) -> ShapeState,
-    pub(crate) fluid_meta: &'r dyn Fn(i32, i32, i32) -> u8,
-    pub(crate) biome: &'r dyn Fn(i32, i32) -> u8,
-    pub(crate) skylight: &'r dyn Fn(i32, i32, i32) -> u8,
-    pub(crate) blocklight: &'r dyn Fn(i32, i32, i32) -> LightRgb,
-    pub(crate) loaded: &'r dyn Fn(i32, i32, i32) -> bool,
+pub struct WorldReads<'r> {
+    pub block: &'r dyn Fn(i32, i32, i32) -> u16,
+    pub cell_state: &'r dyn Fn(i32, i32, i32) -> ShapeState,
+    pub fluid_meta: &'r dyn Fn(i32, i32, i32) -> u8,
+    pub biome: &'r dyn Fn(i32, i32) -> u8,
+    pub skylight: &'r dyn Fn(i32, i32, i32) -> u8,
+    pub blocklight: &'r dyn Fn(i32, i32, i32) -> LightRgb,
+    pub loaded: &'r dyn Fn(i32, i32, i32) -> bool,
     /// Whether a cell carries a dye tint (a transition exclusion).
-    pub(crate) dyed: &'r dyn Fn(i32, i32, i32) -> bool,
+    pub dyed: &'r dyn Fn(i32, i32, i32) -> bool,
 }
 
 /// An owned pad sampled from [`WorldReads`].

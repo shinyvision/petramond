@@ -26,7 +26,7 @@ pub(super) struct Scene {
 }
 
 impl Scene {
-    fn reads(&self) -> WorldReads<'_> {
+    pub(super) fn reads(&self) -> WorldReads<'_> {
         WorldReads {
             block: &self.block,
             cell_state: &self.cell_state,
@@ -43,13 +43,13 @@ impl Scene {
     /// its one-cell pad is sampled from the scene's reads, then meshed with
     /// the exposure-mask fast path.
     pub(super) fn mesh(&self, section: &Section, pos: SectionPos) -> ChunkMesh {
-        build_section_mesh_with(section, pos, test_rules(), &self.reads(), true)
+        build_section_mesh_with(section, pos, test_ctx(), &self.reads(), true)
     }
 
     /// [`Self::mesh`] with every cube face culled by asking its front cell —
     /// the reference the fast path must reproduce byte for byte.
     pub(super) fn mesh_per_face(&self, section: &Section, pos: SectionPos) -> ChunkMesh {
-        build_section_mesh_with(section, pos, test_rules(), &self.reads(), false)
+        build_section_mesh_with(section, pos, test_ctx(), &self.reads(), false)
     }
 }
 

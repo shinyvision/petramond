@@ -10,6 +10,6 @@ description = "Region-file container for section records, shared by the save lay
 workspace = true
 
 [dependencies]
-petramond-util = { workspace = true }
+petramond-persist = { workspace = true }
 petramond-world = { workspace = true }
 rustc-hash = { workspace = true }

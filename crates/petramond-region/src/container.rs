@@ -8,8 +8,8 @@ use std::path::Path;
 
 use rustc_hash::FxHashMap;
 
-use petramond_util::atomic_file::{self, Durability};
-use petramond_util::bytecodec::{read_u16, read_u32, Reader};
+use petramond_persist::atomic_file::{self, Durability};
+use petramond_persist::bytecodec::{read_u16, read_u32, Reader};
 
 const MAGIC_V2: u32 = 0x3252_434C; // "LCR2" little-endian
 const MAGIC_V3: u32 = 0x3352_434C; // "LCR3" little-endian

@@ -15,48 +15,18 @@ use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE};
 use petramond_world::section::Section;
 use petramond_world::texture_transition::Rules;
 
-use super::super::boxset::BoxSetScratch;
-use super::super::greedy::{emit_greedy_quads, GreedyScratch, GREEDY};
+use super::super::greedy::{emit_greedy_quads, GreedyScratch};
 use super::super::tint;
-use super::super::vertex::{ChunkMesh, ContactShadowVertex, ModelVertex, Vertex};
-use super::cell_class::{
-    cell_classes, class_of, emitter_of, emitters, FAST_CUBE, FLUID, SKIP,
-};
+use super::super::vertex::ChunkMesh;
+use super::cell_class::{FAST_CUBE, FLUID, SKIP};
 use super::cell_tint::CellTinting;
 use super::exposed_masks::{build_exposed_masks, ExposedMasks, VISIT_ALL};
 use super::families::BoxesOutcome;
 use super::neighbourhood::Neighbourhood;
 use super::pad::SectionMeshPad;
+use super::scratch::{BoxBuffers, MeshScratch, ScratchLease, Streams};
 use super::transition;
-
-/// Every vertex stream one section build fills.
-#[derive(Default)]
-pub(super) struct Streams {
-    pub(super) opaque: Vec<Vertex>,
-    /// Leaf faces that sit against another cell of the SAME leaves. They are
-    /// the ONLY thing the far (simplified-canopy) LOD drops, so they are
-    /// emitted into their own buffer and appended to `opaque` last — which
-    /// makes the far LOD exactly the opaque stream's leading prefix, built in
-    /// this one traversal instead of a second whole-section pass.
-    pub(super) leaf_interior: Vec<Vertex>,
-    pub(super) transparent: Vec<Vertex>,
-    pub(super) transparent_two_sided: Vec<Vertex>,
-    pub(super) translucent: Vec<Vertex>,
-    pub(super) model: Vec<ModelVertex>,
-    pub(super) model_idx: Vec<u32>,
-    pub(super) model_blend_idx: Vec<u32>,
-    pub(super) contact: Vec<ContactShadowVertex>,
-}
-
-/// The box-set emitter's reusable buffers.
-#[derive(Default)]
-pub(super) struct BoxBuffers {
-    pub(super) scratch: BoxSetScratch,
-    /// The cell's own resolved boxes.
-    pub(super) cell: Vec<ShapeBox>,
-    /// The snow blanket a `snow_bedded` cell is drawn standing in.
-    pub(super) bed: Vec<ShapeBox>,
-}
+use super::MeshContext;
 
 /// One cell the scan hands to an emitter.
 #[derive(Copy, Clone)]
@@ -85,11 +55,11 @@ pub(super) struct SectionMesher<'a> {
     /// identically however far out it lies; the draw adds the column's integer
     /// origin back relative to the camera.
     pub(super) anchor: IVec3,
-    pub(super) out: Streams,
-    pub(super) boxes: BoxBuffers,
+    pub(super) out: &'a mut Streams,
+    pub(super) boxes: &'a mut BoxBuffers,
     /// Flat opaque cube faces deferred during the scan, merged into tiled
     /// quads after it.
-    pub(super) greedy: GreedyScratch,
+    pub(super) greedy: &'a mut GreedyScratch,
     pub(super) greedy_gen: u32,
 }
 
@@ -99,44 +69,51 @@ pub(super) struct SectionMesher<'a> {
 /// [`Neighbourhood::covers_face`] instead, which must give byte-identical
 /// output — the parity the mesher tests hold the fast path to. `None` when
 /// `cancelled` fires between section rows.
+///
+/// Every buffer comes from this thread's leased [`MeshScratch`], which goes
+/// back to the thread on every exit path.
 pub(super) fn mesh_section(
     section: &Section,
     pos: SectionPos,
     pad: &SectionMeshPad<'_>,
-    rules: &Rules,
+    ctx: MeshContext<'_>,
     cancelled: &dyn Fn() -> bool,
     exposure_masks: bool,
 ) -> Option<ChunkMesh> {
     let (ox, oy, oz) = pos.origin_world();
-    let biome = transition::needs_tint(section, rules)
+    let biome = transition::needs_tint(section, ctx.rules)
         .then(|| tint::biome_window(ox, oz, |wx, wz| pad.biome_world(ox, oz, wx, wz)));
-    // Reused per-thread greedy scratch: taken out and put back so meshing
-    // allocates nothing.
-    let mut greedy = GREEDY.with(|g| g.replace(GreedyScratch::new()));
+    let mut lease = ScratchLease::take();
+    let MeshScratch {
+        greedy,
+        boxes,
+        neighbour,
+        out,
+    } = &mut *lease;
     let greedy_gen = greedy.begin();
     let mut mesher = SectionMesher {
         section,
-        nb: Neighbourhood::new(pad, section, IVec3::new(ox, oy, oz)),
-        rules,
+        nb: Neighbourhood::new(
+            pad,
+            section,
+            IVec3::new(ox, oy, oz),
+            ctx.registry,
+            neighbour,
+        ),
+        rules: ctx.rules,
         tints: CellTinting::new(section, biome),
         anchor: IVec3::new(ox, 0, oz),
-        out: Streams::default(),
-        boxes: BoxBuffers::default(),
+        out,
+        boxes,
         greedy,
         greedy_gen,
     };
     let masks = exposure_masks.then(|| build_exposed_masks(&mesher.nb));
-    let finished = mesher.scan(masks.as_ref(), cancelled);
-    let SectionMesher {
-        mut out,
-        mut greedy,
-        ..
-    } = mesher;
-    if finished {
-        emit_greedy_quads(&mut greedy, &mut out.opaque, IVec3::new(0, oy, 0));
+    if !mesher.scan(masks.as_ref(), cancelled) {
+        return None;
     }
-    GREEDY.with(|g| *g.borrow_mut() = greedy);
-    finished.then(|| finish(out))
+    emit_greedy_quads(mesher.greedy, &mut mesher.out.opaque, IVec3::new(0, oy, 0));
+    Some(finish(mesher.out))
 }
 
 impl SectionMesher<'_> {
@@ -147,8 +124,7 @@ impl SectionMesher<'_> {
     /// cancelled.
     fn scan(&mut self, masks: Option<&ExposedMasks>, cancelled: &dyn Fn() -> bool) -> bool {
         let visit = masks.map_or(&VISIT_ALL, ExposedMasks::visit_rows);
-        let classes = cell_classes();
-        let table = emitters();
+        let registry = self.nb.registry();
         let origin = self.nb.origin();
         for ly in 0..SECTION_SIZE {
             if cancelled() {
@@ -165,7 +141,7 @@ impl SectionMesher<'_> {
                         // (see `cell_class`): the class byte skips air and rows
                         // drawn outside the chunk mesh, the emitter table names
                         // the family.
-                        let class = class_of(classes, block.id());
+                        let class = registry.cell_class(block.id());
                         if class & SKIP != 0 {
                             continue;
                         }
@@ -179,7 +155,7 @@ impl SectionMesher<'_> {
                             idx: section_idx(lx, ly, lz),
                             column: lz * SECTION_SIZE + lx,
                         };
-                        self.emit_cell(&cell, class, emitter_of(table, block.id()), masks);
+                        self.emit_cell(&cell, class, registry.emitter(block.id()), masks);
                     }
                 }
             }
@@ -219,26 +195,28 @@ impl SectionMesher<'_> {
     }
 }
 
-/// Close a finished build: the far LOD is everything emitted so far and the
-/// leaf internals follow it. A section with none of them has no far LOD to
-/// offer (0 = "no far mesh").
-fn finish(mut out: Streams) -> ChunkMesh {
+/// Close a finished build into exact-size copies of the scratch streams: the
+/// far LOD is everything emitted so far and the leaf internals follow it. A
+/// section with none of them has no far LOD to offer (0 = "no far mesh").
+fn finish(out: &Streams) -> ChunkMesh {
     let far_opaque_len = if out.leaf_interior.is_empty() {
         0
     } else {
         out.opaque.len() as u32
     };
-    out.opaque.append(&mut out.leaf_interior);
+    let mut opaque = Vec::with_capacity(out.opaque.len() + out.leaf_interior.len());
+    opaque.extend_from_slice(&out.opaque);
+    opaque.extend_from_slice(&out.leaf_interior);
     ChunkMesh {
-        opaque: out.opaque,
+        opaque,
         far_opaque_len,
-        transparent: out.transparent,
-        transparent_two_sided: out.transparent_two_sided,
-        translucent: out.translucent,
-        model: out.model,
-        model_idx: out.model_idx,
-        model_blend_idx: out.model_blend_idx,
-        contact: out.contact,
+        transparent: out.transparent.to_vec(),
+        transparent_two_sided: out.transparent_two_sided.to_vec(),
+        translucent: out.translucent.to_vec(),
+        model: out.model.to_vec(),
+        model_idx: out.model_idx.to_vec(),
+        model_blend_idx: out.model_blend_idx.to_vec(),
+        contact: out.contact.to_vec(),
         mesh_dirty: true,
         ..ChunkMesh::empty()
     }

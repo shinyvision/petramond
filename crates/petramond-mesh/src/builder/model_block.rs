@@ -6,6 +6,46 @@ use petramond_world::facing::Facing;
 use super::super::face::Face;
 use super::super::vertex::{ContactShadowVertex, ModelVertex};
 
+/// The model streams a bbmodel cell lands in: one shared vertex buffer and
+/// its opaque and alpha-blend index streams.
+pub(super) struct ModelStreams<'m> {
+    pub(super) verts: &'m mut Vec<ModelVertex>,
+    pub(super) indices: &'m mut Vec<u32>,
+    pub(super) blend_indices: &'m mut Vec<u32>,
+}
+
+/// One placed bbmodel cell: which model, which of its footprint cells (the
+/// authored offset), how it is turned, and where it sits — its world cell and
+/// the mesh-space origin positions are relative to.
+#[derive(Copy, Clone)]
+pub(super) struct PlacedModelCell {
+    pub(super) kind: BlockModelKind,
+    pub(super) offset: [u8; 3],
+    pub(super) facing: Facing,
+    pub(super) cell: IVec3,
+    pub(super) anchor: IVec3,
+}
+
+impl PlacedModelCell {
+    /// The rotated footprint base in mesh space: the chunk stores the authored
+    /// cell offset + placed facing, and together those resolve it. Templates
+    /// are baked relative to that base, so placing a cell is one translate per
+    /// vertex.
+    fn mesh_base(self) -> Vec3 {
+        let base = block_model::base_from_cell(self.cell, self.kind, self.offset, self.facing);
+        (base - self.anchor).as_vec3()
+    }
+}
+
+/// How a model cell's copied runs are finished: the mesh-space translate, the
+/// packed cell light, and the tint its tinted faces take.
+#[derive(Copy, Clone)]
+struct RunStyle {
+    basef: Vec3,
+    light: u32,
+    tint: u32,
+}
+
 /// Stream one bbmodel-block cell's geometry into the `model` buffers: copy the cell's
 /// startup-baked template (positions already taken through the cube rotation + placement
 /// facing) translated to its base in mesh space (relative to `anchor`), carrying the cell's sky light and its
@@ -19,45 +59,25 @@ use super::super::vertex::{ContactShadowVertex, ModelVertex};
 /// neighbour is opaque and the run is skipped). Blend-routed segments (faces
 /// with semi-transparent texels) index into `blend_indices` — the same shared
 /// vertex buffer, drawn later by the alpha-blend pass.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_model_block(
-    verts: &mut Vec<ModelVertex>,
-    indices: &mut Vec<u32>,
-    blend_indices: &mut Vec<u32>,
-    kind: BlockModelKind,
-    offset: [u8; 3],
-    facing: Facing,
-    wx: i32,
-    wy: i32,
-    wz: i32,
-    anchor: IVec3,
+    out: ModelStreams<'_>,
+    at: PlacedModelCell,
     sky6: u32,
     block: petramond_world::light::BlockLight6,
     parts: u32,
     tint: u32,
     cull: impl Fn(Face) -> bool,
 ) {
-    let inst = block_model::instance(kind);
-    let Some(tmpl) = inst.cell_template(offset, facing) else {
+    let inst = block_model::instance(at.kind);
+    let Some(tmpl) = inst.cell_template(at.offset, at.facing) else {
         return;
     };
-    // The chunk stores the authored cell offset + placed facing; together those resolve the
-    // rotated footprint base. The template's vertices are baked relative to that base, so
-    // placing the cell is one translate per vertex.
-    let base = block_model::base_from_cell(IVec3::new(wx, wy, wz), kind, offset, facing);
-    let basef = (base - anchor).as_vec3();
-    let light = super::super::vertex::pack_model_light(sky6, block);
-    emit_segments(
-        tmpl,
-        basef,
-        light,
-        parts,
+    let style = RunStyle {
+        basef: at.mesh_base(),
+        light: super::super::vertex::pack_model_light(sky6, block),
         tint,
-        &cull,
-        verts,
-        indices,
-        blend_indices,
-    );
+    };
+    emit_segments(tmpl, style, parts, &cull, out);
 }
 
 /// The gate + route core of [`emit_model_block`]: each segment is gated on its
@@ -67,18 +87,18 @@ pub(super) fn emit_model_block(
 /// so an arbitrary parts mask / neighbour configuration is a handful of slice
 /// copies — and every index is rebased onto this emission's own vertex
 /// numbering, since the runs are no longer adjacent.
-#[allow(clippy::too_many_arguments)]
 fn emit_segments(
     tmpl: &block_model::ModelCellTemplate,
-    basef: Vec3,
-    light: u32,
+    style: RunStyle,
     parts: u32,
-    tint: u32,
     cull: &dyn Fn(Face) -> bool,
-    verts: &mut Vec<ModelVertex>,
-    indices: &mut Vec<u32>,
-    blend_indices: &mut Vec<u32>,
+    out: ModelStreams<'_>,
 ) {
+    let ModelStreams {
+        verts,
+        indices,
+        blend_indices,
+    } = out;
     for seg in &tmpl.segments {
         if let Some(p) = seg.part {
             if parts & (1 << p) == 0 {
@@ -95,7 +115,7 @@ fn emit_segments(
         } else {
             &mut *indices
         };
-        copy_run(tmpl, &seg.run, basef, light, tint, verts, dst);
+        copy_run(tmpl, &seg.run, style, verts, dst);
     }
 }
 
@@ -109,12 +129,11 @@ fn emit_segments(
 fn copy_run(
     tmpl: &block_model::ModelCellTemplate,
     run: &block_model::PartRun,
-    basef: Vec3,
-    light: u32,
-    tint: u32,
+    style: RunStyle,
     verts: &mut Vec<ModelVertex>,
     indices: &mut Vec<u32>,
 ) {
+    let RunStyle { basef, light, tint } = style;
     if run.vert_len == 0 {
         return;
     }
@@ -142,28 +161,20 @@ fn copy_run(
 /// dilation ring — is gated INDIVIDUALLY through `supports_stamp(x, z)` on the
 /// stamped cell's own column, which is what lets the shadow cross onto the
 /// grass next to the model while an unsupported neighbouring cell still clips
-/// it. Every stamped cell is within ±1 of `(wx, wz)` by construction, so the
-/// gate's reads stay inside the mesh pad.
-#[allow(clippy::too_many_arguments)]
+/// it. Every stamped cell is within ±1 of the cell's column by construction,
+/// so the gate's reads stay inside the mesh pad.
 pub(super) fn emit_model_contact(
     contact: &mut Vec<ContactShadowVertex>,
-    kind: BlockModelKind,
-    offset: [u8; 3],
-    facing: Facing,
-    wx: i32,
-    wy: i32,
-    wz: i32,
-    anchor: IVec3,
+    at: PlacedModelCell,
     supports_stamp: impl Fn(i32, i32) -> bool,
 ) {
-    let inst = block_model::instance(kind);
-    let Some(tmpl) = inst.contact_template(offset, facing) else {
+    let inst = block_model::instance(at.kind);
+    let Some(tmpl) = inst.contact_template(at.offset, at.facing) else {
         return;
     };
-    let base = block_model::base_from_cell(IVec3::new(wx, wy, wz), kind, offset, facing);
-    let basef = (base - anchor).as_vec3();
+    let basef = at.mesh_base();
     for piece in &tmpl.pieces {
-        if !supports_stamp(wx + piece.cell_delta[0], wz + piece.cell_delta[1]) {
+        if !supports_stamp(at.cell.x + piece.cell_delta[0], at.cell.z + piece.cell_delta[1]) {
             continue;
         }
         contact.extend(piece.verts.iter().map(|v| ContactShadowVertex {
@@ -257,7 +268,12 @@ mod tests {
                     .iter()
                     .map(|&i| tmpl.verts[i as usize].pos.x),
             );
-            copy_run(&tmpl, &seg.run, Vec3::ZERO, 0, 0, &mut verts, &mut indices);
+            let style = RunStyle {
+                basef: Vec3::ZERO,
+                light: 0,
+                tint: 0,
+            };
+            copy_run(&tmpl, &seg.run, style, &mut verts, &mut indices);
         }
         (verts, indices, want)
     }
@@ -357,14 +373,18 @@ mod tests {
             let (mut verts, mut indices, mut blend) = (Vec::new(), Vec::new(), Vec::new());
             emit_segments(
                 &tmpl,
-                Vec3::ZERO,
-                0,
-                0,
+                RunStyle {
+                    basef: Vec3::ZERO,
+                    light: 0,
+                    tint: 0,
+                },
                 0,
                 cull,
-                &mut verts,
-                &mut indices,
-                &mut blend,
+                ModelStreams {
+                    verts: &mut verts,
+                    indices: &mut indices,
+                    blend_indices: &mut blend,
+                },
             );
             (
                 indices
@@ -394,14 +414,18 @@ mod tests {
         let (mut verts, mut indices, mut blend) = (Vec::new(), Vec::new(), Vec::new());
         emit_segments(
             &tmpl,
-            Vec3::ZERO,
-            0,
-            0,
+            RunStyle {
+                basef: Vec3::ZERO,
+                light: 0,
+                tint: 0,
+            },
             0,
             &|_| false,
-            &mut verts,
-            &mut indices,
-            &mut blend,
+            ModelStreams {
+                verts: &mut verts,
+                indices: &mut indices,
+                blend_indices: &mut blend,
+            },
         );
         assert_eq!(verts.len(), 12, "both streams share one vertex emission");
         assert!(blend.iter().all(|&i| (i as usize) < verts.len()));

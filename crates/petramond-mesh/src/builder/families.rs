@@ -7,13 +7,14 @@ use petramond_world::block::{Block, PlantPlanes, ShapeBox};
 use petramond_world::chunk::SKY_FULL;
 use petramond_world::tile::Tile;
 
-use super::super::boxset::{emit_box_set, snow_bed_boxes, BoxSetScratch};
+use super::super::boxset::{emit_box_set, snow_bed_boxes, BoxCell, BoxSetScratch, BoxWorld};
 use super::super::face::Face;
+use super::super::face_emit::FlatLit;
 use super::super::vertex::Vertex;
 use super::fluid_faces::{emit_fluid_cell, FluidStreams};
-use super::lighting::{cell_light, face_lighting};
+use super::lighting::{cell_light, face_lighting, CornerLight};
 use super::mesher::{Cell, SectionMesher};
-use super::model_block::{emit_model_block, emit_model_contact};
+use super::model_block::{emit_model_block, emit_model_contact, ModelStreams, PlacedModelCell};
 use super::neighbourhood::Neighbourhood;
 use super::plant::emit_plant;
 
@@ -28,32 +29,48 @@ pub(super) enum BoxesOutcome {
     Cube { whole_stack: bool },
 }
 
-/// Emit one cell's box set through the unified box-set emitter, with the
-/// emitter's world hooks answered by the neighbourhood.
-#[allow(clippy::too_many_arguments)]
+/// The box-set emitter's world hooks for one cell, answered by the
+/// neighbourhood.
+struct CellBoxWorld<'n> {
+    nb: &'n Neighbourhood<'n>,
+    pos: IVec3,
+    block: Block,
+}
+
+impl BoxWorld for CellBoxWorld<'_> {
+    fn neighbour_solid(&self, face: Face) -> bool {
+        self.nb.solid(self.pos + face.dir())
+    }
+
+    fn neighbour_boxes(&self, face: Face, out: &mut Vec<([f32; 3], [f32; 3])>) {
+        self.nb
+            .occupancy_boxes(self.pos + face.dir(), self.block, out)
+    }
+
+    fn matter(&self, cell: IVec3, lo: [f32; 3], hi: [f32; 3]) -> bool {
+        self.nb.matter(cell, lo, hi)
+    }
+
+    fn face_light(&self, face: Face, front: IVec3, plane: f32, smooth: bool) -> CornerLight {
+        face_lighting(self.nb, face, front, plane, smooth)
+    }
+}
+
+/// Emit one cell's box set through the unified box-set emitter.
 fn emit_cell_boxes(
     nb: &Neighbourhood<'_>,
     vbuf: &mut Vec<Vertex>,
-    pos: IVec3,
+    at: BoxCell,
     block: Block,
-    anchor: IVec3,
     boxes: &[ShapeBox],
     scratch: &mut BoxSetScratch,
 ) {
-    let across = |face: Face| pos + face.dir();
-    emit_box_set(
-        vbuf,
-        pos.x,
-        pos.y,
-        pos.z,
-        anchor,
-        boxes,
-        scratch,
-        &|face| nb.solid(across(face)),
-        &|face, out| nb.occupancy_boxes(across(face), block, out),
-        &|cell, lo, hi| nb.matter(cell, lo, hi),
-        &|face, front, plane, smooth| face_lighting(nb, face, front, plane, smooth),
-    );
+    let world = CellBoxWorld {
+        nb,
+        pos: at.cell,
+        block,
+    };
+    emit_box_set(vbuf, at, boxes, scratch, &world);
 }
 
 impl SectionMesher<'_> {
@@ -87,9 +104,7 @@ impl SectionMesher<'_> {
                 transparent: &mut self.out.transparent,
                 transparent_two_sided: &mut self.out.transparent_two_sided,
             },
-            cell.block,
-            cell.resident,
-            cell.world,
+            cell,
             self.anchor,
             |kind| tints.tile(kind, cell.column),
             tints.part(cell.idx, 0),
@@ -109,9 +124,11 @@ impl SectionMesher<'_> {
             emit_cell_boxes(
                 &self.nb,
                 &mut self.out.opaque,
-                cell.world,
+                BoxCell {
+                    cell: cell.world,
+                    anchor: self.anchor,
+                },
                 cell.block,
-                self.anchor,
                 &self.boxes.bed,
                 &mut self.boxes.scratch,
             );
@@ -128,17 +145,16 @@ impl SectionMesher<'_> {
             ),
             PlantPlanes::Cross => (dims.map_or(0.0, |d| d.inset), 0.0),
         };
-        let base = cell.world - self.anchor;
         emit_plant(
             &mut self.out.opaque,
             layout,
-            base.x as f32,
-            base.y as f32,
-            base.z as f32,
+            (cell.world - self.anchor).as_vec3(),
             tile,
-            tint,
-            sky6,
-            blight,
+            FlatLit {
+                tint,
+                sky6,
+                block: blight,
+            },
             inset,
             drop,
         );
@@ -159,18 +175,17 @@ impl SectionMesher<'_> {
             petramond_world::light::LightRgb::new(er, eg, eb),
         );
         let placement = self.section.torch_placement(cell.lx, cell.ly, cell.lz);
-        let base = cell.world - self.anchor;
         super::torch::emit_torch(
             &mut self.out.opaque,
-            base.x as f32,
-            base.y as f32,
-            base.z as f32,
+            (cell.world - self.anchor).as_vec3(),
             placement,
             side_tile,
             top_tile,
-            [1.0, 1.0, 1.0],
-            sky6,
-            emit,
+            FlatLit {
+                tint: [1.0, 1.0, 1.0],
+                sky6,
+                block: emit,
+            },
         );
     }
 
@@ -220,9 +235,11 @@ impl SectionMesher<'_> {
         emit_cell_boxes(
             &self.nb,
             &mut self.out.opaque,
-            cell.world,
+            BoxCell {
+                cell: cell.world,
+                anchor: self.anchor,
+            },
             block,
-            self.anchor,
             &self.boxes.cell,
             &mut self.boxes.scratch,
         );
@@ -239,23 +256,21 @@ impl SectionMesher<'_> {
         let offset = self.section.model_offset(cell.lx, cell.ly, cell.lz);
         let facing = self.section.model_facing(cell.lx, cell.ly, cell.lz);
         let (sky6, blight) = cell_light(&self.nb, cell.world);
-        let IVec3 {
-            x: wx,
-            y: wy,
-            z: wz,
-        } = cell.world;
-        let nb = &self.nb;
-        emit_model_block(
-            &mut self.out.model,
-            &mut self.out.model_idx,
-            &mut self.out.model_blend_idx,
+        let at = PlacedModelCell {
             kind,
             offset,
             facing,
-            wx,
-            wy,
-            wz,
-            self.anchor,
+            cell: cell.world,
+            anchor: self.anchor,
+        };
+        let nb = &self.nb;
+        emit_model_block(
+            ModelStreams {
+                verts: &mut self.out.model,
+                indices: &mut self.out.model_idx,
+                blend_indices: &mut self.out.model_blend_idx,
+            },
+            at,
             sky6,
             blight,
             self.tints.model_parts(cell.idx),
@@ -263,7 +278,7 @@ impl SectionMesher<'_> {
             // Cullface gate: the WORLD neighbour in the segment's direction
             // suppresses it when opaque (reads stay inside the ±1 mesh pad; an
             // unloaded neighbour reads as air and keeps the face).
-            |f: Face| nb.block(IVec3::new(wx, wy, wz) + f.dir()).is_opaque(),
+            |f: Face| nb.block(cell.world + f.dir()).is_opaque(),
         );
         // Contact shadow: only a BOTTOM footprint cell stamps, each single-cell
         // piece (its own floor + its owned spill onto the dilation ring) gated
@@ -273,24 +288,15 @@ impl SectionMesher<'_> {
         // supporting those shapes needs their real covered top surface and
         // height, not a relaxed opacity check.
         if offset[1] == 0 {
-            emit_model_contact(
-                &mut self.out.contact,
-                kind,
-                offset,
-                facing,
-                wx,
-                wy,
-                wz,
-                self.anchor,
-                |gx, gz| {
-                    let below = nb.block(IVec3::new(gx, wy - 1, gz));
-                    if !below.is_cube_shaped() || !below.is_opaque() {
-                        return false;
-                    }
-                    let at = nb.block(IVec3::new(gx, wy, gz));
-                    !at.is_cube_shaped() || !at.is_opaque()
-                },
-            );
+            let wy = cell.world.y;
+            emit_model_contact(&mut self.out.contact, at, |gx, gz| {
+                let below = nb.block(IVec3::new(gx, wy - 1, gz));
+                if !below.is_cube_shaped() || !below.is_opaque() {
+                    return false;
+                }
+                let at = nb.block(IVec3::new(gx, wy, gz));
+                !at.is_cube_shaped() || !at.is_opaque()
+            });
         }
     }
 }

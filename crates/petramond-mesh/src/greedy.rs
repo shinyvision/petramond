@@ -3,7 +3,6 @@
 //! quads, pixel-identical to the per-cell faces they replace.
 
 use crate::vertex::BlockLightVertexExt;
-use std::cell::RefCell;
 
 use petramond_world::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
@@ -87,10 +86,11 @@ const FLAT_ABSENT: FlatFace = FlatFace {
     tint: 0,
 };
 
-/// Reused per-thread greedy-merge scratch: a `FlatFace` per (face direction 0..6, cell), a
-/// per-slice merged-flag grid, the current build generation, and a deferred-face count per
-/// direction (to skip merging directions that received none). Thread-local + reused so meshing
-/// a section allocates nothing AND clears nothing (the `gen` bump retires the prior build).
+/// Reused greedy-merge scratch: a `FlatFace` per (face direction 0..6, cell), a per-slice
+/// merged-flag grid, the current build generation, and a deferred-face count per direction (to
+/// skip merging directions that received none). Kept per worker thread in the builder's
+/// `MeshScratch` so meshing a section allocates nothing AND clears nothing (the `gen` bump
+/// retires the prior build).
 pub(super) struct GreedyScratch {
     pub(super) faces: Vec<FlatFace>,
     pub(super) merged: Vec<bool>,
@@ -132,8 +132,10 @@ impl GreedyScratch {
     }
 }
 
-thread_local! {
-    pub(super) static GREEDY: RefCell<GreedyScratch> = const { RefCell::new(GreedyScratch::new()) };
+impl Default for GreedyScratch {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Greedy-merge every deferred flat face (in `scratch.faces`) into the fewest tiled quads and

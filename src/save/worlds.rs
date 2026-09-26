@@ -2,7 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use super::{level, settings};
 use crate::net::identity::PlayerKey;
-use petramond_util::atomic_file;
+use petramond_persist::atomic_file;
 use petramond_util::paths::base_data_dir;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

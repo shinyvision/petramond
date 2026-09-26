@@ -17,7 +17,7 @@ tools = ["dep:image"]
 
 [dependencies]
 petramond-math = { workspace = true }
-petramond-util = { workspace = true }
+petramond-persist = { workspace = true }
 petramond-world = { workspace = true }
 petramond-region = { workspace = true }
 mod-api = { workspace = true }

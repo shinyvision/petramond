@@ -35,7 +35,6 @@ petramond-world = { workspace = true }
 petramond-input = { workspace = true }
 petramond-mesh = { workspace = true }
 petramond-worldgen = { workspace = true }
-petramond-util = { workspace = true }
 petramond-ui = { workspace = true }
 petramond-text = { workspace = true }
 mod-api = { workspace = true }

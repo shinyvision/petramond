@@ -8,7 +8,7 @@
 
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
-use petramond_util::bytecodec::Reader;
+use petramond_persist::bytecodec::Reader;
 
 use crate::save::codec::DiskSlot;
 use crate::save::format::RecordError;

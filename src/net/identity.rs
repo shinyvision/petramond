@@ -173,7 +173,7 @@ impl PlayerIdentity {
         }
         let fresh = Self::generate()?;
         let text = format!("{}\n", hex(&fresh.signing.to_bytes()));
-        match petramond_util::atomic_file::publish_new(path, |file| {
+        match petramond_persist::atomic_file::publish_new(path, |file| {
             restrict_to_owner(file)?;
             io::Write::write_all(file, text.as_bytes())
         }) {

@@ -12,15 +12,16 @@ use petramond_world::light::{BlockLight6, LightRgb};
 use petramond_world::tile::TileTint;
 
 use super::super::face::{quad_for, Face, FaceShading, FACES};
-use super::super::face_emit::push_cube_face_with_cell_uvs;
-use super::super::fluid::{side_vs_fluid, FluidSurface, SideVsFluid};
+use super::super::face_emit::{push_cube_face, FaceSpec};
+use super::super::fluid::{side_vs_fluid, FluidReads, FluidSurface, SideVsFluid};
 use super::super::tint;
 use super::super::vertex::{
     pack_fluid_face, push_back_face, Vertex, FLUID_FLOW_FLAG2, FLUID_MEDIUM_MASK,
-    FLUID_MEDIUM_SHIFT, UV_MODE_NONE,
+    FLUID_MEDIUM_SHIFT,
 };
 use super::cube_face::cube_face_tile;
 use super::lighting::{boundary_plane, face_lighting, self_lit_face};
+use super::mesher::Cell;
 use super::neighbourhood::Neighbourhood;
 
 /// The vertex streams a fluid face can land in.
@@ -30,22 +31,20 @@ pub(super) struct FluidStreams<'m> {
     pub transparent_two_sided: &'m mut Vec<Vertex>,
 }
 
-/// Emit every visible face of the `fluid` cell at `pos`. `resident` = the cell's
-/// block IS the fluid and owns the cell's meta; otherwise the fluid is contained
-/// in a host block and always renders a stationary surface. `cell_tint` is the
+/// Emit every visible face of the fluid `cell` (its block is the fluid). When
+/// the cell is `resident` the fluid owns the cell's meta; otherwise the fluid is
+/// contained in a host block and always renders a stationary surface. `cell_tint` is the
 /// cell's `petramond:tint` multiply. Face positions are emitted relative to the
 /// mesh-space origin `anchor`.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_fluid_cell(
     nb: &Neighbourhood<'_>,
     out: FluidStreams<'_>,
-    fluid: Block,
-    resident: bool,
-    pos: IVec3,
+    cell: &Cell,
     anchor: IVec3,
     tint_of: impl Fn(Option<TileTint>) -> [f32; 3],
     cell_tint: Option<[f32; 3]>,
 ) {
+    let (fluid, resident, pos) = (cell.block, cell.resident, cell.world);
     let def = fluid
         .fluid_def()
         .expect("a fluid-class block carries its fluid row");
@@ -85,15 +84,15 @@ pub(super) fn emit_fluid_cell(
                 );
             }
             FluidSurface::new(
-                pos.x,
-                pos.y,
-                pos.z,
+                pos,
                 fluid,
                 full,
                 nb.fluid_falling(pos, fluid),
-                &block_at,
-                &|x, y, z| nb.fluid_height(IVec3::new(x, y, z), fluid),
-                &|x, y, z| nb.fluid_still(IVec3::new(x, y, z), fluid),
+                &FluidReads {
+                    block_at: &block_at,
+                    height_at: &|x, y, z| nb.fluid_height(IVec3::new(x, y, z), fluid),
+                    still_at: &|x, y, z| nb.fluid_still(IVec3::new(x, y, z), fluid),
+                },
             )
         })
     };
@@ -167,21 +166,20 @@ pub(super) fn emit_fluid_cell(
         } else {
             &mut *transparent
         };
-        let start = push_cube_face_with_cell_uvs(
+        let start = push_cube_face(
             stream,
-            corners,
-            tile,
-            top_angle,
-            false,
-            UV_MODE_NONE,
-            None,
-            0,
-            tint,
-            face,
-            ao,
-            light6,
-            block6,
-            cell_tint.is_some(),
+            &FaceSpec {
+                face,
+                corners,
+                base_tile: tile,
+                overlay: top_angle,
+                has_overlay: false,
+                cell_uvs: None,
+                uv_turn: 0,
+                tint,
+                light: (ao, light6, block6),
+                dyed: cell_tint.is_some(),
+            },
         );
         let lane = pack_fluid_face(lane_index, flow_strip);
         for v in &mut stream[start as usize..start as usize + 4] {

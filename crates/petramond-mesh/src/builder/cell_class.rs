@@ -8,9 +8,14 @@
 //! it is read off the row once — the emitter is the row's own declared
 //! [`MeshEmitter`] (its shape family's facet), never a list of named blocks or
 //! families kept here.
+//!
+//! The tables are a value, [`MeshRegistry`], built from a block list and
+//! handed to the mesher with every build. The default table is kept in a
+//! [`Slot`] on the current content registry, so a worker pinned to another
+//! world's mod set gets that world's block rows.
 
 use petramond_world::block::{Block, MeshEmitter};
-use petramond_world::content::stage::BLOCKS;
+use petramond_world::content::stage::BLOCK_VIEWS;
 use petramond_world::content::{ContentRegistry, Slot};
 
 /// Air, invisible rows, and every row drawn outside the chunk mesh by its
@@ -37,75 +42,109 @@ pub(super) const PAD_SEALS: u8 = 1 << 2;
 /// it (the fill check needs the cell's meta, so this bit only nominates).
 pub(super) const PAD_OPAQUE_FLUID: u8 = 1 << 3;
 
-/// The padding classes of a content registry, derived from its block rows.
-static PAD_CLASSES: Slot<Box<[u8]>> = Slot::new("mesh padding classes", &[BLOCKS], derive_pad);
-
-fn derive_pad(_: &ContentRegistry) -> Result<Box<[u8]>, String> {
-    Ok(Block::all()
-            .iter()
-            .map(|&block| {
-                let mut c = 0;
-                if block.is_opaque() {
-                    c |= PAD_OPAQUE;
-                }
-                if block.is_slab() {
-                    c |= PAD_SLAB;
-                }
-                if block.fluid_def().is_some_and(|def| def.medium.is_opaque()) {
-                    c |= PAD_OPAQUE_FLUID;
-                }
-                let seals_by_shape = block.has_box_shape()
-                    && !block.is_transparent()
-                    && !block.is_translucent();
-                if block != Block::Air && (seals_by_shape || block.is_snow_bedded()) {
-                    c |= PAD_SEALS;
-                }
-                c
-            })
-            .collect())
+/// The mesher's dense per-block-id dispatch tables, baked once from a block
+/// list. Ids past the list read as air (row 0), exactly where
+/// `Block::from_id` degrades a raw id to air.
+pub struct MeshRegistry {
+    /// Cell-scan class bits ([`SKIP`], [`FAST_CUBE`], [`FLUID`]).
+    cell: Box<[u8]>,
+    /// Exposure-mask pad-scan class bits ([`PAD_OPAQUE`] and friends).
+    pad: Box<[u8]>,
+    /// Every row's declared [`MeshEmitter`].
+    emitters: Box<[MeshEmitter]>,
 }
 
-#[inline]
-pub(super) fn pad_classes() -> &'static [u8] {
-    PAD_CLASSES.current()
+static MESH_REGISTRY: Slot<MeshRegistry> =
+    Slot::new("mesh block rows", &[BLOCK_VIEWS], derive_mesh_registry);
+
+fn derive_mesh_registry(_: &ContentRegistry) -> Result<MeshRegistry, String> {
+    // The slot is read through `current`; the loader and workers pin that
+    // registry while resolving its block rows.
+    Ok(MeshRegistry::from_blocks(Block::all()))
 }
 
-/// The whole class table. The cell scan and the exposure-mask build both take
-/// it ONCE and index it per cell, so 4096 cells cost 4096 byte loads rather
-/// than 4096 registry lookups.
-#[inline]
-pub(super) fn cell_classes() -> &'static [u8] {
-    CELL_CLASSES.current()
+impl MeshRegistry {
+    /// Bake the tables for `blocks`, indexed by position: `blocks[id]` must
+    /// be the block with that id, and `blocks[0]` air.
+    pub fn from_blocks(blocks: &[Block]) -> Self {
+        assert!(
+            blocks.first() == Some(&Block::Air),
+            "a mesh registry's row 0 is air"
+        );
+        Self {
+            cell: blocks.iter().map(|&b| cell_class(b)).collect(),
+            pad: blocks.iter().map(|&b| pad_class(b)).collect(),
+            emitters: blocks.iter().map(|b| b.mesh_emitter()).collect(),
+        }
+    }
+
+    /// Tables of the current thread's content registry. Mesh jobs pin their
+    /// submitter's registry before building.
+    pub fn global() -> &'static MeshRegistry {
+        MESH_REGISTRY.current()
+    }
+
+    /// The cell-scan class of a RAW block id.
+    #[inline]
+    pub(super) fn cell_class(&self, id: u16) -> u8 {
+        class_of(&self.cell, id)
+    }
+
+    /// The pad-scan class of a RAW block id.
+    #[inline]
+    pub(super) fn pad_class(&self, id: u16) -> u8 {
+        class_of(&self.pad, id)
+    }
+
+    /// The declared emitter of a RAW block id.
+    #[inline]
+    pub(super) fn emitter(&self, id: u16) -> MeshEmitter {
+        self.emitters
+            .get(id as usize)
+            .copied()
+            .unwrap_or(self.emitters[0])
+    }
 }
 
-/// The cell classes of a content registry, derived from its block rows.
-static CELL_CLASSES: Slot<Box<[u8]>> = Slot::new("mesh cell classes", &[BLOCKS], derive_cells);
+fn pad_class(block: Block) -> u8 {
+    let mut c = 0;
+    if block.is_opaque() {
+        c |= PAD_OPAQUE;
+    }
+    if block.is_slab() {
+        c |= PAD_SLAB;
+    }
+    if block.fluid_def().is_some_and(|def| def.medium.is_opaque()) {
+        c |= PAD_OPAQUE_FLUID;
+    }
+    let seals_by_shape =
+        block.has_box_shape() && !block.is_transparent() && !block.is_translucent();
+    if block != Block::Air && (seals_by_shape || block.is_snow_bedded()) {
+        c |= PAD_SEALS;
+    }
+    c
+}
 
-fn derive_cells(_: &ContentRegistry) -> Result<Box<[u8]>, String> {
-    Ok(Block::all()
-            .iter()
-            .map(|&block| {
-                let mut c = if block == Block::Air
-                    || block.flags().invisible()
-                    || block.mesh_emitter() == MeshEmitter::Nothing
-                {
-                    SKIP
-                } else {
-                    0
-                };
-                // A cell the scan skips outright is never a cube candidate either.
-                // Air's row IS the cube family, so without this it would enter the
-                // exposure masks' candidate rows and put every open-sky cell back
-                // into the visit set the masks exist to shrink.
-                if c & SKIP == 0 && fast_cube_candidate(block) {
-                    c |= FAST_CUBE;
-                }
-                if block.is_fluid() {
-                    c |= FLUID;
-                }
-                c
-            })
-            .collect())
+fn cell_class(block: Block) -> u8 {
+    let mut c = if block == Block::Air
+        || block.flags().invisible()
+        || block.mesh_emitter() == MeshEmitter::Nothing
+    {
+        SKIP
+    } else {
+        0
+    };
+    // A cell the scan skips outright is never a cube candidate either. Air's
+    // row IS the cube family, so without this it would enter the exposure
+    // masks' candidate rows and put every open-sky cell back into the visit
+    // set the masks exist to shrink.
+    if c & SKIP == 0 && fast_cube_candidate(block) {
+        c |= FAST_CUBE;
+    }
+    if block.is_fluid() {
+        c |= FLUID;
+    }
+    c
 }
 
 /// Whether a cube-drawn block may take the exposure-mask fast path.
@@ -122,30 +161,30 @@ fn fast_cube_candidate(block: Block) -> bool {
         && block.mesh_emitter() == MeshEmitter::Cube
 }
 
-/// A class-table read at a RAW id. The tables cover the loaded registry, and
-/// a raw id can outrun it exactly where `Block::from_id` degrades to air —
-/// which is air's class, row 0.
+/// A class-table read at a RAW id, degrading to row 0 (air) past the table.
 #[inline]
-pub(super) fn class_of(table: &[u8], id: u16) -> u8 {
+fn class_of(table: &[u8], id: u16) -> u8 {
     table.get(id as usize).copied().unwrap_or(table[0])
 }
 
-/// Every row's declared [`MeshEmitter`], by block id — what the scan
-/// dispatches a non-skipped, non-fluid cell on.
-#[inline]
-pub(super) fn emitters() -> &'static [MeshEmitter] {
-    EMITTERS.current()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-static EMITTERS: Slot<Box<[MeshEmitter]>> =
-    Slot::new("mesh emitters", &[BLOCKS], derive_emitters);
-
-fn derive_emitters(_: &ContentRegistry) -> Result<Box<[MeshEmitter]>, String> {
-    Ok(Block::all().iter().map(|b| b.mesh_emitter()).collect())
-}
-
-/// An emitter-table read at a RAW id, degrading like [`class_of`].
-#[inline]
-pub(super) fn emitter_of(table: &[MeshEmitter], id: u16) -> MeshEmitter {
-    table.get(id as usize).copied().unwrap_or(table[0])
+    #[test]
+    fn a_registry_answers_for_exactly_the_blocks_it_was_built_from() {
+        let all = MeshRegistry::from_blocks(Block::all());
+        let air_only = MeshRegistry::from_blocks(&[Block::Air]);
+        for &block in Block::all() {
+            let id = block.id();
+            assert_eq!(all.cell_class(id), cell_class(block), "{block:?}");
+            assert_eq!(all.pad_class(id), pad_class(block), "{block:?}");
+            assert_eq!(all.emitter(id), block.mesh_emitter(), "{block:?}");
+            // A registry that never heard of the id reads it as air.
+            assert_eq!(air_only.cell_class(id), cell_class(Block::Air));
+            assert_eq!(air_only.pad_class(id), pad_class(Block::Air));
+        }
+        assert_ne!(all.cell_class(0) & SKIP, 0, "air is skipped");
+        assert_eq!(all.cell_class(u16::MAX), all.cell_class(0));
+    }
 }

@@ -28,7 +28,7 @@ use crate::save::codec::DiskSlot;
 use crate::save::palette::Palette;
 use crate::save::wire::{tagged_record, wire_struct, UnknownFields, Wire};
 use petramond_math::world_pos::WorldPos;
-use petramond_util::bytecodec::{put_u8, Reader};
+use petramond_persist::bytecodec::{put_u8, Reader};
 use petramond_world::container::{Container, MAX_CONTAINER_SLOTS};
 
 /// Tag type discriminators for a mob tag value on the wire.

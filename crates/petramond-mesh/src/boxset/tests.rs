@@ -50,6 +50,22 @@ fn subtraction_remerges_bands() {
     assert!((area(&out) - 0.8).abs() < 1e-5);
 }
 
+/// Nothing around the cell, lit fully from the sky.
+struct OpenAir;
+
+impl BoxWorld for OpenAir {
+    fn neighbour_solid(&self, _: Face) -> bool {
+        false
+    }
+    fn neighbour_boxes(&self, _: Face, _: &mut Vec<([f32; 3], [f32; 3])>) {}
+    fn matter(&self, _: IVec3, _: [f32; 3], _: [f32; 3]) -> bool {
+        false
+    }
+    fn face_light(&self, _: Face, _: IVec3, _: f32, _: bool) -> CornerLight {
+        ([3; 4], [63; 4], [petramond_world::light::BlockLight6::DARK; 4])
+    }
+}
+
 fn plain(min: [f32; 3], max: [f32; 3]) -> ShapeBox {
     // The tile is irrelevant to these geometry tests; any atlas row works.
     let t = petramond_world::tile::Tile::named("stone");
@@ -63,18 +79,20 @@ fn plain(min: [f32; 3], max: [f32; 3]) -> ShapeBox {
 /// of overlapping boxes keep exactly one winner.
 #[test]
 fn occluder_rule_covers_butting_and_coincidence() {
-    let axes = (0usize, 2usize, 1usize); // +X face: u=Z, v=Y
+    // +X face at d = 0.5: u=Z, v=Y.
+    let plus_x_at_half = FacePlane {
+        axes: (0, 2, 1),
+        positive: true,
+        d: 0.5,
+    };
     let rect_full = rect(0.0, 0.0, 1.0, 1.0);
     let mut occ = vec![];
 
     // In front (butted at d): hides.
     push_occluder(
         &mut occ,
-        [0.5, 0.0, 0.0],
-        [1.0, 1.0, 1.0],
-        axes,
-        true,
-        0.5,
+        ([0.5, 0.0, 0.0], [1.0, 1.0, 1.0]),
+        plus_x_at_half,
         false,
         &rect_full,
     );
@@ -84,11 +102,8 @@ fn occluder_rule_covers_butting_and_coincidence() {
     occ.clear();
     push_occluder(
         &mut occ,
-        [0.0, 0.0, 0.0],
-        [0.5, 1.0, 1.0],
-        axes,
-        true,
-        0.5,
+        ([0.0, 0.0, 0.0], [0.5, 1.0, 1.0]),
+        plus_x_at_half,
         false,
         &rect_full,
     );
@@ -97,11 +112,8 @@ fn occluder_rule_covers_butting_and_coincidence() {
     // Behind + coincident + earlier: hides (the tie-break winner).
     push_occluder(
         &mut occ,
-        [0.0, 0.0, 0.0],
-        [0.5, 1.0, 1.0],
-        axes,
-        true,
-        0.5,
+        ([0.0, 0.0, 0.0], [0.5, 1.0, 1.0]),
+        plus_x_at_half,
         true,
         &rect_full,
     );
@@ -113,11 +125,8 @@ fn occluder_rule_covers_butting_and_coincidence() {
     occ.clear();
     push_occluder(
         &mut occ,
-        [0.25, 0.0, 0.0],
-        [0.75, 1.0, 1.0],
-        axes,
-        true,
-        0.5,
+        ([0.25, 0.0, 0.0], [0.75, 1.0, 1.0]),
+        plus_x_at_half,
         false,
         &rect_full,
     );
@@ -130,19 +139,23 @@ fn occluder_rule_covers_butting_and_coincidence() {
 #[test]
 fn full_cell_probe_reduces_to_grid_vertex_ao() {
     let boxes = [plain([0.0; 3], [1.0; 3])];
-    let axes = face_axes(Face::PosY);
+    let top = FacePlane {
+        axes: face_axes(Face::PosY),
+        positive: true,
+        d: 1.0,
+    };
     let r = rect(0.0, 0.0, 1.0, 1.0);
     // Corner (0, 1, 0): side cells (-1,1,0) and (0,1,-1), diag (-1,1,-1).
     let corner = [0.0, 1.0, 0.0];
-    let at = (0, 0, 0);
-    let ao_none = probe_ao(&boxes, corner, axes, true, &r, at, &|_, _, _| false);
+    let at = IVec3::ZERO;
+    let ao_none = probe_ao(&boxes, corner, top, &r, at, &|_, _, _| false);
     assert_eq!(ao_none, 3);
-    let ao_diag = probe_ao(&boxes, corner, axes, true, &r, at, &|cl, _, _| {
-        cl == (-1, 1, -1)
+    let ao_diag = probe_ao(&boxes, corner, top, &r, at, &|cl, _, _| {
+        cl == IVec3::new(-1, 1, -1)
     });
     assert_eq!(ao_diag, 2);
-    let ao_sides = probe_ao(&boxes, corner, axes, true, &r, at, &|cl, _, _| {
-        cl.1 == 1 && (cl.0 == -1) != (cl.2 == -1)
+    let ao_sides = probe_ao(&boxes, corner, top, &r, at, &|cl, _, _| {
+        cl.y == 1 && (cl.x == -1) != (cl.z == -1)
     });
     assert_eq!(ao_sides, 0, "two solid sides bury the corner");
 }
@@ -158,16 +171,19 @@ fn probes_darken_creases_but_not_continuations() {
         plain([0.0, 0.0, 0.0], [1.0, 0.5, 1.0]),
         plain([0.0, 0.5, 0.0], [0.5, 1.0, 1.0]),
     ];
-    let axes = face_axes(Face::PosY);
+    let plane_at = |d: f32| FacePlane {
+        axes: face_axes(Face::PosY),
+        positive: true,
+        d,
+    };
     // The tread: the floor box's +Y face right of the riser.
     let tread = rect(0.5, 0.0, 1.0, 1.0); // u = X in [0.5, 1], v = Z
     let crease = probe_ao(
         &stair,
         [0.5, 0.5, 0.5],
-        axes,
-        true,
+        plane_at(0.5),
         &tread,
-        (0, 0, 0),
+        IVec3::ZERO,
         &|_, _, _| false,
     );
     assert!(crease < 3, "tread corner against the riser must darken");
@@ -181,10 +197,9 @@ fn probes_darken_creases_but_not_continuations() {
     let seam = probe_ao(
         &flat,
         [0.5, 1.0, 0.5],
-        axes,
-        true,
+        plane_at(1.0),
         &left_top,
-        (0, 0, 0),
+        IVec3::ZERO,
         &|_, _, _| false,
     );
     assert_eq!(seam, 3, "coplanar continuation must not self-shadow");
@@ -220,16 +235,13 @@ fn a_posed_plane_lands_on_its_rotated_corners_and_seals_nothing() {
     let mut scratch = BoxSetScratch::default();
     emit_box_set(
         &mut vbuf,
-        0,
-        0,
-        0,
-        glam::IVec3::ZERO,
+        BoxCell {
+            cell: IVec3::ZERO,
+            anchor: IVec3::ZERO,
+        },
         &boxes,
         &mut scratch,
-        &|_| false,
-        &|_, _| {},
-        &|_, _, _| false,
-        &|_, _, _, _| ([3; 4], [63; 4], [petramond_world::light::BlockLight6::DARK; 4]),
+        &OpenAir,
     );
     // The slope's +Y face: front + back windings, 8 vertices, every
     // corner on the tilted plane (y = 1 - z).

@@ -17,21 +17,23 @@ fn mesh_lit_floor(block_light: impl Fn(i32, i32, i32) -> LightRgb) -> ChunkMesh 
     build_section_mesh(
         &section,
         SectionPos::new(0, 0, 0),
-        test_rules(),
-        |wx, wy, wz| {
-            if in_section(wx, wy, wz) {
-                section.block_raw(wx as usize, wy as usize, wz as usize)
-            } else {
-                Block::Air.id()
-            }
+        test_ctx(),
+        &crate::WorldReads {
+            block: &|wx, wy, wz| {
+                if in_section(wx, wy, wz) {
+                    section.block_raw(wx as usize, wy as usize, wz as usize)
+                } else {
+                    Block::Air.id()
+                }
+            },
+            cell_state: &|_, _, _| petramond_world::block::ShapeState::NONE,
+            fluid_meta: &|_, _, _| 0,
+            biome: &|_, _| 0,
+            skylight: &|_, _, _| 0,
+            blocklight: &block_light,
+            loaded: &|_, _, _| true,
+            dyed: &|_, _, _| false,
         },
-        |_, _, _| petramond_world::block::ShapeState::NONE,
-        |_, _, _| 0,
-        |_, _| 0,
-        |_, _, _| 0,
-        block_light,
-        |_, _, _| true,
-        |_, _, _| false,
     )
 }
 

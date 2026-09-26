@@ -274,7 +274,7 @@ pub fn prepare_world(dir: &Path) -> io::Result<Option<WorldFormat>> {
     }
     if found != Some(current) {
         let json = serde_json::to_string_pretty(&current).expect("stamp serializes");
-        petramond_util::atomic_file::replace(&dir.join(STAMP), json.as_bytes())?;
+        petramond_persist::atomic_file::replace(&dir.join(STAMP), json.as_bytes())?;
     }
     Ok(found)
 }
@@ -355,7 +355,7 @@ pub fn quarantine(dir: &Path, relative: &Path, bytes: &[u8]) -> io::Result<std::
             Ok(existing) if existing == bytes => return Ok(path),
             Ok(_) => continue,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                petramond_util::atomic_file::replace(&path, bytes)?;
+                petramond_persist::atomic_file::replace(&path, bytes)?;
                 return Ok(path);
             }
             Err(e) => return Err(e),

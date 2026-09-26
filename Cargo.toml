@@ -20,6 +20,7 @@ members = [
     "gui-builder",
     "crates/petramond-math",
     "crates/petramond-util",
+    "crates/petramond-persist",
     "crates/petramond-worldgen",
     "crates/petramond-mesh",
     "crates/petramond-world",
@@ -61,6 +62,7 @@ petramond-text = { path = "petramond-text" }
 petramond-ui = { path = "petramond-ui" }
 petramond-math = { path = "crates/petramond-math" }
 petramond-util = { path = "crates/petramond-util" }
+petramond-persist = { path = "crates/petramond-persist" }
 petramond-worldgen = { path = "crates/petramond-worldgen" }
 petramond-mesh = { path = "crates/petramond-mesh" }
 petramond-world = { path = "crates/petramond-world" }
@@ -142,6 +144,7 @@ petramond-ui = { workspace = true }
 petramond-text = { workspace = true }
 petramond-math = { workspace = true }
 petramond-util = { workspace = true }
+petramond-persist = { workspace = true }
 petramond-worldgen = { workspace = true }
 petramond-mesh = { workspace = true }
 petramond-world = { workspace = true }

@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
-use petramond_util::bytecodec::{
+use petramond_persist::bytecodec::{
     put_f32, put_f64, put_i64, put_u16, put_u32, put_u64, put_u8, Reader,
 };
 
@@ -257,7 +257,7 @@ macro_rules! wire_struct {
                 $( $crate::save::wire::Wire::put(&self.$field, buf); )+
             }
 
-            fn get(r: &mut petramond_util::bytecodec::Reader) -> Option<Self> {
+            fn get(r: &mut petramond_persist::bytecodec::Reader) -> Option<Self> {
                 Some(Self {
                     $( $field: $crate::save::wire::Wire::get(r)?, )+
                 })
@@ -285,7 +285,7 @@ macro_rules! tagged_record {
                 w.finish();
             }
 
-            fn get(r: &mut petramond_util::bytecodec::Reader) -> Option<Self> {
+            fn get(r: &mut petramond_persist::bytecodec::Reader) -> Option<Self> {
                 let mut fields = $crate::save::wire::TaggedFields::read(r)?;
                 Some(Self {
                     $( $field: fields.take($tag)?, )+

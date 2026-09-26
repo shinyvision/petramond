@@ -1,6 +1,7 @@
-use petramond_world::block::ShapeState;
 use petramond_world::chunk::SectionPos;
+use petramond_world::content::{pin, Content};
 use petramond_world::section::Section;
+use petramond_world::texture_transition::Rules;
 
 use super::torch;
 use super::vertex::ChunkMesh;
@@ -20,56 +21,64 @@ mod model_block;
 mod neighbourhood;
 mod pad;
 mod plant;
+mod scratch;
 mod transition;
 
+pub use cell_class::MeshRegistry;
 pub(super) use cube_face::face_axes;
 pub(super) use lighting::{boundary_plane, CornerLight};
 pub use pad::SectionMeshPad;
 #[cfg(test)]
 pub(super) use lighting::corner_cast_probes;
 
-pub(crate) use closure_pad::WorldReads;
+pub use closure_pad::WorldReads;
 pub use foliage::FOLIAGE_OVERHANG;
 pub use transition::{SamplingHalo, SAMPLING_HALO};
 
-/// Build the mesh for one cubic [`Section`] from world-coordinate closures:
-/// they are sampled over the section's one-cell pad (see
-/// [`SectionMeshPad`]) and the pad is meshed exactly as the live world's is,
-/// so reads beyond that pad are never made. Out-of-world / unloaded reads
-/// return air / open sky as the closures define. Block-entity state (furnace
-/// lit/facing, torch placement, model offset/facing) is read from `section`
-/// directly. `neighbour_dyed` answers whether a cell carries a dye tint (a
-/// transition exclusion) — for neighbour sections too, exactly as the live
-/// pad scatters their tint maps. The renderer culls the resulting mesh by its
-/// [`SectionPos`].
-#[allow(clippy::too_many_arguments)]
+/// What a section mesh is built against: the block dispatch tables and the
+/// texture-transition policy. Passed into every build rather than read from
+/// process globals, so one process can mesh against several registries.
+#[derive(Copy, Clone)]
+pub struct MeshContext<'a> {
+    /// The content whose block rows and texture rules this build uses.
+    pub content: Content,
+    pub registry: &'a MeshRegistry,
+    pub rules: &'a Rules,
+}
+
+impl MeshContext<'static> {
+    /// Build a mesh context for a specific content registry.
+    pub fn for_content(content: Content) -> Self {
+        let _pin = pin(content);
+        Self {
+            content,
+            registry: MeshRegistry::global(),
+            rules: petramond_world::texture_transition::rules(),
+        }
+    }
+
+    /// A context for the registry selected on this thread.
+    pub fn global() -> Self {
+        Self::for_content(Content::current())
+    }
+}
+
+/// Build the mesh for one cubic [`Section`] from world-coordinate reads: they
+/// are sampled over the section's one-cell pad (see [`SectionMeshPad`]) and
+/// the pad is meshed exactly as the live world's is, so reads beyond that pad
+/// are never made. Out-of-world / unloaded reads return air / open sky as the
+/// reads define. Block-entity state (furnace lit/facing, torch placement,
+/// model offset/facing) is read from `section` directly. The renderer culls
+/// the resulting mesh by its [`SectionPos`].
 pub fn build_section_mesh(
     section: &Section,
     pos: SectionPos,
-    rules: &petramond_world::texture_transition::Rules,
-    neighbour_block: impl Fn(i32, i32, i32) -> u16,
-    neighbour_cell_state: impl Fn(i32, i32, i32) -> ShapeState,
-    neighbour_fluid_meta: impl Fn(i32, i32, i32) -> u8,
-    neighbour_biome: impl Fn(i32, i32) -> u8,
-    neighbour_light: impl Fn(i32, i32, i32) -> u8,
-    neighbour_blocklight: impl Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
-    neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
-    neighbour_dyed: impl Fn(i32, i32, i32) -> bool,
+    ctx: MeshContext<'_>,
+    reads: &WorldReads<'_>,
 ) -> ChunkMesh {
-    let pad = closure_pad::ClosurePad::assemble(
-        pos,
-        &WorldReads {
-            block: &neighbour_block,
-            cell_state: &neighbour_cell_state,
-            fluid_meta: &neighbour_fluid_meta,
-            biome: &neighbour_biome,
-            skylight: &neighbour_light,
-            blocklight: &neighbour_blocklight,
-            loaded: &neighbour_loaded,
-            dyed: &neighbour_dyed,
-        },
-    );
-    build_section_mesh_from_pad(section, pos, pad.view(), rules)
+    let _pin = pin(ctx.content);
+    let pad = closure_pad::ClosurePad::assemble(pos, reads);
+    build_section_mesh_from_pad(section, pos, pad.view(), ctx)
 }
 
 /// [`build_section_mesh_cancellable`] that always finishes.
@@ -77,24 +86,25 @@ pub fn build_section_mesh_from_pad(
     section: &Section,
     pos: SectionPos,
     pad: SectionMeshPad<'_>,
-    rules: &petramond_world::texture_transition::Rules,
+    ctx: MeshContext<'_>,
 ) -> ChunkMesh {
-    build_section_mesh_cancellable(section, pos, pad, rules, &|| false).expect("uncancelled mesh")
+    build_section_mesh_cancellable(section, pos, pad, ctx, &|| false).expect("uncancelled mesh")
 }
 
-/// Build one section's mesh from its assembled pad under a transition policy.
-/// Workers can abandon superseded snapshots between section rows.
+/// Build one section's mesh from its assembled pad. Workers can abandon
+/// superseded snapshots between section rows.
 pub fn build_section_mesh_cancellable(
     section: &Section,
     pos: SectionPos,
     pad: SectionMeshPad<'_>,
-    rules: &petramond_world::texture_transition::Rules,
+    ctx: MeshContext<'_>,
     cancelled: &dyn Fn() -> bool,
 ) -> Option<ChunkMesh> {
+    let _pin = pin(ctx.content);
     if cancelled() {
         return None;
     }
-    let mesh = mesher::mesh_section(section, pos, &pad, rules, cancelled, true)?;
+    let mesh = mesher::mesh_section(section, pos, &pad, ctx, cancelled, true)?;
     (!cancelled()).then_some(mesh)
 }
 
@@ -106,11 +116,12 @@ pub fn build_section_mesh_cancellable(
 pub(super) fn build_section_mesh_with(
     section: &Section,
     pos: SectionPos,
-    rules: &petramond_world::texture_transition::Rules,
+    ctx: MeshContext<'_>,
     reads: &WorldReads<'_>,
     exposure_masks: bool,
 ) -> ChunkMesh {
+    let _pin = pin(ctx.content);
     let pad = closure_pad::ClosurePad::assemble(pos, reads);
-    mesher::mesh_section(section, pos, &pad.view(), rules, &|| false, exposure_masks)
+    mesher::mesh_section(section, pos, &pad.view(), ctx, &|| false, exposure_masks)
         .expect("uncancelled mesh")
 }

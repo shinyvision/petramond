@@ -9,8 +9,6 @@
 //! fluids, the exposure masks). Reads outside the pad fall back the way the
 //! live world's accessors do: air, no state, open sky, not loaded.
 
-use std::cell::RefCell;
-
 use glam::IVec3;
 use petramond_world::block::{Block, CellView, ShapeState};
 use petramond_world::block_state::SlabState;
@@ -19,33 +17,43 @@ use petramond_world::light::LightRgb;
 use petramond_world::section::Section;
 use petramond_world::tile::Tile;
 
-use super::super::boxset::{cell_seals_face, BoxSetScratch, ShapeBox};
+use super::super::boxset::cell_seals_face;
 use super::super::face::Face;
-use super::cell_class::{class_of, pad_classes, PAD_OPAQUE_FLUID};
+use super::cell_class::{MeshRegistry, PAD_OPAQUE_FLUID};
 use super::pad::{mesh_pad_idx, SectionMeshPad, SECTION_PAD};
+use super::scratch::NeighbourScratch;
 
 pub(super) struct Neighbourhood<'a> {
     pad: &'a SectionMeshPad<'a>,
     section: &'a Section,
     /// World coordinates of the section's minimum cell.
     origin: IVec3,
-    pad_classes: &'static [u8],
-    /// Scratch for [`Self::occupancy_boxes`]: the neighbour's resolved boxes.
-    occupancy: RefCell<Vec<ShapeBox>>,
-    /// Scratch for [`Self::seals_floor`].
-    seal: RefCell<(Vec<ShapeBox>, BoxSetScratch)>,
+    /// The dispatch tables the build runs against.
+    registry: &'a MeshRegistry,
+    /// Scratch for [`Self::occupancy_boxes`] and [`Self::seals_floor`].
+    scratch: &'a NeighbourScratch,
 }
 
 impl<'a> Neighbourhood<'a> {
-    pub(super) fn new(pad: &'a SectionMeshPad<'a>, section: &'a Section, origin: IVec3) -> Self {
+    pub(super) fn new(
+        pad: &'a SectionMeshPad<'a>,
+        section: &'a Section,
+        origin: IVec3,
+        registry: &'a MeshRegistry,
+        scratch: &'a NeighbourScratch,
+    ) -> Self {
         Self {
             pad,
             section,
             origin,
-            pad_classes: pad_classes(),
-            occupancy: RefCell::default(),
-            seal: RefCell::default(),
+            registry,
+            scratch,
         }
+    }
+
+    #[inline]
+    pub(super) fn registry(&self) -> &'a MeshRegistry {
+        self.registry
     }
 
     #[inline]
@@ -176,7 +184,7 @@ impl<'a> Neighbourhood<'a> {
     /// above. Deliberately PosY-only — a sealed face in the other five
     /// directions is plain overdraw, never a visible artifact.
     pub(super) fn seals_floor(&self, p: IVec3) -> bool {
-        let (boxes, scratch) = &mut *self.seal.borrow_mut();
+        let (boxes, scratch) = &mut *self.scratch.seal.borrow_mut();
         cell_seals_face(self, p, Face::NegY, boxes, scratch)
     }
 
@@ -187,7 +195,7 @@ impl<'a> Neighbourhood<'a> {
         let b = self.block(p);
         b.is_opaque()
             || (b.is_slab() && self.full_slab(p))
-            || (class_of(self.pad_classes, b.id()) & PAD_OPAQUE_FLUID != 0
+            || (self.registry.pad_class(b.id()) & PAD_OPAQUE_FLUID != 0
                 && self.fluid_fills(p, b))
             || (matches!(face, Face::PosY) && self.seals_floor(p))
     }
@@ -225,7 +233,7 @@ impl<'a> Neighbourhood<'a> {
         // Presentation is irrelevant to an occupancy query, so the tint is a
         // constant; the scratch keeps the per-face call allocation free.
         let k = nb_block.shape_kind_def();
-        let mut boxes = self.occupancy.borrow_mut();
+        let mut boxes = self.scratch.occupancy.borrow_mut();
         boxes.clear();
         let tint_for = |_: Tile| [1.0f32; 3];
         k.render.boxes(
@@ -256,8 +264,7 @@ impl<'a> Neighbourhood<'a> {
     /// in-section custom cells. Consumed by the face-lighting cast probes AND
     /// the box emitter's out-of-cell probes, so casting and receiving are one
     /// rule.
-    pub(super) fn matter(&self, (cx, cy, cz): (i32, i32, i32), lo: [f32; 3], hi: [f32; 3]) -> bool {
-        let p = IVec3::new(cx, cy, cz);
+    pub(super) fn matter(&self, p: IVec3, lo: [f32; 3], hi: [f32; 3]) -> bool {
         let b = self.block(p);
         if b.occludes_ao() {
             return true;

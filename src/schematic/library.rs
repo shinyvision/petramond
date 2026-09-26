@@ -104,7 +104,7 @@ pub fn save(dir: &Path, schematic: &Schematic, thumbnail: &[u8]) -> Result<PathB
 pub fn save_as(path: &Path, schematic: &Schematic, thumbnail: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("Schematic path has no directory")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    petramond_util::atomic_file::publish_new(path, |file| {
+    petramond_persist::atomic_file::publish_new(path, |file| {
         archive::write_to(file, schematic, thumbnail).map_err(std::io::Error::other)
     })
     .map_err(|e| e.to_string())

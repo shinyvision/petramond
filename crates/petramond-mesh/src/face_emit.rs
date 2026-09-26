@@ -7,10 +7,11 @@ use petramond_world::block_state::SlabState;
 use petramond_world::light::BlockLight6;
 use petramond_world::tile::Tile;
 
+use super::builder::CornerLight;
 use super::face::{should_flip, Face, FaceShading};
 use super::vertex::{
     pack_cell_uv, pack_normal_code, pack_overlay, pack_uv_turn, pack_uv_turn2, pack_vertex, Vertex,
-    UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
+    UV_MODE_CELL_LOCAL, UV_MODE_NONE, UV_MODE_SHIFT,
 };
 
 /// Fold a cell's (or neighbourhood-summed) skylight + block-light into the
@@ -117,29 +118,72 @@ pub(super) fn slab_corner_open(
     !petramond_world::slab::half_cell_occupied(state, pick(u.x, v.x), pick(u.y, v.y), pick(u.z, v.z))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn push_cube_face_with_cell_uvs(
-    vbuf: &mut Vec<Vertex>,
-    corners: [[f32; 3]; 4],
-    base_tile: Tile,
-    overlay: u32,
-    has_overlay: bool,
-    uv_mode: u32,
-    cell_uvs: Option<[(u32, u32); 4]>,
-    uv_turn: u32,
-    tint: [f32; 3],
-    face: Face,
-    ao: [u32; 4],
-    light6: [u32; 4],
-    block6: [BlockLight6; 4],
-    dyed: bool,
-) -> u32 {
+/// The light and tint of flat-lit geometry (plant planes, the torch pole):
+/// one value for every corner, no AO, no directional shade.
+#[derive(Copy, Clone)]
+pub(super) struct FlatLit {
+    pub(super) tint: [f32; 3],
+    /// The cell's skylight, 0..=63.
+    pub(super) sky6: u32,
+    pub(super) block: BlockLight6,
+}
+
+impl FlatLit {
+    /// A flat-lit vertex at `pos` for `corner` of a quad textured with `tile`:
+    /// shade index 0 (top, no directional darkening), AO 3, no overlay.
+    pub(super) fn vertex(self, pos: [f32; 3], tile: Tile, corner: u32) -> Vertex {
+        Vertex {
+            pos,
+            tint: self.block.tint_word(self.tint),
+            packed: pack_vertex(tile.index() as u32, corner, 0, false, 3, self.sky6)
+                | self.block.packed_bits(),
+            packed2: self.block.packed2_bits(),
+        }
+    }
+}
+
+/// One cube-face quad to push: its geometry, its art, and its per-corner
+/// light.
+pub(super) struct FaceSpec {
+    pub(super) face: Face,
+    /// The four corners, in [`Face::quad_box`] order.
+    pub(super) corners: [[f32; 3]; 4],
+    pub(super) base_tile: Tile,
+    /// The overlay lane's payload: an overlay tile index, or a fluid
+    /// surface's flow angle.
+    pub(super) overlay: u32,
+    /// Whether the shader draws `overlay` as an overlay tile.
+    pub(super) has_overlay: bool,
+    /// Explicit cell-local UVs per corner (the log remap); `None` maps the
+    /// tile by corner id.
+    pub(super) cell_uvs: Option<[(u32, u32); 4]>,
+    pub(super) uv_turn: u32,
+    pub(super) tint: [f32; 3],
+    /// Per-corner `(ao, sky light, block light)`.
+    pub(super) light: CornerLight,
+    pub(super) dyed: bool,
+}
+
+/// Push one cube face and return the index of its first vertex.
+pub(super) fn push_cube_face(vbuf: &mut Vec<Vertex>, spec: &FaceSpec) -> u32 {
+    let FaceSpec {
+        face,
+        corners,
+        base_tile,
+        overlay,
+        has_overlay,
+        cell_uvs,
+        uv_turn,
+        tint,
+        light: (ao, light6, block6),
+        dyed,
+    } = *spec;
     let shade_idx = face.shade_idx();
     let dyed = if dyed { super::vertex::DYED_FLAG2 } else { 0 };
     let packed_uv_mode = if cell_uvs.is_some() {
         UV_MODE_CELL_LOCAL
     } else {
-        uv_mode
+        UV_MODE_NONE
     };
     // A CELL_LOCAL face carries its full mapping in the explicit UV it packs
     // (box sets, the log remap), so its turn bits stay zero — the shaders

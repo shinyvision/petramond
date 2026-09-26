@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use petramond_region::{REGION_SHIFT, REGION_SIZE};
-use petramond_util::bytecodec::{deflate, inflate, put_u32, put_u64, put_u8, Reader};
+use petramond_persist::bytecodec::{deflate, inflate, put_u32, put_u64, put_u8, Reader};
 use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 
 /// Layout of an encoded record. Bump it when [`ColumnCore`]'s fields or

@@ -16,8 +16,8 @@
 use std::io;
 use std::path::{Component, Path};
 
-use petramond_util::atomic_file;
-use petramond_util::bytecodec::Reader;
+use petramond_persist::atomic_file;
+use petramond_persist::bytecodec::Reader;
 
 use super::region::{self, MergePolicy};
 

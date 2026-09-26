@@ -21,8 +21,8 @@ mod v19;
 mod v20;
 
 pub use item_slot::DiskSlot;
-pub use petramond_util::bytecodec::{deflate, inflate, Reader};
-pub use petramond_util::bytecodec::{
+pub use petramond_persist::bytecodec::{deflate, inflate, Reader};
+pub use petramond_persist::bytecodec::{
     get_indexed, get_kv_map, put_indexed, put_kv_map, put_u16, put_u32, put_u64, put_u8,
 };
 

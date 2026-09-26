@@ -8,7 +8,7 @@
 //! reinterpreted: block ids, item ids and mob species stay disk ids, so the
 //! step needs no palette.
 
-use petramond_util::bytecodec::Reader;
+use petramond_persist::bytecodec::Reader;
 
 use super::{
     RecordError, FLAG2_HAS_CELL_KV, FLAG2_HAS_CONTAINERS, FLAG3_HAS_BLOCKLIGHT, FLAG3_HAS_SKYLIGHT,

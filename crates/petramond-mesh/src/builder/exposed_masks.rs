@@ -2,9 +2,7 @@ use petramond_world::block::CellView;
 use petramond_world::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::super::face::{Face, FACES};
-use super::cell_class::{
-    class_of, FAST_CUBE, PAD_OPAQUE, PAD_OPAQUE_FLUID, PAD_SEALS, PAD_SLAB, SKIP,
-};
+use super::cell_class::{FAST_CUBE, PAD_OPAQUE, PAD_OPAQUE_FLUID, PAD_SEALS, PAD_SLAB, SKIP};
 use super::cube_face::face_index;
 use super::neighbourhood::Neighbourhood;
 use super::pad::{mesh_pad_idx, SECTION_PAD};
@@ -83,8 +81,7 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
         }
     }
 
-    let pad_class = super::cell_class::pad_classes();
-    let classes = super::cell_class::cell_classes();
+    let registry = nb.registry();
     let mut masks = ExposedMasks {
         faces: [[0u64; FACE_MASK_WORDS]; FACES.len()],
         visit: [0u16; SECTION_SIZE * SECTION_SIZE],
@@ -102,7 +99,7 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
             let mut covers_row = 0u32;
             for px in 0..SECTION_PAD {
                 let i = mesh_pad_idx(px, py, pz);
-                let c = pad_class[pad.blocks[i] as usize];
+                let c = registry.pad_class(pad.blocks[i]);
                 if c & PAD_OPAQUE != 0
                     || (c & PAD_SLAB != 0
                         && petramond_world::block_state::SlabState::from_cell(pad.cell_states[i])
@@ -145,14 +142,14 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
             for lx in 0..SECTION_SIZE {
                 let i = mesh_pad_idx(lx + 1, ly + 1, lz + 1);
                 let id = pad.blocks[i];
-                if class_of(classes, id) & SKIP == 0 {
+                if registry.cell_class(id) & SKIP == 0 {
                     work |= 1u32 << lx;
                 }
-                if class_of(classes, id) & FAST_CUBE == 0 {
+                if registry.cell_class(id) & FAST_CUBE == 0 {
                     // Same-material full slab stacks take the cube fast path too;
                     // this MUST match the box families' whole-cube fall-through
                     // (`ShapeRender::meshes_as_cube`) the scan dispatches on.
-                    if class_of(pad_class, id) & PAD_SLAB == 0
+                    if registry.pad_class(id) & PAD_SLAB == 0
                         || !petramond_world::slab::is_uniform_full_stack(
                             petramond_world::block_state::SlabState::from_cell(pad.cell_states[i]),
                         )
