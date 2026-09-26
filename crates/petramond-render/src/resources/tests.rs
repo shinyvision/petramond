@@ -1,4 +1,4 @@
-use super::*;
+use super::patch::section_index_hash;
 
 /// The vertex-only patch path must refuse a mesh whose model index TOPOLOGY
 /// changed even when every layer count matches — count equality alone let

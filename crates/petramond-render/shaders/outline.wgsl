@@ -1,15 +1,7 @@
 // Selection outline: draws a black wireframe cube (LineList) at the targeted
-// block. Reuses the block pipeline's Uniforms buffer; the struct layout must stay
-// byte-identical to render::Uniforms / block.wgsl.
+// block. Reuses the block pipeline's frame Uniforms buffer.
 
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos:   vec4<f32>,
-    fog:       vec4<f32>,
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-};
+#import petramond::frame
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 

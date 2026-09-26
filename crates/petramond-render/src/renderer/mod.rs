@@ -64,8 +64,9 @@ use super::particles::{build_particles_split, build_transparent_emitter_particle
 use super::pipeline::{create_pipeline_resources, EnvPassResources};
 use super::resources::{
     create_atlas, create_atlas_array, create_gui_panel, create_model_texture, create_scene_color,
-    upload_column_mesh, ColumnOrigins, ColumnUploadScratch, GpuSectionMesh,
+    upload_column_mesh, ColumnOrigins, GpuSectionMesh, SectionStream, Span,
 };
+use draw_plan::{QuadPass, SectionOcclusion, TerrainDraws};
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::Uniforms;
@@ -124,27 +125,17 @@ pub(crate) struct VisibleSection {
     opaque_batched: bool,
     model_batched: bool,
     use_far_leaf_lod: bool,
-    /// Base vertex + quad count of the section's implied-triangulation opaque
-    /// streams (see [`petramond_mesh::QuadIdx`]).
-    opaque_vertex_start: u32,
-    opaque_quads: u32,
-    /// The section's leaf-to-leaf internal faces, in the column's tail region.
-    /// Drawn only at detailed LOD; empty for a section without leaves, which
-    /// is why nearly every section still draws its opaque share in one call.
-    opaque_tail_start: u32,
-    opaque_tail_quads: u32,
-    transparent_vertex_start: u32,
-    transparent_quads: u32,
-    transparent_ts_vertex_start: u32,
-    transparent_ts_quads: u32,
-    translucent_vertex_start: u32,
-    translucent_quads: u32,
-    model_index_start: u32,
-    model_idx_count: u32,
-    /// The section's alpha-blend model face range in the column index buffer
-    /// (drawn by the model-blend pass; see [`petramond_mesh::ChunkMesh::model_blend_idx`]).
-    model_blend_index_start: u32,
-    model_blend_idx_count: u32,
+    /// The section's ranges in its column's buffers, by [`SectionStream`]:
+    /// the quad passes' draw lists are built from them, and the model passes
+    /// draw a section's index ranges when its column is not batched.
+    spans: [Span; SectionStream::COUNT],
+}
+
+impl VisibleSection {
+    #[inline]
+    fn span(&self, stream: SectionStream) -> Span {
+        self.spans[stream.index()]
+    }
 }
 
 /// One pack environment (volumetric) pass: its pipeline resources plus the
@@ -376,14 +367,15 @@ struct TerrainPass {
     /// per terrain pass; each column draw selects its row via `first_instance`.
     column_origins: ColumnOrigins,
     /// Suballocated GPU storage every packed terrain column's geometry lives in.
-    geometry: super::geometry_arena::GeometryArena,
+    geometry: super::resources::TerrainArenas,
     /// Shared index buffer for the implied-triangulation terrain streams.
     quad_index: super::resources::QuadIndexBuffer,
     /// Which dirty columns upload when (see [`UploadQueue`]).
     uploads: UploadQueue,
-    /// Reusable CPU staging for packing section meshes into a GPU column upload.
-    upload_scratch: ColumnUploadScratch,
     plan: TerrainPlan,
+    /// The planned quad passes' draw lists, uploaded for indirect submission
+    /// (see [`TerrainDraws`]).
+    draws: TerrainDraws,
     /// Reusable `(distance, column, index)` keys for the section depth sort,
     /// and the gather buffer the sorted records land in.
     sort_scratch: Vec<(f32, ChunkPos, u32)>,
@@ -403,6 +395,9 @@ struct TerrainPass {
     /// naming a contiguous run of it.
     cull_regions: Vec<CullRegion>,
     cull_index_revision: u64,
+    /// The section visibility graph, refreshed with the cull index, and the
+    /// last plan's occlusion flood over it (see [`SectionOcclusion`]).
+    occlusion: SectionOcclusion,
 }
 
 /// Columns per side of one cull region. A region test rejects up to its square
@@ -448,8 +443,10 @@ impl TerrainPass {
         self.planned_view_key = None;
         self.cull_index.clear();
         self.cull_regions.clear();
+        self.occlusion.clear();
         self.cull_index_revision = u64::MAX;
         self.plan.clear();
+        self.draws.clear();
     }
 }
 

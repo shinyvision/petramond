@@ -20,16 +20,19 @@ const PARTICLE_ROW_ATTRS: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array!
     9 => Uint32,
 ];
 
-/// The particle module: the helpers, the face table generated from
-/// `particles::FACES`, then `particles.wgsl`.
+/// The particle module, composed: the helpers, the face table generated from
+/// `particles::FACES`, then `particles.wgsl`, its imports resolved.
 fn particle_shader_source() -> String {
-    [
+    let source = [
         include_str!("../../shaders/cel.wgsl"),
         include_str!("../../shaders/atmosphere.wgsl"),
         &super::particles::wgsl_faces(),
         include_str!("../../shaders/particles.wgsl"),
     ]
-    .concat()
+    .concat();
+    super::prelude::compose(&source)
+        .unwrap_or_else(|e| panic!("particle shader: {e}"))
+        .into_owned()
 }
 
 /// Particle pipelines (tiny 3D cubes, one instance per particle). Mining/break

@@ -91,8 +91,9 @@ pub(super) async fn request_adapter(
 /// The device every renderer needs. The terrain tile array holds every tile
 /// PLUS its dye-base twin (2 × tile count layers), which exceeds the default
 /// 256-layer limit — request what the tile array actually needs, capped to what
-/// the adapter offers, so an adapter that can't fit it fails `create_texture`
-/// with a clear count instead of silently truncating.
+/// the adapter offers; content that overflows the resulting limits is reported
+/// by `content_limits::check` with the offending counts before the device
+/// exists.
 pub(super) async fn request_device(
     adapter: &wgpu::Adapter,
 ) -> Result<(wgpu::Device, wgpu::Queue), RenderInitError> {
@@ -100,6 +101,8 @@ pub(super) async fn request_device(
     required_limits.max_texture_array_layers = (2 * petramond_world::tile::Tile::count() as u32)
         .max(required_limits.max_texture_array_layers)
         .min(adapter.limits().max_texture_array_layers);
+    // The limits the device will have: content past them is named here.
+    crate::content_limits::check(&required_limits).map_err(RenderInitError::ContentLimits)?;
     // Adapter-specific format features expose supported 8x MSAA; timestamps
     // remain opt-in for the GPU-timing instrument.
     let mut required_features =
@@ -107,6 +110,7 @@ pub(super) async fn request_device(
     if gpu_timer::GpuTimer::wanted() {
         required_features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
     }
+    required_features |= super::draw_plan::terrain_draw_features(adapter);
     adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: None,

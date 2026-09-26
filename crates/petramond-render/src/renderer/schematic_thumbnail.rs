@@ -74,11 +74,7 @@ impl SchematicThumbnailer {
             bytemuck::bytes_of(&u),
             wgpu::BufferUsages::UNIFORM,
         );
-        let uv = buffer(
-            "schematic uv table",
-            &vec![0u8; crate::uniforms::UV_RECTS_LEN * 16],
-            wgpu::BufferUsages::UNIFORM,
-        );
+        let uv = crate::uniforms::uv_rects_placeholder(&self.device, "schematic uv table");
         let bind = crate::selection_highlight::inactive_bind(
             &self.device,
             &self.blocks.get(1).get_bind_group_layout(0),

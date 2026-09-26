@@ -7,6 +7,7 @@ pub mod block_draw;
 pub mod block_entity_model;
 pub mod break_overlay;
 pub mod camera;
+mod content_limits;
 pub mod crosshair;
 pub mod effect_icons;
 pub mod entity_shadow;

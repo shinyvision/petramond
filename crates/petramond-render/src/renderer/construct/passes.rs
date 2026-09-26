@@ -12,11 +12,11 @@ impl TerrainPass {
             pipes,
             columns: ColumnStore::default(),
             column_origins: ColumnOrigins::new(device),
-            geometry: crate::geometry_arena::GeometryArena::new(),
+            geometry: crate::resources::TerrainArenas::default(),
             quad_index: crate::resources::QuadIndexBuffer::new(device, queue),
             uploads: UploadQueue::default(),
-            upload_scratch: ColumnUploadScratch::default(),
             plan: TerrainPlan::default(),
+            draws: TerrainDraws::new(device),
             sort_scratch: Vec::new(),
             sorted_scratch: Vec::new(),
             gpu_revision: 0,
@@ -30,6 +30,7 @@ impl TerrainPass {
             cull_index: Vec::new(),
             cull_regions: Vec::new(),
             cull_index_revision: u64::MAX,
+            occlusion: SectionOcclusion::default(),
         }
     }
 }

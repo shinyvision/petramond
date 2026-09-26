@@ -1,17 +1,5 @@
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos:   vec4<f32>,
-    fog:       vec4<f32>,
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-    water_anim: vec4<u32>,
-    sky_color: vec4<f32>,
-};
-
-struct ShaderParams {
-    values: array<vec4<f32>, 16>,
-};
+#import petramond::frame
+#import petramond::shader_params
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<uniform> params: ShaderParams;

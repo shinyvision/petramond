@@ -12,14 +12,15 @@
 // exactly like the chunk pipeline, so a held block is textured identically to
 // the world block.
 //
-// `packed` bit 26 is overloaded (mirrors block_model's packing):
-//  - solid cuboid (bit 26 set, NO tile / NO overlay): the tint IS the colour
+// The overlay flag (vtx_overlay_flag) is overloaded (mirrors block_model's
+// packing):
+//  - solid cuboid (flag set, NO tile / NO overlay): the tint IS the colour
 //    tile (both 0) -> output the interpolated vertex `tint` directly.
-//  - grass-block side: bit 26 set + a real overlay tile in packed2 bits 20..31 ->
+//  - grass-block side: flag set + a real overlay tile (vtx_overlay_payload) ->
 //    sample the dirt base + tinted grayscale grass-side overlay and composite
 //    (exactly like block.wgsl::fs_opaque), so out-of-world grass sides green to
 //    match the top.
-//  - bit 26 clear: sample the atlas tile * face shade * tint (leaves/grass-top
+//  - flag clear: sample the atlas tile * face shade * tint (leaves/grass-top
 //    foliage tint, or untinted blocks/flowers).
 // The two set-bit cases are told apart by whether the overlay tile is non-zero
 // (the solid path packs no tiles at all).
@@ -28,40 +29,30 @@ struct MvpUniform {
     mvp: mat4x4<f32>,
 };
 
-// Mirror of the frame `Uniforms` (block.wgsl) — only fog_color.w (the sim's sky
-// scale) and sky_color.rgb are read here, so the held block dims/tints in step
-// with terrain. The icon-atlas bake binds the same buffer at its init values
-// (w = 1.0, sky_color = white), so icons stay full-bright.
-struct FrameUniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos:   vec4<f32>,
-    fog:       vec4<f32>,
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-    atlas_layout: vec4<u32>,
-    sky_color: vec4<f32>,
-};
+// The frame `Uniforms` — only fog_color.w (the sim's sky scale) and
+// sky_color.rgb are read here, so the held block dims/tints in step with
+// terrain. The icon-atlas bake binds the same buffer at its init values
+// (w = 1.0, sky_color = white), so icons stay full-bright. The uv-rect table
+// (u0,v0,u1,v1 per tile, SELECT only) and the vertex lane decoders are the
+// same modules block.wgsl reads.
+#import petramond::frame
+#import petramond::uv_rects
+#import petramond::vertex
 
 // Keep in sync with `block.wgsl` / `render::lighting` (dark cave floor).
 const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
 const SKY_GAMMA: f32 = 3.0;
 
-// Mirror of block.wgsl's CELL_LOCAL UV mode (packed bits 23..26): the vertex
-// carries an explicit tile-local UV in packed2 bits 6..11 / 11..16 (1/16ths).
-// Stair item cubes use it so their partial faces sample the matching
-// sub-rectangle of the tile instead of restarting it per quad.
-const UV_MODE_CELL_LOCAL: u32 = 3u;
-// Modes from here up are terrain texture-transition payloads. This pipeline
-// draws its own geometry (item cubes and bbmodels), which never emits them; any other mode reads
-// as a plain face.
-const UV_MODE_TRANSITION: u32 = 4u;
+// UV_MODE_CELL_LOCAL: the vertex carries an explicit tile-local UV
+// (vtx_cell_uv). Stair item cubes use it so their partial faces sample the
+// matching sub-rectangle of the tile instead of restarting it per quad. Modes
+// from UV_MODE_TRANSITION up are terrain texture-transition payloads; this
+// pipeline draws its own geometry (item cubes and bbmodels), which never emits
+// them, so any other mode reads as a plain face.
 
 @group(0) @binding(0) var<uniform> m: MvpUniform;
-// uv-rect table identical to block.wgsl: (u0,v0,u1,v1) per tile. SELECT only.
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 2048>;
-@group(0) @binding(2) var<uniform> frame: FrameUniforms;
+@group(0) @binding(2) var<uniform> frame: Uniforms;
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 
@@ -69,14 +60,9 @@ struct VsIn {
     @location(0) pos:  vec3<f32>,
     // rgb = albedo tint; a = the block light's chroma low byte (block_light_rgb).
     @location(1) tint: vec4<f32>,
-    // bits 0..11 = tile id, 11..13 = corner, 13..15 = shade index, 15..17 = AO,
-    // 17..23 = SKYlight, 23..26 = UV mode (only CELL_LOCAL is honoured here),
-    // 26 = flag (solid-color OR has grass-side overlay),
-    // 27..31 = block-light chroma high nibble, 31 = free.
+    // The two packed words, decoded through petramond::vertex (only the
+    // CELL_LOCAL UV mode is honoured here; the normal code is unused).
     @location(2) packed: u32,
-    // Second packed word: bits 0..6 = block light RED, 6..16 = cell-local uv
-    // (CELL_LOCAL mode only), 16..19 = face normal code (unused here),
-    // 19 = dyed flag, 20..31 = overlay payload (tile id), 31 = free.
     @location(3) packed2: u32,
 };
 
@@ -85,7 +71,7 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
     @location(1) tint: vec3<f32>,
     @location(2) light: vec3<f32>,
-    // bit-20 flag (set for solid hand OR grass-side overlay).
+    // Overlay flag (set for solid hand OR grass-side overlay).
     @location(3) @interpolate(flat) flag: u32,
     // overlay (grass-side) uv, sampled when `overlay_tile` is non-zero.
     @location(4) uv2: vec2<f32>,
@@ -144,53 +130,36 @@ fn turn_uv(turn: u32, uv: vec2<f32>) -> vec2<f32> {
     return uv;
 }
 
-// Mirror of block.wgsl's block_light_rgb: RED in packed2 bits 0..6, GREEN and
-// BLUE in the 12-bit chroma word split 8 + 4 across the tint alpha lane and
-// packed bits 27..31, each XOR the red channel (see `mesh::vertex::BlockLight6`)
-// — so colourless light writes no chroma bits at all. The lane audit in
-// `mesh::vertex` fails if this decode and the Rust encoders drift.
-fn block_light_rgb(packed: u32, packed2: u32, chroma_lo: f32) -> vec3<f32> {
-    let r = packed2 & 0x3Fu;
-    let chroma = u32(round(chroma_lo * 255.0)) | (((packed >> 27u) & 0xFu) << 8u);
-    let g = (chroma & 0x3Fu) ^ r;
-    let b = ((chroma >> 6u) & 0x3Fu) ^ r;
-    return vec3<f32>(f32(r), f32(g), f32(b)) / 63.0;
-}
-
 @vertex
 fn vs_model(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = m.mvp * vec4<f32>(in.pos, 1.0);
 
-    let tile = in.packed & 0x7FFu;
-    let corner = (in.packed >> 11u) & 0x3u;
-    let shade_idx = (in.packed >> 13u) & 0x3u;
-    let overlay_tile = (in.packed2 >> 20u) & 0x7FFu;
-    let ao = (in.packed >> 15u) & 0x3u;
-    let sky6 = (in.packed >> 17u) & 0x3Fu;
-    let uv_mode = (in.packed >> 23u) & 0x7u;
+    let tile = vtx_tile(in.packed);
+    let corner = vtx_corner(in.packed);
+    let shade_idx = vtx_shade(in.packed);
+    let overlay_tile = vtx_overlay_payload(in.packed2);
+    let ao = vtx_ao(in.packed);
+    let sky6 = vtx_sky(in.packed);
+    let uv_mode = vtx_uv_mode(in.packed);
 
     // Reconstruct uvs from the FULL tile rect (texel-exact mapping); the
     // fragment stage clamps them into the half-texel-inset bounds so edge
     // fragments of the magnified iso icons never sample the neighbour tile
     // (see inset_tile). Applied to BOTH the base uv and the grass-side overlay uv2.
-    // Dyed vertices (packed2 bit 19) shift the tile rect into the dye-base
-    // half of the composed atlas (twins sit exactly half the texture down).
-    let dye_v = f32((in.packed2 >> 19u) & 0x1u) * 0.5;
+    // Dyed vertices (vtx_dyed) shift the tile rect into the dye-base half of
+    // the composed atlas (twins sit exactly half the texture down).
+    let dye_v = f32(vtx_dyed(in.packed2)) * 0.5;
     var r = uv_rects[tile];
     r = vec4<f32>(r.x, r.y + dye_v, r.z, r.w + dye_v);
     out.uv_bounds = inset_tile(r);
     if (uv_mode == UV_MODE_CELL_LOCAL) {
-        let c = vec2<f32>(
-            f32((in.packed2 >> 6u) & 0x1Fu),
-            f32((in.packed2 >> 11u) & 0x1Fu),
-        ) / 16.0;
-        out.uv = mix(r.xy, r.zw, c);
+        out.uv = mix(r.xy, r.zw, vtx_cell_uv(in.packed2));
     } else {
-        // The row's UV quarter turn (packed bit 31 + packed2 bit 31, see
-        // mesh::vertex::pack_uv_turn); CELL_LOCAL faces bake their mapping
-        // into the explicit uv above, so only plain faces turn here.
-        let uv_turn = ((in.packed >> 31u) & 0x1u) | (((in.packed2 >> 31u) & 0x1u) << 1u);
+        // The row's UV quarter turn (see mesh::vertex::pack_uv_turn);
+        // CELL_LOCAL faces bake their mapping into the explicit uv above, so
+        // only plain faces turn here.
+        let uv_turn = vtx_uv_turn(in.packed, in.packed2);
         out.uv = mix(r.xy, r.zw, turn_uv(uv_turn, corner_unit(corner)));
     }
     let r2 = uv_rects[overlay_tile];
@@ -213,7 +182,7 @@ fn vs_model(in: VsIn) -> VsOut {
         shades[shade_idx] * ao_lut[ao] * max(sky_term, block_term),
     );
     out.tint = in.tint.rgb;
-    out.flag = (in.packed >> 26u) & 0x1u;
+    out.flag = vtx_overlay_flag(in.packed);
     out.overlay_tile = overlay_tile;
     return out;
 }

@@ -67,18 +67,7 @@ impl Renderer {
         let mut live_allocs = 0usize;
         let mut used = 0u64;
         for col in self.terrain.columns.values() {
-            for b in [
-                &col.opaque_vbuf,
-                &col.transparent_vbuf,
-                &col.transparent_ts_vbuf,
-                &col.translucent_vbuf,
-                &col.model_vbuf,
-                &col.model_ibuf,
-                &col.contact_vbuf,
-            ]
-            .into_iter()
-            .flatten()
-            {
+            for (_, b) in col.layers() {
                 suballocated += b.alloc.capacity();
                 used += b.len;
                 live_allocs += 1;

@@ -6,14 +6,17 @@ use super::*;
 /// its waste must stay bounded, or terrain VRAM balloons silently.
 #[test]
 fn size_classes_cover_the_request_with_bounded_waste() {
-    for len in (1u64..1 << 22).step_by(97) {
-        let c = class_size(len);
-        assert!(c >= len, "class {c} smaller than {len}");
-        assert!(
-            c <= len + MIN_CLASS.max(len / 8),
-            "class {c} wastes too much on {len}"
-        );
-        assert_eq!(c % 4, 0, "class {c} breaks wgpu's 4-byte alignment");
+    for unit in [4u64, 16, 20, 32] {
+        for len in (1u64..1 << 22).step_by(97) {
+            let c = class_size(len, unit);
+            assert!(c >= len, "class {c} smaller than {len} (unit {unit})");
+            assert!(
+                c <= len + (MIN_CLASS + unit).max(len / 8 + unit),
+                "class {c} wastes too much on {len} (unit {unit})"
+            );
+            assert_eq!(c % unit, 0, "class {c} is not whole {unit}-byte units");
+            assert_eq!(c % 4, 0, "class {c} breaks wgpu's 4-byte alignment");
+        }
     }
 }
 
@@ -21,8 +24,10 @@ fn size_classes_cover_the_request_with_bounded_waste() {
 /// what keeps allocation O(1) with no fragmentation search.
 #[test]
 fn freed_allocations_are_reused_by_the_same_class() {
-    assert_eq!(class_size(5000), class_size(5100));
-    let mut book = Book::default();
+    assert_eq!(class_size(5000, 4), class_size(5100, 4));
+    assert_ne!(class_size(5000, 4), class_size(9000, 4));
+    assert_eq!(class_size(5000, 20), class_size(5100, 20));
+    let mut book = Book::new(4, BLOCK_BYTES);
     let first = book.place(5000);
     let neighbour = book.place(9000);
     assert_eq!(first.new_block, Some(BLOCK_BYTES));
@@ -40,7 +45,7 @@ fn freed_allocations_are_reused_by_the_same_class() {
 
 #[test]
 fn allocations_bump_through_a_block_then_open_the_next() {
-    let mut book = Book::default();
+    let mut book = Book::new(4, BLOCK_BYTES);
     let big = BLOCK_BYTES / 4;
     let placed: Vec<Placement> = (0..5).map(|_| book.place(big)).collect();
     for (i, p) in placed.iter().take(4).enumerate() {
@@ -54,11 +59,11 @@ fn allocations_bump_through_a_block_then_open_the_next() {
 
 #[test]
 fn an_oversized_request_gets_a_block_of_its_own() {
-    let mut book = Book::default();
+    let mut book = Book::new(4, BLOCK_BYTES);
     let huge = BLOCK_BYTES * 3 + 1;
     let p = book.place(huge);
     assert_eq!(p.offset, 0);
-    assert_eq!(p.new_block, Some(class_size(huge)));
+    assert_eq!(p.new_block, Some(class_size(huge, 4)));
     assert!(p.capacity >= huge);
 }
 
@@ -67,7 +72,7 @@ fn an_oversized_request_gets_a_block_of_its_own() {
 /// a released block are purged, so nothing hands out memory that is gone.
 #[test]
 fn emptied_blocks_are_released_past_one_spare() {
-    let mut book = Book::default();
+    let mut book = Book::new(4, BLOCK_BYTES);
     let big = BLOCK_BYTES / 2;
     let placed: Vec<Placement> = (0..6).map(|_| book.place(big)).collect();
     assert_eq!(book.block_count(), 3);
@@ -88,7 +93,7 @@ fn emptied_blocks_are_released_past_one_spare() {
 
 #[test]
 fn reclaiming_without_emptying_a_block_releases_nothing() {
-    let mut book = Book::default();
+    let mut book = Book::new(4, BLOCK_BYTES);
     let a = book.place(1000);
     book.place(1000);
     assert!(book.reclaim(vec![(a.capacity, a.block, a.offset)]).is_empty());
@@ -102,7 +107,7 @@ fn reclaiming_without_emptying_a_block_releases_nothing() {
 /// allocation uses.
 #[test]
 fn a_random_workload_never_overlaps_live_allocations() {
-    let mut book = Book::default();
+    let mut book = Book::new(4, BLOCK_BYTES);
     let mut live: Vec<Placement> = Vec::new();
     let mut block_sizes: Vec<u64> = Vec::new();
     let mut seed = 0x2545_F491_4F6C_DD1Du64;
@@ -152,4 +157,26 @@ fn a_random_workload_never_overlaps_live_allocations() {
     }
     let live_bytes: u64 = live.iter().map(|p| p.capacity).sum();
     assert!(live_bytes + book.free_bytes() <= book.reserved_bytes());
+}
+
+/// A four-byte-unit arena keeps the byte classes the per-buffer policy was
+/// tuned with.
+#[test]
+fn the_byte_arena_keeps_its_classes() {
+    assert_eq!(class_size(1, 4), 512);
+    assert_eq!(class_size(4096, 4), 4096);
+    assert_eq!(class_size(4100, 4), 4608);
+    assert_eq!(class_size(1 << 20, 4), 1 << 20);
+}
+
+/// A vertex-stride arena only ever places allocations at whole-element
+/// offsets, so a draw can reach any of them by `base_vertex`.
+#[test]
+fn a_vertex_arena_places_only_whole_elements() {
+    let mut book = Book::new(20, BLOCK_BYTES);
+    for len in [1u64, 19, 21, 999, 5000, 70_000] {
+        let p = book.place(len);
+        assert_eq!(p.offset % 20, 0, "{p:?}");
+        assert_eq!(p.capacity % 20, 0, "{p:?}");
+    }
 }

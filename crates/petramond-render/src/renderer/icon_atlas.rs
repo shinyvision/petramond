@@ -8,9 +8,13 @@
 //! slot is far cheaper than re-projecting cubes/models per frame.
 //!
 //! ## Layout
-//! Cells are 64×64 (the max icon size), laid out [`COLS`] per row. Cell index `i`
-//! (an item's stable `ItemType::id()`) sits at `(col = i % COLS, row = i / COLS)`,
-//! pixel origin `(col*64, row*64)`. The atlas is `(COLS*64) × (rows*64)`.
+//! Cells are 64×64 (the max icon size), laid out [`IconLayout::cols`] per row —
+//! as square as the item count asks, so the atlas grows in both dimensions and
+//! reaches the device's texture-size limit only at `(max/64)²` cells (16 384 on
+//! the common 8192 px limit) instead of at a fixed-width column's height. Cell
+//! index `i` (an item's stable `ItemType::id()`) sits at `(i % cols, i / cols)`,
+//! pixel origin `(col*64, row*64)`. A catalogue past even that capacity is
+//! reported once at bake and its surplus icons render blank.
 //!
 //! ## Format
 //! The color texture uses the SURFACE format (an `*Srgb` format). Sampling decodes
@@ -43,10 +47,42 @@ use super::super::item_model::{build_block_model_icon, ItemVertex};
 use glam::Vec3;
 use petramond_mesh::Vertex;
 
-/// Cells per atlas row.
-const COLS: u32 = 16;
+/// Fewest cells per atlas row (a small catalogue keeps the historical strip).
+const MIN_COLS: u32 = 16;
 /// Side length (px) of one square icon cell — also the max icon size.
 const CELL: u32 = 64;
+
+/// Where the atlas's cells sit: `cols` per row, `rows` rows.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct IconLayout {
+    cols: u32,
+    rows: u32,
+}
+
+impl IconLayout {
+    /// The squarest layout of `cells` cells whose texture stays within
+    /// `max_dim` px on each side (so possibly short of `cells`).
+    fn new(cells: u32, max_dim: u32) -> Self {
+        let max_cells = (max_dim / CELL).max(1);
+        let square = (cells as f64).sqrt().ceil() as u32;
+        let cols = square.max(MIN_COLS).min(max_cells);
+        let rows = cells.div_ceil(cols).clamp(1, max_cells);
+        Self { cols, rows }
+    }
+
+    fn capacity(self) -> u32 {
+        self.cols * self.rows
+    }
+
+    /// Cell `i`'s `(col, row)`, or `None` past the capacity.
+    fn cell(self, i: u32) -> Option<(u32, u32)> {
+        (i < self.capacity()).then_some((i % self.cols, i / self.cols))
+    }
+
+    fn size(self) -> (u32, u32) {
+        (self.cols * CELL, self.rows * CELL)
+    }
+}
 /// Bytes of one model3d MVP slot (a `mat4` padded to the 256-byte dynamic-offset
 /// alignment), matching the per-frame model3d MVP buffer.
 const MVP_SLOT_SIZE: u64 = 256;
@@ -60,8 +96,7 @@ pub(super) struct IconAtlas {
     /// to `ui_pipe` exactly where the gui atlas does.
     pub bind: wgpu::BindGroup,
     /// Atlas dimensions (px), for the UV math.
-    width: f32,
-    height: f32,
+    layout: IconLayout,
     /// Item count at bake — a stack's DYED twin cell sits at `item_cells + id`.
     item_cells: u32,
 }
@@ -81,16 +116,19 @@ impl IconAtlas {
         self.cell_uv_at(self.item_cells + item.id() as u32)
     }
 
+    /// A cell past the atlas capacity (reported at bake) maps to cell 0 —
+    /// air's, left transparent — so its slot draws blank.
     fn cell_uv_at(&self, i: u32) -> [f32; 4] {
-        let col = i % COLS;
-        let row = i / COLS;
+        let (col, row) = self.layout.cell(i).unwrap_or((0, 0));
+        let (width, height) = self.layout.size();
+        let (width, height) = (width as f32, height as f32);
         let x0 = (col * CELL) as f32;
         let y0 = (row * CELL) as f32;
         [
-            x0 / self.width,
-            y0 / self.height,
-            (x0 + CELL as f32) / self.width,
-            (y0 + CELL as f32) / self.height,
+            x0 / width,
+            y0 / height,
+            (x0 + CELL as f32) / width,
+            (y0 + CELL as f32) / height,
         ]
     }
 }
@@ -141,8 +179,17 @@ pub(super) fn bake(
     // dye-base tiles (desaturated, peak-white), which the UI multiplies by a
     // stack's `petramond:tint`. Model (bbmodel) icons have no dye-base half
     // in the model atlas, so their twin is a plain copy (the multiply alone).
-    let rows = (2 * count).div_ceil(COLS);
-    let size = (COLS * CELL, rows * CELL);
+    let max_dim = device.limits().max_texture_dimension_2d;
+    let layout = IconLayout::new(2 * count, max_dim);
+    if layout.capacity() < 2 * count {
+        log::error!(
+            "{count} items need {} icon cells (each plus its dyed twin), but this GPU's \
+             {max_dim} px texture limit holds {}; icons past that render blank",
+            2 * count,
+            layout.capacity()
+        );
+    }
+    let size = layout.size();
     let texture = create_atlas_texture(device, format, size);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind = create_atlas_bind(device, atlas_bgl, &view);
@@ -150,7 +197,7 @@ pub(super) fn bake(
     // order). Pass A is depthless and never touches it.
     let depth_view = create_atlas_depth(device, size);
 
-    let geometry = IconGeometry::build(count);
+    let geometry = IconGeometry::build(count, layout);
     let buffers = geometry.upload(device, model3d_mvp_bgl, uv_rects_buf, uniform_buf);
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("icon atlas bake"),
@@ -239,8 +286,7 @@ pub(super) fn bake(
 
     IconAtlas {
         bind,
-        width: size.0 as f32,
-        height: size.1 as f32,
+        layout,
         item_cells: count,
     }
 }
@@ -330,11 +376,6 @@ fn create_atlas_depth(device: &wgpu::Device, (width, height): (u32, u32)) -> wgp
     .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-/// `(col, row)` of atlas cell `index`.
-fn cell_of(index: u32) -> (u32, u32) {
-    (index % COLS, index / COLS)
-}
-
 /// Every icon's geometry, built CPU-side and grouped by render kind.
 #[derive(Default)]
 struct IconGeometry {
@@ -366,8 +407,9 @@ struct IconBuffers {
 }
 
 impl IconGeometry {
-    /// Every non-`Air` item's icon and its dyed twin (at `count + id`).
-    fn build(count: u32) -> Self {
+    /// Every non-`Air` item's icon and its dyed twin (at `count + id`), as
+    /// far as `layout` has cells for them.
+    fn build(count: u32, layout: IconLayout) -> Self {
         // The square 64×64 cell every icon's MVP is auto-framed to (undistorted).
         let screen = (CELL, CELL);
         let cell_rect = SlotRect {
@@ -383,7 +425,10 @@ impl IconGeometry {
                 continue;
             }
             let i = item.id() as u32;
-            let (cell, twin) = (cell_of(i), cell_of(count + i));
+            let Some(cell) = layout.cell(i) else {
+                continue;
+            };
+            let twin = layout.cell(count + i);
             match item.render_kind() {
                 ItemRenderKind::BlockCube(block) => {
                     geometry.push_cube_icon(cell, twin, iso_icon_mvp(screen, cell_rect), |v, ix| {
@@ -406,19 +451,21 @@ impl IconGeometry {
         geometry
     }
 
-    /// A cube or sprite icon in `cell` and its dyed twin in `twin`: the same
+    /// A cube or sprite icon in `cell` and its dyed twin in `twin` (when it
+    /// fits the atlas): the same
     /// geometry pushed twice, the second copy flagged dyed so model3d samples
     /// the dye-base tiles. Both draw through one MVP slot.
     fn push_cube_icon(
         &mut self,
         cell: (u32, u32),
-        twin: (u32, u32),
+        twin: Option<(u32, u32)>,
         mvp: glam::Mat4,
         push: impl Fn(&mut Vec<Vertex>, &mut Vec<u32>),
     ) {
         let mvp_offset = self.cube_mvps.len() as u32;
         self.cube_mvps.extend_from_slice(&mvp_slot_bytes(&mvp));
-        for ((col, row), dyed) in [(cell, false), (twin, true)] {
+        let twin = twin.map(|twin| (twin, true));
+        for ((col, row), dyed) in std::iter::once((cell, false)).chain(twin) {
             let index_start = self.cube_indices.len() as u32;
             let vert_start = self.cube_verts.len();
             push(&mut self.cube_verts, &mut self.cube_indices);
@@ -443,13 +490,13 @@ impl IconGeometry {
     fn push_model_icon(
         &mut self,
         cell: (u32, u32),
-        twin: (u32, u32),
+        twin: Option<(u32, u32)>,
         push: impl FnOnce(&mut Vec<ItemVertex>, &mut Vec<u32>),
     ) {
         let index_start = self.model_indices.len() as u32;
         push(&mut self.model_verts, &mut self.model_indices);
         let index_count = self.model_indices.len() as u32 - index_start;
-        for (col, row) in [cell, twin] {
+        for (col, row) in std::iter::once(cell).chain(twin) {
             self.model_icons.push(ModelIcon {
                 col,
                 row,
@@ -551,7 +598,7 @@ fn dump_atlas(
     format: wgpu::TextureFormat,
     path: &str,
 ) {
-    let row = w * 4; // 4096 for the 16-col atlas: already 256-aligned
+    let row = w * 4; // whole 64 px cells: always a multiple of 256 bytes
     let buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("icon atlas dump"),
         size: (row * h) as u64,
@@ -634,7 +681,9 @@ mod tests {
     #[test]
     fn every_item_gets_its_cell_and_a_dyed_twin() {
         let count = ItemType::all().len() as u32;
-        let geometry = IconGeometry::build(count);
+        let layout = IconLayout::new(2 * count, 8192);
+        let geometry = IconGeometry::build(count, layout);
+        let cell_of = |i: u32| layout.cell(i).expect("the catalogue fits 8192 px");
         let cells: Vec<(u32, u32)> = geometry
             .cube_icons
             .iter()
@@ -662,5 +711,38 @@ mod tests {
             geometry.cube_mvps.len(),
             geometry.cube_icons.len() / 2 * MVP_SLOT_SIZE as usize
         );
+    }
+
+    /// A small catalogue keeps the historical 16-wide strip.
+    #[test]
+    fn a_small_catalogue_keeps_the_strip() {
+        let layout = IconLayout::new(2 * 100, 8192);
+        assert_eq!(layout.cols, MIN_COLS);
+        assert_eq!(layout.rows, 13);
+        assert_eq!(layout.cell(17), Some((1, 1)));
+    }
+
+    /// A large catalogue grows square and stays inside the texture limit —
+    /// the old fixed-width strip passed 8192 px tall at 1024 items.
+    #[test]
+    fn a_large_catalogue_grows_square_within_the_limit() {
+        for items in [1024u32, 3000, 8192] {
+            let layout = IconLayout::new(2 * items, 8192);
+            let (w, h) = layout.size();
+            assert!(w <= 8192 && h <= 8192, "{items} items: {w}x{h}");
+            assert!(layout.capacity() >= 2 * items, "{items} items fit");
+            assert!(layout.cols.abs_diff(layout.rows) <= layout.cols / 2 + 1);
+        }
+    }
+
+    /// Past the device's capacity, the surplus cells are refused (and draw
+    /// blank) rather than growing an invalid texture.
+    #[test]
+    fn a_catalogue_past_the_limit_is_capped() {
+        let layout = IconLayout::new(100_000, 2048);
+        assert_eq!(layout.size(), (2048, 2048));
+        assert_eq!(layout.capacity(), 32 * 32);
+        assert_eq!(layout.cell(layout.capacity()), None);
+        assert!(layout.cell(layout.capacity() - 1).is_some());
     }
 }

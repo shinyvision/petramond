@@ -28,12 +28,15 @@ pub(super) const MAX_WAIT_FRAMES: u64 = 4;
 /// against a burst of individually-cheap uploads. The old cap of 6 (~360
 /// columns/s) admission-limited fresh-terrain visibility during RD32 flight
 /// (~200 fresh columns/s plus 2–3 re-uploads each while filling) with most of
-/// the time budget unspent.
-pub(super) const MAX_UPLOADS_PER_FRAME: usize = 24;
+/// the time budget unspent. Since the mesh workers seal sections into the GPU
+/// vertex format, an upload is byte copies into staging memory (no
+/// quantising, no concatenation), so the backstop sits well above what the
+/// time budget admits in practice.
+pub(super) const MAX_UPLOADS_PER_FRAME: usize = 64;
 /// Current entries examined per frame (uploaded or deferred).
-const MAX_ATTEMPTS_PER_FRAME: usize = 64;
+const MAX_ATTEMPTS_PER_FRAME: usize = 2 * MAX_UPLOADS_PER_FRAME;
 /// Heap entries popped per frame, stale ones included.
-const MAX_POPS_PER_FRAME: usize = 128;
+const MAX_POPS_PER_FRAME: usize = 4 * MAX_UPLOADS_PER_FRAME;
 
 /// A column's place in the upload order: `(hidden, distance bits)` — columns
 /// in view soon before hidden ones, then nearest first. Equal priorities fall

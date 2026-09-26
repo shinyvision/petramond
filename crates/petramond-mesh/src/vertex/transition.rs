@@ -74,7 +74,15 @@ impl Transition {
     /// Whether `v` carries a transition payload.
     #[inline]
     pub fn carried_by(v: &Vertex) -> bool {
-        (v.packed >> UV_MODE_SHIFT) & 7 >= UV_MODE_TRANSITION
+        Self::carried_by_word(v.packed)
+    }
+
+    /// Whether a vertex whose `packed` word is `packed` carries a transition
+    /// payload — for the sealed [`TerrainVertex`](super::TerrainVertex) streams
+    /// as much as the builder's.
+    #[inline]
+    pub fn carried_by_word(packed: u32) -> bool {
+        (packed >> UV_MODE_SHIFT) & 7 >= UV_MODE_TRANSITION
     }
 
     /// The Rust mirror of the shader's decode, for tests.
@@ -96,6 +104,34 @@ impl Transition {
             grid: std::array::from_fn(|i| ((data >> (i as u32 * MATERIAL_BITS)) & 15) as u8),
         })
     }
+}
+
+/// The shader decode of [`Transition::apply`]'s payload, for the generated
+/// `petramond::vertex` module: the 36 material bits reassembled as a low word
+/// (tile lane, overlay flag, `packed` bit 31, cell-local UV, then the low bits
+/// of the `packed2` tail) and a high nibble, plus the set id from the UV-mode
+/// and shade lanes. Spelled from the same constants `apply` writes with.
+pub(super) fn wgsl() -> String {
+    let tile_bits = TILE_MASK.count_ones();
+    let overlay = OVERLAY_FLAG.trailing_zeros();
+    let bit31_at = tile_bits + 1;
+    let cell_uv = 0x3ff_u32;
+    let cell_uv_at = tile_bits + 2;
+    let tail_at = cell_uv_at + cell_uv.count_ones();
+    let tail_mask = (1u32 << (u32::BITS - tail_at)) - 1;
+    let dyed = DYED_FLAG2.trailing_zeros();
+    let hi_shift = dyed + tail_mask.count_ones();
+    format!(
+        "struct TransitionWords {{\n    lo: u32,\n    hi: u32,\n    set_id: u32,\n}}\n\
+         fn transition_words(packed: u32, packed2: u32) -> TransitionWords {{\n    \
+         let lo = (packed & {TILE_MASK:#X}u) | (((packed >> {overlay}u) & 0x1u) << {tile_bits}u)\n        \
+         | ((packed >> 31u) << {bit31_at}u)\n        \
+         | (((packed2 >> {CELL_UV_U_SHIFT}u) & {cell_uv:#X}u) << {cell_uv_at}u)\n        \
+         | (((packed2 >> {dyed}u) & {tail_mask:#X}u) << {tail_at}u);\n    \
+         let set_id = (((packed >> {UV_MODE_SHIFT}u) & 0x7u) - UV_MODE_TRANSITION)\n        \
+         | (((packed >> {SHADE_SHIFT}u) & 0x3u) << {SET_LOW_BITS}u);\n    \
+         return TransitionWords(lo, packed2 >> {hi_shift}u, set_id);\n}}\n"
+    )
 }
 
 #[cfg(test)]

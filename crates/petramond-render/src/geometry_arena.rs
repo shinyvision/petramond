@@ -9,17 +9,20 @@
 //! `CommandEncoder::finish` from 0.80 to 0.37 ms, `Queue::submit` from 0.15 to
 //! 0.02 ms and pass encoding from 0.30 to 0.17 ms.
 //!
-//! So the arena changes nothing about how terrain is packed, culled, ordered or
-//! drawn: it is still one column's geometry per draw, and a repack still
-//! rewrites only that column. Only the ALLOCATION moves — into a handful of
-//! large blocks that every draw slices into.
+//! A repack still rewrites only its column; only the ALLOCATION is shared —
+//! a handful of large blocks every draw addresses. An arena is built for one
+//! element UNIT (a vertex stride, or 4 for mixed byte streams) and hands out
+//! only whole multiples of it at unit-aligned offsets, so a draw can bind a
+//! whole block once and reach any allocation in it by `base_vertex`
+//! ([`GeometryArena::first_element`]): that is what lets the terrain passes
+//! batch many columns into one indirect multi-draw.
 //!
 //! Allocation is size-classed rather than free-list-coalesced, which makes both
 //! `alloc` and `free` O(1) and removes fragmentation search entirely. A class
-//! rounds up to an eighth of the next power of two, so the rounding waste is
-//! bounded by 12.5% — the same order as the growth headroom the per-buffer
-//! policy already carried, and it doubles as that headroom (a column that
-//! remeshes slightly larger stays inside its class and writes in place).
+//! rounds up to an eighth of the next power of two (in units), so the rounding
+//! waste is bounded by 12.5% — the same order as the growth headroom the
+//! per-buffer policy already carried, and it doubles as that headroom (a column
+//! that remeshes slightly larger stays inside its class and writes in place).
 
 mod book;
 use book::Book;
@@ -64,20 +67,24 @@ impl Drop for LayerAlloc {
 /// to a few dozen, because the cost was per-buffer over THOUSANDS.
 const BLOCK_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Smallest class, and the granularity below `MIN_CLASS * 8`. Also satisfies
-/// every wgpu offset alignment the terrain path needs (vertex/index binds and
-/// `write_buffer` want 4).
+/// Smallest class in bytes (rounded to whole units), and the granularity
+/// below eight of it.
 const MIN_CLASS: u64 = 512;
 
-/// Round `len` up to its size class: multiples of [`MIN_CLASS`] up to
-/// `MIN_CLASS * 8`, then eighths of the enclosing power of two.
-pub(super) fn class_size(len: u64) -> u64 {
-    let len = len.max(1);
-    if len <= MIN_CLASS * 8 {
-        return len.div_ceil(MIN_CLASS) * MIN_CLASS;
-    }
-    let step = 1u64 << (63 - (len - 1).leading_zeros() as u64 - 3);
-    len.div_ceil(step) * step
+/// Round `len` bytes up to its size class in an arena of `unit`-byte
+/// elements: multiples of the minimum class up to eight of them, then eighths
+/// of the enclosing power of two — both counted in units, so every class (and
+/// so every offset the bump pointer reaches) is a whole number of units.
+pub(super) fn class_size(len: u64, unit: u64) -> u64 {
+    let units = len.max(1).div_ceil(unit);
+    let min = (MIN_CLASS / unit).max(1);
+    let classes = if units <= min * 8 {
+        units.div_ceil(min) * min
+    } else {
+        let step = 1u64 << (63 - (units - 1).leading_zeros() as u64 - 3);
+        units.div_ceil(step) * step
+    };
+    classes * unit
 }
 
 pub struct GeometryArena {
@@ -89,18 +96,20 @@ pub struct GeometryArena {
     recycle: Recycle,
     usage: wgpu::BufferUsages,
     copy_scratch: Option<wgpu::Buffer>,
-}
-
-impl Default for GeometryArena {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// The element size every allocation is a whole multiple of (and aligned
+    /// to). A multiple of 4, wgpu's copy alignment.
+    unit: u64,
 }
 
 impl GeometryArena {
-    pub fn new() -> Self {
+    /// An arena of `unit`-byte elements in blocks of about `block_bytes`.
+    pub fn new(unit: u64, block_bytes: u64) -> Self {
+        assert!(
+            unit > 0 && unit % wgpu::COPY_BUFFER_ALIGNMENT == 0,
+            "arena unit {unit} breaks wgpu's copy alignment"
+        );
         Self {
-            book: Book::default(),
+            book: Book::new(unit, block_bytes),
             buffers: Vec::new(),
             recycle: Recycle::default(),
             copy_scratch: None,
@@ -108,7 +117,13 @@ impl GeometryArena {
                 | wgpu::BufferUsages::INDEX
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
+            unit,
         }
+    }
+
+    /// An arena of `unit`-byte elements in the default block size.
+    pub fn with_unit(unit: u64) -> Self {
+        Self::new(unit, BLOCK_BYTES)
     }
 
     /// Total bytes of GPU buffer the arena holds.
@@ -130,6 +145,20 @@ impl GeometryArena {
     /// The bound range for a live allocation, `len` bytes from its start.
     pub fn slice(&self, alloc: &LayerAlloc, len: u64) -> wgpu::BufferSlice<'_> {
         self.block(alloc.block).slice(alloc.offset..alloc.offset + len)
+    }
+
+    /// The whole buffer of block `index`, for draws that bind a block once
+    /// and address allocations in it by element.
+    pub fn block_buffer(&self, index: u32) -> &wgpu::Buffer {
+        self.block(index)
+    }
+
+    /// `(block, first element)` of a live allocation: bind the block's whole
+    /// buffer and draw with this as the base, and the draw reads exactly the
+    /// allocation's elements. Exact because offsets are whole units.
+    pub fn first_element(&self, alloc: &LayerAlloc) -> (u32, u32) {
+        debug_assert_eq!(alloc.offset % self.unit, 0);
+        (alloc.block, (alloc.offset / self.unit) as u32)
     }
 
     #[cfg(test)]
@@ -176,6 +205,33 @@ impl GeometryArena {
         }
         queue.write_buffer(self.block(alloc.block), alloc.offset + offset, bytes);
         true
+    }
+
+    /// Write `len` bytes at `offset` inside a live allocation by filling
+    /// wgpu's staging memory directly: `fill` receives the destination bytes,
+    /// so a caller assembling several sources copies each once, with no
+    /// intermediate buffer. False when the range would leave the allocation.
+    pub fn write_with(
+        &self,
+        queue: &wgpu::Queue,
+        alloc: &LayerAlloc,
+        offset: u64,
+        len: u64,
+        fill: impl FnOnce(&mut [u8]),
+    ) -> bool {
+        if offset + len > alloc.capacity {
+            return false;
+        }
+        let Some(size) = wgpu::BufferSize::new(len) else {
+            return true;
+        };
+        match queue.write_buffer_with(self.block(alloc.block), alloc.offset + offset, size) {
+            Some(mut view) => {
+                fill(&mut view);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Copy live geometry between distinct allocations without a CPU readback.

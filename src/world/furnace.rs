@@ -132,9 +132,9 @@ mod tests {
     }
 
     fn count_tile(mesh: &ChunkMesh, tile: Tile) -> usize {
-        mesh.opaque
+        mesh.gpu_quads(petramond_mesh::QuadLayer::Opaque)
             .iter()
-            .filter(|v| v.packed & 0xFF == tile.index() as u32)
+            .filter(|v| v.packed & petramond_mesh::vertex::TILE_MASK == tile.index() as u32)
             .count()
     }
 

@@ -16,24 +16,7 @@
 // by terrain. Double-sided (the pipeline disables back-face culling) so flat
 // sub-cubes such as legs and tails show from both sides.
 
-// Mirror of `render::uniforms::Uniforms`. Matches block.wgsl's layout.
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos: vec4<f32>,
-    fog: vec4<f32>,
-    // rgb = fog colour; w = sim-owned sky scale (1.0 = noon; night dims it).
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-    atlas_layout: vec4<u32>,
-    // rgb = sim-owned sky light COLOUR (white = identity; night tints subtly
-    // blue). Applied to the SKY term only — torch light keeps its warmth.
-    sky_color: vec4<f32>,
-    // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
-    sun_dir: vec4<f32>,
-    // rgb = the eye fluid's volume tint (white in air).
-    volume_tint: vec4<f32>,
-};
+#import petramond::frame
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(1) @binding(0) var tex: texture_2d<f32>;

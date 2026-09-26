@@ -41,9 +41,9 @@ fn transition_donors_use_snapshot_tints_across_sections() {
     }
     let has_transition = |world: &ReplicaWorld| {
         let mesh = build_inline(world.build_mesh_job(center).unwrap()).unwrap();
-        mesh.opaque
+        mesh.gpu_quads(petramond_mesh::QuadLayer::Opaque)
             .iter()
-            .any(petramond_mesh::vertex::transition::Transition::carried_by)
+            .any(|v| petramond_mesh::vertex::transition::Transition::carried_by_word(v.packed))
     };
     assert!(has_transition(&world));
     world.data.section_mut(east).unwrap().cell_kv_set(

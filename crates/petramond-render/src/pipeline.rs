@@ -4,7 +4,7 @@ use petramond_world::tile::Tile;
 
 use wgpu::util::DeviceExt;
 
-use super::uniforms::{Uniforms, UV_RECTS_LEN};
+use super::uniforms::Uniforms;
 use super::{item_model, particles, resources, shader_pack, ui};
 
 mod builders;
@@ -18,10 +18,10 @@ mod fluid_media;
 #[cfg(test)]
 mod gpu_validation;
 mod grade;
-mod lanes;
 mod model3d;
 mod overlays;
 mod particle;
+pub(crate) mod prelude;
 mod sky;
 mod terrain;
 mod transition;
@@ -196,12 +196,12 @@ pub(super) struct PipelineResources {
     pub model_icon_pipe: wgpu::RenderPipeline,
 }
 
-/// The terrain shader: the registry-generated tables (vertex lanes, transition
+/// The terrain shader, composed: the registry-generated tables (transition
 /// sets, variation, flipbooks, the fluid `media`) ahead of the shared helpers
-/// and `block.wgsl`.
+/// and `block.wgsl`, with every `#import` (frame uniforms, vertex lanes)
+/// resolved.
 fn block_shader_source(media: &[petramond_world::fluid::FluidMedium]) -> String {
-    lanes::declarations()
-        + &transition::declarations()
+    let source = transition::declarations()
         + &variation::declarations()
         + &flipbook::declarations()
         + &fluid_media::declarations(media)
@@ -213,7 +213,10 @@ fn block_shader_source(media: &[petramond_world::fluid::FluidMedium]) -> String 
             include_str!("../shaders/tile_variation.wgsl"),
             include_str!("../shaders/selection_highlight.wgsl"),
             include_str!("../shaders/block.wgsl")
-        )
+        );
+    prelude::compose(&source)
+        .unwrap_or_else(|e| panic!("terrain shader: {e}"))
+        .into_owned()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -537,18 +540,17 @@ fn create_shared_bindings(
     // uv-rect table: the EXACT `tile_uv()` bits per tile, indexed by `Tile as
     // usize`. The vertex shader only SELECTS corners from this (no arithmetic),
     // so reconstructed uvs are bit-identical to the old CPU-baked per-vertex uvs
-    // on every backend. Never updated after creation.
-    // The atlas loader caps the tile count at 256 (the packed vertex's 8-bit
-    // tile-id field); this guards the table size against a cap drift.
-    assert!(Tile::count() <= UV_RECTS_LEN);
-    let mut uv_rects = [[0f32; 4]; UV_RECTS_LEN];
+    // on every backend. Never updated after creation. A storage buffer sized to
+    // the loaded catalogue, so the table grows with content (at least one row:
+    // a binding cannot be empty).
+    let mut uv_rects = vec![[0f32; 4]; Tile::count().max(1)];
     for t in Tile::all() {
         uv_rects[t.index()] = tile_uv(t);
     }
     let uv_rects_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uv_rects"),
-        contents: bytemuck::cast_slice(&uv_rects[..]),
-        usage: wgpu::BufferUsages::UNIFORM,
+        contents: bytemuck::cast_slice(&uv_rects),
+        usage: wgpu::BufferUsages::STORAGE,
     });
 
     let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -559,7 +561,7 @@ fn create_shared_bindings(
                 wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 std::mem::size_of::<Uniforms>() as u64,
             ),
-            uniform_entry(1, wgpu::ShaderStages::VERTEX, (UV_RECTS_LEN * 16) as u64),
+            crate::uniforms::uv_rects_entry(1),
             crate::selection_highlight::layout_entries()[0],
             crate::selection_highlight::layout_entries()[1],
         ],

@@ -29,6 +29,9 @@ pub enum RenderInitError {
     /// The pass table failed validation: a renderer bug, caught before the
     /// first frame rather than as a validation error in the middle of one.
     PassGraph(String),
+    /// The loaded content (tiles, item icons, the uv table) overflows the
+    /// GPU's limits; the message names every overflow.
+    ContentLimits(String),
 }
 
 impl fmt::Display for RenderInitError {
@@ -44,6 +47,9 @@ impl fmt::Display for RenderInitError {
                 write!(f, "offscreen colour format {format:?} is not readable as 8-bit RGBA")
             }
             Self::PassGraph(e) => write!(f, "invalid render pass graph: {e}"),
+            Self::ContentLimits(e) => {
+                write!(f, "the loaded content does not fit this GPU:\n  {e}")
+            }
         }
     }
 }
@@ -54,7 +60,10 @@ impl std::error::Error for RenderInitError {
             Self::CreateSurface(e) => Some(e),
             Self::NoAdapter(e) => Some(e),
             Self::RequestDevice(e) => Some(e),
-            Self::SurfaceUnsupported | Self::UnreadableFormat(_) | Self::PassGraph(_) => None,
+            Self::SurfaceUnsupported
+            | Self::UnreadableFormat(_)
+            | Self::PassGraph(_)
+            | Self::ContentLimits(_) => None,
         }
     }
 }

@@ -5,22 +5,11 @@
 const TRANSITION_MASK_SIDE: i32 = 4;
 const TRANSITION_MASK_TEXELS: i32 = 16 * TRANSITION_MASK_SIDE;
 
-// The mesher's payload: nine 4-bit material slots (source, then eight
-// in-plane neighbours) across the lanes a plain face no longer needs, and a
-// set id split between the UV mode's low bits and the shade lane.
-struct TransitionWords {
-    lo: u32,
-    hi: u32,
-    set_id: u32,
-}
-
-fn transition_words(packed: u32, packed2: u32) -> TransitionWords {
-    let lo = (packed & 0x7FFu) | (((packed >> 26u) & 0x1u) << 11u)
-        | ((packed >> 31u) << 12u) | (((packed2 >> 6u) & 0x3FFu) << 13u)
-        | (((packed2 >> 19u) & 0x1FFu) << 23u);
-    let set_id = (((packed >> 23u) & 0x7u) - UV_MODE_TRANSITION) | (((packed >> 13u) & 0x3u) << 2u);
-    return TransitionWords(lo, packed2 >> 28u, set_id);
-}
+// The mesher's payload (nine 4-bit material slots — source, then eight
+// in-plane neighbours — across the lanes a plain face no longer needs, and a
+// set id split between the UV mode's low bits and the shade lane) is decoded
+// by `transition_words`, generated with the rest of the vertex lanes.
+#import petramond::vertex
 
 fn transition_plane(p: vec3<f32>, normal: u32) -> vec2<f32> {
     switch normal {

@@ -13,7 +13,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::worker::JobPool;
-use petramond_mesh::{ChunkMesh, SectionMeshPad};
+use petramond_mesh::{ChunkMesh, SectionMeshPad, SectionVisibility};
 use petramond_world::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
 use petramond_world::section::Section;
 
@@ -470,6 +470,13 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
             petramond_world::texture_transition::rules(),
             &|| cancel.is_cancelled(),
         )
+    });
+    // Hand the renderer GPU-ready streams (quantising here keeps it off the
+    // render thread, whose column upload is then a byte copy) and the
+    // section's face connectivity for occlusion culling.
+    let mesh = mesh.map(|mut mesh| {
+        mesh.visibility = SectionVisibility::of_section(&center);
+        mesh.into_sealed()
     });
     MeshDone {
         pos,

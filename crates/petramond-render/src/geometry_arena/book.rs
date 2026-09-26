@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use super::{class_size, BLOCK_BYTES};
+use super::class_size;
 
 /// One block's accounting. A block whose last live allocation goes away is
 /// RELEASED (slot left empty, reused by the next new block): travelling
@@ -35,8 +35,12 @@ pub(super) struct Placement {
     pub(super) new_block: Option<u64>,
 }
 
-#[derive(Default)]
 pub(super) struct Book {
+    /// The element size every class (and so every offset) is a whole
+    /// multiple of.
+    unit: u64,
+    /// Size of a fresh block, a whole number of units.
+    block_bytes: u64,
     /// Slots, not a dense list: a released block leaves a hole so live
     /// allocations' block indices stay valid.
     blocks: Vec<Option<BlockBook>>,
@@ -46,11 +50,22 @@ pub(super) struct Book {
 }
 
 impl Book {
+    /// Bookkeeping for an arena of `unit`-byte elements in blocks of about
+    /// `block_bytes`.
+    pub(super) fn new(unit: u64, block_bytes: u64) -> Self {
+        Self {
+            unit,
+            block_bytes: (block_bytes / unit).max(1) * unit,
+            blocks: Vec::new(),
+            free: HashMap::new(),
+        }
+    }
+
     /// Claim `len` bytes: a freed allocation of the same class first, then
     /// bump space in any live block, then a fresh block (a request larger
     /// than a block gets a block of its own). Never fails.
     pub(super) fn place(&mut self, len: u64) -> Placement {
-        let capacity = class_size(len);
+        let capacity = class_size(len, self.unit);
         if let Some((block, offset)) = self.free.get_mut(&capacity).and_then(Vec::pop) {
             self.blocks[block as usize]
                 .as_mut()
@@ -77,7 +92,7 @@ impl Book {
                 };
             }
         }
-        let size = capacity.max(BLOCK_BYTES);
+        let size = capacity.max(self.block_bytes);
         let block = BlockBook {
             bump: capacity,
             size,

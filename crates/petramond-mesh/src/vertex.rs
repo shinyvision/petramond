@@ -1,4 +1,7 @@
+mod chunk_mesh;
 pub mod transition;
+pub mod wgsl;
+pub use chunk_mesh::{ChunkMesh, QuadLayer};
 use petramond_world::light::BlockLight6;
 
 /// Per-face directional shade factors, mirrored in `block.wgsl`.
@@ -6,8 +9,9 @@ pub use petramond_world::shade::SHADES;
 
 /// The CPU block vertex: 24 bytes. A section mesh emits `pos` in MESH space —
 /// column-local X/Z, world Y — so no absolute coordinate is ever rounded to
-/// `f32`; packed columns quantize it into [`TerrainVertex`]. Dynamic bakes
-/// (item entities, chests, doors, break overlay) upload it directly.
+/// `f32`; sealing a mesh ([`ChunkMesh::seal`]) quantizes it into
+/// [`TerrainVertex`]. Dynamic bakes (item entities, chests, doors, break
+/// overlay) upload it directly.
 ///
 /// `tint` is LINEAR RGB packed unorm8 ([`pack_tint`]; the GPU reads it as
 /// `Unorm8x4` — linear values in a linear-interpreted format, so no sRGB OETF
@@ -40,8 +44,9 @@ pub const TERRAIN_POS_SCALE: f32 = 64.0;
 /// (column-local XZ + world Y) in [`TERRAIN_POS_SCALE`] fixed point (`i16`);
 /// the draw binds the column's integer world origin as an instance-step
 /// attribute, and the terrain VS offsets by that origin minus the render
-/// origin in integers, so the large part never reaches a float. CPU meshes
-/// still use [`Vertex`]; conversion happens at upload / patch time.
+/// origin in integers, so the large part never reaches a float. The mesh
+/// builder emits [`Vertex`]; the mesh worker converts when it seals the mesh
+/// ([`ChunkMesh::seal`]), so the renderer only copies these.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TerrainVertex {
@@ -103,18 +108,16 @@ mod terrain_vertex_tests {
         assert_eq!(std::mem::size_of::<TerrainVertex>(), 20);
     }
 
-    /// The three GPU words are decoded by HAND-MIRRORED WGSL (`block.wgsl`,
-    /// `model3d.wgsl`, `break_overlay.wgsl`), which no Rust test can execute —
-    /// a shift that drifts between the two is invisible until something renders
-    /// wrong. So this mirrors the shaders' decode of BOTH packed words AND the
-    /// `Unorm8x4` tint word (alpha lane included) and round-trips every field at
-    /// its extremes, including a tile id ABOVE the old 8-bit ceiling (the whole
-    /// point of the widening) and the overlay payload in its new home.
+    /// The three GPU words are the `petramond::vertex` shader ABI: engine
+    /// shaders decode them through the module [`wgsl::layout`] generates, and
+    /// pack shaders may import it too. This spells that ABI out — BOTH packed
+    /// words AND the `Unorm8x4` tint word (alpha lane included) — and
+    /// round-trips every field at its extremes, including a tile id ABOVE the
+    /// old 8-bit ceiling and the overlay payload in its `packed2` home.
     ///
-    /// The literals below are the SHADERS' literals, deliberately spelled out
-    /// rather than derived from the constants: moving a Rust shift must break
-    /// this test, because the WGSL it mirrors did not move with it. If you move
-    /// a field, update this decode to match the shader you edited.
+    /// The literals below are deliberately spelled out rather than derived
+    /// from the constants: moving a lane changes what every pack shader built
+    /// against the module reads, so it must be a deliberate edit here too.
     #[test]
     fn packed_words_round_trip_through_the_shaders_decode() {
         let cases = [
@@ -257,109 +260,6 @@ mod terrain_vertex_tests {
         assert_eq!(std::mem::size_of::<TerrainVertex>(), 20);
     }
 
-    /// The Rust mirror above proves the encoders agree with a decode SPELLED IN
-    /// RUST. This proves the decode spelled in WGSL is the same one: re-read the
-    /// three shader sources and collect every `packed`/`packed2` bit extraction
-    /// they perform, then require each to name a lane the Rust side defines.
-    ///
-    /// A new lane carved out of the free bits shows up here as an unknown
-    /// `(shift, mask)` until it is listed, and a lane that MOVES on the Rust
-    /// side leaves a shader decoding a shift no longer in the table. Either way
-    /// this fails before anything renders.
-    #[test]
-    fn every_shader_decodes_the_packed_words_at_the_rust_lanes() {
-        // (word, shift, mask, what it is) — the complete Rust-side lane map.
-        // `packed2` bits 20..32 hold three mutually exclusive tenants, so the
-        // overlay payload appears at three widths (a whole tile id, the two
-        // greedy-span nibbles, and both nibbles read at once by the T-junction
-        // nudge's "payload is nonzero" gate).
-        let lanes: &[(&str, u32, u32, &str)] = &[
-            ("packed", 0, TILE_MASK, "tile id"),
-            ("packed", CORNER_SHIFT, 0x3, "corner"),
-            ("packed", SHADE_SHIFT, 0x3, "shade index"),
-            ("packed", AO_SHIFT, 0x3, "ao"),
-            ("packed", SKY_SHIFT, 0x3F, "skylight"),
-            ("packed", UV_MODE_SHIFT, 0x7, "uv mode"),
-            ("packed", OVERLAY_FLAG.trailing_zeros(), 0x1, "has-overlay"),
-            (
-                "packed",
-                CHROMA_HI_SHIFT,
-                CHROMA_HI_MASK,
-                "chroma high nibble",
-            ),
-            ("packed", 31, 0x1, "uv turn low bit"),
-            ("packed2", 0, BLOCK_LIGHT_MASK, "block light red"),
-            ("packed2", CELL_UV_U_SHIFT, CELL_UV_MASK, "cell-local u"),
-            ("packed2", CELL_UV_V_SHIFT, CELL_UV_MASK, "cell-local v"),
-            (
-                "packed2",
-                FLUID_MEDIUM_SHIFT,
-                FLUID_MEDIUM_MASK,
-                "fluid medium",
-            ),
-            (
-                "packed2",
-                FLUID_FLOW_FLAG2.trailing_zeros(),
-                0x1,
-                "fluid flow strip",
-            ),
-            (
-                "packed2",
-                NORMAL_CODE_SHIFT,
-                NORMAL_CODE_MASK,
-                "normal code",
-            ),
-            ("packed2", DYED_FLAG2.trailing_zeros(), 0x1, "dyed flag"),
-            ("packed2", 31, 0x1, "uv turn high bit"),
-            ("packed2", OVERLAY_SHIFT2, OVERLAY_MASK, "overlay tile"),
-            ("packed2", OVERLAY_SHIFT2, 0xF, "greedy width"),
-            ("packed2", OVERLAY_SHIFT2 + 4, 0xF, "greedy height"),
-            (
-                "packed2",
-                OVERLAY_SHIFT2,
-                0xFF,
-                "greedy span (both nibbles)",
-            ),
-        ];
-        let sources = [
-            (
-                "block.wgsl",
-                include_str!("../../petramond-render/shaders/block.wgsl"),
-            ),
-            (
-                "model3d.wgsl",
-                include_str!("../../petramond-render/shaders/model3d.wgsl"),
-            ),
-            (
-                "break_overlay.wgsl",
-                include_str!("../../petramond-render/shaders/break_overlay.wgsl"),
-            ),
-        ];
-        let mut seen_in_block = std::collections::HashSet::new();
-        for (name, src) in sources {
-            for (word, shift, mask) in shader_bit_reads(src) {
-                assert!(
-                    lanes
-                        .iter()
-                        .any(|&(w, s, m, _)| w == word && s == shift && m == mask),
-                    "{name} decodes `{word}` at shift {shift} mask {mask:#X}, \
-                     which is not a lane mesh::vertex defines"
-                );
-                if name == "block.wgsl" {
-                    seen_in_block.insert((word, shift, mask));
-                }
-            }
-        }
-        // block.wgsl is the full-fat consumer: it reads every lane. One going
-        // missing there is a lane silently dropped from the terrain render.
-        for &(word, shift, mask, what) in lanes {
-            assert!(
-                seen_in_block.contains(&(word, shift, mask)),
-                "block.wgsl no longer decodes the {what} lane ({word} >> {shift} & {mask:#X})"
-            );
-        }
-    }
-
     /// The block light's three channels are split across THREE words, so an
     /// emitter's colour survives only if every destination is written. This
     /// round-trips the split through the same decode the shaders perform, and
@@ -411,10 +311,11 @@ mod terrain_vertex_tests {
         assert_eq!(BlockLight6::DARK.packed2_bits(), 0);
     }
 
-    /// The chroma low byte rides the `tint` alpha lane, which the lane-shift
-    /// audit above cannot see (it only parses `packed`/`packed2` reads). Both
-    /// shaders that decode block light must actually read it, and must declare
-    /// the attribute wide enough to receive it.
+    /// The chroma low byte rides the `tint` alpha lane, which the generated
+    /// module's lane audit cannot see (it only parses `packed`/`packed2`
+    /// reads). Both shaders that decode block light must actually hand it to
+    /// `block_light_rgb`, and must declare the attribute wide enough to
+    /// receive it.
     #[test]
     fn the_light_decoding_shaders_read_the_tint_alpha_lane() {
         for (name, src) in [
@@ -436,44 +337,6 @@ mod terrain_vertex_tests {
                 "{name} no longer reads the chroma lane out of the tint alpha"
             );
         }
-    }
-
-    /// Every `(<word> >> Nu) & 0xMu` / `<word> & 0xMu` extraction a WGSL source
-    /// performs on the two packed vertex words. Prose mentioning `packed2` is
-    /// skipped: only an immediately following shift-or-mask parses.
-    fn shader_bit_reads(src: &str) -> Vec<(&'static str, u32, u32)> {
-        let hex = |s: &str| -> Option<u32> {
-            let end = s.find('u')?;
-            u32::from_str_radix(&s[..end], 16).ok()
-        };
-        let mut out = Vec::new();
-        let mut at = 0;
-        while let Some(i) = src[at..].find("packed") {
-            let start = at + i;
-            at = start + "packed".len();
-            let word = if src[at..].starts_with('2') {
-                at += 1;
-                "packed2"
-            } else {
-                "packed"
-            };
-            let tail = src[at..].trim_start();
-            if let Some(rest) = tail.strip_prefix(">> ") {
-                let Some(u) = rest.find("u) & 0x") else {
-                    continue;
-                };
-                let (Ok(shift), Some(mask)) = (rest[..u].parse::<u32>(), hex(&rest[u + 7..]))
-                else {
-                    continue;
-                };
-                out.push((word, shift, mask));
-            } else if let Some(rest) = tail.strip_prefix("& 0x") {
-                if let Some(mask) = hex(rest) {
-                    out.push((word, 0, mask));
-                }
-            }
-        }
-        out
     }
 
     /// The greedy merge span shares the overlay payload, and `block.wgsl` reads
@@ -619,8 +482,8 @@ pub fn unpack_tint(tint: u32) -> [f32; 3] {
 /// field meanings) routes through here, so the layout is defined in exactly one
 /// place.
 ///
-/// Bit layout — the constants below are the ONE definition, mirrored by hand in
-/// `src/shaders/block.wgsl`, `model3d.wgsl` and `break_overlay.wgsl`:
+/// Bit layout — the constants below are the ONE definition; the shaders decode
+/// it through the WGSL module [`wgsl::layout`] generates from them:
 ///   0..11 tile id | 11..13 corner (0..3) | 13..15 shade index (into `SHADES`)
 ///   15..17 AO (0 dark..3 bright) | 17..23 SKYLIGHT ONLY (0 dark..63 full sky)
 ///   23..26 UV mode | 26 has-overlay flag | 27..31 block-light chroma high
@@ -650,14 +513,14 @@ pub fn pack_vertex(
 }
 
 /// Width of the `packed` tile-id field. 11 bits addresses 2048 atlas tiles —
-/// the cap `atlas::build` enforces and `render::uniforms::UV_RECTS_LEN` sizes
-/// its table to. An OVERLAY tile id is the same currency and gets the same
-/// width in `packed2`.
+/// the cap the tile catalogue enforces at pack load (`tile::MAX_TILES`, with
+/// an error naming the count). An OVERLAY tile id is the same currency and
+/// gets the same width in `packed2`. The shaders' masks derive from this
+/// (see [`wgsl`]), so widening it is this edit plus finding the bits.
 pub const TILE_BITS: u32 = petramond_world::tile::MAX_TILES.trailing_zeros();
 pub const TILE_MASK: u32 = (1 << TILE_BITS) - 1;
 /// How many atlas tiles the vertex format can address — the ONE definition the
-/// atlas loader's cap and the shader uv-rect table both derive from, so the
-/// three cannot drift.
+/// catalogue's load-time cap and the shader tile masks both derive from.
 pub use petramond_world::tile::MAX_TILES;
 pub const CORNER_SHIFT: u32 = 11;
 pub const SHADE_SHIFT: u32 = 13;
@@ -714,8 +577,8 @@ pub fn unpack_greedy_span(packed2: u32) -> (u32, u32) {
 }
 
 /// The `Vertex::packed2` bit layout — owned here together with
-/// [`pack_cell_uv`], [`pack_overlay`] and [`pack_normal_code`] (all mirrored by
-/// hand in `block.wgsl` and `model3d.wgsl`):
+/// [`pack_cell_uv`], [`pack_overlay`] and [`pack_normal_code`] (decoded in
+/// WGSL through the generated [`wgsl::layout`] module):
 ///
 ///   0..6 block light RED ([`BlockLight6::packed2_bits`]; green and blue ride
 ///        the chroma split — see [`CHROMA_HI_SHIFT`])
@@ -894,170 +757,4 @@ pub fn push_back_face(vbuf: &mut Vec<Vertex>, start: u32) {
     let s = start as usize;
     let back = [vbuf[s], vbuf[s + 3], vbuf[s + 2], vbuf[s + 1]];
     vbuf.extend_from_slice(&back);
-}
-
-pub struct ChunkMesh {
-    /// Opaque terrain quads, triangulation implied (see `QuadIdx`). An OPAQUE
-    /// fluid's faces ride here too (its top in both windings).
-    pub opaque: Vec<Vertex>,
-    /// TRANSLUCENT fluid geometry: alpha-blended, depth-READ-only (a
-    /// see-through body must not occlude the terrain behind it), drawn last,
-    /// farthest section first. Back-face culled: an exposed side face over a
-    /// shallower neighbour must not show its back as a dark sheet from inside.
-    pub transparent: Vec<Vertex>,
-    /// Translucent fluid TOP faces, drawn by the same pass with culling OFF so
-    /// the surface stays visible from underneath. They used to be a second
-    /// index winding over the same vertices; a separate cull-none draw is the
-    /// index-free equivalent and rasterizes half the triangles.
-    pub transparent_two_sided: Vec<Vertex>,
-    /// TRANSLUCENT-BLOCK geometry (ice): alpha-blended but depth-WRITING and
-    /// drawn between opaque and water — a 3D sheet of translucent cubes needs
-    /// depth to resolve its own face order (buffer order is arbitrary within
-    /// a section), which water's read-only convention cannot give it.
-    pub translucent: Vec<Vertex>,
-    /// Optional opaque LOD for far chunks, expressed as a PREFIX LENGTH of
-    /// [`opaque`](Self::opaque) rather than a stream of its own: the simplified
-    /// canopy differs from the detailed one only by culling leaf-to-leaf
-    /// internal faces, so the mesher emits those faces LAST and this records
-    /// where they start. Drawing the far LOD is the same buffer with a shorter
-    /// quad count — no second bake, no second upload, no duplicated VRAM.
-    /// `0` means the section has no far LOD (nothing would be culled).
-    pub far_opaque_len: u32,
-    /// bbmodel-block geometry (explicit-UV [`ModelVertex`], sampling the model atlas),
-    /// drawn in the renderer's dedicated model pass. Baked here at remesh like the rest
-    /// of the chunk; empty for the common chunk with no bbmodel blocks.
-    pub model: Vec<ModelVertex>,
-    pub model_idx: Vec<u32>,
-    /// The alpha-BLEND model faces (semi-transparent texels, routed at template-bake
-    /// time): indices into the SAME `model` vertex buffer, drawn by the model-blend
-    /// pass after the translucent-block pass. Kept as a second index stream so the
-    /// opaque pass never touches a blended triangle.
-    pub model_blend_idx: Vec<u32>,
-    /// Model→terrain contact-shadow triangles (non-indexed, see
-    /// [`ContactShadowVertex`]), drawn by the renderer's dedicated contact pass.
-    /// A section can hold contact triangles with an EMPTY model stream (a
-    /// multi-cell model's spanning cuboids may all render from a sibling cell),
-    /// so contact presence is tracked independently of `model_idx`.
-    pub contact: Vec<ContactShadowVertex>,
-    /// True until GPU upload has happened. Set by the mesh builder, cleared by
-    /// renderer after a successful upload so we don't re-upload every frame.
-    pub mesh_dirty: bool,
-    /// True once the CPU vertex/index buffers were released after a settled GPU
-    /// upload (the geometry then lives only in the packed column buffer). A column
-    /// repack cannot read a released mesh; it must force a remesh first.
-    pub(crate) released: bool,
-    /// `is_empty()` captured at release time, so emptiness queries stay truthful
-    /// after the buffers are gone.
-    pub(crate) released_empty: bool,
-}
-
-impl Default for ChunkMesh {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
-impl ChunkMesh {
-    pub fn empty() -> Self {
-        Self {
-            opaque: vec![],
-            transparent: vec![],
-            transparent_two_sided: vec![],
-            translucent: vec![],
-            far_opaque_len: 0,
-            model: vec![],
-            model_idx: vec![],
-            model_blend_idx: vec![],
-            contact: vec![],
-            mesh_dirty: false,
-            released: false,
-            released_empty: false,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        if self.released {
-            return self.released_empty;
-        }
-        // A chunk holding ONLY a bbmodel block (empty packed buffers) is NOT empty —
-        // its geometry lives in the model stream, which must still upload + draw.
-        self.opaque.is_empty()
-            && self.transparent.is_empty()
-            && self.transparent_two_sided.is_empty()
-            && self.translucent.is_empty()
-            && self.model_idx.is_empty()
-            && self.model_blend_idx.is_empty()
-            && self.contact.is_empty()
-    }
-
-    pub fn is_released(&self) -> bool {
-        self.released
-    }
-
-    /// Per-stream used bytes of the retained CPU buffers: `(opaque v, opaque i,
-    /// far v, far i, transparent v, transparent i, translucent v, translucent i,
-    /// model v, model i, contact v)`. For the memory census. The far lanes are
-    /// always zero — the far LOD shares the opaque buffer.
-    pub fn stream_bytes(&self) -> [u64; 11] {
-        const V: usize = std::mem::size_of::<Vertex>();
-        const M: usize = std::mem::size_of::<ModelVertex>();
-        const C: usize = std::mem::size_of::<ContactShadowVertex>();
-        [
-            (self.opaque.len() * V) as u64,
-            0,
-            // The far LOD is a prefix of the opaque stream, so it owns no
-            // bytes of its own — counting them again would double-count.
-            0,
-            0,
-            ((self.transparent.len() + self.transparent_two_sided.len()) * V) as u64,
-            0,
-            (self.translucent.len() * V) as u64,
-            0,
-            (self.model.len() * M) as u64,
-            ((self.model_idx.len() + self.model_blend_idx.len()) * 4) as u64,
-            (self.contact.len() * C) as u64,
-        ]
-    }
-
-    /// `(used bytes, allocated-capacity bytes)` of the retained CPU buffers,
-    /// for the memory census.
-    pub fn memory_bytes(&self) -> (u64, u64) {
-        const V: usize = std::mem::size_of::<Vertex>();
-        const M: usize = std::mem::size_of::<ModelVertex>();
-        const C: usize = std::mem::size_of::<ContactShadowVertex>();
-        let used = self.opaque.len() * V
-            + self.transparent.len() * V
-            + self.transparent_two_sided.len() * V
-            + self.translucent.len() * V
-            + self.model.len() * M
-            + self.contact.len() * C
-            + self.model_idx.len() * 4
-            + self.model_blend_idx.len() * 4;
-        let cap = self.opaque.capacity() * V
-            + self.transparent.capacity() * V
-            + self.transparent_two_sided.capacity() * V
-            + self.translucent.capacity() * V
-            + self.model.capacity() * M
-            + self.contact.capacity() * C
-            + self.model_idx.capacity() * 4
-            + self.model_blend_idx.capacity() * 4;
-        (used as u64, (cap + std::mem::size_of::<Self>()) as u64)
-    }
-
-    /// Free the CPU-side geometry of an uploaded mesh. `Vec::new()` (not `clear`)
-    /// so the heap allocations are returned, not kept as capacity.
-    pub fn release_cpu_buffers(&mut self) {
-        debug_assert!(!self.mesh_dirty, "releasing a mesh that was never uploaded");
-        self.released_empty = self.is_empty();
-        self.released = true;
-        self.opaque = Vec::new();
-        self.transparent = Vec::new();
-        self.transparent_two_sided = Vec::new();
-        self.translucent = Vec::new();
-        self.far_opaque_len = 0;
-        self.model = Vec::new();
-        self.model_idx = Vec::new();
-        self.model_blend_idx = Vec::new();
-        self.contact = Vec::new();
-    }
 }

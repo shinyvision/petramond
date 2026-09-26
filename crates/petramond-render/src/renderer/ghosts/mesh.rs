@@ -82,12 +82,7 @@ impl GhostMesh {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let uv = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ghost uv table"),
-            size: (crate::uniforms::UV_RECTS_LEN * 16) as u64,
-            usage: wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: false,
-        });
+        let uv = crate::uniforms::uv_rects_placeholder(device, "ghost uv table");
         let bind = crate::selection_highlight::inactive_bind(
             device,
             &pipelines.uniform_layout,

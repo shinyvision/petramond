@@ -4,17 +4,7 @@
 // blue. pipeline.rs prepends atmosphere.wgsl so the horizon warms toward the sun
 // with the same glow the terrain haze uses.
 
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos:   vec4<f32>,
-    fog:       vec4<f32>, // (start, end, time, eye fluid medium + 1 or 0)
-    fog_color: vec4<f32>, // rgb = fog colour (CPU-dimmed/tinted); w = sky scale
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-    atlas_layout: vec4<u32>,
-    sky_color: vec4<f32>, // rgb = sim sky-light colour (white = identity)
-    sun_dir: vec4<f32>,   // xyz = unit sun direction, w = daylight [0,1]
-};
+#import petramond::frame
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 

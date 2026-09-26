@@ -5,7 +5,7 @@ use super::builders::{
     world_pipeline, DepthPreset,
 };
 use crate::renderer::dynamic_draw::new_buffer;
-use crate::uniforms::{Uniforms, UV_RECTS_LEN};
+use crate::uniforms::Uniforms;
 
 /// Size of one MVP slot in the model3d dynamic-offset uniform buffer. A `mat4`
 /// is 64 bytes but dynamic offsets must be a multiple of the device's
@@ -79,7 +79,7 @@ pub(super) fn create_model3d_pipelines(
         label: Some("model3d mvp bgl"),
         entries: &[
             mvp_slot_entry(0),
-            uniform_entry(1, wgpu::ShaderStages::VERTEX, (UV_RECTS_LEN * 16) as u64),
+            crate::uniforms::uv_rects_entry(1),
             // The frame `Uniforms` buffer: model3d reads only fog_color.w (the
             // sim's sky scale) so the held block dims in step with terrain.
             uniform_entry(

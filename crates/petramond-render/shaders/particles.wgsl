@@ -16,25 +16,13 @@
 // is done CPU-side by SHRINKING the cube (its row's half size); alpha gates the
 // cutout.
 
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos:   vec4<f32>,
-    fog:       vec4<f32>,
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-    atlas_layout: vec4<u32>,
-    sky_color: vec4<f32>,
-    // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
-    sun_dir: vec4<f32>,
-    // rgb = the eye fluid's volume tint (white in air).
-    volume_tint: vec4<f32>,
-};
+#import petramond::frame
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-// Unused by particles (uv is absolute, per-vertex) but declared so this pipeline
-// can reuse the block pipeline's `uniform_bind` bind group unchanged.
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 2048>;
+// The uv-rect table is unused by particles (uv is absolute, per-vertex) but
+// imported so this pipeline can reuse the block pipeline's `uniform_bind`
+// bind group unchanged.
+#import petramond::uv_rects
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 

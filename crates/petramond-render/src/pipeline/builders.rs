@@ -150,15 +150,25 @@ pub(super) fn color_target(
 }
 
 /// One labelled WGSL shader module (source from `include_str!`/`concat!`, or
-/// the shader pack's owned string).
+/// the shader pack's owned string), its `#import`s resolved through
+/// [`super::prelude`]. An engine source importing an unknown module is a
+/// build defect and panics here; pack sources are composed (and their import
+/// errors reported) by their callers before they reach this.
 pub(super) fn shader_module(
     device: &wgpu::Device,
     label: &str,
     wgsl: impl Into<std::borrow::Cow<'static, str>>,
 ) -> wgpu::ShaderModule {
+    let wgsl = wgsl.into();
+    let composed = match super::prelude::compose(&wgsl) {
+        Ok(std::borrow::Cow::Owned(text)) => Some(text),
+        Ok(std::borrow::Cow::Borrowed(_)) => None,
+        Err(e) => panic!("{label}: {e}"),
+    };
+    let source = composed.map_or(wgsl, std::borrow::Cow::Owned);
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        source: wgpu::ShaderSource::Wgsl(source),
     })
 }
 

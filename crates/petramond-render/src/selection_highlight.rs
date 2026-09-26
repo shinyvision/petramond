@@ -75,11 +75,7 @@ pub(crate) struct Highlight {
 impl Highlight {
     pub fn new(device: &wgpu::Device, layout: wgpu::BindGroupLayout, world: wgpu::Buffer) -> Self {
         // Terrain and world-model shaders share this layout but never read the UV table.
-        let uv = buffer(
-            device,
-            (crate::uniforms::UV_RECTS_LEN * 16) as u64,
-            wgpu::BufferUsages::UNIFORM,
-        );
+        let uv = crate::uniforms::uv_rects_placeholder(device, "selection highlight uv table");
         let cells = buffer(device, 16, wgpu::BufferUsages::STORAGE);
         let bounds = buffer(device, 32, wgpu::BufferUsages::UNIFORM);
         let bind = bind(device, &layout, [&world, &uv, &cells, &bounds]);

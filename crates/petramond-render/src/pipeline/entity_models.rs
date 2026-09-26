@@ -279,6 +279,7 @@ mod tests {
     #[test]
     fn skinned_shader_validates() {
         let source = super::mob_shader_source() + include_str!("../../shaders/skinned.wgsl");
+        let source = super::super::prelude::compose(&source).expect("skinned imports resolve");
         let module = naga::front::wgsl::parse_str(&source).expect("skinned shader parses");
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),

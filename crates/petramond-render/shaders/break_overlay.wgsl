@@ -8,44 +8,34 @@
 // the shared uv_rects table (binding 1) — the SAME bind group as the block
 // pipeline. group(1) is the block atlas (the destroy tiles live in it).
 //
-// Vertex format is the shared 32-byte mesh::Vertex (packed2's light bits are
-// unused here — the crack needs no light; its cell-local uv bits ARE read for
+// Vertex format is the shared 24-byte mesh::Vertex (the light lanes are
+// unused here — the crack needs no light; its cell-local uv lane IS read for
 // stair quads). We only need uv reconstruction (SELECT from uv_rects — never
 // recompute), so this is a trimmed copy of the block vertex stage. The crack cube is coincident with the block faces; the pipeline
 // draws it depth LessEqual / no-write with a small polygon offset toward the camera
 // (BREAK_DEPTH_BIAS in pipeline.rs) so the decal wins the depth tie cleanly — see
 // that constant for why the offset is needed (the mesher's per-AO diagonal flip).
 
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos:   vec4<f32>,
-    fog:       vec4<f32>,
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-};
+#import petramond::frame
+#import petramond::uv_rects
+#import petramond::vertex
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 2048>;
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 
-// Mirror of block.wgsl's CELL_LOCAL UV mode (packed bits 29..32): the vertex
-// carries an explicit tile-local UV in packed2 bits 6..11 / 11..16 (1/16ths).
-// Stair crack quads use it so the crack decal is continuous across the stair
-// instead of restarting the tile per quad.
-const UV_MODE_CELL_LOCAL: u32 = 3u;
-// Modes from here up are terrain texture-transition payloads. This pipeline
-// draws its own geometry (the break decal), which never emits them; any other mode reads
-// as a plain face.
-const UV_MODE_TRANSITION: u32 = 4u;
+// UV_MODE_CELL_LOCAL: the vertex carries an explicit tile-local UV
+// (vtx_cell_uv). Stair crack quads use it so the crack decal is continuous
+// across the stair instead of restarting the tile per quad. Transition modes
+// never reach this pipeline (the break decal emits its own geometry); any
+// other mode reads as a plain face.
 
 struct VsIn {
     @location(0) pos:  vec3<f32>,
     @location(1) tint: vec3<f32>,
     @location(2) packed: u32,
-    // Second packed word: bits 6..16 = cell-local uv (CELL_LOCAL mode only);
-    // the light bits are unused here (the crack needs no light).
+    // Second packed word: only the cell-local uv lane is read (CELL_LOCAL
+    // mode); the light lanes are unused (the crack needs no light).
     @location(3) packed2: u32,
 };
 
@@ -70,16 +60,12 @@ fn vs_break(in: VsIn) -> VsOut {
     var out: VsOut;
     let local_pos = in.pos;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
-    let tile = in.packed & 0x7FFu;
-    let corner = (in.packed >> 11u) & 0x3u;
-    let uv_mode = (in.packed >> 23u) & 0x7u;
+    let tile = vtx_tile(in.packed);
+    let corner = vtx_corner(in.packed);
+    let uv_mode = vtx_uv_mode(in.packed);
     let r = uv_rects[tile];
     if (uv_mode == UV_MODE_CELL_LOCAL) {
-        let c = vec2<f32>(
-            f32((in.packed2 >> 6u) & 0x1Fu),
-            f32((in.packed2 >> 11u) & 0x1Fu),
-        ) / 16.0;
-        out.uv = mix(r.xy, r.zw, c);
+        out.uv = mix(r.xy, r.zw, vtx_cell_uv(in.packed2));
     } else {
         out.uv = corner_uv(r, corner);
     }

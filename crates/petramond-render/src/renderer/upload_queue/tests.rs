@@ -128,7 +128,9 @@ fn superseded_heap_entries_are_skipped() {
 fn a_frame_uploads_at_most_its_budget_and_keeps_the_rest() {
     let mut queue = UploadQueue::default();
     queue.begin_frame();
-    let columns: Vec<_> = (0..40).map(|i| col(i, 0)).collect();
+    let columns: Vec<_> = (0..(MAX_UPLOADS_PER_FRAME as i32 * 3 / 2))
+        .map(|i| col(i, 0))
+        .collect();
     for &column in &columns {
         dirty(&mut queue, column, 1);
     }

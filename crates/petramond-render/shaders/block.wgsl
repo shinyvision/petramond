@@ -1,26 +1,12 @@
 // Block vertex/fragment shader with atmosphere haze + directional face shading.
-// The pipeline prepends the generated tables (lanes, transitions, variation,
+// The pipeline prepends the generated tables (transitions, variation,
 // flipbooks, the fluid medium table) and the shared cel, atmosphere and sheen
-// helpers.
-
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos:   vec4<f32>,
-    fog:       vec4<f32>, // (start, end, time, eye fluid medium + 1 or 0)
-    // rgb = fog colour; w = sim-owned sky scale (1.0 = noon; mods dim it).
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-    // w = atlas tile count (the dye-base layer offset); xyz reserved.
-    atlas_layout: vec4<u32>,
-    // rgb = sim-owned sky light COLOUR (white = identity; mods tint the night
-    // subtly blue). Applied to the SKY term only — torch light keeps its warmth.
-    sky_color: vec4<f32>,
-    // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
-    sun_dir: vec4<f32>,
-    // rgb = the eye fluid's volume tint (white in air).
-    volume_tint: vec4<f32>,
-};
+// helpers. `Uniforms` (fog = start, end, time, eye fluid medium + 1 or 0;
+// fog_color.w = the sim's sky scale; atlas_layout.w = the tile count, i.e. the
+// dye-base layer offset) and every packed-vertex lane decoder come from the
+// generated modules below.
+#import petramond::frame
+#import petramond::vertex
 
 // Skylight floor: a fully sky-occluded surface fades to this fraction of its lit
 // value rather than to black. FINAL_MIN is the absolute darkest pixel ("very
@@ -32,14 +18,12 @@ const FINAL_MIN: f32 = 0.006;
 // Steepness of the light->dark falloff: higher = more of the range reads dark.
 const SKY_GAMMA: f32 = 3.0;
 
-// Packed UV modes (bits 23..26; the UV_MODE_* constants are generated from
-// the mesher's definitions):
+// Packed UV modes (the UV_MODE_* constants come from petramond::vertex):
 // - dynamic thin geometry crops a 3/16-deep face to a matching strip instead of
 //   squishing a whole 16px tile across a door edge.
-// - CELL_LOCAL faces (stairs) carry an explicit tile-local UV in packed2 bits
-//   6..11 / 11..16 (1/16ths), so a partial face samples the sub-rectangle of its
-//   tile matching its position in the cell and the shape reads as a full block
-//   with a chunk cut out.
+// - CELL_LOCAL faces (stairs) carry an explicit tile-local UV (vtx_cell_uv), so
+//   a partial face samples the sub-rectangle of its tile matching its position
+//   in the cell and the shape reads as a full block with a chunk cut out.
 // - modes from UV_MODE_TRANSITION up carry a texture-transition payload (see
 //   texture_transition.wgsl); the mode's low bits are part of the set id.
 const THIN_SLICE: f32 = 3.0 / 16.0;
@@ -61,13 +45,10 @@ struct VsIn {
     @location(0) pos:  vec3<f32>,
     // rgb = albedo tint; a = the block light's chroma low byte (block_light_rgb).
     @location(1) tint: vec4<f32>,
-    // bits 0..11 = tile id, 11..13 = corner, 13..15 = shade index, 15..17 = AO,
-    // 17..23 = SKYlight, 23..26 = UV mode, 26 = has-overlay,
-    // 27..31 = block-light chroma high nibble, 31 = free.
+    // The two packed words (tile, corner, shade, AO, skylight, UV mode, overlay
+    // flag, chroma | block light, cell uv / fluid medium, normal code, dyed
+    // flag, overlay payload, UV turn): decoded only through petramond::vertex.
     @location(2) packed: u32,
-    // Second packed word: bits 0..6 = block light RED, 6..16 = cell-local uv
-    // (CELL_LOCAL mode only), 16..19 = face normal code, 19 = dyed flag,
-    // 20..31 = overlay payload (tile id / greedy span), 31 = free.
     @location(3) packed2: u32,
 };
 
@@ -100,7 +81,7 @@ struct VsOut {
     // Texture-array layers (tile ids): the base tile and the overlay tile. Flat.
     @location(7) @interpolate(flat) layer: u32,
     @location(8) @interpolate(flat) overlay_layer: u32,
-    // Face normal code (packed2 bits 16..19) for the fragment-side cel rim.
+    // Face normal code (vtx_normal_code) for the fragment-side cel rim.
     @location(9) @interpolate(flat) ncode: u32,
     // Day-invariant light LEVEL (max(sky, block) at noon scale + white sky, no
     // AO): drives the fragment-side cel banding so the bands stay put while the
@@ -108,7 +89,7 @@ struct VsOut {
     // untouched.
     @location(10) cel_drive: f32,
     @location(11) sky_exposure: f32,
-    // The face's fluid medium index + 1 (packed2 bits 6..15); 0 = not a fluid.
+    // The face's fluid medium index + 1 (vtx_fluid_medium); 0 = not a fluid.
     @location(12) @interpolate(flat) fluid: u32,
 };
 
@@ -143,57 +124,33 @@ fn turn_uv(turn: u32, uv: vec2<f32>) -> vec2<f32> {
     return uv;
 }
 
-// Explicit tile-local UV carried in packed2 bits 6..11 (u) / 11..16 (v), in
-// 1/16ths of a tile. Read only for UV_MODE_CELL_LOCAL vertices.
-fn cell_local_uv(packed2: u32) -> vec2<f32> {
-    return vec2<f32>(
-        f32((packed2 >> 6u) & 0x1Fu),
-        f32((packed2 >> 11u) & 0x1Fu),
-    ) / 16.0;
-}
-
-// The vertex's BLOCK light, per channel in 0..1. RED rides packed2 bits 0..6;
-// GREEN and BLUE ride a 12-bit chroma word split 8 + 4 between the tint's alpha
-// lane and packed bits 27..31, each stored XOR the red channel — so colourless
-// light writes no chroma bits at all and a white-lit vertex is bit-identical to
-// the pre-colour engine's. Hand-mirrored from `mesh::vertex::BlockLight6`; the
-// lane audit in `mesh::vertex` fails if the two drift.
-fn block_light_rgb(packed: u32, packed2: u32, chroma_lo: f32) -> vec3<f32> {
-    let r = packed2 & 0x3Fu;
-    let chroma = u32(round(chroma_lo * 255.0)) | (((packed >> 27u) & 0xFu) << 8u);
-    let g = (chroma & 0x3Fu) ^ r;
-    let b = ((chroma >> 6u) & 0x3Fu) ^ r;
-    return vec3<f32>(f32(r), f32(g), f32(b)) / 63.0;
-}
-
 // `local_pos` is relative to the render origin; `world_y` is the absolute height.
 fn vs_common(local_pos: vec3<f32>, world_y: f32, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOut {
     var out: VsOut;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
 
-    let tile = packed & 0x7FFu;
-    let corner = (packed >> 11u) & 0x3u;
-    let overlay_tile = (packed2 >> 20u) & 0x7FFu;
-    let ao = (packed >> 15u) & 0x3u;
-    let sky6 = (packed >> 17u) & 0x3Fu;
-    let uv_mode = (packed >> 23u) & 0x7u;
-    let ncode = (packed2 >> 16u) & 0x7u;
+    let tile = vtx_tile(packed);
+    let corner = vtx_corner(packed);
+    let overlay_tile = vtx_overlay_payload(packed2);
+    let ao = vtx_ao(packed);
+    let sky6 = vtx_sky(packed);
+    let uv_mode = vtx_uv_mode(packed);
+    let ncode = vtx_normal_code(packed2);
     let transition = uv_mode >= UV_MODE_TRANSITION;
     // A transition face spends its shade lane on the set id; a cube face's
     // shade follows from its normal anyway.
-    var shade_idx = (packed >> 13u) & 0x3u;
+    var shade_idx = vtx_shade(packed);
     if (transition) { shade_idx = face_shade_idx(ncode); }
 
     let atile = tile;
-    // A row-declared UV quarter turn: low bit in packed bit 31, high bit in
-    // packed2 bit 31 (see mesh::vertex::pack_uv_turn). Applied to plain cube
-    // faces below; every other UV lane bakes its mapping into the UV it
-    // carries, so its turn bits are zero.
-    let uv_turn = ((packed >> 31u) & 0x1u) | (((packed2 >> 31u) & 0x1u) << 1u);
+    // A row-declared UV quarter turn (see mesh::vertex::pack_uv_turn). Applied
+    // to plain cube faces below; every other UV lane bakes its mapping into
+    // the UV it carries, so its turn bits are zero.
+    let uv_turn = vtx_uv_turn(packed, packed2);
     // A fluid face is always UV mode NONE; the cell-local uv lane then carries
-    // its medium + 1 and bit 15 whether it shows the flow strip.
-    let fluid = select(0u, (packed2 >> 6u) & 0x1FFu, uv_mode == UV_MODE_NONE);
-    let flow_strip = fluid != 0u && ((packed2 >> 15u) & 0x1u) == 1u;
+    // its medium + 1 and a flag for whether it shows the flow strip.
+    let fluid = select(0u, vtx_fluid_medium(packed2), uv_mode == UV_MODE_NONE);
+    let flow_strip = fluid != 0u && vtx_fluid_flow(packed2) == 1u;
 
     // Tile-LOCAL uv in [0,1]; the array layer selects the tile.
     var uv = corner_local(corner);
@@ -235,37 +192,34 @@ fn vs_common(local_pos: vec3<f32>, world_y: f32, tint: vec4<f32>, packed: u32, p
             uv.y = lv * THIN_SLICE;
         }
     } else if (uv_mode == UV_MODE_CELL_LOCAL) {
-        uv = cell_local_uv(packed2);
+        uv = vtx_cell_uv(packed2);
     } else {
-        // uv_mode == NONE: plain cube face. A greedy-merged quad packs (W-1, H-1) into
-        // packed2 bits 20..28 so its layer tiles W×H across the merge under the REPEAT sampler;
-        // a normal 1×1 face has 0 there → ×(1,1), a no-op. Fluid tops (flow
+        // uv_mode == NONE: plain cube face. A greedy-merged quad packs its span into
+        // the overlay payload (vtx_greedy_span) so its layer tiles W×H across the merge
+        // under the REPEAT sampler; a normal 1×1 face decodes ×(1,1), a no-op. Fluid tops (flow
         // heading) and grass-side overlays reuse those bits for other data, so exclude
         // them (they are never greedy-merged by the mesher). The row's UV turn
         // rides the same faces, applied after the span multiply (carve, then
         // turn — the ShapeFace order); overlay faces composite the plain
         // corner uv in uv2, so they never turn.
-        let has_overlay = (packed >> 26u) & 0x1u;
-        if (has_overlay == 0u && fluid == 0u) {
-            let gw = f32(((packed2 >> 20u) & 0xFu) + 1u);
-            let gh = f32(((packed2 >> 24u) & 0xFu) + 1u);
-            uv = turn_uv(uv_turn, corner_local(corner) * vec2<f32>(gw, gh));
+        if (vtx_overlay_flag(packed) == 0u && fluid == 0u) {
+            uv = turn_uv(uv_turn, corner_local(corner) * vtx_greedy_span(packed2));
         }
     }
     out.uv = uv;
-    // Dyed vertices (packed2 bit 19) sample the tile's dye-base twin: the
+    // Dyed vertices (vtx_dyed) sample the tile's dye-base twin: the
     // desaturated, brightness-normalized layers appended after the base set
     // (offset = tile count, carried in atlas_layout.w). The overlay layer
     // shifts with it so a dyed overlay-bearing face (a tinted grass side)
     // resolves WHOLLY in the dye-base domain — one primitive, no half-dyed
     // composite.
-    let dyed_off = ((packed2 >> 19u) & 0x1u) * u.atlas_layout.w;
+    let dyed_off = vtx_dyed(packed2) * u.atlas_layout.w;
     out.layer = atile + dyed_off;
     out.fluid = fluid;
     // Overlay uv: only grass sides (full cube faces) composite an overlay, so the
     // plain corner uv is always correct here.
     out.uv2 = corner_local(corner);
-    out.overlay = select(FACE_PLAIN, FACE_OVERLAY, ((packed >> 26u) & 0x1u) == 1u);
+    out.overlay = select(FACE_PLAIN, FACE_OVERLAY, vtx_overlay_flag(packed) == 1u);
     out.overlay_layer = overlay_tile + dyed_off;
     if (transition) {
         // The material grid rides the two layer lanes; the set id sits above
@@ -281,7 +235,7 @@ fn vs_common(local_pos: vec3<f32>, world_y: f32, tint: vec4<f32>, packed: u32, p
     // max(sky term, block term), all smoothly interpolated so shadows and the
     // light-level gradient are soft.
     //   - Face shade: SUN-DIRECTIONAL for terrain faces carrying a normal code
-    //     (packed2 bits 16..19): N·L against the moving sun, warm on lit faces,
+    //     (vtx_normal_code): N·L against the moving sun, warm on lit faces,
     //     cool in shadow — the flat storybook look. Code
     //     0 (cross plants, torches, dynamic props) keeps the classic SHADES
     //     table (mirror of mesh::SHADES — keep byte-identical).
@@ -371,20 +325,17 @@ fn vs_terrain(in: VsInTerrain) -> VsOut {
 // uv-mode NONE, no overlay, not a fluid face — and a nonzero (W-1, H-1) field,
 // so 1×1 faces (which never form T-junctions) stay mathematically exact.
 fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
-    let uv_mode = (packed >> 23u) & 0x7u;
-    let has_overlay = (packed >> 26u) & 0x1u;
-    let whf = (packed2 >> 20u) & 0xFFu;
-    if (uv_mode != 0u || has_overlay == 1u || whf == 0u
-        || ((packed2 >> 6u) & 0x1FFu) != 0u) {
+    if (vtx_uv_mode(packed) != UV_MODE_NONE || vtx_overlay_flag(packed) == 1u
+        || vtx_greedy_payload(packed2) == 0u || vtx_fluid_medium(packed2) != 0u) {
         return vec3<f32>(0.0);
     }
     // corner_local -> {-1,+1} per tangent axis; du/dv map (u,v) quad space to
     // world axes per face (normal code 1..=6, Face::ALL order — the same
     // corner order as Face::quad_box).
-    let c = corner_local((packed >> 11u) & 0x3u) * 2.0 - vec2<f32>(1.0, 1.0);
+    let c = corner_local(vtx_corner(packed)) * 2.0 - vec2<f32>(1.0, 1.0);
     var du = vec3<f32>(0.0);
     var dv = vec3<f32>(0.0);
-    switch ((packed2 >> 16u) & 0x7u) {
+    switch (vtx_normal_code(packed2)) {
         case NORMAL_POS_X: { du = vec3<f32>(0.0, 0.0, -1.0); dv = vec3<f32>(0.0, -1.0, 0.0); }
         case NORMAL_NEG_X: { du = vec3<f32>(0.0, 0.0, 1.0);  dv = vec3<f32>(0.0, -1.0, 0.0); }
         case NORMAL_POS_Y: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, 0.0, 1.0); }

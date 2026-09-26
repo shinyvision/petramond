@@ -164,7 +164,18 @@ fn checked_shader_source(
         return None;
     };
     match String::from_utf8(bytes) {
-        Ok(source) => Some((source, path)),
+        // Resolve the engine imports (`#import petramond::frame`, …) here, so
+        // an unknown module rejects the row exactly like any other bad row.
+        Ok(source) => match crate::pipeline::prelude::compose(&source) {
+            Ok(composed) => Some((composed.into_owned(), path)),
+            Err(e) => {
+                log::warn!(
+                    "ignoring {} {kind} shader '{shader}': {e}",
+                    catalog_path.display(),
+                );
+                None
+            }
+        },
         Err(e) => {
             log::warn!(
                 "ignoring {} {kind} shader '{shader}': source is not UTF-8: {e}",

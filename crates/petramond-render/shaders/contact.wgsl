@@ -18,18 +18,7 @@
 // terminal fog distance — a darkening that survived into the haze would tint
 // the fog and pop at the terrain cull boundary.
 
-// Mirror of `render::uniforms::Uniforms`. Matches block.wgsl's layout.
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    cam_pos: vec4<f32>,
-    fog: vec4<f32>,
-    fog_color: vec4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    render_origin: vec4<i32>,
-    atlas_layout: vec4<u32>,
-    sky_color: vec4<f32>,
-    sun_dir: vec4<f32>,
-};
+#import petramond::frame
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 

@@ -52,6 +52,8 @@ fn bundled_pack_shaders_parse_and_validate() {
                 continue;
             }
             let source = std::fs::read_to_string(&path).expect("shader reads");
+            let source = crate::pipeline::prelude::compose(&source)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             let module = naga::front::wgsl::parse_str(&source)
                 .unwrap_or_else(|e| panic!("{} fails to parse: {e}", path.display()));
             naga::valid::Validator::new(

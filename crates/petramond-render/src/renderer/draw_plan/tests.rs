@@ -30,21 +30,14 @@ fn section(dist_sq: f32, cx: i32, cz: i32) -> VisibleSection {
         opaque_batched: false,
         model_batched: false,
         use_far_leaf_lod: false,
-        opaque_vertex_start: 0,
-        opaque_quads: 0,
-        opaque_tail_start: 0,
-        opaque_tail_quads: 0,
-        transparent_vertex_start: 0,
-        transparent_quads: 0,
-        transparent_ts_vertex_start: 0,
-        transparent_ts_quads: 0,
-        translucent_vertex_start: 0,
-        translucent_quads: 0,
-        model_index_start: 0,
-        model_idx_count: 0,
-        model_blend_index_start: 0,
-        model_blend_idx_count: 0,
+        spans: Default::default(),
     }
+}
+
+/// `count` elements of `stream` in the section's spans.
+fn with(mut section: VisibleSection, stream: SectionStream, count: u32) -> VisibleSection {
+    section.spans[stream.index()].count = count;
+    section
 }
 
 /// Columns over a `side × side` grid centred on the origin, each with a
@@ -182,19 +175,32 @@ const STREAMS: ColumnStreams = ColumnStreams {
 #[test]
 fn a_column_batches_its_opaque_stream_when_its_sections_agree() {
     // All detailed: the whole stream in one draw.
-    assert_eq!(batch_column(visible(true, false, true), STREAMS).opaque, Some(false));
+    assert_eq!(batch_column(visible(true, false, true), STREAMS, false).opaque, Some(false));
     // All far-capable sections far: the leading far region in one draw.
-    assert_eq!(batch_column(visible(true, true, true), STREAMS).opaque, Some(true));
+    assert_eq!(batch_column(visible(true, true, true), STREAMS, false).opaque, Some(true));
     // Mixed LOD: every section draws for itself.
-    assert_eq!(batch_column(visible(true, true, false), STREAMS).opaque, None);
+    assert_eq!(batch_column(visible(true, true, false), STREAMS, false).opaque, None);
     // Nothing opaque in view, or nothing in the stream.
-    assert_eq!(batch_column(visible(false, false, true), STREAMS).opaque, None);
+    assert_eq!(batch_column(visible(false, false, true), STREAMS, false).opaque, None);
     let empty = ColumnStreams {
         opaque_quads: 0,
         opaque_far_quads: 0,
         ..STREAMS
     };
-    assert_eq!(batch_column(visible(true, false, true), empty).opaque, None);
+    assert_eq!(batch_column(visible(true, false, true), empty, false).opaque, None);
+}
+
+/// A whole-column draw also covers culled sections: with indirect draws it is
+/// taken only when none holds opaque geometry, while a device where every
+/// draw is a CPU call keeps it.
+#[test]
+fn a_culled_opaque_section_splits_the_column_unless_draws_are_direct() {
+    let column = VisibleColumn {
+        hidden_opaque: true,
+        ..visible(true, false, true)
+    };
+    assert_eq!(batch_column(column, STREAMS, false).opaque, None);
+    assert_eq!(batch_column(column, STREAMS, true).opaque, Some(false));
 }
 
 #[test]
@@ -203,7 +209,7 @@ fn model_and_contact_batches_follow_their_own_presence_bits() {
         has_model: true,
         ..VisibleColumn::default()
     };
-    let batch = batch_column(column, STREAMS);
+    let batch = batch_column(column, STREAMS, false);
     assert!(batch.model && !batch.contact);
     // A multi-cell model's contact stamps can sit in a section without model
     // faces: contact visibility never rides the model bit.
@@ -211,7 +217,7 @@ fn model_and_contact_batches_follow_their_own_presence_bits() {
         has_contact: true,
         ..VisibleColumn::default()
     };
-    let batch = batch_column(column, STREAMS);
+    let batch = batch_column(column, STREAMS, false);
     assert!(!batch.model && batch.contact);
     let no_streams = ColumnStreams {
         model_idx_count: 0,
@@ -223,24 +229,22 @@ fn model_and_contact_batches_follow_their_own_presence_bits() {
         has_contact: true,
         ..VisibleColumn::default()
     };
-    let batch = batch_column(column, no_streams);
+    let batch = batch_column(column, no_streams, false);
     assert!(!batch.model && !batch.contact);
 }
 
 #[test]
 fn sections_covered_by_whole_column_draws_are_dropped() {
-    let mut opaque = section(1.0, 0, 0);
-    opaque.opaque_quads = 4;
-    let mut leafy_far = section(2.0, 0, 0);
-    leafy_far.opaque_tail_quads = 4;
+    let opaque = with(section(1.0, 0, 0), SectionStream::OpaqueFar, 16);
+    let mut leafy_far = with(section(2.0, 0, 0), SectionStream::OpaqueTail, 16);
     leafy_far.use_far_leaf_lod = true;
-    let mut water = section(3.0, 0, 0);
-    water.opaque_quads = 4;
-    water.transparent_quads = 2;
-    let mut model = section(4.0, 0, 0);
-    model.model_idx_count = 6;
-    let mut kept_before = section(0.5, 9, 9);
-    kept_before.opaque_quads = 1;
+    let water = with(
+        with(section(3.0, 0, 0), SectionStream::OpaqueFar, 16),
+        SectionStream::Transparent,
+        8,
+    );
+    let model = with(section(4.0, 0, 0), SectionStream::ModelIndices, 6);
+    let kept_before = with(section(0.5, 9, 9), SectionStream::OpaqueFar, 4);
     let mut sections = vec![kept_before, opaque, leafy_far, water, model];
 
     let batch = ColumnBatch {
@@ -302,24 +306,22 @@ fn the_section_sort_is_a_total_order_independent_of_input_order() {
 
 #[test]
 fn equal_distances_break_ties_on_the_column_then_the_build_order() {
-    let mut first_built = section(5.0, 1, 0);
-    first_built.opaque_quads = 1;
-    let mut second_built = section(5.0, 1, 0);
-    second_built.opaque_quads = 2;
+    let first_built = with(section(5.0, 1, 0), SectionStream::OpaqueFar, 4);
+    let second_built = with(section(5.0, 1, 0), SectionStream::OpaqueFar, 8);
     let mut sections = vec![first_built, section(5.0, 0, 7), second_built, section(1.0, 4, 4)];
     let (mut keys, mut sorted) = (Vec::new(), Vec::new());
     sort_sections(&mut sections, &mut keys, &mut sorted);
     let order: Vec<_> = sections
         .iter()
-        .map(|s| (s.column_pos, s.opaque_quads))
+        .map(|s| (s.column_pos, s.span(SectionStream::OpaqueFar).count))
         .collect();
     assert_eq!(
         order,
         [
             (ChunkPos::new(4, 4), 0),
             (ChunkPos::new(0, 7), 0),
-            (ChunkPos::new(1, 0), 1),
-            (ChunkPos::new(1, 0), 2),
+            (ChunkPos::new(1, 0), 4),
+            (ChunkPos::new(1, 0), 8),
         ]
     );
 }

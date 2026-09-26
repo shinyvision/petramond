@@ -1,6 +1,7 @@
-//! Frustum cull + depth sort: which sections and whole columns each terrain
-//! node draws this frame, and in what order. The terrain nodes consume the
-//! plan without re-deciding any of it.
+//! Frustum cull, occlusion flood and depth sort: which sections and whole
+//! columns each terrain node draws this frame, and in what order. The quad
+//! nodes get their draws as indirect-ready lists ([`draws`]); the terrain
+//! nodes consume the plan without re-deciding any of it.
 //!
 //! The decisions themselves — the region grouping of the cull index, the
 //! region test, a column's whole-column draws, which sections still draw for
@@ -9,6 +10,13 @@
 //! columns and applies them.
 
 use super::*;
+use crate::resources::SectionStream;
+use petramond_mesh::QuadLayer;
+
+mod draws;
+mod occlusion;
+pub(crate) use draws::{wanted_features as terrain_draw_features, QuadPass, TerrainDraws};
+pub(crate) use occlusion::SectionOcclusion;
 
 impl Renderer {
     /// Is this render-local bounding box inside the current view frustum?
@@ -100,6 +108,18 @@ impl Renderer {
                 max_cy: column.cy_span.1,
             }));
         group_cull_regions(&mut terrain.cull_index, &mut terrain.cull_regions);
+        // The occlusion flood's graph follows the column set too.
+        terrain.occlusion.clear();
+        for column in terrain.columns.values() {
+            terrain.occlusion.insert_column(
+                column.column_pos(),
+                column.cy_span,
+                column
+                    .sections
+                    .iter()
+                    .map(|(pos, section)| (pos.cy, section.visibility)),
+            );
+        }
         terrain.cull_index_revision = terrain.gpu_revision;
     }
 
@@ -122,7 +142,32 @@ impl Renderer {
         // Cull and sort in render-local space, like the GPU draws.
         let cam = self.view.cam_pos.relative_to(render_origin);
         let fog = self.terrain_cull_dist();
-        let Self { terrain, .. } = self;
+        let Self {
+            terrain,
+            device,
+            queue,
+            ..
+        } = self;
+        // Occlusion first: flood the section visibility graph from the
+        // camera's section through the view volume. A section it cannot reach
+        // is behind rock from every sight line.
+        let camera_block = render_origin + cam.floor().as_ivec3();
+        let camera_section = petramond_world::chunk::SectionPos::new(
+            camera_block.x.div_euclid(16),
+            camera_block.y.div_euclid(16),
+            camera_block.z.div_euclid(16),
+        );
+        let occluding = terrain.occlusion.flood(camera_section, |pos| {
+            let min = (glam::IVec3::new(pos.cx, pos.cy, pos.cz) * 16 - render_origin).as_vec3();
+            Self::aabb_visible(min, min + glam::Vec3::splat(16.0), frustum, cam, fog, false)
+        });
+        let occlusion = &terrain.occlusion;
+        // A whole-column opaque draw covers every section of the column. With
+        // indirect draws a section's draw is only a record, so the column draw
+        // is taken only when no culled section would ride along; where every
+        // draw is a CPU call, the column draw is kept regardless (the culled
+        // sections it covers are off-screen or behind rock either way).
+        let batch_hidden = terrain.draws.draws_directly();
         let plan = &mut terrain.plan;
         let cull_index = &terrain.cull_index;
         let terrain_columns = &mut terrain.columns;
@@ -140,8 +185,12 @@ impl Renderer {
                 let first_section = plan.sections.len();
                 let mut column_dist_sq = f32::INFINITY;
                 let mut visible = VisibleColumn::default();
-                for (_, section) in column.sections.iter_mut() {
-                    if !Self::section_visible(section, frustum, render_origin, cam, fog, enclosed) {
+                for (pos, section) in column.sections.iter_mut() {
+                    if !Self::section_visible(section, frustum, render_origin, cam, fog, enclosed)
+                        || (occluding && !occlusion.is_visible(*pos))
+                    {
+                        visible.hidden_opaque |=
+                            !section.span(SectionStream::OpaqueFar).is_empty();
                         continue;
                     }
                     let (ox, oy, oz) = section.origin;
@@ -149,18 +198,15 @@ impl Renderer {
                         + glam::Vec3::splat(8.0);
                     let dist_sq = (cam - c).length_squared();
                     column_dist_sq = column_dist_sq.min(dist_sq);
-                    let has_model =
-                        section.model_idx_count > 0 || section.model_blend_idx_count > 0;
-                    visible.has_opaque |= section.opaque_vertex_count > 0;
+                    let has_model = section.has_model();
+                    visible.has_opaque |= !section.span(SectionStream::OpaqueFar).is_empty();
                     visible.has_model |= has_model;
                     // Contact visibility is its OWN presence bit: a multi-cell
                     // model's contact triangles can sit in a section whose model
                     // index range is empty.
-                    visible.has_contact |= section.contact_vertex_count > 0;
+                    visible.has_contact |= !section.span(SectionStream::Contact).is_empty();
                     plan.any_model |= has_model;
-                    plan.any_transparent |= section.transparent_vertex_count > 0
-                        || section.transparent_ts_vertex_count > 0
-                        || section.translucent_vertex_count > 0;
+                    plan.any_transparent |= section.has_alpha();
                     // The hysteresis state lives on the section record, so a
                     // section without a far mesh — nearly all of them, every frame
                     // — costs one field test, and one with a far mesh costs a
@@ -180,30 +226,18 @@ impl Renderer {
                         opaque_batched: false,
                         model_batched: false,
                         use_far_leaf_lod,
-                        opaque_vertex_start: section.opaque_vertex_start,
-                        opaque_quads: section.opaque_vertex_count / 4,
-                        opaque_tail_start: section.opaque_tail_start,
-                        opaque_tail_quads: section.opaque_tail_count / 4,
-                        transparent_vertex_start: section.transparent_vertex_start,
-                        transparent_quads: section.transparent_vertex_count / 4,
-                        transparent_ts_vertex_start: section.transparent_ts_vertex_start,
-                        transparent_ts_quads: section.transparent_ts_vertex_count / 4,
-                        translucent_vertex_start: section.translucent_vertex_start,
-                        translucent_quads: section.translucent_vertex_count / 4,
-                        model_index_start: section.model_index_start,
-                        model_idx_count: section.model_idx_count,
-                        model_blend_index_start: section.model_blend_index_start,
-                        model_blend_idx_count: section.model_blend_idx_count,
+                        spans: section.spans,
                     });
                 }
                 let batch = batch_column(
                     visible,
                     ColumnStreams {
-                        opaque_quads: column.opaque_quads,
-                        opaque_far_quads: column.opaque_far_quads,
-                        model_idx_count: column.model_idx_count,
-                        contact_vertex_count: column.contact_vertex_count,
+                        opaque_quads: column.opaque_quads(),
+                        opaque_far_quads: column.opaque_far_quads(),
+                        model_idx_count: column.region(SectionStream::ModelIndices).count,
+                        contact_vertex_count: column.region(SectionStream::Contact).count,
                     },
+                    batch_hidden,
                 );
                 if let Some(far) = batch.opaque {
                     plan.opaque_columns.push((column_dist_sq, column_pos, entry.slot, far));
@@ -223,6 +257,8 @@ impl Renderer {
             &mut terrain.sorted_scratch,
         );
         sort_columns(plan);
+        build_terrain_draws(&mut terrain.draws, &terrain.geometry, &terrain.columns, plan);
+        terrain.draws.finish(device, queue);
         terrain.planned_gpu_revision = terrain.gpu_revision;
         terrain.planned_view_key = Some(terrain.view_key);
     }
@@ -298,6 +334,9 @@ struct VisibleColumn {
     any_far_lod: bool,
     /// Every far-capable visible section draws its far LOD.
     all_far_capable_are_far: bool,
+    /// A CULLED section holds opaque geometry a whole-column draw would
+    /// cover.
+    hidden_opaque: bool,
 }
 
 impl Default for VisibleColumn {
@@ -308,6 +347,7 @@ impl Default for VisibleColumn {
             has_contact: false,
             any_far_lod: false,
             all_far_capable_are_far: true,
+            hidden_opaque: false,
         }
     }
 }
@@ -338,10 +378,17 @@ struct ColumnBatch {
 /// leading far region), or — mixed — none, and each section draws for
 /// itself. The far case exists because a distant leafy column is the common
 /// case at range, and before the two-region packing it cost a draw per
-/// section.
-fn batch_column(visible: VisibleColumn, streams: ColumnStreams) -> ColumnBatch {
-    let detailed = visible.has_opaque && !visible.any_far_lod && streams.opaque_quads > 0;
-    let far = visible.has_opaque
+/// section. A whole-column draw also covers culled sections, so it is taken
+/// only when none holds opaque geometry — unless `batch_hidden` (every draw
+/// is a CPU call on this device, and one column draw beats many).
+fn batch_column(
+    visible: VisibleColumn,
+    streams: ColumnStreams,
+    batch_hidden: bool,
+) -> ColumnBatch {
+    let batchable = visible.has_opaque && (batch_hidden || !visible.hidden_opaque);
+    let detailed = batchable && !visible.any_far_lod && streams.opaque_quads > 0;
+    let far = batchable
         && visible.any_far_lod
         && visible.all_far_capable_are_far
         && streams.opaque_far_quads > 0;
@@ -355,16 +402,17 @@ fn batch_column(visible: VisibleColumn, streams: ColumnStreams) -> ColumnBatch {
 /// Whether a section still draws anything for itself once its column's
 /// whole-column draws are decided.
 fn draws_for_itself(section: &VisibleSection) -> bool {
+    let has = |stream| !section.span(stream).is_empty();
     let opaque_left = !section.opaque_batched
-        && (section.opaque_quads > 0
-            || (!section.use_far_leaf_lod && section.opaque_tail_quads > 0));
+        && (has(SectionStream::OpaqueFar)
+            || (!section.use_far_leaf_lod && has(SectionStream::OpaqueTail)));
     let model_left = !section.model_batched
-        && (section.model_idx_count > 0 || section.model_blend_idx_count > 0);
+        && (has(SectionStream::ModelIndices) || has(SectionStream::ModelBlendIndices));
     opaque_left
         || model_left
-        || section.transparent_quads > 0
-        || section.transparent_ts_quads > 0
-        || section.translucent_quads > 0
+        || has(SectionStream::Transparent)
+        || has(SectionStream::TransparentTwoSided)
+        || has(SectionStream::Translucent)
 }
 
 /// Stamp one column's batch onto its sections (`sections[first..]`) and drop
@@ -428,6 +476,70 @@ fn sort_columns(plan: &mut TerrainPlan) {
     plan.opaque_columns.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     plan.model_columns.sort_unstable_by(by_dist_then_pos);
     plan.contact_columns.sort_unstable_by(by_dist_then_pos);
+}
+
+/// Fill the terrain quad nodes' draw lists from the sorted plan: the opaque
+/// node draws whole columns near→far and then every section no column draw
+/// covered (its far range, plus its leaf tail at detailed LOD); translucent
+/// blocks draw near→far and fluids far→near, sides and two-sided tops in
+/// their section's place.
+fn build_terrain_draws(
+    draws: &mut TerrainDraws,
+    arenas: &crate::resources::TerrainArenas,
+    columns: &ColumnStore,
+    plan: &TerrainPlan,
+) {
+    draws.clear();
+    let opaque = draws.list_mut(QuadPass::Opaque);
+    for &(_, _, slot, far) in &plan.opaque_columns {
+        let column = columns.at(slot);
+        // Far LOD draws the column's leading far region; detailed draws the
+        // whole stream. Both are one contiguous range from its start.
+        let quads = if far {
+            column.opaque_far_quads()
+        } else {
+            column.opaque_quads()
+        };
+        opaque.push(arenas, column, QuadLayer::Opaque, 0, quads);
+    }
+    for item in plan.sections.iter().filter(|item| !item.opaque_batched) {
+        let column = columns.at(item.column_slot);
+        opaque.push_span(arenas, column, QuadLayer::Opaque, item.span(SectionStream::OpaqueFar));
+        if !item.use_far_leaf_lod {
+            opaque.push_span(
+                arenas,
+                column,
+                QuadLayer::Opaque,
+                item.span(SectionStream::OpaqueTail),
+            );
+        }
+    }
+    let translucent = draws.list_mut(QuadPass::Translucent);
+    for item in &plan.sections {
+        let column = columns.at(item.column_slot);
+        translucent.push_span(
+            arenas,
+            column,
+            QuadLayer::Translucent,
+            item.span(SectionStream::Translucent),
+        );
+    }
+    let transparent = draws.list_mut(QuadPass::Transparent);
+    for item in plan.sections.iter().rev() {
+        let column = columns.at(item.column_slot);
+        transparent.push_span(
+            arenas,
+            column,
+            QuadLayer::Transparent,
+            item.span(SectionStream::Transparent),
+        );
+        transparent.push_span(
+            arenas,
+            column,
+            QuadLayer::TransparentTwoSided,
+            item.span(SectionStream::TransparentTwoSided),
+        );
+    }
 }
 
 #[cfg(test)]

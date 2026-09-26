@@ -1,14 +1,17 @@
 // skinned: GPU-skinned animated bodies (mobs, player bodies).
 //
-// Concatenated AFTER mob.wgsl (it reuses `Uniforms`/`u`, the entity texture
-// at group(1), `VsOut`, `fs_mob` and the light-curve constants declared
-// there). Each model's cubes live in a static bind-space vertex buffer (see
+// Concatenated AFTER mob.wgsl (it reuses `u`, the entity texture at
+// group(1), `VsOut`, `fs_mob` and the light-curve constants declared there;
+// the frame `Uniforms` struct itself comes from the shared prelude, imported
+// here too so this file names its own dependency). Each model's cubes live in a static bind-space vertex buffer (see
 // render::skinned::SkinMesh); the per-frame CPU work is only the skeleton:
 // a bone palette of `G · pose[bone]` matrices at group(2) and one instance
 // row per body (tint, sampled light, palette base, hidden parts). The vertex
 // shader applies the palette entry and lights the body per instance with the
 // same two-channel curve block.wgsl and render::lighting use, so the output
 // matches the old CPU bake that folded all of this into world-space vertices.
+
+#import petramond::frame
 
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
 

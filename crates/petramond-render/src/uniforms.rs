@@ -11,25 +11,45 @@ pub fn fog_range(render_dist_chunks: i32) -> (f32, f32) {
     (end * 0.75, end)
 }
 
-/// Fixed size of the uv-rect table shared with the vertex shader. Sized
-/// straight from the packed vertex's tile-id field ([`petramond_mesh::MAX_TILES`])
-/// so the whole content catalogue fits without a shader edit, and so widening
-/// that field cannot leave the table behind. The
-/// `pipeline.rs` `assert!(TILE_COUNT <= UV_RECTS_LEN)` is the runtime guard
-/// that the catalogue fits the table.
+/// Bytes of one uv-rect table row: the `(u0, v0, u1, v1)` of one atlas tile.
 ///
-/// The WGSL side spells the length as a LITERAL (`array<vec4<f32>, 2048>`) in
-/// every shader bound to this group — WGSL cannot read a Rust constant, so
-/// `uv_rect_table_length_matches_every_shader` re-reads the shader sources and
-/// pins them to this value.
-pub const UV_RECTS_LEN: usize = petramond_mesh::MAX_TILES;
+/// The table is a read-only STORAGE buffer sized from the loaded tile
+/// catalogue (see `pipeline::create_shared_bindings`), so it grows with the
+/// content instead of pinning a length every shader has to spell: the WGSL side
+/// is the runtime-sized `array<vec4<f32>>` the `petramond::uv_rects` import
+/// declares ([`UV_RECTS_WGSL`]).
+pub const UV_RECT_BYTES: u64 = 16;
 
-/// The binding must fit `wgpu::Limits::default().max_uniform_buffer_binding_size`
-/// (64 KiB) — which is what `render::renderer::construct` requests, so a table
-/// past it would fail device creation on every adapter rather than fall back.
-/// At 2048 tiles the table is 32 KiB; the next widening of the tile field would
-/// trip this instead of shipping.
-const _: () = assert!(UV_RECTS_LEN * 16 <= 65536);
+/// The `petramond::uv_rects` shader module: binding 1 of the block group 0
+/// (and of the model3d MVP group), selected by tile id and never recomputed.
+pub(crate) const UV_RECTS_WGSL: &str =
+    "@group(0) @binding(1) var<storage, read> uv_rects: array<vec4<f32>>;\n";
+
+/// Layout entry for the uv-rect table at `binding`, vertex-stage.
+pub(crate) fn uv_rects_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(UV_RECT_BYTES),
+        },
+        count: None,
+    }
+}
+
+/// A one-row stand-in for the uv-rect table, for binds whose pipelines share
+/// the block group-0 layout but never read the table (terrain, world models,
+/// ghosts, schematic thumbnails).
+pub(crate) fn uv_rects_placeholder(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: UV_RECT_BYTES,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    })
+}
 
 pub const SHADER_PARAM_SLOTS: usize = 16;
 
@@ -69,10 +89,68 @@ pub struct Uniforms {
     pub sun_dir: [f32; 4],
     /// `xyz` = the eye fluid's `volume_tint`, multiplied over every surface
     /// but a fluid's own faces while the eye is inside it (white in air);
-    /// `w` is reserved (0). New fields go at the END: every other shader
-    /// declares a PREFIX of this struct, so an insertion above shifts what they
-    /// read (`uniform_layout_matches_every_shader`).
+    /// `w` is reserved (0).
     pub volume_tint: [f32; 4],
+}
+
+/// Every [`Uniforms`] field as the `petramond::frame` shader module declares
+/// it: `(name, WGSL type, byte offset)`, in declaration order. Shaders never
+/// spell the struct themselves — they import it — so a field may go anywhere;
+/// [`frame_wgsl`] emits this table and the tests pin it to the Rust layout
+/// (offsets contiguous, sizes matching, nothing left out).
+pub(crate) const UNIFORM_FIELDS: [(&str, &str, usize); 10] = [
+    ("view_proj", "mat4x4<f32>", std::mem::offset_of!(Uniforms, view_proj)),
+    ("cam_pos", "vec4<f32>", std::mem::offset_of!(Uniforms, cam_pos)),
+    ("fog", "vec4<f32>", std::mem::offset_of!(Uniforms, fog)),
+    ("fog_color", "vec4<f32>", std::mem::offset_of!(Uniforms, fog_color)),
+    (
+        "inv_view_proj",
+        "mat4x4<f32>",
+        std::mem::offset_of!(Uniforms, inv_view_proj),
+    ),
+    (
+        "render_origin",
+        "vec4<i32>",
+        std::mem::offset_of!(Uniforms, render_origin),
+    ),
+    (
+        "atlas_layout",
+        "vec4<u32>",
+        std::mem::offset_of!(Uniforms, atlas_layout),
+    ),
+    ("sky_color", "vec4<f32>", std::mem::offset_of!(Uniforms, sky_color)),
+    ("sun_dir", "vec4<f32>", std::mem::offset_of!(Uniforms, sun_dir)),
+    (
+        "volume_tint",
+        "vec4<f32>",
+        std::mem::offset_of!(Uniforms, volume_tint),
+    ),
+];
+
+/// Version of the `petramond::frame` module a pack shader imports
+/// (`PETRAMOND_FRAME_ABI` in WGSL). Bumped whenever a field changes meaning
+/// or is removed, so a pack can tell which frame it was written against.
+pub(crate) const FRAME_ABI_VERSION: u32 = 1;
+
+/// The `petramond::frame` shader module: the [`Uniforms`] struct (from
+/// [`UNIFORM_FIELDS`]) and the ABI version constant.
+pub(crate) fn frame_wgsl() -> String {
+    let mut text = format!(
+        "// petramond::frame — generated from render::uniforms::Uniforms; do not copy.\n\
+         const PETRAMOND_FRAME_ABI: u32 = {FRAME_ABI_VERSION}u;\n\
+         struct Uniforms {{\n"
+    );
+    for (name, ty, _) in UNIFORM_FIELDS {
+        text.push_str(&format!("    {name}: {ty},\n"));
+    }
+    text.push_str("};\n");
+    text
+}
+
+/// The `petramond::shader_params` module: the named-parameter slots a pack
+/// sky or environment shader reads at group 0 binding 1.
+pub(crate) fn shader_params_wgsl() -> String {
+    format!("struct ShaderParams {{\n    values: array<vec4<f32>, {SHADER_PARAM_SLOTS}>,\n}};\n")
 }
 
 #[repr(C, align(16))]
@@ -82,147 +160,4 @@ pub struct ShaderParams {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::UV_RECTS_LEN;
-
-    /// Every shader bound to the block group-0 layout declares the uv-rect
-    /// table's length as a WGSL literal, which no Rust constant can reach. A
-    /// shader left behind at the old length silently reads (or fails to
-    /// validate) past the table when the tile field widens, so re-read the
-    /// sources and pin the literal.
-    #[test]
-    fn uv_rect_table_length_matches_every_shader() {
-        // Every shader declaring binding 1 of the shared block group.
-        let sources = [
-            ("block.wgsl", include_str!("../shaders/block.wgsl")),
-            ("model3d.wgsl", include_str!("../shaders/model3d.wgsl")),
-            (
-                "break_overlay.wgsl",
-                include_str!("../shaders/break_overlay.wgsl"),
-            ),
-            ("particles.wgsl", include_str!("../shaders/particles.wgsl")),
-        ];
-        let want = format!("array<vec4<f32>, {UV_RECTS_LEN}>");
-        let mut declared = 0;
-        for (name, src) in sources {
-            for line in src.lines() {
-                if !line.contains("uv_rects") || !line.contains("array<vec4<f32>") {
-                    continue;
-                }
-                declared += 1;
-                assert!(
-                    line.contains(&want),
-                    "{name} declares uv_rects as `{}`, not `{want}`",
-                    line.trim()
-                );
-            }
-        }
-        // block.wgsl computes its uvs from the atlas directly and declares no
-        // table; the other three do. A source that stops declaring it (or a
-        // new one that starts) should be reflected here deliberately.
-        assert_eq!(declared, 3, "shaders declaring the uv-rect table");
-    }
-
-    /// Every shader bound to the frame uniform buffer declares its own WGSL
-    /// mirror of [`Uniforms`], most of them a PREFIX. WGSL lays a struct out
-    /// from its own declaration, so a field inserted mid-struct on the Rust
-    /// side silently shifts everything a prefix mirror reads after it (the
-    /// sky colour became lava tile ids once). Parse each mirror's fields,
-    /// accumulate their std140 offsets, and pin them to the Rust offsets.
-    #[test]
-    fn uniform_layout_matches_every_shader() {
-        use super::Uniforms;
-        use std::mem::offset_of;
-
-        let sources = [
-            (
-                "block.wgsl",
-                include_str!("../shaders/block.wgsl"),
-                "Uniforms",
-            ),
-            ("sky.wgsl", include_str!("../shaders/sky.wgsl"), "Uniforms"),
-            ("mob.wgsl", include_str!("../shaders/mob.wgsl"), "Uniforms"),
-            (
-                "particles.wgsl",
-                include_str!("../shaders/particles.wgsl"),
-                "Uniforms",
-            ),
-            (
-                "contact.wgsl",
-                include_str!("../shaders/contact.wgsl"),
-                "Uniforms",
-            ),
-            (
-                "entity_shadow.wgsl",
-                include_str!("../shaders/entity_shadow.wgsl"),
-                "Uniforms",
-            ),
-            (
-                "break_overlay.wgsl",
-                include_str!("../shaders/break_overlay.wgsl"),
-                "Uniforms",
-            ),
-            (
-                "outline.wgsl",
-                include_str!("../shaders/outline.wgsl"),
-                "Uniforms",
-            ),
-            (
-                "model3d.wgsl",
-                include_str!("../shaders/model3d.wgsl"),
-                "FrameUniforms",
-            ),
-        ];
-        let rust_offset = |field: &str| -> Option<usize> {
-            Some(match field {
-                "view_proj" => offset_of!(Uniforms, view_proj),
-                "cam_pos" => offset_of!(Uniforms, cam_pos),
-                "fog" => offset_of!(Uniforms, fog),
-                "fog_color" => offset_of!(Uniforms, fog_color),
-                "inv_view_proj" => offset_of!(Uniforms, inv_view_proj),
-                "render_origin" => offset_of!(Uniforms, render_origin),
-                "atlas_layout" => offset_of!(Uniforms, atlas_layout),
-                "sky_color" => offset_of!(Uniforms, sky_color),
-                "sun_dir" => offset_of!(Uniforms, sun_dir),
-                "volume_tint" => offset_of!(Uniforms, volume_tint),
-                _ => return None,
-            })
-        };
-        for (name, src, struct_name) in sources {
-            let header = format!("struct {struct_name} {{");
-            let body = src
-                .split_once(&header)
-                .and_then(|(_, rest)| rest.split_once("};"))
-                .map(|(body, _)| body)
-                .unwrap_or_else(|| panic!("{name} declares no `{header}`"));
-            let mut offset = 0usize;
-            let mut fields = 0;
-            for line in body.lines() {
-                let decl = line.split("//").next().unwrap_or("").trim();
-                let Some((field, ty)) = decl.split_once(':') else {
-                    continue;
-                };
-                let (field, ty) = (field.trim(), ty.trim().trim_end_matches(','));
-                let size = match ty {
-                    "mat4x4<f32>" => 64,
-                    "vec4<f32>" | "vec4<u32>" | "vec4<i32>" => 16,
-                    other => panic!("{name}: unhandled uniform field type `{other}`"),
-                };
-                let want = rust_offset(field)
-                    .unwrap_or_else(|| panic!("{name} declares unknown frame uniform `{field}`"));
-                assert_eq!(
-                    offset, want,
-                    "{name}: `{field}` sits at byte {offset} in WGSL but {want} in `Uniforms` \
-                     (a field inserted mid-struct? new fields go at the end)"
-                );
-                offset += size;
-                fields += 1;
-            }
-            assert!(fields > 0, "{name}: no fields parsed from `{struct_name}`");
-            assert!(
-                offset <= std::mem::size_of::<Uniforms>(),
-                "{name}: mirror ({offset} bytes) overruns `Uniforms`"
-            );
-        }
-    }
-}
+mod tests;

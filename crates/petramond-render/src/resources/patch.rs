@@ -1,26 +1,13 @@
-//! The vertex-only patch: rewriting a column's vertex attributes in place when
-//! every section kept its counts and index topology (light/AO remeshes).
+//! The vertex-only patch: rewriting a column's vertex streams in place when
+//! every section kept its stream counts and index topology (light/AO remeshes).
 
-use super::{GeometryArena, GpuColumnMesh, GpuSectionMesh, Layer};
-use petramond_mesh::{ChunkMesh, TerrainVertex, Vertex};
+use super::layers::{mesh_bytes, mesh_count};
+use super::{GpuColumnMesh, GpuSectionMesh, SectionStream, TerrainArenas};
+use petramond_mesh::ChunkMesh;
 use petramond_world::chunk::SectionPos;
 
-fn patch_terrain_verts(
-    queue: &wgpu::Queue,
-    arena: &GeometryArena,
-    buf: &Option<Layer>,
-    vertex_start: u32,
-    src: &[Vertex],
-) -> bool {
-    if src.is_empty() {
-        return true;
-    }
-    let quantized: Vec<TerrainVertex> = src.iter().map(TerrainVertex::from_mesh).collect();
-    patch_verts(queue, arena, buf, vertex_start, &quantized)
-}
-
 /// FNV-1a over a section's SECTION-LOCAL index streams, all indexed layers in a
-/// fixed order. With per-layer counts already matched, equal hashes mean the
+/// fixed order. With per-stream counts already matched, equal hashes mean the
 /// column-buffer indices retained on the GPU (section-local + a vertex-start
 /// offset that count equality pins) are still valid for the new vertex data.
 pub(super) fn section_index_hash(mesh: &ChunkMesh) -> u64 {
@@ -40,54 +27,34 @@ pub(super) fn section_index_hash(mesh: &ChunkMesh) -> u64 {
     h
 }
 
-fn layer_sizes_match(mesh: &ChunkMesh, gpu: &GpuSectionMesh) -> bool {
-    // The opaque stream is packed as two regions (far, then leaf tail), so the
-    // split must land in the same place as well as the total.
-    super::far_len(mesh) == gpu.opaque_vertex_count
-        && mesh.opaque.len() as u32 - super::far_len(mesh) == gpu.opaque_tail_count
-        && mesh.transparent.len() as u32 == gpu.transparent_vertex_count
-        && mesh.transparent_two_sided.len() as u32 == gpu.transparent_ts_vertex_count
-        && mesh.translucent.len() as u32 == gpu.translucent_vertex_count
-        && mesh.model.len() as u32 == gpu.model_vertex_count
-        && mesh.model_idx.len() as u32 == gpu.model_idx_count
-        && mesh.model_blend_idx.len() as u32 == gpu.model_blend_idx_count
-        && mesh.contact.len() as u32 == gpu.contact_vertex_count
+/// Every stream keeps its element count — which pins every start offset in
+/// the column, the opaque far/tail split included.
+fn counts_match(mesh: &ChunkMesh, gpu: &GpuSectionMesh) -> bool {
+    SectionStream::ALL
+        .iter()
+        .all(|&stream| mesh_count(mesh, stream) == gpu.span(stream).count)
 }
 
-fn patch_verts<V: bytemuck::Pod>(
+/// When every section keeps the same stream counts as the installed GPU
+/// column, rewrite only the dirty sections' vertex streams in place, straight
+/// from their sealed meshes. Indices and sibling packing are skipped entirely.
+pub(super) fn try_patch_column(
     queue: &wgpu::Queue,
-    arena: &GeometryArena,
-    buf: &Option<Layer>,
-    vertex_start: u32,
-    src: &[V],
-) -> bool {
-    if src.is_empty() {
-        return true;
-    }
-    let Some(buf) = buf else {
-        return false;
-    };
-    let offset = vertex_start as u64 * std::mem::size_of::<V>() as u64;
-    let bytes = bytemuck::cast_slice(src);
-    arena.write(queue, &buf.alloc, offset, bytes)
-}
-
-/// When every section keeps the same vertex/index counts as the installed GPU
-/// column, rewrite only vertex attributes in place (light/AO remeshes). Indices
-/// and sibling CPU packing are skipped entirely.
-pub(super) fn try_patch_column_verts(
-    queue: &wgpu::Queue,
-    arena: &GeometryArena,
+    arenas: &TerrainArenas,
     meshes: &[(SectionPos, &ChunkMesh)],
     prev: &GpuColumnMesh,
 ) -> bool {
     if meshes.len() != prev.sections.len() {
         return false;
     }
-    for (&(sp, mesh), &(psp, ref gpu)) in meshes.iter().zip(&prev.sections) {
-        if sp != psp
+    for (&(sp, mesh), (psp, gpu)) in meshes.iter().zip(&prev.sections) {
+        // The record is reused as-is, so everything it caches beyond the
+        // vertex bytes must still hold: counts, index topology, connectivity.
+        if sp != *psp
             || (mesh.mesh_dirty
-                && (!layer_sizes_match(mesh, gpu) || section_index_hash(mesh) != gpu.index_hash))
+                && (!counts_match(mesh, gpu)
+                    || section_index_hash(mesh) != gpu.index_hash
+                    || mesh.visibility != gpu.visibility))
         {
             return false;
         }
@@ -96,51 +63,24 @@ pub(super) fn try_patch_column_verts(
         if !mesh.mesh_dirty {
             continue;
         }
-        let far = super::far_len(mesh) as usize;
-        if !patch_terrain_verts(
-            queue,
-            arena,
-            &prev.opaque_vbuf,
-            gpu.opaque_vertex_start,
-            &mesh.opaque[..far],
-        ) || !patch_terrain_verts(
-            queue,
-            arena,
-            &prev.opaque_vbuf,
-            gpu.opaque_tail_start,
-            &mesh.opaque[far..],
-        ) || !patch_terrain_verts(
-            queue,
-            arena,
-            &prev.transparent_vbuf,
-            gpu.transparent_vertex_start,
-            &mesh.transparent,
-        ) || !patch_terrain_verts(
-            queue,
-            arena,
-            &prev.transparent_ts_vbuf,
-            gpu.transparent_ts_vertex_start,
-            &mesh.transparent_two_sided,
-        ) || !patch_terrain_verts(
-            queue,
-            arena,
-            &prev.translucent_vbuf,
-            gpu.translucent_vertex_start,
-            &mesh.translucent,
-        ) || !patch_verts(
-            queue,
-            arena,
-            &prev.model_vbuf,
-            gpu.model_vertex_start,
-            &mesh.model,
-        ) || !patch_verts(
-            queue,
-            arena,
-            &prev.contact_vbuf,
-            gpu.contact_vertex_start,
-            &mesh.contact,
-        ) {
-            return false;
+        for stream in SectionStream::ALL {
+            let span = gpu.span(stream);
+            // Equal index topology was checked above; only vertices changed.
+            if stream.is_index() || span.is_empty() {
+                continue;
+            }
+            let buffer = stream.buffer();
+            let Some(layer) = prev.buffer(buffer) else {
+                return false;
+            };
+            if !arenas.get(buffer).write(
+                queue,
+                &layer.alloc,
+                u64::from(span.start) * buffer.stride(),
+                mesh_bytes(mesh, stream),
+            ) {
+                return false;
+            }
         }
     }
     true

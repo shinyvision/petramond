@@ -480,9 +480,8 @@ impl Renderer {
         let queue = &self.queue;
         let TerrainPass {
             columns,
-            upload_scratch,
             column_origins: origins,
-            geometry: arena,
+            geometry: arenas,
             quad_index,
             uploads,
             gpu_revision,
@@ -533,9 +532,8 @@ impl Renderer {
                 queue,
                 &meshes,
                 prev,
-                upload_scratch,
                 origins,
-                arena,
+                arenas,
                 quad_index,
                 &mut upload_batch,
             );

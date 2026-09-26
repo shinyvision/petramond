@@ -6,11 +6,13 @@ fn world_cell_variation_survives_rebases_faces_and_transition_donors() {
         return;
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
-    let source = super::super::lanes::declarations()
-        + &super::hash_declaration()
+    let source = super::hash_declaration()
         + "fn block_variation_count(tile: u32) -> u32 { return select(1u, 4u, tile == 7u); }\n"
         + include_str!("../../../shaders/tile_variation.wgsl")
         + include_str!("tests.wgsl");
+    let source = super::super::prelude::compose(&source)
+        .expect("variation shader imports resolve")
+        .into_owned();
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("actual terrain variation functions"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
