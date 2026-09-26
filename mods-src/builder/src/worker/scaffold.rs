@@ -11,7 +11,7 @@ use crate::host::prelude::*;
 use super::tuning::hands::SCAFFOLD_STOCK;
 use super::{cargo, hands, Body, Ctx};
 use crate::content::ScaffoldKind;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::survey::ItemKey;
 
 fn key(kind: &ScaffoldKind) -> ItemKey {

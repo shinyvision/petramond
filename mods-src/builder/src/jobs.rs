@@ -21,8 +21,8 @@ use crate::design::{Design, Progress};
 use crate::fx::HashMap;
 use crate::project::{Brief, ProjectId, Projects};
 use crate::supplies::Supplies;
-use crate::survey::{Summary, Survey};
-use crate::worker::{self, Crew};
+use crate::survey::Survey;
+use crate::worker::{self, Job};
 
 pub use admission::Refusal;
 
@@ -46,32 +46,6 @@ const ROUTE_SWEEP: Cadence = Cadence::every(ROUTE_TICKS);
 /// its supplies still cover the rest.
 const TABLE_CHECK: Cadence = Cadence::every(40);
 
-pub struct Job {
-    pub id: ProjectId,
-    pub design: Design,
-    pub survey: Option<Survey>,
-    pub failed: Option<String>,
-    pub crew: Crew,
-    seen: u64,
-}
-
-impl Job {
-    pub fn summary(&self) -> Option<&Summary> {
-        self.survey.as_ref()?.summary()
-    }
-
-    /// The fraction of the design's units the world holds.
-    pub fn done(&self) -> f32 {
-        let Some(survey) = self.survey.as_ref() else {
-            return 0.0;
-        };
-        if survey.known.is_empty() {
-            return 1.0;
-        }
-        1.0 - survey.open() as f32 / survey.known.len() as f32
-    }
-}
-
 #[derive(Default)]
 pub struct Jobs {
     pub map: BTreeMap<ProjectId, Job>,
@@ -79,6 +53,8 @@ pub struct Jobs {
     /// against the job's crew before it is trusted, so a crew change never
     /// has to report here.
     mobs: HashMap<u64, ProjectId>,
+    /// The tick each job was last attended.
+    seen: BTreeMap<ProjectId, u64>,
 }
 
 impl Jobs {
@@ -91,15 +67,11 @@ impl Jobs {
         if stale {
             self.map.remove(&project.id);
         }
-        let job = self.map.entry(project.id).or_insert_with(|| Job {
-            id: project.id,
-            design: Design::new(asset, origin, turns),
-            survey: None,
-            failed: None,
-            crew: Crew::default(),
-            seen: now,
-        });
-        job.seen = now;
+        self.seen.insert(project.id, now);
+        let job = self
+            .map
+            .entry(project.id)
+            .or_insert_with(|| Job::new(project.id, Design::new(asset, origin, turns)));
         Some(job)
     }
 
@@ -120,16 +92,19 @@ impl Jobs {
     /// Drop the jobs nobody has attended for [`FORGET_AFTER`] ticks and that
     /// have no golem out, with what the memo remembers of them.
     fn forget_idle(&mut self, now: u64) {
-        self.map
-            .retain(|_, j| now < j.seen + FORGET_AFTER || j.crew.mob.is_some());
+        let seen = &self.seen;
+        self.map.retain(|id, j| {
+            seen.get(id).is_some_and(|at| now < at + FORGET_AFTER) || j.crew.mob.is_some()
+        });
         let map = &self.map;
         self.mobs.retain(|_, id| map.contains_key(id));
+        self.seen.retain(|id, _| map.contains_key(id));
     }
 }
 
 pub struct Builder {
     pub content: Content,
-    pub supplies: Supplies,
+    supplies: Supplies,
     pub projects: Projects,
     pub jobs: Jobs,
     pub caches: Caches,

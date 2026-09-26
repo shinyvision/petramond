@@ -5,7 +5,7 @@ use crate::host::prelude::*;
 
 use super::{defer_task, places};
 use crate::geometry::{offset, FACES};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::survey::Known;
 use crate::worker::tuning::patience::{BURY_ROUNDS, DUE_PATIENCE};
 use crate::worker::tuning::waits::{BURY_WAIT, REFUSED, SEALED_WAIT, UNLOADED, UNREAD};

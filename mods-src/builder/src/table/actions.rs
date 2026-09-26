@@ -74,7 +74,7 @@ pub fn click(builder: &mut Builder, kind: &str, widget: &str, at: Option<Contain
         Err(refusal) => builder
             .tables
             .refused
-            .insert((player, pos), (refusal.to_string(), now + REFUSAL_TICKS)),
+            .insert((player, pos), (refusal, now + REFUSAL_TICKS)),
     };
     let viewer = GuiViewerData {
         player_id: player,

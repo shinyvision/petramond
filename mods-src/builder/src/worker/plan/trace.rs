@@ -9,7 +9,7 @@ use super::task_cells;
 use super::verdict::{verdict_name, viability};
 use crate::design::Design;
 use crate::geometry::reaches;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::survey::{ItemKey, Known, Survey};
 use crate::worker::crew::Crew;
 use crate::worker::step::Task;

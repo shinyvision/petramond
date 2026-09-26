@@ -4,7 +4,7 @@ use crate::host::prelude::*;
 
 use super::places;
 use crate::geometry::{offset, SIDES};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::survey::Known;
 use crate::worker::body::stands_at;
 use crate::worker::route::{self, Hubs};

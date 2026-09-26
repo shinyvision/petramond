@@ -8,10 +8,11 @@ use crate::design::Progress;
 use crate::geometry::cell_of;
 use crate::host::fake::{rows, Fake, Installed};
 use crate::host::prelude::*;
-use crate::jobs::{Builder, Job};
-use crate::project::ProjectId;
+use crate::jobs::Builder;
+use crate::project::{Note, ProjectId};
+use crate::supplies::Shortfall;
 use crate::survey::Survey;
-use crate::worker::{Body, PROJECT_TAG};
+use crate::worker::{Body, Job, PROJECT_TAG};
 
 /// The player every test project belongs to.
 pub const OWNER: &str = "ada";
@@ -19,6 +20,15 @@ pub const OWNER: &str = "ada";
 pub const ASSET: SchematicId = [7; 32];
 /// The floor's top layer: a body on it stands in y = 0.
 pub const FLOOR: i32 = -1;
+
+/// The note of a job short of `count` stone and nothing else.
+pub fn short_of_stone(count: u32) -> Note {
+    Note::Missing(Shortfall {
+        count,
+        name: "Stone".into(),
+        more: false,
+    })
+}
 
 /// The row site ([`Session::row`]): three stones to lay along x from the
 /// origin, the table three cells south of them with a chest beside it, and

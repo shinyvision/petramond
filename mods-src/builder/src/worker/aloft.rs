@@ -14,7 +14,7 @@ use super::tuning::{
 };
 use super::{course, route, Body, Ctx, Pillar, Step, Task, Then};
 use crate::geometry::{feet_of, offset, reaches};
-use crate::jobs::Job;
+use crate::worker::Job;
 
 enum Way {
     Walk([i32; 3]),

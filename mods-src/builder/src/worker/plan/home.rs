@@ -4,7 +4,7 @@ use crate::host::prelude::*;
 
 use super::{walk_to, walk_via, Flow, Mode, Round};
 use crate::geometry::offset;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
 use crate::worker::{cargo, sight, stance, Body, Ctx, Step, Then};

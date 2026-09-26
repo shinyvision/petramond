@@ -5,7 +5,7 @@ use crate::host::prelude::*;
 
 use crate::jobs::Builder;
 use crate::keys::golem;
-use crate::table::Tone;
+use crate::ui::Tone;
 use crate::worker::trouble::{self, Trouble};
 
 const PUBLISH: Cadence = Cadence::every(4);

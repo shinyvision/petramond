@@ -36,7 +36,7 @@ impl Builder {
         self.projects.update(id, |p| {
             p.table = table;
             p.release();
-            p.note.clear();
+            p.note = Note::None;
         });
         Ok(())
     }
@@ -56,8 +56,8 @@ impl Builder {
             if stock.read && stock.has_room() {
                 self.projects.update(project.id, |p| {
                     p.release();
-                    if Note::read(&p.note) == Note::ChestsFull {
-                        p.note.clear();
+                    if p.note == Note::ChestsFull {
+                        p.note = Note::None;
                     }
                 });
             }
@@ -75,13 +75,13 @@ impl Builder {
             return;
         }
         self.projects.update(project.id, |p| match &short {
-            Some(short) => p.note = Note::Missing(short.to_string()).into(),
+            Some(short) => p.note = Note::Missing(short.clone()),
             None => {
                 if p.hold() == Some(Hold::Supplies) {
                     p.release();
                 }
-                if Note::read(&p.note).is_shortfall() {
-                    p.note.clear();
+                if p.note.is_shortfall() {
+                    p.note = Note::None;
                 }
             }
         });
@@ -111,7 +111,7 @@ impl Builder {
             if gone {
                 self.cancel(id);
                 self.projects
-                    .update(id, |p| p.note = Note::TableGone.into());
+                    .update(id, |p| p.note = Note::TableGone);
             }
         }
     }

@@ -11,7 +11,7 @@ use super::{trace, Flow, Mode, Round};
 use crate::design::Design;
 use crate::fx::HashSet;
 use crate::geometry::{manhattan, offset, FACES};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 use crate::survey::{ItemKey, Known, Survey};
 use crate::worker::crew::{Crew, Stamped};

@@ -13,7 +13,7 @@ mod tick;
 mod trouble;
 
 use super::Ctx;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::{ProjectId, Projects};
 use crate::testing::{Session, HOME};
 

@@ -1,5 +1,7 @@
 use super::*;
 use crate::content::PROJECT_DATA;
+use crate::supplies::Shortfall;
+use crate::testing::short_of_stone;
 
 #[test]
 fn a_project_record_round_trips() {
@@ -11,21 +13,26 @@ fn a_project_record_round_trips() {
     project.summon([1, -1, 3]);
     project.emerged();
     project.cancel();
-    project.hold_for(Hold::Storage, Note::ChestsFull);
+    project.hold_for(Hold::Storage, short_of_stone(3));
     project.show_ghost = false;
-    project.scaffolds = vec![[1, 2, 3], [4, 5, 6]];
     assert_eq!(
         (project.phase(), project.cancelling(), project.worker()),
         (Phase::Returning, true, true)
     );
-    assert_eq!(Project::decode(&project.encode()), Some(project));
+    assert_eq!(Project::decode(&project.encode()), Some(project.clone()));
+
+    // The scaffolds are stored beside the record, never in it.
+    let bare = project.encode();
+    project.scaffolds = vec![[1, 2, 3], [4, 5, 6]];
+    assert_eq!(project.encode(), bare, "the scaffolds went into the record");
 }
 
-/// Worlds hold project records written as the flat field list: they must
-/// still read, and read as the same job.
+/// Worlds hold version 3 records: the note in words, the scaffolds inline.
+/// They must still read, as the same job, with the note as data again and
+/// the scaffolds carried over for the store to adopt.
 #[test]
-fn a_record_written_flat_reads_as_the_same_job() {
-    let flat = Record {
+fn a_version_3_record_reads_as_the_same_job() {
+    let old = RecordV3 {
         id: 7,
         owner: "ada".into(),
         table: [1, -2, 3],
@@ -39,31 +46,101 @@ fn a_record_written_flat_reads_as_the_same_job() {
         home: [1, -1, 3],
         worker: false,
         scaffolds: vec![[1, 2, 3]],
-        note: Note::GolemDied.into(),
+        note: "The golem died".into(),
         started: true,
         show_ghost: true,
     };
-    let bytes = mod_sdk::encode(&flat).unwrap();
-    let project = Project::decode(&bytes).expect("a flat record reads");
+    let mut stored = vec![3];
+    stored.extend(mod_sdk::encode(&old).unwrap());
+    let project: Project = decode_versioned(&stored).expect("a version 3 record reads");
     assert!(project.brief().lost_worker());
-    assert_eq!(project.encode(), bytes, "and is written back byte for byte");
+    assert_eq!(project.note, Note::GolemDied);
+    assert_eq!(project.scaffolds, vec![[1, 2, 3]]);
 }
 
 #[test]
-fn a_note_reads_back_as_what_was_said() {
+fn a_note_is_data_and_words_only_when_shown() {
+    let report = Note::report(1, 2).with_chests_full();
+    assert_eq!(
+        report.to_string(),
+        "1 block was lost after it was placed; 2 scaffolds were out of reach and stand; \
+         The chests are full"
+    );
+    assert_eq!(Note::report(0, 0), Note::None, "nothing lost, nothing to say");
+    assert_eq!(Note::None.with_chests_full().to_string(), "The chests are full");
+    assert_eq!(
+        Note::GolemDied.with_chests_full(),
+        Note::GolemDied,
+        "a more specific note keeps saying it"
+    );
+    assert_eq!(short_of_stone(3).to_string(), "Missing 3x Stone");
+}
+
+/// What older builds stored as words reads back as the data it said.
+#[test]
+fn legacy_words_read_back_as_data() {
     for note in [
         Note::None,
         Note::Paused,
         Note::GolemDied,
         Note::TableGone,
         Note::ChestsFull,
-        Note::Missing("Missing 3x Stone and more".into()),
-        Note::Text("The golem's hands are full".into()),
+        Note::HandsFull,
+        Note::MissingBlueprint,
+        short_of_stone(3),
+        Note::Missing(Shortfall {
+            count: 12,
+            name: "Oak Planks".into(),
+            more: true,
+        }),
     ] {
-        assert_eq!(Note::read(&String::from(note.clone())), note);
+        assert_eq!(Note::from_legacy(&note.to_string()), note);
     }
     // The golem's own "Missing blueprint" is no shortfall of supplies.
-    assert!(!Note::read("Missing blueprint").is_shortfall());
+    assert!(!Note::from_legacy("Missing blueprint").is_shortfall());
+    let report = "1 block was lost after it was placed";
+    assert_eq!(Note::from_legacy(report), Note::Legacy(report.into()));
+    assert_eq!(Note::from_legacy(report).to_string(), report, "shown as it was");
+}
+
+#[test]
+fn a_projects_scaffolds_are_stored_beside_it_across_a_reload() {
+    let _session = crate::testing::Session::flat(1);
+    let mut projects = Projects::load();
+    let id = projects.create("ada".into(), [0, 0, 0]);
+    projects.update(id, |p| p.scaffolds.extend([[1, 0, 0], [2, 0, 0], [3, 0, 0]]));
+    projects.update(id, |p| p.scaffolds.retain(|c| *c != [2, 0, 0]));
+    let mut again = Projects::load();
+    assert_eq!(
+        again.get(id).map(|p| p.scaffolds.clone()),
+        Some(vec![[1, 0, 0], [3, 0, 0]])
+    );
+}
+
+/// A project saved as version 3 keeps its scaffolds: the store adopts the
+/// list the record carried, and later edits go to the shards.
+#[test]
+fn a_version_3_projects_scaffolds_are_adopted() {
+    let session = crate::testing::Session::flat(1);
+    let mut projects = Projects::load();
+    let id = projects.create("ada".into(), [0, 0, 0]);
+    let mut old = Record::from(projects.get(id).unwrap().clone());
+    old.legacy_scaffolds = vec![[5, 0, 5]];
+    let mut stored = vec![Project::VERSION];
+    stored.extend(mod_sdk::encode(&old).unwrap());
+    let key = tag_of(id);
+    {
+        let mut state = session.world.state_mut();
+        state.kv.insert(key.clone(), stored);
+        state.kv.retain(|k, _| !k.starts_with("builder:scaffolds/"));
+    }
+    let mut again = Projects::load();
+    assert_eq!(again.get(id).map(|p| p.scaffolds.clone()), Some(vec![[5, 0, 5]]));
+    again.update(id, |p| p.scaffolds.push([6, 0, 6]));
+    assert_eq!(
+        Projects::load().get(id).map(|p| p.scaffolds.clone()),
+        Some(vec![[5, 0, 5], [6, 0, 6]])
+    );
 }
 
 fn draft() -> Project {
@@ -81,27 +158,27 @@ fn a_job_runs_from_draft_to_complete() {
     assert_eq!(reads(&p), (Phase::Draft, None, false, false, false));
     assert!(p.brief().open_to_change());
     p.hold_for(Hold::Player, Note::Paused);
-    assert_eq!((p.hold(), p.note.as_str()), (None, ""), "a draft is never held");
+    assert_eq!((p.hold(), &p.note), (None, &Note::None), "a draft is never held");
 
-    p.note = "stale".into();
+    p.note = Note::TableGone;
     p.summon([1, 0, 0]);
     assert_eq!(reads(&p), (Phase::Emerging, None, false, true, true));
-    assert_eq!((p.home, p.note.as_str()), ([1, 0, 0], ""));
+    assert_eq!((p.home, &p.note), ([1, 0, 0], &Note::None));
     assert!(!p.brief().open_to_change());
     p.emerged();
     assert_eq!(p.phase(), Phase::Working);
-    p.hold_for(Hold::Supplies, "Missing 3x Stone");
+    p.hold_for(Hold::Supplies, short_of_stone(3));
     assert_eq!(p.hold(), Some(Hold::Supplies));
-    assert!(Note::read(&p.note).is_shortfall());
+    assert!(p.note.is_shortfall());
     p.release();
     assert_eq!(p.hold(), None);
-    p.wind_down("1 block was lost after it was placed".into());
+    p.wind_down(Note::report(1, 0));
     assert_eq!(p.phase(), Phase::Returning);
     p.burrow();
     assert_eq!(p.phase(), Phase::Burrowing);
     p.gone_home();
     assert_eq!(reads(&p), (Phase::Complete, None, false, false, true));
-    assert_eq!(p.note, "1 block was lost after it was placed");
+    assert_eq!(p.note.to_string(), "1 block was lost after it was placed");
     let brief = p.brief();
     assert!(brief.resumable() && !brief.lost_worker() && !brief.open_to_change());
 }
@@ -155,7 +232,7 @@ fn a_dead_golem_holds_the_job_for_the_next() {
             (Phase::Working, Some(Hold::Worker), false, false, true),
             "rising, working or sinking, it is work again"
         );
-        assert_eq!(Note::read(&p.note), Note::GolemDied);
+        assert_eq!(p.note, Note::GolemDied);
         assert!(p.brief().lost_worker());
     }
 
@@ -166,7 +243,7 @@ fn a_dead_golem_holds_the_job_for_the_next() {
     p.golem_died();
     p.summon([2, 0, 0]);
     assert_eq!(reads(&p), (Phase::Emerging, None, false, true, true));
-    assert_eq!(p.note, "");
+    assert_eq!(p.note, Note::None);
 
     // With no golem out, calling it off simply ends it.
     let mut p = draft();
@@ -196,7 +273,7 @@ fn finish(projects: &mut Projects, id: ProjectId) {
     projects.update(id, |p| {
         p.summon(p.table);
         p.emerged();
-        p.wind_down(String::new());
+        p.wind_down(Note::None);
         p.burrow();
         p.gone_home();
     });

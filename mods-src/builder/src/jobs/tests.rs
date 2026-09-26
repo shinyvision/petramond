@@ -3,7 +3,7 @@ use crate::content::INFO_DATA;
 use crate::host::fake::rows::{AIR, CHEST, STONE, TABLE};
 use crate::project::{Hold, Note, Phase, Project};
 use crate::supplies::Shortfall;
-use crate::testing::{Session, ASSET, CHEST_AT, HOME, OWNER, ROW, TABLE_AT};
+use crate::testing::{short_of_stone, Session, ASSET, CHEST_AT, HOME, OWNER, ROW, TABLE_AT};
 use crate::worker::{Step, PROJECT_TAG};
 
 fn row_site() -> (Session, ProjectId) {
@@ -284,16 +284,16 @@ fn pause_and_resume_hold_and_release_a_working_job() {
     at_work(&mut session, id);
     session.builder.pause(id);
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.hold(), Note::read(&project.note)), (Some(Hold::Player), Note::Paused));
+    assert_eq!((project.hold(), &project.note), (Some(Hold::Player), &Note::Paused));
     assert_eq!(session.builder.resume(id, [3, 0, -3]), Ok(()));
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.hold(), project.note.as_str(), project.table), (None, "", [3, 0, -3]));
+    assert_eq!((project.hold(), &project.note, project.table), (None, &Note::None, [3, 0, -3]));
     assert_eq!(session.builder.resume(id, TABLE_AT), Ok(()), "nothing held");
 
     session
         .builder
         .projects
-        .update(id, |p| p.hold_for(Hold::Blueprint, "Missing blueprint"));
+        .update(id, |p| p.hold_for(Hold::Blueprint, Note::MissingBlueprint));
     assert_eq!(
         session.builder.resume(id, TABLE_AT),
         Err(Refusal::GolemLostBlueprint)
@@ -309,7 +309,7 @@ fn a_supplies_hold_lifts_once_the_chests_cover_the_rest() {
     session
         .builder
         .projects
-        .update(id, |p| p.hold_for(Hold::Supplies, "Missing 3x Stone"));
+        .update(id, |p| p.hold_for(Hold::Supplies, short_of_stone(3)));
     assert_eq!(session.builder.resume(id, TABLE_AT), Err(short(3, "Stone")));
     stock(&session, "petramond:stone", 3);
     session.world.set_now(2);
@@ -324,17 +324,17 @@ fn a_working_job_keeps_its_missing_note_current() {
     at_work(&mut session, id);
     let project = brief(&mut session, id);
     session.builder.check_supplies(&project, 2);
-    assert_eq!(session.builder.projects.get(id).unwrap().note, "Missing 3x Stone");
+    assert_eq!(session.builder.projects.get(id).unwrap().note, short_of_stone(3));
 
     session
         .builder
         .projects
-        .update(id, |p| p.hold_for(Hold::Supplies, "Missing 3x Stone"));
+        .update(id, |p| p.hold_for(Hold::Supplies, short_of_stone(3)));
     stock(&session, "petramond:stone", 3);
     let project = brief(&mut session, id);
     session.builder.check_supplies(&project, 3);
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.hold(), project.note.as_str()), (None, ""));
+    assert_eq!((project.hold(), &project.note), (None, &Note::None));
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn a_storage_hold_lifts_once_a_chest_has_room() {
         .put(ContainerAddress::Block(CHEST_AT), 3, None);
     session.builder.check_supplies(&project, 3);
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.hold(), project.note.as_str()), (None, ""));
+    assert_eq!((project.hold(), &project.note), (None, &Note::None));
 }
 
 #[test]
@@ -389,7 +389,7 @@ fn a_job_whose_table_is_broken_is_called_off() {
     session.builder.cancel_tableless(&[id], 41);
     let project = session.builder.projects.get(id).unwrap();
     assert_eq!((project.phase(), project.cancelling()), (Phase::Returning, true));
-    assert_eq!(Note::read(&project.note), Note::TableGone);
+    assert_eq!(project.note, Note::TableGone);
 }
 
 #[test]

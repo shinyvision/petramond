@@ -77,26 +77,6 @@ pub fn manhattan(a: [i32; 3], b: [i32; 3]) -> i32 {
     (a[0] - b[0]).abs() + (a[1] - b[1]).abs() + (a[2] - b[2]).abs()
 }
 
-pub fn encode_cell(cell: [i32; 3]) -> String {
-    format!("{} {} {}", cell[0], cell[1], cell[2])
-}
-
-pub fn decode_cell(text: &str) -> Option<[i32; 3]> {
-    let mut parts = text.split(' ').map(|p| p.parse::<i32>().ok());
-    let cell = [parts.next()??, parts.next()??, parts.next()??];
-    parts.next().is_none().then_some(cell)
-}
-
-pub fn encode_point(point: [f64; 3]) -> String {
-    format!("{:.3} {:.3} {:.3}", point[0], point[1], point[2])
-}
-
-pub fn decode_point(text: &str) -> Option<[f64; 3]> {
-    let mut parts = text.split(' ').map(|p| p.parse::<f64>().ok());
-    let point = [parts.next()??, parts.next()??, parts.next()??];
-    parts.next().is_none().then_some(point)
-}
-
 pub fn centre_of(cell: [i32; 3]) -> [f64; 3] {
     [
         f64::from(cell[0]) + 0.5,

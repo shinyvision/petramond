@@ -4,7 +4,6 @@
 
 use crate::host::prelude::*;
 
-use crate::geometry::{decode_cell, decode_point};
 use crate::worker::{EYE_HEIGHT as EYE, FACE_TAG, GOAL_TAG, HOLD_TAG, LOOK_TAG, PROJECT_TAG};
 
 /// How far the neck turns and tilts: down far enough to see the block under
@@ -16,18 +15,16 @@ pub fn decide(ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     let tag = |key: &str| ctx.tags.iter().find(|(k, _)| k == key).map(|(_, v)| v);
     tag(PROJECT_TAG)?;
     let hold = matches!(tag(HOLD_TAG), Some(MobTagValue::Bool(true)));
-    let goal = match tag(GOAL_TAG) {
-        Some(MobTagValue::Str(text)) if !hold => decode_cell(text),
-        _ => None,
-    };
+    let goal = tag(GOAL_TAG)
+        .filter(|_| !hold)
+        .and_then(<[i32; 3]>::from_tag);
     let facing = match tag(FACE_TAG) {
         Some(MobTagValue::F64(yaw)) => Some(*yaw as f32),
         _ => None,
     };
-    let head_look = match tag(LOOK_TAG) {
-        Some(MobTagValue::Str(text)) => decode_point(text).map(|point| gaze(ctx, point)),
-        _ => None,
-    };
+    let head_look = tag(LOOK_TAG)
+        .and_then(<[f64; 3]>::from_tag)
+        .map(|point| gaze(ctx, point));
     let mut claims = vec![DecisionChannel::Goal, DecisionChannel::Facing];
     if head_look.is_some() {
         claims.push(DecisionChannel::HeadLook);

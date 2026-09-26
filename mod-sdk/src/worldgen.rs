@@ -6,7 +6,7 @@
 use mod_api::{BlockId, WorldgenStage};
 mod colony;
 mod terrain;
-pub use colony::{isqrt, Colony, ColonyField};
+pub use colony::{isqrt, smoothstep01, Colony, ColonyField};
 pub use terrain::TerrainCache;
 
 host_fn! {

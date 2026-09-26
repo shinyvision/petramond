@@ -19,7 +19,7 @@ use super::tuning::{
 };
 use super::{Body, Ctx, Step, Task, Then};
 use crate::geometry::{feet_of, manhattan, offset, SIDES};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Project;
 
 /// Whether this tick can afford a scan at all.

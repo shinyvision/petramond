@@ -3,7 +3,6 @@
 use crate::host::prelude::*;
 
 use super::{act, trouble, EYE_HEIGHT, FACE_TAG, GOAL_TAG, HOLD_TAG, LOOK_TAG, TRACE};
-use crate::geometry::encode_cell;
 
 /// Where a player's eyes are, for a golem to look at.
 pub(super) fn eye_of(player: PlayerId) -> Option<[f64; 3]> {
@@ -53,7 +52,7 @@ impl Presentation {
         }
         self.goal = goal;
         match goal {
-            Some(cell) => mob_tag_set(id, GOAL_TAG, MobTagValue::Str(encode_cell(cell))),
+            Some(cell) => mob_tag_set(id, GOAL_TAG, cell.to_tag()),
             None => mob_tag_delete(id, GOAL_TAG),
         };
     }
@@ -117,11 +116,7 @@ impl Presentation {
             }
             self.gaze_dir = dir;
             self.gaze = Some(point);
-            mob_tag_set(
-                id,
-                LOOK_TAG,
-                MobTagValue::Str(crate::geometry::encode_point(point)),
-            );
+            mob_tag_set(id, LOOK_TAG, point.to_tag());
         }
     }
 

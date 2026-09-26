@@ -12,8 +12,8 @@ use super::body::Body;
 use super::step::{Step, Task, Then};
 use super::waiting::Waiting;
 use super::Ctx;
-use crate::jobs::Job;
-use crate::project::{Phase, Project, Projects};
+use crate::worker::Job;
+use crate::project::{Note, Phase, Project, Projects};
 use crate::survey::Known;
 mod climb;
 mod gather;
@@ -200,18 +200,8 @@ fn finish(projects: &mut Projects, job: &mut Job) -> Step {
         }
         None => 0,
     };
-    let mut told: Vec<String> = Vec::new();
-    match lost {
-        0 => {}
-        1 => told.push("1 block was lost after it was placed".into()),
-        n => told.push(format!("{n} blocks were lost after they were placed")),
-    }
-    match job.crew.scaffolding.left_standing {
-        0 => {}
-        1 => told.push("1 scaffold was out of reach and stands".into()),
-        n => told.push(format!("{n} scaffolds were out of reach and stand")),
-    }
-    projects.update(job.id, |p| p.wind_down(told.join("; ")));
+    let report = Note::report(lost as u32, job.crew.scaffolding.left_standing);
+    projects.update(job.id, |p| p.wind_down(report));
     job.crew.note.clear();
     Step::Plan
 }

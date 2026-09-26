@@ -57,10 +57,9 @@ pub fn of(project: &Project, crew: &Crew, now: u64) -> Option<Trouble> {
 
 /// Why, in the owner's words; what it is doing when nothing is wrong.
 pub fn reason(project: &Project, crew: &Crew, trouble: Option<Trouble>) -> String {
-    let told = [&project.note, &crew.note]
-        .into_iter()
-        .find(|note| !note.is_empty())
-        .cloned()
+    let told = (!project.note.is_none())
+        .then(|| project.note.to_string())
+        .or_else(|| (!crew.note.is_empty()).then(|| crew.note.clone()))
         .or_else(|| crew.why.told().or(crew.why.pondering()).map(str::to_owned));
     match (trouble, told) {
         (Some(_), Some(told)) => told,

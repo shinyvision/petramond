@@ -8,8 +8,8 @@ use crate::host::prelude::*;
 use super::trip::{at_container, go_to_container, hands_in_everything, short_of_bill};
 use super::wants::{dig_room, digs_ahead, keeps, needed_at, tool_kind, wanted};
 use crate::content::BLUEPRINT;
-use crate::jobs::Job;
-use crate::project::{Hold, Phase, Projects};
+use crate::worker::Job;
+use crate::project::{Hold, Note, Phase, Projects};
 use crate::survey::key_of;
 use crate::worker::tuning::hands::{LID_UP, LINGER};
 use crate::worker::{scaffold, Body, Ctx, Step, Then};
@@ -132,7 +132,7 @@ pub fn fetch(
         }
         if body.slots.iter().all(Option::is_some) {
             projects.update(job.id, |p| {
-                p.hold_for(Hold::Storage, "The golem's hands are full")
+                p.hold_for(Hold::Storage, Note::HandsFull)
             });
         } else {
             // A trip that took nothing holds the job only when the hands
@@ -278,14 +278,9 @@ pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Bod
     // room for goes home in its hands (and is set down there).
     if stuck && project.phase() == Phase::Returning {
         job.crew.cargo.chests_full = true;
-        projects.update(job.id, |p| {
-            if !p.note.contains("The chests are full") {
-                let sep = if p.note.is_empty() { "" } else { "; " };
-                p.note = format!("{}{sep}The chests are full", p.note);
-            }
-        });
+        projects.update(job.id, |p| p.note = std::mem::take(&mut p.note).with_chests_full());
     } else if stuck {
-        projects.update(job.id, |p| p.hold_for(Hold::Storage, "The chests are full"));
+        projects.update(job.id, |p| p.hold_for(Hold::Storage, Note::ChestsFull));
     }
     Step::Plan
 }

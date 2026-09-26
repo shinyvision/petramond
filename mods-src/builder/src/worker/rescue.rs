@@ -25,7 +25,7 @@ use super::wayin::open;
 use super::{Body, Ctx, Step, Task, Then};
 use crate::fx::{HashMap, HashSet};
 use crate::geometry::{feet_of, manhattan, offset};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::{Project, Projects};
 /// A golem getting out of somewhere.
 #[derive(Clone, Debug, Default)]

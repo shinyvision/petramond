@@ -13,7 +13,7 @@ use super::tuning::patience::{WALKWAY_PATIENCE, WALKWAY_STEP_UNTAKEN, WALKWAY_SU
 use super::{open_block, Body, Ctx, Step, Task};
 use crate::content::GOLEM;
 use crate::geometry::{feet_of, manhattan, offset, reaches};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 
 #[derive(Clone, Debug, PartialEq)]

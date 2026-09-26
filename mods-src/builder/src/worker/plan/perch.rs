@@ -9,7 +9,7 @@ use super::sealing::{as_walls, cutting};
 use super::verdict::{settle_verdict, verdict_name, viability, Viable};
 use super::{defer_task, places, task_cells, trace, walk_to, Flow, Mode, Round};
 use crate::geometry::{feet_of, offset, reaches};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 use crate::survey::Known;
 use crate::worker::body::stands_at;

@@ -1,7 +1,7 @@
 //! The trips to the chests a plan calls for.
 
 use super::{Flow, Round};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 use crate::worker::crew::Stamped;
 use crate::worker::tuning::waits::TOOL_TRIP_WAIT;

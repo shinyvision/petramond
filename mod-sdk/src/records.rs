@@ -25,7 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::{log, world_kv_get, world_kv_set};
+use crate::{log, world_kv_get, world_kv_set, KV_MAX_VALUE_BYTES};
 
 /// One kind of persistent record. Pick any encoding; a `serde` type can use
 /// the SDK's own wire format: `crate::encode(self).unwrap_or_default()` and
@@ -112,6 +112,22 @@ fn versioned<T: KvRecord>(value: &T) -> Vec<u8> {
     let mut bytes = vec![T::VERSION];
     bytes.extend(value.encode());
     bytes
+}
+
+/// Write a record's bytes unless they exceed one world-KV value
+/// ([`KV_MAX_VALUE_BYTES`]): an oversized write is a host ERROR, which
+/// disables the mod, so it is logged and skipped instead. The record keeps
+/// living in memory; the world keeps its last value that fit.
+fn write_fitting(key: &str, bytes: &[u8]) {
+    if bytes.len() > KV_MAX_VALUE_BYTES {
+        log(&format!(
+            "record {key} is {} bytes, over the {KV_MAX_VALUE_BYTES}-byte value cap; \
+             not saved (kept in memory)",
+            bytes.len()
+        ));
+        return;
+    }
+    world_kv_set(key, bytes.to_vec());
 }
 
 /// `value` as stored: its version byte, then its own encoding.
@@ -245,23 +261,26 @@ impl<T: KvRecord> RecordStore<T> {
     /// Edit the record in place. The world is written only when the edit
     /// changed the record's encoding; the flag says whether it did. `None`
     /// when there is no readable record — an unreadable one is never
-    /// written over.
+    /// written over. A record grown past one world-KV value is logged and
+    /// not written (the host would refuse it); a later edit that fits again
+    /// writes it.
     pub fn update<R>(&mut self, id: u64, f: impl FnOnce(&mut T) -> R) -> Option<(R, bool)> {
         self.fetch(id);
         let held = self.held.get_mut(&id)?;
         self.touched.insert(id);
         let (out, changed) = held.edit(f);
         if changed {
-            world_kv_set(&format!("{}{id}", self.prefix), held.bytes.clone());
+            write_fitting(&format!("{}{id}", self.prefix), &held.bytes);
         }
         Some((out, changed))
     }
 
     /// Store a new record (or replace one) and write it to the world. This
-    /// replaces whatever the world holds under the key, readable or not.
+    /// replaces whatever the world holds under the key, readable or not
+    /// (unless it is too large to store at all, which is logged).
     pub fn insert(&mut self, id: u64, value: T) {
         let held = Held::new(value);
-        world_kv_set(&self.key(id), held.bytes.clone());
+        write_fitting(&self.key(id), &held.bytes);
         self.missing.remove(&id);
         self.unreadable.remove(&id);
         self.touched.insert(id);

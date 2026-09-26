@@ -4,7 +4,7 @@ use crate::host::prelude::*;
 
 use crate::fx::HashSet;
 use crate::geometry::{offset, SIDES};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::survey::Known;
 use crate::worker::tuning::window::SCAN;
 

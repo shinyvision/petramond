@@ -10,6 +10,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::host::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::fx::{HashMap, HashSet};
 use crate::geometry::FACES;
@@ -182,8 +183,12 @@ impl Supplies {
     }
 }
 
-/// What a bill wants beyond what there is: the worst of it, in words.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// How every rendered shortfall begins: a count follows.
+pub const MISSING: &str = "Missing ";
+
+/// What a bill wants beyond what there is: the worst of it. Kept as data in
+/// a project's note and put in words only when shown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Shortfall {
     pub count: u32,
     pub name: String,
@@ -196,8 +201,7 @@ impl fmt::Display for Shortfall {
         let more = if self.more { " and more" } else { "" };
         write!(
             f,
-            "{}{}x {}{more}",
-            crate::project::note::MISSING,
+            "{MISSING}{}x {}{more}",
             self.count,
             self.name
         )

@@ -5,8 +5,8 @@ use crate::host::prelude::*;
 use super::wants::{digs_ahead, keeps, tool_kind, wanted};
 use crate::content::BLUEPRINT;
 use crate::geometry::{feet_of, manhattan, reach_to, reaches};
-use crate::jobs::Job;
-use crate::project::{Hold, Project, Projects};
+use crate::worker::Job;
+use crate::project::{Hold, Note, Project, Projects};
 use crate::survey::{key_of, ItemKey};
 use crate::worker::plan::Mode;
 use crate::worker::route::{self, Hubs};
@@ -105,7 +105,7 @@ pub(super) fn short_of_bill(
         // Stocked again: the table says so no longer.
         projects.update(job.id, |p| {
             if p.hold().is_none() {
-                p.note.clear();
+                p.note = Note::None;
             }
         });
         return;
@@ -123,19 +123,12 @@ fn short_of(
     names: &mut crate::caches::Caches,
     hold: bool,
 ) {
-    let text = match missing.first() {
-        Some(((item, _), count)) => format!(
-            "Missing {count}x {}{}",
-            names.display_name(item),
-            if missing.len() > 1 { " and more" } else { "" }
-        ),
-        None => String::new(),
-    };
+    let note = crate::supplies::worst(missing, names).map_or(Note::None, Note::Missing);
     projects.update(job.id, |p| {
         if hold {
-            p.hold_for(Hold::Supplies, text);
+            p.hold_for(Hold::Supplies, note);
         } else {
-            p.note = text;
+            p.note = note;
         }
     });
 }

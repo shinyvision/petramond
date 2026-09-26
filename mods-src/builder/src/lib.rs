@@ -36,6 +36,7 @@ mod survey;
 mod table;
 #[cfg(test)]
 mod testing;
+mod ui;
 mod worker;
 
 use crate::host::prelude::*;

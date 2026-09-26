@@ -128,7 +128,7 @@ fn a_crew_finds_its_golem_by_its_tag_and_clears_what_it_wore() {
         let mut state = session.world.state_mut();
         let tags = &mut state.mobs.get_mut(&golem).unwrap().tags;
         tags.insert(PROJECT_TAG.into(), MobTagValue::I64(9));
-        tags.insert(GOAL_TAG.into(), MobTagValue::Str("1 2 3".into()));
+        tags.insert(GOAL_TAG.into(), [1, 2, 3].to_tag());
         tags.insert(HOLD_TAG.into(), MobTagValue::Bool(true));
     }
     let mut crew = Crew {

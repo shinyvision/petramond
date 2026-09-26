@@ -7,15 +7,17 @@
 //! what it built.
 //!
 //! - [`store`] — the session's view of the records and the live index.
-//! - [`note`] — what a project's note says, where logic has to tell.
+//! - [`note`] — what a project's note says, as data.
+//! - [`scaffolds`] — each project's standing scaffolds, beside its record.
 
 pub mod note;
+mod scaffolds;
 mod store;
 
 use crate::host::prelude::*;
 use serde::{Deserialize, Serialize};
 
-pub use note::Note;
+pub use note::{Note, Report};
 pub use store::Projects;
 
 pub type ProjectId = u64;
@@ -81,11 +83,13 @@ pub struct Project {
     state: State,
     /// Where the golem emerged, and where it burrows back down.
     pub home: [i32; 3],
-    /// Scaffold cells the golem placed and has not taken down yet.
+    /// Scaffold cells the golem placed and has not taken down yet. Stored
+    /// beside the record, never in it (see [`scaffolds`]): the list grows
+    /// with the build, and the record must stay one world-KV value.
     pub scaffolds: Vec<[i32; 3]>,
-    /// The most recent specific reason work is waiting, in the owner's
-    /// words. Read what it says through [`Note`].
-    pub note: String,
+    /// The most recent specific reason work is waiting, as data; words only
+    /// when shown.
+    pub note: Note,
     /// The ghost stays up through repositioning and the build. Off, it shows
     /// only a settled draft: it steps aside while being repositioned and
     /// goes once the golem starts.
@@ -122,9 +126,34 @@ enum Stage {
     Burrowing,
 }
 
-/// The stored shape of a project, kept as it has always been written.
+/// The stored shape of a project (version 4).
 #[derive(Serialize, Deserialize)]
 struct Record {
+    id: ProjectId,
+    owner: String,
+    table: [i32; 3],
+    asset: Option<SchematicId>,
+    title: String,
+    origin: Option<[i32; 3]>,
+    turns: u8,
+    phase: Phase,
+    hold: Option<Hold>,
+    cancelling: bool,
+    home: [i32; 3],
+    worker: bool,
+    /// Scaffolds a version 3 record carried inline. Adopted into the
+    /// scaffold shards the first time the project is loaded, and always
+    /// written empty.
+    legacy_scaffolds: Vec<[i32; 3]>,
+    note: Note,
+    started: bool,
+    show_ghost: bool,
+}
+
+/// The stored shape of a version 3 project: the note in words, the
+/// scaffolds inline.
+#[derive(Serialize, Deserialize)]
+struct RecordV3 {
     id: ProjectId,
     owner: String,
     table: [i32; 3],
@@ -175,7 +204,7 @@ impl From<Record> for Project {
             turns: r.turns,
             state,
             home: r.home,
-            scaffolds: r.scaffolds,
+            scaffolds: r.legacy_scaffolds,
             note: r.note,
             show_ghost: r.show_ghost,
         }
@@ -198,9 +227,32 @@ impl From<Project> for Record {
             origin: p.origin,
             turns: p.turns,
             home: p.home,
-            scaffolds: p.scaffolds,
+            legacy_scaffolds: Vec::new(),
             note: p.note,
             show_ghost: p.show_ghost,
+        }
+    }
+}
+
+impl From<RecordV3> for Record {
+    fn from(r: RecordV3) -> Self {
+        Self {
+            id: r.id,
+            owner: r.owner,
+            table: r.table,
+            asset: r.asset,
+            title: r.title,
+            origin: r.origin,
+            turns: r.turns,
+            phase: r.phase,
+            hold: r.hold,
+            cancelling: r.cancelling,
+            home: r.home,
+            worker: r.worker,
+            legacy_scaffolds: r.scaffolds,
+            note: Note::from_legacy(&r.note),
+            started: r.started,
+            show_ghost: r.show_ghost,
         }
     }
 }
@@ -259,7 +311,7 @@ impl Project {
             state: State::Draft,
             home: table,
             scaffolds: Vec::new(),
-            note: String::new(),
+            note: Note::None,
             show_ghost: true,
         }
     }
@@ -357,7 +409,7 @@ impl Project {
             cancelling: false,
         };
         self.home = home;
-        self.note.clear();
+        self.note = Note::None;
     }
 
     /// The golem is up. A job called off while it rose goes straight home.
@@ -375,7 +427,7 @@ impl Project {
     }
 
     /// Nothing is left to build: home, with `report` for the owner.
-    pub fn wind_down(&mut self, report: String) {
+    pub fn wind_down(&mut self, report: Note) {
         if let State::Active { stage, .. } = &mut self.state {
             *stage = Stage::Returning;
         }
@@ -409,7 +461,7 @@ impl Project {
             if matches!(stage, Stage::Emerging | Stage::Burrowing) {
                 *stage = Stage::Working;
             }
-            self.note = Note::GolemDied.into();
+            self.note = Note::GolemDied;
         }
     }
 
@@ -440,10 +492,10 @@ impl Project {
 
     /// Work stops for `hold`, with what to tell the owner. Only a job under
     /// way can be held.
-    pub fn hold_for(&mut self, hold: Hold, note: impl Into<String>) {
+    pub fn hold_for(&mut self, hold: Hold, note: Note) {
         if let State::Active { hold: held, .. } = &mut self.state {
             *held = Some(hold);
-            self.note = note.into();
+            self.note = note;
         }
     }
 
@@ -456,7 +508,8 @@ impl Project {
 }
 
 impl KvRecord for Project {
-    const VERSION: u8 = 3;
+    const VERSION: u8 = 4;
+    const OLDEST_VERSION: u8 = 3;
 
     fn encode(&self) -> Vec<u8> {
         mod_sdk::encode(self).expect("a project record encodes")
@@ -464,6 +517,17 @@ impl KvRecord for Project {
 
     fn decode(bytes: &[u8]) -> Option<Self> {
         mod_sdk::decode(bytes).ok()
+    }
+
+    /// Version 4 keeps the note as data and the scaffolds outside the record.
+    fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
+        match from {
+            3 => {
+                let old: RecordV3 = mod_sdk::decode(bytes).ok()?;
+                mod_sdk::encode(&Record::from(old)).ok()
+            }
+            _ => None,
+        }
     }
 }
 

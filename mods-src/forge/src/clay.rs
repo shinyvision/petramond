@@ -236,15 +236,11 @@ impl FieldTile {
     fn at(&self, wx: i32, wz: i32) -> f32 {
         let ix = (wx.div_euclid(PERIOD) - self.cx) as usize;
         let iz = (wz.div_euclid(PERIOD) - self.cz) as usize;
-        let sx = smoothstep(wx.rem_euclid(PERIOD) as f32 / PERIOD as f32);
-        let sz = smoothstep(wz.rem_euclid(PERIOD) as f32 / PERIOD as f32);
+        let sx = smoothstep01(wx.rem_euclid(PERIOD) as f32 / PERIOD as f32);
+        let sz = smoothstep01(wz.rem_euclid(PERIOD) as f32 / PERIOD as f32);
         let corner = |dx: usize, dz: usize| self.corners[(iz + dz) * self.stride + ix + dx];
         let top = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * sx;
         let bottom = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * sx;
         top + (bottom - top) * sz
     }
-}
-
-fn smoothstep(t: f32) -> f32 {
-    t * t * (3.0 - 2.0 * t)
 }

@@ -6,7 +6,7 @@ use crate::host::prelude::*;
 use super::Pillar;
 use crate::content::GOLEM;
 use crate::geometry::{feet_of, manhattan, offset, reaches, SIDES};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Project;
 use crate::worker::route::{self, Hubs};
 use crate::worker::stance::Search;

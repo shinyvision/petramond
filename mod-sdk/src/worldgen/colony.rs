@@ -111,9 +111,22 @@ pub fn isqrt(n: i32) -> i32 {
     x
 }
 
+/// The cubic ease `3t² − 2t³` over `t` in `[0, 1]`: the blend weight for
+/// interpolating a value field between lattice corners without visible
+/// creases at the cell edges.
+pub fn smoothstep01(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smoothstep01_eases_from_zero_to_one() {
+        assert_eq!((smoothstep01(0.0), smoothstep01(0.5), smoothstep01(1.0)), (0.0, 0.5, 1.0));
+        assert!(smoothstep01(0.1) < 0.1 && smoothstep01(0.9) > 0.9, "flat at both ends");
+    }
 
     const FIELD: ColonyField = ColonyField {
         salt: 0x00C0_10E7,

@@ -4,7 +4,7 @@
 use crate::host::prelude::*;
 
 use super::{Body, Ctx, FULL_HEALTH_TAG, HEALTH_TAG};
-use crate::project::{Hold, Project, Projects};
+use crate::project::{Hold, Note, Project, Projects};
 
 /// Whether a cell holding `block` leaves room for a body, a scaffold or a
 /// line of sight.
@@ -25,13 +25,13 @@ pub(super) fn hold_for_blueprint(projects: &mut Projects, project: &Project, bod
     match (carried, project.hold()) {
         (false, None) => {
             projects.update(project.id, |p| {
-                p.hold_for(Hold::Blueprint, "Missing blueprint")
+                p.hold_for(Hold::Blueprint, Note::MissingBlueprint)
             });
         }
         (true, Some(Hold::Blueprint)) => {
             projects.update(project.id, |p| {
                 p.release();
-                p.note.clear();
+                p.note = Note::None;
             });
         }
         _ => {}

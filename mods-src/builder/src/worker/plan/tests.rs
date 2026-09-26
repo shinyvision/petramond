@@ -7,8 +7,8 @@ use super::*;
 use crate::geometry::{feet_of, reaches};
 use crate::host::fake::rows::STONE;
 use crate::host::prelude::*;
-use crate::project::{Hold, ProjectId};
-use crate::testing::{Session, CHEST_AT, HOME};
+use crate::project::{Hold, Note, ProjectId, Report};
+use crate::testing::{short_of_stone, Session, CHEST_AT, HOME};
 use crate::worker::tests::{at_work, unit, working};
 use crate::worker::tuning::waits::{FACELESS_SPACING, SEALED_WAIT};
 
@@ -40,7 +40,7 @@ fn the_mode_follows_the_phase_and_the_scaffolding_left() {
     let (mut session, id, _) = working(HOME);
     let mut project = session.builder.projects.get(id).unwrap().clone();
     assert_eq!(Mode::of(&project), Mode::Building);
-    project.wind_down(String::new());
+    project.wind_down(Note::None);
     assert_eq!(Mode::of(&project), Mode::GoingHome);
     project.scaffolds.push([4, 0, 4]);
     assert_eq!(Mode::of(&project), Mode::StrikingScaffold);
@@ -173,7 +173,7 @@ fn with_nothing_anywhere_the_job_waits_for_supplies() {
     assert_eq!(plan_now(&mut session, id, golem), Step::Plan);
     let project = session.builder.projects.get(id).unwrap();
     assert_eq!(project.hold(), Some(Hold::Supplies));
-    assert_eq!(project.note, "Missing 3x Stone");
+    assert_eq!(project.note, short_of_stone(3));
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn with_everything_built_the_golem_winds_down_and_heads_home() {
     let golem = session.golem(id, HOME, [3, 0, -5]);
     assert_eq!(plan_now(&mut session, id, golem), Step::Plan);
     assert_eq!(phase(&mut session, id), Phase::Returning);
-    assert_eq!(session.builder.projects.get(id).unwrap().note, "");
+    assert_eq!(session.builder.projects.get(id).unwrap().note, Note::None);
     let now = session.now();
     assert_eq!(
         plan_now(&mut session, id, golem),
@@ -238,7 +238,7 @@ fn at_home_with_the_work_done_the_golem_burrows() {
     session
         .builder
         .projects
-        .update(id, |p| p.wind_down(String::new()));
+        .update(id, |p| p.wind_down(Note::None));
     assert_eq!(plan_now(&mut session, id, golem), Step::Burrow { t: 0 });
     assert_eq!(phase(&mut session, id), Phase::Burrowing);
 }
@@ -265,6 +265,14 @@ fn the_report_says_what_was_lost_and_what_was_left_standing() {
     assert_eq!(project.phase(), Phase::Returning);
     assert_eq!(
         project.note,
+        Note::Report(Report {
+            lost: 1,
+            standing: 2,
+            chests_full: false
+        })
+    );
+    assert_eq!(
+        project.note.to_string(),
         "1 block was lost after it was placed; 2 scaffolds were out of reach and stand"
     );
 }

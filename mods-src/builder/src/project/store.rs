@@ -1,11 +1,13 @@
 //! The session's view of the project records: read once, written only when
-//! an edit changed them, and the index of the live ones.
+//! an edit changed them, and the index of the live ones. Each record's
+//! scaffold list is joined to it on load and stored beside it (see
+//! [`super::scaffolds`]).
 
 use crate::host::prelude::*;
 
 use crate::content::PROJECT_DATA;
 use crate::fx::HashMap;
-use crate::project::{Project, ProjectId, RECORD_PREFIX};
+use crate::project::{scaffolds, Project, ProjectId, RECORD_PREFIX};
 
 const NONCE_KEY: &str = "builder:nonce";
 const NEXT_KEY: &str = "builder:next_project";
@@ -26,6 +28,9 @@ pub struct Projects {
     nonce: u64,
     records: RecordStore<Project>,
     live: IdShards,
+    /// Per loaded project, its scaffold list as last stored: what an edit is
+    /// compared against, and the mark that the list was joined to the record.
+    stored_scaffolds: HashMap<ProjectId, Vec<[i32; 3]>>,
 }
 
 impl Projects {
@@ -41,6 +46,7 @@ impl Projects {
             nonce,
             records: RecordStore::new(RECORD_PREFIX),
             live: IdShards::load(INDEX_PREFIX),
+            stored_scaffolds: HashMap::default(),
         }
     }
 
@@ -51,15 +57,48 @@ impl Projects {
 
     pub fn get(&mut self, id: ProjectId) -> Option<&Project> {
         match self.records.get(id) {
-            Ok(Some(project)) => Some(project),
+            Ok(Some(_)) => {}
             // A listed project with no record is no project.
             Ok(None) => {
                 self.live.set(id, false);
-                None
+                return None;
             }
             // An unreadable record (say, from a newer build) stays listed:
             // the world keeps it for a build that can read it.
-            Err(_) => None,
+            Err(_) => return None,
+        }
+        self.join_scaffolds(id);
+        self.records.peek(id)
+    }
+
+    /// Give a record this session just read its scaffold list, once. A
+    /// project whose scaffolds were never stored beside it adopts the list
+    /// its (version 3) record carried inline, and stores it.
+    fn join_scaffolds(&mut self, id: ProjectId) {
+        if self.stored_scaffolds.contains_key(&id) {
+            return;
+        }
+        let Some(inline) = self.records.peek(id).map(|p| p.scaffolds.clone()) else {
+            return;
+        };
+        let cells = scaffolds::load(id).unwrap_or_else(|| {
+            scaffolds::save(id, &[], &inline, true);
+            inline
+        });
+        self.records.update(id, |p| p.scaffolds = cells.clone());
+        self.stored_scaffolds.insert(id, cells);
+    }
+
+    /// Store project `id`'s scaffold list if an edit changed it.
+    fn store_scaffolds(&mut self, id: ProjectId) {
+        let (Some(project), Some(stored)) =
+            (self.records.peek(id), self.stored_scaffolds.get_mut(&id))
+        else {
+            return;
+        };
+        if project.scaffolds != *stored {
+            scaffolds::save(id, stored, &project.scaffolds, false);
+            stored.clone_from(&project.scaffolds);
         }
     }
 
@@ -69,6 +108,10 @@ impl Projects {
     }
 
     pub fn update<R>(&mut self, id: ProjectId, f: impl FnOnce(&mut Project) -> R) -> Option<R> {
+        if !matches!(self.records.get(id), Ok(Some(_))) {
+            return None;
+        }
+        self.join_scaffolds(id);
         let ((out, finished, table), changed) = self.records.update(id, |p| {
             let out = f(p);
             (out, p.phase().finished(), p.table)
@@ -79,6 +122,7 @@ impl Projects {
                 file_report(table, id);
             }
         }
+        self.store_scaffolds(id);
         Some(out)
     }
 
@@ -88,6 +132,7 @@ impl Projects {
             .unwrap_or(1);
         world_kv_set(NEXT_KEY, (id + 1).to_le_bytes().to_vec());
         self.records.insert(id, Project::new(id, owner, table));
+        self.stored_scaffolds.insert(id, Vec::new());
         self.live.set(id, true);
         id
     }
@@ -133,6 +178,9 @@ impl Projects {
         }
         self.records
             .sweep(|id, p| !p.phase().finished() || reports.get(&p.table) == Some(&id));
+        let records = &self.records;
+        self.stored_scaffolds
+            .retain(|id, _| records.peek(*id).is_some());
     }
 
     /// The project a blueprint stack is bound to in this world.

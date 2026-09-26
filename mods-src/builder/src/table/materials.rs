@@ -7,7 +7,8 @@ use crate::host::prelude::*;
 
 use crate::jobs::Builder;
 use crate::keys::materials;
-use crate::table::{project_at, Tone};
+use crate::table::project_at;
+use crate::ui::Tone;
 
 struct Row {
     item: String,

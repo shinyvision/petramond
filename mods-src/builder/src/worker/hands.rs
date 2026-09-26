@@ -6,7 +6,7 @@
 use crate::host::prelude::*;
 
 use super::{cargo, sight, Body, Ctx};
-use crate::jobs::Job;
+use crate::worker::Job;
 
 const MINE: &str = "mine";
 

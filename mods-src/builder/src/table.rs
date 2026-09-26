@@ -22,7 +22,6 @@ use crate::project::{Project, ProjectId};
 
 pub use actions::{chosen, click, positioned, use_blueprint};
 pub use blueprint::{blueprint_at, follow_blueprints, label_blueprint, placed, show_blueprint};
-pub use panel::Tone;
 
 /// Panels refresh this often, each viewer on a tick of their own.
 const PUBLISH: Cadence = Cadence::every(4);
@@ -39,7 +38,7 @@ pub struct Tables {
     /// tick that was last checked.
     laid: HashMap<[i32; 3], (bool, u64)>,
     /// The press each viewer was last refused, and the tick it stops showing.
-    refused: HashMap<(PlayerId, [i32; 3]), (String, u64)>,
+    refused: HashMap<(PlayerId, [i32; 3]), (crate::jobs::Refusal, u64)>,
 }
 
 impl Tables {

@@ -5,7 +5,7 @@ use crate::host::prelude::*;
 
 use super::{defer_task, Flow, Round};
 use crate::geometry::{manhattan, offset};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::{Project, Projects};
 use crate::worker::tuning::patience::SCAFFOLD_TRIES;
 use crate::worker::tuning::reach::{COVER, TRIM_REACH};

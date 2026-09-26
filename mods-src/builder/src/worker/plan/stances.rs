@@ -5,7 +5,7 @@ use super::sealing::{cutting, strands};
 use super::verdict::{settle_verdict, viability, waits_there, Viable};
 use super::{defer_task, places, task_cells, walk_via, Flow, Round};
 use crate::geometry::{feet_of, manhattan, offset, reaches};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::patience::NOWHERE_STANDS;

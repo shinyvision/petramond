@@ -8,7 +8,7 @@ use crate::host::prelude::*;
 use super::tuning::patience::GAZE_TRIES;
 use super::{Body, Ctx, Task};
 use crate::geometry::feet_of;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::survey::Known;
 
 /// What a look must find for a piece of work.

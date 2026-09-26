@@ -1,6 +1,6 @@
 use super::{at_work, working};
 use crate::project::{Hold, Note, Project};
-use crate::testing::HOME;
+use crate::testing::{short_of_stone, HOME};
 use crate::worker::trouble::{self, Trouble};
 use crate::worker::tuning::patience::{STUCK_AFTER, THINK_AFTER};
 use crate::worker::waiting::Waiting;
@@ -43,7 +43,7 @@ fn only_a_hold_the_player_can_lift_is_trouble() {
     paused.hold_for(Hold::Player, Note::Paused);
     assert_eq!(trouble::of(&paused, &Crew::default(), STUCK_AFTER + 1), None);
     let mut short = project();
-    short.hold_for(Hold::Supplies, "Missing 3x Stone");
+    short.hold_for(Hold::Supplies, short_of_stone(3));
     assert_eq!(trouble::of(&short, &Crew::default(), 1), Some(Trouble::Stuck));
     let mut rising = project();
     rising.summon(HOME);
@@ -71,7 +71,7 @@ fn the_reason_is_whatever_was_last_said_or_what_it_is_doing() {
         "Waiting for materials"
     );
     let mut noted = working.clone();
-    noted.note = "Missing 3x Stone".into();
+    noted.note = short_of_stone(3);
     assert_eq!(
         trouble::reason(&noted, &waiting, Some(Trouble::Stuck)),
         "Missing 3x Stone",
@@ -79,13 +79,13 @@ fn the_reason_is_whatever_was_last_said_or_what_it_is_doing() {
     );
 
     let mut held = working.clone();
-    held.hold_for(Hold::Worker, "");
+    held.hold_for(Hold::Worker, Note::None);
     assert_eq!(trouble::reason(&held, &crew, None), "Paused");
     held.hold_for(Hold::Player, Note::Paused);
     assert_eq!(trouble::reason(&held, &waiting, None), "Paused");
 
     let mut home = working.clone();
-    home.wind_down(String::new());
+    home.wind_down(Note::None);
     assert_eq!(trouble::reason(&home, &crew, None), "Returning materials");
     home.burrow();
     assert_eq!(trouble::reason(&home, &crew, None), "Burrowing home");

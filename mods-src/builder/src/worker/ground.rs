@@ -15,7 +15,7 @@ use super::tuning::price::{
 };
 use super::{Body, Ctx};
 use crate::geometry::{offset, SIDES};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Project;
 
 #[derive(Clone, Copy, Debug)]

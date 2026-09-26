@@ -2,7 +2,7 @@ use super::{at_work, unit, working};
 use crate::host::fake::rows::{AIR, DIRT, STONE};
 use crate::host::fake::Deed;
 use crate::host::prelude::*;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 use crate::survey::Known;
 use crate::worker::act::{begin, dig, settle};

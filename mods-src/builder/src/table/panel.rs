@@ -7,29 +7,7 @@ use crate::jobs::Builder;
 use crate::keys::table;
 use crate::project::{Hold, Phase, Project};
 use crate::table::{blueprint_at, may_edit, project_at};
-
-/// The theme palette a status line is drawn in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Tone {
-    #[default]
-    Muted,
-    Plain,
-    Accent,
-    Warn,
-    Danger,
-}
-
-impl Tone {
-    pub fn palette(self) -> &'static str {
-        match self {
-            Tone::Muted => "text_muted",
-            Tone::Plain => "text",
-            Tone::Accent => "accent",
-            Tone::Warn => "warn",
-            Tone::Danger => "danger",
-        }
-    }
-}
+use crate::ui::Tone;
 
 /// A table with no project shows nothing but its words: the default.
 #[derive(Default)]
@@ -99,7 +77,7 @@ pub fn describe(builder: &mut Builder, player: PlayerId, anchor: [i32; 3], now: 
     // would otherwise wipe it before it could be read.
     match builder.tables.refused.get(&(player, anchor)) {
         Some((reason, until)) if now < *until => {
-            panel.status = reason.clone();
+            panel.status = reason.to_string();
             panel.tone = Tone::Danger;
         }
         _ => {}
@@ -180,7 +158,7 @@ fn status(
         },
         (Phase::Emerging, _) => ("The golem is digging itself out".into(), Tone::Plain),
         (_, Some(Hold::Player)) if working => ("Paused".into(), Tone::Muted),
-        (_, Some(Hold::Worker | Hold::Table)) if working => (project.note.clone(), Tone::Danger),
+        (_, Some(Hold::Worker | Hold::Table)) if working => (project.note.to_string(), Tone::Danger),
         _ if working && away => ("The golem is outside the loaded world".into(), Tone::Warn),
         (_, Some(_)) if working => (format!("Waiting: {percent}% done"), Tone::Warn),
         (Phase::Working, _) => (format!("Building: {percent}% done"), Tone::Plain),
@@ -192,8 +170,8 @@ fn status(
             if manual > 0 {
                 notes.push(format!("{manual} blocks need building by hand"));
             }
-            if !project.note.is_empty() {
-                notes.push(project.note.clone());
+            if !project.note.is_none() {
+                notes.push(project.note.to_string());
             }
             if notes.is_empty() {
                 ("Complete".into(), Tone::Accent)

@@ -4,7 +4,7 @@ use super::sealing::cutting;
 use super::unreached::fall_out;
 use super::verdict::waits_there;
 use super::{defer_task, places, task_cells, walk_via, Flow, Round};
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::waits::{FOOT_UNWALKED, SCAFFOLD_WAIT, SEALED_WAIT};

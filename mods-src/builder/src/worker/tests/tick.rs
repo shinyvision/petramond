@@ -3,7 +3,7 @@
 use super::{at_work, unit};
 use crate::host::fake::rows::{AIR, GRASS, STONE, TORCH, WATER};
 use crate::host::prelude::*;
-use crate::project::{Hold, Phase};
+use crate::project::{Hold, Note, Phase};
 use crate::testing::{Session, HOME};
 use crate::worker::upkeep::{hold_for_blueprint, mend, open_block};
 use crate::worker::{tick, Step, Task, FULL_HEALTH_TAG, HEALTH_TAG};
@@ -81,13 +81,13 @@ fn a_golem_without_its_blueprint_holds_its_job_until_it_is_back() {
     let project = session.builder.projects.get(id).unwrap().clone();
     hold_for_blueprint(&mut session.builder.projects, &project, &body);
     let held = session.builder.projects.get(id).unwrap().clone();
-    assert_eq!((held.hold(), held.note.as_str()), (Some(Hold::Blueprint), "Missing blueprint"));
+    assert_eq!((held.hold(), &held.note), (Some(Hold::Blueprint), &Note::MissingBlueprint));
 
     session.world.put(ContainerAddress::Mob(golem), 0, blueprint);
     let body = session.body(golem);
     hold_for_blueprint(&mut session.builder.projects, &held, &body);
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.hold(), project.note.as_str()), (None, ""));
+    assert_eq!((project.hold(), &project.note), (None, &Note::None));
     assert_eq!(project.phase(), Phase::Working);
 }
 

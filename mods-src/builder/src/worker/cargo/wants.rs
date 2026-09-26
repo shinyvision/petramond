@@ -7,7 +7,7 @@ use crate::host::prelude::*;
 
 use super::totals;
 use crate::content::BLUEPRINT;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::Project;
 use crate::survey::{key_of, ItemKey, Known};
 use crate::worker::tuning::hands::{DIG_ROOM, DIG_ROOM_MOST, SPOIL_PER_SLOT};

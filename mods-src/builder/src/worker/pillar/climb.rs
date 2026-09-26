@@ -4,7 +4,7 @@ use crate::host::prelude::*;
 
 use super::Pillar;
 use crate::geometry::offset;
-use crate::jobs::Job;
+use crate::worker::Job;
 use crate::project::{Project, Projects};
 use crate::worker::legs::{self, centre_on, hold_still};
 use crate::worker::tuning::body::{JUMP, ON_COLUMN, PERCH_OFF_CENTRE, PERCH_SETTLE_TICKS};

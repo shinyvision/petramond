@@ -165,7 +165,11 @@ fn a_shortfall_is_the_biggest_gap_first_named_for_the_owner() {
     );
     let named = worst(&short, &mut Caches::default()).expect("something is short");
     assert_eq!(named.to_string(), "Missing 4x Stone and more");
-    assert!(crate::project::Note::read(&named.to_string()).is_shortfall());
+    assert_eq!(
+        crate::project::Note::from_legacy(&named.to_string()),
+        crate::project::Note::Missing(named.clone()),
+        "a shortfall an older build stored in words reads back as data"
+    );
 
     let even: BTreeMap<ItemKey, u32> = [(key("petramond:stone"), 2), (key("petramond:dirt"), 2)]
         .into_iter()
